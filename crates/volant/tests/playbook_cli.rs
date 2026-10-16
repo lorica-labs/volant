@@ -2496,6 +2496,25 @@ const RUNS_PROBES: &[RunsProbe] = &[
         0,
         "\"msg\": \"probe-registered\"",
     ),
+    // Started in the background and polled: without the keyword the task runs in front of the
+    // controller and prints no `ASYNC` line.
+    runs(
+        "task",
+        "async",
+        "- hosts: localhost\n  gather_facts: false\n  vars:\n    ansible_async_dir: \"{{ playbook_dir }}/jobs\"\n  tasks:\n    - name: Probe task\n      command: \"true\"\n      async: 5\n      poll: 1\n",
+        &[],
+        0,
+        "ASYNC OK on localhost: jid=j",
+    ),
+    // Started and left: without the keyword the job is polled to its end and reads finished.
+    runs(
+        "task",
+        "poll",
+        "- hosts: localhost\n  gather_facts: false\n  vars:\n    ansible_async_dir: \"{{ playbook_dir }}/jobs\"\n  tasks:\n    - name: Probe task\n      command: \"true\"\n      async: 5\n      poll: 0\n      register: r\n    - debug: var=r.finished\n",
+        &[],
+        0,
+        "\"r.finished\": false",
+    ),
     runs(
         "task",
         "timeout",

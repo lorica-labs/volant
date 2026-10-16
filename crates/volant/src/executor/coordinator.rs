@@ -135,11 +135,14 @@ pub(super) enum Event {
         censored: bool,
     },
     /// A line an action prints on stdout before its result, as the reference's `pause` prints
-    /// `Pausing for N seconds`. Queued like a warning.
+    /// `Pausing for N seconds`, or the `ASYNC POLL` lines a job's polling prints. Queued like a
+    /// warning.
     Display {
         host: String,
         index: usize,
         line: String,
+        /// Printed in the reference's debug colour, as the `ASYNC` lines are.
+        debug: bool,
     },
     /// What `host` asked for at the include step `index`, already read and compiled. Empty when
     /// every item was skipped or failed to resolve, which still has to be said: the coordinator
@@ -918,8 +921,12 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
         out.warning(message, *censored);
         return;
     }
-    if let Event::Display { line, .. } = &event {
-        out.display(line);
+    if let Event::Display { line, debug, .. } = &event {
+        if *debug {
+            out.debug(line);
+        } else {
+            out.display(line);
+        }
         return;
     }
     if let Event::UnreachableIgnored {

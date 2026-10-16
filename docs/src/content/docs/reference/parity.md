@@ -13,13 +13,13 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|---|---|
 | keyword (play) | 29 | 1 | 11 | 0 |
 | keyword (block) | 25 | 1 | 5 | 0 |
-| keyword (task) | 57 | 1 | 8 | 0 |
+| keyword (task) | 59 | 1 | 6 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
-| module | 62 | 0 | 9 | 0 |
-| action plugin | 19 | 0 | 9 | 0 |
+| module | 63 | 0 | 8 | 0 |
+| action plugin | 20 | 0 | 8 | 0 |
 | filter | 120 | 0 | 2 | 0 |
 | test | 80 | 0 | 2 | 0 |
 | lookup | 24 | 0 | 1 | 0 |
@@ -126,7 +126,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `action` | <span class="kw kw-runs">runs</span> |  |
 | `any_errors_fatal` | <span class="kw kw-runs">runs</span> |  |
 | `args` | <span class="kw kw-runs">runs</span> |  |
-| `async` | <span class="kw kw-notyet">not yet</span> |  |
+| `async` | <span class="kw kw-runs">runs</span> |  |
 | `become` | <span class="kw kw-runs">runs</span> |  |
 | `become_exe` | <span class="kw kw-notyet">not yet</span> |  |
 | `become_flags` | <span class="kw kw-notyet">not yet</span> |  |
@@ -152,7 +152,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `name` | <span class="kw kw-runs">runs</span> |  |
 | `no_log` | <span class="kw kw-runs">runs</span> |  |
 | `notify` | <span class="kw kw-runs">runs</span> |  |
-| `poll` | <span class="kw kw-notyet">not yet</span> |  |
+| `poll` | <span class="kw kw-runs">runs</span> |  |
 | `port` | <span class="kw kw-runs">runs</span> |  |
 | `register` | <span class="kw kw-runs">runs</span> |  |
 | `remote_user` | <span class="kw kw-runs">runs</span> |  |
@@ -277,7 +277,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `apt_repository` | <span class="kw kw-runs">runs</span> | Python |
 | `assemble` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
 | `assert` | <span class="kw kw-runs">runs</span> | controller |
-| `async_status` | <span class="kw kw-notyet">not yet</span> | needs its action plugin |
+| `async_status` | <span class="kw kw-runs">runs</span> | agent |
 | `blockinfile` | <span class="kw kw-runs">runs</span> | Python |
 | `command` | <span class="kw kw-runs">runs</span> | agent |
 | `copy` | <span class="kw kw-runs">runs</span> | action plugin |
@@ -350,7 +350,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `add_host` | <span class="kw kw-notyet">not yet</span> |  |
 | `assemble` | <span class="kw kw-notyet">not yet</span> |  |
 | `assert` | <span class="kw kw-runs">runs</span> |  |
-| `async_status` | <span class="kw kw-notyet">not yet</span> |  |
+| `async_status` | <span class="kw kw-runs">runs</span> |  |
 | `command` | <span class="kw kw-runs">runs</span> |  |
 | `copy` | <span class="kw kw-runs">runs</span> |  |
 | `debug` | <span class="kw kw-runs">runs</span> |  |

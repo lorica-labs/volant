@@ -1,0 +1,87 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    ansible_async_dir: "{{ playbook_dir }}/jobs"
+  tasks:
+    - name: fire
+      command: sleep 4
+      async: 10
+      poll: 0
+      register: r
+
+    - debug: var=r
+
+    - name: the first status, as the job writes it
+      command: cat {{ r.results_file }}
+      register: first
+
+    - debug: var=first.stdout
+
+    - name: wait for it
+      async_status:
+        jid: "{{ r.ansible_job_id }}"
+      register: s
+      until: s.finished
+      retries: 3
+      delay: 5
+
+    - debug: var=s
+
+    - name: clean up
+      async_status:
+        jid: "{{ r.ansible_job_id }}"
+        mode: cleanup
+      register: c
+
+    - debug: var=c
+
+    - name: the status file is gone
+      shell: test -e {{ r.results_file }} && echo kept || echo removed
+      register: kept
+
+    - debug: var=kept.stdout
+
+    - name: a job nobody started
+      async_status: jid=nosuch.1
+      register: missing
+      ignore_errors: true
+
+    - debug: var=missing
+
+    - name: a status file cut short
+      shell: |
+        printf '{"rc": 0, "chan' > '{{ playbook_dir }}/jobs/j1.2'
+
+    - name: reads as a job still running
+      async_status: jid=j1.2
+      register: cut
+
+    - debug: var=cut
+
+    - name: a failing job
+      command: /bin/false
+      async: 5
+      poll: 0
+      register: g
+
+    - pause: seconds=1
+
+    - async_status: jid={{ g.ansible_job_id }}
+      register: gs
+      ignore_errors: true
+
+    - debug: var=gs.rc
+
+    - name: a job past its limit
+      command: sleep 10
+      async: 1
+      poll: 0
+      register: late
+
+    - pause: seconds=3
+
+    - async_status: jid={{ late.ansible_job_id }}
+      register: qs
+      ignore_errors: true
+
+    - debug: var=qs

@@ -35,7 +35,13 @@ where
             return stop(id, index, &broken, &send);
         }
         let started = Instant::now();
-        let (run, mut ran) = modules::run(task, &cancelled);
+        let (run, mut ran) = match &task.job {
+            Some(job) => (
+                Run::Done(crate::jobs::start(task, job)),
+                modules::ran_natively(),
+            ),
+            None => modules::run(task, &cancelled),
+        };
         let result = match run {
             Run::Done(result) => result,
             Run::Cancelled => return stop(id, index, &broken, &send),

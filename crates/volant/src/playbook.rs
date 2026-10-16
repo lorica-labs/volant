@@ -225,6 +225,11 @@ pub struct PlayTask {
     /// has to be told apart from its silence.
     pub ignore_errors: Option<Flag>,
     pub timeout: Option<u64>,
+    /// `async`: seconds the task may run as a background job, 0 for a task that is not one.
+    pub async_val: u64,
+    /// `poll`: seconds between two looks at the job, 0 for a task that only starts it. Unset is
+    /// the reference's default of 15.
+    pub poll: Option<u64>,
     pub vars: Map<String, Value>,
     /// Conditions that must all hold, as Jinja2 expressions.
     pub when: Vec<String>,
@@ -341,6 +346,8 @@ impl PlayTask {
             tags: Vec::new(),
             ignore_errors: None,
             timeout: None,
+            async_val: 0,
+            poll: None,
             vars: Map::new(),
             when: Vec::new(),
             loop_items: None,
@@ -1542,6 +1549,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     let context = format!("task '{label}': ");
     let ignore_errors = flag(yaml, "ignore_errors")?;
     let timeout = timeout(yaml, &context)?;
+    let async_val = seconds(yaml, "async", &context)?.unwrap_or(0);
+    let poll = seconds(yaml, "poll", &context)?;
     let vars = mapping(yaml, "vars", &context)?;
     let when = conditions(yaml, "when", &context)?;
     let changed_when = conditions(yaml, "changed_when", &context)?;
@@ -1616,6 +1625,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         tags: tags(yaml, &context)?,
         ignore_errors,
         timeout,
+        async_val,
+        poll,
         vars,
         when,
         loop_items,
@@ -1703,11 +1714,16 @@ fn collect_tags(node: Option<&Yaml>, context: &str, out: &mut Vec<String>) -> an
 
 /// `timeout`, on a task or on a block.
 fn timeout(yaml: &Yaml, context: &str) -> anyhow::Result<Option<u64>> {
-    match field(yaml, "timeout") {
+    seconds(yaml, "timeout", context)
+}
+
+/// A keyword counting seconds: `timeout`, `async`, `poll`.
+fn seconds(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Option<u64>> {
+    match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
         Some(Yaml::Value(Scalar::Integer(i))) if *i >= 0 => Ok(Some(*i as u64)),
         Some(other) => {
-            bail!("{context}'timeout' must be a non-negative integer, found {other:?}")
+            bail!("{context}'{key}' must be a non-negative integer, found {other:?}")
         }
     }
 }
@@ -2144,6 +2160,14 @@ mod tests {
         "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      when: [3]\n",
         &["task 't': 'when' must be an expression or a list of expressions"]
     )]
+    #[case::async_text(
+        "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      async: x\n",
+        &["task 't': 'async' must be a non-negative integer"]
+    )]
+    #[case::poll_negative(
+        "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      poll: -1\n",
+        &["task 't': 'poll' must be a non-negative integer"]
+    )]
     fn the_load_refuses(#[case] text: &str, #[case] needles: &[&str]) {
         let err = parse(text, "x.yml").expect_err("the load must refuse");
         let got = format!("{err:#}");
@@ -2155,8 +2179,6 @@ mod tests {
     /// Keywords the reference has and this release cannot run are parked for the pre-flight.
     #[rstest]
     #[case::throttle("throttle")]
-    #[case::async_("async")]
-    #[case::poll("poll")]
     #[case::diff("diff")]
     #[case::become_flags("become_flags")]
     #[case::become_exe("become_exe")]

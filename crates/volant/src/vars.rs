@@ -344,7 +344,15 @@ const RESTRICTED_FACTS: [&str; 39] = [
 /// it through [`host_setting`] like every other name that picks what runs, so the scan guarding
 /// this list stays total. A host that set it could only pick another backend of a closed list,
 /// which its own `pkg_mgr` fact already does.
-const ENGINE_RESTRICTED_FACTS: [&str; 2] = ["ansible_remote_tmp", "ansible_package_use"];
+///
+/// `ansible_async_dir` is where a job writes its status file and the directory `async_status`
+/// removes one from in `cleanup`: a host that named it for itself would choose where the agent,
+/// escalated or not, writes and deletes.
+const ENGINE_RESTRICTED_FACTS: [&str; 3] = [
+    "ansible_remote_tmp",
+    "ansible_package_use",
+    "ansible_async_dir",
+];
 
 /// Whether ansible-core's `clean_facts()` removes a fact of this name before it becomes a
 /// variable: a connection or escalation setting, `ansible_<connection plugin>_*` unless it ends

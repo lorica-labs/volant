@@ -665,6 +665,52 @@ fn ssh_ctrl_c_stops_the_task_on_the_real_host() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A job started with `poll: 0` keeps running once the run that started it has closed its ssh
+/// session, and the next run reads its result with `async_status`.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_an_async_job_outlives_the_run_that_started_it() {
+    let dir = tmp("async");
+    let inv = inventory(&dir, &[("box", "")]);
+    let jobs = format!("    ansible_async_dir: {}\n", dir.join("jobs").display());
+    let fire = dir.join("fire.yml");
+    std::fs::write(
+        &fire,
+        format!(
+            "- hosts: all\n  gather_facts: false\n  vars:\n{jobs}  tasks:\n    - shell: sleep 2; echo done\n      async: 60\n      poll: 0\n      register: r\n    - debug: msg=\"jid={{{{ r.ansible_job_id }}}}\"\n"
+        ),
+    )
+    .unwrap();
+    let first = volant_within(
+        &["playbook", "-i", &inv, &fire.display().to_string()],
+        Duration::from_secs(60),
+    );
+    let text = both(&first);
+    assert_eq!(first.status.code(), Some(0), "{text}");
+    let jid = text
+        .split("\"msg\": \"jid=")
+        .nth(1)
+        .and_then(|rest| rest.split('"').next())
+        .unwrap_or_else(|| panic!("no job id in:\n{text}"))
+        .to_string();
+    let read = dir.join("read.yml");
+    std::fs::write(
+        &read,
+        format!(
+            "- hosts: all\n  gather_facts: false\n  vars:\n{jobs}  tasks:\n    - async_status: jid={jid}\n      register: s\n      until: s.finished\n      retries: 30\n      delay: 1\n    - debug: var=s.stdout\n"
+        ),
+    )
+    .unwrap();
+    let second = volant_within(
+        &["playbook", "-i", &inv, &read.display().to_string()],
+        Duration::from_secs(90),
+    );
+    let text = both(&second);
+    assert_eq!(second.status.code(), Some(0), "{text}");
+    assert!(text.contains("\"s.stdout\": \"done\""), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The unit `ssh/actions.yml` asks to be started. Present and running wherever systemd is the
 /// init system, which the CI runner and the development machine both are, so the task changes
 /// nothing on either.

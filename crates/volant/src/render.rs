@@ -350,6 +350,8 @@ const FAILED: Style = AnsiColor::Red.on_default();
 const UNREACHABLE: Style = AnsiColor::BrightRed.on_default();
 const SKIPPED: Style = AnsiColor::Cyan.on_default();
 const WARNING: Style = AnsiColor::BrightMagenta.on_default();
+/// The reference's `dark gray`, its `COLOR_DEBUG`.
+const DEBUG: Style = AnsiColor::BrightBlack.on_default();
 
 impl Renderer {
     /// Stdout renderer. Colour follows the terminal, `NO_COLOR`, `CLICOLOR_FORCE`, or the caller.
@@ -468,6 +470,13 @@ impl Renderer {
     /// A line an action writes on stdout as it runs, as it wrote it.
     pub fn display(&mut self, line: &str) {
         let _ = writeln!(self.out, "{line}");
+    }
+
+    /// A line the reference prints in its debug colour: the `ASYNC POLL`, `ASYNC OK` and
+    /// `ASYNC FAILED` lines of a polled job.
+    pub fn debug(&mut self, line: &str) {
+        let painted = self.paint(DEBUG, line);
+        let _ = writeln!(self.out, "{painted}");
     }
 
     /// The line a failed attempt prints before the task is reported, measured on ansible-core

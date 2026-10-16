@@ -18,6 +18,7 @@ fn command(cmd: &str, ignore_errors: bool) -> Task {
         payload: None,
         files: Vec::new(),
         force_python: false,
+        job: None,
     }
 }
 

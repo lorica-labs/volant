@@ -206,8 +206,19 @@ pub const SHELL: ModuleSpec = ModuleSpec {
     validated_as: Some("ansible.legacy.command"),
 };
 
+/// `async_status`, answered in the agent from the job's status file. The reference runs it as an
+/// action plugin that adds `_async_dir` and wraps the module's answer; the controller adds the
+/// directory here too, and the agent's module gives the wrapped answer itself.
+pub const ASYNC_STATUS: ModuleSpec = ModuleSpec {
+    name: "async_status",
+    free_form: false,
+    summary: "Report on a job started with `async`, or remove its status file.",
+    args: &[honoured("_async_dir"), honoured("jid"), honoured("mode")],
+    validated_as: None,
+};
+
 /// Every module the agent implements natively, sorted by name.
-pub const NATIVE_MODULES: &[ModuleSpec] = &[COMMAND, RAW, SHELL];
+pub const NATIVE_MODULES: &[ModuleSpec] = &[ASYNC_STATUS, COMMAND, RAW, SHELL];
 
 /// The Python modules the agent may run natively instead, by the reference's name. The agent
 /// decides per task: a native answers only inside the subset of arguments it implements and
@@ -494,7 +505,7 @@ pub fn is_known(module: &str) -> bool {
 /// Where a builtin module runs, as the documentation page and the parity matrix say it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Route {
-    /// `command`, `shell`, `raw`: the agent runs it, without Python.
+    /// `async_status`, `command`, `shell`, `raw`: the agent runs it, without Python.
     Agent,
     /// `assert`, `debug`, ...: the controller runs it.
     Controller,
@@ -537,7 +548,8 @@ pub fn builtin_route(module: &str) -> Option<Route> {
 ///
 /// Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
 /// 27 names in both, and each of these waits on the plugin of its own name. The names this release
-/// already implements are **not** here, whether natively (`command`, `shell`, `raw`), on the
+/// already implements are **not** here, whether natively (`async_status`, `command`, `shell`,
+/// `raw`), on the
 /// controller (`assert`, `debug`, `fail`, `include_vars`, `pause`, `set_fact`,
 /// `validate_argument_spec`) or through a plugin of its own ([`ACTION_PLUGINS`]). `normal` is not
 /// here either: it is the only action plugin with no module of the same name, so no playbook can
@@ -545,7 +557,6 @@ pub fn builtin_route(module: &str) -> Option<Route> {
 pub const BUILTIN_ACTION_PLUGINS: &[&str] = &[
     "add_host",
     "assemble",
-    "async_status",
     "gather_facts",
     "group_by",
     "script",
@@ -967,7 +978,7 @@ mod tests {
                 assert!(is_builtin(m) && !is_known(m), "{m}");
             }
         }
-        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 9);
+        assert_eq!(BUILTIN_ACTION_PLUGINS.len(), 8);
         assert!(!BUILTIN_ACTION_PLUGINS.contains(&"setup"));
         for m in &implemented {
             assert!(!BUILTIN_ACTION_PLUGINS.contains(m), "{m} is in both lists");

@@ -2,6 +2,7 @@
 //! Native modules. Each one takes Ansible's argument names and returns Ansible's result shape.
 //! The list of names lives in `volant_protocol::modules`; this table maps each name to code.
 
+pub mod async_status;
 pub mod command;
 mod glob;
 pub mod raw;
@@ -51,7 +52,12 @@ pub struct Module {
     pub run: ModuleFn,
 }
 
-pub const MODULES: &[Module] = &[command::MODULE, raw::MODULE, shell::MODULE];
+pub const MODULES: &[Module] = &[
+    async_status::MODULE,
+    command::MODULE,
+    raw::MODULE,
+    shell::MODULE,
+];
 
 /// Runs a task, and says which code ran it. `Ran::micros` is left at 0 for the caller, which
 /// times the whole of this call.
@@ -62,14 +68,7 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
         environment: task.environment.clone(),
         ..Context::default()
     };
-    let mut ran = Ran {
-        path: ExecPath::Native,
-        reason: None,
-        micros: 0,
-        fork_micros: None,
-        import_micros: None,
-        module_micros: None,
-    };
+    let mut ran = ran_natively();
     // A task that carries a payload is a Python module, and the name it goes by is the
     // reference's rather than this table's: `ping` is a module here and a payload there, so the
     // payload decides before the name is looked up at all.
@@ -133,6 +132,18 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
         ))),
     };
     (run, ran)
+}
+
+/// What a task the agent answered by itself reports: no Python, no time measured yet.
+pub fn ran_natively() -> Ran {
+    Ran {
+        path: ExecPath::Native,
+        reason: None,
+        micros: 0,
+        fork_micros: None,
+        import_micros: None,
+        module_micros: None,
+    }
 }
 
 /// A module's own result as the task's: ansible-core's `TaskExecutor._execute` fills in a

@@ -1,0 +1,45 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    ansible_async_dir: "{{ playbook_dir }}/jobs"
+  tasks:
+    - name: polled twice
+      command: sleep 3
+      async: 10
+      poll: 2
+      register: r
+
+    - debug: var=r
+
+    - name: the status file is removed once the job is read
+      shell: test -e {{ r.results_file }} && echo kept || echo removed
+      register: kept
+
+    - debug: var=kept.stdout
+
+    - name: a failing job
+      command: /bin/false
+      async: 5
+      poll: 1
+      register: f
+      ignore_errors: true
+
+    - debug: var=f.msg
+
+    - name: a job killed at its limit
+      command: sleep 10
+      async: 1
+      poll: 3
+      register: t
+      ignore_errors: true
+
+    - debug: var=t
+
+    - name: a job the controller stops waiting for
+      command: sleep 10
+      async: 1
+      poll: 1
+      register: n
+      ignore_errors: true
+
+    - debug: var=n.msg

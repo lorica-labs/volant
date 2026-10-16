@@ -735,8 +735,8 @@ mod tests {
     /// sentence every mismatch gets, before any blob could reach it in a shape it would misread.
     #[cfg(unix)]
     #[tokio::test]
-    async fn an_agent_that_speaks_protocol_five_is_refused_at_the_handshake() {
-        let ready = br#"{"type":"ready","protocol":5,"version":"0.1.0-alpha.7","arch":"x86_64"}"#;
+    async fn an_agent_that_speaks_protocol_six_is_refused_at_the_handshake() {
+        let ready = br#"{"type":"ready","protocol":6,"version":"0.1.0-alpha.7","arch":"x86_64"}"#;
         let len = u32::try_from(ready.len()).unwrap().to_be_bytes();
         let mut octal = String::new();
         for byte in len.iter().chain(ready.iter()) {
@@ -758,7 +758,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "agent 0.1.0-alpha.7 speaks protocol 5, this controller speaks 6"
+            "agent 0.1.0-alpha.7 speaks protocol 6, this controller speaks 7"
         );
     }
 

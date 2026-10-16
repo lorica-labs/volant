@@ -17,6 +17,7 @@ Ansible declares `chdir`, `creates` and `removes` as paths and expands `~` and `
 
 | Module | Free-form | Arguments | What it does |
 |---|---|---|---|
+| `async_status` | no | `jid`, `mode` | Report on a job started with `async`, or remove its status file. |
 | `command` | yes | `argv`, `chdir`, `cmd`, `creates`, `expand_argument_vars`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a program directly, without a shell. |
 | `raw` | yes | `executable` | Run a command line through the remote shell, with no module machinery around it. |
 | `shell` | yes | `argv`, `chdir`, `cmd`, `creates`, `executable`, `removes`, `stdin`, `stdin_add_newline`, `strip_empty_ends` | Run a command line through a shell, `sh` unless `executable` names another. |
@@ -56,7 +57,6 @@ The exceptions are the modules ansible-core runs through an action plugin that V
 | `apt_key` | Python module |
 | `apt_repository` | Python module |
 | `assemble` | not supported yet: needs the `assemble` action plugin |
-| `async_status` | not supported yet: needs the `async_status` action plugin |
 | `blockinfile` | Python module |
 | `cron` | Python module |
 | `deb822_repository` | Python module |

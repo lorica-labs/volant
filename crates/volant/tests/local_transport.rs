@@ -72,6 +72,7 @@ async fn runs_a_batch_through_the_local_transport() {
             payload: None,
             files: Vec::new(),
             force_python: false,
+            job: None,
         }],
     })
     .await
@@ -123,6 +124,7 @@ async fn cancel_stops_the_running_task_and_its_children() {
             payload: None,
             files: Vec::new(),
             force_python: false,
+            job: None,
         }],
     })
     .await
@@ -166,6 +168,7 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
             payload: None,
             files: Vec::new(),
             force_python: false,
+            job: None,
         }],
     })
     .await
@@ -181,6 +184,79 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
         survivors.stdout.is_empty(),
         "the agent was killed before it could stop its task"
     );
+}
+
+/// One task in a batch of its own, and its result.
+async fn run_one(link: &mut AgentLink, id: u64, task: Task) -> volant_protocol::TaskResult {
+    link.send(&ToAgent::RunBatch {
+        id,
+        tasks: vec![task],
+    })
+    .await
+    .unwrap();
+    let result = match link.recv().await.unwrap() {
+        Some(FromAgent::TaskResult { result, .. }) => result,
+        other => panic!("expected a result, got {other:?}"),
+    };
+    assert!(matches!(
+        link.recv().await.unwrap(),
+        Some(FromAgent::BatchDone { .. })
+    ));
+    result
+}
+
+/// A job started over one link finishes with that link gone, and a new link reads its result.
+#[tokio::test]
+async fn an_async_job_outlives_the_link_that_started_it() {
+    let jobs = tempfile::tempdir().unwrap();
+    let dir = jobs.path().to_str().unwrap().to_string();
+    let transport = Transport::for_host(&local_host(), &defaults()).unwrap();
+    let mut first = transport.connect(&agents(), None).await.unwrap();
+    first.handshake().await.unwrap();
+    let started = run_one(
+        &mut first,
+        1,
+        Task {
+            module: "shell".into(),
+            args: json!({"_raw_params": "sleep 1; echo done"})
+                .as_object()
+                .unwrap()
+                .clone(),
+            job: Some(volant_protocol::AsyncJob {
+                limit: 60,
+                dir: dir.clone(),
+            }),
+            ..Task::default()
+        },
+    )
+    .await;
+    assert_eq!(started.0["started"], json!(true), "{started:?}");
+    let jid = started.0["ansible_job_id"].as_str().unwrap().to_string();
+    drop(first);
+    let mut second = transport.connect(&agents(), None).await.unwrap();
+    second.handshake().await.unwrap();
+    let status = Task {
+        module: "async_status".into(),
+        args: json!({"jid": jid, "_async_dir": dir})
+            .as_object()
+            .unwrap()
+            .clone(),
+        ..Task::default()
+    };
+    // Asked until it says it finished, a bounded number of times rather than for a duration.
+    let mut finished = None;
+    for id in 2..200 {
+        let result = run_one(&mut second, id, status.clone()).await;
+        if result.0["finished"] == json!(true) {
+            finished = Some(result);
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(100)).await;
+    }
+    let finished = finished.expect("the job never finished");
+    assert_eq!(finished.0["rc"], json!(0), "{finished:?}");
+    assert_eq!(finished.0["stdout"], json!("done"));
+    second.shutdown().await;
 }
 
 #[tokio::test]

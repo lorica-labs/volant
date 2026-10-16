@@ -27,7 +27,11 @@ use serde_json::{Map, Value};
 /// than as base64 inside the JSON. An agent that speaks 5 would read the blob's frame as a
 /// malformed message, drop it, and answer a `put_blob` with no `zip_b64`; the handshake refuses
 /// it first, with the same sentence as every other mismatch.
-pub const PROTOCOL_VERSION: u32 = 6;
+///
+/// 7 added `Task.job`: a task the controller wants started in the background. An agent that did
+/// not know the field would run the task to the end in front of the controller and answer a
+/// result with no job id, which is the "accepted then ignored" shape again.
+pub const PROTOCOL_VERSION: u32 = 7;
 
 /// How the frame after a `PutBlob` carries the blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -178,6 +182,18 @@ pub struct Task {
     /// facts it could not prove the play reads only from the native collector's keys.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub force_python: bool,
+    /// Start the task as a background job and answer at once with its id (Ansible's `async`).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub job: Option<AsyncJob>,
+}
+
+/// How a task runs in the background: what ansible-core hands its `async_wrapper`.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct AsyncJob {
+    /// Seconds the job may run before its process group is killed (`async`).
+    pub limit: u64,
+    /// Where the job's status file goes, `~` not yet expanded (`ansible_async_dir`).
+    pub dir: String,
 }
 
 /// Which code ran a task that carries a Python payload. A task without one (`command`, `shell`,
@@ -456,7 +472,7 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<Ran>(&text).unwrap(), ran);
         assert_eq!(
-            PROTOCOL_VERSION, 6,
+            PROTOCOL_VERSION, 7,
             "additive fields do not move the version"
         );
     }
@@ -538,6 +554,7 @@ mod tests {
                 payload: None,
                 files: Vec::new(),
                 force_python: false,
+                job: None,
             }],
         };
         let back: ToAgent = serde_json::from_slice(&serde_json::to_vec(&msg).unwrap()).unwrap();
@@ -658,8 +675,8 @@ mod tests {
 
     /// The version moves with the shape.
     #[test]
-    fn the_protocol_version_is_six() {
-        assert_eq!(PROTOCOL_VERSION, 6);
+    fn the_protocol_version_is_seven() {
+        assert_eq!(PROTOCOL_VERSION, 7);
     }
 
     #[test]

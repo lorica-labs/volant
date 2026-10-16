@@ -30,10 +30,10 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, failure_text, pause_of, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Relinker, RetryLine,
-    any_retried, break_after, broke_before, chosen_interpreter, discovers_interpreter,
+    Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Polled, Relinker,
+    RetryLine, any_retried, break_after, broke_before, chosen_interpreter, discovers_interpreter,
     discovery_warning, fact_targets, failed_task_value, finish, judge_attempt, local_timed_out,
-    notified_handlers, pause_lines, python_for, raw_params_refusal, record_facts,
+    notified_handlers, pause_lines, poll_job, polls, python_for, raw_params_refusal, record_facts,
     record_local_facts, record_registered, requested_interpreter, retry_plans, reuse_or_connect,
     run_agent_batch, run_local, run_plugin_attempts, running_host_vars, silent_discovery,
     stamp_discovery, step_tasks, take_warnings, wait_or_stop,
@@ -1150,6 +1150,7 @@ pub(super) async fn drive_host(
                                                 host: name.clone(),
                                                 index: pos,
                                                 line,
+                                                debug: false,
                                             })
                                             .await;
                                     }
@@ -1400,9 +1401,11 @@ pub(super) async fn drive_host(
                     let plans = retry_plans(task, &items, &templar);
                     // A loop that pauses or can break runs its items one at a time, like a retried
                     // one: the agent cannot be told to stop after an item it has not answered yet.
+                    // A job that is waited for is too: each look at it is a trip of its own.
                     let retried = any_retried(&plans)
                         || !task.break_when.is_empty()
-                        || task.loop_pause.is_some();
+                        || task.loop_pause.is_some()
+                        || polls(task);
                     // A retried task runs its items one at a time, each on its own trip to the
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
@@ -1910,6 +1913,43 @@ pub(super) async fn drive_host(
                         // The agent ended without a result for this item. Left unreported, the
                         // way the loop below leaves a task the agent never reached.
                         let Some(raw) = raw else { continue 'items };
+                        let raw = if polls(task) {
+                            match poll_job(
+                                link,
+                                &name,
+                                &mut batch_id,
+                                task,
+                                item,
+                                raw,
+                                &mut driver.stop,
+                                &mut driver.stop_broken,
+                                &mut logs,
+                                &tx,
+                                *index,
+                            )
+                            .await
+                            {
+                                Polled::Done(result) => result,
+                                Polled::Stopped => {
+                                    file_timings(
+                                        link,
+                                        &options.profile,
+                                        &name,
+                                        &c,
+                                        &[],
+                                        batch[0].0,
+                                        &prepare_micros,
+                                    );
+                                    break 'run;
+                                }
+                                Polled::Ended(ended) => {
+                                    outcome = ended;
+                                    break 'items;
+                                }
+                            }
+                        } else {
+                            raw
+                        };
                         let Some(retry) = retry else {
                             received[0][ii] = Some(finish(task, item, raw, &templar));
                             continue 'items;
@@ -2139,7 +2179,12 @@ pub(super) async fn drive_host(
                         // And only on the first attempt: a retried task's final result is a later
                         // attempt's, which found the interpreter already known. The warning stays.
                         let retried = bi == 0 && lefts.get(i).is_some_and(|left| !left.is_empty());
-                        if (batch_delegate.is_none() || task.delegates_facts()) && !retried {
+                        // Nor on a polled job's, which is the job's last status: measured, it
+                        // carries no fact and the next task discovers the interpreter again.
+                        if (batch_delegate.is_none() || task.delegates_facts())
+                            && !retried
+                            && !polls(task)
+                        {
                             stamp_discovery(&mut results[i].1, path);
                         }
                         Some(warns)

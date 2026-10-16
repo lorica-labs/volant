@@ -4,6 +4,7 @@
 mod blobs;
 mod clock;
 mod interpreter;
+mod jobs;
 mod modules;
 mod natives;
 mod python;
@@ -34,6 +35,9 @@ fn main() {
             let interpreter = args.next().unwrap_or_else(|| "python3".into());
             std::process::exit(natives::setup::print(&subset, &interpreter));
         }
+        // The two halves of a background job, started by the agent itself: see `jobs`.
+        Some("--async-job") => std::process::exit(jobs::watch()),
+        Some("--async-run") => std::process::exit(jobs::run()),
         _ => {}
     }
     if std::env::args().nth(1).as_deref() == Some("--version") {

@@ -190,6 +190,7 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     if let Some(kw) = task.unsupported.first() {
         bail!("task '{}': keyword '{kw}' is not supported yet", task.name);
     }
+    refuse_async(task)?;
     // `check_mode: false` is what this release does, so it is honoured by doing nothing;
     // `check_mode: true` asks for a mode that reports what a task would have changed without
     // changing it, and running the task for real instead is the worst answer available here.
@@ -483,6 +484,32 @@ fn refuse_retries(task: &PlayTask) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Refuses `async` on a task that starts no module on the host: the controller's own modules,
+/// the action plugins this release runs on the controller, the statements, and the two agent
+/// modules the reference refuses it on (`raw` and `async_status`, whose action plugins say
+/// `does not support async`). What is left is what the agent runs as a job of its own.
+fn refuse_async(task: &PlayTask) -> anyhow::Result<()> {
+    if task.async_val == 0 {
+        return Ok(());
+    }
+    let module = &task.module;
+    let refused = volant_protocol::modules::local(module).is_some()
+        || import_module(module).is_some()
+        || include_module(module).is_some()
+        || is_meta(task)
+        || action_plugins::kind(module).is_some()
+        || action_plugins::is_action_backed(module)
+        || volant_protocol::modules::native(module)
+            .is_some_and(|spec| matches!(spec.name, "raw" | "async_status"));
+    if refused {
+        bail!(
+            "task '{}': keyword 'async' is not supported yet on '{module}'",
+            task.name
+        );
+    }
+    Ok(())
+}
+
 /// One task's arguments against the registry of the module it names.
 ///
 /// Only an argument the reference **has** and this release does not act on is refused here. A
@@ -622,9 +649,11 @@ mod tests {
 
     /// Everything the pre-flight refuses is refused at exit 4, naming what it refuses.
     #[rstest]
-    #[case::async_(task_play("      command: echo hi\n      async: x\n"), &["keyword 'async' is not supported yet", "play 1", "'T'"])]
+    #[case::async_on_a_controller_module(task_play("      debug: msg=hi\n      async: 5\n"), &["task 'T': keyword 'async' is not supported yet on 'debug'"])]
+    #[case::async_on_an_action_plugin(task_play("      copy: src=a dest=b\n      async: 5\n"), &["keyword 'async' is not supported yet on 'copy'"])]
+    #[case::async_on_raw(task_play("      raw: echo hi\n      async: 5\n"), &["keyword 'async' is not supported yet on 'raw'"])]
+    #[case::async_on_an_include(task_play("      include_tasks: inc.yml\n      async: 5\n"), &["keyword 'async' is not supported yet on 'include_tasks'"])]
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
-    #[case::poll(task_play("      command: echo hi\n      poll: x\n"), &["keyword 'poll' is not supported yet", "play 1", "'T'"])]
     #[case::throttle(task_play("      command: echo hi\n      throttle: x\n"), &["keyword 'throttle' is not supported yet", "play 1", "'T'"])]
     #[case::play_vars_prompt("- hosts: all\n  vars_prompt: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'vars_prompt' is not supported yet"])]
     #[case::play_order("- hosts: all\n  order: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'order' is not supported yet"])]
@@ -983,7 +1012,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            24,
+            22,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

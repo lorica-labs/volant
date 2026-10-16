@@ -1,0 +1,4 @@
+# Jobs started with `poll: 0` and read with `async_status`: a running job, a finished one after
+# retries, cleanup, a job id nobody started, a status file cut short, a failed job and a job past
+# its limit. Each read lands a second away from the moment the job changes.
+args: [-i, inv.ini, status.yml]

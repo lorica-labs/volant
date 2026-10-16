@@ -291,12 +291,18 @@ impl Case {
     }
 }
 
-/// `stdout` with a command's timings masked, and the lines an `unordered` regex matches sorted
-/// among themselves, each staying in the slots such lines take: only their order is excused.
+/// `stdout` with a command's timings and an async job's id and process masked, and the lines an
+/// `unordered` regex matches sorted among themselves, each staying in the slots such lines take:
+/// only their order is excused.
 fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
     // A command's timings, which differ between two runs of the reference itself.
     let timed = regex::Regex::new(r#""(start|end|delta)": "[^"]*""#).expect("the pattern compiles");
     let stdout = timed.replace_all(stdout, r#""$1": "<time>""#);
+    // A job's id, `j<random>.<pid>`, and the process its limit killed: drawn anew by every run.
+    let jid = regex::Regex::new(r"\bj[0-9]+\.[0-9]+\b").expect("the pattern compiles");
+    let stdout = jid.replace_all(&stdout, "<jid>");
+    let pid = regex::Regex::new(r#""child_pid": [0-9]+"#).expect("the pattern compiles");
+    let stdout = pid.replace_all(&stdout, r#""child_pid": <pid>"#);
     if unordered.is_empty() {
         return stdout.into_owned();
     }

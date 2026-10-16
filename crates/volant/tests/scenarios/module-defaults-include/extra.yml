@@ -1,0 +1,6 @@
+- block:
+    - my.col.hello:
+      register: r
+    - debug: msg="{{ r.who }} {{ r.how }}"
+  module_defaults:
+    group/my.col.tools: {who: included, how: by-include}

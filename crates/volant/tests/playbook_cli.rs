@@ -1254,21 +1254,20 @@ fn module_defaults_and_collections_that_cannot_be_honoured_say_why(
     #[case] code: i32,
     #[case] said: &str,
 ) {
-    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+    // The names ansible-core resolves need it; the other rows are said by the controller alone.
+    let python = python::reference_python().map(|p| p.display().to_string());
+    if python.is_none() && keywords.contains("nosuch") {
         return;
-    };
+    }
+    let envs: Vec<(&str, &str)> = python
+        .iter()
+        .map(|python| ("VOLANT_PYTHON", python.as_str()))
+        .collect();
     let dir = probe_dir(&format!("defaults-refused-{name}"));
     let body = format!(
         "- hosts: localhost\n  gather_facts: false\n{keywords}  tasks:\n    - debug: msg=hi\n"
     );
-    let (got, text) = run_probe_env(
-        &dir,
-        "refused",
-        &body,
-        &[],
-        None,
-        &[("VOLANT_PYTHON", python.as_str())],
-    );
+    let (got, text) = run_probe_env(&dir, "refused", &body, &[], None, &envs);
     assert_eq!(got, code, "{text}");
     assert!(text.contains(said), "{text}");
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");

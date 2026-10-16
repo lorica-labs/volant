@@ -10,9 +10,11 @@
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::PathBuf;
+use std::sync::{Mutex, PoisonError};
 
 use serde_json::{Map, Value};
 
+use crate::bridge::Bridge;
 use crate::compile::{Compiled, Handler, Step};
 use crate::playbook::PlayTask;
 use crate::roles::RoleSearch;
@@ -192,21 +194,96 @@ pub(crate) fn unresolved_action(name: &str) -> String {
     format!("Could not resolve action {name} in module_defaults")
 }
 
+/// What ansible-core said about the groups and the keys of `module_defaults`, shared by every
+/// play of a run. A name an include brings in while the play runs is asked about then.
+#[derive(Debug, Default)]
+pub(crate) struct Resolved {
+    groups: Mutex<BTreeMap<String, Vec<String>>>,
+    actions: Mutex<BTreeSet<String>>,
+}
+
+impl Resolved {
+    /// Asks `bridge` about every group and key the layers of `tasks` name that has not been
+    /// asked about yet.
+    ///
+    /// # Errors
+    /// The reference's sentence for the first group or key nothing answers to.
+    pub(crate) fn ensure<'a>(
+        &self,
+        tasks: impl IntoIterator<Item = &'a PlayTask> + Clone,
+        bridge: Option<&Bridge>,
+    ) -> Result<(), String> {
+        let missing_actions: Vec<String> = {
+            let known = self.actions.lock().unwrap_or_else(PoisonError::into_inner);
+            actions_named(tasks.clone())
+                .into_iter()
+                .filter(|name| !known.contains(name))
+                .collect()
+        };
+        if let Some(first) = missing_actions.first() {
+            let bridge = bridge.ok_or_else(|| unresolved_action(first))?;
+            let found = bridge
+                .actions_resolve(&missing_actions)
+                .map_err(|e| e.to_string())?;
+            if let Some((name, _)) = found.iter().find(|(_, resolved)| !**resolved) {
+                return Err(unresolved_action(name));
+            }
+            self.actions
+                .lock()
+                .unwrap_or_else(PoisonError::into_inner)
+                .extend(missing_actions);
+        }
+        let missing_groups: Vec<String> = {
+            let known = self.groups.lock().unwrap_or_else(PoisonError::into_inner);
+            groups_named(tasks)
+                .into_iter()
+                .filter(|name| !known.contains_key(name))
+                .collect()
+        };
+        if let Some(first) = missing_groups.first() {
+            let bridge = bridge.ok_or_else(|| unresolved_group(first))?;
+            let held = bridge
+                .action_groups(&missing_groups)
+                .map_err(|e| e.to_string())?;
+            let mut known = self.groups.lock().unwrap_or_else(PoisonError::into_inner);
+            for (group, members) in held {
+                known.insert(
+                    group.clone(),
+                    members.ok_or_else(|| unresolved_group(&group))?,
+                );
+            }
+        }
+        Ok(())
+    }
+
+    /// The groups resolved so far, by full name.
+    pub(crate) fn groups(&self) -> BTreeMap<String, Vec<String>> {
+        self.groups
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .clone()
+    }
+}
+
 /// The sentence for a group nothing defines.
 pub(crate) fn unresolved_group(group: &str) -> String {
     format!("Error loading module_defaults: could not resolve the module_defaults group {group}")
 }
 
+/// One `module_defaults` value as the mapping it stands for, or why it is none.
+pub(crate) type Rendered = Result<Map<String, Value>, String>;
+
 /// What `module_defaults` gives the call to `module`, before the task's own arguments are laid
-/// over it. `groups` maps a group's full name to the modules it holds.
+/// over it. `groups` maps a group's full name to the modules it holds; `render` turns the value
+/// a key holds into the mapping it stands for.
 ///
 /// # Errors
-/// The reference's sentence for a group `groups` does not hold, or a plain one for a value that
-/// is not a mapping.
+/// The reference's sentence for a group `groups` does not hold, or whatever `render` refuses.
 pub(crate) fn defaults_for(
     module: &str,
     layers: &[Value],
     groups: &BTreeMap<String, Vec<String>>,
+    render: &mut dyn FnMut(&str, &Value) -> Rendered,
 ) -> Result<Map<String, Value>, String> {
     let mut merged: Vec<(String, &Value)> = Vec::new();
     for layer in layers {
@@ -226,13 +303,11 @@ pub(crate) fn defaults_for(
     }
     let me = canonical(module);
     let mut out = Map::new();
-    let mut lay = |key: &str, value: &Value| match value {
-        Value::Object(map) => {
-            out.extend(map.iter().map(|(k, v)| (k.clone(), v.clone())));
-            Ok(())
-        }
-        Value::Null => Ok(()),
-        _ => Err(format!("module_defaults for '{key}' must be a mapping")),
+    // Each value is rendered by the caller before it is required to be a mapping: a whole value
+    // may be a template that renders to one.
+    let mut lay = |key: &str, value: &Value| {
+        out.extend(render(key, value)?);
+        Ok::<(), String>(())
     };
     for (key, value) in &merged {
         if let Some(group) = key.strip_prefix("group/") {
@@ -253,6 +328,10 @@ mod tests {
     use super::*;
     use rstest::rstest;
     use serde_json::json;
+
+    fn as_written(_: &str, value: &Value) -> Rendered {
+        Ok(value.as_object().cloned().unwrap_or_default())
+    }
 
     fn groups() -> BTreeMap<String, Vec<String>> {
         BTreeMap::from([(
@@ -295,7 +374,9 @@ mod tests {
     ) {
         let layers = layers.as_array().expect("layers");
         assert_eq!(
-            Value::Object(defaults_for(module, layers, &groups()).expect("defaults")),
+            Value::Object(
+                defaults_for(module, layers, &groups(), &mut as_written).expect("defaults")
+            ),
             want
         );
     }
@@ -351,7 +432,7 @@ mod tests {
     fn a_group_nobody_defined_names_itself() {
         let layers = [json!({"group/nosuch": {"a": 1}})];
         assert_eq!(
-            defaults_for("ping", &layers, &groups()),
+            defaults_for("ping", &layers, &groups(), &mut as_written),
             Err(unresolved_group("ansible.builtin.nosuch"))
         );
     }

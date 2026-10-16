@@ -13,7 +13,7 @@
 //! and the driver tells the coordinator about every index it steps over, so a step left out is
 //! a step the recap can still account for.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::BTreeSet;
 use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -330,10 +330,10 @@ pub(crate) struct Compiled {
     /// variables. A list out of step with `steps` - never filled - makes every step a boundary:
     /// that costs time, and never lets a host read ahead of the host it reads.
     pub crosses: Vec<bool>,
-    /// Every `module_defaults` group the play names, by full name, with the modules it holds.
-    /// Filled by the run from ansible-core before the first connection; a group an include brings
-    /// in later is not in it, and the task that reads it fails by name.
-    pub action_groups: BTreeMap<String, Vec<String>>,
+    /// What ansible-core said about the groups and keys of `module_defaults`, shared by the plays
+    /// of a run and by the includes read while one runs. The run fills it before the first
+    /// connection; a name an include brings in later is asked about when its task is prepared.
+    pub resolved: Arc<crate::collection::Resolved>,
     /// What compiling the play had to say, for the run to print before the first banner.
     pub warnings: Vec<String>,
 }
@@ -1278,7 +1278,7 @@ pub(crate) fn compile(
         selection: selection.clone(),
         gathers,
         crosses: Vec::new(),
-        action_groups: BTreeMap::new(),
+        resolved: Arc::default(),
         warnings,
     })
 }
@@ -1409,7 +1409,7 @@ pub(crate) fn expand_include(
         // gather step of its own.
         gathers: false,
         crosses: Vec::new(),
-        action_groups: BTreeMap::new(),
+        resolved: Arc::clone(&base.resolved),
         warnings: Vec::new(),
     };
     // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,

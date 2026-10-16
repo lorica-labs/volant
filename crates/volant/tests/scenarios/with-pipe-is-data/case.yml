@@ -1,0 +1,2 @@
+# What a command printed is data: an expression in it is shown, never evaluated.
+args: [play.yml]

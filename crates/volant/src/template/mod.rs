@@ -469,6 +469,18 @@ impl Templar {
         self.evaluate_in(expr, &context_of(vars.into()).0)
     }
 
+    /// `evaluate`, and whether the value is data: a lookup read a file, a command or the
+    /// environment, or the expression read a name that came from a managed host.
+    pub fn evaluate_tainted<'a>(
+        &self,
+        expr: &str,
+        vars: impl Into<Vars<'a>>,
+    ) -> Result<(Value, bool), TemplateError> {
+        let (ctx, tainted) = context_of(vars.into());
+        let value = self.evaluate_in(expr, &ctx)?;
+        Ok((value, tainted.load(Ordering::Relaxed)))
+    }
+
     fn evaluate_in(&self, expr: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
         let value = eval_expr(&self.env, expr, ctx).map_err(convert_error)?;
         // Strict mode only raises on operations that force an undefined value (printing,

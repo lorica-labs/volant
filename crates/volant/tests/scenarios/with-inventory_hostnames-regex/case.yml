@@ -1,0 +1,2 @@
+# A ~ pattern selects the hosts whose name starts with a match.
+args: [-i, inv.ini, play.yml]

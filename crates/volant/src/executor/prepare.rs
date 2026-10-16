@@ -806,10 +806,12 @@ fn with_lookup_items(
             Value::String(format!("{subdir}s")),
         );
     }
-    let found = templar.evaluate(
+    let (found, from_lookup) = templar.evaluate_tainted(
         &format!("lookup({lookup:?}, *{TERMS}, wantlist=True)"),
         &scope,
     )?;
+    // What a lookup read at run time is data, as a host's answer is: its items are never rendered.
+    tainted |= from_lookup;
     let list = match found {
         Value::Array(list) => list,
         one => vec![one],

@@ -1,0 +1,7 @@
+- hosts: web1
+  gather_facts: false
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item }}"
+      with_inventory_hostnames: ["~web.*", "nosuch"]

@@ -4,6 +4,7 @@
 use std::cell::Cell;
 use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
+use std::sync::Mutex;
 
 use minijinja::value::{Kwargs, Rest, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, State, Value};
@@ -114,11 +115,14 @@ fn lookup(
                 Value::from(std::env::var(&term_text).unwrap_or_default())
             }
             "file" | "ansible.builtin.file" => {
-                let path = if term_text.starts_with('/') {
-                    PathBuf::from(&term_text)
-                } else {
-                    base_dir.join(&term_text)
-                };
+                // `find_file_in_search_path`: each entry's `files/<term>`, then its `<term>`.
+                let search = search_path(state, base_dir);
+                let path = relative_stack(&search, Some("files"), &term_text)
+                    .into_iter()
+                    .find(|p| p.is_file())
+                    .ok_or_else(|| {
+                        invalid(format!("could not locate file in lookup: {term_text}"))
+                    })?;
                 let text = std::fs::read_to_string(&path).map_err(|e| {
                     invalid(format!(
                         "could not locate file in lookup: {}: {e}",
@@ -190,8 +194,17 @@ fn inventory_hostnames(state: &State, terms: &[Value]) -> Result<Vec<Value>, Err
         }
     }
     let pattern = terms.iter().map(text_of).collect::<Vec<_>>().join(":");
-    Ok(Inventory::from_groups(&groups)
-        .resolve(&pattern)
+    let resolution = Inventory::from_groups(&groups).resolve(&pattern);
+    // Said once per run, as the reference's display drops a warning it has already shown.
+    static SHOWN: Mutex<BTreeSet<String>> = Mutex::new(BTreeSet::new());
+    for unmatched in &resolution.unmatched {
+        let line =
+            format!("[WARNING]: Could not match supplied host pattern, ignoring: {unmatched}");
+        if SHOWN.lock().expect("warnings shown").insert(line.clone()) {
+            eprintln!("{line}");
+        }
+    }
+    Ok(resolution
         .hosts
         .into_iter()
         .map(|h| Value::from(h.name))
@@ -207,7 +220,7 @@ fn varnames(state: &State, terms: &[Value]) -> Result<Vec<Value>, Error> {
         .into_iter()
         .flatten()
         .map(|n| text_of(&n))
-        .filter(|n| !n.starts_with("__volant_"))
+        .filter(|n| !n.starts_with("__volant_") && n != "volant_version")
         .collect();
     let mut found = Vec::new();
     for term in terms {

@@ -575,7 +575,7 @@ a: 3
         let err = to_json(&docs[0]).unwrap_err();
         assert!(format!("{err:#}").contains("vault"), "{err:#}");
         let docs = load(
-            "raw: !unsafe 'a \"{{ x }}\" \\ b'\nl: [!unsafe '{{ y }}', 3, plain]\n",
+            "raw: !unsafe 'a \"{{ x }}\" \\ b'\nl: [!unsafe '{{ y }}', 3, plain]\nn: !unsafe [{k: '{{ z }}'}, 1]\n",
             "t.yml",
         )
         .unwrap();
@@ -584,6 +584,7 @@ a: 3
             json!({
                 "raw": r#"{{ "a \"{{ x }}\" \\ b" | volant_unsafe }}"#,
                 "l": [r#"{{ "{{ y }}" | volant_unsafe }}"#, 3, "plain"],
+                "n": [{"k": r#"{{ "{{ z }}" | volant_unsafe }}"#}, 1],
             })
         );
     }
@@ -597,12 +598,19 @@ a: 3
             "{{ \u{1f600} }}",
             "{{ a\u{85}b }}\n\r\t",
         ] {
-            let Value::String(wrapped) = unsafe_data(Value::String(text.into())) else {
-                panic!("not a string");
-            };
-            assert_eq!(unsafe_text(&wrapped).as_deref(), Some(text), "{text:?}");
+            let wrapped = unsafe_data(Value::String(text.into()));
+            assert_eq!(
+                unsafe_text(wrapped.as_str().unwrap()).as_deref(),
+                Some(text)
+            );
         }
-        assert_eq!(unsafe_text("{{ \"a\" | volant_unsafe }} {{ b }}"), None);
+        for not_a_wrapper in [
+            "{{ \"a\" | volant_unsafe }} {{ b }}",
+            "{{ \"a\"b\" | volant_unsafe }}",
+            "{{ \"a\\qb\" | volant_unsafe }}",
+        ] {
+            assert_eq!(unsafe_text(not_a_wrapper), None, "{not_a_wrapper:?}");
+        }
     }
 
     #[test]

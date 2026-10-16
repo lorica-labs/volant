@@ -2644,6 +2644,9 @@ pub(super) trait AgentChannel {
     fn stderr_note(&self) -> String {
         String::new()
     }
+    /// Gives the link up after a question went unanswered: its answer may still arrive, and the
+    /// next task would read it as its own. The link is dead afterwards.
+    fn abandon(&mut self) {}
 }
 
 /// How a plugin that expects its host to go away gets a link to it again.
@@ -2745,6 +2748,10 @@ impl AgentChannel for AgentLink {
 
     fn stderr_note(&self) -> String {
         AgentLink::stderr_note(self)
+    }
+
+    fn abandon(&mut self) {
+        AgentLink::abandon(self);
     }
 }
 
@@ -2866,6 +2873,19 @@ pub(super) async fn put_file<C: AgentChannel>(
     mode: Option<u32>,
     logs: &mut Vec<String>,
 ) -> Result<bool, String> {
+    put_file_within(link, host, bytes, remote, mode, logs, PUT_FILE_WAIT).await
+}
+
+/// [`put_file`] with the agent's time to move the file given.
+async fn put_file_within<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    bytes: &[u8],
+    remote: &str,
+    mode: Option<u32>,
+    logs: &mut Vec<String>,
+    patience: Duration,
+) -> Result<bool, String> {
     let hash = blake3::hash(bytes).to_hex().to_string();
     let before = logs.len();
     let frame = async { Ok(std::sync::Arc::new(BlobFrame::packed(bytes.to_vec()))) };
@@ -2930,14 +2950,15 @@ pub(super) async fn put_file<C: AgentChannel>(
             }
         }
     };
-    tokio::time::timeout(PUT_FILE_WAIT, wait)
-        .await
-        .map_err(|_| {
-            format!(
-                "the agent did not put the file at '{remote}' within {} seconds",
-                PUT_FILE_WAIT.as_secs()
-            )
-        })?
+    if let Ok(done) = tokio::time::timeout(patience, wait).await {
+        done
+    } else {
+        link.abandon();
+        Err(format!(
+            "the agent did not put the file at '{remote}' within {} seconds",
+            patience.as_secs()
+        ))
+    }
 }
 
 /// Asks one question about a blob and reads the one answer to it.
@@ -4790,6 +4811,8 @@ mod tests {
         transfer_takes: Duration,
         /// Set to run batches one at a time, as the agent does.
         busy: Option<Box<Busy>>,
+        /// Whether the link was given up on.
+        abandoned: bool,
     }
 
     /// Batches run the way `volant-agent`'s runner runs them: one at a time, each `RunBatch` it
@@ -4846,6 +4869,7 @@ mod tests {
                 ledger: crate::profile::Ledger::default(),
                 transfer_takes: Duration::ZERO,
                 busy: None,
+                abandoned: false,
             }
         }
 
@@ -4918,6 +4942,10 @@ mod tests {
 
         fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
             Some(&mut self.ledger)
+        }
+
+        fn abandon(&mut self) {
+            self.abandoned = true;
         }
     }
 
@@ -4998,6 +5026,32 @@ mod tests {
             err.starts_with("the agent could not store the file for '/x'"),
             "{err}"
         );
+    }
+
+    /// An agent that never answers the put is given up on, so its late answer cannot desync the next task.
+    #[tokio::test]
+    async fn a_put_the_agent_never_answers_abandons_the_link() {
+        let hash = blake3::hash(b"abc").to_hex().to_string();
+        let mut agent = FakeAgent {
+            hangs_when_empty: true,
+            ..FakeAgent::answering(vec![state(&hash, true)])
+        };
+        let err = put_file_within(
+            &mut agent,
+            "h1",
+            b"abc",
+            "/x",
+            None,
+            &mut Vec::new(),
+            Duration::from_millis(50),
+        )
+        .await
+        .unwrap_err();
+        assert!(
+            err.starts_with("the agent did not put the file at '/x'"),
+            "{err}"
+        );
+        assert!(agent.abandoned);
     }
 
     /// A union goes up deflated, a small file raw, and a blob the agent does not keep fails with one sentence.

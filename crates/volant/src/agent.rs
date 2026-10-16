@@ -498,6 +498,12 @@ impl AgentLink {
             .unwrap_or(false)
     }
 
+    /// Kills the agent without waiting, so a late answer to a question given up on is never
+    /// read as another's: every later use of the link finds it closed.
+    pub(crate) fn abandon(&mut self) {
+        let _ = self.child.start_kill();
+    }
+
     /// Kills the agent and waits for it, leaving the link in place: what a host that rebooted
     /// leaves a controller holding.
     #[cfg(all(test, unix))]

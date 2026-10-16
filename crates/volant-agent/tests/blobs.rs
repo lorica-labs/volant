@@ -483,6 +483,10 @@ fn a_staged_file_is_put_at_a_path_and_a_relative_path_is_refused() {
         }
     );
     assert_eq!(fs::read(&at).unwrap(), b"the content");
+    assert_eq!(
+        std::os::unix::fs::PermissionsExt::mode(&fs::metadata(&at).unwrap().permissions()) & 0o777,
+        0o640
+    );
     assert!(entries(&link.stage_dir(&scratch.0)).is_empty());
 
     let file = link.stage(b"the content");

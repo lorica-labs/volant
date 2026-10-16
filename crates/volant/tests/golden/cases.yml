@@ -356,3 +356,136 @@
 - {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore') }}"}
 - {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore', wantlist=true) }}"}
 - {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='warn') }}"}
+# collections: ansible.utils and community.general, offline; and the job-status tests
+- {bridge: true, template: "{{ ['10.0.0.0/25', '10.0.0.128/25'] | ansible.utils.cidr_merge }}"}
+- {bridge: true, template: "{{ data_sources | ansible.utils.consolidate }}", vars: {data_sources: [{data: [{name: a, v: 1}], match_key: name, name: one}, {data: [{name: a, w: 2}], match_key: name, name: two}]}}
+- {bridge: true, template: "{{ {'a': 1} | ansible.utils.fact_diff({'a': 2}) }}"}
+- {bridge: true, template: "{{ {'a': {'b': 1}} | ansible.utils.get_path('a.b') }}"}
+- {bridge: true, template: "{{ '00:11:22:33:44:55' | ansible.utils.hwaddr('bare') }}"}
+- {bridge: true, template: "{{ [1, 2, 3] | ansible.utils.index_of('eq', 2) }}"}
+- {bridge: true, template: "{{ '192.168.0.1' | ansible.utils.ip4_hex }}"}
+- {bridge: true, template: "{{ '192.168.0.1/24' | ansible.utils.ipaddr('network') }}"}
+- {bridge: true, template: "{{ '1234:4321:abcd:dcba::17' | ansible.utils.ipcut(64) }}"}
+- {bridge: true, template: "{{ '192.168.0.1' | ansible.utils.ipmath(5) }}"}
+- {bridge: true, template: "{{ '192.168.0.0/16' | ansible.utils.ipsubnet(24, 1) }}"}
+- {bridge: true, template: "{{ '192.168.0.1' | ansible.utils.ipv4 }}"}
+- {bridge: true, template: "{{ '::1' | ansible.utils.ipv6 }}"}
+- {bridge: true, template: "{{ '2001:db8::1' | ansible.utils.ipv6form('expand') }}"}
+- {bridge: true, template: "{{ ['::1', '10.0.0.1'] | ansible.utils.ipwrap }}"}
+- {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | ansible.utils.keep_keys(target=['a']) }}"}
+- {bridge: true, template: "{{ '00:11:22:33:44:55' | ansible.utils.macaddr('linux') }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.network_in_network('192.168.0.0/16') }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.network_in_usable('192.168.0.5') }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.next_nth_usable(2) }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' | ansible.utils.nthhost(5) }}"}
+- {bridge: true, template: "{{ '192.168.0.10/24' | ansible.utils.previous_nth_usable(2) }}"}
+- {bridge: true, template: "{{ ['192.168.0.1', '10.0.0.1'] | ansible.utils.reduce_on_network('192.168.0.0/24') }}"}
+- {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | ansible.utils.remove_keys(target=['a']) }}"}
+- {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | ansible.utils.replace_keys(target=[{'before': 'a', 'after': 'z'}]) }}"}
+- {bridge: true, template: "{{ '2001:db8::/64' | ansible.utils.slaac('00:11:22:33:44:55') }}"}
+- {bridge: true, template: "{{ {'a': {'b': 1}} | ansible.utils.to_paths }}"}
+- {bridge: true, template: "{{ '192.168.0.0/29' | ansible.utils.usable_range }}"}
+- {bridge: true, template: "{{ '192.168.0.5' is ansible.utils.in_any_network(['192.168.0.0/24', '10.0.0.0/8']) }}"}
+- {bridge: true, template: "{{ '192.168.0.5' is ansible.utils.in_network('192.168.0.0/24') }}"}
+- {bridge: true, template: "{{ '192.168.0.5' is ansible.utils.in_one_network(['192.168.0.0/24', '10.0.0.0/8']) }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ip }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ip_address }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ipv4 }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ipv4_address }}"}
+- {bridge: true, template: "{{ '0.0.0.255' is ansible.utils.ipv4_hostmask }}"}
+- {bridge: true, template: "{{ '255.255.255.0' is ansible.utils.ipv4_netmask }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6 }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6_address }}"}
+- {bridge: true, template: "{{ '::ffff:192.0.2.1' is ansible.utils.ipv6_ipv4_mapped }}"}
+- {bridge: true, template: "{{ '2002:c000:204::' is ansible.utils.ipv6_sixtofour }}"}
+- {bridge: true, template: "{{ '2001:0:4136:e378:8000:63bf:3fff:fdd2' is ansible.utils.ipv6_teredo }}"}
+- {bridge: true, template: "{{ '127.0.0.1' is ansible.utils.loopback }}"}
+- {bridge: true, template: "{{ '00:11:22:33:44:55' is ansible.utils.mac }}"}
+- {bridge: true, template: "{{ '224.0.0.1' is ansible.utils.multicast }}"}
+- {bridge: true, template: "{{ '10.0.0.1' is ansible.utils.private }}"}
+- {bridge: true, template: "{{ '8.8.8.8' is ansible.utils.public }}"}
+- {bridge: true, template: "{{ '240.0.0.1' is ansible.utils.reserved }}"}
+- {bridge: true, template: "{{ '127.0.0.1' is ansible.utils.resolvable }}"}
+- {bridge: true, template: "{{ '10.0.0.0/24' is ansible.utils.subnet_of('10.0.0.0/8') }}"}
+- {bridge: true, template: "{{ '10.0.0.0/8' is ansible.utils.supernet_of('10.0.0.0/24') }}"}
+- {bridge: true, template: "{{ '0.0.0.0' is ansible.utils.unspecified }}"}
+- {bridge: true, template: "{{ lookup('ansible.utils.get_path', {'a': {'b': 1}}, 'a.b') }}"}
+- {bridge: true, template: "{{ lookup('ansible.utils.index_of', [1, 2, 3], 'eq', 2) }}"}
+- {bridge: true, template: "{{ lookup('ansible.utils.to_paths', {'a': {'b': 1}}) }}"}
+- {bridge: true, template: "{{ [1, 2, 3] | community.general.accumulate }}"}
+- {bridge: true, template: "{{ ['a', 'b', 'a'] | community.general.counter }}"}
+- {bridge: true, template: "{{ 'abc' | community.general.crc32 }}"}
+- {bridge: true, template: "{{ [['a', 1], ['b', 2]] | community.general.dict }}"}
+- {bridge: true, template: "{{ 'v' | community.general.dict_kv('k') }}"}
+- {bridge: true, template: "{{ csv_text | community.general.from_csv }}", vars: {csv_text: "a,b\n1,2\n"}}
+- {bridge: true, template: "{{ ini_text | community.general.from_ini }}", vars: {ini_text: "[s]\nk=v\n"}}
+- {bridge: true, template: "{{ 'a = 1' | community.general.from_toml }}"}
+- {bridge: true, template: "{{ [{'n': 'a', 'v': 1}, {'n': 'b', 'v': 2}] | community.general.groupby_as_dict('n') }}"}
+- {bridge: true, template: "{{ {'a': [{'b': 1}, {'b': 2}]} | community.general.json_query('a[*].b') }}"}
+- {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | community.general.keep_keys(target=['a']) }}"}
+- {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | community.general.remove_keys(target=['a']) }}"}
+- {bridge: true, template: "{{ [{'a': 1, 'b': 2}] | community.general.replace_keys(target=[{'before': 'a', 'after': 'z'}]) }}"}
+- {bridge: true, template: "{{ [1, 2] | community.general.lists_union([2, 3]) }}"}
+- {bridge: true, template: "{{ [1, 2] | community.general.lists_intersect([2, 3]) }}"}
+- {bridge: true, template: "{{ [1, 2] | community.general.lists_difference([2, 3]) }}"}
+- {bridge: true, template: "{{ [1, 2] | community.general.lists_symmetric_difference([2, 3]) }}"}
+- {bridge: true, template: "{{ [{'n': 'a', 'x': 1}] | community.general.lists_mergeby([{'n': 'a', 'y': 2}], 'n') }}"}
+- {bridge: true, template: "{{ '00:11:22' | community.general.random_mac(seed='volant') }}"}
+- {bridge: true, template: "{{ [1, 2] | community.general.reveal_ansible_type }}"}
+- {bridge: true, template: "{{ '1m 30s' | community.general.to_seconds }}"}
+- {bridge: true, template: "{{ '1s' | community.general.to_milliseconds }}"}
+- {bridge: true, template: "{{ '2h' | community.general.to_minutes }}"}
+- {bridge: true, template: "{{ '1d' | community.general.to_hours }}"}
+- {bridge: true, template: "{{ '1w' | community.general.to_days }}"}
+- {bridge: true, template: "{{ '14d' | community.general.to_weeks }}"}
+- {bridge: true, template: "{{ '2y' | community.general.to_months }}"}
+- {bridge: true, template: "{{ '24mo' | community.general.to_years }}"}
+- {bridge: true, template: "{{ '1h' | community.general.to_time_unit('seconds') }}"}
+- {bridge: true, template: "{{ {'s': {'k': 'v'}} | community.general.to_ini }}"}
+- {bridge: true, template: "{{ {'a': [1, 2]} | community.general.to_yaml }}"}
+- {bridge: true, template: "{{ {'a': [1, 2]} | community.general.to_nice_yaml }}"}
+- {bridge: true, template: "{{ 'abc' | community.general.unicode_normalize('NFC') | length }}"}
+- {bridge: true, template: "{{ ['1.10', '1.2', '1.9'] | community.general.version_sort }}"}
+- {bridge: true, template: "{{ 'ansible.builtin.copy' is community.general.a_module }}"}
+- {bridge: true, template: "{{ [1, 2] is community.general.ansible_type('list[int]') }}"}
+- {bridge: true, template: "{{ lookup('community.general.binary_file', '/var/tmp/volant-golden-fs/a.txt') }}"}
+- {bridge: true, template: "{{ lookup('community.general.cartesian', [1, 2], ['a', 'b'], wantlist=True) }}"}
+- {bridge: true, template: "{{ lookup('community.general.collection_version', 'community.general') }}"}
+- {bridge: true, template: "{{ lookup('community.general.dependent', {'a': [1, 2]}, wantlist=True) }}"}
+- {bridge: true, template: "{{ lookup('community.general.flattened', [1, [2, [3]]], wantlist=True) }}"}
+- {bridge: true, template: "{{ lookup('community.general.random_string', length=8) | length }}"}
+- {bridge: true, template: "{{ r is finished }}", vars: {r: {finished: 1}}}
+- {bridge: true, template: "{{ r is started }}", vars: {r: {started: 1}}}
+- {bridge: true, template: "{{ r is reachable }}", vars: {r: {unreachable: false}}}
+- {bridge: true, template: "{{ r is unreachable }}", vars: {r: {unreachable: true}}}
+- {bridge: true, template: "{{ r is timedout }}", vars: {r: {timedout: {period: 5}}}}
+- {bridge: true, template: "{{ '8.8.8.8' is ansible.utils.private }}"}
+- {bridge: true, template: "{{ '10.0.0.1' is ansible.utils.public }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv4 }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ipv6 }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.loopback }}"}
+- {bridge: true, template: "{{ '10.0.0.1' is ansible.utils.multicast }}"}
+- {bridge: true, template: "{{ '10.0.0.1' is ansible.utils.reserved }}"}
+- {bridge: true, template: "{{ 'zz' is ansible.utils.mac }}"}
+- {bridge: true, template: "{{ '1.2.3.4' is ansible.utils.unspecified }}"}
+- {bridge: true, template: "{{ '10.0.0.5' is ansible.utils.in_network('192.168.0.0/24') }}"}
+- {bridge: true, template: "{{ '10.0.0.5' is ansible.utils.in_any_network(['192.168.0.0/24']) }}"}
+- {bridge: true, template: "{{ '10.0.0.5' is ansible.utils.in_one_network(['192.168.0.0/24']) }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' is ansible.utils.subnet_of('10.0.0.0/8') }}"}
+- {bridge: true, template: "{{ '192.168.0.0/24' is ansible.utils.supernet_of('10.0.0.0/8') }}"}
+- {bridge: true, template: "{{ '255.0.255.0' is ansible.utils.ipv4_netmask }}"}
+- {bridge: true, template: "{{ '255.255.255.0' is ansible.utils.ipv4_hostmask }}"}
+- {bridge: true, template: "{{ 'nope' is ansible.utils.ip }}"}
+- {bridge: true, template: "{{ 'nope' is ansible.utils.ip_address }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv4_address }}"}
+- {bridge: true, template: "{{ '192.168.0.1' is ansible.utils.ipv6_address }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6_ipv4_mapped }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6_sixtofour }}"}
+- {bridge: true, template: "{{ '::1' is ansible.utils.ipv6_teredo }}"}
+- {bridge: true, template: "{{ [1, 2] is community.general.ansible_type('dict') }}"}
+- {bridge: true, template: "{{ 'nosuch.module' is community.general.a_module }}"}
+- {bridge: true, template: "{{ r is finished }}", vars: {r: {finished: 0}}}
+- {bridge: true, template: "{{ r is started }}", vars: {r: {started: 0}}}
+- {bridge: true, template: "{{ r is reachable }}", vars: {r: {unreachable: true}}}
+- {bridge: true, template: "{{ r is unreachable }}", vars: {r: {unreachable: false}}}
+- {bridge: true, template: "{{ r is timedout }}", vars: {r: {timedout: false}}}

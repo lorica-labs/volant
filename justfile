@@ -66,7 +66,7 @@ test:
 # Run it when a native module, an action plugin or a golden recording changes; CI runs it in `ssh`.
 test-reference:
     "${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" -c 'import ansible' || { echo "no ansible-core"; exit 1; }
-    VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) - test(=a_native_answer_is_held_to_the_path_its_index_names)'
+    VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) - test(=a_native_answer_is_held_to_the_path_its_index_names) | test(=every_runs_keyword_changes_something_observable)'
 
 # One crate, one test pattern: the loop while you are iterating. `check` is the gate, not the loop.
 test-one crate pattern:
@@ -225,7 +225,7 @@ ssh-test: agent-musl
     cargo build -p volant-agent --features test-natives
     mkdir -p target/test-natives
     cp target/debug/volant-agent target/test-natives/volant-agent
-    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | test(/^a_scenario_matches_the_reference::/) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver)'
+    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | test(/^a_scenario_matches_the_reference::/) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver) | test(=every_runs_keyword_changes_something_observable)'
     just facts-compare
 
 # Gather facts twice on one host, through the native setup and through the Python one, and

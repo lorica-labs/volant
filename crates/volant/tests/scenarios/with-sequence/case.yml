@@ -1,0 +1,3 @@
+# with_sequence counts.
+args: [play.yml]
+needs: ["ansible-core"]

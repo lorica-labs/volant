@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    people:
+      - {name: ann, tags: [x, y]}
+      - {name: bob, tags: [z]}
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item.0.name }}:{{ item.1 }}"
+      with_subelements: ["{{ people }}", tags]

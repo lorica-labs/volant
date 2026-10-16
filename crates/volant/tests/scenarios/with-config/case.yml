@@ -1,0 +1,3 @@
+# with_config reads a setting.
+args: [play.yml]
+needs: ["ansible-core"]

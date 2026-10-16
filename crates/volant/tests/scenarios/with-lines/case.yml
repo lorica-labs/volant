@@ -1,0 +1,3 @@
+# with_lines walks the lines a command prints.
+args: [play.yml]
+needs: ["ansible-core"]

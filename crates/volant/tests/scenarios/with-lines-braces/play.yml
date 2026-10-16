@@ -1,0 +1,7 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item }}"
+      with_lines: ["printf '%s%s x %s%s\n' '{' '{' '}' '}'"]

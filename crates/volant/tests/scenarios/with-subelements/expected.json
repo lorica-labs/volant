@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Walk] ********************************************************************\nok: [localhost] => (item=[{'name': 'ann'}, 'x']) => {\n    \"msg\": \"ann:x\"\n}\nok: [localhost] => (item=[{'name': 'ann'}, 'y']) => {\n    \"msg\": \"ann:y\"\n}\nok: [localhost] => (item=[{'name': 'bob'}, 'z']) => {\n    \"msg\": \"bob:z\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

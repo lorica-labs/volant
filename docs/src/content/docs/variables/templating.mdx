@@ -70,7 +70,7 @@ The file's own trailing newline survives the render. [Action plugins](/reference
 
 ## Not there yet
 
-- The `!vault` and `!unsafe` YAML tags are detected and not supported yet. There is no decryption and no unsafe marking yet.
+- The `!vault` YAML tag is detected and not supported yet: there is no decryption. A value under `!unsafe` is data and is never templated.
 - The vault filters and tests, and the `unvault`, `inventory_hostnames` and `varnames` lookups, are not supported yet.
 - In a template file, `template_host`, `template_uid`, `template_run_date` and `template_mtime` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
 - In a template file, `{% include %}` and `{% import %}` fail: nothing loads a second file during a render.

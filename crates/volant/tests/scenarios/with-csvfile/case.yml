@@ -1,0 +1,3 @@
+# with_csvfile reads a column of a delimited file.
+args: [play.yml]
+needs: ["ansible-core"]

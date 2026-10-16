@@ -1,0 +1,3 @@
+# with_ini reads a key of an ini file.
+args: [play.yml]
+needs: ["ansible-core"]

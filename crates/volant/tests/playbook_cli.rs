@@ -1623,13 +1623,24 @@ fn run_probe(
     extra: &[&str],
     path: Option<&Path>,
 ) -> (i32, String) {
+    run_probe_env(dir, kw, body, extra, path, &[])
+}
+
+fn run_probe_env(
+    dir: &Path,
+    kw: &str,
+    body: &str,
+    extra: &[&str],
+    path: Option<&Path>,
+    envs: &[(&str, &str)],
+) -> (i32, String) {
     let file = dir.join(format!("{kw}.yml"));
     std::fs::write(&file, body).expect("the probe is written");
     let mut args: Vec<&str> = vec!["playbook"];
     args.extend_from_slice(extra);
     let shown = file.display().to_string();
     args.push(&shown);
-    let out = volant_within_with_path(&args, PROBE_DEADLINE, path, &[]);
+    let out = volant_within_with_path(&args, PROBE_DEADLINE, path, envs);
     let text = format!(
         "{}{}",
         String::from_utf8_lossy(&out.stdout),
@@ -2144,6 +2155,24 @@ const fn runs(
     }
 }
 
+/// The `with_*` rows whose lookup runs in the controller's Python helper.
+const BRIDGED_LOOPS: &[&str] = &[
+    "with_config",
+    "with_csvfile",
+    "with_dict",
+    "with_indexed_items",
+    "with_ini",
+    "with_lines",
+    "with_list",
+    "with_nested",
+    "with_password",
+    "with_random_choice",
+    "with_sequence",
+    "with_subelements",
+    "with_together",
+    "with_url",
+];
+
 /// One proof per `Runs` row, every one of them a real run of this binary. Each body is written
 /// so that deleting the keyword's handling changes the run: the task stops failing, the loop
 /// stops looping, the refusal stops coming.
@@ -2334,6 +2363,226 @@ ok: [localhost] => (item=one) => {
         &[],
         0,
         "(item=localhost)",
+    ),
+    runs(
+        "task",
+        "with_config",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_config: [DEFAULT_FORKS]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_csvfile",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_csvfile: [\"bob file={{ playbook_dir }}/probe.csv delimiter=, col=1\"]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_dict",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_dict: {probe_key: probe_value}
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_indexed_items",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_indexed_items: [probe_x]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_ini",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_ini: [\"name section=main file={{ playbook_dir }}/probe.ini\"]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_lines",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_lines: [\"echo lined\"]
+",
+        &[],
+        0,
+        "(item=lined)",
+    ),
+    runs(
+        "task",
+        "with_list",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_list: [probe_a, [probe_b]]
+",
+        &[],
+        0,
+        "(item=probe_a)",
+    ),
+    runs(
+        "task",
+        "with_nested",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_nested: [[probe_a], [probe_b]]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_password",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_password: [\"{{ playbook_dir }}/probe.pw length=8\"]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_random_choice",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_random_choice: [probe_only]
+",
+        &[],
+        0,
+        "(item=probe_only)",
+    ),
+    runs(
+        "task",
+        "with_sequence",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_sequence: start=1 end=2
+",
+        &[],
+        0,
+        "(item=2)",
+    ),
+    runs(
+        "task",
+        "with_subelements",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_subelements: [[{name: ann, tags: [x]}], tags]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_together",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_together: [[probe_a], [probe_b]]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_url",
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Probe task
+      debug:
+        msg: \"{{ item }}\"
+      with_url: [\"file://{{ playbook_dir }}/task-with_url.yml\"]
+      loop_control: {label: one}
+",
+        &[],
+        0,
+        "(item=one)",
     ),
     runs(
         "task",
@@ -2946,6 +3195,11 @@ fn every_runs_keyword_changes_something_observable() {
     .expect("the probe role's tasks are written");
     // Every probe runs before anything is asserted, so one failing run reports every row that
     // broke rather than only the first: a change that touches several keywords is read once.
+    let python = python::reference_python().map(|p| p.display().to_string());
+    assert!(
+        python.is_some() || std::env::var_os("VOLANT_PYTHON").is_none(),
+        "VOLANT_PYTHON is set but names no ansible-core: the bridged loop probes cannot run"
+    );
     let mut failures = Vec::new();
     for probe in RUNS_PROBES {
         let body = probe.body;
@@ -2954,6 +3208,19 @@ fn every_runs_keyword_changes_something_observable() {
             std::fs::write(dir.join(format!("{name}.vars.yml")), "probe: file-value\n")
                 .expect("the probe's vars file is written");
         }
+        std::fs::write(
+            dir.join("probe.csv"),
+            "bob,2
+",
+        )
+        .expect("the probe's csv is written");
+        std::fs::write(
+            dir.join("probe.ini"),
+            "[main]
+name = vol
+",
+        )
+        .expect("the probe's ini is written");
         let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
         let path = match (is_become_user_probe(probe), probe.kw) {
             (true, _) => Some(sudo_dir.as_path()),
@@ -2977,7 +3244,14 @@ fn every_runs_keyword_changes_something_observable() {
             .expect("the probe's inventory is written");
             args.extend(["-i", inventory.as_str()]);
         }
-        let (code, text) = run_probe(&dir, &name, &body, &args, path);
+        // These loops read through the controller's Python helper; with no ansible-core to run
+        // it the row is skipped, as every other reference-dependent test is.
+        let mut envs: Vec<(&str, &str)> = Vec::new();
+        if BRIDGED_LOOPS.contains(&probe.kw) {
+            let Some(python) = &python else { continue };
+            envs.push(("VOLANT_PYTHON", python));
+        }
+        let (code, text) = run_probe_env(&dir, &name, &body, &args, path, &envs);
         if code != probe.code || !text.contains(probe.expect) {
             failures.push(format!(
                 "{name}: wanted exit {} and {:?}, got exit {code}:\n{text}",

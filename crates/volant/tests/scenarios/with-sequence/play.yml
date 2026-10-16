@@ -1,0 +1,7 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item }}"
+      with_sequence: start=1 end=3

@@ -107,21 +107,26 @@ def _read_pins(name):
     return pins
 
 
-# The collection versions the goldens are recorded against, plus `netaddr`: not a collection, but
-# pinned the same way because `ansible.utils.ipwrap` needs it in the same controller environment.
+# The collection versions the goldens are recorded against, plus `netaddr` and `jmespath`: not collections, but
+# pinned the same way because filters of the collections need them in the same controller environment.
 COLLECTIONS = _read_pins("COLLECTIONS")
 
 
 def _installed_collections():
     """What the controller's ansible-core has, read the way it reads it: a collection's version from
-    its own `MANIFEST.json`, on the first configured collection path that carries it; `netaddr` is a
-    plain import next to it. Read in this process, whose environment `check_reference` made the
+    its own `MANIFEST.json`, on the first configured collection path that carries it; a Python package's from its metadata. Read in this process, whose environment `check_reference` made the
     runs' own."""
     from ansible import constants as ansible_constants
 
     versions = {}
+    from importlib.metadata import PackageNotFoundError, version
+
     for fqcn in COLLECTIONS:
-        if fqcn == "netaddr":
+        if "." not in fqcn:
+            try:
+                versions[fqcn] = version(fqcn)
+            except PackageNotFoundError:
+                pass
             continue
         namespace, name = fqcn.split(".", 1)
         for root in ansible_constants.COLLECTIONS_PATHS:
@@ -130,12 +135,6 @@ def _installed_collections():
                 with open(manifest, encoding="utf-8") as f:
                     versions[fqcn] = json.load(f)["collection_info"]["version"]
                 break
-    try:
-        import netaddr
-
-        versions["netaddr"] = netaddr.__version__
-    except ImportError:
-        pass
     return versions
 
 

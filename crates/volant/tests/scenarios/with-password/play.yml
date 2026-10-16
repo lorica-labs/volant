@@ -1,0 +1,8 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item | length }}"
+      with_password: ["pw length=8 chars=ascii_letters"]
+      loop_control: {label: password}

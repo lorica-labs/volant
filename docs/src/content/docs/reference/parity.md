@@ -13,7 +13,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|---|---|
 | keyword (play) | 20 | 1 | 20 | 0 |
 | keyword (block) | 18 | 1 | 12 | 0 |
-| keyword (task) | 34 | 1 | 31 | 0 |
+| keyword (task) | 48 | 1 | 17 | 0 |
 | keyword (loop_control) | 2 | 0 | 5 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
 | ansible-playbook option | 17 | 3 | 18 | 0 |
@@ -164,29 +164,29 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `until` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
 | `when` | <span class="kw kw-runs">runs</span> |  |
-| `with_config` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_csvfile` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_dict` | <span class="kw kw-notyet">not yet</span> |  |
+| `with_config` | <span class="kw kw-runs">runs</span> |  |
+| `with_csvfile` | <span class="kw kw-runs">runs</span> |  |
+| `with_dict` | <span class="kw kw-runs">runs</span> |  |
 | `with_env` | <span class="kw kw-runs">runs</span> |  |
 | `with_file` | <span class="kw kw-runs">runs</span> |  |
 | `with_fileglob` | <span class="kw kw-runs">runs</span> |  |
 | `with_first_found` | <span class="kw kw-runs">runs</span> |  |
-| `with_indexed_items` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_ini` | <span class="kw kw-notyet">not yet</span> |  |
+| `with_indexed_items` | <span class="kw kw-runs">runs</span> |  |
+| `with_ini` | <span class="kw kw-runs">runs</span> |  |
 | `with_inventory_hostnames` | <span class="kw kw-runs">runs</span> |  |
 | `with_items` | <span class="kw kw-runs">runs</span> |  |
-| `with_lines` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_list` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_nested` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_password` | <span class="kw kw-notyet">not yet</span> |  |
+| `with_lines` | <span class="kw kw-runs">runs</span> |  |
+| `with_list` | <span class="kw kw-runs">runs</span> |  |
+| `with_nested` | <span class="kw kw-runs">runs</span> |  |
+| `with_password` | <span class="kw kw-runs">runs</span> |  |
 | `with_pipe` | <span class="kw kw-runs">runs</span> |  |
-| `with_random_choice` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_sequence` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_subelements` | <span class="kw kw-notyet">not yet</span> |  |
+| `with_random_choice` | <span class="kw kw-runs">runs</span> |  |
+| `with_sequence` | <span class="kw kw-runs">runs</span> |  |
+| `with_subelements` | <span class="kw kw-runs">runs</span> |  |
 | `with_template` | <span class="kw kw-runs">runs</span> |  |
-| `with_together` | <span class="kw kw-notyet">not yet</span> |  |
+| `with_together` | <span class="kw kw-runs">runs</span> |  |
 | `with_unvault` | <span class="kw kw-notyet">not yet</span> |  |
-| `with_url` | <span class="kw kw-notyet">not yet</span> |  |
+| `with_url` | <span class="kw kw-runs">runs</span> |  |
 | `with_varnames` | <span class="kw kw-runs">runs</span> |  |
 | `with_vars` | <span class="kw kw-runs">runs</span> |  |
 

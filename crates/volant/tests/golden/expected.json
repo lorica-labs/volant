@@ -2207,5 +2207,1155 @@
       "template": "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='warn') }}"
     },
     "result": null
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['10.0.0.0/25', '10.0.0.128/25'] | ansible.utils.cidr_merge }}"
+    },
+    "result": [
+      "10.0.0.0/24"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ data_sources | ansible.utils.consolidate }}",
+      "vars": {
+        "data_sources": [
+          {
+            "data": [
+              {
+                "name": "a",
+                "v": 1
+              }
+            ],
+            "match_key": "name",
+            "name": "one"
+          },
+          {
+            "data": [
+              {
+                "name": "a",
+                "w": 2
+              }
+            ],
+            "match_key": "name",
+            "name": "two"
+          }
+        ]
+      }
+    },
+    "result": {
+      "a": {
+        "one": {
+          "name": "a",
+          "v": 1
+        },
+        "two": {
+          "name": "a",
+          "w": 2
+        }
+      }
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': 1} | ansible.utils.fact_diff({'a': 2}) }}"
+    },
+    "result": "['--- before', '+++ after', '@@ -1,3 +1,3 @@', ' {', '-    \"a\": 1', '+    \"a\": 2', ' }', '']"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': {'b': 1}} | ansible.utils.get_path('a.b') }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '00:11:22:33:44:55' | ansible.utils.hwaddr('bare') }}"
+    },
+    "result": "001122334455"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2, 3] | ansible.utils.index_of('eq', 2) }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' | ansible.utils.ip4_hex }}"
+    },
+    "result": "c0a80001"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1/24' | ansible.utils.ipaddr('network') }}"
+    },
+    "result": "192.168.0.0"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1234:4321:abcd:dcba::17' | ansible.utils.ipcut(64) }}"
+    },
+    "result": "1234:4321:abcd:dcba"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' | ansible.utils.ipmath(5) }}"
+    },
+    "result": "192.168.0.6"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/16' | ansible.utils.ipsubnet(24, 1) }}"
+    },
+    "result": "192.168.1.0/24"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' | ansible.utils.ipv4 }}"
+    },
+    "result": "192.168.0.1"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' | ansible.utils.ipv6 }}"
+    },
+    "result": "::1"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2001:db8::1' | ansible.utils.ipv6form('expand') }}"
+    },
+    "result": "2001:0db8:0000:0000:0000:0000:0000:0001"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['::1', '10.0.0.1'] | ansible.utils.ipwrap }}"
+    },
+    "result": [
+      "[::1]",
+      "10.0.0.1"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'a': 1, 'b': 2}] | ansible.utils.keep_keys(target=['a']) }}"
+    },
+    "result": [
+      {
+        "a": 1
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '00:11:22:33:44:55' | ansible.utils.macaddr('linux') }}"
+    },
+    "result": "00:11:22:33:44:55"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/24' | ansible.utils.network_in_network('192.168.0.0/16') }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/24' | ansible.utils.network_in_usable('192.168.0.5') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/24' | ansible.utils.next_nth_usable(2) }}"
+    },
+    "result": "192.168.0.2"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/24' | ansible.utils.nthhost(5) }}"
+    },
+    "result": "192.168.0.5"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.10/24' | ansible.utils.previous_nth_usable(2) }}"
+    },
+    "result": "192.168.0.8"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['192.168.0.1', '10.0.0.1'] | ansible.utils.reduce_on_network('192.168.0.0/24') }}"
+    },
+    "result": [
+      "192.168.0.1"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'a': 1, 'b': 2}] | ansible.utils.remove_keys(target=['a']) }}"
+    },
+    "result": [
+      {
+        "b": 2
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'a': 1, 'b': 2}] | ansible.utils.replace_keys(target=[{'before': 'a', 'after': 'z'}]) }}"
+    },
+    "result": [
+      {
+        "b": 2,
+        "z": 1
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2001:db8::/64' | ansible.utils.slaac('00:11:22:33:44:55') }}"
+    },
+    "result": "2001:db8::211:22ff:fe33:4455"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': {'b': 1}} | ansible.utils.to_paths }}"
+    },
+    "result": {
+      "a.b": 1
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/29' | ansible.utils.usable_range }}"
+    },
+    "result": {
+      "number_of_ips": 8,
+      "usable_ips": [
+        "192.168.0.0",
+        "192.168.0.1",
+        "192.168.0.2",
+        "192.168.0.3",
+        "192.168.0.4",
+        "192.168.0.5",
+        "192.168.0.6",
+        "192.168.0.7"
+      ]
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.5' is ansible.utils.in_any_network(['192.168.0.0/24', '10.0.0.0/8']) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.5' is ansible.utils.in_network('192.168.0.0/24') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.5' is ansible.utils.in_one_network(['192.168.0.0/24', '10.0.0.0/8']) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' is ansible.utils.ip }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' is ansible.utils.ip_address }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' is ansible.utils.ipv4 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' is ansible.utils.ipv4_address }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '0.0.0.255' is ansible.utils.ipv4_hostmask }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '255.255.255.0' is ansible.utils.ipv4_netmask }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' is ansible.utils.ipv6 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' is ansible.utils.ipv6_address }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::ffff:192.0.2.1' is ansible.utils.ipv6_ipv4_mapped }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2002:c000:204::' is ansible.utils.ipv6_sixtofour }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2001:0:4136:e378:8000:63bf:3fff:fdd2' is ansible.utils.ipv6_teredo }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '127.0.0.1' is ansible.utils.loopback }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '00:11:22:33:44:55' is ansible.utils.mac }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '224.0.0.1' is ansible.utils.multicast }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.1' is ansible.utils.private }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '8.8.8.8' is ansible.utils.public }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '240.0.0.1' is ansible.utils.reserved }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '127.0.0.1' is ansible.utils.resolvable }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.0/24' is ansible.utils.subnet_of('10.0.0.0/8') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.0/8' is ansible.utils.supernet_of('10.0.0.0/24') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '0.0.0.0' is ansible.utils.unspecified }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('ansible.utils.get_path', {'a': {'b': 1}}, 'a.b') }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('ansible.utils.index_of', [1, 2, 3], 'eq', 2) }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('ansible.utils.to_paths', {'a': {'b': 1}}) }}"
+    },
+    "result": {
+      "a.b": 1
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2, 3] | community.general.accumulate }}"
+    },
+    "result": [
+      1,
+      3,
+      6
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['a', 'b', 'a'] | community.general.counter }}"
+    },
+    "result": {
+      "a": 2,
+      "b": 1
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'abc' | community.general.crc32 }}"
+    },
+    "result": "352441c2"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [['a', 1], ['b', 2]] | community.general.dict }}"
+    },
+    "result": {
+      "a": 1,
+      "b": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'v' | community.general.dict_kv('k') }}"
+    },
+    "result": {
+      "k": "v"
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ csv_text | community.general.from_csv }}",
+      "vars": {
+        "csv_text": "a,b\n1,2\n"
+      }
+    },
+    "result": [
+      {
+        "a": "1",
+        "b": "2"
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ini_text | community.general.from_ini }}",
+      "vars": {
+        "ini_text": "[s]\nk=v\n"
+      }
+    },
+    "result": {
+      "s": {
+        "k": "v"
+      }
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'a = 1' | community.general.from_toml }}"
+    },
+    "result": {
+      "a": 1
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'n': 'a', 'v': 1}, {'n': 'b', 'v': 2}] | community.general.groupby_as_dict('n') }}"
+    },
+    "result": {
+      "a": {
+        "n": "a",
+        "v": 1
+      },
+      "b": {
+        "n": "b",
+        "v": 2
+      }
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': [{'b': 1}, {'b': 2}]} | community.general.json_query('a[*].b') }}"
+    },
+    "result": [
+      1,
+      2
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'a': 1, 'b': 2}] | community.general.keep_keys(target=['a']) }}"
+    },
+    "result": [
+      {
+        "a": 1
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'a': 1, 'b': 2}] | community.general.remove_keys(target=['a']) }}"
+    },
+    "result": [
+      {
+        "b": 2
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'a': 1, 'b': 2}] | community.general.replace_keys(target=[{'before': 'a', 'after': 'z'}]) }}"
+    },
+    "result": [
+      {
+        "b": 2,
+        "z": 1
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | community.general.lists_union([2, 3]) }}"
+    },
+    "result": [
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | community.general.lists_intersect([2, 3]) }}"
+    },
+    "result": [
+      2
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | community.general.lists_difference([2, 3]) }}"
+    },
+    "result": [
+      1
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | community.general.lists_symmetric_difference([2, 3]) }}"
+    },
+    "result": [
+      1,
+      3
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'n': 'a', 'x': 1}] | community.general.lists_mergeby([{'n': 'a', 'y': 2}], 'n') }}"
+    },
+    "result": [
+      {
+        "n": "a",
+        "x": 1,
+        "y": 2
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '00:11:22' | community.general.random_mac(seed='volant') }}"
+    },
+    "result": "00:11:22:6b:08:2c"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | community.general.reveal_ansible_type }}"
+    },
+    "result": "list[int]"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1m 30s' | community.general.to_seconds }}"
+    },
+    "result": 90.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1s' | community.general.to_milliseconds }}"
+    },
+    "result": 1000.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2h' | community.general.to_minutes }}"
+    },
+    "result": 120.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1d' | community.general.to_hours }}"
+    },
+    "result": 24.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1w' | community.general.to_days }}"
+    },
+    "result": 7.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '14d' | community.general.to_weeks }}"
+    },
+    "result": 2.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2y' | community.general.to_months }}"
+    },
+    "result": 24.333333333333
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '24mo' | community.general.to_years }}"
+    },
+    "result": 1.972602739726
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1h' | community.general.to_time_unit('seconds') }}"
+    },
+    "result": 3600.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'s': {'k': 'v'}} | community.general.to_ini }}"
+    },
+    "result": "[s]\nk = v\n"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': [1, 2]} | community.general.to_yaml }}"
+    },
+    "result": "a: [1, 2]\n"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': [1, 2]} | community.general.to_nice_yaml }}"
+    },
+    "result": "a:\n- 1\n- 2\n"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'abc' | community.general.unicode_normalize('NFC') | length }}"
+    },
+    "result": 3
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['1.10', '1.2', '1.9'] | community.general.version_sort }}"
+    },
+    "result": [
+      "1.2",
+      "1.9",
+      "1.10"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'ansible.builtin.copy' is community.general.a_module }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] is community.general.ansible_type('list[int]') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.binary_file', '/var/tmp/volant-golden-fs/a.txt') }}"
+    },
+    "result": "aGkK"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.cartesian', [1, 2], ['a', 'b'], wantlist=True) }}"
+    },
+    "result": [
+      [
+        1,
+        "a"
+      ],
+      [
+        1,
+        "b"
+      ],
+      [
+        2,
+        "a"
+      ],
+      [
+        2,
+        "b"
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.collection_version', 'community.general') }}"
+    },
+    "result": "13.4.0"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.dependent', {'a': [1, 2]}, wantlist=True) }}"
+    },
+    "result": [
+      {
+        "a": 1
+      },
+      {
+        "a": 2
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.flattened', [1, [2, [3]]], wantlist=True) }}"
+    },
+    "result": [
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.random_string', length=8) | length }}"
+    },
+    "result": 8
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is finished }}",
+      "vars": {
+        "r": {
+          "finished": 1
+        }
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is started }}",
+      "vars": {
+        "r": {
+          "started": 1
+        }
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is reachable }}",
+      "vars": {
+        "r": {
+          "unreachable": false
+        }
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is unreachable }}",
+      "vars": {
+        "r": {
+          "unreachable": true
+        }
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is timedout }}",
+      "vars": {
+        "r": {
+          "timedout": {
+            "period": 5
+          }
+        }
+      }
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '8.8.8.8' is ansible.utils.private }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.1' is ansible.utils.public }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' is ansible.utils.ipv4 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' is ansible.utils.ipv6 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' is ansible.utils.loopback }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.1' is ansible.utils.multicast }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.1' is ansible.utils.reserved }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'zz' is ansible.utils.mac }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1.2.3.4' is ansible.utils.unspecified }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.5' is ansible.utils.in_network('192.168.0.0/24') }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.5' is ansible.utils.in_any_network(['192.168.0.0/24']) }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '10.0.0.5' is ansible.utils.in_one_network(['192.168.0.0/24']) }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/24' is ansible.utils.subnet_of('10.0.0.0/8') }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.0/24' is ansible.utils.supernet_of('10.0.0.0/8') }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '255.0.255.0' is ansible.utils.ipv4_netmask }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '255.255.255.0' is ansible.utils.ipv4_hostmask }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'nope' is ansible.utils.ip }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'nope' is ansible.utils.ip_address }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' is ansible.utils.ipv4_address }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '192.168.0.1' is ansible.utils.ipv6_address }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' is ansible.utils.ipv6_ipv4_mapped }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' is ansible.utils.ipv6_sixtofour }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '::1' is ansible.utils.ipv6_teredo }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] is community.general.ansible_type('dict') }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'nosuch.module' is community.general.a_module }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is finished }}",
+      "vars": {
+        "r": {
+          "finished": 0
+        }
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is started }}",
+      "vars": {
+        "r": {
+          "started": 0
+        }
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is reachable }}",
+      "vars": {
+        "r": {
+          "unreachable": true
+        }
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is unreachable }}",
+      "vars": {
+        "r": {
+          "unreachable": false
+        }
+      }
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ r is timedout }}",
+      "vars": {
+        "r": {
+          "timedout": false
+        }
+      }
+    },
+    "result": false
   }
 ]

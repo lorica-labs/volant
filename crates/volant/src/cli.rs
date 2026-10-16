@@ -354,10 +354,14 @@ async fn run_all(
             play.action_groups = known.clone();
         }
     }
+    // Said once per run, as the reference says a warning once however many plays raise it.
+    let mut said: HashSet<&String> = HashSet::new();
     for plays in &compiled {
         for play in plays {
             for warning in &play.warnings {
-                out.warning(warning, false);
+                if said.insert(warning) {
+                    out.warning(warning, false);
+                }
             }
             preflight::check_built(play, python.as_ref()).map_err(|e| Refusal::or(4, e))?;
         }

@@ -7,6 +7,7 @@ mod interpreter;
 mod jobs;
 mod modules;
 mod natives;
+mod put_file;
 mod python;
 mod runner;
 #[cfg(test)]
@@ -193,6 +194,9 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
             // lives in `blobs` rather than here.
             ToAgent::HasBlob { .. } | ToAgent::PutBlob { .. } => {
                 blobs::answer(remote_tmp, &msg, &frame, &mut send)?;
+            }
+            ToAgent::PutFile { hash, path, mode } => {
+                put_file::answer(remote_tmp, &hash, &path, mode, &mut send)?;
             }
         }
     }

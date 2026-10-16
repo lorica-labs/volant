@@ -2847,6 +2847,99 @@ async fn stage_files<C: AgentChannel>(
     Ok(placed)
 }
 
+/// How long the agent has to move a staged file into place. The move is a local copy and a
+/// rename; a host that takes longer than this is hung, and the task fails rather than waits.
+const PUT_FILE_WAIT: Duration = Duration::from_secs(120);
+
+/// Puts `bytes` at the absolute path `remote` of the host, with `mode` (0600 when `None`):
+/// staged first, then moved into place by the agent through a temporary file and a rename.
+/// Whether the content differs from what the path held.
+#[cfg_attr(
+    not(test),
+    expect(dead_code, reason = "the action plugins that put files come next")
+)]
+pub(super) async fn put_file<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    bytes: &[u8],
+    remote: &str,
+    mode: Option<u32>,
+    logs: &mut Vec<String>,
+) -> Result<bool, String> {
+    let hash = blake3::hash(bytes).to_hex().to_string();
+    let before = logs.len();
+    let frame = async { Ok(std::sync::Arc::new(BlobFrame::packed(bytes.to_vec()))) };
+    let placed = place_blob(link, host, &hash, frame, true, logs)
+        .await
+        .map_err(|err| format!("staging the file for '{remote}': {err}"))?;
+    if !placed {
+        let prefix = format!("[{host}] ");
+        let why: Vec<&str> = logs[before..]
+            .iter()
+            .map(|line| line.strip_prefix(&prefix).unwrap_or(line))
+            .collect();
+        let why = if why.is_empty() {
+            "it gave no reason".to_string()
+        } else {
+            why.join("; ")
+        };
+        return Err(format!(
+            "the agent could not store the file for '{remote}' ({hash}): {why}"
+        ));
+    }
+    let put = ToAgent::PutFile {
+        hash: hash.clone(),
+        path: remote.into(),
+        mode,
+    };
+    link.ask(&put)
+        .await
+        .map_err(|err| format!("asking the agent to put the file at '{remote}': {err}"))?;
+    let wait = async {
+        loop {
+            match link.answer().await {
+                Ok(Some(FromAgent::PutFileDone {
+                    hash: named,
+                    changed,
+                    error,
+                })) if named == hash => {
+                    return match error {
+                        None => Ok(changed),
+                        Some(why) => Err(why),
+                    };
+                }
+                Ok(Some(FromAgent::Log { message, .. })) => {
+                    logs.push(format!("[{host}] {message}"));
+                }
+                Ok(Some(FromAgent::Ready { .. })) => {}
+                Ok(Some(other)) => {
+                    return Err(format!(
+                        "the agent answered {other:?} while asked to put the file at '{remote}'"
+                    ));
+                }
+                Ok(None) => {
+                    return Err(format!(
+                        "the agent stopped while putting the file at '{remote}'"
+                    ));
+                }
+                Err(err) => {
+                    return Err(format!(
+                        "reading the agent's answer about the file at '{remote}': {err}"
+                    ));
+                }
+            }
+        }
+    };
+    tokio::time::timeout(PUT_FILE_WAIT, wait)
+        .await
+        .map_err(|_| {
+            format!(
+                "the agent did not put the file at '{remote}' within {} seconds",
+                PUT_FILE_WAIT.as_secs()
+            )
+        })?
+}
+
 /// Asks one question about a blob and reads the one answer to it.
 ///
 /// Anything else the agent says on the way is either a line to show or a message that does not
@@ -2899,6 +2992,11 @@ async fn blob_state<C: AgentChannel>(
                 ));
             }
             Ok(Some(FromAgent::Ready { .. })) => {}
+            Ok(Some(FromAgent::PutFileDone { .. })) => {
+                return Err(format!(
+                    "the agent ended a put_file while asked about the blob {hash}"
+                ));
+            }
             Ok(None) => {
                 return Err(format!(
                     "the agent stopped while being asked about the blob {hash}"
@@ -3099,7 +3197,11 @@ async fn send_batch<C: AgentChannel>(
             // place the `no_log` policy can see it. `FromAgent::Log` carries no task index, so
             // the caller decides for the whole batch.
             Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
-            Ok(Some(FromAgent::Ready { .. } | FromAgent::BlobState { .. })) => {}
+            Ok(Some(
+                FromAgent::Ready { .. }
+                | FromAgent::BlobState { .. }
+                | FromAgent::PutFileDone { .. },
+            )) => {}
             Ok(None) => {
                 break Err(format!(
                     "agent stopped before the batch finished{}",
@@ -4846,6 +4948,56 @@ mod tests {
             .await
             .expect("the agent already holds it");
         assert_eq!(held.puts(), 0, "{:?}", held.sent);
+    }
+
+    /// A file is staged, then put at its path; the agent's refusal comes back in its words.
+    #[tokio::test]
+    async fn a_file_is_staged_then_put_and_a_refusal_is_the_agents_own() {
+        let hash = blake3::hash(b"abc").to_hex().to_string();
+        let done = |changed, error: Option<&str>| FromAgent::PutFileDone {
+            hash: hash.clone(),
+            changed,
+            error: error.map(Into::into),
+        };
+        let mut agent = FakeAgent::answering(vec![state(&hash, true), done(true, None)]);
+        let changed = put_file(
+            &mut agent,
+            "h1",
+            b"abc",
+            "/etc/x",
+            Some(0o644),
+            &mut Vec::new(),
+        )
+        .await
+        .expect("the agent put it");
+        assert!(changed);
+        assert_eq!(
+            agent.sent[1..],
+            [ToAgent::PutFile {
+                hash: hash.clone(),
+                path: "/etc/x".into(),
+                mode: Some(0o644),
+            }]
+        );
+        let mut agent = FakeAgent::answering(vec![
+            state(&hash, true),
+            done(
+                false,
+                Some("putting the file at x: the path is not absolute"),
+            ),
+        ]);
+        let err = put_file(&mut agent, "h1", b"abc", "x", None, &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert_eq!(err, "putting the file at x: the path is not absolute");
+        let mut agent = FakeAgent::answering(vec![state(&hash, false)]);
+        let err = put_file(&mut agent, "h1", b"abc", "/x", None, &mut Vec::new())
+            .await
+            .unwrap_err();
+        assert!(
+            err.starts_with("the agent could not store the file for '/x'"),
+            "{err}"
+        );
     }
 
     /// A union goes up deflated, a small file raw, and a blob the agent does not keep fails with one sentence.

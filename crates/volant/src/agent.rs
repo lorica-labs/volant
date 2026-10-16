@@ -792,7 +792,7 @@ mod tests {
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "agent 0.1.0-alpha.7 speaks protocol 6, this controller speaks 7"
+            "agent 0.1.0-alpha.7 speaks protocol 6, this controller speaks 8"
         );
     }
 

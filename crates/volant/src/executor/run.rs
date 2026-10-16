@@ -1779,14 +1779,22 @@ pub(super) const DISCOVERY_HELP: &str = "See https://docs.ansible.com/ansible-co
 /// Whether the reference discovers the interpreter this task's module runs under, once nobody
 /// named one. Measured on ansible-core 2.19.12: every module sent to a host does, but not `raw`
 /// and `script` (they hand a line or a file to the shell) and not `fetch`, `reboot` and
-/// `wait_for_connection`, whose result is not a module's.
+/// `wait_for_connection`, whose result is not a module's. `add_host`, `group_by` and
+/// `set_stats` send no module at all.
 pub(super) fn discovers_interpreter<V: crate::vars::HostSettings + ?Sized>(
     module: &str,
     vars: &V,
 ) -> bool {
     !matches!(
         short_name(module),
-        "raw" | "script" | "fetch" | "reboot" | "wait_for_connection"
+        "raw"
+            | "script"
+            | "fetch"
+            | "reboot"
+            | "wait_for_connection"
+            | "add_host"
+            | "group_by"
+            | "set_stats"
     ) && requested_interpreter(vars).is_none()
 }
 

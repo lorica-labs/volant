@@ -309,9 +309,8 @@ impl Pty {
     }
 }
 
-/// On a terminal a `pause` without a duration shows `[name]` and its prompt, reads the answer and
-/// reports it in `user_input`. A hidden answer is typed only once the hidden prompt is up, is
-/// never echoed, and leaves the terminal echoing.
+/// A `pause` without a duration prompts on a terminal and reports the answer in `user_input`;
+/// a hidden answer is never echoed and the terminal echoes again afterwards.
 #[cfg(target_os = "linux")]
 #[test]
 fn a_pause_on_a_terminal_reads_its_answer() {

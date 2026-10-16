@@ -255,6 +255,9 @@ pub async fn run_play(
         if *options.stop.borrow() {
             break;
         }
+        // The reference divides by the batch as the inventory cut it, hosts that failed in an
+        // earlier play included, and counts only the failures of this batch.
+        let batch_size = batch.len();
         let live: Vec<Host> = batch
             .into_iter()
             .filter(|h| !state.failed_hosts.contains(&h.name))
@@ -296,7 +299,7 @@ pub async fn run_play(
             &live,
             &all,
             &vars_files,
-            max_fail,
+            max_fail.map(|limit| (limit, batch_size)),
             agents,
             options,
             state,

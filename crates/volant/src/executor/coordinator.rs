@@ -246,7 +246,7 @@ pub(super) async fn run_batch(
     hosts: &[Host],
     all: &[String],
     vars_files: &HashMap<String, Vec<Map<String, Value>>>,
-    max_fail: Option<f64>,
+    max_fail: Option<(f64, usize)>,
     agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
@@ -303,7 +303,8 @@ pub(super) async fn run_batch(
         aborted_at: None,
         failed_here: HashSet::new(),
         last_failure: None,
-        limit: max_fail,
+        limit: max_fail.map(|(limit, _)| limit),
+        batch_size: max_fail.map_or(hosts.len(), |(_, size)| size),
     };
     // Whether the two `NO MORE HOSTS LEFT` of `max_fail_percentage` are out. They follow the last
     // line of the step the batch was lost at.
@@ -604,7 +605,7 @@ pub(super) async fn run_batch(
                                 .steps()
                                 .steps
                                 .get(at)
-                                .is_some_and(|s| s.task.fails_all())
+                                .is_some_and(|s| s.task.fails_all() && !s.task.ignores_errors())
                         {
                             coordinator.fatal.insert(at);
                         }
@@ -752,7 +753,7 @@ pub(super) async fn run_batch(
                         .steps()
                         .steps
                         .get(at)
-                        .is_some_and(|s| s.task.fails_all())
+                        .is_some_and(|s| s.task.fails_all() && !s.task.ignores_errors())
                 {
                     coordinator.fatal.insert(at);
                 }
@@ -1022,6 +1023,8 @@ struct Coordinator<'a> {
     last_failure: Option<usize>,
     /// `max_fail_percentage`, rendered.
     limit: Option<f64>,
+    /// The batch as the inventory cut it, failed hosts of earlier plays included.
+    batch_size: usize,
 }
 
 impl Coordinator<'_> {
@@ -1048,6 +1051,15 @@ impl Coordinator<'_> {
     /// that have moved.
     fn forget_elections_past(&mut self, index: usize) {
         self.elected.split_off(&(index + 1));
+    }
+
+    /// The share of the batch that failed. A step under `any_errors_fatal` that a host failed at
+    /// fails the whole batch, and the reference counts them all before it compares.
+    fn lost_share(&self) -> f64 {
+        if self.last_failure.is_some_and(|s| self.fatal.contains(&s)) {
+            return 1.0;
+        }
+        self.failed_here.len() as f64 / self.batch_size as f64
     }
 
     /// Republishes the batch's progress. `live_hosts` is the batch's own list minus the hosts
@@ -1086,7 +1098,7 @@ impl Coordinator<'_> {
         if let Some(limit) = self.limit
             && !self.aborted
             && let Some(step) = self.last_failure
-            && self.failed_here.len() as f64 / self.batch_hosts.len() as f64 > limit / 100.0
+            && self.lost_share() > limit / 100.0
         {
             let finished = live_hosts
                 .iter()
@@ -1271,6 +1283,7 @@ mod tests {
             failed_here: HashSet::new(),
             last_failure: None,
             limit: None,
+            batch_size: hosts.len(),
         }
     }
 

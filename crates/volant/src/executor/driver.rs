@@ -533,6 +533,11 @@ pub(super) async fn drive_host(
             && !handlers_only
             && let Some(at) = fatal_at
         {
+            // The batch was lost at that step: nothing rescues, the hosts just leave.
+            if driver.progress.borrow().aborted {
+                failed = true;
+                break 'run;
+            }
             failed |= rescue_target(&c, at).is_none();
             failed_at = Some((at, TaskResult::default()));
             peer_failure = true;
@@ -2476,7 +2481,11 @@ impl Driver<'_> {
                 return None;
             }
             let p = self.progress.borrow().clone();
-            if p.fatal.contains(&at) {
+            // Under `max_fail_percentage` the batch may be lost at this very step, which the
+            // coordinator decides once every live host has finished it: this host has to know
+            // that before it picks a rescue.
+            let decided = !self.plan.lockstep || p.aborted;
+            if p.fatal.contains(&at) && (decided || p.completed_through.is_some_and(|c| c >= at)) {
                 return Some(true);
             }
             if p.live_hosts.len() <= 1

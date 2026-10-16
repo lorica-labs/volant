@@ -77,7 +77,7 @@ pub struct Play {
     pub any_errors_fatal: Option<bool>,
     pub ignore_errors: Option<Flag>,
     pub ignore_unreachable: Option<bool>,
-    /// `max_fail_percentage`, as written: a number, or a template rendered when each batch
+    /// `max_fail_percentage`, as written: a number, or a template rendered when the play
     /// starts. Play-only - a task or a block carrying it is refused at load.
     pub max_fail_percentage: Option<Value>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. The

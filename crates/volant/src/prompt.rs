@@ -283,12 +283,16 @@ pub(crate) fn hidden_line(prompt: &str) -> anyhow::Result<Option<Vec<u8>>> {
     use std::process::Stdio;
     const READ_LINE: &str = "trap 'stty echo 2>/dev/null' EXIT INT QUIT TERM HUP\n\
          stty -echo 2>/dev/null\n\
+         printf %s \"$1\" >&2\n\
          IFS= read -r password || exit 1\n\
          printf %s \"$password\"\n";
-    eprint!("{prompt}");
+    // The shell prints the prompt itself, once the echo is off: a person (or a test) answering
+    // as soon as it shows would otherwise see the answer typed back.
     let out = std::process::Command::new("sh")
         .arg("-c")
         .arg(READ_LINE)
+        .arg("sh")
+        .arg(prompt)
         .stdin(Stdio::inherit())
         .stdout(Stdio::piped())
         .stderr(Stdio::inherit())

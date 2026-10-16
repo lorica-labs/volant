@@ -129,6 +129,8 @@ pub fn run(args: PlaybookArgs) -> i32 {
             error_code(&err)
         }
     };
+    // A blocked terminal read (a `pause` prompt the run was interrupted at) must not hold the exit.
+    runtime.shutdown_background();
     // After everything the run printed, recap included, and never on stdout.
     if args.profile {
         eprint!("{}", profile.render());

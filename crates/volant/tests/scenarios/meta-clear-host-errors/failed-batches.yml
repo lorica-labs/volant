@@ -1,0 +1,9 @@
+- hosts: all
+  serial: 2
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h1'
+    - meta: clear_host_errors
+      when: inventory_hostname == 'h3'
+    - debug: msg=c

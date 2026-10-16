@@ -5,6 +5,7 @@ runs:
   - args: [-i, inv.ini, failed-later.yml]
   - args: [-i, inv.ini, failed-ignored.yml]
   - args: [-i, inv.ini, failed-serial.yml]
+  - args: [-i, inv.ini, failed-batches.yml]
   - args: [-i, dark.ini, dark.yml]
   - args: [-i, dark.ini, dark-same.yml]
   - args: [-i, dark.ini, dark-play.yml]

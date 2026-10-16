@@ -1031,7 +1031,7 @@ struct MetaContext<'a> {
     /// The host that ran the action and the step it ran at.
     host: &'a str,
     at: usize,
-    /// The batch as the inventory cut it.
+    /// The batch as the inventory cut it: measured, a clear in a later batch leaves an earlier batch's failures.
     whole: &'a [String],
     /// The play's `hosts:` pattern, which a refreshed inventory is asked about again.
     pattern: &'a str,

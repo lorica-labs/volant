@@ -1105,8 +1105,23 @@ pub(super) async fn drive_host(
             }
             let mut warnings = Vec::new();
             let preparing = Instant::now();
+            // The reference never reads the `when` of these, so a condition that cannot be
+            // evaluated must not fail the host either.
+            let unconditioned;
+            let step_read = if step.kind == StepKind::Meta
+                && NO_WHEN.contains(&crate::compile::meta_action(task))
+            {
+                unconditioned = {
+                    let mut copy = step.clone();
+                    copy.task.when.clear();
+                    copy
+                };
+                &unconditioned
+            } else {
+                step
+            };
             let prepared = prepare(
-                step,
+                step_read,
                 &name,
                 &plan,
                 &live,

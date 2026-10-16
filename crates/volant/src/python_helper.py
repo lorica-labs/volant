@@ -822,12 +822,17 @@ def shim():
         if ignore_unknown_opts:
             # The module drops what it does not declare, as it does for the reference.
             args = dict(args, _ansible_ignore_unknown_opts=True)
+        started = time.monotonic()
         result = answered(self._connection._ask("module", name=name, args=args, files=[]))
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
         if wrap_async:
             # ponytail: the module runs to its end before the job is handed back, so parallel
-            # jobs run one after the other; a poll finds each one finished.
+            # jobs run one after the other, and the async limit is judged afterwards: a module
+            # that ran past it is replaced by async_wrapper's timeout result.
+            limit = int(self._task.async_val or 0)
+            if limit and time.monotonic() - started > limit:
+                result = {"msg": "Timeout exceeded", "failed": True}
             jid = "j%s.%d" % (ident, next(JOB_IDS))
             JOBS[(ident, jid)] = result
             return {
@@ -841,9 +846,10 @@ def shim():
 
     def poll(ident, args):
         jid = args.get("jid")
-        if args.get("mode", "status") != "status":
-            raise Unsupported("async_status mode %s is not supported yet" % args.get("mode"))
-        result = JOBS.pop((ident, jid), None)
+        mode = args.get("mode", "status")
+        if mode not in ("status", "cleanup"):
+            raise Unsupported("async_status mode %s is not supported yet" % mode)
+        result = JOBS.get((ident, jid))
         if result is None:
             return {
                 "failed": True,
@@ -852,6 +858,9 @@ def shim():
                 "started": 1,
                 "finished": 1,
             }
+        if mode == "cleanup":
+            del JOBS[(ident, jid)]
+            return {"ansible_job_id": jid, "erased": "/volant-async/%s" % jid}
         return dict(result, started=1, finished=1, ansible_job_id=jid)
 
     def make_tmp_path(self, remote_user=None):
@@ -978,6 +987,8 @@ def run_action(ident, request):
             result = action.run(task_vars=task_vars)
         finally:
             action.cleanup()
+            for key in [key for key in JOBS if key[0] == ident]:
+                del JOBS[key]
     except Exception as failure:
         # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a
         # connection failure is unreachable, `AnsibleActionSkip` skipped, `AnsibleActionFail`

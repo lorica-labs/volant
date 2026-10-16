@@ -1,4 +1,4 @@
 # A directory copied, an assemble of controller files and a parallel gather_facts run through
 # ansible-core's own plugins: each passes options or async jobs the written plugins do not model.
 args: [-i, inv.ini, play.yml]
-needs: ["ansible-core"]
+needs: ["ansible-core", "sudo"]

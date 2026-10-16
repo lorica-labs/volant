@@ -614,6 +614,9 @@ mod tests {
             stdin: None,
             sudoable: false,
         };
-        assert!(plugin.step_for(ask).is_ok());
+        let Ok((Step::Run(sub), Pending::Command)) = plugin.step_for(ask) else {
+            panic!("the command should become a sub-task");
+        };
+        assert_eq!(sub.module, "raw");
     }
 }

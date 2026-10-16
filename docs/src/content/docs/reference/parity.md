@@ -13,7 +13,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|---|---|
 | keyword (play) | 31 | 1 | 9 | 0 |
 | keyword (block) | 27 | 1 | 3 | 0 |
-| keyword (task) | 61 | 1 | 4 | 0 |
+| keyword (task) | 60 | 2 | 4 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
@@ -126,7 +126,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `action` | <span class="kw kw-runs">runs</span> |  |
 | `any_errors_fatal` | <span class="kw kw-runs">runs</span> |  |
 | `args` | <span class="kw kw-runs">runs</span> |  |
-| `async` | <span class="kw kw-runs">runs</span> |  |
+| `async` | <span class="kw kw-partial">partial</span> | runs on modules the agent runs, native or Python. It is refused before the run on the controller's own modules, on the action plugins this release runs on the controller (`package`, `service` and `dnf` among them, which the reference runs as jobs), on statements, and on `raw` and `async_status`, which the reference refuses too. `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are. |
 | `become` | <span class="kw kw-runs">runs</span> |  |
 | `become_exe` | <span class="kw kw-runs">runs</span> |  |
 | `become_flags` | <span class="kw kw-runs">runs</span> |  |

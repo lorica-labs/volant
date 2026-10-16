@@ -1,3 +1,4 @@
 # A polled job: its POLL and OK lines, a failing job, a job killed at its limit, and one the
-# controller stops waiting for. Each poll lands a second away from the moment the job changes.
+# controller stops waiting for. Each poll lands at least three seconds away from the moment
+# the job changes.
 args: [-i, inv.ini, poll.yml]

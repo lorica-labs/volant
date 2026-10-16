@@ -28,7 +28,7 @@ This page is generated from the tables the loader and the pre-flight read, so it
 <tr><td><code>always</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>any_errors_fatal</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>args</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
-<tr><td><code>async</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>async</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-partial">partial</span></td></tr>
 <tr><td><code>become</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>become_exe</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>become_flags</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
@@ -120,6 +120,7 @@ Each keyword below behaves the same way in every place the grid marks it `partia
 
 | Keyword | What is missing |
 |---|---|
+| `async` | runs on modules the agent runs, native or Python. It is refused before the run on the controller's own modules, on the action plugins this release runs on the controller (`package`, `service` and `dnf` among them, which the reference runs as jobs), on statements, and on `raw` and `async_status`, which the reference refuses too. `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are. |
 | `check_mode` | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
 
 ## Handlers

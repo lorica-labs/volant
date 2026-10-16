@@ -4,8 +4,8 @@
     ansible_async_dir: "{{ playbook_dir }}/jobs"
   tasks:
     - name: fire
-      command: sleep 4
-      async: 10
+      command: sleep 8
+      async: 30
       poll: 0
       register: r
 
@@ -13,17 +13,26 @@
 
     - name: the first status, as the job writes it
       command: cat {{ r.results_file }}
-      register: first
+      register: initial
 
-    - debug: var=first.stdout
+    - debug: var=initial.stdout
 
-    - name: wait for it
+    - name: still running
+      async_status:
+        jid: "{{ r.ansible_job_id }}"
+      register: early
+
+    - debug: var=early
+
+    - pause: seconds=12
+
+    - name: finished
       async_status:
         jid: "{{ r.ansible_job_id }}"
       register: s
       until: s.finished
-      retries: 3
-      delay: 5
+      retries: 20
+      delay: 1
 
     - debug: var=s
 
@@ -60,11 +69,11 @@
 
     - name: a failing job
       command: /bin/false
-      async: 5
+      async: 30
       poll: 0
       register: g
 
-    - pause: seconds=1
+    - pause: seconds=3
 
     - async_status: jid={{ g.ansible_job_id }}
       register: gs
@@ -72,13 +81,14 @@
 
     - debug: var=gs.rc
 
+    # Killed at two seconds and its status written at three.
     - name: a job past its limit
-      command: sleep 10
-      async: 1
+      command: sleep 30
+      async: 2
       poll: 0
       register: late
 
-    - pause: seconds=3
+    - pause: seconds=6
 
     - async_status: jid={{ late.ansible_job_id }}
       register: qs

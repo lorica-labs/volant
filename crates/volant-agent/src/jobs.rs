@@ -86,7 +86,7 @@ pub fn start(task: &Task, job: &AsyncJob) -> TaskResult {
         return TaskResult::failed_with("async is not supported yet on a task that stages files");
     }
     let dir = expand_dir(&job.dir);
-    if let Err(err) = std::fs::create_dir_all(&dir) {
+    if let Err(err) = private_dir(&dir) {
         return TaskResult::failed_with(format!(
             "could not create directory: {} - {err}",
             dir.display()
@@ -209,7 +209,8 @@ pub fn watch() -> i32 {
         Ok(runner) => supervise(runner, spec.limit, &jid),
         Err(err) => failure(&jid, &format!("the job's runner did not start: {err}")),
     };
-    // Nobody is left to tell: the agent read the job id and went on.
+    // Nobody is left to tell: the agent read the job id and went on. A watcher killed before
+    // this line leaves the file at started and unfinished, which is the reference's answer too.
     let _ = write_status(&path, &result);
     0
 }
@@ -292,9 +293,26 @@ pub fn run() -> i32 {
     }
 }
 
-/// `limit` seconds from now, or none for a limit past what the clock can count to.
+/// When a job of `limit` seconds is stopped, counted from now, or none for a limit past what the
+/// clock can count to.
 fn deadline(limit: u64) -> Option<Instant> {
-    Instant::now().checked_add(Duration::from_secs(limit))
+    Instant::now().checked_add(kill_after(limit))
+}
+
+/// The moment the reference's watcher kills a job: it looks every five seconds, or every half
+/// limit for a limit of five seconds or less, and kills at the first look past the limit. So a
+/// limit of 7 runs for 10 seconds there, and here too.
+fn kill_after(limit: u64) -> Duration {
+    let limit = Duration::from_secs(limit);
+    let mut step = Duration::from_secs(5);
+    if !limit.is_zero() && step >= limit {
+        step = limit / 2;
+    }
+    let mut at = step;
+    while at < limit {
+        at = at.saturating_add(step);
+    }
+    at
 }
 
 /// Whether `extra` has gone by since `deadline`.
@@ -319,8 +337,35 @@ fn write_status(path: &Path, value: &Value) -> io::Result<()> {
     let tmp = PathBuf::from(tmp);
     let mut text = String::new();
     python_json(value, &mut text);
-    std::fs::write(&tmp, text)?;
+    let mut file = private_file(&tmp)?;
+    file.write_all(text.as_bytes())?;
+    drop(file);
     std::fs::rename(&tmp, path)
+}
+
+/// The jobs directory, readable by its owner alone: a finished job's file holds the module's
+/// whole output.
+fn private_dir(dir: &Path) -> io::Result<()> {
+    let mut builder = std::fs::DirBuilder::new();
+    builder.recursive(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::DirBuilderExt;
+        builder.mode(0o700);
+    }
+    builder.create(dir)
+}
+
+/// A status file created for its owner alone, whatever the umask, before anything is in it.
+fn private_file(path: &Path) -> io::Result<std::fs::File> {
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create(true).truncate(true);
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::OpenOptionsExt;
+        options.mode(0o600);
+    }
+    options.open(path)
 }
 
 /// `value` with `json.dumps`'s separators, `", "` and `": "`, so a status file reads as the
@@ -390,6 +435,17 @@ mod tests {
         assert_eq!(expand_under("~/x", None), PathBuf::from("~/x"));
     }
 
+    #[rstest::rstest]
+    #[case(1, 1)]
+    #[case(2, 2)]
+    #[case(5, 5)]
+    #[case(7, 10)]
+    #[case(10, 10)]
+    #[case(11, 15)]
+    fn a_job_is_killed_where_the_reference_kills_it(#[case] limit: u64, #[case] secs: u64) {
+        assert_eq!(kill_after(limit), Duration::from_secs(secs));
+    }
+
     #[test]
     fn a_status_is_replaced_whole() {
         let dir = tempfile::tempdir().unwrap();
@@ -399,5 +455,15 @@ mod tests {
         let read = std::fs::read_to_string(&path).unwrap();
         assert_eq!(read, r#"{"rc": 0, "cmd": ["a", "b"]}"#);
         assert!(!dir.path().join("j1.2.tmp").exists());
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            let mode = std::fs::metadata(&path).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o600);
+            let jobs = dir.path().join("jobs");
+            private_dir(&jobs).unwrap();
+            let mode = std::fs::metadata(&jobs).unwrap().permissions().mode();
+            assert_eq!(mode & 0o777, 0o700);
+        }
     }
 }

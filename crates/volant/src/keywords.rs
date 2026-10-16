@@ -77,6 +77,13 @@ const fn partial_kw(name: &'static str, missing: &'static str) -> Keyword {
     }
 }
 
+/// What `async` does not run yet: everything the agent does not start as a module of its own.
+const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. It is refused \
+    before the run on the controller's own modules, on the action plugins this release runs on \
+    the controller (`package`, `service` and `dnf` among them, which the reference runs as jobs), \
+    on statements, and on `raw` and `async_status`, which the reference refuses too. \
+    `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are.";
+
 /// One sentence for the three `check_mode` rows, so the page cannot say one thing about a play
 /// and another about the task under it.
 const CHECK_MODE_MISSING: &str = "only `false` is accepted, and the task runs for real. `true` is \
@@ -124,7 +131,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("action", Runs),
     kw("any_errors_fatal", Runs),
     kw("args", Runs),
-    kw("async", Runs),
+    partial_kw("async", ASYNC_MISSING),
     kw("become", Runs),
     kw("become_exe", Runs),
     kw("become_flags", Runs),

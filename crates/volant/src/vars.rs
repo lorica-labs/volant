@@ -577,12 +577,23 @@ impl VarStore {
     /// or, when it is already there, gains them. Visible to `hostvars` and `groups` at once;
     /// the hosts of the play being run are not changed by it.
     pub fn add_host(&mut self, name: &str, groups: &[String], vars: &Map<String, Value>) {
-        let vars = vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect();
-        self.dynamic.add_host(name, vars);
+        // A value that still holds a template after the task rendered it was built from text the
+        // playbook did not write (a fact, a registered result): it is data, kept as an untrusted
+        // fact of the host and never rendered again. The rest sits on the host's inventory line.
+        let (data, line): (Vec<_>, Vec<_>) = vars.iter().partition(|(_, v)| holds_template(v));
+        self.dynamic.add_host(
+            name,
+            line.into_iter()
+                .map(|(k, v)| (k.clone(), v.clone()))
+                .collect(),
+        );
         for group in groups.iter().filter(|g| *g != "all") {
             self.dynamic.add_member(name, group);
         }
         self.inventory_moved();
+        for (key, value) in data {
+            self.set_untrusted_fact(name, key, value.clone());
+        }
     }
 
     /// `group_by`: `host` joins `group`, which is made a child of each of `parents`.
@@ -1129,6 +1140,8 @@ impl VarStore {
             "ansible_play_hosts".to_string(),
             serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
         );
+        // Known gap: measured on ansible-core 2.19.12, `ansible_play_hosts_all` grows when
+        // `add_host` runs inside a `serial` play; here it stays the play's own list.
         map.insert(
             "ansible_play_hosts_all".to_string(),
             serde_json::to_value(&scope.all_play_hosts).unwrap_or_default(),
@@ -2348,5 +2361,27 @@ h1
         let grown = store.take_inventory_changes().expect("the inventory grew");
         assert_eq!(grown.groups()["all"], ["h1", "n1"]);
         assert!(store.take_inventory_changes().is_none());
+    }
+
+    /// A value built from a fact that holds a template stays text: it is never rendered again.
+    #[test]
+    fn an_add_host_value_that_holds_a_template_is_data() {
+        let tmp = scratch();
+        let inv = Inventory::parse_ini(
+            "[g]
+h1
+",
+        )
+        .unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let vars =
+            json!({"note": "{{ lookup('pipe','id') }}", "plain": "x", "ansible_host": "10.0.0.9"});
+        store.add_host("n1", &[], vars.as_object().unwrap());
+        let seen = store.for_host("n1", &scope(&["n1"]));
+        assert_eq!(seen["note"], "{{ lookup('pipe','id') }}");
+        assert_eq!(seen["plain"], "x");
+        assert_eq!(seen["ansible_host"], "10.0.0.9");
+        assert!(store.untrusted_of("n1", &scope(&["n1"])).contains("note"));
+        assert!(!store.untrusted_of("n1", &scope(&["n1"])).contains("plain"));
     }
 }

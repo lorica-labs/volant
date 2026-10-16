@@ -8910,8 +8910,27 @@ h1
             "h1",
             &ok(json!({"ansible_stats": {"data": {"n": 1}, "per_host": true, "aggregate": true}})),
         );
+        // A loop whose item 2 failed adds nothing, not even items 1 and 3 (measured); a
+        // delegated task applies to the host it was written for, which is the one passed in.
+        let added =
+            |n: &str| json!({"add_host": {"host_name": n, "groups": ["lg"], "host_vars": {}}});
+        let mut second = added("L2");
+        second["failed"] = json!(true);
+        let looped: Vec<_> = [added("L1"), second, added("L3")]
+            .into_iter()
+            .map(|v| (None, TaskResult(v.as_object().unwrap().clone())))
+            .collect();
+        record_inventory_results(&mut store, &task("add_host"), "h1", &looped);
+        record_inventory_results(
+            &mut store,
+            &task("group_by"),
+            "h1",
+            &ok(json!({"add_group": "delegated"})),
+        );
         let grown = store.take_inventory_changes().expect("grown");
         let groups = grown.groups();
+        assert!(!groups.contains_key("lg"));
+        assert_eq!(groups["delegated"], ["h1"]);
         assert_eq!(groups["g1"], ["n1"]);
         assert_eq!(groups["all_roles"], ["h1"]);
         assert_eq!(store.custom_stats().hosts()["h1"]["n"], json!(1));

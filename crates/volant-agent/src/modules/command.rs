@@ -49,7 +49,6 @@ pub(crate) fn execute(
         }
         (Err(r), ..) | (_, Err(r), ..) | (_, _, Err(r), _) | (.., Err(r)) => return Run::Done(r),
     };
-    let chdir = args.get("chdir").and_then(Value::as_str);
     // Measured on ansible-core 2.19.12: the newline is appended without looking at what the value
     // already ends with, so a value that ends in one gets a second.
     let stdin_data = args.get("stdin").and_then(Value::as_str).map(|s| {
@@ -100,13 +99,13 @@ pub(crate) fn execute(
     // Measured on ansible-core 2.19.12: `command` expands `$VAR`, `${VAR}` and `~` in each word it
     // runs, on by default; `shell` does not, with an `argv` or without. The task still reports the
     // words as written, and only a failure to run reports them expanded.
+    let var = |name: &str| {
+        ctx.environment
+            .get(name)
+            .cloned()
+            .or_else(|| std::env::var(name).ok())
+    };
     if !uses_shell && expand_vars_on {
-        let var = |name: &str| {
-            ctx.environment
-                .get(name)
-                .cloned()
-                .or_else(|| std::env::var(name).ok())
-        };
         for word in &mut argv {
             let expanded = expand_vars(word, &var);
             #[cfg(unix)]
@@ -114,6 +113,19 @@ pub(crate) fn execute(
             *word = expanded;
         }
     }
+    // Measured on ansible-core 2.19.12: `chdir`, `creates` and `removes` are declared as paths, so
+    // `~` and `$VAR` are expanded in them for `command` and `shell` alike, and the skip message
+    // names the expanded path.
+    let path_arg = |name: &str| {
+        args.get(name).and_then(Value::as_str).map(|p| {
+            let expanded = expand_vars(p, &var);
+            #[cfg(unix)]
+            let expanded = expand_user(&expanded, &var);
+            expanded
+        })
+    };
+    let chdir = path_arg("chdir");
+    let chdir = chdir.as_deref();
 
     // The reference module changes directory before it reads either guard, so a `chdir` that
     // cannot be entered fails the task here rather than being read as a guard that found
@@ -147,7 +159,8 @@ pub(crate) fn execute(
     let guard_base = chdir.map(Path::new);
     // An empty value applies no guard at all, which is what the reference's own `if creates:`
     // does with it: a template that rendered to nothing must not decide anything.
-    if let Some(path) = args.get("creates").and_then(Value::as_str)
+    let creates = path_arg("creates");
+    if let Some(path) = creates.as_deref()
         && !path.is_empty()
         && glob::matches_any(guard_base, path)
     {
@@ -157,7 +170,8 @@ pub(crate) fn execute(
             format!("skipped, since {path} exists"),
         ));
     }
-    if let Some(path) = args.get("removes").and_then(Value::as_str)
+    let removes = path_arg("removes");
+    if let Some(path) = removes.as_deref()
         && !path.is_empty()
         && !glob::matches_any(guard_base, path)
     {
@@ -664,6 +678,26 @@ mod tests {
             assert_eq!(bytes(json!("ab"), Some(off.clone())), "2", "{off}");
         }
         assert_eq!(bytes(json!("ab"), Some(json!("yes"))), "3");
+    }
+
+    /// `chdir`, `creates` and `removes` expand `$VAR` from the task's environment, for `shell` too.
+    #[test]
+    fn the_three_paths_expand_variables() {
+        let dir = scratch();
+        std::fs::write(dir.path().join("marker"), b"").unwrap();
+        let ctx = Context {
+            environment: [("S3D".to_string(), dir.path().to_str().unwrap().to_string())].into(),
+            ..Context::default()
+        };
+        for shell in [false, true] {
+            let params = json!({"_raw_params": "pwd", "_uses_shell": shell, "chdir": "$S3D", "creates": "$S3D/marker"});
+            let r = done(execute(&args(params), false, &ctx, &|| false));
+            let want = format!(
+                "Did not run command since '{}/marker' exists",
+                dir.path().display()
+            );
+            assert_eq!(r.0["msg"], want.as_str(), "{:?}", r.0);
+        }
     }
 
     /// `creates` and `removes` resolve under `chdir`, expand globs per directory component, keep

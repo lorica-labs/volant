@@ -13,7 +13,7 @@ A module named in a file that only a dynamic `include_tasks` or `include_role` b
 
 The agent runs these on the host, without Python. The arguments column lists what each module reads.
 
-Ansible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value. This release does not, so `creates: ~/.provisioned` looks for a directory literally named `~`: those three are read as the playbook writes them. The words of a `command` are expanded as Ansible expands them, from the task's `environment` and then the agent's own, so `command: /bin/echo $HOME` prints the home directory unless `expand_argument_vars` is false. A `shell` task has its shell do the expanding, and `expand_argument_vars` is refused there, as it is in Ansible.
+Ansible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value, and `command` and `shell` do the same, from the task's `environment` and then the agent's own. The words of a `command` are expanded as Ansible expands them, from the task's `environment` and then the agent's own, so `command: /bin/echo $HOME` prints the home directory unless `expand_argument_vars` is false. A `shell` task has its shell do the expanding, and `expand_argument_vars` is refused there, as it is in Ansible.
 
 | Module | Free-form | Arguments | What it does |
 |---|---|---|---|

@@ -604,7 +604,7 @@ pub const ACTION_PLUGINS: &[(&str, &str)] = &[
 /// The Markdown table published in the documentation, generated so it cannot drift.
 pub fn documentation_table() -> String {
     let mut out = String::from(
-        "---\ntitle: Modules\ndescription: Which modules Volant runs, where each one runs, and which ones are not supported yet.\n---\n\n<!-- Generated from crates/volant-protocol/src/modules.rs by `just docs-modules`. Do not edit by hand. -->\n\nVolant runs a module in one of three places: natively in the agent on the host, on the controller itself, or on the host through the warm Python path. A playbook that names a module this release does not support yet stops when it loads, before the first task, the way Ansible stops on a module it cannot resolve.\n\nA module named in a file that only a dynamic `include_tasks` or `include_role` brings in is checked when a host reaches that statement. The statement then fails for that host and nothing in the file runs. See [Includes and imports](/playbooks/includes/).\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads.\n\nAnsible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value. This release does not, so `creates: ~/.provisioned` looks for a directory literally named `~`: those three are read as the playbook writes them. The words of a `command` are expanded as Ansible expands them, from the task's `environment` and then the agent's own, so `command: /bin/echo $HOME` prints the home directory unless `expand_argument_vars` is false. A `shell` task has its shell do the expanding, and `expand_argument_vars` is refused there, as it is in Ansible.\n\n| Module | Free-form | Arguments | What it does |\n|---|---|---|---|\n",
+        "---\ntitle: Modules\ndescription: Which modules Volant runs, where each one runs, and which ones are not supported yet.\n---\n\n<!-- Generated from crates/volant-protocol/src/modules.rs by `just docs-modules`. Do not edit by hand. -->\n\nVolant runs a module in one of three places: natively in the agent on the host, on the controller itself, or on the host through the warm Python path. A playbook that names a module this release does not support yet stops when it loads, before the first task, the way Ansible stops on a module it cannot resolve.\n\nA module named in a file that only a dynamic `include_tasks` or `include_role` brings in is checked when a host reaches that statement. The statement then fails for that host and nothing in the file runs. See [Includes and imports](/playbooks/includes/).\n\n## On the agent\n\nThe agent runs these on the host, without Python. The arguments column lists what each module reads.\n\nAnsible declares `chdir`, `creates` and `removes` as paths and expands `~` and `$VAR` in them before using the value, and `command` and `shell` do the same, from the task's `environment` and then the agent's own. The words of a `command` are expanded as Ansible expands them, from the task's `environment` and then the agent's own, so `command: /bin/echo $HOME` prints the home directory unless `expand_argument_vars` is false. A `shell` task has its shell do the expanding, and `expand_argument_vars` is refused there, as it is in Ansible.\n\n| Module | Free-form | Arguments | What it does |\n|---|---|---|---|\n",
     );
     // The internal keys carry the command line itself rather than being written in a playbook,
     // so they are in the registry and out of the page.
@@ -907,13 +907,12 @@ mod tests {
         assert!(!page.contains("- `command`:"), "{page}");
     }
 
-    /// The page says which arguments are read as written and that a `command` expands its words.
+    /// The page says which arguments are expanded and that a `command` expands its words.
     #[test]
     fn the_page_says_which_arguments_are_expanded() {
         let page = documentation_table();
         for phrase in [
-            "read as the playbook writes them",
-            "expands `~` and `$VAR`",
+            "`creates` and `removes` as paths and expands `~` and `$VAR`",
             "`command: /bin/echo $HOME` prints the home directory",
         ] {
             assert!(

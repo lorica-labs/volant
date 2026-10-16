@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - command: "true"
+      changed_when: false
+    - debug: msg=b
+    - meta: end_play
+    - debug: msg=c

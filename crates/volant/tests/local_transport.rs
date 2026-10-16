@@ -29,6 +29,8 @@ fn defaults() -> ConnectionDefaults {
         r#become: false,
         become_user: "root".to_string(),
         become_method: "sudo".to_string(),
+        become_exe: None,
+        become_flags: None,
         become_password: None,
     }
 }

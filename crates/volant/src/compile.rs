@@ -444,22 +444,19 @@ pub(crate) fn handler_steps(c: &Compiled, at: usize) -> Vec<Step> {
         .collect()
 }
 
-/// Every `meta` action ansible-core 2.19.12 accepts, and whether this release honours it.
-///
-/// `noop` does nothing here and nothing there, and `flush_handlers` compiles into a flush point
-/// of its own. The rest ask for something this release cannot do and are refused by their own
-/// names.
-pub(crate) const META_ACTIONS: &[(&str, bool)] = &[
-    ("clear_facts", false),
-    ("clear_host_errors", false),
-    ("end_batch", false),
-    ("end_host", false),
-    ("end_play", false),
-    ("end_role", false),
-    ("flush_handlers", true),
-    ("noop", true),
-    ("refresh_inventory", false),
-    ("reset_connection", false),
+/// Every `meta` action ansible-core 2.19.12 accepts. `flush_handlers` compiles into a flush point of
+/// its own; the executor runs the rest where the step stands.
+pub(crate) const META_ACTIONS: &[&str] = &[
+    "clear_facts",
+    "clear_host_errors",
+    "end_batch",
+    "end_host",
+    "end_play",
+    "end_role",
+    "flush_handlers",
+    "noop",
+    "refresh_inventory",
+    "reset_connection",
 ];
 
 /// The `meta` action that runs the notified handlers where it stands.
@@ -2882,7 +2879,7 @@ mod tests {
     /// The action table is the reference's own list, sorted and free of duplicates.
     #[test]
     fn the_meta_actions_are_sorted_and_free_of_duplicates() {
-        let names: Vec<&str> = META_ACTIONS.iter().map(|(n, _)| *n).collect();
+        let names: Vec<&str> = META_ACTIONS.to_vec();
         let mut sorted = names.clone();
         sorted.sort_unstable();
         sorted.dedup();

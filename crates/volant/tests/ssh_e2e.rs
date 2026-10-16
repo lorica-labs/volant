@@ -445,6 +445,114 @@ fn ssh_become_over_ssh() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Real `su` to a throwaway account: the right password runs the task as it, a wrong one is
+/// `Incorrect su password`, none is the timeout; the agent is cached in the account's home.
+#[rstest]
+#[case::the_password(Some(true), 0)]
+#[case::a_wrong_password(Some(false), 2)]
+#[case::no_password(None, 4)]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_su_reaches_an_account_through_its_password(#[case] right: Option<bool>, #[case] code: i32) {
+    assert_passwordless_sudo("the test creates the account su logs into");
+    let target = format!("volant-s{}-{code}", std::process::id());
+    let password = format!("su-pw-{}-{code}", std::process::id());
+    let added = Command::new("sudo")
+        .args(["-n", "useradd", "-m", "-s", "/bin/sh", &target])
+        .output()
+        .unwrap();
+    assert!(
+        added.status.success(),
+        "creating the account su logs into: {}",
+        String::from_utf8_lossy(&added.stderr)
+    );
+    let account = Account(target.clone());
+    let mut chpasswd = Command::new("sudo")
+        .args(["-n", "chpasswd"])
+        .stdin(Stdio::piped())
+        .spawn()
+        .unwrap();
+    {
+        use std::io::Write as _;
+        let mut stdin = chpasswd.stdin.take().unwrap();
+        writeln!(stdin, "{target}:{password}").unwrap();
+    }
+    assert!(
+        chpasswd.wait().unwrap().success(),
+        "setting {target}'s password"
+    );
+    let dir = tmp(&format!("su{code}"));
+    let offered = match right {
+        Some(true) => format!(" ansible_become_password={password}"),
+        Some(false) => " ansible_become_password=not-the-password".to_string(),
+        None => String::new(),
+    };
+    let inv = dir.join("inventory.ini");
+    std::fs::write(
+        &inv,
+        format!(
+            "box ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} \
+             ansible_ssh_common_args='-F /dev/null'{offered}\n",
+            user(),
+            key(),
+        ),
+    )
+    .unwrap();
+    let play = dir.join("su.yml");
+    std::fs::write(
+        &play,
+        format!(
+            "- hosts: box\n  gather_facts: false\n  tasks:\n    - shell: id -un\n      \
+             become: true\n      become_method: su\n      become_user: {target}\n      \
+             register: who\n    - debug:\n        msg: \"{{{{ who.stdout }}}}\"\n"
+        ),
+    )
+    .unwrap();
+    // `-T 1` only where nothing answers: PAM holds a refused password about three seconds
+    // before `su` says so, and the default timeout leaves room for that.
+    let timeout = if right.is_none() { "1" } else { "10" };
+    let out = volant_within(
+        &[
+            "playbook",
+            "-T",
+            timeout,
+            "-i",
+            &inv.display().to_string(),
+            &play.display().to_string(),
+        ],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    drop(account);
+    assert_eq!(out.status.code(), Some(code), "{text}");
+    let says = match right {
+        Some(true) => format!(r#""msg": "{target}""#),
+        Some(false) => "Task failed: Incorrect su password".to_string(),
+        None => "Task failed: Timeout (3s) waiting for privilege escalation prompt:".to_string(),
+    };
+    assert!(text.contains(&says), "{text}");
+    assert!(
+        !text.contains(&password),
+        "the password never reaches the output"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Removes the account [`ssh_su_reaches_an_account_through_its_password`] made, its home with
+/// it, however the test ends: `Drop` is the only thing a panic still runs.
+struct Account(String);
+
+impl Drop for Account {
+    fn drop(&mut self) {
+        // An agent still on its way out would make `userdel` refuse the account.
+        let _ = Command::new("sudo")
+            .args(["-n", "pkill", "-KILL", "-u", &self.0])
+            .output();
+        let _ = Command::new("sudo")
+            .args(["-n", "userdel", "-r", &self.0])
+            .output();
+    }
+}
+
 /// A delegated task travels over the **delegate's** connection, never the delegating host's.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
@@ -2068,5 +2176,86 @@ fn ssh_one_connection_per_inventory_host() {
         2,
         "one control master per inventory name, found {sockets:?}; with VOLANT_TARGET_HOST, an \
          ssh configuration that already multiplexes that host keeps Volant's own out:\n{text}"
+    );
+}
+
+/// `meta: reset_connection` makes the host's shared connection exit; a run without it leaves the
+/// master to `ControlPersist`.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
+fn ssh_reset_connection_stops_the_shared_master() {
+    use std::os::unix::fs::{DirBuilderExt as _, FileTypeExt as _};
+    let machine = Machine::from_env();
+    let local = tmp("reset");
+    let pid = std::process::id();
+    let remote_tmp = format!("/var/tmp/volant-e2e-reset-remote-{pid}");
+    let inv = local.join("inventory.ini");
+    std::fs::write(&inv, format!("{}\n", machine.line("one", &remote_tmp))).unwrap();
+    let cleanup = machine.cleanup_dirs(&[&remote_tmp]);
+    // The run and the control sockets it left, which are then asked to exit.
+    let run = |name: &str, tasks: &str| -> (Output, Vec<PathBuf>) {
+        let runtime = PathBuf::from(format!("/tmp/vcm-{pid}-{name}"));
+        let _ = std::fs::remove_dir_all(&runtime);
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&runtime)
+            .unwrap();
+        let playbook = local.join(format!("{name}.yml"));
+        std::fs::write(
+            &playbook,
+            format!("- hosts: all\n  gather_facts: false\n  tasks:\n{tasks}"),
+        )
+        .unwrap();
+        let out = volant_env_within(
+            &[
+                "playbook",
+                "-i",
+                inv.to_str().unwrap(),
+                playbook.to_str().unwrap(),
+            ],
+            &[("XDG_RUNTIME_DIR", runtime.to_str().unwrap())],
+            Duration::from_secs(120),
+        );
+        let sockets: Vec<PathBuf> = std::fs::read_dir(runtime.join("volant-cm"))
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_type().is_ok_and(|t| t.is_socket()))
+                    .map(|entry| entry.path())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for socket in &sockets {
+            let _ = Command::new("ssh")
+                .arg("-o")
+                .arg(format!("ControlPath={}", socket.display()))
+                .args(["-O", "exit", "unused"])
+                .output();
+        }
+        let _ = std::fs::remove_dir_all(&runtime);
+        (out, sockets)
+    };
+    let (kept, left) = run("kept", "    - stat: {path: /}\n");
+    let (reset, gone) = run(
+        "reset",
+        "    - stat: {path: /}\n    - meta: reset_connection\n",
+    );
+    drop(cleanup);
+    let _ = std::fs::remove_dir_all(&local);
+    assert_eq!(kept.status.code(), Some(0), "{}", both(&kept));
+    assert_eq!(reset.status.code(), Some(0), "{}", both(&reset));
+    assert_eq!(
+        left.len(),
+        1,
+        "without a reset the master stays for ControlPersist, found {left:?}; with \
+         VOLANT_TARGET_HOST, an ssh configuration that already multiplexes that host keeps \
+         Volant's own out:\n{}",
+        both(&kept)
+    );
+    assert!(
+        gone.is_empty(),
+        "reset_connection must stop the master, found {gone:?}:\n{}",
+        both(&reset)
     );
 }

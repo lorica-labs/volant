@@ -1,0 +1,12 @@
+- hosts: all
+  max_fail_percentage: 25
+  gather_facts: false
+  tasks:
+    - meta: end_host
+      when: inventory_hostname == 'h1'
+    - fail:
+      when: inventory_hostname == 'h2'
+    - debug: msg=b
+    - fail:
+      when: inventory_hostname == 'h3'
+    - debug: msg=c

@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - command: "true"
+      changed_when: false
+    - meta: reset_connection
+    - command: "true"
+      changed_when: false

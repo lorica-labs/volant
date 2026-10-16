@@ -41,6 +41,8 @@ pub(crate) fn defaults() -> ConnectionDefaults {
         r#become: false,
         become_user: "root".into(),
         become_method: "sudo".into(),
+        become_exe: None,
+        become_flags: None,
         become_password: None,
     }
 }

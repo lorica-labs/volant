@@ -1,0 +1,12 @@
+- hosts: all
+  serial: 2
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+          when: inventory_hostname in ['h1', 'h3']
+      rescue:
+        - meta: end_host
+          when: inventory_hostname == 'h1'
+        - debug: msg=rescued
+    - debug: msg=after

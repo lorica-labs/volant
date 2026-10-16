@@ -1,0 +1,12 @@
+- hosts: all
+  serial: 2
+  gather_facts: false
+  tasks:
+    - debug: msg=a
+    - meta: end_play
+      when: inventory_hostname == 'h3'
+    - debug: msg=b
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=play2

@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - setup: gather_subset=min
+    - set_fact: mine=1
+    - debug: msg="{{ ansible_facts | length > 0 }} {{ mine | default('unset') }} {{ ansible_os_family is defined }}"
+      run_once: true
+    - meta: clear_facts
+    - debug: msg="{{ ansible_facts | length }} {{ mine | default('unset') }} {{ ansible_os_family is defined }}"

@@ -1,0 +1,5 @@
+# end_role skips the rest of the role for one host, an always section included, and nothing past the role.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, nested.yml]
+  - args: [-i, inv.ini, outside.yml]

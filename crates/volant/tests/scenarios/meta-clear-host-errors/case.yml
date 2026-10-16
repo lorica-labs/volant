@@ -1,0 +1,13 @@
+# clear_host_errors forgives failures for the exit code and brings unreachable hosts back for a round of their own.
+runs:
+  - args: [-i, inv.ini, failed.yml]
+  - args: [-i, inv.ini, failed-next.yml]
+  - args: [-i, inv.ini, failed-later.yml]
+  - args: [-i, inv.ini, failed-ignored.yml]
+  - args: [-i, inv.ini, failed-serial.yml]
+  - args: [-i, inv.ini, failed-batches.yml]
+  - args: [-i, dark.ini, dark.yml]
+  - args: [-i, dark.ini, dark-same.yml]
+  - args: [-i, dark.ini, dark-play.yml]
+  - args: [-i, dark.ini, dark-again.yml]
+  - args: [-i, dark.ini, dark-ended.yml]

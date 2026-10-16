@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - meta: end_play
+      when: false
+    - meta: flush_handlers
+      when: false
+    - meta: noop
+    - debug: msg=b

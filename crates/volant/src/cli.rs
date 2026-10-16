@@ -84,7 +84,7 @@ pub struct PlaybookArgs {
     /// Escalate to this user instead of root.
     #[arg(long = "become-user", value_name = "USER")]
     pub become_user: Option<String>,
-    /// Escalation method. Only `sudo` is implemented.
+    /// Escalation method: `sudo` or `su`.
     #[arg(long = "become-method", value_name = "METHOD")]
     pub become_method: Option<String>,
     /// Ask for the escalation password on the terminal.
@@ -162,7 +162,7 @@ async fn run_all(
         return Ok(2);
     }
     let inventory_path = args.inventory.clone().or_else(|| config.inventory.clone());
-    let inventory = match &inventory_path {
+    let mut inventory = match &inventory_path {
         Some(path) => Inventory::load(path)?,
         None => Inventory::empty(),
     };
@@ -379,7 +379,7 @@ async fn run_all(
     // for it and fails the task, which is exit 2. This refuses before the play instead, so no
     // recap is printed, but the code an operator's script reads is the same one.
     if escalates {
-        if become_method != playbook::BECOME_METHOD {
+        if !playbook::BECOME_METHODS.contains(&become_method.as_str()) {
             return Err(Refusal::at(
                 2,
                 format!("become_method '{become_method}' is not supported yet"),
@@ -388,7 +388,7 @@ async fn run_all(
         for host in &all_hosts {
             if let Some(method) = crate::vars::host_setting(&host.vars, "ansible_become_method")
                 .and_then(|v| v.as_str())
-                && method != playbook::BECOME_METHOD
+                && !playbook::BECOME_METHODS.contains(&method)
             {
                 return Err(Refusal::at(
                     2,
@@ -415,6 +415,8 @@ async fn run_all(
             .clone()
             .unwrap_or(config.become_user.clone()),
         become_method,
+        become_exe: config.become_exe,
+        become_flags: config.become_flags,
         become_password: if args.ask_become_pass {
             Some(ask_become_password()?)
         } else {
@@ -484,6 +486,8 @@ async fn run_all(
         )),
         vars: Arc::new(Mutex::new(store)),
         failed_hosts: HashSet::new(),
+        unreachable_hosts: HashSet::new(),
+        refreshed: None,
         verbosity: args.verbose,
         links: HashMap::new(),
         python: python.map(Arc::new),
@@ -546,6 +550,11 @@ async fn run_all(
                     play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
                 )
                 .await?;
+                // `meta: refresh_inventory` read the file again: the plays behind this one
+                // resolve their hosts against what it found.
+                if let Some(fresh) = state.refreshed.take() {
+                    inventory = fresh;
+                }
                 // A batch that lost every live host it had ends the whole run, measured: no
                 // further play, and the recap prints straight away. The recap below belongs to
                 // the playbook loop this leaves, so `stopped` carries it past the `break`.

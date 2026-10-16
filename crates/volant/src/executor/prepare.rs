@@ -15,7 +15,7 @@ use crate::playbook::{Flag, PlayTask, python_repr};
 use crate::python::ModulePayload;
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError};
-use crate::transport::{ConnectionDefaults, ConnectionKeywords, Escalation};
+use crate::transport::{BecomeMethod, ConnectionDefaults, ConnectionKeywords, Escalation};
 use crate::vars::{HostVars, Scope, VarStore, host_setting, omit_token};
 
 use super::as_bool_value;
@@ -84,8 +84,11 @@ fn remove_omit(value: &mut Value) {
     }
 }
 
-/// Resolves privilege escalation for one task: whether to escalate, to whom, and with what
-/// password. `None` means the task runs as the connecting user.
+/// Resolves privilege escalation for one task: whether to escalate, to whom, through which
+/// program, and with what password. `None` means the task runs as the connecting user.
+/// `become_method`, `become_exe` and `become_flags` take the order the reference gives every
+/// setting it maps to a variable: the host's variable, then the task's keyword over its block's
+/// over its play's, then the defaults.
 ///
 /// The order is measured, not assumed. Against `ansible-core 2.19.12`: a host's
 /// `ansible_become` variable beats both keywords in both directions (a play `become: false`
@@ -109,24 +112,62 @@ fn become_for(
         return Ok(None);
     }
     // The method is refused for the task that would actually use it, so a task escalating
-    // nowhere is unaffected by a method it never runs. A variable beats the defaults, which
-    // carry `ansible.cfg` and the command line: this catches the value reaching an escalating
-    // task through `group_vars`, `host_vars`, `--extra-vars` or a `set_fact`, which the startup
-    // pass cannot see.
-    match host_setting(vars, "ansible_become_method").and_then(Value::as_str) {
-        Some(method) if method != crate::playbook::BECOME_METHOD => {
-            return Err(TemplateError(format!(
-                "ansible_become_method '{method}' is not supported yet"
-            )));
-        }
-        None if defaults.become_method != crate::playbook::BECOME_METHOD => {
-            return Err(TemplateError(format!(
-                "become_method '{}' is not supported yet",
-                defaults.become_method
-            )));
-        }
-        Some(_) | None => {}
-    }
+    // nowhere is unaffected by a method it never runs. A variable beats the keyword, which beats
+    // the defaults that carry `ansible.cfg` and the command line: this catches the value
+    // reaching an escalating task through `group_vars`, `host_vars`, `--extra-vars` or a
+    // `set_fact`, which the startup pass cannot see.
+    let (method, source) = match host_setting(vars, "ansible_become_method").and_then(Value::as_str)
+    {
+        Some(method) => (method, "ansible_become_method"),
+        None => (
+            task.connect
+                .become_method
+                .as_deref()
+                .unwrap_or(&defaults.become_method),
+            "become_method",
+        ),
+    };
+    let method = BecomeMethod::named(method)
+        .ok_or_else(|| TemplateError(format!("{source} '{method}' is not supported yet")))?;
+    // `become_exe` and `become_flags` in the same order, each a template or not, then split into
+    // the words the escalation program is given.
+    let program = |var: &str, keyword: &Option<String>, default: &Option<String>| {
+        let raw = match host_setting(vars, var).and_then(Value::as_str) {
+            Some(text) => text.to_string(),
+            None => match keyword.as_ref().or(default.as_ref()) {
+                Some(text) => text.clone(),
+                None => return Ok(None),
+            },
+        };
+        let key = var.trim_start_matches("ansible_");
+        let text = if Templar::is_template(&raw) {
+            match templar
+                .render(&raw, vars)
+                .map_err(|err| TemplateError(format!("rendering '{key}' {raw}: {}", err.0)))?
+            {
+                Value::String(text) => text,
+                _ => return Err(TemplateError(format!("'{key}' must render to text: {raw}"))),
+            }
+        } else {
+            raw
+        };
+        shlex::split(&text).map(Some).ok_or_else(|| {
+            TemplateError(format!(
+                "'{key}' has unbalanced quotes and cannot be split into words: {text}"
+            ))
+        })
+    };
+    let exe = program(
+        "ansible_become_exe",
+        &task.connect.become_exe,
+        &defaults.become_exe,
+    )?
+    .unwrap_or_default();
+    let flags = program(
+        "ansible_become_flags",
+        &task.connect.become_flags,
+        &defaults.become_flags,
+    )?;
     let user = match host_setting(vars, "ansible_become_user").and_then(Value::as_str) {
         Some(user) => user.to_string(),
         None => task
@@ -171,7 +212,13 @@ fn become_for(
         .and_then(Value::as_str)
         .map(str::to_string)
         .or_else(|| defaults.become_password.clone());
-    Ok(Some(Escalation { user, password }))
+    Ok(Some(Escalation {
+        method,
+        user,
+        password,
+        exe,
+        flags,
+    }))
 }
 
 /// The task's own name for the `FAILED - RETRYING` line: templated against `vars`, and never
@@ -295,7 +342,7 @@ pub(super) enum Prepared {
     /// here, since every item already carries them.
     Remote(
         Vec<Item>,
-        Option<Escalation>,
+        Option<Box<Escalation>>,
         Option<(String, HostVars)>,
         /// Present when this task is a Python module: the module's half of the payload every
         /// item of it runs with. One per task rather than one per item, because the module is
@@ -863,7 +910,7 @@ pub(super) fn prepare(
     // `ansible_become_user` under a `delegate_to` still reads the value the **delegating**
     // host carries, while `ansible_host` and `ansible_connection` read the delegate's. So the
     // link goes to the delegate and escalates to the user the task's own host asked for.
-    let escalation = become_for(task, plan, &base, defaults, templar)?;
+    let escalation = become_for(task, plan, &base, defaults, templar)?.map(Box::new);
     if let Some(kind) = crate::action_plugins::kind(&task.module) {
         return Ok(Prepared::Remote(
             items,
@@ -1998,13 +2045,13 @@ mod tests {
             let err = become_for(
                 &t,
                 &plan(),
-                &hvars(json!({"ansible_become_method": "su"})),
+                &hvars(json!({"ansible_become_method": "doas"})),
                 &defaults(),
                 &templar,
             )
             .unwrap_err();
             assert!(
-                err.0.contains("su") && err.0.contains("not supported"),
+                err.0.contains("doas") && err.0.contains("not supported"),
                 "{}",
                 err.0
             );
@@ -2012,7 +2059,7 @@ mod tests {
                 become_for(
                     &task("command"),
                     &plan(),
-                    &hvars(json!({"ansible_become_method": "su"})),
+                    &hvars(json!({"ansible_become_method": "doas"})),
                     &defaults(),
                     &templar,
                 )
@@ -2045,13 +2092,54 @@ mod tests {
         }
     }
 
+    /// The method, `become_exe` and `become_flags` one task resolves to.
+    type Program<'a> = (BecomeMethod, Vec<&'a str>, Option<Vec<&'a str>>);
+
+    /// `become_method`, `become_exe` and `become_flags`: the host variable over the keyword over
+    /// the defaults, templates rendered, words split, and a value that cannot be split refused.
+    #[rstest::rstest]
+    #[case::defaults(json!({}), (None, None, None), Ok((BecomeMethod::Sudo, vec![], None)))]
+    #[case::keywords(json!({}), (Some("su"), Some("/bin/su"), Some("- -m")), Ok((BecomeMethod::Su, vec!["/bin/su"], Some(vec!["-", "-m"]))))]
+    #[case::host_over_keyword(json!({"ansible_become_method": "sudo", "ansible_become_exe": "/opt/sudo", "ansible_become_flags": "-E"}), (Some("su"), Some("/bin/su"), Some("-")), Ok((BecomeMethod::Sudo, vec!["/opt/sudo"], Some(vec!["-E"]))))]
+    #[case::templated(json!({"tool": "/usr/bin/sudo -E"}), (None, Some("{{ tool }}"), None), Ok((BecomeMethod::Sudo, vec!["/usr/bin/sudo", "-E"], None)))]
+    #[case::no_flags(json!({}), (None, None, Some("")), Ok((BecomeMethod::Sudo, vec![], Some(vec![]))))]
+    #[case::unbalanced(json!({}), (None, None, Some("-H 'x")), Err("'become_flags' has unbalanced quotes"))]
+    #[case::unknown_keyword(json!({}), (Some("doas"), None, None), Err("become_method 'doas' is not supported yet"))]
+    fn the_escalation_program_comes_from_the_variable_the_keyword_or_the_defaults(
+        #[case] vars: Value,
+        #[case] keywords: (Option<&str>, Option<&str>, Option<&str>),
+        #[case] want: Result<Program<'static>, &'static str>,
+    ) {
+        let mut t = task("command");
+        t.r#become = Some(true);
+        t.connect.become_method = keywords.0.map(str::to_string);
+        t.connect.become_exe = keywords.1.map(str::to_string);
+        t.connect.become_flags = keywords.2.map(str::to_string);
+        let got = become_for(&t, &plan(), &hvars(vars), &defaults(), &templar());
+        match (got, want) {
+            (Ok(Some(e)), Ok((method, exe, flags))) => {
+                assert_eq!(e.method, method);
+                assert_eq!(e.exe, exe);
+                assert_eq!(
+                    e.flags,
+                    flags.map(|f| f.into_iter().map(str::to_string).collect())
+                );
+            }
+            (Err(err), Err(says)) => assert!(err.0.contains(says), "{}", err.0),
+            (got, want) => panic!("got {got:?}, wanted {want:?}"),
+        }
+    }
+
     /// The password never has to be quoted, logged or formatted, so the one place it could still
     /// leak is a `Debug` that a `-vvv` diagnostic reaches.
     #[test]
     fn the_become_password_is_redacted_in_debug_output() {
         let escalation = Escalation {
+            method: BecomeMethod::Su,
             user: "root".into(),
             password: Some("s3cret".into()),
+            exe: Vec::new(),
+            flags: None,
         };
         assert!(!format!("{escalation:?}").contains("s3cret"));
         let mut d = defaults();

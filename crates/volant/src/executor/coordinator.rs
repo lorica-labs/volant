@@ -79,6 +79,15 @@ pub struct Progress {
     /// The batch lost more hosts than `max_fail_percentage` allows. Every host still running
     /// leaves at its next step, and the run ends behind the batch.
     pub aborted: bool,
+    /// The `meta: end_batch` and `meta: end_play` steps whose condition held on the host that
+    /// ran them. Written together with that step's `run_once` verdict, so a host that reads the
+    /// verdict reads this too: it leaves the play there, not failed, and its `always` sections
+    /// do not run.
+    pub ending: BTreeSet<usize>,
+    /// The hosts a `meta: refresh_inventory` took out of the play, because the play's pattern
+    /// finds them no longer in the inventory it read again. They leave quietly, not failed,
+    /// and a host reads this once it has read the step's verdict.
+    pub dismissed: BTreeSet<String>,
 }
 
 pub(super) enum Event {
@@ -169,6 +178,13 @@ pub(super) enum Event {
         index: usize,
         name: String,
     },
+    /// What a `meta` action did that the coordinator has to carry out or remember, sent in front
+    /// of the step's `TaskDone` so that the verdict the other hosts wait for already holds it.
+    Meta {
+        host: String,
+        index: usize,
+        effect: MetaEffect,
+    },
     /// This host reached step `index` and has no result to show for it. It is the one event
     /// that prints a header of its own every time: measured on ansible-core 2.19.12, a `meta`
     /// shows one `TASK [meta]` banner per live host with nothing underneath, two banners in a
@@ -215,6 +231,23 @@ pub(super) enum Event {
     },
 }
 
+/// What a `meta` action asks of the batch, besides the banner it shows.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum MetaEffect {
+    /// This host leaves the play, not failed.
+    EndHost,
+    /// Every host of the batch leaves the play, not failed.
+    EndBatch,
+    /// As `EndBatch`, and no batch of the play after this one starts.
+    EndPlay,
+    /// The facts modules gathered for the hosts of the batch are forgotten.
+    ClearFacts,
+    /// The failures and the unreachable hosts of the batch are forgiven.
+    ClearHostErrors,
+    /// The inventory file is read again.
+    RefreshInventory,
+}
+
 /// What a host that could not be reached shows: the reference's error block, then the
 /// `UNREACHABLE!` line.
 struct Unreached {
@@ -237,8 +270,63 @@ impl Unreached {
     }
 }
 
+/// How a round of a batch ended, for the play that runs it.
+pub(super) struct BatchEnd {
+    /// A `meta: end_play` held: no batch of the play after this one starts.
+    pub end_play: bool,
+    /// The hosts `meta: clear_host_errors` brought back, each with the step it picks the play up
+    /// at. They run a round of their own once everybody else is done, as the reference's linear
+    /// strategy goes back for them when its task list has run out.
+    pub revived: Vec<(String, usize)>,
+    /// The hosts that went unreachable in this round and were not forgiven afterwards.
+    pub dark: Vec<String>,
+    /// The step list as the round left it, handed to the next round so that the handlers and the
+    /// includes spliced in on the way are already there. Only kept when `revived` is not empty.
+    pub steps: Option<Compiled>,
+}
+
+/// What one round of a batch remembers besides the coordinator's own books.
+#[derive(Default)]
+struct Round {
+    end_play: bool,
+    /// Hosts that went unreachable and have not been forgiven.
+    dark: HashSet<String>,
+    /// Where each of them picks the play up if it is.
+    resume: HashMap<String, usize>,
+    /// Hosts whose `Unreachable` has been read and whose `Finished` has not. The `Finished` of
+    /// such a host must not put it back among the failed: a `clear_host_errors` may have run in
+    /// between, and the host's connections take a moment to close before it speaks.
+    finishing: HashSet<String>,
+    /// Hosts that were unreachable before this play and are brought back as well.
+    dormant: Vec<String>,
+    revived: Vec<(String, usize)>,
+}
+
+impl Round {
+    fn unreachable(&mut self, host: &str, at: Option<usize>, plan: &PlayPlan) {
+        self.dark.insert(host.to_string());
+        self.finishing.insert(host.to_string());
+        if let Some(at) = at {
+            self.resume
+                .insert(host.to_string(), crate::compile::after(&plan.steps(), at));
+        }
+    }
+
+    /// Whether a host that finished failed is to be filed among the failed hosts by this event.
+    fn files_failure(&mut self, host: &str, failed: bool) -> bool {
+        let reported = self.finishing.remove(host);
+        failed && !reported
+    }
+}
+
 /// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list
 /// does between them. Without `serial` a play is one batch and this is the whole of it.
+///
+/// `hosts` are the ones that run, `whole` the batch as the inventory cut it - failed hosts
+/// included, which is what `clear_facts` and `clear_host_errors` reach - and `dormant` the ones of
+/// it that were unreachable before the play began, which `clear_host_errors` brings back at the
+/// play's first step. `resumed` is `Some` for a round that brings hosts back: the step each picks
+/// the play up at, on the list the round before left, which is why nothing is spliced again.
 #[expect(
     clippy::too_many_arguments,
     reason = "the batch's whole context: the coordinator loop, its drivers and the step list it walks"
@@ -247,15 +335,18 @@ pub(super) async fn run_batch(
     play: &Play,
     compiled: &Compiled,
     hosts: &[Host],
+    whole: &[String],
+    dormant: &[String],
     all: &[String],
     vars_files: &HashMap<String, Vec<Map<String, Value>>>,
     max_fail: Option<(f64, usize)>,
+    resumed: Option<&HashMap<String, usize>>,
     agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
     out: &mut Renderer,
     stats: &mut Stats,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<BatchEnd> {
     let play_hosts: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     // The step list, and the only thing in the play that changes while it runs. This loop owns
     // the sender; every driver reads through its own receiver. One copy per batch: the handlers
@@ -308,11 +399,39 @@ pub(super) async fn run_batch(
         last_failure: None,
         limit: max_fail.map(|(limit, _)| limit),
         batch_size: max_fail.map_or(hosts.len(), |(_, size)| size),
+        removed: HashSet::new(),
+        ending: BTreeSet::new(),
+        dismissed: BTreeSet::new(),
     };
+    let mut round = Round {
+        dormant: dormant.to_vec(),
+        ..Round::default()
+    };
+    if resumed.is_some() {
+        // Nothing is spliced in a round that brings hosts back: the list already holds what the
+        // round before spliced, so a driver waiting on a splice finds every one landed.
+        coordinator.spliced_through = Some(usize::MAX);
+    }
     // Whether the two `NO MORE HOSTS LEFT` of `max_fail_percentage` are out. They follow the last
     // line of the step the batch was lost at.
     let mut said_no_more = false;
     let mut marked_failed = false;
+    let mut done: HashSet<(String, usize)> = HashSet::new();
+    let mut index = 0;
+    if let Some(at) = resumed {
+        // The hosts this round brings back are past every step in front of the one they resume
+        // at: filed as done, so the walk below does not wait for a word about them, and as the
+        // frontier their barriers open on.
+        index = at.values().copied().min().unwrap_or(0);
+        for (host, start) in at {
+            for step in 0..*start {
+                done.insert((host.clone(), step));
+            }
+            if let Some(last) = start.checked_sub(1) {
+                coordinator.frontier.insert(host.clone(), last);
+            }
+        }
+    }
     // This first publish is what decides the runner of a `run_once` step at index 0, before any
     // driver exists to disagree about it. There is no barrier in front of index 0 - nobody has
     // anything to wait for there - so nothing else could make that election unanimous.
@@ -342,6 +461,7 @@ pub(super) async fn run_batch(
         let progress = progress_rx.clone();
         let name = host.name.clone();
         let reported = name.clone();
+        let start = resumed.and_then(|at| at.get(&host.name).copied());
         workers.push((
             name,
             tokio::spawn(async move {
@@ -352,7 +472,7 @@ pub(super) async fn run_batch(
                 let driver = tokio::spawn(async move {
                     drive_host(
                         host, plan, agents, options, templar, vars, verbosity, existing, forks,
-                        progress, tx,
+                        progress, tx, start,
                     )
                     .await;
                 });
@@ -382,7 +502,6 @@ pub(super) async fn run_batch(
     drop(tx);
 
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
-    let mut done: HashSet<(String, usize)> = HashSet::new();
     let mut gone: HashSet<String> = HashSet::new();
     // The templated names the drivers rendered at their own step, by host and step.
     let mut names: HashMap<(String, usize), String> = HashMap::new();
@@ -394,7 +513,6 @@ pub(super) async fn run_batch(
     // began at. The host leaves the play on arrival; its block and line print where the host
     // stands in the step's order, like a result, instead of in front of the hosts before it.
     let mut unreached: HashMap<(String, usize), Unreached> = HashMap::new();
-    let mut index = 0;
     // Not `for .. in steps.iter()`: the list grows at a flush point, so its length is read again
     // each time round. The step is cloned rather than borrowed for the same reason - the splice
     // below replaces the value the borrow would point into.
@@ -563,7 +681,7 @@ pub(super) async fn run_batch(
                         if silent_failure {
                             stats.failed_unreported(&host);
                         }
-                        if failed {
+                        if round.files_failure(&host, failed) {
                             // The host is leaving the run for good: keeping its connection open
                             // would just idle until the run ends.
                             state.failed_hosts.insert(host.clone());
@@ -571,6 +689,30 @@ pub(super) async fn run_batch(
                         keep_links(&mut state.links, links, failed).await;
                         gone.insert(host);
                         coordinator.publish(&state.failed_hosts, &plan.steps().steps);
+                    }
+                    Some(Event::Meta {
+                        host,
+                        index: at,
+                        effect,
+                    }) => {
+                        let warned = apply_meta(
+                            effect,
+                            &mut round,
+                            &mut coordinator,
+                            &MetaContext {
+                                host: &host,
+                                at,
+                                whole,
+                                pattern: &play.hosts,
+                                plan: &plan,
+                                first: crate::compile::first(&plan.steps()),
+                            },
+                            state,
+                            stats,
+                        );
+                        for message in warned {
+                            out.warning(&message, false);
+                        }
                     }
                     Some(Event::Unreachable {
                         host,
@@ -581,6 +723,7 @@ pub(super) async fn run_batch(
                         index: at,
                     }) => {
                         stats.unreachable(&host);
+                        round.unreachable(&host, at, &plan);
                         let blame = Unreached {
                             msg,
                             censored,
@@ -631,7 +774,7 @@ pub(super) async fn run_batch(
         // reported the splice point or stepped over it. A play with no handlers splices nothing
         // and still publishes, because the drivers waiting on it have no way to know that and
         // would wait for ever.
-        if crate::compile::is_splice_point(&step.kind) {
+        if crate::compile::is_splice_point(&step.kind) && resumed.is_none() {
             let mut next = { (**plan_tx.borrow()).clone() };
             if let StepKind::Flush { .. } = step.kind {
                 let steps = crate::compile::handler_steps(&next, index);
@@ -703,6 +846,18 @@ pub(super) async fn run_batch(
             // What was spliced in is marked with the rest, and a role it brought carries
             // variables that can change the mark of a step further down.
             mark_boundaries(&mut next, &definitions, &playbook_dir);
+            // A step a host that left will pick the play up at moves with the list, if it sits
+            // behind the splice.
+            let grown = next.steps.len() - plan.steps().steps.len();
+            for at in round
+                .resume
+                .values_mut()
+                .chain(round.revived.iter_mut().map(|(_, at)| at))
+            {
+                if *at > index {
+                    *at += grown;
+                }
+            }
             plan_tx.send_replace(Arc::new(next));
 
             // The splice moved every index past this point, so an election decided for the step
@@ -742,6 +897,7 @@ pub(super) async fn run_batch(
                 index: at,
             } => {
                 stats.unreachable(&host);
+                round.unreachable(&host, at, &plan);
                 // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
                 // the reason censored.
                 out.error(&crate::render::ErrorBlock::unreachable(
@@ -771,11 +927,36 @@ pub(super) async fn run_batch(
                 if silent_failure {
                     stats.failed_unreported(&host);
                 }
-                if failed {
+                if round.files_failure(&host, failed) {
                     state.failed_hosts.insert(host);
                 }
                 keep_links(&mut state.links, links, failed).await;
                 coordinator.publish(&state.failed_hosts, &plan.steps().steps);
+            }
+            // A `meta` action whose step the loop above never reached still did what it did.
+            Event::Meta {
+                host,
+                index: at,
+                effect,
+            } => {
+                let warned = apply_meta(
+                    effect,
+                    &mut round,
+                    &mut coordinator,
+                    &MetaContext {
+                        host: &host,
+                        at,
+                        whole,
+                        pattern: &play.hosts,
+                        plan: &plan,
+                        first: crate::compile::first(&plan.steps()),
+                    },
+                    state,
+                    stats,
+                );
+                for message in warned {
+                    out.warning(&message, false);
+                }
             }
             Event::Named { host, index, name } => {
                 names.insert((host, index), name);
@@ -839,7 +1020,152 @@ pub(super) async fn run_batch(
             state.failed_hosts.insert(host);
         }
     }
-    Ok(())
+    let revived = std::mem::take(&mut round.revived);
+    Ok(BatchEnd {
+        end_play: round.end_play,
+        steps: (!revived.is_empty()).then(|| (**plan_tx.borrow()).clone()),
+        revived,
+        dark: round.dark.into_iter().collect(),
+    })
+}
+
+/// What carrying out a `meta` effect reads besides the books the round keeps.
+struct MetaContext<'a> {
+    /// The host that ran the action and the step it ran at.
+    host: &'a str,
+    at: usize,
+    /// The batch as the inventory cut it: measured, a clear in a later batch leaves an earlier batch's failures.
+    whole: &'a [String],
+    /// The play's `hosts:` pattern, which a refreshed inventory is asked about again.
+    pattern: &'a str,
+    plan: &'a PlayPlan,
+    /// The step a host that was unreachable before the play picks it up at.
+    first: usize,
+}
+
+/// Carries out what a `meta` action asked of the batch, and answers the warnings it raised. Runs
+/// in the order the events arrive, which puts it in front of the `TaskDone` of the step: the
+/// verdict the other hosts wait for is published after it.
+fn apply_meta(
+    effect: MetaEffect,
+    round: &mut Round,
+    coordinator: &mut Coordinator<'_>,
+    cx: &MetaContext<'_>,
+    state: &mut RunState,
+    stats: &mut Stats,
+) -> Vec<String> {
+    let mut warned = Vec::new();
+    match effect {
+        MetaEffect::EndHost => {
+            coordinator.removed.insert(cx.host.to_string());
+        }
+        MetaEffect::EndBatch | MetaEffect::EndPlay => {
+            // Every host of the batch that is still in it, the one that asked included. The
+            // verdict goes out in the same publish, because a host that read the shrunken list
+            // before it would take the runner for a host that vanished without one.
+            let staying: Vec<String> = coordinator
+                .batch_hosts
+                .iter()
+                .filter(|h| !state.failed_hosts.contains(*h))
+                .cloned()
+                .collect();
+            coordinator.removed.extend(staying);
+            coordinator.ending.insert(cx.at);
+            coordinator.run_once.insert(cx.at, false);
+            round.end_play |= effect == MetaEffect::EndPlay;
+        }
+        MetaEffect::ClearFacts => {
+            state
+                .vars
+                .lock()
+                .expect("vars lock")
+                .clear_gathered(cx.whole);
+        }
+        MetaEffect::ClearHostErrors => {
+            // The hosts that are out of the play now stay out of this round, forgiven or not:
+            // the reference revives an unreachable host in a round of its own and never a
+            // failed one.
+            coordinator.removed.extend(
+                cx.whole
+                    .iter()
+                    .filter(|h| state.failed_hosts.contains(*h))
+                    .cloned(),
+            );
+            for h in cx.whole {
+                // An earlier play's unreachable host stays unreachable for every play after,
+                // whatever is cleared: its mark on the exit code stays with it.
+                let kept = state.unreachable_hosts.contains(h);
+                stats.clear_errors(h, kept);
+                if !kept {
+                    state.failed_hosts.remove(h);
+                }
+            }
+            for (h, resume) in round.resume.drain() {
+                if cx.whole.contains(&h) {
+                    round.dark.remove(&h);
+                    state.failed_hosts.remove(&h);
+                    round.revived.push((h, resume));
+                }
+            }
+            for h in std::mem::take(&mut round.dormant) {
+                state.failed_hosts.remove(&h);
+                round.revived.push((h, cx.first));
+            }
+            coordinator.failed_here.clear();
+            coordinator.last_failure = None;
+        }
+        MetaEffect::RefreshInventory => {
+            let path = state
+                .vars
+                .lock()
+                .expect("vars lock")
+                .inventory_file()
+                .map(std::path::Path::to_path_buf);
+            // No inventory file, nothing to read again: the implicit `localhost` is all there is.
+            if let Some(path) = path {
+                // Measured on ansible-core 2.19.12: an inventory that cannot be read any more is
+                // warned about and left empty, and the run carries on without any host in it.
+                let fresh = crate::inventory::Inventory::load(&path).unwrap_or_else(|_| {
+                    let shown = std::path::absolute(&path).unwrap_or_else(|_| path.clone());
+                    warned.push(format!(
+                        "Unable to parse {} as an inventory source",
+                        shown.display()
+                    ));
+                    warned.push(
+                        "No inventory was parsed, only implicit localhost is available".to_string(),
+                    );
+                    crate::inventory::Inventory::empty()
+                });
+                state
+                    .vars
+                    .lock()
+                    .expect("vars lock")
+                    .refresh_inventory(&fresh);
+                // The hosts of the batch the play's pattern no longer finds leave the play where
+                // it stands, not failed; a host the file gained joins the next play. The verdict
+                // goes out in the same publish as the dismissal, for the reason the end of a
+                // batch does.
+                let kept: HashSet<String> = fresh
+                    .resolve(cx.pattern)
+                    .hosts
+                    .into_iter()
+                    .map(|host| host.name)
+                    .collect();
+                let leaving: Vec<String> = coordinator
+                    .batch_hosts
+                    .iter()
+                    .filter(|h| !kept.contains(*h))
+                    .cloned()
+                    .collect();
+                coordinator.removed.extend(leaving.iter().cloned());
+                coordinator.dismissed.extend(leaving);
+                coordinator.run_once.insert(cx.at, false);
+                state.refreshed = Some(fresh);
+            }
+        }
+    }
+    coordinator.publish(&state.failed_hosts, &cx.plan.steps().steps);
+    warned
 }
 
 /// Whether an event puts a line on the terminal, which is what a step's header goes in front
@@ -1032,6 +1358,14 @@ struct Coordinator<'a> {
     limit: Option<f64>,
     /// The batch as the inventory cut it, failed hosts of earlier plays included.
     batch_size: usize,
+    /// The hosts a `meta` action took out of this round of the play without failing them: the
+    /// ones that ended, and the ones `clear_host_errors` forgave, which stay out of the play they
+    /// were forgiven in. Left out of both host lists like a host that failed.
+    removed: HashSet<String>,
+    /// See `Progress::ending`.
+    ending: BTreeSet<usize>,
+    /// See `Progress::dismissed`.
+    dismissed: BTreeSet<String>,
 }
 
 impl Coordinator<'_> {
@@ -1088,13 +1422,13 @@ impl Coordinator<'_> {
         let live_hosts: Vec<String> = self
             .batch_hosts
             .iter()
-            .filter(|h| !lost.contains(*h))
+            .filter(|h| !lost.contains(*h) && !self.removed.contains(*h))
             .cloned()
             .collect();
         let play_hosts_left: Vec<String> = self
             .all_hosts
             .iter()
-            .filter(|h| !lost.contains(*h))
+            .filter(|h| !lost.contains(*h) && !self.removed.contains(*h))
             .cloned()
             .collect();
         // `max_fail_percentage`: once the step a host failed at is finished on every host still
@@ -1149,6 +1483,8 @@ impl Coordinator<'_> {
             elected: self.elected.clone(),
             fatal: self.fatal.clone(),
             aborted: self.aborted,
+            ending: self.ending.clone(),
+            dismissed: self.dismissed.clone(),
         });
     }
 }
@@ -1291,6 +1627,9 @@ mod tests {
             last_failure: None,
             limit: None,
             batch_size: hosts.len(),
+            removed: HashSet::new(),
+            ending: BTreeSet::new(),
+            dismissed: BTreeSet::new(),
         }
     }
 

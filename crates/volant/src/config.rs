@@ -27,6 +27,10 @@ pub struct Config {
     pub r#become: bool,
     pub become_user: String,
     pub become_method: String,
+    /// `become_exe` and `become_flags`, as written; `None` leaves the method's own program and
+    /// flags in place.
+    pub become_exe: Option<String>,
+    pub become_flags: Option<String>,
     /// Whether a host that failed still runs the handlers it notified. Measured on ansible-core
     /// 2.19.12: `[defaults] force_handlers = True` and `--force-handlers` give the same run, down
     /// to the recap.
@@ -83,6 +87,8 @@ impl Default for Config {
             r#become: false,
             become_user: DEFAULT_BECOME_USER.to_string(),
             become_method: DEFAULT_BECOME_METHOD.to_string(),
+            become_exe: None,
+            become_flags: None,
             force_handlers: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
@@ -268,6 +274,16 @@ impl Config {
         {
             config.become_method = method.trim().to_string();
         }
+        if let Ok(exe) = std::env::var("ANSIBLE_BECOME_EXE")
+            && !exe.trim().is_empty()
+        {
+            config.become_exe = Some(exe.trim().to_string());
+        }
+        if let Ok(flags) = std::env::var("ANSIBLE_BECOME_FLAGS")
+            && !flags.trim().is_empty()
+        {
+            config.become_flags = Some(flags.trim().to_string());
+        }
         // The environment replaces the file's list rather than adding to it, the way every
         // other list setting here does; the command line is what adds to whichever won.
         if let Ok(list) = std::env::var("ANSIBLE_RUN_TAGS") {
@@ -412,6 +428,15 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
                         config.become_method = method.to_string();
                     }
                 }
+                "become_exe" => {
+                    let exe = value.trim();
+                    if !exe.is_empty() {
+                        config.become_exe = Some(exe.to_string());
+                    }
+                }
+                // A blank `become_flags =` is kept: the reference then runs the program with no
+                // flags at all, its own defaults included.
+                "become_flags" => config.become_flags = Some(value.trim().to_string()),
                 _ => {}
             }
             continue;
@@ -821,6 +846,12 @@ native_modules = maybe
             c.become_method, "su",
             "kept as written so the escalation check can refuse it by name"
         );
+        let c = cfg(
+            "[privilege_escalation]\nbecome_exe = /usr/bin/sudo\nbecome_flags = -E\n",
+            ".",
+        );
+        assert_eq!(c.become_exe.as_deref(), Some("/usr/bin/sudo"));
+        assert_eq!(c.become_flags.as_deref(), Some("-E"));
         let c = cfg("[privilege_escalation]\nbecome_method =\n", ".");
         assert_eq!(
             c.become_method, DEFAULT_BECOME_METHOD,

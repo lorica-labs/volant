@@ -237,6 +237,8 @@ fn defaults() -> volant::transport::ConnectionDefaults {
         r#become: false,
         become_user: "root".into(),
         become_method: "sudo".into(),
+        become_exe: None,
+        become_flags: None,
         become_password: None,
     }
 }
@@ -362,7 +364,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
     for (category, runs) in [
         (
             "become",
-            (|n: &str| n == volant::playbook::BECOME_METHOD) as fn(&str) -> bool,
+            (|n: &str| volant::playbook::BECOME_METHODS.contains(&n)) as fn(&str) -> bool,
         ),
         ("strategy", |n: &str| n == volant::preflight::STRATEGY),
         ("inventory", |n: &str| n == "ini"),

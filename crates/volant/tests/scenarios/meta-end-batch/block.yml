@@ -1,0 +1,10 @@
+- hosts: all
+  serial: 2
+  gather_facts: false
+  tasks:
+    - block:
+        - debug: msg=in
+        - meta: end_batch
+      always:
+        - debug: msg=always
+    - debug: msg=after

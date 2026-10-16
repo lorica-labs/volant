@@ -1,0 +1,12 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - shell: printf '[g\nh1\n' > {{ playbook_dir }}/inv.ini
+      delegate_to: localhost
+      run_once: true
+    - meta: refresh_inventory
+    - debug: msg=never
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=play2

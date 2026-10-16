@@ -1,0 +1,8 @@
+# end_host takes one host out of the play, its always sections included, and leaves it failed or rescued as it was.
+runs:
+  - args: [-i, inv.ini, when.yml]
+  - args: [-i, inv.ini, block.yml]
+  - args: [-i, inv.ini, rescue.yml]
+  - args: [-i, inv.ini, runner.yml]
+  - args: [-i, inv.ini, failed.yml]
+  - args: [-i, inv.ini, serial.yml]

@@ -1,0 +1,14 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+          when: inventory_hostname == 'h2'
+      rescue:
+        - debug: msg=rescued
+        - meta: end_host
+          when: inventory_hostname == 'h2'
+        - debug: msg=after-end-in-rescue
+      always:
+        - debug: msg=always
+    - debug: msg=after

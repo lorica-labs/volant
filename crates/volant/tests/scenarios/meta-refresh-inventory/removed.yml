@@ -1,0 +1,15 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=a
+    - shell: printf 'h1 ansible_connection=local ansible_python_interpreter=/usr/bin/python3\nh2 ansible_connection=local ansible_python_interpreter=/usr/bin/python3\n' > {{ playbook_dir }}/inv.ini
+      delegate_to: localhost
+      run_once: true
+    - meta: refresh_inventory
+    - debug: msg="{{ ansible_play_hosts }}"
+      run_once: true
+    - debug: msg=b
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=play2

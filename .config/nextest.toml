@@ -14,5 +14,5 @@ default-filter = "not binary(reference_modules)"
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = "binary(reference_modules) | binary(native_user) | binary(native_group) | test(=ssh_natives_match_python_on_a_real_host) | test(=ssh_a_native_falls_back_before_touching_the_host) | test(=ssh_twenty_copies_take_the_native_path)"
+filter = "binary(reference_modules) | binary(native_user) | binary(native_group) | test(=ssh_natives_match_python_on_a_real_host) | test(=ssh_a_native_falls_back_before_touching_the_host) | test(=ssh_twenty_copies_take_the_native_path) | test(/^ssh_su_/) | test(=ssh_become_to_an_unprivileged_user_reaches_the_agent)"
 test-group = "host-changing"

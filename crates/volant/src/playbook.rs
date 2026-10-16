@@ -407,9 +407,25 @@ impl PlayTask {
     /// reference. Measured on ansible-core 2.19.12 with two hosts: a `pause` shows `ok: [h1]`
     /// alone, registers nothing on h2, a `when` that leaves h1 out skips it for both, and one
     /// that fails takes h2 out of the play the way a failed `run_once` does. Where the two
-    /// differ is `register`, which `run_once` writes for every host: see `fact_targets`.
+    /// differ is `register`, which `run_once` writes for every host: see `fact_targets`. A `meta`
+    /// action the reference runs through its first host is the third such task: see
+    /// [`PlayTask::meta_once`].
     pub fn bypasses_host_loop(&self) -> bool {
-        self.runs_once() || self.pauses()
+        self.runs_once() || self.pauses() || self.meta_once()
+    }
+
+    /// Whether this is a `meta` action the reference runs once for the whole batch, through its
+    /// first host: its `when` is read on that host alone and the others only wait for the answer.
+    /// Measured on ansible-core 2.19.12: `end_play`, `end_batch`, `refresh_inventory`,
+    /// `clear_facts` and `clear_host_errors` print one `TASK [meta]` banner, and a `when` that
+    /// holds for a later host and not for the first one leaves the play as it was.
+    pub fn meta_once(&self) -> bool {
+        is_meta(self)
+            && self
+                .args
+                .get("_raw_params")
+                .and_then(Value::as_str)
+                .is_some_and(|action| META_ONCE.contains(&action))
     }
 
     fn pauses(&self) -> bool {
@@ -434,6 +450,7 @@ impl PlayTask {
         (self.runs_once() && crate::keywords::is_barrier("run_once"))
             || self.pauses()
             || self.fails_all()
+            || self.meta_once()
     }
 
     /// Whether a failure of this task on one host fails the whole batch. A barrier too: the
@@ -448,26 +465,34 @@ impl PlayTask {
     }
 }
 
-/// `remote_user`, `port` and `connection`, wherever they are written, as written: each may be a
-/// template, rendered when the task runs. A task's own value wins over its block's and its
-/// play's, and a host variable wins over all of them; see `Transport::for_task`.
+/// `remote_user`, `port`, `connection` and the escalation program's keywords `become_method`,
+/// `become_exe` and `become_flags`, wherever they are written, as written: each may be a
+/// template, rendered when the task runs, except `become_method`, which names one of
+/// [`BECOME_METHODS`]. A task's own value wins over its block's and its play's, and a host
+/// variable wins over all of them; see `Transport::for_task` and `become_for`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Connect {
     pub remote_user: Option<String>,
     pub port: Option<String>,
     pub connection: Option<String>,
+    pub become_method: Option<String>,
+    pub become_exe: Option<String>,
+    pub become_flags: Option<String>,
 }
 
 impl Connect {
     /// This layer over the one outside it.
     pub fn over(&self, outer: &Connect) -> Connect {
+        let pick = |inner: &Option<String>, outer: &Option<String>| {
+            inner.clone().or_else(|| outer.clone())
+        };
         Connect {
-            remote_user: self
-                .remote_user
-                .clone()
-                .or_else(|| outer.remote_user.clone()),
-            port: self.port.clone().or_else(|| outer.port.clone()),
-            connection: self.connection.clone().or_else(|| outer.connection.clone()),
+            remote_user: pick(&self.remote_user, &outer.remote_user),
+            port: pick(&self.port, &outer.port),
+            connection: pick(&self.connection, &outer.connection),
+            become_method: pick(&self.become_method, &outer.become_method),
+            become_exe: pick(&self.become_exe, &outer.become_exe),
+            become_flags: pick(&self.become_flags, &outer.become_flags),
         }
     }
 }
@@ -481,42 +506,9 @@ fn connect_keywords(yaml: &Yaml, context: &str) -> anyhow::Result<Connect> {
             Some(other) => bail!("{context}'{key}' must be a name, found {other:?}"),
         }
     };
-    Ok(Connect {
-        remote_user: text("remote_user")?,
-        port: text("port")?,
-        connection: text("connection")?,
-    })
-}
-
-/// The only escalation method this release implements. `su`, `doas`, `pbrun` and the rest are
-/// refused by name at load time: escalating through a different program is not the same
-/// operation, and quietly using `sudo` where the playbook asked for `su` would run the task
-/// under rules the operator never wrote.
-pub const BECOME_METHOD: &str = "sudo";
-
-/// The one name in the module column that is not a module: `meta` asks the engine itself for
-/// something, so it is read here and compiled into a step of its own instead of travelling to
-/// an agent.
-pub const META: &str = "meta";
-
-/// The three escalation keywords, wherever they appear. `become_user` and `become_method` are
-/// read as text; `become` goes through `as_bool`, so `yes`, `on` and `"true"` all work as they
-/// do in Ansible.
-///
-/// `become_method` comes back as nothing: refusing everything but `sudo` right here is all a
-/// caller could ever do with it, so it is refused here and not stored.
-fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Option<String>)> {
-    let text = |key: &str| -> anyhow::Result<Option<String>> {
-        match field(yaml, key) {
-            None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
-            Some(Yaml::Value(Scalar::String(s))) => Ok(Some(s.to_string())),
-            Some(other) => bail!("{context}'{key}' must be a name, found {other:?}"),
-        }
-    };
-    let flag = boolean(yaml, "become")?;
-    let user = text("become_user")?;
-    if let Some(method) = text("become_method")?
-        && method != BECOME_METHOD
+    let become_method = text("become_method")?;
+    if let Some(method) = &become_method
+        && !BECOME_METHODS.contains(&method.as_str())
     {
         // Exit 2, not the 4 the rest of a refused playbook gets: measured, the reference reads
         // this keyword happily and then fails the task that would have used it, which is 2.
@@ -525,6 +517,37 @@ fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
             format!("{context}become_method '{method}' is not supported yet"),
         ));
     }
+    Ok(Connect {
+        remote_user: text("remote_user")?,
+        port: text("port")?,
+        connection: text("connection")?,
+        become_method,
+        become_exe: text("become_exe")?,
+        become_flags: text("become_flags")?,
+    })
+}
+
+/// The escalation methods this release implements. `doas`, `pbrun` and the rest are refused by
+/// name: escalating through a different program is not the same operation, and quietly using
+/// `sudo` where the playbook asked for `doas` would run the task under rules the operator never
+/// wrote.
+pub const BECOME_METHODS: [&str; 2] = ["sudo", "su"];
+
+/// The one name in the module column that is not a module: `meta` asks the engine itself for
+/// something, so it is read here and compiled into a step of its own instead of travelling to
+/// an agent.
+pub const META: &str = "meta";
+
+/// `become` and `become_user`, wherever they appear. `become_user` is read as text; `become`
+/// goes through `as_bool`, so `yes`, `on` and `"true"` all work as they do in Ansible. The
+/// method and its program are read with the connection keywords, which fold the same way.
+fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Option<String>)> {
+    let flag = boolean(yaml, "become")?;
+    let user = match field(yaml, "become_user") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
+        Some(other) => bail!("{context}'become_user' must be a name, found {other:?}"),
+    };
     Ok((flag, user))
 }
 
@@ -753,6 +776,15 @@ fn python_str_repr(s: &str) -> String {
 pub fn is_meta(task: &PlayTask) -> bool {
     short_name(&task.module) == META
 }
+
+/// The `meta` actions that run once for the batch; see [`PlayTask::meta_once`].
+pub(crate) const META_ONCE: [&str; 5] = [
+    "clear_facts",
+    "clear_host_errors",
+    "end_batch",
+    "end_play",
+    "refresh_inventory",
+];
 
 /// The collection modules the reference reads a string argument of as one command line: the two
 /// of `ansible.windows` in ansible-core 2.19.12's `FREEFORM_ACTIONS`, whose other entries are all
@@ -2040,17 +2072,17 @@ mod tests {
         "- hosts: all\n  nosuchplaykeyword: 1\n  tasks: []\n",
         &["'nosuchplaykeyword' is not a valid attribute for a Play"]
     )]
-    #[case::become_method_play_su(
-        "- hosts: all\n  become: true\n  become_method: su\n  tasks: []\n",
-        &["su", "not supported yet"]
+    #[case::become_method_play_doas(
+        "- hosts: all\n  become: true\n  become_method: doas\n  tasks: []\n",
+        &["doas", "not supported yet"]
     )]
     #[case::become_method_play_runas(
         "- hosts: all\n  become: true\n  become_method: runas\n  tasks: []\n",
         &["runas", "not supported yet"]
     )]
-    #[case::become_method_task_su(
-        "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: su\n",
-        &["su", "T"]
+    #[case::become_method_task_doas(
+        "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: doas\n",
+        &["doas", "T"]
     )]
     #[case::become_method_task_runas(
         "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: runas\n",
@@ -2180,8 +2212,6 @@ mod tests {
     #[rstest]
     #[case::throttle("throttle")]
     #[case::diff("diff")]
-    #[case::become_flags("become_flags")]
-    #[case::become_exe("become_exe")]
     fn a_keyword_is_parked_for_the_preflight(#[case] kw: &str) {
         let pb = parse(
             &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),

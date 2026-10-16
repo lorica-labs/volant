@@ -139,7 +139,18 @@ fn spawn_detached(flag: &str, spec: &Spec) -> io::Result<Child> {
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
-        command.process_group(0);
+        // A session of its own, as the reference's wrapper daemonizes: no terminal an `su` link
+        // hangs up, and a process group of its own for the timeout to kill.
+        // SAFETY: `setsid` is async-signal-safe and touches no memory of the parent.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() == -1 {
+                    Err(io::Error::last_os_error())
+                } else {
+                    Ok(())
+                }
+            });
+        }
     }
     let mut child = command.spawn()?;
     let mut stdin = child.stdin.take().expect("stdin was piped");

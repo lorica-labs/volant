@@ -2872,6 +2872,46 @@ ok: [localhost] => (item=one) => {
         0,
         "\"msg\": \"alpha\"",
     ),
+    runs(
+        "loop_control",
+        "index_var",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"idx={{ i }}\"\n      loop: [alpha]\n      loop_control:\n        index_var: i\n",
+        &[],
+        0,
+        "\"msg\": \"idx=0\"",
+    ),
+    runs(
+        "loop_control",
+        "extended",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"n={{ ansible_loop.index }}\"\n      loop: [alpha]\n      loop_control:\n        extended: true\n",
+        &[],
+        0,
+        "\"msg\": \"n=1\"",
+    ),
+    runs(
+        "loop_control",
+        "extended_allitems",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ ansible_loop.allitems | default('dropped') }}\"\n      loop: [alpha]\n      loop_control:\n        extended: true\n        extended_allitems: false\n",
+        &[],
+        0,
+        "\"msg\": \"dropped\"",
+    ),
+    runs(
+        "loop_control",
+        "pause",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [alpha]\n      loop_control:\n        pause: -1\n",
+        &[],
+        4,
+        "loop_control.pause",
+    ),
+    runs(
+        "loop_control",
+        "break_when",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [1, 2, 3]\n      loop_control:\n        break_when: item == 1\n      register: r\n    - debug:\n        msg: \"ran={{ r.results | length }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"ran=1\"",
+    ),
     // The handler keywords. Each body is written so that dropping the keyword's handling leaves
     // the probe with nothing to print: no handler list means no handler to notify, no `notify`
     // means nothing asks for one, no `listen` means the name reaches nothing, and without

@@ -221,11 +221,18 @@ fn include_request(
         }
     }
     if item.element.is_some() {
-        if let Some(value) = item.vars.get(&task.loop_var) {
-            if item.vars.untrusted.contains(&task.loop_var) {
-                vars.untrusted.insert(task.loop_var.clone());
+        let bound = [Some(&task.loop_var), task.index_var.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .chain(task.loop_extended.then_some("ansible_loop"));
+        for name in bound {
+            if let Some(value) = item.vars.get(name) {
+                if item.vars.untrusted.contains(name) {
+                    vars.untrusted.insert(name.to_string());
+                }
+                vars.values.insert(name.to_string(), value.clone());
             }
-            vars.values.insert(task.loop_var.clone(), value.clone());
         }
         vars.values.insert(
             "ansible_loop_var".into(),

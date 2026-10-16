@@ -230,6 +230,9 @@ pub(super) fn item_keys(
         "ansible_loop_var".into(),
         Value::from(task.loop_var.clone()),
     );
+    if let Some(name) = &task.index_var {
+        result.insert("ansible_index_var".into(), Value::from(name.clone()));
+    }
 }
 
 #[cfg(test)]

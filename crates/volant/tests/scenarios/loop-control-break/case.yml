@@ -1,0 +1,3 @@
+# break_when ends a loop after the first item for which every condition holds, a skipped item
+# included; the results keep only the items that ran and the message stays the usual one.
+args: [loop-control-break.yml]

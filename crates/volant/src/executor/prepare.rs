@@ -468,7 +468,15 @@ pub(super) fn prepare(
         Some(Err(e)) => return Err(e),
     };
     let mut items = Vec::new();
-    for element in elements {
+    // What `ansible_loop` reads: every item, kept only when the loop asks for `extended`.
+    let list: Vec<&Value> = if task.loop_extended {
+        elements.iter().flatten().collect()
+    } else {
+        Vec::new()
+    };
+    let list_value = (task.loop_extended && task.loop_allitems)
+        .then(|| Value::Array(list.iter().map(|v| (*v).clone()).collect()));
+    for (index, element) in elements.iter().cloned().enumerate() {
         let mut vars = base.clone();
         if let Some(el) = &element {
             if items_from_host {
@@ -480,6 +488,36 @@ pub(super) fn prepare(
                 "ansible_loop_var".into(),
                 Value::String(task.loop_var.clone()),
             );
+            if let Some(name) = &task.index_var {
+                vars.insert(name.clone(), Value::from(index));
+            }
+            if task.loop_extended {
+                let last = list.len() - 1;
+                let mut ansible_loop = Map::new();
+                ansible_loop.insert("index".into(), Value::from(index + 1));
+                ansible_loop.insert("index0".into(), Value::from(index));
+                ansible_loop.insert("first".into(), Value::Bool(index == 0));
+                ansible_loop.insert("last".into(), Value::Bool(index == last));
+                ansible_loop.insert("length".into(), Value::from(list.len()));
+                ansible_loop.insert("revindex".into(), Value::from(list.len() - index));
+                ansible_loop.insert("revindex0".into(), Value::from(last - index));
+                if let Some(all) = &list_value {
+                    ansible_loop.insert("allitems".into(), all.clone());
+                }
+                if index < last {
+                    ansible_loop.insert("nextitem".into(), list[index + 1].clone());
+                }
+                if index > 0 {
+                    ansible_loop.insert("previtem".into(), list[index - 1].clone());
+                }
+                // Its items are the loop's, so they are as much a managed host's as the
+                // loop variable is.
+                if items_from_host {
+                    vars.insert_untrusted("ansible_loop".into(), Value::Object(ansible_loop));
+                } else {
+                    vars.insert("ansible_loop".into(), Value::Object(ansible_loop));
+                }
+            }
             // Variables naming the loop variable could not resolve before it was bound. One of
             // them may be built from the item, so this pass widens the set the same way.
             let (resolved, untrusted) = templar.resolve_vars_tainted(&vars);

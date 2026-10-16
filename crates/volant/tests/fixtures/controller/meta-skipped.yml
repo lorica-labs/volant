@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - meta: end_play
+      when: false
+    - meta: end_host
+      when: false
+    - meta: flush_handlers
+      when: false
+    - meta: clear_facts
+      when: false
+    - meta: clear_host_errors
+      when: false
+    - meta: end_batch
+      when: false

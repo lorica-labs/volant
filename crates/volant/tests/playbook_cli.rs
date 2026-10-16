@@ -362,6 +362,38 @@ fn a_bad_playbook_exits_1_with_the_error_on_stderr() {
     assert!(String::from_utf8_lossy(&out.stderr).contains("does-not-exist.yml"));
 }
 
+/// A skipped `meta` is no result the recap counts, and at `-v` it carries the reference's words.
+#[test]
+fn a_skipped_meta_says_what_the_reference_says_and_counts_for_nothing() {
+    let out = volant(&[
+        "playbook",
+        "-v",
+        "-i",
+        &fixture("controller/two-hosts.ini"),
+        &fixture("controller/meta-skipped.yml"),
+    ]);
+    let text = String::from_utf8(out.stdout).unwrap();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    for line in [
+        r#"skipping: [h1] => {"msg": "end_play", "skip_reason": "end_play conditional evaluated to False, continuing play"}"#,
+        r#"skipping: [h1] => {"msg": "end_host conditional evaluated to false, continuing execution for h1", "skip_reason": "end_host conditional evaluated to False, continuing execution for h1"}"#,
+        r#"skipping: [h1] => {"msg": "flush_handlers", "skip_reason": "flush_handlers conditional evaluated to False, not running handlers for h1"}"#,
+        r#"skipping: [h1] => {"msg": "clear_facts", "skip_reason": "clear_facts conditional evaluated to False, not clearing facts and fact cache for h1"}"#,
+        r#"skipping: [h1] => {"msg": "clear_host_errors", "skip_reason": "clear_host_errors conditional evaluated to False, not clearing host error state for h1"}"#,
+        r#"skipping: [h1] => {"msg": "end_batch", "skip_reason": "end_batch conditional evaluated to False, continuing current batch"}"#,
+    ] {
+        assert!(
+            text.contains(line),
+            "missing {line}:
+{text}"
+        );
+    }
+    assert!(
+        text.contains("h1                         : ok=0    changed=0    unreachable=0    failed=0    skipped=0"),
+        "{text}"
+    );
+}
+
 #[test]
 fn a_deferred_render_error_does_not_resurrect_a_host_that_already_failed() {
     let out = volant(&[

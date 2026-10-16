@@ -2899,10 +2899,10 @@ ok: [localhost] => (item=one) => {
     runs(
         "loop_control",
         "pause",
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [alpha]\n      loop_control:\n        pause: -1\n",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [alpha, beta]\n      loop_control:\n        pause: 0.01\n    - name: Probe pause refused\n      debug:\n        msg: probe\n      loop: [alpha]\n      loop_control:\n        pause: abc\n",
         &[],
-        4,
-        "loop_control.pause",
+        2,
+        "Error processing keyword 'pause'",
     ),
     runs(
         "loop_control",

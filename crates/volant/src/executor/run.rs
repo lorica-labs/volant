@@ -941,8 +941,11 @@ pub(super) fn break_after(
     true
 }
 
-/// Walks the items `from` up to `upto` and says which one `break_when` ends the loop at, if any.
-/// A skipped item counts, as in the reference; an item that never ran has no result and is passed.
+/// Walks the items `from` up to `upto` and says which one `break_when` ends the loop at, if any,
+/// and how many items it passed without one. A skipped item counts, as in the reference; an item
+/// that never ran has no result and is passed. The reference pauses after every item that does
+/// not end the loop and has another behind it, so the caller owes one pause per item passed,
+/// less one when `upto` is the end of the loop.
 pub(super) fn broke_before(
     task: &PlayTask,
     items: &[Item],
@@ -950,21 +953,26 @@ pub(super) fn broke_before(
     from: &mut usize,
     upto: usize,
     templar: &Templar,
-) -> Option<usize> {
+) -> (Option<usize>, usize) {
+    let mut passed = 0;
     while *from < upto {
         let ii = *from;
         *from += 1;
         let mut result = match (&items[ii].skipped, &received[ii]) {
             (Some(s), _) => s.clone(),
             (None, Some(r)) => r.clone(),
-            (None, None) => continue,
+            (None, None) => {
+                passed += 1;
+                continue;
+            }
         };
         if break_after(task, &items[ii], &mut result, templar) {
             received[ii] = Some(result);
-            return Some(ii);
+            return (Some(ii), passed);
         }
+        passed += 1;
     }
-    None
+    (None, passed)
 }
 
 /// The variables `changed_when`, `failed_when` and `until` read for one result: the item's, with

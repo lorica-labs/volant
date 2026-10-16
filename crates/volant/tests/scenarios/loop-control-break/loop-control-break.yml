@@ -29,3 +29,9 @@
       when: item != 1
       register: r4
     - debug: msg="{{ r4.msg }} {{ r4.results | length }} {{ r4.skipped }}"
+    - command: "false"
+      loop: [1, 2, 3]
+      loop_control: {break_when: "item == 2"}
+      ignore_errors: true
+      register: r5
+    - debug: msg="{{ r5.results | map(attribute=\"item\") | list }} {{ r5.msg }} {{ r5.failed }}"

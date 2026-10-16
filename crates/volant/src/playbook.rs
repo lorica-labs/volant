@@ -228,11 +228,11 @@ pub struct PlayTask {
     pub loop_label: Option<String>,
     /// `loop_control.index_var`: the name each item's 0-based position is bound to.
     pub index_var: Option<String>,
-    /// `loop_control.extended`, and `extended_allitems`, which only matters beside it.
-    pub loop_extended: bool,
-    pub loop_allitems: bool,
-    /// `loop_control.pause`, in seconds, waited between two items.
-    pub loop_pause: Option<f64>,
+    /// `loop_control.extended`, `extended_allitems` and `pause`, raw: the reference templates
+    /// and converts them per task, so a bad value fails the task, not the load.
+    pub loop_extended: Option<Value>,
+    pub loop_allitems: Option<Value>,
+    pub loop_pause: Option<Value>,
     /// `loop_control.break_when`: the loop ends after the first item for which all hold.
     pub break_when: Vec<String>,
     pub register: Option<String>,
@@ -320,8 +320,8 @@ impl PlayTask {
             loop_var: "item".to_string(),
             loop_label: None,
             index_var: None,
-            loop_extended: false,
-            loop_allitems: true,
+            loop_extended: None,
+            loop_allitems: None,
             loop_pause: None,
             break_when: Vec::new(),
             register: None,
@@ -1203,8 +1203,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     let mut loop_var = "item".to_string();
     let mut loop_label = None;
     let mut index_var = None;
-    let mut loop_extended = false;
-    let mut loop_allitems = true;
+    let mut loop_extended = None;
+    let mut loop_allitems = None;
     let mut loop_pause = None;
     let mut break_when = Vec::new();
     if let Some(control) = field(yaml, "loop_control") {
@@ -1222,11 +1222,6 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
                 unsupported.push(k.name);
                 continue;
             }
-            let flag = |what: &str| {
-                as_bool(value).ok_or_else(|| {
-                    anyhow!("task '{label}': 'loop_control.{what}' must be a boolean")
-                })
-            };
             let name = || {
                 value.as_str().map(str::to_string).ok_or_else(|| {
                     anyhow!("task '{label}': 'loop_control.{}' must be a name", k.name)
@@ -1236,25 +1231,9 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
                 "loop_var" => loop_var = name()?,
                 "label" => loop_label = Some(name()?),
                 "index_var" => index_var = Some(name()?),
-                "extended" => loop_extended = flag("extended")?,
-                "extended_allitems" => loop_allitems = flag("extended_allitems")?,
-                "pause" => {
-                    let seconds = match value {
-                        Yaml::Value(Scalar::Integer(i)) => Some(*i as f64),
-                        Yaml::Value(Scalar::FloatingPoint(f)) => Some(f.into_inner()),
-                        Yaml::Value(Scalar::String(s)) => s.trim().parse::<f64>().ok(),
-                        _ => None,
-                    };
-                    loop_pause = Some(
-                        seconds
-                            .filter(|s| std::time::Duration::try_from_secs_f64(*s).is_ok())
-                            .ok_or_else(|| {
-                                anyhow!(
-                                    "task '{label}': 'loop_control.pause' must be a number of seconds, 0 or more"
-                                )
-                            })?,
-                    );
-                }
+                "extended" => loop_extended = Some(to_json(value)?),
+                "extended_allitems" => loop_allitems = Some(to_json(value)?),
+                "pause" => loop_pause = Some(to_json(value)?),
                 "break_when" => {
                     let context = format!("task '{label}': ");
                     break_when = match value {
@@ -1981,17 +1960,17 @@ mod tests {
         .unwrap();
         let t = first(&pb);
         assert_eq!(t.index_var.as_deref(), Some("i"));
-        assert_eq!((t.loop_extended, t.loop_allitems), (true, false));
-        assert_eq!(t.loop_pause, Some(0.5));
+        assert_eq!(
+            (&t.loop_extended, &t.loop_allitems),
+            (
+                &Some(serde_json::json!(true)),
+                &Some(serde_json::json!(false))
+            )
+        );
+        assert_eq!(t.loop_pause, Some(serde_json::json!(0.5)));
         assert_eq!(t.break_when, ["a", "b"]);
         assert!(t.unsupported.is_empty());
-        for bad in [
-            "extended: maybe",
-            "pause: -1",
-            "pause: x",
-            "index_var: [i]",
-            "break_when: {a: b}",
-        ] {
+        for bad in ["index_var: [i]", "break_when: {a: b}"] {
             assert!(parse(&task(bad), "x.yml").is_err(), "{bad}");
         }
     }

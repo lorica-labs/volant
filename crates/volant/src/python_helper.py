@@ -507,9 +507,22 @@ EXPRESSIONS = {
 def plain(value):
     """`value` as JSON holds it: lazy containers, tuples and sets as lists and mappings, text
     subclasses (`Markup`, tagged strings) as `str`, dates as ISO text, bytes as UTF-8 text."""
-    if value is None or isinstance(value, (bool, int, float)):
+    if value is None or isinstance(value, bool):
         return value
+    # What the controller's JSON reader would refuse is refused here, for this call alone.
+    if isinstance(value, int):
+        if not -(2**63) <= value < 2**64:
+            raise RuntimeError("the result holds the integer %s, beyond 64 bits" % value)
+        return int(value)
+    if isinstance(value, float):
+        if value != value or value in (float("inf"), float("-inf")):
+            raise RuntimeError("the result holds %r, which JSON cannot carry" % value)
+        return float(value)
     if isinstance(value, str):
+        try:
+            value.encode("utf-8")
+        except UnicodeEncodeError as failure:
+            raise RuntimeError("the result holds text that is not valid Unicode: %s" % failure)
         return str.__str__(value)
     if isinstance(value, (bytes, bytearray)):
         try:
@@ -546,11 +559,13 @@ def call(request):
     args = request["args"]
     if kind != "lookup" and not args:
         return {"error": {"kind": "plugin", "message": "a %s needs the value it is given" % kind}}
-    templar = Templar(variables=request.get("vars") or {})
-    if kind != "lookup" and name not in getattr(templar.environment, kind + "s"):
-        return {"error": missing}
     expression = EXPRESSIONS[kind] if kind == "lookup" else EXPRESSIONS[kind] % name
     try:
+        templar = Templar(variables=request.get("vars") or {})
+        # The environment resolves a plugin on `in`, which may raise the not-found error or the
+        # load error of a broken plugin file: both are answered below like a failed call.
+        if kind != "lookup" and name not in getattr(templar.environment, kind + "s"):
+            return {"error": missing}
         value = templar.evaluate_expression(
             trust_as_template(expression),
             local_variables={
@@ -589,14 +604,23 @@ def write_frame(stream, message):
 def main():
     # The frames keep the real stdout. Anything else that prints - the plugin loader, a
     # collection imported under it - goes to stderr, which the controller passes through.
-    frames = sys.stdout.buffer
+    # They are private copies of the pipes, and descriptors 0 and 1 point elsewhere: a plugin's
+    # subprocess (`lookup('pipe', 'cat')`) inherits those, and must not read the next request or
+    # write into a frame.
+    frames = os.fdopen(os.dup(1), "wb")
+    requests = os.fdopen(os.dup(0), "rb")
+    null = os.open(os.devnull, os.O_RDONLY)
+    os.dup2(null, 0)
+    os.close(null)
+    sys.stdin = open(os.devnull)
+    os.dup2(2, 1)
     sys.stdout = sys.stderr
     # `python -c` puts the working directory first on the path, which ansible-playbook, a script,
     # never does: an `ansible` directory where the run starts is not the ansible-core to build
     # with, and the working directory is no file a kept union should depend on.
     sys.path[:] = [entry for entry in sys.path if entry]
     while True:
-        request = read_frame(sys.stdin.buffer)
+        request = read_frame(requests)
         if request is None:
             return
         if "call" in request:

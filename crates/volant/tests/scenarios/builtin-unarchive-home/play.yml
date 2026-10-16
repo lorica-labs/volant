@@ -1,0 +1,23 @@
+- hosts: h1
+  gather_facts: false
+  vars: {base: "~/.volant-golden-unarchive"}
+  tasks:
+    - block:
+        - file: {path: "{{ base }}/src", state: directory}
+        - copy: {content: "x\n", dest: "{{ base }}/src/a.txt"}
+        - command: tar -czf a.tgz a.txt
+          args: {chdir: "{{ base }}/src"}
+          changed_when: false
+        - file: {path: "{{ base }}/out", state: directory}
+        - unarchive: {src: "{{ base }}/src/a.tgz", dest: "{{ base }}/out", remote_src: true}
+          register: u1
+        - debug: msg="{{ u1.changed }} {{ u1.handler }} {{ u1.extract_results.rc }} {{ u1.state }}"
+        - unarchive: {src: "{{ base }}/src/a.tgz", dest: "{{ base }}/out", remote_src: true}
+          register: u2
+        - debug: msg="rerun changed={{ u2.changed }}"
+        - unarchive: {src: "{{ base }}/src/a.tgz", dest: "$HOME/.volant-golden-unarchive/out2", remote_src: true}
+          register: u3
+          ignore_errors: true
+        - debug: var=u3.msg
+      always:
+        - file: {path: "{{ base }}", state: absent}

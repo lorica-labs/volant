@@ -1,0 +1,4 @@
+# `wait_for_connection` on a host that answers, and on one that never does: a failed task with
+# the plugin's own message, not an unreachable host.
+args: [-i, inv.ini, play.yml]
+needs: ["ansible-core"]

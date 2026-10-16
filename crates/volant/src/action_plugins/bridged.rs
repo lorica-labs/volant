@@ -383,8 +383,14 @@ impl Bridged {
     fn result_of(&self, outcome: Result<Value, BridgeError>) -> TaskResult {
         match outcome {
             Ok(Value::Object(map)) => {
+                let raised_skip = map.contains_key(crate::executor::RAISED_SKIP);
                 let mut result = TaskResult(map);
                 crate::executor::drop_internal_keys(&mut result);
+                if raised_skip {
+                    result
+                        .0
+                        .insert(crate::executor::RAISED_SKIP.into(), Value::Bool(true));
+                }
                 result
             }
             Ok(other) => TaskResult::failed_with(format!(

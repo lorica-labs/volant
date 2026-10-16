@@ -1,0 +1,27 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - script: t.sh x "y z"
+      register: r1
+    - debug: {var: r1}
+    - script: t.sh
+      args: {creates: "{{ playbook_dir }}/files/t.sh"}
+      register: r2
+    - debug: {var: r2}
+    - script: t.sh
+      args: {removes: "{{ playbook_dir }}/nothing-here"}
+      register: r3
+    - debug: {var: r3}
+    - script: t.sh
+      args: {chdir: /usr}
+      register: r4
+    - debug: var=r4.stdout
+    - script: t.sh
+      args: {executable: /bin/bash}
+      register: r5
+    - debug: var=r5.stdout
+    - script: f.sh
+      register: r6
+      ignore_errors: true
+    - debug: {var: r6}
+    - script: f.sh

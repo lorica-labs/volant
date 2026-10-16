@@ -44,6 +44,18 @@ pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
     }
 }
 
+/// A refusal the plugin raises before the module runs: `changed: false`, and an error block that
+/// says `Task failed: ` and the message, with no `Action failed: ` between.
+fn raised(msg: String) -> TaskResult {
+    let mut failed = TaskResult::failed_with(msg.clone());
+    failed.0.insert("changed".into(), Value::Bool(false));
+    failed.0.insert(
+        crate::render::ERROR_KEY.into(),
+        Value::from(crate::render::task_failed(&msg)),
+    );
+    failed
+}
+
 enum State {
     Start,
     Creates,
@@ -210,7 +222,7 @@ impl Plugin for Unarchive {
                         let is =
                             |key: &str| found.get(key).and_then(Value::as_bool).unwrap_or(false);
                         if !is("exists") || !is("isdir") {
-                            return Step::Done(TaskResult::failed_with(format!(
+                            return Step::Done(raised(format!(
                                 "dest '{}' must be an existing dir",
                                 self.dest
                             )));

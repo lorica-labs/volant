@@ -345,6 +345,18 @@ impl AgentLink {
         })
     }
 
+    /// A link whose agent is already gone: the first batch asked over it fails as a lost
+    /// connection does, which is what `wait_for_connection` expects of a host that is down.
+    pub fn dead() -> anyhow::Result<Self> {
+        let child = tokio::process::Command::new("sh")
+            .args(["-c", "exit 0"])
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .spawn()
+            .context("could not start the stand-in for a host that is down")?;
+        Self::new(child)
+    }
+
     /// The same, for an agent whose stdin and stdout are a remote terminal that `ssh -tt`
     /// carries (see the `tty` field), and whose stderr is `stderr_file` on the host.
     pub fn new_over_tty(child: Child, stderr_file: String) -> anyhow::Result<Self> {

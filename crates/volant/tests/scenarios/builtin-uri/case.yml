@@ -1,0 +1,4 @@
+# `uri` against a server the play starts: the result keys, a status code the task accepts, a
+# download that reports a change again on a rerun, a JSON body and the redirect options.
+args: [-i, inv.ini, play.yml]
+needs: ["ansible-core"]

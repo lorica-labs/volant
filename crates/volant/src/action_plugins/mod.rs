@@ -90,6 +90,12 @@ pub(crate) fn controller_side(module: &str) -> bool {
     builtin_spelling(module) && matches!(short_name(module), "add_host" | "group_by" | "set_stats")
 }
 
+/// Whether the plugin is `wait_for_connection`, which is run even when the host cannot be reached
+/// yet: the plugin's own loop reports a host that never answers.
+pub(crate) fn waits_for_connection(module: &str) -> bool {
+    builtin_spelling(module) && short_name(module) == "wait_for_connection"
+}
+
 /// Every module a plugin may run, which the union has to hold before the first connection.
 ///
 /// A run that names `package` or `service` carries every builtin backend and `setup`. Measured

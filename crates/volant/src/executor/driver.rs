@@ -1825,6 +1825,25 @@ pub(super) async fn drive_host(
                 &options,
             )
             .await;
+            // `wait_for_connection` is for a host that may be down: it runs over a link that is
+            // already lost, and its own loop reports the connection error, as the reference's
+            // does, rather than the host being unreachable from the first connect.
+            let connected = match connected {
+                Err(ConnectError::Unreachable(_))
+                    if crate::action_plugins::waits_for_connection(
+                        &c.steps[batch[0].0].task.module,
+                    ) =>
+                {
+                    match AgentLink::dead() {
+                        Ok(dead) => {
+                            links.insert(key.clone(), dead);
+                            Ok(links.get_mut(&key).expect("inserted just above"))
+                        }
+                        Err(err) => Err(ConnectError::Unreachable(err.to_string())),
+                    }
+                }
+                other => other,
+            };
             options
                 .profile
                 .phase(Some(&name), Phase::Connect, micros(connecting));

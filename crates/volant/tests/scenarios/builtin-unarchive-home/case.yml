@@ -1,0 +1,3 @@
+# `unarchive` with a `~` in `src` and in `dest`, and the refusal of a `$HOME` in `dest`.
+args: [-i, inv.ini, play.yml]
+needs: ["ansible-core"]

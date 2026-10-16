@@ -1,0 +1,39 @@
+- hosts: h1
+  gather_facts: false
+  vars: {u: "http://127.0.0.1:18765"}
+  tasks:
+    - shell: nohup python3 server.py > /dev/null 2>&1 & echo $!
+      args: {chdir: "{{ playbook_dir }}"}
+      register: server
+    - block:
+        - wait_for: {host: 127.0.0.1, port: 18765, timeout: 10}
+        - uri: {url: "{{ u }}/hello.txt", return_content: true}
+          register: r1
+        - debug: msg="{{ r1 | dict2items | map(attribute='key') | sort | join(',') }} {{ r1.msg }} {{ r1.content }}"
+        - uri: {url: "{{ u }}/hello.txt"}
+          register: r1b
+        - debug: msg="{{ r1b | dict2items | map(attribute='key') | sort | join(',') }}"
+        - uri: {url: "{{ u }}/missing", status_code: [200, 404]}
+          register: r2
+        - debug: msg="{{ r2.status }} {{ r2.msg }} {{ r2.changed }}"
+        - uri: {url: "{{ u }}/hello.txt", dest: "{{ playbook_dir }}/dest.txt"}
+          register: r3
+        - debug: msg="{{ r3 | dict2items | map(attribute='key') | sort | join(',') }} {{ r3.changed }}"
+        - command: cat {{ playbook_dir }}/dest.txt
+          register: c
+          changed_when: false
+        - debug: var=c.stdout
+        - uri: {url: "{{ u }}/hello.txt", dest: "{{ playbook_dir }}/dest.txt"}
+          register: r3b
+        - debug: msg="rerun changed={{ r3b.changed }}"
+        - uri: {url: "{{ u }}/echo", method: POST, body_format: json, body: {a: 1, b: [x]}, return_content: true}
+          register: r4
+        - debug: msg="{{ r4.json | to_json }} {{ r4.status }} {{ r4.content_type }}"
+        - uri: {url: "{{ u }}/redir"}
+          register: r5
+        - debug: msg="{{ r5.status }} {{ r5.url }} {{ r5.redirected }}"
+        - uri: {url: "{{ u }}/redir", follow_redirects: none, status_code: 302}
+          register: r6
+        - debug: msg="{{ r6.status }} {{ r6.url }} {{ r6.redirected }}"
+      always:
+        - command: kill {{ server.stdout }}

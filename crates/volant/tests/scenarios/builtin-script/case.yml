@@ -1,0 +1,4 @@
+# `script` runs a controller file on the host: its result keys, the skips of `creates` and
+# `removes`, `chdir`, `executable`, and the failure of a script that exits 3.
+args: [-i, inv.ini, play.yml]
+needs: ["ansible-core"]

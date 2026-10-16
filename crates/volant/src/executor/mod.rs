@@ -14,7 +14,7 @@ mod prepare;
 mod report;
 mod run;
 
-pub(crate) use run::drop_internal_keys;
+pub(crate) use run::{RAISED_SKIP, drop_internal_keys};
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};

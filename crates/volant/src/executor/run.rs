@@ -963,6 +963,10 @@ fn apply_conditions(
     mut result: TaskResult,
     templar: &Templar,
 ) -> TaskResult {
+    // A skip an action plugin raised ends `_execute` before `failed` is filled in.
+    if result.0.remove(RAISED_SKIP).is_some() {
+        return result;
+    }
     result.settle_failed();
     if task.changed_when.is_empty() && task.failed_when.is_empty() {
         return result;
@@ -2184,7 +2188,10 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                 let deadline = Instant::now() + capped(timeout);
                 let failed = tries.map_or(0, |t| t + 1);
                 tries = Some(failed);
+                // The plugin's own `sleep` is its pause between tries.
+                let waiting = crate::action_plugins::waits_for_connection(&task.module);
                 if failed > 0
+                    && !waiting
                     && wait_or_stop(capped(relink.pause(failed).min(timeout)), stop, stop_broken)
                         .await
                         .is_none()
@@ -2194,10 +2201,12 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                 if expired() {
                     return Ok(timeout_result());
                 }
-                let built = match sub_task(task, item, &probe, union, interpreters, asked) {
-                    Ok(built) => built,
-                    Err(failure) => return Ok(failure),
-                };
+                // A host that was down from the start has no interpreter to name yet: the probe
+                // is built again once a try has connected.
+                let built = sub_task(task, item, &probe, union, interpreters, asked);
+                if let (Err(failure), false) = (&built, interpreters.is_empty()) {
+                    return Ok(failure.clone());
+                }
                 let left = deadline.saturating_duration_since(Instant::now());
                 if left.is_zero() {
                     // Nothing here awaits, so a plugin asking again with no time left would hold
@@ -2217,6 +2226,15 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                 let sent_before = *batch_id;
                 let once = async {
                     relink.relink(link, attempt).await?;
+                    let built = match built {
+                        Ok(built) => built,
+                        Err(failure) => {
+                            match sub_task(task, item, &probe, union, &link.interpreters(), asked) {
+                                Ok(built) => built,
+                                Err(_) => return Ok(Some(failure)),
+                            }
+                        }
+                    };
                     // What is left once the connection is up, not before it.
                     let built = bounded(built);
                     *batch_id += 1;
@@ -2239,6 +2257,11 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                 last = Some(match tried {
                     Ok(Ok(Some(result))) => result,
                     Ok(Ok(None)) => return Err(Ok(BatchOutcome::Cancelled { at: 0 })),
+                    // The connection's own error, as the plugin's loop words it: the reference
+                    // names the error, not the task that failed on it.
+                    Ok(Err(why)) if waiting => {
+                        gone(why.strip_prefix("Task failed: ").unwrap_or(&why))
+                    }
                     Ok(Err(why)) => gone(&why),
                     Err(_) => {
                         // A probe that went out may still be running on the host, and the agent
@@ -2277,6 +2300,12 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
         tries = None;
         let built = match sub_task(task, item, &sub, union, interpreters, asked) {
             Ok(built) => built,
+            // The ping of a host that was down from the start: the plugin's own loop goes on to
+            // reconnect, and names the interpreter once the host answers.
+            Err(_) if dropping && interpreters.is_empty() => {
+                last = Some(gone("the host has not answered yet"));
+                continue;
+            }
             Err(failure) => return Ok(failure),
         };
         *batch_id += 1;
@@ -2840,6 +2869,10 @@ pub(super) trait AgentChannel {
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
     /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
+    /// The interpreters the agent behind this channel found, empty when it has none to tell.
+    fn interpreters(&self) -> Vec<String> {
+        Vec::new()
+    }
     /// Where the batches over this channel leave their timings, when anything reads them.
     fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
         None
@@ -2944,6 +2977,10 @@ impl AgentChannel for AgentLink {
 
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool {
         self.cancel(id, grace).await
+    }
+
+    fn interpreters(&self) -> Vec<String> {
+        AgentLink::interpreters(self).to_vec()
     }
 
     fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
@@ -3444,6 +3481,9 @@ async fn send_batch<C: AgentChannel>(
     }
     (received, ended)
 }
+
+/// The key the Python helper sets on a result it built from `AnsibleActionSkip`.
+pub(crate) const RAISED_SKIP: &str = "_volant_raised_skip";
 
 /// `stdout_lines` and `stderr_lines`, for a result that carries `stdout` or `stderr` and not the
 /// list beside it. The reference's `_execute_module` adds both to every

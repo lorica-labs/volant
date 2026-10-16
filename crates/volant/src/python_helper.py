@@ -985,6 +985,12 @@ def run_action(ident, request):
             raise AnsibleError("the handler '%s' was not found" % name)
         try:
             result = action.run(task_vars=task_vars)
+            if isinstance(result, dict):
+                # What `TaskExecutor._execute` fills in on a result that came back, and a key
+                # only this helper may set, which the plugin's own data cannot carry.
+                for key in [key for key in result if str(key).startswith("_volant_")]:
+                    del result[key]
+                result.setdefault("changed", False)
         finally:
             action.cleanup()
             for key in [key for key in JOBS if key[0] == ident]:
@@ -998,6 +1004,9 @@ def run_action(ident, request):
         except AnsibleTaskError as wrapped:
             result = _error_utils.result_dict_from_exception(wrapped, accept_result_contribution=True)
             result.setdefault("changed", False)
+            # Raised, so the result never goes through the part of `_execute` that adds `failed`.
+            if result.get("skipped") and not result.get("failed"):
+                result["_volant_raised_skip"] = True
         # The summary object carries the traceback text only when ansible-core is set to keep it.
         summary = result.pop("exception", None)
         traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)

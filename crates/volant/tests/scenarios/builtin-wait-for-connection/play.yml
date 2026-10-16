@@ -1,0 +1,10 @@
+- hosts: up
+  gather_facts: false
+  tasks:
+    - wait_for_connection: {timeout: 5, delay: 0}
+      register: r
+    - debug: {var: r}
+- hosts: down
+  gather_facts: false
+  tasks:
+    - wait_for_connection: {timeout: 3, delay: 0, sleep: 1}

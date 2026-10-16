@@ -636,6 +636,30 @@ pub fn union_for(
     union_from(start, modules, named, place.as_ref(), warn)
 }
 
+/// [`union_for`] that also hands back the helper it built, still running, when it built one.
+///
+/// The run keeps it for the filters, tests and lookups ansible-core alone can answer
+/// ([`crate::bridge::Bridge::adopt`]) instead of paying for a second ansible-core start.
+pub fn union_and_helper(
+    modules: &std::collections::BTreeSet<String>,
+    named: &[(String, String)],
+    plugin_dirs: &[std::path::PathBuf],
+    warn: &mut dyn FnMut(String),
+) -> anyhow::Result<(Option<Union>, Option<PythonBuilder>)> {
+    if modules.is_empty() {
+        return Ok((None, None));
+    }
+    let place = crate::union_cache::Place::here(modules, &collection_names(modules), plugin_dirs);
+    let start = || {
+        let mut builder = PythonBuilder::start()?;
+        builder.add_plugin_dirs(plugin_dirs)?;
+        Ok(builder)
+    };
+    let mut helper = None;
+    let union = union_keeping(start, modules, named, place.as_ref(), warn, &mut helper)?;
+    Ok((union, helper))
+}
+
 /// The names only the controller's ansible-core can answer to, which the helper resolves first.
 fn collection_names(modules: &std::collections::BTreeSet<String>) -> Vec<String> {
     modules
@@ -653,6 +677,18 @@ fn union_from(
     named: &[(String, String)],
     cache: Option<&crate::union_cache::Place>,
     warn: &mut dyn FnMut(String),
+) -> anyhow::Result<Option<Union>> {
+    union_keeping(start, modules, named, cache, warn, &mut None)
+}
+
+/// [`union_from`] leaving the helper it started in `keep` instead of dropping it.
+fn union_keeping(
+    start: impl FnOnce() -> anyhow::Result<PythonBuilder>,
+    modules: &std::collections::BTreeSet<String>,
+    named: &[(String, String)],
+    cache: Option<&crate::union_cache::Place>,
+    warn: &mut dyn FnMut(String),
+    keep: &mut Option<PythonBuilder>,
 ) -> anyhow::Result<Option<Union>> {
     let unusable = |place: &crate::union_cache::Place, err: &dyn std::fmt::Display| {
         format!(
@@ -684,8 +720,8 @@ fn union_from(
         }
     }
     let mut names: Vec<String> = modules.iter().cloned().collect();
-    let mut builder = match start() {
-        Ok(builder) => builder,
+    let builder = match start() {
+        Ok(builder) => keep.insert(builder),
         // Nothing the plays name needs a payload, only names a role file for another platform
         // holds: the run went without ansible-core before those names were resolved at all.
         Err(_)
@@ -865,7 +901,7 @@ impl PythonBuilder {
         let virtual_env = std::env::var("VIRTUAL_ENV").ok();
         start_from(explicit.as_deref(), virtual_env.as_deref())
     }
-    fn under(python: &str) -> anyhow::Result<PythonBuilder> {
+    pub(crate) fn under(python: &str) -> anyhow::Result<PythonBuilder> {
         PythonBuilder::under_with(python, &[])
     }
 
@@ -875,7 +911,11 @@ impl PythonBuilder {
         PythonBuilder::spawn(python, &["-c", HELPER], env)
     }
 
-    fn spawn(python: &str, args: &[&str], env: &[(&str, &str)]) -> anyhow::Result<PythonBuilder> {
+    pub(crate) fn spawn(
+        python: &str,
+        args: &[&str],
+        env: &[(&str, &str)],
+    ) -> anyhow::Result<PythonBuilder> {
         let mut child = Command::new(python)
             .args(args)
             .envs(env.iter().copied())
@@ -921,6 +961,23 @@ impl PythonBuilder {
             )?;
         }
         Ok(())
+    }
+
+    /// One frame out and the next one in, for a caller that frames its own requests. `Ok(None)`
+    /// when the helper closed its output before answering.
+    pub(crate) fn round_trip(&mut self, request: &[u8]) -> std::io::Result<Option<Vec<u8>>> {
+        let stdin = self.stdin.as_mut().expect("stdin is open until drop");
+        write_frame(stdin, request)?;
+        read_frame(&mut self.stdout)
+    }
+
+    /// Ends the helper and says how it went, for the message of a call that found it gone.
+    pub(crate) fn end(&mut self) -> String {
+        drop(self.stdin.take());
+        let _ = self.child.kill();
+        self.child
+            .wait()
+            .map_or_else(|err| err.to_string(), |status| status.to_string())
     }
 
     /// What the controller's ansible-core makes of each name, one answer per name asked.

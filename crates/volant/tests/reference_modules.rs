@@ -3,6 +3,7 @@
 //! needs the recorded ansible-core, `sudo -n`, systemd, apt and cron. The `ssh` job runs them.
 #![cfg(target_os = "linux")]
 
+use rstest::rstest;
 use serde_json::{Map, Value};
 
 #[path = "common/collections.rs"]
@@ -705,4 +706,50 @@ fn a_native_answer_is_held_to_the_path_its_index_names() {
         wrong,
         vec!["case echo-native: path native, index says fallback".to_string()]
     );
+}
+
+/// Filters, tests and lookups run in the Python helper answer with ansible-core's own result
+/// and sentences. The terms of a lookup stay data: a template in a variable comes back as is.
+#[rstest]
+#[case::filter("filter", "ansible.builtin.b64encode", serde_json::json!(["a"]), serde_json::json!({}), Ok(serde_json::json!("YQ==")))]
+#[case::filter_keyword("filter", "join", serde_json::json!([["a", "b"]]), serde_json::json!({"d": "-"}), Ok(serde_json::json!("a-b")))]
+#[case::a_test("test", "divisibleby", serde_json::json!([4, 2]), serde_json::json!({}), Ok(serde_json::json!(true)))]
+#[case::lookup("lookup", "vars", serde_json::json!(["x"]), serde_json::json!({}), Ok(serde_json::json!("{{ 1 + 1 }}")))]
+#[case::plugin_error("filter", "join", serde_json::json!([["a"]]), serde_json::json!({"sep": "-"}), Err(("Plugin", "The filter plugin 'ansible.builtin.join' failed:")))]
+#[case::unknown_filter("filter", "nope", serde_json::json!([1]), serde_json::json!({}), Err(("NotFound", "No filter named 'nope'.")))]
+#[case::unknown_test("test", "nope", serde_json::json!([1]), serde_json::json!({}), Err(("NotFound", "No test named 'nope'.")))]
+#[case::unknown_lookup("lookup", "nope", serde_json::json!([1]), serde_json::json!({}), Err(("NotFound", "The lookup plugin 'nope' was not found.")))]
+fn the_bridge_runs_what_only_ansible_core_can(
+    #[case] kind: &str,
+    #[case] name: &str,
+    #[case] args: Value,
+    #[case] kwargs: Value,
+    #[case] ends: Result<Value, (&'static str, &'static str)>,
+) {
+    use volant::bridge::{Bridge, BridgeError, PluginKind};
+
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let kind = match kind {
+        "filter" => PluginKind::Filter,
+        "test" => PluginKind::Test,
+        _ => PluginKind::Lookup,
+    };
+    let vars = serde_json::json!({"x": "{{ 1 + 1 }}"});
+    let got = Bridge::under(python, Vec::new()).call(
+        kind,
+        name,
+        args.as_array().unwrap(),
+        kwargs.as_object().unwrap(),
+        vars.as_object(),
+    );
+    match (got, ends) {
+        (Ok(got), Ok(want)) => assert_eq!(got, want),
+        (Err(BridgeError::Plugin(text)), Err(("Plugin", part)))
+        | (Err(BridgeError::NotFound(text)), Err(("NotFound", part))) => {
+            assert!(text.contains(part), "{text}");
+        }
+        (got, want) => panic!("{got:?} is not {want:?}"),
+    }
 }

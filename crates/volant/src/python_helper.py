@@ -15,6 +15,8 @@ Nothing but a frame is ever written to stdout; anything the helper wants to say 
 stderr, which the controller passes through.
 """
 import base64
+import collections.abc
+import datetime
 import importlib.util
 import io
 import json
@@ -490,6 +492,82 @@ def plugin_dirs(dirs):
     return {}
 
 
+CALL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
+
+# The only template text this helper ever renders is one of these, written here. What a play
+# holds reaches the plugin as the variables below, which are untrusted and so never templated
+# again: the controller has already rendered every term.
+EXPRESSIONS = {
+    "filter": "volant_args__[0] | %s(*volant_args__[1:], **volant_kwargs__)",
+    "test": "volant_args__[0] is %s(*volant_args__[1:], **volant_kwargs__)",
+    "lookup": "lookup(volant_name__, *volant_args__, **volant_kwargs__)",
+}
+
+
+def plain(value):
+    """`value` as JSON holds it: lazy containers, tuples and sets as lists and mappings, text
+    subclasses (`Markup`, tagged strings) as `str`, dates as ISO text, bytes as UTF-8 text."""
+    if value is None or isinstance(value, (bool, int, float)):
+        return value
+    if isinstance(value, str):
+        return str.__str__(value)
+    if isinstance(value, (bytes, bytearray)):
+        try:
+            return bytes(value).decode("utf-8")
+        except UnicodeDecodeError as failure:
+            raise RuntimeError("the result holds bytes that are not UTF-8: %s" % failure)
+    if isinstance(value, (datetime.date, datetime.time)):
+        return value.isoformat()
+    if isinstance(value, collections.abc.Mapping):
+        return {
+            str.__str__(k) if isinstance(k, str) else str(k): plain(v) for k, v in value.items()
+        }
+    if isinstance(value, (collections.abc.Iterable)):
+        return [plain(item) for item in value]
+    raise RuntimeError("a value of type %s cannot be returned" % type(value).__name__)
+
+
+def call(request):
+    """One filter, test or lookup, run through ansible-core's own Jinja environment so its
+    argument handling, error text and `errors`/`wantlist` shaping are the reference's."""
+    from ansible.template import Templar, trust_as_template
+
+    loaders()
+    kind, name = request["kind"], request["name"]
+    if kind not in EXPRESSIONS:
+        return {"error": {"kind": "plugin", "message": "unknown plugin kind '%s'" % kind}}
+    # Jinja's own sentence for a filter or a test, ansible-core's for a lookup.
+    sentence = "The lookup plugin '%s' was not found." if kind == "lookup" else (
+        "No %s named '%%s'." % kind
+    )
+    missing = {"kind": "not_found", "message": sentence % name}
+    if not CALL_NAME.match(name):
+        return {"error": missing}
+    args = request["args"]
+    if kind != "lookup" and not args:
+        return {"error": {"kind": "plugin", "message": "a %s needs the value it is given" % kind}}
+    templar = Templar(variables=request.get("vars") or {})
+    if kind != "lookup" and name not in getattr(templar.environment, kind + "s"):
+        return {"error": missing}
+    expression = EXPRESSIONS[kind] if kind == "lookup" else EXPRESSIONS[kind] % name
+    try:
+        value = templar.evaluate_expression(
+            trust_as_template(expression),
+            local_variables={
+                "volant_args__": args,
+                "volant_kwargs__": request["kwargs"],
+                "volant_name__": name,
+            },
+        )
+        return {"value": plain(value)}
+    except Exception as failure:
+        # Named rather than imported: the class lives in ansible-core's private templating
+        # package, and its name is what 2.19 keeps stable.
+        if type(failure).__name__ == "AnsibleTemplatePluginNotFoundError":
+            return {"error": missing}
+        return {"error": {"kind": "plugin", "message": str(failure)}}
+
+
 def read_frame(stream):
     header = stream.read(4)
     if len(header) < 4:
@@ -521,6 +599,14 @@ def main():
         request = read_frame(sys.stdin.buffer)
         if request is None:
             return
+        if "call" in request:
+            try:
+                answer = call(request["call"])
+            except Exception as failure:
+                answer = {"error": {"kind": "plugin", "message": str(failure)}}
+            answer["id"] = request.get("id")
+            write_frame(frames, answer)
+            continue
         try:
             if "plugin_dirs" in request:
                 answer = plugin_dirs(request["plugin_dirs"])
@@ -601,6 +687,14 @@ def self_check():
         assert "profile" in str(twice), twice
     else:
         raise AssertionError("a wrapper naming a field twice was read from its first match")
+    shaped = plain({"a": (1, {2}), "b": b"x", "c": datetime.date(2020, 1, 2), 3: iter("y")})
+    assert shaped == {"a": [1, [2]], "b": "x", "c": "2020-01-02", "3": ["y"]}, shaped
+    try:
+        plain(b"\xff")
+    except RuntimeError as bytes_:
+        assert "not UTF-8" in str(bytes_), bytes_
+    else:
+        raise AssertionError("bytes that are not UTF-8 were turned into text")
     check_sources()
 
 

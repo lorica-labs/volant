@@ -3,6 +3,7 @@
 
 pub mod action_plugins;
 pub mod agent;
+pub mod bridge;
 pub mod cli;
 pub(crate) mod compile;
 pub mod config;

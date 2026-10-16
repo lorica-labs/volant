@@ -68,6 +68,9 @@ pub struct LoadedRole {
     pub handlers: Vec<HandlerTask>,
     pub dependencies: Vec<RoleEntry>,
     pub allow_duplicates: bool,
+    /// The `collections` of `meta/main.yml`: the only list the role's own tasks search, the
+    /// play's being no business of a role.
+    pub collections: Vec<String>,
     /// The `options` mapping of the `argument_specs` entry named after the tasks file, when the
     /// role has one. It is what the validation task checks the role's arguments against.
     pub argument_spec: Option<Map<String, Value>>,
@@ -177,7 +180,7 @@ pub fn load(path: &Path, from: &RoleFrom) -> anyhow::Result<LoadedRole> {
     {
         handlers.extend(crate::playbook::parse_handlers_file(&file)?);
     }
-    let (dependencies, allow_duplicates) = meta(path)?;
+    let (dependencies, allow_duplicates, collections) = meta(path)?;
     let (argument_spec, argument_spec_description) = argument_spec(path, &from.tasks)?;
     Ok(LoadedRole {
         defaults,
@@ -186,6 +189,7 @@ pub fn load(path: &Path, from: &RoleFrom) -> anyhow::Result<LoadedRole> {
         handlers,
         dependencies,
         allow_duplicates,
+        collections,
         argument_spec,
         argument_spec_description,
     })
@@ -250,13 +254,15 @@ fn variables(role: &Path, sub: &str, from: &str) -> anyhow::Result<Map<String, V
     Ok(out)
 }
 
-/// `meta/main.yml`: the roles this one depends on, and whether two identical entries run twice.
-pub(crate) fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool)> {
+/// `meta/main.yml`: the roles this one depends on, whether two identical entries run twice, and
+/// the collections its tasks search.
+pub(crate) fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool, Vec<String>)> {
     let Some(files) = files(role, "meta", "main", false)? else {
-        return Ok((Vec::new(), false));
+        return Ok((Vec::new(), false, Vec::new()));
     };
     let mut dependencies = Vec::new();
     let mut allow_duplicates = false;
+    let mut collections = Vec::new();
     for file in files {
         let text = std::fs::read_to_string(&file)
             .with_context(|| format!("reading {}", file.display()))?;
@@ -276,8 +282,19 @@ pub(crate) fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool)> {
         {
             allow_duplicates = flag;
         }
+        if let Some(node) = crate::yaml::field(doc, "collections") {
+            let bad = || anyhow::anyhow!("{source}: 'collections' must be a list of names");
+            collections = match node {
+                saphyr::Yaml::Value(saphyr::Scalar::Null) => Vec::new(),
+                saphyr::Yaml::Sequence(items) => items
+                    .iter()
+                    .map(|item| item.as_str().map(str::to_string).ok_or_else(bad))
+                    .collect::<anyhow::Result<_>>()?,
+                other => vec![other.as_str().map(str::to_string).ok_or_else(bad)?],
+            };
+        }
     }
-    Ok((dependencies, allow_duplicates))
+    Ok((dependencies, allow_duplicates, collections))
 }
 
 /// `meta/argument_specs.yml`, reduced to the `options` mapping of the entry named after the

@@ -1,0 +1,3 @@
+# A group applies to every module it holds, extended groups included, under the module's own key; the builtin testgroup holds ping.
+args: [-i, inv.ini, groups.yml]
+needs: [ansible-core]

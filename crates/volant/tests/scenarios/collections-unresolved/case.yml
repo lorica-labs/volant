@@ -1,0 +1,3 @@
+# A short name no listed collection has is refused before anything runs, as ansible.builtin has none either.
+args: [-i, inv.ini, unresolved.yml]
+needs: [ansible-core]

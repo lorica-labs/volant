@@ -1,0 +1,54 @@
+- hosts: h1
+  gather_facts: false
+  collections: [my.col, my.col2]
+  tasks:
+    - hello:
+      register: x
+    - debug: var=x.who
+    - ping:
+      register: y
+    - debug: var=y.who
+    - ansible.builtin.ping:
+      register: y
+    - debug: var=y.ping
+    - ansible.legacy.ping:
+      register: y
+    - debug: var=y.ping
+    - only2:
+      register: z
+    - debug: var=z.who
+- hosts: h1
+  gather_facts: false
+  collections: [my.col2, my.col]
+  tasks:
+    - hello:
+      register: x
+    - debug: var=x.who
+- hosts: h1
+  gather_facts: false
+  collections: [my.col]
+  roles: [r5]
+- hosts: h1
+  gather_facts: false
+  roles: [r4]
+- hosts: h1
+  gather_facts: false
+  roles: [r2]
+- hosts: h1
+  gather_facts: false
+  collections: [my.col]
+  tasks:
+    - name: bring in r2
+      include_role: {name: r2}
+    - block:
+        - hello:
+          register: x
+        - debug: var=x.who
+      collections: [my.col2]
+    - hello:
+      collections: [my.col2]
+      register: x
+    - debug: var=x.who
+    - hello:
+      register: x
+    - debug: var=x.who

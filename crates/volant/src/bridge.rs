@@ -149,6 +149,70 @@ impl Bridge {
         .map(drop)
     }
 
+    /// Whether each name a `module_defaults` key spells resolves to a module or an action plugin
+    /// ansible-core knows.
+    ///
+    /// # Errors
+    /// [`BridgeError`] when the helper cannot start or answers out of shape.
+    pub fn actions_resolve(
+        &self,
+        names: &[String],
+    ) -> Result<std::collections::BTreeMap<String, bool>, BridgeError> {
+        let answer = self.defaults_request("actions", names)?;
+        names
+            .iter()
+            .map(|name| match answer.get(name) {
+                Some(Value::Bool(found)) => Ok((name.clone(), *found)),
+                _ => Err(defaults_shape()),
+            })
+            .collect()
+    }
+
+    /// The modules each `module_defaults` group (a full name) holds, as ansible-core resolves
+    /// them; `None` for a group nobody declares.
+    ///
+    /// # Errors
+    /// [`BridgeError`] when the helper cannot start or answers out of shape.
+    pub fn action_groups(
+        &self,
+        groups: &[String],
+    ) -> Result<std::collections::BTreeMap<String, Option<Vec<String>>>, BridgeError> {
+        let answer = self.defaults_request("action_groups", groups)?;
+        groups
+            .iter()
+            .map(|group| {
+                let held = match answer.get(group).and_then(|g| g.get("actions")) {
+                    None => None,
+                    Some(Value::Array(items)) => Some(
+                        items
+                            .iter()
+                            .map(|item| {
+                                item.as_str().map(str::to_string).ok_or_else(defaults_shape)
+                            })
+                            .collect::<Result<Vec<_>, _>>()?,
+                    ),
+                    Some(_) => return Err(defaults_shape()),
+                };
+                Ok((group.clone(), held))
+            })
+            .collect()
+    }
+
+    fn defaults_request(
+        &self,
+        kind: &str,
+        names: &[String],
+    ) -> Result<Map<String, Value>, BridgeError> {
+        match self.request(
+            PluginKind::Lookup,
+            kind,
+            json!({"kind": kind, "name": kind, "args": names, "kwargs": {}}),
+        )? {
+            Value::Object(answer) => Ok(answer),
+            _ => Err(defaults_shape()),
+        }
+    }
+
     fn request(&self, kind: PluginKind, name: &str, call: Value) -> Result<Value, BridgeError> {
         let mut guard = self.lock();
         let (state, next) = &mut *guard;
@@ -188,6 +252,12 @@ impl Bridge {
         }
         outcome
     }
+}
+
+fn defaults_shape() -> BridgeError {
+    BridgeError::Helper(
+        "the Python helper answered the module_defaults names in a shape it should not".into(),
+    )
 }
 
 /// One request and its answer, checked to be the answer to that request.
@@ -275,6 +345,16 @@ while True:
         put(json.dumps({"id": request["id"] + 1, "value": 1}).encode())
     elif mode == "oversized":
         out.write(struct.pack(">I", 64 * 1024 * 1024 + 1)); out.flush()
+    elif mode == "defaults":
+        call = request["call"]
+        names = call["args"]
+        if call["kind"] == "actions":
+            value = {n: n != "ansible.legacy.nosuch" for n in names}
+        else:
+            value = {n: {"missing": True} if n.endswith("nosuch") else {"actions": ["ansible.builtin.ping"]} for n in names}
+        put(json.dumps({"id": request["id"], "value": value}).encode())
+    elif mode == "bad_items":
+        put(json.dumps({"id": request["id"], "value": {n: {"actions": [1]} for n in request["call"]["args"]}}).encode())
     elif mode == "latin1":
         put(b"\xff\xfe")
     else:
@@ -297,6 +377,86 @@ while True:
             &Map::new(),
             None,
         )
+    }
+
+    fn names(list: &[&str]) -> Vec<String> {
+        list.iter().map(ToString::to_string).collect()
+    }
+
+    #[test]
+    fn the_module_defaults_requests_read_the_helper_s_answers() {
+        let bridge = bridge_with("defaults", &Arc::new(AtomicUsize::new(0)));
+        let found = bridge
+            .actions_resolve(&names(&["ansible.legacy.foo", "ansible.legacy.nosuch"]))
+            .expect("an answer");
+        assert_eq!(
+            found.into_iter().collect::<Vec<_>>(),
+            [
+                ("ansible.legacy.foo".to_string(), true),
+                ("ansible.legacy.nosuch".to_string(), false)
+            ]
+        );
+        let held = bridge
+            .action_groups(&names(&["ansible.builtin.g", "my.col.nosuch"]))
+            .expect("an answer");
+        assert_eq!(
+            held["ansible.builtin.g"],
+            Some(names(&["ansible.builtin.ping"]))
+        );
+        assert_eq!(held["my.col.nosuch"], None);
+    }
+
+    #[rstest]
+    #[case::echo("echo")]
+    #[case::items_that_are_not_names("bad_items")]
+    fn module_defaults_answers_out_of_shape_are_refused(#[case] mode: &'static str) {
+        let bridge = bridge_with(mode, &Arc::new(AtomicUsize::new(0)));
+        let groups = bridge
+            .action_groups(&names(&["ansible.builtin.g"]))
+            .unwrap_err();
+        assert!(
+            groups.to_string().contains("in a shape it should not"),
+            "{groups}"
+        );
+        let actions = bridge.actions_resolve(&names(&["x"])).unwrap_err();
+        assert!(
+            actions.to_string().contains("in a shape it should not"),
+            "{actions}"
+        );
+    }
+
+    #[test]
+    fn module_defaults_are_asked_about_once_and_refused_by_name() {
+        use crate::collection::Resolved;
+        use crate::playbook::PlayTask;
+
+        let task = |key: &str| {
+            let mut task = PlayTask::empty();
+            task.module_defaults = vec![json!({ key: {"a": 1} })];
+            task
+        };
+        let bridge = bridge_with("defaults", &Arc::new(AtomicUsize::new(0)));
+        let resolved = Resolved::default();
+        let group = task("group/g");
+        resolved.ensure([&group], Some(&bridge)).expect("a group");
+        assert_eq!(
+            resolved.groups()["ansible.builtin.g"],
+            names(&["ansible.builtin.ping"])
+        );
+        assert_eq!(
+            resolved.ensure([&task("group/nosuch")], Some(&bridge)),
+            Err("Error loading module_defaults: could not resolve the module_defaults group ansible.builtin.nosuch".to_string())
+        );
+        assert_eq!(
+            resolved.ensure([&task("nosuch")], Some(&bridge)),
+            Err("Could not resolve action ansible.legacy.nosuch in module_defaults".to_string())
+        );
+        assert_eq!(resolved.ensure([&task("foo")], Some(&bridge)), Ok(()));
+        // Without a helper nothing can be checked, and the run says which name.
+        assert_eq!(
+            Resolved::default().ensure([&group], None),
+            Err("Error loading module_defaults: could not resolve the module_defaults group ansible.builtin.g".to_string())
+        );
     }
 
     #[test]

@@ -169,6 +169,12 @@ pub struct AgentLink {
     interpreters: Vec<String>,
     natives: Vec<String>,
     ledger: crate::profile::Ledger,
+    /// Whether the agent reads a terminal rather than a pipe, as it does behind `su`. Closing
+    /// stdin then reaches nobody, so the link ends by stopping `ssh`, whose hangup is the end
+    /// of input the agent stops on.
+    tty: bool,
+    /// Where, on the host, the agent's stderr goes when it cannot share the link's stream.
+    stderr_file: Option<String>,
 }
 
 /// A blob as it goes on the wire in the frame after its `put_blob`.
@@ -334,7 +340,27 @@ impl AgentLink {
             interpreters: Vec::new(),
             natives: Vec::new(),
             ledger: crate::profile::Ledger::default(),
+            tty: false,
+            stderr_file: None,
         })
+    }
+
+    /// The same, for an agent whose stdin and stdout are a remote terminal that `ssh -tt`
+    /// carries (see the `tty` field), and whose stderr is `stderr_file` on the host.
+    pub fn new_over_tty(child: Child, stderr_file: String) -> anyhow::Result<Self> {
+        let mut link = Self::new(child)?;
+        link.tty = true;
+        link.stderr_file = Some(stderr_file);
+        Ok(link)
+    }
+
+    /// Where to look for what an agent that stopped said, for a message about it: empty when
+    /// its stderr reached the controller's own.
+    pub fn stderr_note(&self) -> String {
+        self.stderr_file
+            .as_ref()
+            .map(|file| format!(" (its stderr is in {file} on the host)"))
+            .unwrap_or_default()
     }
 
     /// The same, having first written `preamble` to the child's stdin unframed. That is how a
@@ -483,6 +509,9 @@ impl AgentLink {
     /// Kills the agent process if it is still running.
     pub async fn shutdown(mut self) {
         drop(self.stdin.take());
+        if self.tty {
+            let _ = self.child.start_kill();
+        }
         let _ = tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait()).await;
         let _ = self.child.start_kill();
     }
@@ -496,6 +525,11 @@ impl Drop for AgentLink {
     /// falls through and lets the `child` field's own `kill_on_drop` kill it as before.
     fn drop(&mut self) {
         drop(self.stdin.take());
+        // Nothing reaches an agent behind a terminal until `ssh` goes, which `kill_on_drop`
+        // sees to as soon as this returns.
+        if self.tty {
+            return;
+        }
         let deadline = std::time::Instant::now() + DROP_GRACE;
         while std::time::Instant::now() < deadline {
             match self.child.try_wait() {

@@ -234,6 +234,7 @@ pub(crate) fn task_strings(task: &PlayTask) -> (Vec<&str>, Vec<&str>) {
         .chain(&task.retries)
         .chain(&task.delay)
         .chain(&task.environment)
+        .chain(&task.module_defaults)
     {
         strings(value, &mut text);
     }
@@ -1276,6 +1277,7 @@ pub(super) async fn drive_host(
                     pos = next;
                 }
                 Ok(Prepared::Remote(items, escalation, delegate, payload, action, connect)) => {
+                    let escalation = escalation.map(|e| *e);
                     // A different target user is a different agent on the host, a different
                     // delegate is a different host entirely, and a different connection is a
                     // different machine even under one name, so any of the three ends the batch
@@ -1510,11 +1512,13 @@ pub(super) async fn drive_host(
             let key = LinkKey {
                 host: target,
                 become_user: batch_escalation.as_ref().map(|e| e.user.clone()),
+                become_program: batch_escalation.as_ref().map(Escalation::program),
                 transport,
             };
             // One escalated link at a time, now that they are no longer released at every
             // barrier: a batch escalating differently from the one in hand - another
-            // `become_user`, another transport - retires the one it is replacing rather than
+            // `become_user`, another escalation program or flags, another transport - retires the
+            // one it is replacing rather than
             // adding to it. So a host holds its own link plus at most one escalated link
             // whatever the number of users the play names, which is what the run was measured
             // for. Closed off-task: `shutdown` grants its agent two seconds and this batch has
@@ -1554,7 +1558,18 @@ pub(super) async fn drive_host(
                     let index = batch[0].0;
                     let mut task = c.steps[index].task.clone();
                     task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    let results = vec![(None, TaskResult::failed_with(msg))];
+                    // Measured for `Incorrect su password` (scout case `c5w`): the reference
+                    // raises it from its connection, so the result is `changed: false` and a
+                    // `msg` that already says `Task failed: `. The other refusals keep their shape
+                    // until they are measured too.
+                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD {
+                        let mut shaped = TaskResult::failed_with(crate::render::task_failed(&msg));
+                        shaped.0.insert("changed".into(), Value::Bool(false));
+                        shaped
+                    } else {
+                        TaskResult::failed_with(msg)
+                    };
+                    let results = vec![(None, refused)];
                     let rescuable = !handlers_only && rescue_target(&c, index).is_some();
                     let result = report_task(
                         &tx,

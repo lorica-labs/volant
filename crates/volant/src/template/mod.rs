@@ -326,6 +326,11 @@ impl Templar {
         Self::with_bridge(base_dir, None)
     }
 
+    /// The bridge to ansible-core this templar sends what it lacks to, when it has one.
+    pub(crate) fn bridge(&self) -> Option<&Arc<Bridge>> {
+        self.bridge.as_ref()
+    }
+
     /// [`Templar::new`], sending what the engine lacks to `bridge`: a filter or test the engine
     /// has no native implementation of, a lookup it does not run. A native name never reaches it.
     pub fn with_bridge(base_dir: PathBuf, bridge: Option<Arc<Bridge>>) -> Self {

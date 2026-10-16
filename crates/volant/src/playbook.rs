@@ -74,6 +74,10 @@ pub struct Play {
     pub environment: Vec<Value>,
     pub check_mode: Option<bool>,
     pub run_once: Option<bool>,
+    /// The play's `module_defaults` and `collections`, folded into every task the same way. A
+    /// role is the exception for `collections`: it does not inherit the play's.
+    pub module_defaults: Vec<Value>,
+    pub collections: Option<Vec<String>>,
     /// The play's `any_errors_fatal`, `ignore_errors` and `ignore_unreachable`: task keywords a
     /// play may carry, folded into every task as the outermost layer like `no_log` above.
     pub any_errors_fatal: Option<bool>,
@@ -279,6 +283,14 @@ pub struct PlayTask {
     /// block's, then the task's. They are rendered and merged when the task runs, the later
     /// layer winning, because a layer is a mapping whose values may be templates.
     pub environment: Vec<Value>,
+    /// `module_defaults`, one mapping per layer that wrote one, outermost first. The innermost
+    /// layer naming a module replaces the outer layers' defaults for it as a whole, which is
+    /// settled when the task runs, because the values are templates.
+    pub module_defaults: Vec<Value>,
+    /// `collections`, searched before `ansible.builtin` for a module written by its short name.
+    /// `None` when no layer wrote one, `Some` of an empty list for a role that has none: a role
+    /// does not inherit the play's.
+    pub collections: Option<Vec<String>>,
     /// `check_mode`. `false` is what this release does, so it is accepted and changes nothing;
     /// `true` asks for a mode this release has not written and the pre-flight refuses it.
     pub check_mode: Option<bool>,
@@ -361,6 +373,8 @@ impl PlayTask {
             delay: None,
             no_log: None,
             environment: Vec::new(),
+            module_defaults: Vec::new(),
+            collections: None,
             check_mode: None,
             run_once: None,
             any_errors_fatal: None,
@@ -435,26 +449,34 @@ impl PlayTask {
     }
 }
 
-/// `remote_user`, `port` and `connection`, wherever they are written, as written: each may be a
-/// template, rendered when the task runs. A task's own value wins over its block's and its
-/// play's, and a host variable wins over all of them; see `Transport::for_task`.
+/// `remote_user`, `port`, `connection` and the escalation program's keywords `become_method`,
+/// `become_exe` and `become_flags`, wherever they are written, as written: each may be a
+/// template, rendered when the task runs, except `become_method`, which names one of
+/// [`BECOME_METHODS`]. A task's own value wins over its block's and its play's, and a host
+/// variable wins over all of them; see `Transport::for_task` and `become_for`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Connect {
     pub remote_user: Option<String>,
     pub port: Option<String>,
     pub connection: Option<String>,
+    pub become_method: Option<String>,
+    pub become_exe: Option<String>,
+    pub become_flags: Option<String>,
 }
 
 impl Connect {
     /// This layer over the one outside it.
     pub fn over(&self, outer: &Connect) -> Connect {
+        let pick = |inner: &Option<String>, outer: &Option<String>| {
+            inner.clone().or_else(|| outer.clone())
+        };
         Connect {
-            remote_user: self
-                .remote_user
-                .clone()
-                .or_else(|| outer.remote_user.clone()),
-            port: self.port.clone().or_else(|| outer.port.clone()),
-            connection: self.connection.clone().or_else(|| outer.connection.clone()),
+            remote_user: pick(&self.remote_user, &outer.remote_user),
+            port: pick(&self.port, &outer.port),
+            connection: pick(&self.connection, &outer.connection),
+            become_method: pick(&self.become_method, &outer.become_method),
+            become_exe: pick(&self.become_exe, &outer.become_exe),
+            become_flags: pick(&self.become_flags, &outer.become_flags),
         }
     }
 }
@@ -468,42 +490,9 @@ fn connect_keywords(yaml: &Yaml, context: &str) -> anyhow::Result<Connect> {
             Some(other) => bail!("{context}'{key}' must be a name, found {other:?}"),
         }
     };
-    Ok(Connect {
-        remote_user: text("remote_user")?,
-        port: text("port")?,
-        connection: text("connection")?,
-    })
-}
-
-/// The only escalation method this release implements. `su`, `doas`, `pbrun` and the rest are
-/// refused by name at load time: escalating through a different program is not the same
-/// operation, and quietly using `sudo` where the playbook asked for `su` would run the task
-/// under rules the operator never wrote.
-pub const BECOME_METHOD: &str = "sudo";
-
-/// The one name in the module column that is not a module: `meta` asks the engine itself for
-/// something, so it is read here and compiled into a step of its own instead of travelling to
-/// an agent.
-pub const META: &str = "meta";
-
-/// The three escalation keywords, wherever they appear. `become_user` and `become_method` are
-/// read as text; `become` goes through `as_bool`, so `yes`, `on` and `"true"` all work as they
-/// do in Ansible.
-///
-/// `become_method` comes back as nothing: refusing everything but `sudo` right here is all a
-/// caller could ever do with it, so it is refused here and not stored.
-fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Option<String>)> {
-    let text = |key: &str| -> anyhow::Result<Option<String>> {
-        match field(yaml, key) {
-            None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
-            Some(Yaml::Value(Scalar::String(s))) => Ok(Some(s.to_string())),
-            Some(other) => bail!("{context}'{key}' must be a name, found {other:?}"),
-        }
-    };
-    let flag = boolean(yaml, "become")?;
-    let user = text("become_user")?;
-    if let Some(method) = text("become_method")?
-        && method != BECOME_METHOD
+    let become_method = text("become_method")?;
+    if let Some(method) = &become_method
+        && !BECOME_METHODS.contains(&method.as_str())
     {
         // Exit 2, not the 4 the rest of a refused playbook gets: measured, the reference reads
         // this keyword happily and then fails the task that would have used it, which is 2.
@@ -512,6 +501,37 @@ fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
             format!("{context}become_method '{method}' is not supported yet"),
         ));
     }
+    Ok(Connect {
+        remote_user: text("remote_user")?,
+        port: text("port")?,
+        connection: text("connection")?,
+        become_method,
+        become_exe: text("become_exe")?,
+        become_flags: text("become_flags")?,
+    })
+}
+
+/// The escalation methods this release implements. `doas`, `pbrun` and the rest are refused by
+/// name: escalating through a different program is not the same operation, and quietly using
+/// `sudo` where the playbook asked for `doas` would run the task under rules the operator never
+/// wrote.
+pub const BECOME_METHODS: [&str; 2] = ["sudo", "su"];
+
+/// The one name in the module column that is not a module: `meta` asks the engine itself for
+/// something, so it is read here and compiled into a step of its own instead of travelling to
+/// an agent.
+pub const META: &str = "meta";
+
+/// `become` and `become_user`, wherever they appear. `become_user` is read as text; `become`
+/// goes through `as_bool`, so `yes`, `on` and `"true"` all work as they do in Ansible. The
+/// method and its program are read with the connection keywords, which fold the same way.
+fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Option<String>)> {
+    let flag = boolean(yaml, "become")?;
+    let user = match field(yaml, "become_user") {
+        None | Some(Yaml::Value(Scalar::Null)) => None,
+        Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
+        Some(other) => bail!("{context}'become_user' must be a name, found {other:?}"),
+    };
     Ok((flag, user))
 }
 
@@ -1024,6 +1044,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         serial,
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, "")?,
+        module_defaults: module_defaults(yaml, "")?,
+        collections: collections(yaml, "")?,
         check_mode: boolean(yaml, "check_mode")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
@@ -1099,6 +1121,35 @@ fn environment(yaml: &Yaml, context: &str) -> anyhow::Result<Vec<Value>> {
         Some(v) => Ok(vec![
             to_json(v).with_context(|| format!("{context}'environment'"))?,
         ]),
+    }
+}
+
+/// `module_defaults`, wherever it is written: one layer per level, a mapping or a list of
+/// mappings. The keys are action or group names and are read as they are; the values are
+/// templates, rendered when a task runs.
+fn module_defaults(yaml: &Yaml, context: &str) -> anyhow::Result<Vec<Value>> {
+    let layers = match field(yaml, "module_defaults") {
+        None | Some(Yaml::Value(Scalar::Null)) => return Ok(Vec::new()),
+        Some(Yaml::Sequence(items)) => items.iter().collect(),
+        Some(node) => vec![node],
+    };
+    layers
+        .into_iter()
+        .map(|node| match to_json(node).with_context(|| format!("{context}'module_defaults'"))? {
+            layer @ Value::Object(_) => Ok(layer),
+            _ => bail!(
+                "{context}The field 'module_defaults' is supposed to be a dictionary or list of dictionaries, the keys of which must be static action, module, or group names. Only the values may contain templates. For example: {{'ping': \"{{{{ ping_defaults }}}}\"}}"
+            ),
+        })
+        .collect()
+}
+
+/// `collections`, wherever it is written: a name or a list of names, searched in order. Absent
+/// is `None`, so the layer above is not hidden; a null or an empty list says none.
+fn collections(yaml: &Yaml, context: &str) -> anyhow::Result<Option<Vec<String>>> {
+    match field(yaml, "collections") {
+        None => Ok(None),
+        Some(_) => names(yaml, "collections", context).map(Some),
     }
 }
 
@@ -1194,6 +1245,8 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             notify: names(yaml, "notify", &context)?,
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
+            module_defaults: module_defaults(yaml, &context)?,
+            collections: collections(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
@@ -1367,6 +1420,8 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             notify: names(yaml, "notify", &context)?,
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
+            module_defaults: module_defaults(yaml, &context)?,
+            collections: collections(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
@@ -1649,6 +1704,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         delay: field(yaml, "delay").map(to_json).transpose()?,
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, &context)?,
+        module_defaults: module_defaults(yaml, &context)?,
+        collections: collections(yaml, &context)?,
         check_mode: boolean(yaml, "check_mode")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
@@ -2031,17 +2088,17 @@ mod tests {
         "- hosts: all\n  nosuchplaykeyword: 1\n  tasks: []\n",
         &["'nosuchplaykeyword' is not a valid attribute for a Play"]
     )]
-    #[case::become_method_play_su(
-        "- hosts: all\n  become: true\n  become_method: su\n  tasks: []\n",
-        &["su", "not supported yet"]
+    #[case::become_method_play_doas(
+        "- hosts: all\n  become: true\n  become_method: doas\n  tasks: []\n",
+        &["doas", "not supported yet"]
     )]
     #[case::become_method_play_runas(
         "- hosts: all\n  become: true\n  become_method: runas\n  tasks: []\n",
         &["runas", "not supported yet"]
     )]
-    #[case::become_method_task_su(
-        "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: su\n",
-        &["su", "T"]
+    #[case::become_method_task_doas(
+        "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: doas\n",
+        &["doas", "T"]
     )]
     #[case::become_method_task_runas(
         "- hosts: all\n  tasks:\n    - name: T\n      command: id\n      become_method: runas\n",
@@ -2165,8 +2222,6 @@ mod tests {
     #[case::async_("async")]
     #[case::poll("poll")]
     #[case::diff("diff")]
-    #[case::become_flags("become_flags")]
-    #[case::become_exe("become_exe")]
     fn a_keyword_is_parked_for_the_preflight(#[case] kw: &str) {
         let pb = parse(
             &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),

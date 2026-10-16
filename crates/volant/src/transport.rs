@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use anyhow::bail;
 use serde_json::{Map, Value};
-use tokio::io::AsyncWriteExt;
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 
 use crate::agent::{AgentLink, AgentSource};
@@ -30,8 +30,11 @@ pub struct ConnectionDefaults {
     pub r#become: bool,
     /// Who to become, Ansible's `become_user`, `root` unless configured otherwise.
     pub become_user: String,
-    /// Only `sudo` is implemented; anything else is refused before a playbook runs.
+    /// `sudo` or `su`; anything else is refused before a playbook runs.
     pub become_method: String,
+    /// `become_exe` and `become_flags` from `ansible.cfg` or the environment, as written.
+    pub become_exe: Option<String>,
+    pub become_flags: Option<String>,
     /// The `--ask-become-pass` answer, if one was asked for.
     pub become_password: Option<String>,
 }
@@ -51,16 +54,63 @@ impl std::fmt::Debug for ConnectionDefaults {
             .field("become", &self.r#become)
             .field("become_user", &self.become_user)
             .field("become_method", &self.become_method)
+            .field("become_exe", &self.become_exe)
+            .field("become_flags", &self.become_flags)
             .field("become_password", &redacted(self.become_password.as_ref()))
             .finish()
     }
 }
 
-/// Privilege escalation for one link: run the agent as `user` through `sudo`.
+/// The escalation programs this release drives, by the name a playbook gives them.
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
+pub enum BecomeMethod {
+    Sudo,
+    Su,
+}
+
+impl BecomeMethod {
+    /// The method a `become_method` names, or `None` for one this release does not implement.
+    pub fn named(name: &str) -> Option<Self> {
+        match name {
+            "sudo" => Some(Self::Sudo),
+            "su" => Some(Self::Su),
+            _ => None,
+        }
+    }
+}
+
+/// Privilege escalation for one link: run the agent as `user` through `sudo` or `su`.
 #[derive(Clone, PartialEq, Eq)]
 pub struct Escalation {
+    pub method: BecomeMethod,
     pub user: String,
     pub password: Option<String>,
+    /// `become_exe`, split into shell words; empty runs the method's own program.
+    pub exe: Vec<String>,
+    /// `become_flags`, split into shell words; `None` keeps the method's own default.
+    pub flags: Option<Vec<String>>,
+}
+
+/// How a link escalates, less the user and the password: two links to one user through
+/// different programs or flags are different agents, started under different rules. The
+/// password is left out on purpose, so a password that changes in the middle of a play keeps
+/// the link it already has, the escalation it proved being the same.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct EscalationProgram {
+    pub method: BecomeMethod,
+    pub exe: Vec<String>,
+    pub flags: Option<Vec<String>>,
+}
+
+impl Escalation {
+    /// What of this escalation keys its link, beside the user.
+    pub fn program(&self) -> EscalationProgram {
+        EscalationProgram {
+            method: self.method,
+            exe: self.exe.clone(),
+            flags: self.flags.clone(),
+        }
+    }
 }
 
 /// Also written by hand, and for the same reason: `Escalation` travels through the executor,
@@ -68,8 +118,11 @@ pub struct Escalation {
 impl std::fmt::Debug for Escalation {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Escalation")
+            .field("method", &self.method)
             .field("user", &self.user)
             .field("password", &redacted(self.password.as_ref()))
+            .field("exe", &self.exe)
+            .field("flags", &self.flags)
             .finish()
     }
 }
@@ -85,6 +138,8 @@ fn redacted(password: Option<&String>) -> &'static str {
 /// wrong. Both texts are ansible-core 2.19.12's own, measured against `sudo` 1.9.15p5.
 pub const MISSING_SUDO_PASSWORD: &str = "Missing sudo password";
 pub const INCORRECT_SUDO_PASSWORD: &str = "Incorrect sudo password";
+/// The reference's text for a `su` that refused the password, or asked for it a second time.
+pub const INCORRECT_SU_PASSWORD: &str = "Incorrect su password";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Transport {
@@ -320,6 +375,14 @@ impl Transport {
                     .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))?;
                 let agent = agent.display().to_string();
                 let escalated = match escalation {
+                    // `su` reads its password from a terminal, which this side only reaches
+                    // through `ssh -tt`; a local link has none to give it.
+                    Some(e) if e.method == BecomeMethod::Su => {
+                        return Err(ConnectError::Become(
+                            "become_method 'su' is not supported yet on a local connection"
+                                .to_string(),
+                        ));
+                    }
                     Some(e) => Some((e, check_local_escalation(&agent, e).await?)),
                     None => None,
                 };
@@ -392,13 +455,55 @@ fn preamble(escalated: Escalated<'_>) -> Option<Vec<u8>> {
     Some(bytes)
 }
 
+/// `sudo`'s words up to `-u`: `become_exe` or `sudo`, then `become_flags` or `-H`, then the
+/// probed form's own. The reference's default flags are `-H -S -n`; the last two are what the
+/// probed form decides here, so only `-H` stands in for them.
+///
+/// The form that writes a password drops `-n` from `become_flags` first, as the reference does
+/// when it has a password to send: a `sudo` told never to ask refuses the line it is given.
+fn sudo_words(escalation: &Escalation, form: SudoForm) -> Vec<String> {
+    let mut words = if escalation.exe.is_empty() {
+        vec!["sudo".to_string()]
+    } else {
+        escalation.exe.clone()
+    };
+    match &escalation.flags {
+        None => words.push("-H".to_string()),
+        Some(flags) if form == SudoForm::ReadStdin => {
+            words.extend(flags.iter().filter_map(|flag| interactive(flag)));
+        }
+        Some(flags) => words.extend(flags.iter().cloned()),
+    }
+    words.extend(form.flags().iter().map(ToString::to_string));
+    words
+}
+
+/// One `become_flags` word with its non-interactive switch taken out, the way sudo.py rewrites
+/// it: `-n` and `--non-interactive` go, and a cluster of short flags loses its `n`
+/// (its `^(-\w*)n(\w*.*)` pattern, whose greedy `\w*` finds the last `n` of the leading run
+/// of word characters).
+fn interactive(flag: &str) -> Option<String> {
+    if flag == "-n" || flag == "--non-interactive" {
+        return None;
+    }
+    let Some(cluster) = flag.strip_prefix('-').filter(|rest| !rest.starts_with('-')) else {
+        return Some(flag.to_string());
+    };
+    let run = cluster
+        .find(|c: char| !(c.is_alphanumeric() || c == '_'))
+        .unwrap_or(cluster.len());
+    Some(match cluster[..run].rfind('n') {
+        Some(at) => format!("-{}{}", &cluster[..at], &cluster[at + 1..]),
+        None => flag.to_string(),
+    })
+}
+
 /// The command line that starts a local agent, under `sudo` when escalation is asked for.
 fn local_argv(agent: &str, escalated: Escalated<'_>) -> Vec<String> {
     let Some((escalation, form)) = escalated else {
         return vec![agent.to_string()];
     };
-    let mut argv = vec!["sudo".to_string(), "-H".to_string()];
-    argv.extend(form.flags().iter().map(ToString::to_string));
+    let mut argv = sudo_words(escalation, form);
     argv.extend([
         "-u".to_string(),
         escalation.user.clone(),
@@ -428,13 +533,223 @@ fn sudo_prefix(escalated: Escalated<'_>) -> String {
     let Some((escalation, form)) = escalated else {
         return String::new();
     };
-    let flags = form
-        .flags()
+    let words = sudo_words(escalation, form)
         .iter()
-        .map(|f| single_quoted(f))
+        .map(|word| single_quoted(word))
         .collect::<Vec<_>>()
         .join(" ");
-    format!("sudo -H {flags} -u {} -- ", single_quoted(&escalation.user))
+    format!("{words} -u {} -- ", single_quoted(&escalation.user))
+}
+
+/// Who a bootstrap command runs as: the connecting user, or the escalated one through `sudo`
+/// in its settled form, both over plain pipes; or the escalated one through `su`, over a
+/// terminal.
+#[derive(Clone, Copy)]
+enum RunAs<'a> {
+    Direct(Escalated<'a>),
+    Su(&'a Escalation),
+}
+
+/// A bootstrap failure on an escalated link, said to be about that user's agent.
+fn preparing_for(err: ConnectError, escalation: Option<&Escalation>) -> ConnectError {
+    match (err, escalation) {
+        (ConnectError::Unreachable(msg), Some(e)) => {
+            ConnectError::Unreachable(format!("preparing the agent for user {}: {msg}", e.user))
+        }
+        (err, _) => err,
+    }
+}
+
+/// The line the command behind `su` prints once `su` has let it in and its terminal is raw:
+/// everything before it is `su` talking, everything after it is the command's own. A fresh one
+/// for every `su`, like the reference's `BECOME-SUCCESS-<random>`, so nothing printed before
+/// `su` lets the command in can pass for it.
+fn become_success() -> String {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seed = format!(
+        "{:?} {} {}",
+        std::time::SystemTime::now(),
+        std::process::id(),
+        COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    format!(
+        "VOLANT-BECOME-SUCCESS-{}",
+        &blake3::hash(seed.as_bytes()).to_hex()[..32]
+    )
+}
+
+/// The most `su` may print before its success line: a prompt and a refusal are a few dozen
+/// bytes, and something printing without end is not `su` asking for anything.
+const SU_TALK_LIMIT: usize = 4096;
+
+/// `su`'s password prompts, the reference's `SU_PROMPT_LOCALIZATIONS` of ansible-core 2.19.12,
+/// matched as su.py matches them: any of them, then optional spaces, then an ASCII or a
+/// full-width colon, in any case.
+fn su_prompt() -> &'static regex::Regex {
+    static PROMPT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
+    PROMPT.get_or_init(|| {
+        const PROMPTS: [&str; 32] = [
+            "Password",
+            "암호",
+            "パスワード",
+            "Adgangskode",
+            "Contraseña",
+            "Contrasenya",
+            "Hasło",
+            "Heslo",
+            "Jelszó",
+            "Lösenord",
+            "Mật khẩu",
+            "Mot de passe",
+            "Parola",
+            "Parool",
+            "Pasahitza",
+            "Passord",
+            "Passwort",
+            "Salasana",
+            "Sandi",
+            "Senha",
+            "Wachtwoord",
+            "ססמה",
+            "Лозинка",
+            "Парола",
+            "Пароль",
+            "गुप्तशब्द",
+            "शब्दकूट",
+            "సంకేతపదము",
+            "හස්පදය",
+            "密码",
+            "密碼",
+            "口令",
+        ];
+        let alternatives = PROMPTS.map(regex::escape).join("|");
+        regex::Regex::new(&format!(r"(?i)(?:{alternatives})\s*[:：]"))
+            .expect("the prompt pattern is fixed")
+    })
+}
+
+/// The remote command that runs `command` behind `su`, as the reference builds it: `become_exe`
+/// or `su`, `become_flags` (none by default, so no `-` login), the user, then `-c` and the
+/// command for `/bin/sh` whatever the user's own shell is. Every word is quoted for the remote
+/// shell.
+///
+/// Before `command`, the shell `su` started makes its terminal raw: the agent's frames are
+/// binary, and a terminal left as it is would echo them, turn their carriage returns into new
+/// lines and read some of their bytes as signals. Only then does it print `success` (see
+/// [`become_success`]), so nothing is sent before the terminal is ready for it.
+fn su_command(escalation: &Escalation, command: &str, success: &str) -> String {
+    let inner = format!("stty raw -echo -iexten || exit 1; echo {success}; {command}");
+    let program = if escalation.exe.is_empty() {
+        vec!["su".to_string()]
+    } else {
+        escalation.exe.clone()
+    };
+    let words = program
+        .iter()
+        .chain(escalation.flags.iter().flatten())
+        .chain(std::iter::once(&escalation.user))
+        .map(|word| single_quoted(word))
+        .collect::<Vec<_>>()
+        .join(" ");
+    format!(
+        "exec {words} -c {}",
+        single_quoted(&format!("/bin/sh -c {}", single_quoted(&inner)))
+    )
+}
+
+/// Talks `su` through to the command it guards, the way the reference's ssh connection does:
+/// a prompt is answered with the password once, and a second prompt or an `Authentication
+/// failure` line is the wrong password. Without a password no prompt is answered, so `su` waits
+/// and the link times out, which is what the reference reports too.
+///
+/// `success` is taken before any prompt as well, as the reference takes it: a connecting user
+/// who is already root, or a PAM that lets this one in, gets no prompt at all. Being fresh for
+/// every `su`, it can only come from the shell `su` started.
+///
+/// Reads one byte at a time, so nothing the command prints after `success` is taken off the
+/// stream. `Ok(None)` is the command running; `Ok(Some(said))` is the stream ending before it
+/// did, with what `su` had said, for the caller to tell a dead connection from a refusal by the
+/// exit code.
+async fn su_exchange<R, W>(
+    out: &mut R,
+    input: &mut W,
+    password: Option<&str>,
+    success: &str,
+    timeout: Duration,
+) -> Result<Option<String>, ConnectError>
+where
+    R: tokio::io::AsyncRead + Unpin,
+    W: tokio::io::AsyncWrite + Unpin,
+{
+    let mut said: Vec<u8> = Vec::new();
+    let mut line: Vec<u8> = Vec::new();
+    let mut answered = false;
+    let text = |bytes: &[u8]| redacted_stderr(&String::from_utf8_lossy(bytes), password);
+    loop {
+        let byte = match tokio::time::timeout(timeout, out.read_u8()).await {
+            Ok(Ok(byte)) => byte,
+            Ok(Err(_)) => {
+                said.extend_from_slice(&line);
+                return Ok(Some(text(&said)));
+            }
+            Err(_) => {
+                // The reference's own words, with the complete lines `su` printed before it
+                // went quiet; a prompt it is still waiting at has no line end and stays out.
+                let msg = format!(
+                    "Task failed: Timeout ({}s) waiting for privilege escalation prompt: {}",
+                    timeout.as_secs(),
+                    text(&said).trim()
+                );
+                return Err(ConnectError::Unreachable(msg.trim_end().to_string()));
+            }
+        };
+        if said.len() + line.len() >= SU_TALK_LIMIT {
+            return Err(ConnectError::Become(format!(
+                "su printed more than {SU_TALK_LIMIT} bytes without starting the command: {}",
+                first_words(&text(&said), "")
+            )));
+        }
+        if byte == b'\n' {
+            let complete = String::from_utf8_lossy(&line);
+            // Ends with rather than equals: util-linux 2.41's `su` opens the session with an
+            // `OSC 3008` context sequence that has no line end of its own, measured on the
+            // development machine, and the reference too looks for the marker within the line.
+            if complete.trim_end().ends_with(success) {
+                return Ok(None);
+            }
+            if complete.contains("Authentication failure") {
+                return Err(ConnectError::Become(INCORRECT_SU_PASSWORD.to_string()));
+            }
+            said.append(&mut line);
+            said.push(b'\n');
+            continue;
+        }
+        line.push(byte);
+        // A prompt ends at its colon, the ASCII one or the last byte of the full-width one.
+        let Some(password) = password.filter(|_| matches!(byte, b':' | 0x9A)) else {
+            continue;
+        };
+        if !su_prompt().is_match(&String::from_utf8_lossy(&line)) {
+            continue;
+        }
+        if answered {
+            return Err(ConnectError::Become(INCORRECT_SU_PASSWORD.to_string()));
+        }
+        // A `su` that is gone by now closes the terminal, and the read above says so.
+        let _ = input.write_all(format!("{password}\n").as_bytes()).await;
+        let _ = input.flush().await;
+        answered = true;
+        line.clear();
+    }
+}
+
+/// Why a command behind `su` never started, once the stream has ended: `ssh`'s own failure when
+/// it exited 255, otherwise what `su` said, with the password taken back out.
+fn su_ended(code: Option<i32>, said: &str, stderr: &str, password: Option<&str>) -> ConnectError {
+    if code == Some(EXIT_SSH_FAILURE) {
+        return ConnectError::Unreachable(unreachable_message(stderr, password));
+    }
+    ConnectError::Become(first_words(said, "su exited without starting the command"))
 }
 
 /// Which `sudo` form works for this link, asked of `sudo` itself rather than guessed from
@@ -1007,8 +1322,11 @@ impl SshTarget {
         )
     }
 
-    /// Reads the agent from stdin into the cache, atomically, after checking free space. The
-    /// byte count is verified before the temporary copy is made executable and renamed, so a
+    /// Reads the agent from stdin into the cache, atomically, after checking free space. It
+    /// reads the byte count it was told rather than up to the end of its input, because behind
+    /// `su` that input is a terminal, where no end ever comes; `head -c` has that on every host
+    /// an agent is built for (GNU coreutils, BusyBox and toybox alike). The byte count is
+    /// verified before the temporary copy is made executable and renamed, so a
     /// transfer cut short never lands under the final name; older cached versions are removed
     /// afterwards, and failing to remove one does not fail an upload that has already landed.
     /// The temporary name carries the remote shell's pid, so two uploads racing on one host
@@ -1023,7 +1341,7 @@ impl SshTarget {
              avail=$(df -Pk \"$d\" | awk 'NR==2 {{print $4}}'); \
              case \"$avail\" in ''|*[!0-9]*) avail=0;; esac; \
              [ \"$avail\" -ge {need} ] || {{ echo \"$avail\"; exit {EXIT_NO_SPACE}; }}; \
-             cat > \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
+             head -c {size} > \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
              [ \"$(wc -c < \"$t\")\" -eq {size} ] || {{ rm -f \"$t\"; exit {EXIT_SHORT_WRITE}; }}; \
              chmod 755 \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
              mv \"$t\" \"$d/volant-agent\" || {{ rm -f \"$t\"; exit 1; }}; \
@@ -1134,6 +1452,11 @@ impl SshTarget {
         // The probe that settles the form is the bootstrap's own first probe, so its answer is
         // carried over rather than asked for twice: on a host whose agent is already cached
         // that makes an escalated link two `ssh` invocations, one fewer than before.
+        if let Some(e) = escalation
+            && e.method == BecomeMethod::Su
+        {
+            return self.open_su(agents, e).await;
+        }
         let (escalated, probed) = match escalation {
             Some(e) => {
                 let (form, probe) = self.check_escalation(e).await?;
@@ -1141,14 +1464,9 @@ impl SshTarget {
             }
             None => (None, None),
         };
-        self.bootstrap(agents, escalated, probed)
+        self.bootstrap(agents, RunAs::Direct(escalated), probed)
             .await
-            .map_err(|err| match (err, escalated) {
-                (ConnectError::Unreachable(msg), Some((e, _))) => ConnectError::Unreachable(
-                    format!("preparing the agent for user {}: {msg}", e.user),
-                ),
-                (err, _) => err,
-            })?;
+            .map_err(|err| preparing_for(err, escalation))?;
         let agent = shell_word(&self.agent_path());
         let remote = match escalated {
             None => format!("exec {agent}"),
@@ -1184,9 +1502,162 @@ impl SshTarget {
     ) -> Result<(SudoForm, Captured), ConnectError> {
         let command = self.probe_command();
         settle_form(escalation, bootstrap_probe_ran, |form| {
-            self.run_bootstrap(Some((escalation, form)), &command, None)
+            self.run_bootstrap(RunAs::Direct(Some((escalation, form))), &command, None)
         })
         .await
+    }
+
+    /// A link whose agent `su` starts. The first probe goes through `su` on its own, so its
+    /// refusals and its timeout reach the task as the reference words them; only what goes
+    /// wrong after `su` has let it in is said to be about preparing the agent.
+    async fn open_su(
+        &self,
+        agents: &AgentSource,
+        escalation: &Escalation,
+    ) -> Result<AgentLink, ConnectError> {
+        let probe = self.run_su(escalation, &self.probe_command(), None).await?;
+        self.bootstrap(agents, RunAs::Su(escalation), Some(probe))
+            .await
+            .map_err(|err| preparing_for(err, Some(escalation)))?;
+        // The agent's stderr would land in the stream it answers on, so it goes to a file
+        // beside it, which a dead link names. Its hangup at the end of the link is what the
+        // agent's own `SIGHUP` handler is for.
+        let agent = shell_word(&self.agent_path());
+        let stderr_file = format!("{}/agent.stderr", self.cache_dir());
+        let success = become_success();
+        let mut child = self.spawn_su(
+            escalation,
+            &format!("exec {agent} 2>{}", shell_word(&stderr_file)),
+            &success,
+            false,
+            Stdio::inherit(),
+        )?;
+        let (Some(mut stdin), Some(mut stdout)) = (child.stdin.take(), child.stdout.take()) else {
+            return Err(ConnectError::Unreachable(
+                "ssh was started without its pipes".to_string(),
+            ));
+        };
+        let password = escalation.password.as_deref();
+        let timeout = self.escalation_timeout();
+        if let Some(said) =
+            su_exchange(&mut stdout, &mut stdin, password, &success, timeout).await?
+        {
+            let code = child.wait().await.ok().and_then(|status| status.code());
+            return Err(su_ended(code, &said, "", password));
+        }
+        child.stdin = Some(stdin);
+        child.stdout = Some(stdout);
+        AgentLink::new_over_tty(child, stderr_file)
+            .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
+    }
+
+    /// How long `su` may stay silent before the link is given up: the connection timeout and
+    /// two seconds, the reference's own measure for the same wait.
+    fn escalation_timeout(&self) -> Duration {
+        self.connect_timeout + Duration::from_secs(2)
+    }
+
+    /// `ssh -tt` running `command` behind `su`, with `stdin` and `stdout` piped for
+    /// [`su_exchange`]. `su` reads its password from a terminal, so the remote side gets one;
+    /// `-e none` keeps the agent's bytes from ever reading as an escape sequence once they
+    /// travel over it, and `LogLevel=ERROR` keeps `ssh` from announcing the closed connection
+    /// on the controller's stderr when the link ends.
+    fn spawn_su(
+        &self,
+        escalation: &Escalation,
+        command: &str,
+        success: &str,
+        compress: bool,
+        stderr: Stdio,
+    ) -> Result<tokio::process::Child, ConnectError> {
+        if escalation.user.starts_with('-') {
+            // `su` would read it as one of its own options.
+            return Err(ConnectError::Become(format!(
+                "'become_user' must be a user name for su, found '{}'",
+                escalation.user
+            )));
+        }
+        let mut argv = self.ssh_argv_with(&su_command(escalation, command, success), compress);
+        let address = argv.len() - 3;
+        argv.splice(
+            address..address,
+            ["-o".to_string(), "LogLevel=ERROR".into()],
+        );
+        argv.splice(1..1, ["-tt".to_string(), "-e".into(), "none".into()]);
+        Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(stderr)
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| ConnectError::Unreachable(format!("starting ssh: {e}")))
+    }
+
+    /// One bootstrap command behind `su`, captured the way [`Self::run_capturing`] captures one
+    /// over a pipe: what it printed once `su` let it in, its exit code, and `ssh`'s own words.
+    async fn run_su(
+        &self,
+        escalation: &Escalation,
+        command: &str,
+        payload: Option<&[u8]>,
+    ) -> Result<Captured, ConnectError> {
+        let success = become_success();
+        let mut child = self.spawn_su(
+            escalation,
+            command,
+            &success,
+            payload.is_some(),
+            Stdio::piped(),
+        )?;
+        let (Some(mut stdin), Some(mut stdout), Some(mut stderr)) =
+            (child.stdin.take(), child.stdout.take(), child.stderr.take())
+        else {
+            return Err(ConnectError::Unreachable(
+                "ssh was started without its pipes".to_string(),
+            ));
+        };
+        let stderr = tokio::spawn(async move {
+            let mut bytes = Vec::new();
+            let _ = stderr.read_to_end(&mut bytes).await;
+            String::from_utf8_lossy(&bytes).into_owned()
+        });
+        let password = escalation.password.as_deref();
+        let timeout = self.escalation_timeout();
+        if let Some(said) =
+            su_exchange(&mut stdout, &mut stdin, password, &success, timeout).await?
+        {
+            let code = child.wait().await.ok().and_then(|status| status.code());
+            let stderr = stderr.await.unwrap_or_default();
+            return Err(su_ended(code, &said, &stderr, password));
+        }
+        if let Some(bytes) = payload {
+            // A command that gives up early closes the terminal; its exit code says why.
+            let _ = stdin.write_all(bytes).await;
+            let _ = stdin.flush().await;
+        }
+        drop(stdin);
+        let mut out = Vec::new();
+        stdout
+            .read_to_end(&mut out)
+            .await
+            .map_err(|e| ConnectError::Unreachable(format!("reading ssh: {e}")))?;
+        let status = child
+            .wait()
+            .await
+            .map_err(|e| ConnectError::Unreachable(format!("waiting for ssh: {e}")))?;
+        let captured = Captured {
+            code: status.code(),
+            stdout: String::from_utf8_lossy(&out).into_owned(),
+            stderr: stderr.await.unwrap_or_default(),
+        };
+        if captured.code == Some(EXIT_SSH_FAILURE) {
+            return Err(ConnectError::Unreachable(unreachable_message(
+                &captured.stderr,
+                password,
+            )));
+        }
+        Ok(captured)
     }
 
     /// One bootstrap command, run as the escalated user where the link escalates.
@@ -1196,10 +1667,14 @@ impl SshTarget {
     /// anything, so an upload whose first line went to `sudo` would land one line short.
     async fn run_bootstrap(
         &self,
-        escalated: Escalated<'_>,
+        run_as: RunAs<'_>,
         command: &str,
         payload: Option<&[u8]>,
     ) -> Result<Captured, ConnectError> {
+        let escalated = match run_as {
+            RunAs::Direct(escalated) => escalated,
+            RunAs::Su(escalation) => return self.run_su(escalation, command, payload).await,
+        };
         let secret = preamble(escalated);
         // A password is only ever on this pipe when `secret` carries it; asking the escalation
         // directly would say "offered" for a `NoPrompt` probe that never wrote it anywhere.
@@ -1229,13 +1704,13 @@ impl SshTarget {
     async fn bootstrap(
         &self,
         agents: &AgentSource,
-        escalated: Escalated<'_>,
+        run_as: RunAs<'_>,
         probed: Option<Captured>,
     ) -> Result<(), ConnectError> {
         let probe = match probed {
             Some(probe) => probe,
             None => {
-                self.run_bootstrap(escalated, &self.probe_command(), None)
+                self.run_bootstrap(run_as, &self.probe_command(), None)
                     .await?
             }
         };
@@ -1261,7 +1736,7 @@ impl SshTarget {
             _ => {
                 let uname = self
                     .run_bootstrap(
-                        escalated,
+                        run_as,
                         &format!("uname -m || exit {EXIT_UNAME_FAILED}"),
                         None,
                     )
@@ -1306,7 +1781,7 @@ impl SshTarget {
         }
         let size = file.bytes.len() as u64;
         let upload = self
-            .run_bootstrap(escalated, &self.upload_command(size), Some(&file.bytes))
+            .run_bootstrap(run_as, &self.upload_command(size), Some(&file.bytes))
             .await?;
         match upload.code {
             Some(0) => {}
@@ -1336,7 +1811,7 @@ impl SshTarget {
         // a wrapper script or a foreign architecture), not a stale file this controller can fix
         // by trying again.
         let check = self
-            .run_bootstrap(escalated, &self.probe_command(), None)
+            .run_bootstrap(run_as, &self.probe_command(), None)
             .await?;
         if check.code == Some(EXIT_AGENT_UNRUNNABLE) {
             return Err(ConnectError::Unreachable(format!(
@@ -1472,8 +1947,11 @@ mod tests {
 
     fn escalation(password: Option<&str>) -> Escalation {
         Escalation {
+            method: BecomeMethod::Sudo,
             user: "deploy".into(),
             password: password.map(str::to_string),
+            exe: Vec::new(),
+            flags: None,
         }
     }
 
@@ -1543,21 +2021,220 @@ mod tests {
             let password = format!("only-this-run-{}", std::process::id());
             let secret = escalation(Some(password.as_str()));
             let prefix = sudo_prefix(Some((&secret, SudoForm::ReadStdin)));
-            assert_eq!(prefix, "sudo -H '-k' '-S' '-p' '' -u 'deploy' -- ");
+            assert_eq!(prefix, "'sudo' '-H' '-k' '-S' '-p' '' -u 'deploy' -- ");
             assert!(!prefix.contains(&password), "{prefix}");
             assert_eq!(
                 sudo_prefix(Some((
                     &Escalation {
                         user: "it's me".into(),
-                        password: None
+                        ..escalation(None)
                     },
                     SudoForm::NoPrompt
                 ))),
-                r"sudo -H '-n' -u 'it'\''s me' -- ",
+                r"'sudo' '-H' '-n' -u 'it'\''s me' -- ",
                 "a user name that would otherwise break out of the remote shell word is quoted"
             );
             assert!(sudo_prefix(None).is_empty());
         }
+    }
+
+    /// `become_exe` replaces `sudo`, `become_flags` replaces `-H`, and the form that writes a
+    /// password takes `-n` back out of them as sudo.py does (scout case `c4`'s flags).
+    #[rstest]
+    #[case::quiet(
+        SudoForm::NoPrompt,
+        "'/usr/bin/sudo' '-H' '-S' '-n' '-n' -u 'deploy' -- "
+    )]
+    #[case::asking(
+        SudoForm::ReadStdin,
+        "'/usr/bin/sudo' '-H' '-S' '-k' '-S' '-p' '' -u 'deploy' -- "
+    )]
+    fn become_exe_and_become_flags_shape_the_sudo_words(
+        #[case] form: SudoForm,
+        #[case] want: &str,
+    ) {
+        let e = Escalation {
+            exe: vec!["/usr/bin/sudo".into()],
+            flags: Some(vec!["-H".into(), "-S".into(), "-n".into()]),
+            ..escalation(Some("pw"))
+        };
+        assert_eq!(sudo_prefix(Some((&e, form))), want);
+        for (flag, kept) in [
+            ("-n", None),
+            ("--non-interactive", None),
+            ("-Hn", Some("-H")),
+            ("-nH", Some("-H")),
+            ("-Snn", Some("-Sn")),
+            ("-E", Some("-E")),
+            ("--preserve-env", Some("--preserve-env")),
+        ] {
+            assert_eq!(interactive(flag).as_deref(), kept, "{flag}");
+        }
+    }
+
+    /// `su <flags> <user> -c '/bin/sh -c ...'`, every word quoted, the terminal made raw before
+    /// the line that says `su` let the command in.
+    #[test]
+    fn the_su_command_is_the_references_with_a_raw_terminal() {
+        let e = Escalation {
+            method: BecomeMethod::Su,
+            user: "root".into(),
+            ..escalation(None)
+        };
+        assert_eq!(
+            su_command(&e, "uname -m", BECOME_SUCCESS),
+            r"exec 'su' 'root' -c '/bin/sh -c '\''stty raw -echo -iexten || exit 1; echo MARK-42; uname -m'\'''"
+        );
+        let e = Escalation {
+            exe: vec!["/bin/su".into()],
+            flags: Some(vec!["-".into()]),
+            ..e
+        };
+        assert!(
+            su_command(&e, ":", BECOME_SUCCESS).starts_with("exec '/bin/su' '-' 'root' -c "),
+            "{}",
+            su_command(&e, ":", BECOME_SUCCESS)
+        );
+        assert_ne!(
+            become_success(),
+            become_success(),
+            "a fresh line every time"
+        );
+        assert_ne!(
+            e.program(),
+            escalation(None).program(),
+            "su and sudo to one user are two links"
+        );
+    }
+
+    /// The success line the fakes below print.
+    const BECOME_SUCCESS: &str = "MARK-42";
+
+    /// What a fake `su` on the other end of [`su_exchange`] does.
+    #[derive(Clone, Copy, Debug)]
+    enum FakeSu {
+        Accepts,
+        Refuses,
+        AsksTwice,
+        WaitsForever,
+        IsGone,
+        EchoesAndDies,
+        Localised,
+        Announces,
+    }
+
+    /// Plays `su` over `io` for one exchange; `pw` is the password it accepts.
+    async fn fake_su(mode: FakeSu, io: tokio::io::DuplexStream, pw: &str) {
+        use tokio::io::AsyncBufReadExt;
+        let (read, mut write) = tokio::io::split(io);
+        let mut lines = tokio::io::BufReader::new(read).lines();
+        let prompt = if matches!(mode, FakeSu::Localised) {
+            "Mot de passe : "
+        } else {
+            "Password: "
+        };
+        if matches!(mode, FakeSu::IsGone) {
+            let _ = write.write_all(b"su: user nosuch does not exist\r\n").await;
+            return;
+        }
+        let _ = write.write_all(prompt.as_bytes()).await;
+        if matches!(mode, FakeSu::WaitsForever) {
+            std::future::pending::<()>().await;
+        }
+        let answer = lines.next_line().await.ok().flatten().unwrap_or_default();
+        let reply = match mode {
+            FakeSu::EchoesAndDies => format!("{answer}\r\nsu: something odd\r\n"),
+            FakeSu::Refuses => "\r\nsu: Authentication failure\r\n".to_string(),
+            FakeSu::AsksTwice => format!("\r\n{prompt}"),
+            // util-linux 2.41's session announcement, with no line end before the marker.
+            FakeSu::Announces => {
+                format!("\r\n\x1b]3008;start=1;comm=su\x1b\\{BECOME_SUCCESS}\nframes")
+            }
+            _ if answer == pw => format!("\r\n{BECOME_SUCCESS}\nframes"),
+            _ => "\r\nsu: Authentication failure\r\n".to_string(),
+        };
+        let _ = write.write_all(reply.as_bytes()).await;
+        if matches!(mode, FakeSu::AsksTwice) {
+            std::future::pending::<()>().await;
+        }
+    }
+
+    /// A prompt is answered once, the command's first byte is left on the stream, and every way
+    /// `su` can say no comes back as the reference words it, without the password in it.
+    #[rstest]
+    #[case::accepts(FakeSu::Accepts, Some("pw"), Ok(None))]
+    #[case::localised(FakeSu::Localised, Some("pw"), Ok(None))]
+    #[case::announces(FakeSu::Announces, Some("pw"), Ok(None))]
+    #[case::refuses(FakeSu::Refuses, Some("pw"), Err(INCORRECT_SU_PASSWORD))]
+    #[case::wrong(FakeSu::Accepts, Some("nope"), Err(INCORRECT_SU_PASSWORD))]
+    #[case::asks_twice(FakeSu::AsksTwice, Some("pw"), Err(INCORRECT_SU_PASSWORD))]
+    #[case::no_password(
+        FakeSu::Accepts,
+        None,
+        Err("Task failed: Timeout (0s) waiting for privilege escalation prompt:")
+    )]
+    #[case::no_prompt(
+        FakeSu::WaitsForever,
+        Some("pw"),
+        Err("Task failed: Timeout (0s) waiting for privilege escalation prompt:")
+    )]
+    #[case::gone(FakeSu::IsGone, Some("pw"), Ok(Some("su: user nosuch does not exist")))]
+    #[case::echoes(FakeSu::EchoesAndDies, Some("pw"), Ok(Some("<redacted>")))]
+    #[tokio::test]
+    async fn su_is_talked_through_as_the_reference_does(
+        #[case] mode: FakeSu,
+        #[case] password: Option<&str>,
+        #[case] want: Result<Option<&str>, &str>,
+    ) {
+        let (mut ours, theirs) = tokio::io::duplex(1024);
+        let su = tokio::spawn(fake_su(mode, theirs, "pw"));
+        let (mut read, mut write) = tokio::io::split(&mut ours);
+        let got = su_exchange(
+            &mut read,
+            &mut write,
+            password,
+            BECOME_SUCCESS,
+            Duration::from_millis(300),
+        )
+        .await;
+        match (got, want) {
+            (Ok(None), Ok(None)) => {
+                let mut rest = [0u8; 6];
+                read.read_exact(&mut rest).await.unwrap();
+                assert_eq!(
+                    &rest, b"frames",
+                    "the command's own bytes stay on the stream"
+                );
+            }
+            (Ok(Some(said)), Ok(Some(says))) => {
+                assert!(said.contains(says), "{said}");
+                assert!(
+                    !said.contains("pw\r"),
+                    "the echoed password is taken out: {said}"
+                );
+            }
+            (Err(err), Err(says)) => assert_eq!(err.to_string(), says),
+            (got, want) => panic!("got {got:?}, wanted {want:?}"),
+        }
+        su.abort();
+    }
+
+    /// The stream ending before `su` let the command in: `ssh`'s failure when it exited 255,
+    /// `su`'s own words otherwise.
+    #[test]
+    fn a_su_that_ends_early_is_told_apart_by_the_exit_code() {
+        assert!(matches!(
+            su_ended(Some(EXIT_SSH_FAILURE), "", "Connection refused", None),
+            ConnectError::Unreachable(msg) if msg.ends_with("Connection refused")
+        ));
+        assert!(matches!(
+            su_ended(Some(1), "su: user x does not exist", "", None),
+            ConnectError::Become(msg) if msg == "su: user x does not exist"
+        ));
+        assert!(matches!(
+            su_ended(Some(1), " \r\n", "", None),
+            ConnectError::Become(msg) if msg == "su exited without starting the command"
+        ));
     }
 
     /// The strings come from the two `sudo` implementations measured for this: `sudo` 1.9.15p5 on
@@ -1791,7 +2468,7 @@ mod tests {
         );
         assert_eq!(
             wrapped,
-            r#"sudo -H '-n' -u 'deploy' -- sh -c 'd=~/'\''.ansible/tmp'\''; mkdir -p "$d"'"#
+            r#"'sudo' '-H' '-n' -u 'deploy' -- sh -c 'd=~/'\''.ansible/tmp'\''; mkdir -p "$d"'"#
         );
         // Run the wrapping against a real `sh`, with the `sudo` words dropped: the failure this
         // guards against is a quoting one, and what has to hold is that the tilde reaches the
@@ -2311,6 +2988,7 @@ mod tests {
         let key = |port| LinkKey {
             host: "node".to_string(),
             become_user: None,
+            become_program: None,
             transport: Transport::for_vars(
                 "node",
                 json!({"ansible_host": "10.0.0.5", "ansible_port": port})

@@ -1,0 +1,4 @@
+- hello:
+  collections: [my.col2]
+  register: x
+- debug: var=x.who

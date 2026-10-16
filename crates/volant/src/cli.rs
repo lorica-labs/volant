@@ -23,7 +23,7 @@ use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
-use crate::{agent, facts_read, playbook, preflight, python};
+use crate::{agent, collection, facts_read, playbook, preflight, python};
 
 #[derive(Parser, Debug)]
 pub struct PlaybookArgs {
@@ -84,7 +84,7 @@ pub struct PlaybookArgs {
     /// Escalate to this user instead of root.
     #[arg(long = "become-user", value_name = "USER")]
     pub become_user: Option<String>,
-    /// Escalation method. Only `sudo` is implemented.
+    /// Escalation method: `sudo` or `su`.
     #[arg(long = "become-method", value_name = "METHOD")]
     pub become_method: Option<String>,
     /// Ask for the escalation password on the terminal.
@@ -318,8 +318,32 @@ async fn run_all(
     if let Some(helper) = helper {
         bridge.adopt(helper);
     }
+    // What `module_defaults` names, resolved by ansible-core as the reference resolves it when it
+    // loads a play: a key nothing answers to, or a group nobody declares, stops the run before
+    // anything is shown.
+    let resolved = Arc::new(collection::Resolved::default());
+    resolved
+        .ensure(
+            compiled
+                .iter()
+                .flatten()
+                .flat_map(collection::tasks_of)
+                .collect::<Vec<_>>(),
+            Some(&bridge),
+        )
+        .map_err(|e| Refusal::at(4, e))?;
+    for play in compiled.iter_mut().flatten() {
+        play.resolved = Arc::clone(&resolved);
+    }
+    // Said once per run, as the reference says a warning once however many plays raise it.
+    let mut said: HashSet<&String> = HashSet::new();
     for plays in &compiled {
         for play in plays {
+            for warning in &play.warnings {
+                if said.insert(warning) {
+                    out.warning(warning, false);
+                }
+            }
             preflight::check_built(play, python.as_ref()).map_err(|e| Refusal::or(4, e))?;
         }
     }
@@ -355,7 +379,7 @@ async fn run_all(
     // for it and fails the task, which is exit 2. This refuses before the play instead, so no
     // recap is printed, but the code an operator's script reads is the same one.
     if escalates {
-        if become_method != playbook::BECOME_METHOD {
+        if !playbook::BECOME_METHODS.contains(&become_method.as_str()) {
             return Err(Refusal::at(
                 2,
                 format!("become_method '{become_method}' is not supported yet"),
@@ -364,7 +388,7 @@ async fn run_all(
         for host in &all_hosts {
             if let Some(method) = crate::vars::host_setting(&host.vars, "ansible_become_method")
                 .and_then(|v| v.as_str())
-                && method != playbook::BECOME_METHOD
+                && !playbook::BECOME_METHODS.contains(&method)
             {
                 return Err(Refusal::at(
                     2,
@@ -391,6 +415,8 @@ async fn run_all(
             .clone()
             .unwrap_or(config.become_user.clone()),
         become_method,
+        become_exe: config.become_exe,
+        become_flags: config.become_flags,
         become_password: if args.ask_become_pass {
             Some(ask_become_password()?)
         } else {

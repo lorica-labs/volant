@@ -1,0 +1,20 @@
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    ansible.builtin.copy:
+      content: from-default
+      mode: "0600"
+    ansible.builtin.template:
+      mode: "0640"
+  vars: {y: Z}
+  tasks:
+    - ansible.builtin.copy: {dest: "{{ playbook_dir }}/a.out"}
+    - ansible.builtin.template: {src: t.j2, dest: "{{ playbook_dir }}/b.out"}
+    - ansible.builtin.stat: {path: "{{ playbook_dir }}/a.out"}
+      register: a
+    - ansible.builtin.stat: {path: "{{ playbook_dir }}/b.out"}
+      register: b
+    - debug: msg="{{ a.stat.mode }} {{ b.stat.mode }}"
+    - command: cat "{{ playbook_dir }}/a.out"
+      register: c
+    - debug: var=c.stdout

@@ -279,6 +279,17 @@ fn local_result(
             r.insert("failed".into(), json!(false));
         }
         "debug" => {
+            // The action refuses both before it looks at either, which is how a `module_defaults`
+            // `msg` turns a task's own `var` into a failure.
+            if item.args.contains_key("msg") && item.args.contains_key("var") {
+                let msg = "parameters are mutually exclusive: msg|var";
+                let mut failed = TaskResult::failed_with(msg);
+                failed.0.insert(
+                    crate::render::ERROR_KEY.into(),
+                    Value::from(crate::render::task_failed(msg)),
+                );
+                return failed;
+            }
             let wanted: u8 = item
                 .args
                 .get("verbosity")
@@ -1168,9 +1179,8 @@ pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskR
 /// never looked at the keyword. `connection`, `port` and `remote_user` read what the task, its
 /// block or its play wrote, and `null` when none did.
 ///
-/// `become_method` is not one of those: this release honours it. It reads `null` here anyway
-/// because its resolved value lives with the host's variables, not on `PlayTask`, and this
-/// function only takes the task - not because nothing looked at the keyword.
+/// `become_method`, `become_exe` and `become_flags` read the same way: what the task, its block
+/// or its play wrote, and `null` when none did.
 pub(super) fn failed_task_value(task: &PlayTask) -> Value {
     let mut out = Map::new();
     let strings = |list: &[String]| Value::Array(list.iter().map(|s| json!(s)).collect());
@@ -1183,6 +1193,9 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
             "args" => Value::Object(task.args.clone()),
             "become" => json!(task.r#become),
             "become_user" => json!(task.become_user),
+            "become_method" => json!(task.connect.become_method),
+            "become_exe" => json!(task.connect.become_exe),
+            "become_flags" => json!(task.connect.become_flags),
             "changed_when" => strings(&task.changed_when),
             "connection" => json!(task.connect.connection),
             "failed_when" => strings(&task.failed_when),
@@ -2402,6 +2415,10 @@ pub(super) trait AgentChannel {
     fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
         None
     }
+    /// Where to look for what a stopped agent said; see `AgentLink::stderr_note`.
+    fn stderr_note(&self) -> String {
+        String::new()
+    }
 }
 
 /// How a plugin that expects its host to go away gets a link to it again.
@@ -2499,6 +2516,10 @@ impl AgentChannel for AgentLink {
 
     fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
         Some(self.ledger())
+    }
+
+    fn stderr_note(&self) -> String {
+        AgentLink::stderr_note(self)
     }
 }
 
@@ -2854,7 +2875,12 @@ async fn send_batch<C: AgentChannel>(
             // the caller decides for the whole batch.
             Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
             Ok(Some(FromAgent::Ready { .. } | FromAgent::BlobState { .. })) => {}
-            Ok(None) => break Err("agent stopped before the batch finished".to_string()),
+            Ok(None) => {
+                break Err(format!(
+                    "agent stopped before the batch finished{}",
+                    link.stderr_note()
+                ));
+            }
             Err(err) => break Err(format!("reading from the agent: {err}")),
         }
     };
@@ -7462,6 +7488,8 @@ mod tests {
                 r#become: false,
                 become_user: "root".to_string(),
                 become_method: "sudo".to_string(),
+                become_exe: None,
+                become_flags: None,
                 become_password: None,
             };
             let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
@@ -7585,6 +7613,8 @@ mod tests {
             r#become: false,
             become_user: "root".to_string(),
             become_method: "sudo".to_string(),
+            become_exe: None,
+            become_flags: None,
             become_password: None,
         };
         let transport = Transport::for_host(&host, &defaults).expect("a local transport");
@@ -8051,6 +8081,8 @@ mod tests {
                 r#become: false,
                 become_user: "root".to_string(),
                 become_method: "sudo".to_string(),
+                become_exe: None,
+                become_flags: None,
                 become_password: None,
             };
             let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
@@ -8084,6 +8116,8 @@ mod tests {
             r#become: false,
             become_user: "root".to_string(),
             become_method: "sudo".to_string(),
+            become_exe: None,
+            become_flags: None,
             become_password: None,
         };
         Transport::for_vars("h1", vars.as_object().expect("an object"), &defaults)
@@ -8185,6 +8219,7 @@ mod tests {
         let key = |become_user: Option<&str>| LinkKey {
             host: "h1".to_string(),
             become_user: become_user.map(str::to_string),
+            become_program: None,
             transport: transport.clone(),
         };
         let (escalated, plain) = (key(Some("root")), key(None));
@@ -8237,6 +8272,7 @@ mod tests {
         let key = |become_user: Option<&str>| LinkKey {
             host: "h1".to_string(),
             become_user: become_user.map(str::to_string),
+            become_program: None,
             transport: transport.clone(),
         };
         let (escalated, plain) = (key(Some("root")), key(None));
@@ -8416,6 +8452,8 @@ mod tests {
             r#become: false,
             become_user: "root".to_string(),
             become_method: "sudo".to_string(),
+            become_exe: None,
+            become_flags: None,
             become_password: None,
         };
         (AgentSource::discover(), defaults)
@@ -8426,6 +8464,7 @@ mod tests {
         LinkKey {
             host: host.to_string(),
             become_user: user.map(str::to_string),
+            become_program: None,
             transport: Transport::Local,
         }
     }

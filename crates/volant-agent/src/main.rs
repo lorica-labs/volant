@@ -50,6 +50,8 @@ fn main() {
         }
         return;
     }
+    #[cfg(unix)]
+    outlive_the_hangup();
     let remote_tmp = blobs::remote_tmp();
     blobs::sweep(&remote_tmp);
     let served = serve(&remote_tmp);
@@ -59,6 +61,24 @@ fn main() {
     if let Err(err) = served {
         eprintln!("volant-agent: {err}");
         std::process::exit(1);
+    }
+}
+
+/// A `SIGHUP` that does nothing, for an agent behind `su`: its terminal hangs up when the link
+/// ends, and it then reads the end of its input and stops its tasks as it does when a pipe
+/// closes, where the default action would kill it with them still running. A handler, unlike an
+/// ignored signal, does not survive `exec`, so the commands the agent runs keep the default.
+#[cfg(unix)]
+fn outlive_the_hangup() {
+    extern "C" fn nothing(_: libc::c_int) {}
+    // SAFETY: the handler touches nothing, `action` is fully initialised before the call, and
+    // `SA_RESTART` keeps a read the signal lands in from failing with `EINTR`.
+    unsafe {
+        let mut action: libc::sigaction = std::mem::zeroed();
+        action.sa_sigaction = nothing as extern "C" fn(libc::c_int) as libc::sighandler_t;
+        action.sa_flags = libc::SA_RESTART;
+        libc::sigemptyset(&mut action.sa_mask);
+        libc::sigaction(libc::SIGHUP, &action, std::ptr::null_mut());
     }
 }
 

@@ -1,0 +1,25 @@
+- hosts: h1
+  gather_facts: true
+  module_defaults:
+    setup:
+      gather_subset: min
+  tasks:
+    - debug: msg="short {{ ansible_facts.processor is defined }}"
+- hosts: h1
+  gather_facts: true
+  module_defaults:
+    ansible.builtin.setup:
+      gather_subset: min
+  tasks:
+    - debug: msg="builtin {{ ansible_facts.processor is defined }}"
+- hosts: h1
+  gather_facts: true
+  module_defaults:
+    ansible.legacy.setup:
+      gather_subset: min
+  tasks:
+    - debug: msg="legacy {{ ansible_facts.processor is defined }}"
+- hosts: h1
+  gather_facts: true
+  tasks:
+    - debug: msg="none {{ ansible_facts.processor is defined }}"

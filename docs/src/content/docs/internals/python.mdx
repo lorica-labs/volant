@@ -92,7 +92,7 @@ A name outside `ansible.builtin` and `ansible.legacy` gets one of four answers:
 | What ansible-core finds | What Volant does |
 |---|---|
 | a module it can build | adds it to the union and runs it |
-| a module its collection runs through an action plugin, directly or through `runtime.yml` routing | stops the run: Volant does not run a collection's action plugins |
+| a module its collection runs through an action plugin, directly or through `runtime.yml` routing | runs the action plugin in the Python helper, as ansible-core's own |
 | no module by that name | stops the run with the reference's sentence |
 | a module it cannot run: removed, PowerShell only, or failing to build | stops the run, with the reason |
 
@@ -100,7 +100,6 @@ The refusals come before the first connection, with exit code 4:
 
 ```text
 task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicates a misspelling, missing collection, or incorrect module path. The collection 'ns.coll' is not installed on the controller: install it with ansible-galaxy collection install ns.coll
-task 'Forward': module 'ns.coll.mod' needs an action plugin from its collection, which this release does not run
 task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 ```
 

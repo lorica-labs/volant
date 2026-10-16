@@ -1,0 +1,12 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - community.general.shutdown: {msg: x}
+      register: sh
+      ignore_errors: true
+    - debug: {var: sh}
+    - ansible.utils.update_fact:
+        updates: [{path: foo.bar, value: 5}]
+      vars: {foo: {bar: 1}}
+      register: uf
+    - debug: {var: uf}

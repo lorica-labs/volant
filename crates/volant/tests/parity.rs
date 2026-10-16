@@ -150,6 +150,10 @@ fn row(category: &str, name: &str, status: Status, note: &str) -> Row {
     }
 }
 
+/// Collection action plugins that run a module of their own on the host, which the bridge cannot
+/// send yet.
+const NEEDS_OWN_MODULE: &[&str] = &["ansible.posix.synchronize"];
+
 /// Names outside this milestone, with why. Decided here, never on the page.
 const LATER: &[(&str, &str, &str)] = &[
     ("become", "runas", "Windows"),
@@ -412,19 +416,30 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             rows.push(row(&format!("collection {kind}"), name, s, note));
         };
         for m in names(c, &["module"]) {
-            // A module that runs through an action plugin waits on it.
+            // A module that runs through an action plugin runs on the bridge, as that plugin.
             match (later(&m), c["module_action"][&m].as_str()) {
                 (Some(why), _) => push("module", &m, Status::Later, why),
-                (None, Some(action)) => {
-                    push("module", &m, Status::NotYet, &format!("needs `{action}`"));
+                (None, Some(action)) if NEEDS_OWN_MODULE.contains(&m.as_str()) => {
+                    push(
+                        "module",
+                        &m,
+                        Status::NotYet,
+                        &format!("needs `{action}` to run its module"),
+                    );
                 }
+                (None, Some(_)) => push("module", &m, Status::Runs, "through its action plugin"),
                 (None, None) => push("module", &m, Status::Runs, ""),
             }
         }
         for a in &actions {
             match later(a) {
                 Some(why) => push("action plugin", a, Status::Later, why),
-                None => push("action plugin", a, Status::NotYet, ""),
+                None => push(
+                    "action plugin",
+                    a,
+                    Status::Runs,
+                    "through the Python helper",
+                ),
             }
         }
         for f in names(c, &["filter"]) {

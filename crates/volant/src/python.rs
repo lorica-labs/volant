@@ -153,6 +153,16 @@ pub fn is_resolved_name(module: &str) -> bool {
         && !volant_protocol::modules::is_builtin(module)
 }
 
+/// Tells the action plugin dispatch which of the names ansible-core resolved are collection
+/// action plugins, which run in the helper rather than as a module.
+pub(crate) fn note_action_plugins(resolved: &BTreeMap<String, Resolved>) {
+    for (name, answer) in resolved {
+        if matches!(answer, Resolved::ActionPlugin { .. }) {
+            crate::action_plugins::note_collection_action(name);
+        }
+    }
+}
+
 /// What the controller's ansible-core makes of one module name it was asked about.
 ///
 /// Only the helper can answer: the collections are the controller's, installed where its
@@ -167,7 +177,7 @@ pub enum Resolved {
         collection: Option<(String, String)>,
     },
     /// A name a collection serves through an action plugin, its own or one its `runtime.yml`
-    /// routes it to: refused, by name.
+    /// routes it to: run in the helper as ansible-core's action plugin.
     ActionPlugin { fqcn: String },
     /// A name ansible-core knows and this release cannot run: a module its collection removed
     /// (a `runtime.yml` tombstone), one with no Python source (a `.ps1` module whose `.py` holds
@@ -612,7 +622,7 @@ fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> 
 ///
 /// A collection's module is resolved first, by the same helper, and only what resolves to a
 /// module it can build goes into the union. `named` is every `(task, module)` the compiled plays
-/// name themselves: one of those that is missing, or served by an action plugin, is refused here
+/// name themselves: one of those that is missing is refused here
 /// by `preflight::check_resolved`. A collection's module found only in a role file is
 /// dropped instead, because a file for another platform is no reason to refuse the run.
 ///
@@ -707,6 +717,7 @@ fn union_keeping(
                 // The tasks of this run are checked against the answers kept, as they would have
                 // been against fresh ones: the key holds the module set, not which of them a
                 // task names.
+                note_action_plugins(&entry.resolved);
                 for (task, module) in named {
                     if let Some(answer) = entry.resolved.get(module) {
                         crate::preflight::check_resolved(task, module, answer)?;
@@ -750,6 +761,7 @@ fn union_keeping(
     let mut resolved = BTreeMap::new();
     if !asked.is_empty() {
         resolved = builder.resolve(&asked)?;
+        note_action_plugins(&resolved);
         for (task, module) in named {
             if let Some(answer) = resolved.get(module) {
                 crate::preflight::check_resolved(task, module, answer)?;
@@ -1848,14 +1860,9 @@ mod tests {
             .expect("ping is built");
         assert_eq!(built.modules.keys().collect::<Vec<_>>(), ["ping"]);
         let named = [("Sync".to_string(), "ansible.posix.synchronize".to_string())];
-        let err =
-            union_from(PythonBuilder::start, &modules, &named, None, &mut |_| {}).unwrap_err();
-        assert_eq!(crate::stats::error_code(&err), 4, "{err:#}");
-        assert!(
-            format!("{err:#}")
-                .contains("module 'ansible.posix.synchronize' needs an action plugin"),
-            "{err:#}"
-        );
+        // Served by an action plugin, the name is run in the helper and nothing is built for it.
+        union_from(PythonBuilder::start, &modules, &named, None, &mut |_| {}).unwrap();
+        assert!(crate::action_plugins::kind("ansible.posix.synchronize").is_some());
     }
 
     /// The controller's interpreter is chosen in one order and that order is visible: an explicit
@@ -2411,9 +2418,9 @@ mod tests {
         }
     }
 
-    /// A kept answer refuses a task of this run as a fresh one would.
+    /// A kept answer says a name is an action plugin, as a fresh one would.
     #[test]
-    fn a_cache_hit_still_refuses_what_a_task_cannot_run() {
+    fn a_cache_hit_still_knows_a_collection_action_plugin() {
         let root_guard = scratch();
         let root = root_guard.path().to_path_buf();
         let source = root.join("ping.py");
@@ -2439,11 +2446,8 @@ mod tests {
         let modules = std::collections::BTreeSet::from(["ping".to_string()]);
         let unstarted = || -> anyhow::Result<PythonBuilder> { panic!("the helper was started") };
         let named = [("Sync".to_string(), "ns.c.sync".to_string())];
-        let err = union_from(unstarted, &modules, &named, Some(&place), &mut |_| {}).unwrap_err();
-        assert!(
-            format!("{err:#}").contains("needs an action plugin"),
-            "{err:#}"
-        );
+        union_from(unstarted, &modules, &named, Some(&place), &mut |_| {}).unwrap();
+        assert!(crate::action_plugins::kind("ns.c.sync").is_some());
     }
 
     /// An entry is filed under the interpreter that built it and the executable that answered.

@@ -61,6 +61,25 @@ pub(crate) enum Kind {
     Bridged(&'static str),
 }
 
+/// The names a collection serves through an action plugin, as the controller's ansible-core
+/// resolved them before the first connection. Each name is leaked once, so [`Kind`] stays `Copy`:
+/// the set is as large as the distinct collection plugins a run names.
+fn collection_actions() -> std::sync::MutexGuard<'static, BTreeSet<&'static str>> {
+    static NAMES: std::sync::Mutex<BTreeSet<&'static str>> = std::sync::Mutex::new(BTreeSet::new());
+    NAMES
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+}
+
+/// Records that `name` (a collection's module or action plugin, as a task spells it) is run as
+/// ansible-core's action plugin of that name in the Python helper.
+pub(crate) fn note_collection_action(name: &str) {
+    let mut known = collection_actions();
+    if !known.contains(name) {
+        known.insert(Box::leak(name.to_string().into_boxed_str()));
+    }
+}
+
 /// The plugin this release runs for a module name, read as the builtin registry reads one.
 ///
 /// Gated on [`ACTION_PLUGINS`], the list the modules page is built from, so a name this match
@@ -68,7 +87,7 @@ pub(crate) enum Kind {
 pub(crate) fn kind(module: &str) -> Option<Kind> {
     let short = short_name(module);
     if !builtin_spelling(module) {
-        return None;
+        return collection_actions().get(module).copied().map(Kind::Bridged);
     }
     let (name, _) = ACTION_PLUGINS.iter().find(|(name, _)| *name == short)?;
     match short {
@@ -347,6 +366,12 @@ mod tests {
         assert_eq!(kind("community.general.unarchive"), None);
         assert_eq!(kind("ansible.builtin.fetch"), Some(Kind::Fetch));
         assert_eq!(kind("community.general.fetch"), None);
+        assert_eq!(kind("ns.coll.shutdown"), None);
+        note_collection_action("ns.coll.shutdown");
+        assert_eq!(
+            kind("ns.coll.shutdown"),
+            Some(Kind::Bridged("ns.coll.shutdown"))
+        );
         assert_eq!(kind("ansible.builtin.reboot"), Some(Kind::Reboot));
         assert_eq!(kind("community.general.reboot"), None);
     }

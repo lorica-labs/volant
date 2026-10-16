@@ -330,9 +330,8 @@ fn set_aside(compiled: &crate::compile::Compiled) -> impl Iterator<Item = &PlayT
 /// What the controller's ansible-core made of a collection's module a task names, refused
 /// before the first connection unless it is a module the union can hold.
 ///
-/// Volant never installs a collection, and never runs a collection's action plugin: the plugin
-/// is controller code this release does not execute, and sending its module alone would run
-/// something the playbook did not ask for. A missing collection is named, with the command that
+/// Volant never installs a collection. A collection's action plugin is not refused: it runs in the
+/// Python helper (see [`crate::python::note_action_plugins`]). A missing collection is named, with the command that
 /// installs it; a module missing from a collection that is installed is the reference's typo
 /// sentence alone.
 pub(crate) fn check_resolved(
@@ -352,10 +351,8 @@ pub(crate) fn check_resolved(
 pub(crate) fn refusal_of(module: &str, answer: &crate::python::Resolved) -> Option<String> {
     use crate::python::Resolved;
     match answer {
-        Resolved::Module { .. } => None,
-        Resolved::ActionPlugin { fqcn } => Some(format!(
-            "module '{fqcn}' needs an action plugin from its collection, which this release does not run"
-        )),
+        // A collection's action plugin runs in the Python helper, as ansible-core's own.
+        Resolved::Module { .. } | Resolved::ActionPlugin { .. } => None,
         Resolved::Unusable { reason } => Some(format!("module '{module}' cannot run: {reason}")),
         Resolved::Missing { collection: None } => Some(unresolved_tail(module)),
         Resolved::Missing {
@@ -385,14 +382,14 @@ pub(crate) fn unresolvable_here(task: &str, module: &str, why: &anyhow::Error) -
 ///
 /// The union was built before the first connection, from what the plays and their role files
 /// name, and a set-aside module is in it only if the controller's ansible-core resolved it to a
-/// module it could build. One that is not was missing, is served by an action plugin, or sits
+/// module it could build, or an action plugin the helper runs. One that is not was missing, or sits
 /// in a file nothing read before the run; the include fails for the host that reached it, before
 /// any of the file's tasks run, like any other refusal of an included file.
 pub(crate) fn check_built(
     expanded: &crate::compile::Compiled,
     union: Option<&crate::python::Union>,
 ) -> anyhow::Result<()> {
-    for task in set_aside(expanded) {
+    for task in set_aside(expanded).filter(|task| action_plugins::kind(&task.module).is_none()) {
         let (name, module) = (&task.name, &task.module);
         if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(module))) {
             // What the controller made of a name it set aside, as the pre-flight says it for one
@@ -401,7 +398,7 @@ pub(crate) fn check_built(
                 bail!("task '{name}': {why}");
             }
             bail!(
-                "task '{name}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, no module path holds it, it runs through an action plugin, or it is named only in a file nothing read before the first connection"
+                "task '{name}': module '{module}' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, no module path holds it, or it is named only in a file nothing read before the first connection"
             );
         }
     }
@@ -871,11 +868,11 @@ mod tests {
             })
             .is_ok()
         );
-        assert_eq!(
+        assert!(
             verdict(Resolved::ActionPlugin {
                 fqcn: "ns.coll.mod".into()
-            }),
-            Err("task 'T': module 'ns.coll.mod' needs an action plugin from its collection, which this release does not run".to_string())
+            })
+            .is_ok()
         );
         let typo = "task 'T': couldn't resolve module/action 'ns.coll.mod'. This often indicates a misspelling, missing collection, or incorrect module path.";
         assert_eq!(

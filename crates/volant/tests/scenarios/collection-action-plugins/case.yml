@@ -1,0 +1,4 @@
+# A collection's action plugins run as ansible-core's own: update_fact works on the controller,
+# and shutdown refuses a local connection by itself.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

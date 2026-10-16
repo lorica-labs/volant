@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  vars: {h: H1, x: topic1, hl: [H1, H2]}
+  tasks:
+    - debug: msg=chg
+      changed_when: true
+      notify: "{{ x }}"
+  handlers:
+    - name: Hx
+      listen: "{{ x }}"
+      debug: msg=hx-ran

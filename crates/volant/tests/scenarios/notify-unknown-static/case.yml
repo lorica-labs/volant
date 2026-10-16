@@ -1,0 +1,2 @@
+# A plain name no handler answers to ends the run at rc 1, after the task banner.
+args: [-i, inv.ini, play.yml]

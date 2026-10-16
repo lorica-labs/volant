@@ -1724,9 +1724,10 @@ fn a_refused_escalation_hands_its_fork_back_before_waiting() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A `notify` naming nothing stops the run with the reference's own sentence and exit 1.
+/// A `notify` naming nothing stops the run with the reference's own sentence and exit 1, once
+/// the task has changed something.
 #[test]
-fn an_unknown_handler_is_refused_with_exit_1() {
+fn an_unknown_handler_ends_the_run_with_exit_1() {
     let out = volant_within(
         &["playbook", &fixture("handlers/unknown.yml")],
         std::time::Duration::from_secs(20),
@@ -1740,7 +1741,7 @@ fn an_unknown_handler_is_refused_with_exit_1() {
         ),
         "{err}"
     );
-    assert!(!text.contains("PLAY RECAP"), "nothing ran: {text}");
+    assert!(!text.contains("PLAY RECAP"), "{text}");
 }
 
 /// A `notify` in an included file naming no handler ends the run at exit 1, whatever
@@ -1773,10 +1774,9 @@ fn a_notify_in_an_include_naming_no_handler_ends_the_run() {
     }
 }
 
-/// A templated `notify` in an included file is refused by name, as it is in the play, rather than
-/// looked up as a handler called `restart {{ svc }}`: the statement fails for the host that...
+/// A templated `notify` in an included file is rendered for the host and finds the play's handler.
 #[test]
-fn a_templated_notify_in_an_include_is_refused_by_name() {
+fn a_templated_notify_in_an_include_finds_its_handler() {
     let out = volant_within(
         &[
             "playbook",
@@ -1790,13 +1790,8 @@ fn a_templated_notify_in_an_include_is_refused_by_name() {
     );
     let text = String::from_utf8(out.stdout).unwrap();
     let errors = String::from_utf8(out.stderr).unwrap();
-    assert_eq!(out.status.code(), Some(2), "{text}{errors}");
-    assert!(
-        text.contains("a templated 'notify' is not supported yet"),
-        "{text}{errors}"
-    );
-    assert!(!text.contains("TASK [notifies a templated name]"), "{text}");
-    assert!(!text.contains("restarted"), "{text}");
+    assert_eq!(out.status.code(), Some(0), "{text}{errors}");
+    assert!(text.contains("restarted"), "{text}{errors}");
 }
 
 /// A local failure that steps over an include, with fewer forks than hosts.

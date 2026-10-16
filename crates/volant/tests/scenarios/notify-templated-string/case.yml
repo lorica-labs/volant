@@ -1,0 +1,2 @@
+# A notify written as a template names the handler it renders to.
+args: [-i, inv.ini, play.yml]

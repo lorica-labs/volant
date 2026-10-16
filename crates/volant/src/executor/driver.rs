@@ -32,11 +32,11 @@ use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Relinker, RetryLine,
     any_retried, chosen_interpreter, discovers_interpreter, discovery_warning, fact_targets,
-    failed_task_value, finish, judge_attempt, local_timed_out, notify, pause_lines, python_for,
-    raw_params_refusal, record_facts, record_local_facts, record_registered, requested_interpreter,
-    retry_plans, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
-    running_host_vars, silent_discovery, stamp_discovery, step_tasks, take_warnings,
-    unresolved_notify, wait_or_stop,
+    failed_task_value, finish, judge_attempt, local_timed_out, notified_handlers, pause_lines,
+    python_for, raw_params_refusal, record_facts, record_local_facts, record_registered,
+    requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
+    run_plugin_attempts, running_host_vars, silent_discovery, stamp_discovery, step_tasks,
+    take_warnings, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -1142,10 +1142,15 @@ pub(super) async fn drive_host(
                         labels.push(item.label.clone());
                         lefts.push(mine);
                     }
-                    if let Some(reason) = unresolved_notify(&c, task, &results) {
-                        options.abort.raise(reason);
-                        break 'run;
-                    }
+                    let to_notify = match notified_handlers(&c, task, &items, &templar, &results) {
+                        Ok(found) => found,
+                        Err(reason) => {
+                            // The task's banner is the last line the reference prints.
+                            driver.banner(pos).await;
+                            options.abort.raise(reason);
+                            break 'run;
+                        }
+                    };
                     let warnings = take_warnings(&mut results);
                     for message in &warnings {
                         let _ = tx
@@ -1197,7 +1202,7 @@ pub(super) async fn drive_host(
                         failed_at = Some((pos, result));
                         break;
                     }
-                    notify(&c, task, &results, &mut notified);
+                    notified.extend(to_notify);
                     let Some(next) = driver.advance(pos).await else {
                         break 'run;
                     };
@@ -1858,10 +1863,15 @@ pub(super) async fn drive_host(
                 if !reached && results.is_empty() {
                     break;
                 }
-                if let Some(reason) = unresolved_notify(&c, task, &results) {
-                    options.abort.raise(reason);
-                    break 'run;
-                }
+                let to_notify = match notified_handlers(&c, task, items, &templar, &results) {
+                    Ok(found) => found,
+                    Err(reason) => {
+                        // The task's banner is the last line the reference prints.
+                        driver.banner(*index).await;
+                        options.abort.raise(reason);
+                        break 'run;
+                    }
+                };
                 let live = driver.progress.borrow().live_hosts.clone();
                 let targets = fact_targets(task, &name, &live);
                 let fact_hosts = match (task.delegates_facts(), &batch_delegate) {
@@ -1979,7 +1989,7 @@ pub(super) async fn drive_host(
                     failed_at = Some((*index, result));
                     break;
                 }
-                notify(&c, task, &results, &mut notified);
+                notified.extend(to_notify);
                 if undecided == Some(*index) {
                     undecided_reported = true;
                 }

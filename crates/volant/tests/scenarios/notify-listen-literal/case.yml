@@ -1,0 +1,2 @@
+# A listen written as a template is the literal text, so its rendered name finds nothing.
+args: [-i, inv.ini, play.yml]

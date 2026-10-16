@@ -392,8 +392,11 @@ pub(crate) fn beside_or_in_role(file_dir: &Path, role_dir: Option<&Path>, name: 
 /// for `x` both run when `x` is notified. It is what makes a role that runs three times
 /// contribute one handler rather than three - the three copies share a name, and only the first
 /// of them is ever reached.
-pub(crate) fn resolve_notify(c: &Compiled, name: &str) -> Vec<usize> {
-    let named = c.handlers.iter().position(|h| h.task.name == name);
+///
+/// `names` is what each handler's `name` renders to for the host asking, one per handler in
+/// order: a handler name may be a template, `listen` never is.
+pub(crate) fn resolve_notify(c: &Compiled, name: &str, names: &[String]) -> Vec<usize> {
+    let named = names.iter().position(|n| n == name);
     c.handlers
         .iter()
         .enumerate()
@@ -2709,9 +2712,10 @@ mod tests {
 "#,
         );
         assert_eq!(c.handlers.len(), 5);
-        assert_eq!(resolve_notify(&c, "twice"), [0, 2]);
-        assert_eq!(resolve_notify(&c, "listening"), [2]);
-        assert!(resolve_notify(&c, "nobody").is_empty());
+        let names: Vec<String> = c.handlers.iter().map(|h| h.task.name.clone()).collect();
+        assert_eq!(resolve_notify(&c, "twice", &names), [0, 2]);
+        assert_eq!(resolve_notify(&c, "listening", &names), [2]);
+        assert!(resolve_notify(&c, "nobody", &names).is_empty());
         assert_eq!(c.steps[1].task.notify, ["h"]);
         assert_eq!(c.steps[2].task.notify, ["own", "h"]);
     }

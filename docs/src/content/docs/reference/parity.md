@@ -11,9 +11,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 23 | 1 | 17 | 0 |
-| keyword (block) | 21 | 1 | 9 | 0 |
-| keyword (task) | 53 | 1 | 12 | 0 |
+| keyword (play) | 25 | 1 | 15 | 0 |
+| keyword (block) | 23 | 1 | 7 | 0 |
+| keyword (task) | 55 | 1 | 10 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
@@ -23,7 +23,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | filter | 120 | 0 | 2 | 0 |
 | test | 80 | 0 | 2 | 0 |
 | lookup | 24 | 0 | 1 | 0 |
-| become | 1 | 0 | 1 | 1 |
+| become | 2 | 0 | 0 | 1 |
 | strategy | 1 | 0 | 3 | 0 |
 | inventory | 1 | 0 | 8 | 0 |
 | shell | 1 | 0 | 0 | 2 |
@@ -43,8 +43,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|
 | `any_errors_fatal` | <span class="kw kw-notyet">not yet</span> |  |
 | `become` | <span class="kw kw-runs">runs</span> |  |
-| `become_exe` | <span class="kw kw-notyet">not yet</span> |  |
-| `become_flags` | <span class="kw kw-notyet">not yet</span> |  |
+| `become_exe` | <span class="kw kw-runs">runs</span> |  |
+| `become_flags` | <span class="kw kw-runs">runs</span> |  |
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
@@ -90,8 +90,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `always` | <span class="kw kw-runs">runs</span> |  |
 | `any_errors_fatal` | <span class="kw kw-notyet">not yet</span> |  |
 | `become` | <span class="kw kw-runs">runs</span> |  |
-| `become_exe` | <span class="kw kw-notyet">not yet</span> |  |
-| `become_flags` | <span class="kw kw-notyet">not yet</span> |  |
+| `become_exe` | <span class="kw kw-runs">runs</span> |  |
+| `become_flags` | <span class="kw kw-runs">runs</span> |  |
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `block` | <span class="kw kw-runs">runs</span> |  |
@@ -128,8 +128,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `args` | <span class="kw kw-runs">runs</span> |  |
 | `async` | <span class="kw kw-notyet">not yet</span> |  |
 | `become` | <span class="kw kw-runs">runs</span> |  |
-| `become_exe` | <span class="kw kw-notyet">not yet</span> |  |
-| `become_flags` | <span class="kw kw-notyet">not yet</span> |  |
+| `become_exe` | <span class="kw kw-runs">runs</span> |  |
+| `become_flags` | <span class="kw kw-runs">runs</span> |  |
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `changed_when` | <span class="kw kw-runs">runs</span> |  |
@@ -625,7 +625,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `runas` | <span class="kw kw-no">later</span> | Windows |
-| `su` | <span class="kw kw-notyet">not yet</span> |  |
+| `su` | <span class="kw kw-runs">runs</span> |  |
 | `sudo` | <span class="kw kw-runs">runs</span> |  |
 
 ## connection

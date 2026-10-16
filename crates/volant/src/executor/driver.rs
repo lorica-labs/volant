@@ -1241,6 +1241,7 @@ pub(super) async fn drive_host(
                     pos = next;
                 }
                 Ok(Prepared::Remote(items, escalation, delegate, payload, action, connect)) => {
+                    let escalation = escalation.map(|e| *e);
                     // A different target user is a different agent on the host, a different
                     // delegate is a different host entirely, and a different connection is a
                     // different machine even under one name, so any of the three ends the batch
@@ -1490,7 +1491,12 @@ pub(super) async fn drive_host(
                     let index = batch[0].0;
                     let mut task = c.steps[index].task.clone();
                     task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    let results = vec![(None, TaskResult::failed_with(msg))];
+                    // The reference raises these from its connection, so the task's result is
+                    // `changed: false` and a `msg` that already says `Task failed: `, measured
+                    // for `Incorrect su password` (scout case `c5w`).
+                    let mut refused = TaskResult::failed_with(crate::render::task_failed(&msg));
+                    refused.0.insert("changed".into(), Value::Bool(false));
+                    let results = vec![(None, refused)];
                     let rescuable = !handlers_only && rescue_target(&c, index).is_some();
                     let result = report_task(
                         &tx,

@@ -74,7 +74,15 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="become_method" id="privilege-escalation-become-method" default="sudo" flag="--become-method" env="ANSIBLE_BECOME_METHOD">
-  The escalation method. Only `sudo` is implemented.
+  The escalation method: `sudo` or `su`. `su` needs an `ssh` connection, because it reads its password from a terminal.
+</Option>
+
+<Option name="become_exe" id="privilege-escalation-become-exe" env="ANSIBLE_BECOME_EXE">
+  The program to run instead of `sudo` or `su`.
+</Option>
+
+<Option name="become_flags" id="privilege-escalation-become-flags" env="ANSIBLE_BECOME_FLAGS">
+  The flags given to that program, in place of `-H` for `sudo` and of none for `su`. A blank value gives no flags at all.
 </Option>
 
 ## [tags]

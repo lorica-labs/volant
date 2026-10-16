@@ -676,6 +676,127 @@ fn fake_ssh_echoing(name: &str) -> std::path::PathBuf {
     dir
 }
 
+/// A host that is this machine behind fakes: `ssh` runs the remote command here, `su` prompts,
+/// reads one line and lets the command in only for `FAKE_SU_PASSWORD` (or says nothing at all
+/// under `FAKE_SU_SILENT`), logging its arguments, and `stty` succeeds without a terminal. The
+/// `su` path runs end to end with no terminal and no second account; `ssh_e2e` has the real one.
+fn fake_su_host(name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(dir.join("bin")).unwrap();
+    std::fs::create_dir_all(dir.join("agents")).unwrap();
+    let scripts = [
+        (
+            "ssh",
+            "#!/bin/sh\nwhile [ $# -gt 0 ] && [ \"$1\" != -- ]; do shift; done\n[ $# -gt 1 ] || exit 0\nexec sh -c \"$2\"\n",
+        ),
+        (
+            "su",
+            "#!/bin/sh\necho \"$*\" >> \"$FAKE_SU_LOG\"\n[ -n \"$FAKE_SU_SILENT\" ] && exec sleep 600\nprintf 'Password: '\nIFS= read -r answer\nif [ \"$answer\" != \"$FAKE_SU_PASSWORD\" ]; then printf '\\r\\nsu: Authentication failure\\r\\n'; exit 1; fi\nprintf '\\r\\n'\nwhile [ $# -gt 0 ] && [ \"$1\" != -c ]; do shift; done\nexec sh -c \"$2\"\n",
+        ),
+        ("stty", "#!/bin/sh\nexit 0\n"),
+    ];
+    for (file, body) in scripts {
+        let path = dir.join("bin").join(file);
+        std::fs::write(&path, body).unwrap();
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    // The agent this workspace built, under the name the controller uploads to a host of this
+    // machine's architecture.
+    let triple = volant::transport::triple_for(std::env::consts::ARCH)
+        .expect("this architecture has an agent triple");
+    std::os::unix::fs::symlink(
+        std::path::PathBuf::from(env!("CARGO_BIN_EXE_volant")).with_file_name("volant-agent"),
+        dir.join("agents").join(format!("volant-agent-{triple}")),
+    )
+    .unwrap();
+    dir
+}
+
+/// `become_method: su` through [`fake_su_host`]: the password answers the prompt and never
+/// reaches a command line; a wrong one and a missing one end as the reference ends them, and so
+/// does a `su` that never prompts (`-T 1`, so its timeout is 3 seconds).
+#[rstest]
+#[case::the_password(Some("s3cret-su"), false, 0, "changed: [box]")]
+#[case::a_wrong_password(
+    Some("wrong"),
+    false,
+    2,
+    r#"fatal: [box]: FAILED! => {"changed": false, "msg": "Task failed: Incorrect su password"}"#
+)]
+#[case::no_password(
+    None,
+    false,
+    4,
+    "Task failed: Timeout (3s) waiting for privilege escalation prompt:"
+)]
+#[case::no_prompt(
+    Some("s3cret-su"),
+    true,
+    4,
+    "Task failed: Timeout (3s) waiting for privilege escalation prompt:"
+)]
+fn su_answers_its_prompt_with_the_password(
+    #[case] password: Option<&str>,
+    #[case] silent: bool,
+    #[case] code: i32,
+    #[case] says: &str,
+) {
+    let dir = fake_su_host(&format!("su-{code}-{silent}"));
+    let mut inventory = format!(
+        "box ansible_host=fake-host ansible_remote_tmp={}\n",
+        dir.join("remote").display()
+    );
+    if let Some(password) = password {
+        inventory = inventory.replace('\n', &format!(" ansible_become_password={password}\n"));
+    }
+    std::fs::write(dir.join("inv.ini"), inventory).unwrap();
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: box\n  gather_facts: false\n  tasks:\n    - command: id -un\n      become: true\n      become_method: su\n",
+    )
+    .unwrap();
+    let log = dir.join("su.log");
+    let (inv, play, log_text, agents) = (
+        dir.join("inv.ini").display().to_string(),
+        dir.join("play.yml").display().to_string(),
+        log.display().to_string(),
+        dir.join("agents").display().to_string(),
+    );
+    let mut envs = vec![
+        ("FAKE_SU_PASSWORD", "s3cret-su"),
+        ("FAKE_SU_LOG", log_text.as_str()),
+        ("VOLANT_AGENT_DIR", agents.as_str()),
+    ];
+    if silent {
+        envs.push(("FAKE_SU_SILENT", "1"));
+    }
+    let out = volant_within_with_path(
+        &["playbook", "-T", "1", "-i", &inv, &play],
+        DEFAULT_DEADLINE,
+        Some(&dir.join("bin")),
+        &envs,
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert_eq!(out.status.code(), Some(code), "{text}");
+    assert!(text.contains(says), "{text}");
+    let asked = std::fs::read_to_string(&log).unwrap_or_default();
+    assert!(
+        asked.starts_with("root -c "),
+        "su was run for root: {asked}"
+    );
+    assert!(
+        !asked.contains("s3cret-su") && !text.contains("s3cret-su"),
+        "the password reaches neither su's arguments nor the output"
+    );
+    std::fs::remove_dir_all(&dir).unwrap();
+}
+
 /// A `python3` on `PATH` with no ansible-core behind it, so a probe that needs the controller to
 /// have none reads the same on a machine that has one.
 fn fake_python3_without_ansible(name: &str) -> std::path::PathBuf {
@@ -888,7 +1009,7 @@ fn an_escalation_that_cannot_happen_fails_the_task(
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `become_method` other than `sudo` stops the run before anything executes, with the method named.
+/// A `become_method` other than `sudo` and `su` stops the run before anything executes, named.
 #[test]
 fn unsupported_become_methods_are_refused_by_name() {
     let dir = std::env::temp_dir().join(format!("volant-su-{}", std::process::id()));
@@ -897,14 +1018,14 @@ fn unsupported_become_methods_are_refused_by_name() {
     let path = dir.join("su.yml");
     std::fs::write(
         &path,
-        "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_method: su\n  tasks:\n    - command: \"true\"\n",
+        "- hosts: localhost\n  gather_facts: false\n  become: true\n  become_method: doas\n  tasks:\n    - command: \"true\"\n",
     )
     .unwrap();
     let out = volant(&["playbook", &path.display().to_string()]);
     assert_eq!(out.status.code(), Some(2));
     let text = String::from_utf8_lossy(&out.stderr).to_string();
     assert!(
-        text.contains("su") && text.contains("not supported"),
+        text.contains("doas") && text.contains("not supported"),
         "{text}"
     );
     assert!(
@@ -2299,10 +2420,26 @@ const RUNS_PROBES: &[RunsProbe] = &[
     runs(
         "task",
         "become_method",
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become_method: su\n",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become: true\n      become_method: su\n",
         &[],
-        2,
-        "become_method 'su' is not supported yet",
+        4,
+        "'su' 'root' -c",
+    ),
+    runs(
+        "task",
+        "become_exe",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become: true\n      become_exe: probe-exe\n",
+        &[],
+        4,
+        "'probe-exe' '-H' '-n' -u 'root'",
+    ),
+    runs(
+        "task",
+        "become_flags",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      become: true\n      become_flags: --probe-flag\n",
+        &[],
+        4,
+        "'sudo' '--probe-flag' '-n' -u 'root'",
     ),
     runs(
         "task",
@@ -2715,17 +2852,33 @@ ok: [localhost] => (item=one) => {
         "play",
         "become",
         "- hosts: localhost\n  gather_facts: false\n  become: true\n  tasks:\n    - command: echo hi\n",
-        &["--become-method", "su"],
+        &["--become-method", "doas"],
         2,
-        "become_method 'su' is not supported yet",
+        "become_method 'doas' is not supported yet",
     ),
     runs(
         "play",
         "become_method",
-        "- hosts: localhost\n  gather_facts: false\n  become_method: su\n  tasks:\n    - command: echo hi\n",
+        "- hosts: h1\n  gather_facts: false\n  become: true\n  become_method: su\n  tasks:\n    - command: echo hi\n",
         &[],
-        2,
-        "become_method 'su' is not supported yet",
+        4,
+        "'su' 'root' -c",
+    ),
+    runs(
+        "play",
+        "become_exe",
+        "- hosts: h1\n  gather_facts: false\n  become: true\n  become_exe: probe-exe\n  tasks:\n    - command: echo hi\n",
+        &[],
+        4,
+        "'probe-exe' '-H' '-n' -u 'root'",
+    ),
+    runs(
+        "play",
+        "become_flags",
+        "- hosts: h1\n  gather_facts: false\n  become: true\n  become_flags: --probe-flag\n  tasks:\n    - command: echo hi\n",
+        &[],
+        4,
+        "'sudo' '--probe-flag' '-n' -u 'root'",
     ),
     runs(
         "play",
@@ -2886,17 +3039,33 @@ ok: [localhost] => (item=one) => {
         "block",
         "become",
         "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      become: true\n",
-        &["--become-method", "su"],
+        &["--become-method", "doas"],
         2,
-        "become_method 'su' is not supported yet",
+        "become_method 'doas' is not supported yet",
     ),
     runs(
         "block",
         "become_method",
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - command: echo hi\n      become_method: su\n",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - command: echo hi\n          become: true\n      become_method: su\n",
         &[],
-        2,
-        "become_method 'su' is not supported yet",
+        4,
+        "'su' 'root' -c",
+    ),
+    runs(
+        "block",
+        "become_exe",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - command: echo hi\n          become: true\n      become_exe: probe-exe\n",
+        &[],
+        4,
+        "'probe-exe' '-H' '-n' -u 'root'",
+    ),
+    runs(
+        "block",
+        "become_flags",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - command: echo hi\n          become: true\n      become_flags: --probe-flag\n",
+        &[],
+        4,
+        "'sudo' '--probe-flag' '-n' -u 'root'",
     ),
     runs(
         "block",
@@ -3360,9 +3529,11 @@ name = vol
         let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
         let path = match (is_become_user_probe(probe), probe.kw) {
             (true, _) => Some(sudo_dir.as_path()),
-            (_, "remote_user" | "port" | "connection" | "action" | "local_action") => {
-                Some(ssh_dir.as_path())
-            }
+            (
+                _,
+                "remote_user" | "port" | "connection" | "action" | "local_action" | "become_method"
+                | "become_exe" | "become_flags",
+            ) => Some(ssh_dir.as_path()),
             (_, "gather_facts") => Some(no_ansible.as_path()),
             _ => None,
         };
@@ -3387,7 +3558,14 @@ name = vol
         // that says how it was called and fails, so the run shows which user and port it chose.
         if matches!(
             probe.kw,
-            "remote_user" | "port" | "connection" | "action" | "local_action"
+            "remote_user"
+                | "port"
+                | "connection"
+                | "action"
+                | "local_action"
+                | "become_method"
+                | "become_exe"
+                | "become_flags"
         ) {
             std::fs::write(&inventory, "h1 ansible_host=probe-host\n")
                 .expect("the probe's inventory is written");

@@ -84,7 +84,7 @@ pub struct PlaybookArgs {
     /// Escalate to this user instead of root.
     #[arg(long = "become-user", value_name = "USER")]
     pub become_user: Option<String>,
-    /// Escalation method. Only `sudo` is implemented.
+    /// Escalation method: `sudo` or `su`.
     #[arg(long = "become-method", value_name = "METHOD")]
     pub become_method: Option<String>,
     /// Ask for the escalation password on the terminal.
@@ -355,7 +355,7 @@ async fn run_all(
     // for it and fails the task, which is exit 2. This refuses before the play instead, so no
     // recap is printed, but the code an operator's script reads is the same one.
     if escalates {
-        if become_method != playbook::BECOME_METHOD {
+        if !playbook::BECOME_METHODS.contains(&become_method.as_str()) {
             return Err(Refusal::at(
                 2,
                 format!("become_method '{become_method}' is not supported yet"),
@@ -364,7 +364,7 @@ async fn run_all(
         for host in &all_hosts {
             if let Some(method) = crate::vars::host_setting(&host.vars, "ansible_become_method")
                 .and_then(|v| v.as_str())
-                && method != playbook::BECOME_METHOD
+                && !playbook::BECOME_METHODS.contains(&method)
             {
                 return Err(Refusal::at(
                     2,
@@ -391,6 +391,8 @@ async fn run_all(
             .clone()
             .unwrap_or(config.become_user.clone()),
         become_method,
+        become_exe: config.become_exe,
+        become_flags: config.become_flags,
         become_password: if args.ask_become_pass {
             Some(ask_become_password()?)
         } else {

@@ -90,7 +90,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 </Option>
 
 <Option name="--become-method" arg="METHOD" default="sudo" config="[privilege_escalation] become_method" env="ANSIBLE_BECOME_METHOD">
-  The escalation method. Only `sudo` is supported for now; other methods stop the run before it starts.
+  The escalation method: `sudo` or `su`. Other methods stop the run before it starts.
 </Option>
 
 <Option name="-K, --ask-become-pass">

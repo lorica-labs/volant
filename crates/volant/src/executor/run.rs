@@ -1168,9 +1168,8 @@ pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskR
 /// never looked at the keyword. `connection`, `port` and `remote_user` read what the task, its
 /// block or its play wrote, and `null` when none did.
 ///
-/// `become_method` is not one of those: this release honours it. It reads `null` here anyway
-/// because its resolved value lives with the host's variables, not on `PlayTask`, and this
-/// function only takes the task - not because nothing looked at the keyword.
+/// `become_method`, `become_exe` and `become_flags` read the same way: what the task, its block
+/// or its play wrote, and `null` when none did.
 pub(super) fn failed_task_value(task: &PlayTask) -> Value {
     let mut out = Map::new();
     let strings = |list: &[String]| Value::Array(list.iter().map(|s| json!(s)).collect());
@@ -1183,6 +1182,9 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
             "args" => Value::Object(task.args.clone()),
             "become" => json!(task.r#become),
             "become_user" => json!(task.become_user),
+            "become_method" => json!(task.connect.become_method),
+            "become_exe" => json!(task.connect.become_exe),
+            "become_flags" => json!(task.connect.become_flags),
             "changed_when" => strings(&task.changed_when),
             "connection" => json!(task.connect.connection),
             "failed_when" => strings(&task.failed_when),
@@ -7462,6 +7464,8 @@ mod tests {
                 r#become: false,
                 become_user: "root".to_string(),
                 become_method: "sudo".to_string(),
+                become_exe: None,
+                become_flags: None,
                 become_password: None,
             };
             let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
@@ -7585,6 +7589,8 @@ mod tests {
             r#become: false,
             become_user: "root".to_string(),
             become_method: "sudo".to_string(),
+            become_exe: None,
+            become_flags: None,
             become_password: None,
         };
         let transport = Transport::for_host(&host, &defaults).expect("a local transport");
@@ -8051,6 +8057,8 @@ mod tests {
                 r#become: false,
                 become_user: "root".to_string(),
                 become_method: "sudo".to_string(),
+                become_exe: None,
+                become_flags: None,
                 become_password: None,
             };
             let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
@@ -8084,6 +8092,8 @@ mod tests {
             r#become: false,
             become_user: "root".to_string(),
             become_method: "sudo".to_string(),
+            become_exe: None,
+            become_flags: None,
             become_password: None,
         };
         Transport::for_vars("h1", vars.as_object().expect("an object"), &defaults)
@@ -8416,6 +8426,8 @@ mod tests {
             r#become: false,
             become_user: "root".to_string(),
             become_method: "sudo".to_string(),
+            become_exe: None,
+            become_flags: None,
             become_password: None,
         };
         (AgentSource::discover(), defaults)

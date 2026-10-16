@@ -221,6 +221,16 @@ struct Actions {
     next: u64,
 }
 
+impl Drop for Actions {
+    /// Every idle helper is asked to stop before any is waited for, so the run's exit waits
+    /// for the slowest of them rather than for each in turn.
+    fn drop(&mut self) {
+        for helper in &mut self.idle {
+            helper.close_input();
+        }
+    }
+}
+
 /// The run's channel to the Python helper.
 pub struct Bridge {
     start: Start,
@@ -418,7 +428,8 @@ impl Bridge {
     /// # Errors
     /// [`BridgeError::NotFound`] when ansible-core has no such action plugin, `Plugin` when the
     /// request is refused, `Start` when no helper starts, and `Helper` when the helper dies,
-    /// breaks the protocol or is still running at `deadline`. A helper that ended any of those
+    /// breaks the protocol or is still running at `deadline`: every
+    /// wait for the helper ends there. A helper that ended any of those
     /// ways is killed, and the next action starts another.
     pub fn run_action(
         &self,
@@ -426,7 +437,7 @@ impl Bridge {
         task: &Value,
         task_vars: &Value,
         play_context: &Value,
-        deadline: Option<Instant>,
+        deadline: Instant,
         asks: &mut dyn FnMut(Ask) -> Reply,
     ) -> Result<Value, BridgeError> {
         let (mut helper, id) = self.action_helper()?;
@@ -474,8 +485,11 @@ impl Bridge {
         }
         actions.next += 1;
         let id = actions.next;
-        if let Some(helper) = actions.idle.pop() {
-            return Ok((helper, id));
+        // A helper that died while idle is dropped here, which reaps it, and never reused.
+        while let Some(mut helper) = actions.idle.pop() {
+            if helper.alive() {
+                return Ok((helper, id));
+            }
         }
         // Started without the lock: an action on another host need not wait for this start.
         drop(actions);
@@ -496,7 +510,7 @@ fn converse(
     id: u64,
     name: &str,
     request: &str,
-    deadline: Option<Instant>,
+    deadline: Instant,
     asks: &mut dyn FnMut(Ask) -> Reply,
 ) -> Result<Value, BridgeError> {
     helper
@@ -843,7 +857,7 @@ while True:
     /// gives back what was asked and how the action ended. A run that hangs fails the test.
     fn act(
         bridge: &Arc<Bridge>,
-        deadline: Option<Instant>,
+        deadline: Instant,
         reply: fn(&Ask) -> Reply,
     ) -> (Vec<Ask>, Result<Value, BridgeError>) {
         let bridge = Arc::clone(bridge);
@@ -868,6 +882,11 @@ while True:
             .expect("the action ended")
     }
 
+    /// A deadline no test row is meant to reach.
+    fn later() -> Instant {
+        Instant::now() + std::time::Duration::from_secs(60)
+    }
+
     fn answers(ask: &Ask) -> Reply {
         match ask {
             Ask::HostVar { .. } => Reply::Error("no such host".into()),
@@ -880,7 +899,7 @@ while True:
         let starts = Arc::new(AtomicUsize::new(0));
         let bridge = bridge_with("asks", &starts);
         for _ in 0..2 {
-            let (asked, ended) = act(&bridge, None, answers);
+            let (asked, ended) = act(&bridge, later(), answers);
             assert_eq!(
                 asked,
                 [
@@ -907,7 +926,7 @@ while True:
     #[test]
     fn an_answer_over_the_cap_reaches_the_plugin_as_an_error() {
         let bridge = bridge_with("asks", &Arc::new(AtomicUsize::new(0)));
-        let (_, ended) = act(&bridge, None, |_| {
+        let (_, ended) = act(&bridge, later(), |_| {
             Reply::Value(json!("x".repeat(MAX_FRAME_LEN)))
         });
         let ended = ended.expect("a value");
@@ -927,9 +946,11 @@ while True:
     ) {
         let starts = Arc::new(AtomicUsize::new(0));
         let bridge = bridge_with(mode, &starts);
-        let deadline = Some(Instant::now() + std::time::Duration::from_millis(500));
+        // Only the silent helper is meant to reach its deadline.
+        let wait = if mode == "silent" { 500 } else { 60_000 };
+        let deadline = Instant::now() + std::time::Duration::from_millis(wait);
         for start in 1..=2 {
-            let (_, ended) = act(&bridge, deadline.filter(|_| mode == "silent"), answers);
+            let (_, ended) = act(&bridge, deadline, answers);
             let err = ended.unwrap_err();
             assert!(err.to_string().contains(said), "{err}");
             assert_eq!(starts.load(Ordering::SeqCst), start);
@@ -945,7 +966,7 @@ while True:
             anyhow::bail!("no ansible-core")
         }));
         for _ in 0..2 {
-            let (_, ended) = act(&bridge, None, answers);
+            let (_, ended) = act(&bridge, later(), answers);
             assert_eq!(ended, Err(BridgeError::Start("no ansible-core".into())));
         }
         assert_eq!(starts.load(Ordering::SeqCst), 1);

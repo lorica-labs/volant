@@ -885,7 +885,7 @@ def run_action(ident, request):
     connection, then `run(task_vars=…)` and `cleanup()`. A failure of the plugin is its task's
     failed result, shaped by ansible-core; only a request it cannot even start is an error."""
     from ansible._internal._errors import _error_utils
-    from ansible.errors import AnsibleError
+    from ansible.errors import AnsibleError, AnsibleTaskError
     from ansible.parsing.dataloader import DataLoader
     from ansible.playbook.block import Block
     from ansible.playbook.play import Play
@@ -906,6 +906,7 @@ def run_action(ident, request):
     if not CALL_NAME.match(name) or not plugin_loader.action_loader.has_plugin(name):
         return {"error": {"kind": "not_found", "message": "the handler '%s' was not found" % name}}
     task_vars = dict(request.get("task_vars") or {})
+    task = None
     try:
         context = PlayContext()
         for key, value in (request.get("play_context") or {}).items():
@@ -947,9 +948,14 @@ def run_action(ident, request):
         finally:
             action.cleanup()
     except Exception as failure:
-        result = _error_utils.result_dict_from_exception(failure)
-        if not isinstance(failure, AnsibleError):
-            result.update(msg="Unexpected failure during task execution: %s" % result["msg"])
+        # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a
+        # connection failure is unreachable, `AnsibleActionSkip` skipped, `AnsibleActionFail`
+        # its own result, and anything else a failure under the task's error.
+        try:
+            raise AnsibleTaskError(obj=task.get_ds() if task is not None else None) from failure
+        except AnsibleTaskError as wrapped:
+            result = _error_utils.result_dict_from_exception(wrapped, accept_result_contribution=True)
+            result.setdefault("changed", False)
         # The summary object carries the traceback text only when ansible-core is set to keep it.
         summary = result.pop("exception", None)
         traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)

@@ -1072,12 +1072,9 @@ impl ActionHelper {
     }
 
     /// The next frame, waiting no later than `deadline`.
-    pub(crate) fn next(&self, deadline: Option<std::time::Instant>) -> Result<Frame, Silence> {
+    pub(crate) fn next(&self, deadline: std::time::Instant) -> Result<Frame, Silence> {
         use std::sync::mpsc::RecvTimeoutError;
 
-        let Some(deadline) = deadline else {
-            return self.frames.recv().map_err(|_| Silence::Gone);
-        };
         let left = deadline.saturating_duration_since(std::time::Instant::now());
         self.frames.recv_timeout(left).map_err(|err| match err {
             RecvTimeoutError::Timeout => Silence::Expired,
@@ -1088,6 +1085,16 @@ impl ActionHelper {
     /// Ends the helper and says how it went.
     pub(crate) fn end(&mut self) -> String {
         self.helper.end()
+    }
+
+    /// Whether the process still runs: one that died while idle is not handed a request.
+    pub(crate) fn alive(&mut self) -> bool {
+        matches!(self.helper.child.try_wait(), Ok(None))
+    }
+
+    /// Asks the helper to stop, without waiting: closing its input ends its loop.
+    pub(crate) fn close_input(&mut self) {
+        drop(self.helper.stdin.take());
     }
 }
 

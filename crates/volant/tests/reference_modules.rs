@@ -861,7 +861,7 @@ fn every_bridge_case_matches_the_reference() {
 
 /// A local action plugin that asks the controller for each thing a plugin may ask of the host,
 /// once, and one that reads a connection member the stand-in connection does not have.
-const ACTION_PLUGINS: [(&str, &str); 2] = [
+const ACTION_PLUGINS: [(&str, &str); 4] = [
     (
         "every_ask.py",
         r#"from ansible.plugins.action import ActionBase
@@ -891,6 +891,27 @@ class ActionModule(ActionBase):
         return {"path": self._connection.socket_path}
 "#,
     ),
+    (
+        "unreachable.py",
+        r#"from ansible.plugins.action import ActionBase
+
+
+class ActionModule(ActionBase):
+    def run(self, tmp=None, task_vars=None):
+        return self._low_level_execute_command("true", sudoable=False)
+"#,
+    ),
+    (
+        "skipped.py",
+        r#"from ansible.errors import AnsibleActionSkip
+from ansible.plugins.action import ActionBase
+
+
+class ActionModule(ActionBase):
+    def run(self, tmp=None, task_vars=None):
+        raise AnsibleActionSkip("not here")
+"#,
+    ),
 ];
 
 /// Action plugins run in the Python helper as ansible-core runs them: each question reaches the
@@ -906,7 +927,9 @@ class ActionModule(ActionBase):
     "HostVar { host: \"other\" }",
     "Tmp(Remove { path: \"/tmp/ansible-tmp-1\" })",
 ], Ok(serde_json::json!({"rc": 0, "stdout": "hi\n", "module": {"ping": "x"}, "other": 7, "args": {"k": "{{ a }}"}})))]
-#[case::member_not_supported("refused", serde_json::json!({}), &[], Ok(serde_json::json!({"failed": true, "msg": "Connection.socket_path is not supported yet"})))]
+#[case::member_not_supported("refused", serde_json::json!({}), &[], Ok(serde_json::json!({"failed": true, "msg": "Task failed: Connection.socket_path is not supported yet"})))]
+#[case::link_failure_is_unreachable("unreachable", serde_json::json!({}), &["Command { cmd: \"/bin/sh -c 'true && sleep 0'\", stdin: None, sudoable: false }"], Ok(serde_json::json!({"unreachable": true, "msg": "Task failed: the host is gone", "changed": false})))]
+#[case::skip("skipped", serde_json::json!({}), &[], Ok(serde_json::json!({"skipped": true, "msg": "not here", "changed": false})))]
 #[case::unknown_plugin("my.col.nosuch", serde_json::json!({}), &[], Err("the handler 'my.col.nosuch' was not found"))]
 fn the_bridge_runs_action_plugins(
     #[case] name: &str,
@@ -933,7 +956,7 @@ fn the_bridge_runs_action_plugins(
         &serde_json::json!({ "args": args }),
         &serde_json::json!({"a": {"b": 1}, "groups": {"all": ["h", "other"]}}),
         &serde_json::json!({"connection": "ssh", "remote_addr": "h", "remote_user": "u"}),
-        Some(deadline),
+        deadline,
         &mut |ask| {
             let reply = match &ask {
                 Ask::Tmp(TmpOp::Make { .. }) => serde_json::json!("/tmp/ansible-tmp-1"),
@@ -943,6 +966,9 @@ fn the_bridge_runs_action_plugins(
                 _ => Value::Null,
             };
             asked.push(format!("{ask:?}"));
+            if name == "unreachable" {
+                return Reply::Error("the host is gone".into());
+            }
             Reply::Value(reply)
         },
     );

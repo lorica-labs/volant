@@ -7,6 +7,8 @@
       - !unsafe "{{ 1 + 1 }}"
       - key: !unsafe "{{ 2 + 2 }}"
     wrapped: "{{ plain }}"
+    up: "{{ plain | upper }}"
+    n: "{{ plain | length }}"
   tasks:
     - debug:
         var: plain
@@ -18,6 +20,10 @@
         var: nested
     - debug:
         var: wrapped
+    - debug:
+        var: up
+    - debug:
+        var: n
     - debug:
         msg: "{{ plain | to_json }}"
     - debug:
@@ -40,9 +46,7 @@
     - debug:
         var: included
     - name: no marker was written
-      stat:
-        path: "{{ item }}"
+      command:
+        argv: [test, "!", -e, "{{ item }}"]
+      changed_when: false
       loop: [MARKER_FILE, MARKER_VARS, MARKER_ARG, MARKER_FACT, MARKER_LOOP, MARKER_INCLUDE]
-      register: markers
-    - assert:
-        that: markers.results | map(attribute='stat.exists') | select | list | length == 0

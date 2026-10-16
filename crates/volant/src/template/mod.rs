@@ -516,6 +516,13 @@ impl Templar {
         // from that pass on and the passes after this one leave it alone.
         let mut untrusted = given();
         let mut current = vars.map.clone();
+        // What `!unsafe` loaded as is text from here on: a sibling that reads it must see the
+        // text, not the wrapper, and the name is data so no pass renders it.
+        for (k, v) in &mut current {
+            if !untrusted.contains(k) && unwrap_unsafe(v) {
+                untrusted.insert(k.clone());
+            }
+        }
         for _ in 0..5 {
             // One context for the whole pass: every value of the map renders against the same
             // map, so building it per value paid for the same conversion once per variable.
@@ -620,6 +627,16 @@ impl Templar {
 }
 
 /// Whether any string inside a value still carries a template marker.
+/// Replaces every `!unsafe` wrapper inside `value` by its text; whether there was one.
+fn unwrap_unsafe(value: &mut Value) -> bool {
+    match value {
+        Value::String(s) => crate::yaml::unsafe_text(s).map(|t| *s = t).is_some(),
+        Value::Array(items) => items.iter_mut().fold(false, |a, v| unwrap_unsafe(v) | a),
+        Value::Object(map) => map.values_mut().fold(false, |a, v| unwrap_unsafe(v) | a),
+        _ => false,
+    }
+}
+
 fn holds_template(value: &Value) -> bool {
     match value {
         Value::String(s) => Templar::is_template(s),

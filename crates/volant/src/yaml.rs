@@ -366,9 +366,38 @@ fn unsafe_data(value: Value) -> Value {
     }
 }
 
+/// The text `unsafe_data` wrapped, when `s` is exactly such a wrapper and nothing else. Read
+/// back by hand, never through the templater: `s` may be any string of a variable map.
+pub(crate) fn unsafe_text(s: &str) -> Option<String> {
+    let body = s
+        .strip_prefix("{{ \"")?
+        .strip_suffix("\" | volant_unsafe }}")?;
+    let mut out = String::new();
+    let mut chars = body.chars();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => return None,
+            '\\' => match chars.next()? {
+                '\\' => out.push('\\'),
+                '"' => out.push('"'),
+                'n' => out.push('\n'),
+                'r' => out.push('\r'),
+                't' => out.push('\t'),
+                'u' => {
+                    let hex: String = chars.by_ref().take(4).collect();
+                    out.push(char::from_u32(u32::from_str_radix(&hex, 16).ok()?)?);
+                }
+                _ => return None,
+            },
+            c => out.push(c),
+        }
+    }
+    Some(out)
+}
+
 /// Converts a node to JSON. A vault tag is refused with a message naming it: decryption arrives
 /// with a later release, and silently dropping it would change what a playbook does. `!unsafe`
-/// is loaded as data, see [`unsafe_data`].
+/// is loaded as data, see `unsafe_data`.
 pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
     Ok(match node {
         Yaml::Value(Scalar::Null) => Value::Null,
@@ -557,6 +586,23 @@ a: 3
                 "l": [r#"{{ "{{ y }}" | volant_unsafe }}"#, 3, "plain"],
             })
         );
+    }
+
+    #[test]
+    fn unsafe_text_escapes_and_reads_back_whatever_it_holds() {
+        for text in [
+            "{{ a }} }} \"q\"",
+            "{% if x %}",
+            "{{ a }}\\",
+            "{{ \u{1f600} }}",
+            "{{ a\u{85}b }}\n\r\t",
+        ] {
+            let Value::String(wrapped) = unsafe_data(Value::String(text.into())) else {
+                panic!("not a string");
+            };
+            assert_eq!(unsafe_text(&wrapped).as_deref(), Some(text), "{text:?}");
+        }
+        assert_eq!(unsafe_text("{{ \"a\" | volant_unsafe }} {{ b }}"), None);
     }
 
     #[test]

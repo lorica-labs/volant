@@ -1881,6 +1881,9 @@ pub(super) async fn drive_host(
                 }
                 Err(err) => {
                     if c.steps[batch[0].0].task.ignores_unreachable() {
+                        // The turn goes back before the host waits for anyone: `advance` can
+                        // wait for a verdict that depends on a host this gate is holding up.
+                        drop(gate);
                         if !plan.strategy.pinned() {
                             permit = None;
                         }

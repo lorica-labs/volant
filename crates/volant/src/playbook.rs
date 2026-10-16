@@ -1839,6 +1839,10 @@ fn throttle(yaml: &Yaml, context: &str) -> anyhow::Result<Option<u64>> {
     match field(yaml, "throttle") {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
         Some(Yaml::Value(Scalar::Integer(i))) => Ok(Some((*i).max(0) as u64)),
+        // Rendered by the reference when the task runs; this release reads a number only.
+        Some(Yaml::Value(Scalar::String(_))) => {
+            bail!("{context}'throttle' written as a string or a template is not supported yet")
+        }
         Some(other) => bail!("{context}'throttle' must be an integer, found {other:?}"),
     }
 }
@@ -2302,7 +2306,7 @@ mod tests {
     )]
     #[case::throttle_word(
         "- hosts: all\n  tasks:\n    - command: echo hi\n      throttle: abc\n",
-        &["'throttle' must be an integer"]
+        &["'throttle' written as a string or a template is not supported yet"]
     )]
     #[case::notify_element(
         "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      notify: [3]\n",

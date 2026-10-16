@@ -5835,6 +5835,11 @@ fn a_strategy_that_cannot_wait_is_refused_by_name() {
             "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
         ),
         (
+            "pinned-second-play",
+            "- hosts: all\n  gather_facts: false\n  tasks:\n    - debug: msg=first\n- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  tasks:\n    - debug: msg=once\n      run_once: true\n",
+            "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
+        ),
+        (
             "pinned-handler",
             "- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  handlers:\n    - name: later\n      debug: msg=later\n  tasks:\n    - debug: msg=now\n      changed_when: true\n      notify: later\n",
             "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
@@ -5925,5 +5930,36 @@ fn a_throttled_task_under_free_never_overlaps() {
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert_eq!(text.matches("changed: [h").count(), 3, "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A throttled task whose host cannot be reached and is told to carry on gives its turn back
+/// before it waits for the others: with `any_errors_fatal` that wait needs the host behind it.
+#[test]
+fn a_throttled_unreachable_host_under_any_errors_fatal_gives_its_turn_back() {
+    let dir = probe_dir("throttle-unreachable");
+    let inventory = dir.join("hosts.ini");
+    std::fs::write(
+        &inventory,
+        "h1 ansible_connection=local\nh2 ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=1\nh3 ansible_connection=local\n",
+    )
+    .expect("the probe's inventory is written");
+    let play = dir.join("play.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          shell: \"true\"\n          throttle: 1\n          any_errors_fatal: true\n          ignore_unreachable: true\n      rescue:\n        - debug: msg=rescued\n",
+    )
+    .expect("the probe is written");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &inventory.display().to_string(),
+            &play.display().to_string(),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert!(text.contains("PLAY RECAP"), "{text}");
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }

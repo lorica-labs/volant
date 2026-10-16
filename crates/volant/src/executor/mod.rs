@@ -283,7 +283,6 @@ pub async fn run_play(
             out.play(&play.name);
             continue;
         }
-        refuse_unsafe_pinning(play, compiled, live.len(), max_fail.is_some(), options)?;
         // Read here, once per batch about to run and not once for the whole play: see
         // `load_play_vars_files`. `play_hosts` is the play's still-live hosts computed from
         // `state.failed_hosts` as it stands right before this batch starts (this batch and every
@@ -402,32 +401,23 @@ pub async fn run_play(
     Ok(PlayEnd { stop_run: false })
 }
 
-/// What `free` and `host_pinned` cannot do yet, said before the batch starts. `max_fail_percentage`
-/// decides after each step whether the batch goes on, which hosts that do not wait for each other
-/// have no step to decide at. A host kept by its fork cannot wait at a point the hosts behind it
-/// have to reach, so `host_pinned` with fewer forks than hosts refuses the steps that make hosts
-/// meet: handlers, dynamic includes, `run_once`, `pause` and `any_errors_fatal`.
-fn refuse_unsafe_pinning(
+/// What `host_pinned` cannot do yet, said before the first play starts. A host kept by its fork
+/// cannot wait at a point the hosts behind it have to reach, so `host_pinned` with fewer forks
+/// than hosts refuses the steps that make hosts meet: handlers, dynamic includes, `run_once`,
+/// `pause` and `any_errors_fatal`. `hosts` is the play's whole list, so a `serial` play is held
+/// to the same bound as one without.
+pub fn refuse_unsafe_pinning(
     play: &Play,
     compiled: &Compiled,
     hosts: usize,
-    max_fail: bool,
-    options: &RunOptions,
+    forks: usize,
 ) -> anyhow::Result<()> {
-    let strategy = prepare::Strategy::named(play.strategy.as_deref());
-    let name = play.strategy.as_deref().unwrap_or_default();
-    if strategy.free() && max_fail {
-        return Err(crate::stats::Refusal::at(
-            4,
-            format!("strategy '{name}' with 'max_fail_percentage' is not supported yet"),
-        ));
-    }
     let meets = compiled.steps.iter().any(|s| match s.kind {
         StepKind::Include(_) => true,
         StepKind::Flush { explicit } => explicit || !compiled.handlers.is_empty(),
         _ => s.task.barrier(),
     });
-    if strategy.pinned() && options.forks < hosts && meets {
+    if play.strategy.as_deref() == Some("host_pinned") && forks < hosts && meets {
         return Err(crate::stats::Refusal::at(
             4,
             "strategy 'host_pinned' with fewer forks than hosts is not supported yet for a play with handlers, includes, run_once, pause or any_errors_fatal",

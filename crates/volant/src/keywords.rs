@@ -84,6 +84,12 @@ const CHECK_MODE_MISSING: &str = "only `false` is accepted, and the task runs fo
     connection when the playbook writes it, and at the include statement when a dynamic include \
     brings it in";
 
+/// One sentence for the `debugger` rows. The reference's prompt also evaluates Python.
+const DEBUGGER_MISSING: &str = "the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input";
+
+/// One sentence for the `throttle` rows.
+const THROTTLE_MISSING: &str = "a number only; a string or a template is not supported yet";
+
 /// A keyword whose presence on a task makes that task a synchronisation point.
 const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
     Keyword {
@@ -134,7 +140,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Runs),
     kw("connection", Runs),
-    kw("debugger", Runs),
+    partial_kw("debugger", DEBUGGER_MISSING),
     kw("delay", Runs),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
@@ -157,7 +163,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("retries", Runs),
     barrier_kw("run_once", Runs),
     kw("tags", Runs),
-    kw("throttle", Runs),
+    partial_kw("throttle", THROTTLE_MISSING),
     kw("timeout", Runs),
     kw("until", Runs),
     kw("vars", Runs),
@@ -231,7 +237,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Runs),
     kw("connection", Runs),
-    kw("debugger", Runs),
+    partial_kw("debugger", DEBUGGER_MISSING),
     kw("diff", Preflight),
     kw("environment", Runs),
     kw("fact_path", Runs),
@@ -258,7 +264,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("strategy", Runs),
     kw("tags", Runs),
     kw("tasks", Runs),
-    kw("throttle", Runs),
+    partial_kw("throttle", THROTTLE_MISSING),
     kw("timeout", Runs),
     kw("vars", Runs),
     kw("vars_files", Runs),
@@ -304,7 +310,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     partial_kw("check_mode", CHECK_MODE_MISSING),
     kw("collections", Runs),
     kw("connection", Runs),
-    kw("debugger", Runs),
+    partial_kw("debugger", DEBUGGER_MISSING),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
     kw("diff", Preflight),
@@ -320,7 +326,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("rescue", Runs),
     barrier_kw("run_once", Runs),
     kw("tags", Runs),
-    kw("throttle", Runs),
+    partial_kw("throttle", THROTTLE_MISSING),
     kw("timeout", Runs),
     kw("vars", Runs),
     kw("when", Runs),

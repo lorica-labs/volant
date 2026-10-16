@@ -2,9 +2,9 @@
 //! The collection version rule `reference_modules.rs` and `ssh_e2e.rs` both apply before they run a
 //! collection module: what `golden/COLLECTIONS` pins, read back from a controller python.
 
-/// The versions `COLLECTIONS` pins: the three real collections, plus `netaddr`, which is not a
-/// collection but is needed in the same controller environment for `ansible.utils.ipwrap` and is
-/// pinned the same way.
+/// The versions `COLLECTIONS` pins: the three real collections, plus `netaddr` and `jmespath`, which
+/// are not collections but are needed in the same controller environment (`ipwrap`, `json_query`)
+/// and are pinned the same way.
 fn pinned_collections() -> Vec<(String, String)> {
     include_str!("../golden/COLLECTIONS")
         .lines()
@@ -15,7 +15,7 @@ fn pinned_collections() -> Vec<(String, String)> {
 
 /// What the generator's own `_installed_collections()` (`run.py`) runs, in the interpreter's own
 /// words: a collection's version comes from its `MANIFEST.json`, found on one of
-/// `C.COLLECTIONS_PATHS`; `netaddr` is a plain import next to it. Kept in the interpreter this
+/// `C.COLLECTIONS_PATHS`; the Python packages are read from their metadata. Kept in the interpreter this
 /// refuses to run without (`reference_python()`) rather than reimplemented in Rust, because a
 /// manifest's shape and a collection's path list are ansible-core's own to read.
 ///
@@ -23,13 +23,16 @@ fn pinned_collections() -> Vec<(String, String)> {
 /// `COLLECTIONS` gaining a fourth pin (or losing one) must not also require editing this string
 /// by hand to match.
 fn collection_version_script() -> String {
-    let tuple = pinned_collections()
-        .into_iter()
-        .map(|(name, _)| name)
-        .filter(|name| name != "netaddr")
-        .map(|name| format!("{name:?}"))
-        .collect::<Vec<_>>()
-        .join(", ");
+    let names = |collections: bool| {
+        pinned_collections()
+            .into_iter()
+            .map(|(name, _)| name)
+            .filter(|name| name.contains('.') == collections)
+            .map(|name| format!("{name:?}"))
+            .collect::<Vec<_>>()
+            .join(", ")
+    };
+    let (tuple, packages) = (names(true), names(false));
     format!(
         r#"
 import json, os
@@ -43,11 +46,12 @@ for fqcn in ({tuple},):
             with open(manifest, encoding="utf-8") as f:
                 versions[fqcn] = json.load(f)["collection_info"]["version"]
             break
-try:
-    import netaddr
-    versions["netaddr"] = netaddr.__version__
-except ImportError:
-    pass
+from importlib.metadata import PackageNotFoundError, version
+for package in ({packages},):
+    try:
+        versions[package] = version(package)
+    except PackageNotFoundError:
+        pass
 print(json.dumps(versions))
 "#
     )

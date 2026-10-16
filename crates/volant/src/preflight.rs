@@ -709,7 +709,7 @@ mod tests {
     #[case::shell_false(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
     #[case::shell_no(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"no\"\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
     #[case::strategy_free("- hosts: all\n  strategy: free\n  tasks:\n    - command: echo hi\n".to_string(), &["strategy 'free' is not supported yet"])]
-    #[case::with_dict(task_play("      debug: msg=hi\n      with_dict: {a: 1}\n"), &["keyword 'with_dict' is not supported yet"])]
+    #[case::with_unvault(task_play("      debug: msg=hi\n      with_unvault: [x]\n"), &["keyword 'with_unvault' is not supported yet"])]
     #[case::action_plugin_assemble(task_play("      assemble: src=a dest=b\n"), &["module 'assemble' needs an action plugin"])]
     #[case::action_plugin_script(task_play("      script: src=a dest=b\n"), &["module 'script' needs an action plugin"])]
     #[case::action_plugin_builtin_script(task_play("      ansible.builtin.script: src=a dest=b\n"), &["module 'ansible.builtin.script' needs an action plugin"])]
@@ -1039,7 +1039,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            68,
+            54,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

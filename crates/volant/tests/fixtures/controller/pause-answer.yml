@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - pause: {prompt: Enter name}
+      register: asked
+    - pause: {prompt: Secret, echo: false}
+      register: hidden
+    - debug:
+        msg: "{{ asked.user_input }} {{ hidden.user_input }} {{ hidden.echo }}"

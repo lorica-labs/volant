@@ -219,6 +219,151 @@ fn a_prompting_pause_in_a_play_with_no_host_is_not_refused() {
     assert!(text.contains(r#""msg": "after""#), "{text}");
 }
 
+/// A run under util-linux `script`, which gives it a terminal. Output is read as it comes so a test
+/// can answer a prompt only once it is shown; whatever is still running at the deadline is killed
+/// by the fixture's name, the program under `script` included.
+#[cfg(target_os = "linux")]
+struct Pty {
+    child: std::process::Child,
+    input: Option<std::process::ChildStdin>,
+    output: std::sync::mpsc::Receiver<Vec<u8>>,
+    seen: String,
+    marker: String,
+}
+
+#[cfg(target_os = "linux")]
+impl Pty {
+    fn start(args: &str, playbook: &str) -> Self {
+        use std::io::Read as _;
+        let marker = fixture(playbook);
+        // `stty -a` last, to show the terminal's state once the run is over.
+        let command = format!(
+            "'{}' playbook {args} '{marker}'; echo EXIT=$?; stty -a",
+            env!("CARGO_BIN_EXE_volant")
+        );
+        let mut child = Command::new("script")
+            .args(["-qc", &command, "/dev/null"])
+            .env("NO_COLOR", "1")
+            .stdin(std::process::Stdio::piped())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null())
+            .spawn()
+            .expect("this test needs util-linux `script` to give the run a terminal");
+        let mut stdout = child.stdout.take().expect("script's stdout");
+        let (tx, output) = std::sync::mpsc::channel();
+        std::thread::spawn(move || {
+            let mut chunk = [0u8; 4096];
+            while let Ok(n) = stdout.read(&mut chunk) {
+                if n == 0 || tx.send(chunk[..n].to_vec()).is_err() {
+                    break;
+                }
+            }
+        });
+        let input = child.stdin.take();
+        Self {
+            child,
+            input,
+            output,
+            seen: String::new(),
+            marker,
+        }
+    }
+
+    fn kill(&mut self) {
+        let _ = Command::new("pkill")
+            .args(["-KILL", "-f", &self.marker])
+            .status();
+        let _ = self.child.kill();
+        let _ = self.child.wait();
+    }
+
+    /// Reads until `needle` has been printed, or kills the run at the deadline.
+    fn wait_for(&mut self, needle: &str) {
+        let end = std::time::Instant::now() + PROBE_DEADLINE;
+        while !self.seen.contains(needle) {
+            let left = end.saturating_duration_since(std::time::Instant::now());
+            if let Ok(bytes) = self.output.recv_timeout(left) {
+                self.seen
+                    .push_str(&String::from_utf8_lossy(&bytes).replace('\r', ""));
+            } else {
+                self.kill();
+                panic!(
+                    "`{needle}` never appeared within {PROBE_DEADLINE:?}: {}",
+                    self.seen
+                );
+            }
+        }
+    }
+
+    fn send(&mut self, bytes: &[u8]) {
+        use std::io::Write as _;
+        let input = self.input.as_mut().expect("script's stdin");
+        input.write_all(bytes).and_then(|()| input.flush()).unwrap();
+    }
+
+    /// Everything the run printed, up to the end of `stty -a`.
+    fn finish(mut self) -> String {
+        self.wait_for("EXIT=");
+        self.wait_for("extproc");
+        self.seen.clone()
+    }
+}
+
+/// A `pause` without a duration prompts on a terminal and reports the answer in `user_input`;
+/// a hidden answer is never echoed and the terminal echoes again afterwards.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pause_on_a_terminal_reads_its_answer() {
+    let mut run = Pty::start("", "controller/pause-answer.yml");
+    run.wait_for("[pause]\nEnter name:");
+    run.send(b"alice\n");
+    run.wait_for("[pause]\nSecret (output is hidden):");
+    run.send(b"s3cret\n");
+    let text = run.finish();
+    assert!(text.contains("EXIT=0"), "{text}");
+    assert!(text.contains("alice s3cret False"), "{text}");
+    assert_eq!(
+        text.matches("s3cret").count(),
+        1,
+        "the answer was echoed: {text}"
+    );
+    let flags = text.split("EXIT=0").nth(1).unwrap();
+    assert!(
+        flags.split_whitespace().any(|flag| flag == "echo"),
+        "echo was left off: {flags}"
+    );
+}
+
+/// With two hosts the prompt is asked once and h2 registers nothing, as the reference does.
+#[cfg(target_os = "linux")]
+#[test]
+fn a_pause_on_a_terminal_asks_once_for_two_hosts() {
+    let inventory = fixture("controller/two-hosts.ini");
+    let mut run = Pty::start(
+        &format!("-i '{inventory}'"),
+        "controller/pause-two-hosts.yml",
+    );
+    run.wait_for("[pause]\nEnter name:");
+    run.send(b"alice\n");
+    let text = run.finish();
+    assert_eq!(text.matches("Enter name:").count(), 1, "{text}");
+    assert!(
+        text.contains("h1 alice") && text.contains("h2 none"),
+        "{text}"
+    );
+}
+
+/// Ctrl+C at the prompt ends the run: the read a person abandoned does not hold the process.
+#[cfg(target_os = "linux")]
+#[test]
+fn ctrl_c_at_a_pause_prompt_ends_the_run() {
+    let mut run = Pty::start("", "controller/pause-only.yml");
+    run.wait_for("[pause]\nEnter name:");
+    run.send(&[3]);
+    run.wait_for("EXIT=");
+    run.kill();
+}
+
 /// `retries` is rendered per item, on the agent path, the controller-side one and an action
 /// plugin's.
 #[test]

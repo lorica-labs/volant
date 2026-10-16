@@ -299,7 +299,7 @@ pub const FAIL: ModuleSpec = ModuleSpec {
 pub const PAUSE: ModuleSpec = ModuleSpec {
     name: "pause",
     free_form: false,
-    summary: "Wait for `seconds` or `minutes`. Volant cannot read keyboard input, so when standard input is a terminal, `prompt` and a pause with no duration are not supported yet. Without a terminal, a pause that asks for input prints a warning and continues at once, as Ansible does.",
+    summary: "Wait for `seconds` or `minutes`. On a terminal a pause with no duration asks for an answer and keeps it in `user_input`; `prompt` next to a duration is not supported yet. Without a terminal, a pause that asks for input prints a warning and continues at once, as Ansible does.",
     args: &[
         honoured("echo"),
         honoured("minutes"),

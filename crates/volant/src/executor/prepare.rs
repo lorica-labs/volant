@@ -318,6 +318,99 @@ pub(super) enum Prepared {
     ),
 }
 
+/// What `loop_control`'s `extended`, `extended_allitems` and `pause` come to once rendered.
+pub(super) struct LoopOptions {
+    pub(super) extended: bool,
+    pub(super) allitems: bool,
+    pub(super) pause: Option<std::time::Duration>,
+}
+
+/// The three `loop_control` fields the reference templates per task, rendered against `vars` and
+/// converted. Measured on ansible-core 2.19.12: a value that does not convert fails the task
+/// with `Error processing keyword 'pause': The value 'nope' could not be converted to 'float'.`,
+/// and an undefined name with `Error processing keyword 'pause': 'x' is undefined`; a negative
+/// `pause` is accepted and waits for nothing.
+pub(super) fn loop_options(
+    task: &PlayTask,
+    vars: &HostVars,
+    templar: &Templar,
+) -> Result<LoopOptions, TemplateError> {
+    let rendered = |key: &str, raw: &Option<Value>| -> Result<Option<Value>, TemplateError> {
+        raw.as_ref()
+            .map(|raw| {
+                templar
+                    .render_value(raw, vars)
+                    .map_err(|e| TemplateError(format!("{KEYWORD_ERROR}'{key}': {}", e.0)))
+            })
+            .transpose()
+    };
+    let unconverted = |key: &str, value: &Value, to: &str| {
+        let shown = match value {
+            Value::String(s) => s.clone(),
+            other => other.to_string(),
+        };
+        TemplateError(format!(
+            "{KEYWORD_ERROR}'{key}': The value '{shown}' could not be converted to '{to}'."
+        ))
+    };
+    let flag = |key: &str, raw: &Option<Value>, default: bool| -> Result<bool, TemplateError> {
+        match rendered(key, raw)? {
+            None => Ok(default),
+            Some(Value::Number(n)) if n.as_i64() == Some(0) => Ok(false),
+            Some(Value::Number(n)) if n.as_i64() == Some(1) => Ok(true),
+            Some(value) => as_bool_value(&value).ok_or_else(|| unconverted(key, &value, "bool")),
+        }
+    };
+    let pause = match rendered("pause", &task.loop_pause)? {
+        None => None,
+        Some(value) => {
+            let seconds = match &value {
+                Value::Number(n) => n.as_f64(),
+                Value::Bool(b) => Some(f64::from(u8::from(*b))),
+                Value::String(s) => s.trim().parse::<f64>().ok(),
+                _ => None,
+            }
+            .ok_or_else(|| unconverted("pause", &value, "float"))?;
+            if seconds > 0.0 {
+                Some(
+                    std::time::Duration::try_from_secs_f64(seconds)
+                        .map_err(|_| unconverted("pause", &value, "float"))?,
+                )
+            } else {
+                None
+            }
+        }
+    };
+    Ok(LoopOptions {
+        extended: flag("extended", &task.loop_extended, false)?,
+        allitems: flag("extended_allitems", &task.loop_allitems, true)?,
+        pause,
+    })
+}
+
+/// The start of the message a `loop_control` field that fails to render or convert reports.
+pub(super) const KEYWORD_ERROR: &str = "Error processing keyword ";
+
+/// The text a task that dies before it runs reports: the reference's `Task failed: ` prefix,
+/// except on a keyword error, which it states as it is.
+pub(super) fn failure_text(err: &TemplateError) -> String {
+    if err.0.starts_with(KEYWORD_ERROR) {
+        err.0.clone()
+    } else {
+        format!("Task failed: {}", err.0)
+    }
+}
+
+/// The pause the loop `items` belong to waits between two of them, if it has one.
+pub(super) fn pause_of(
+    task: &PlayTask,
+    items: &[Item],
+    templar: &Templar,
+) -> Option<std::time::Duration> {
+    let first = items.first()?;
+    loop_options(task, &first.vars, templar).ok()?.pause
+}
+
 /// One loop item (or the whole task when there is no loop), rendered.
 pub(super) struct Item {
     /// The loop element, present only for loops.
@@ -468,7 +561,24 @@ pub(super) fn prepare(
         Some(Err(e)) => return Err(e),
     };
     let mut items = Vec::new();
-    for element in elements {
+    // What `ansible_loop` reads: every item, kept only when the loop asks for `extended`.
+    let options = if task.loop_items.is_some() {
+        loop_options(task, &base, templar)?
+    } else {
+        LoopOptions {
+            extended: false,
+            allitems: true,
+            pause: None,
+        }
+    };
+    let list: Vec<&Value> = if options.extended {
+        elements.iter().flatten().collect()
+    } else {
+        Vec::new()
+    };
+    let list_value = (options.extended && options.allitems)
+        .then(|| Value::Array(list.iter().map(|v| (*v).clone()).collect()));
+    for (index, element) in elements.iter().cloned().enumerate() {
         let mut vars = base.clone();
         if let Some(el) = &element {
             if items_from_host {
@@ -480,6 +590,36 @@ pub(super) fn prepare(
                 "ansible_loop_var".into(),
                 Value::String(task.loop_var.clone()),
             );
+            if let Some(name) = &task.index_var {
+                vars.insert(name.clone(), Value::from(index));
+            }
+            if options.extended {
+                let last = list.len() - 1;
+                let mut ansible_loop = Map::new();
+                ansible_loop.insert("index".into(), Value::from(index + 1));
+                ansible_loop.insert("index0".into(), Value::from(index));
+                ansible_loop.insert("first".into(), Value::Bool(index == 0));
+                ansible_loop.insert("last".into(), Value::Bool(index == last));
+                ansible_loop.insert("length".into(), Value::from(list.len()));
+                ansible_loop.insert("revindex".into(), Value::from(list.len() - index));
+                ansible_loop.insert("revindex0".into(), Value::from(last - index));
+                if let Some(all) = &list_value {
+                    ansible_loop.insert("allitems".into(), all.clone());
+                }
+                if index < last {
+                    ansible_loop.insert("nextitem".into(), list[index + 1].clone());
+                }
+                if index > 0 {
+                    ansible_loop.insert("previtem".into(), list[index - 1].clone());
+                }
+                // Its items are the loop's, so they are as much a managed host's as the
+                // loop variable is.
+                if items_from_host {
+                    vars.insert_untrusted("ansible_loop".into(), Value::Object(ansible_loop));
+                } else {
+                    vars.insert("ansible_loop".into(), Value::Object(ansible_loop));
+                }
+            }
             // Variables naming the loop variable could not resolve before it was bound. One of
             // them may be built from the item, so this pass widens the set the same way.
             let (resolved, untrusted) = templar.resolve_vars_tainted(&vars);

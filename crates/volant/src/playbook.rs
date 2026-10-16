@@ -226,6 +226,15 @@ pub struct PlayTask {
     pub loop_with: Option<String>,
     pub loop_var: String,
     pub loop_label: Option<String>,
+    /// `loop_control.index_var`: the name each item's 0-based position is bound to.
+    pub index_var: Option<String>,
+    /// `loop_control.extended`, `extended_allitems` and `pause`, raw: the reference templates
+    /// and converts them per task, so a bad value fails the task, not the load.
+    pub loop_extended: Option<Value>,
+    pub loop_allitems: Option<Value>,
+    pub loop_pause: Option<Value>,
+    /// `loop_control.break_when`: the loop ends after the first item for which all hold.
+    pub break_when: Vec<String>,
     pub register: Option<String>,
     pub changed_when: Vec<String>,
     pub failed_when: Vec<String>,
@@ -310,6 +319,11 @@ impl PlayTask {
             loop_with: None,
             loop_var: "item".to_string(),
             loop_label: None,
+            index_var: None,
+            loop_extended: None,
+            loop_allitems: None,
+            loop_pause: None,
+            break_when: Vec::new(),
             register: None,
             changed_when: Vec::new(),
             failed_when: Vec::new(),
@@ -1182,15 +1196,17 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
             }
         }
     }
-    // `loop_control` is a mapping, so it has a grammar of its own, and reading two of its
-    // sub-keys while dropping the rest reopens the silent skip one level below the keyword:
-    // `index_var` or `pause` would be accepted, waved past the pre-flight and ignored while the
-    // table still said the keyword runs. The reference refuses a sub-key it does not know at
-    // load - measured, exit 4, `'nosuch' is not a valid attribute for a LoopControl` - and the
-    // ones it knows and this release cannot honour are parked for the pre-flight like any other
-    // keyword.
+    // `loop_control` is a mapping, so it has a grammar of its own. The reference refuses a
+    // sub-key it does not know at load - measured, exit 4, `'nosuch' is not a valid attribute
+    // for a LoopControl` - and one it knows and this release cannot honour would be parked for
+    // the pre-flight like any other keyword.
     let mut loop_var = "item".to_string();
     let mut loop_label = None;
+    let mut index_var = None;
+    let mut loop_extended = None;
+    let mut loop_allitems = None;
+    let mut loop_pause = None;
+    let mut break_when = Vec::new();
     if let Some(control) = field(yaml, "loop_control") {
         let control = control
             .as_mapping()
@@ -1199,21 +1215,36 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
             let key = key
                 .as_str()
                 .ok_or_else(|| anyhow!("task '{label}': 'loop_control' keys must be strings"))?;
-            match loop_control_keyword(key) {
-                None => bail!("'{key}' is not a valid attribute for a LoopControl"),
-                Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
-                // The two this release honours, both plain text: the name a loop item is bound
-                // to, and the template a looping task shows instead of the item itself.
-                Some(k) => {
-                    let text = value.as_str().map(str::to_string).ok_or_else(|| {
-                        anyhow!("task '{label}': 'loop_control.{}' must be a name", k.name)
-                    })?;
-                    if k.name == "loop_var" {
-                        loop_var = text;
-                    } else {
-                        loop_label = Some(text);
-                    }
+            let Some(k) = loop_control_keyword(key) else {
+                bail!("'{key}' is not a valid attribute for a LoopControl");
+            };
+            if k.support == Support::Preflight {
+                unsupported.push(k.name);
+                continue;
+            }
+            let name = || {
+                value.as_str().map(str::to_string).ok_or_else(|| {
+                    anyhow!("task '{label}': 'loop_control.{}' must be a name", k.name)
+                })
+            };
+            match k.name {
+                "loop_var" => loop_var = name()?,
+                "label" => loop_label = Some(name()?),
+                "index_var" => index_var = Some(name()?),
+                "extended" => loop_extended = Some(to_json(value)?),
+                "extended_allitems" => loop_allitems = Some(to_json(value)?),
+                "pause" => loop_pause = Some(to_json(value)?),
+                "break_when" => {
+                    let context = format!("task '{label}': ");
+                    break_when = match value {
+                        Yaml::Sequence(items) => items
+                            .iter()
+                            .map(|n| condition(n, "break_when", &context))
+                            .collect::<anyhow::Result<_>>()?,
+                        node => vec![condition(node, "break_when", &context)?],
+                    };
                 }
+                other => unreachable!("loop_control sub-key '{other}' has no reader"),
             }
         }
     }
@@ -1346,6 +1377,11 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         loop_with,
         loop_var,
         loop_label,
+        index_var,
+        loop_extended,
+        loop_allitems,
+        loop_pause,
+        break_when,
         register,
         changed_when,
         failed_when,
@@ -1499,13 +1535,17 @@ fn parse_handlers(node: Option<&Yaml>) -> anyhow::Result<Vec<HandlerTask>> {
 /// `when`, `changed_when`, `failed_when`: one expression or a list of them. A YAML boolean is
 /// spelled back as Python would (`True`/`False`) so the expression evaluator reads it.
 fn conditions(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Vec<String>> {
-    one_or_many(yaml, key, |node| match node {
+    one_or_many(yaml, key, |node| condition(node, key, context))
+}
+
+fn condition(node: &Yaml, key: &str, context: &str) -> anyhow::Result<String> {
+    match node {
         Yaml::Value(Scalar::String(s)) => Ok(s.to_string()),
         Yaml::Value(Scalar::Boolean(b)) => Ok(if *b { "True" } else { "False" }.to_string()),
         other => bail!(
             "{context}'{key}' must be an expression or a list of expressions, found {other:?}"
         ),
-    })
+    }
 }
 
 fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>> {
@@ -1878,33 +1918,61 @@ mod tests {
         assert_eq!(first(&pb).unsupported, [kw]);
     }
 
-    /// A `loop_control` sub-key the reference has but this release cannot honour is parked; the two
-    /// it honours are read.
+    /// Every `loop_control` sub-key is read into its field, and a malformed one is refused by name.
     #[test]
-    fn loop_control_sub_keys_are_parked_or_read() {
+    fn loop_control_sub_keys_are_read() {
         let task = |sub: &str| {
             format!(
-                "- hosts: all\n  tasks:\n    - debug:\n        msg: x\n      loop: [a]\n      loop_control:\n        {sub}\n"
+                "- hosts: all
+  tasks:
+    - debug:
+        msg: x
+      loop: [a]
+      loop_control:
+        {sub}
+"
             )
         };
-        for kw in [
-            "break_when",
-            "extended",
-            "extended_allitems",
-            "index_var",
-            "pause",
-        ] {
-            let pb = parse(&task(&format!("{kw}: probe")), "x.yml")
-                .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
-            assert_eq!(first(&pb).unsupported, [kw], "{kw}");
-        }
-        let pb = parse(&task("loop_var: thing\n        label: shown"), "x.yml").unwrap();
+        let pb = parse(
+            &task(
+                "loop_var: thing
+        label: shown",
+            ),
+            "x.yml",
+        )
+        .unwrap();
         let t = first(&pb);
         assert_eq!(
             (t.loop_var.as_str(), t.loop_label.as_deref()),
             ("thing", Some("shown"))
         );
         assert!(t.unsupported.is_empty());
+        let pb = parse(
+            &task(
+                "index_var: i
+        extended: true
+        extended_allitems: false
+        pause: 0.5
+        break_when: [a, b]",
+            ),
+            "x.yml",
+        )
+        .unwrap();
+        let t = first(&pb);
+        assert_eq!(t.index_var.as_deref(), Some("i"));
+        assert_eq!(
+            (&t.loop_extended, &t.loop_allitems),
+            (
+                &Some(serde_json::json!(true)),
+                &Some(serde_json::json!(false))
+            )
+        );
+        assert_eq!(t.loop_pause, Some(serde_json::json!(0.5)));
+        assert_eq!(t.break_when, ["a", "b"]);
+        assert!(t.unsupported.is_empty());
+        for bad in ["index_var: [i]", "break_when: {a: b}"] {
+            assert!(parse(&task(bad), "x.yml").is_err(), "{bad}");
+        }
     }
 
     /// A module's argument string is read as the reference's `parse_kv` reads it: `key=value` words

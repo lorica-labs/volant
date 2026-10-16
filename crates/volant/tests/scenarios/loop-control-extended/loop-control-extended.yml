@@ -1,0 +1,28 @@
+- name: Loop control, extended
+  hosts: localhost
+  gather_facts: false
+  vars: {d: 0.1, f: true}
+  tasks:
+    - debug: msg="{{ ansible_loop | to_json }}|{{ i }}"
+      loop: [a, b, c]
+      loop_control: {extended: true, index_var: i}
+    - debug: msg="{{ ansible_loop | to_json }}"
+      loop: [a, b, c]
+      loop_control: {extended: true, extended_allitems: false}
+    - debug: msg="{{ ansible_loop | default(\"undef\") }}"
+      loop: [a, b]
+      loop_control: {extended_allitems: false}
+    - debug: msg="{{ ansible_loop.allitems | default(\"noall\") }}"
+      loop: [a, b]
+      loop_control: {extended: true, extended_allitems: false}
+    - debug: msg="{{ item }} {{ i }}"
+      loop: [x, y]
+      loop_control: {pause: 0.1, index_var: i}
+    - command: echo {{ item }}
+      loop: [p, q]
+      loop_control: {extended: true, index_var: n, pause: 0.1, label: "{{ n }}-{{ ansible_loop.index }}"}
+      register: cmd
+    - debug: msg="{{ cmd.results | map(attribute=\"ansible_index_var\") | list }}"
+    - debug: msg="{{ item }} {{ ansible_loop.index }} {{ ansible_loop.allitems | length }}"
+      loop: [a, b]
+      loop_control: {pause: "{{ d }}", extended: "{{ f }}", extended_allitems: "{{ f }}"}

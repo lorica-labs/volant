@@ -39,7 +39,7 @@
       msg:
       - "{{ c1.cmd | join(' ') }} {{ c1.stdout }}"
       - "{{ c2.cmd | join(' ') }} {{ c2.stdout }}"
-      - "{{ d1.stdout }} {{ d2.stdout }} {{ d3.stdout }} {{ d4.stdout }}"
+      - "{{ d1.stdout | basename }} {{ d2.stdout | basename }} {{ d3.stdout | basename }} {{ d4.stdout | basename }}"
       - "{{ d5.msg }} {{ d5.rc is none }}"
       - "{{ k1.msg }} {{ k1.stdout }}"
       - "{{ k2.msg }} {{ k2.stdout }}"

@@ -18,7 +18,7 @@ description: loop, with_items and loop_control, and how until, retries and delay
 
 `loop` and `with_items` cannot both appear on the same task. `with_items` flattens one level of nested lists and `loop` does not, as in Ansible. Registering a looped task collects a `results` list with one entry per item.
 
-Under `loop_control`, only `loop_var` and `label` are read. The other sub-keys are not supported yet, and a sub-key ansible-core does not know is rejected when the playbook loads. `with_items`, `with_first_found` and `with_fileglob` run; every other `with_*` form is not supported yet: rewrite it with `loop` and a filter. See [Keywords](/reference/keywords/#under-loop_control).
+`loop_control` reads `loop_var`, `label`, `index_var`, `pause`, `extended`, `extended_allitems` and `break_when`. A sub-key ansible-core does not know is rejected when the playbook loads. `with_items`, `with_first_found` and `with_fileglob` run; every other `with_*` form is not supported yet: rewrite it with `loop` and a filter. See [Keywords](/reference/keywords/#under-loop_control).
 
 ## `with_first_found` and `with_fileglob`
 

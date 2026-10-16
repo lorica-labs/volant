@@ -64,6 +64,14 @@ sequenceDiagram
 
 `order` sets the order a play's hosts run in: `inventory`, `reverse_inventory`, `sorted`, `reverse_sorted` or `shuffle`. `throttle` limits a task to that many hosts at a time, and a play's `timeout` is the default `timeout` of its tasks.
 
+### Async tasks
+
+`async: <seconds>` starts the task as a job on the host and `poll: <seconds>` waits for it; `poll: 0` returns at once with an `ansible_job_id` that `async_status` reads later. The job keeps running if the connection drops, writes its status file atomically under `~/.ansible_async` (or `ansible_async_dir` / `ANSIBLE_ASYNC_DIR`), and is killed with its process group when `async` runs out. `async_status` with `mode: cleanup` removes that job's file only. Async runs modules the agent runs; on anything else, and on `raw`, it is refused before the run. `async_dir` in `ansible.cfg` is not read.
+
+### vars_prompt and module_defaults
+
+`vars_prompt` asks for each variable when the play starts, unless `-e` already gave it. When standard input is not a terminal it takes the `default` and warns once, and never waits. `module_defaults` fills a module's missing arguments from the play, block or task, for the module's own name and for its group, such as `group/aws`, with `collections` resolving short names the way ansible-core does.
+
 ## Where the work happens
 
 Templating happens on the controller. Each host renders its own copy of a task with its own variables, and the rendered task goes to that host's agent over a connection that stays open for the whole run. The agent runs it and streams the result back. The controller then applies `register`, `changed_when`, `failed_when` and `notify`, and prints the result line.

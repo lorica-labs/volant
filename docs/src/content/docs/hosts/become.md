@@ -1,9 +1,9 @@
 ---
 title: Privilege escalation
-description: How become works through sudo, where the password comes from, and which settings win.
+description: How become works through sudo and su, where the password comes from, and which settings win.
 ---
 
-`become` runs tasks as another user through `sudo`.
+`become` runs tasks as another user through `sudo` or `su`.
 
 ```yaml
 - hosts: web
@@ -39,7 +39,7 @@ The escalated agent is kept until the end of the play, so a play of escalated ta
 2. The task keyword beats the play keyword.
 3. The `ansible.cfg` defaults and `-b`, `--become-user` apply last.
 
-`become_method` must be `sudo`. Other methods are not supported yet: Volant stops before a task runs and names the method, rather than escalating through a mechanism you did not ask for. `ansible_become_flags` and `become_exe` are not read.
+`become_method` is `sudo` or `su`. Any other method is not supported yet: Volant stops before a task runs and names the method, rather than escalating through a mechanism you did not ask for. `become_exe` and `become_flags` are read from the keyword and from `ansible_become_exe` and `ansible_become_flags`, the host variable winning.
 
 ## The password
 
@@ -53,7 +53,10 @@ Volant asks `sudo` which form to use instead of assuming one. A `sudo` that need
 
 When escalation fails, for a missing password, a wrong one or a `sudoers` rule that forbids the command, the task fails and the host stays reachable. The messages are Ansible's own: `Missing sudo password` or `Incorrect sudo password`.
 
+## su
+
+`su` has no flag to read a password without a terminal, so Volant answers its prompt instead. The password is written once to the prompt, never put in a command line, a log or `-vvv` output. A wrong password fails the task with `Incorrect su password`. A prompt that never comes ends the task with `Timeout (12s) waiting for privilege escalation prompt`, as in ansible-core.
+
 ## Not there yet
 
-- `su`, `doas`, `pbrun` and the other methods. They can be added as other ways to start the agent, without a protocol change.
-- `ansible_become_flags` and `become_exe`.
+- `doas`, `pbrun` and the other methods. They can be added as other ways to start the agent, without a protocol change.

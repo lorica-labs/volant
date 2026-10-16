@@ -29,6 +29,10 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
   Log in to hosts as this user. Without it, `ssh` picks the user, from your `~/.ssh/config` or your local account.
 </Option>
 
+<Option name="-c, --connection" arg="CONNECTION">
+  The connection plugin for hosts that name none: `ssh` or `local`. A host's `ansible_connection` and a play, block or task `connection` keyword both win over it. Any other name fails the task with `the connection plugin '<name>' was not found`.
+</Option>
+
 <Option name="--private-key" arg="FILE" config="[defaults] private_key_file" env="ANSIBLE_PRIVATE_KEY_FILE">
   The private key `ssh` authenticates with, passed as `ssh -i`.
 </Option>
@@ -153,4 +157,3 @@ These `ansible-playbook` options are not accepted yet:
 | `-k, --ask-pass` | Use a key file or an ssh-agent. |
 | `--ask-vault-pass`, `--vault-password-file`, `--vault-id` | Keep vaulted playbooks under Ansible for now. |
 | `--start-at-task`, `--step` | Use tags to select part of a play. |
-| `-c, --connection` | Set `ansible_connection` in the inventory. |

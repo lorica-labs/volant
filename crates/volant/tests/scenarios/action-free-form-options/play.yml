@@ -1,0 +1,4 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - action: command cmd=x

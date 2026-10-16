@@ -56,6 +56,8 @@ pub struct Play {
     /// speak before the connection defaults do.
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
+    /// `remote_user`, `port` and `connection`, folded into every task at compile time.
+    pub connect: Connect,
     /// The execution strategy the play asked for, as written. Only `linear` exists here; the
     /// pre-flight refuses the others by name.
     pub strategy: Option<String>,
@@ -248,6 +250,8 @@ pub struct PlayTask {
     pub failed_when: Vec<String>,
     pub r#become: Option<bool>,
     pub become_user: Option<String>,
+    /// `remote_user`, `port` and `connection`, the task's own over its block's over the play's.
+    pub connect: Connect,
     /// The handlers this task asks for when it changes something, as written. A block's `notify`
     /// comes down here too, which is what makes a `notify` on a block apply to its tasks -
     /// measured on ansible-core 2.19.12.
@@ -342,6 +346,7 @@ impl PlayTask {
             failed_when: Vec::new(),
             r#become: None,
             become_user: None,
+            connect: Connect::default(),
             notify: Vec::new(),
             until: Vec::new(),
             retries: None,
@@ -422,6 +427,46 @@ impl PlayTask {
     }
 }
 
+/// `remote_user`, `port` and `connection`, wherever they are written, as written: each may be a
+/// template, rendered when the task runs. A task's own value wins over its block's and its
+/// play's, and a host variable wins over all of them; see `Transport::for_task`.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct Connect {
+    pub remote_user: Option<String>,
+    pub port: Option<String>,
+    pub connection: Option<String>,
+}
+
+impl Connect {
+    /// This layer over the one outside it.
+    pub fn over(&self, outer: &Connect) -> Connect {
+        Connect {
+            remote_user: self
+                .remote_user
+                .clone()
+                .or_else(|| outer.remote_user.clone()),
+            port: self.port.clone().or_else(|| outer.port.clone()),
+            connection: self.connection.clone().or_else(|| outer.connection.clone()),
+        }
+    }
+}
+
+fn connect_keywords(yaml: &Yaml, context: &str) -> anyhow::Result<Connect> {
+    let text = |key: &str| -> anyhow::Result<Option<String>> {
+        match field(yaml, key) {
+            None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
+            Some(Yaml::Value(Scalar::String(s))) => Ok(Some(s.to_string())),
+            Some(Yaml::Value(Scalar::Integer(i))) if key == "port" => Ok(Some(i.to_string())),
+            Some(other) => bail!("{context}'{key}' must be a name, found {other:?}"),
+        }
+    };
+    Ok(Connect {
+        remote_user: text("remote_user")?,
+        port: text("port")?,
+        connection: text("connection")?,
+    })
+}
+
 /// The only escalation method this release implements. `su`, `doas`, `pbrun` and the rest are
 /// refused by name at load time: escalating through a different program is not the same
 /// operation, and quietly using `sudo` where the playbook asked for `su` would run the task
@@ -460,6 +505,81 @@ fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
         ));
     }
     Ok((flag, user))
+}
+
+/// The module an `action:` or `local_action:` value names and the value that module reads its
+/// arguments from, as if it had been written under the module's own key.
+///
+/// Measured on ansible-core 2.19.12: `action: command hostname` and `action: {module: command,
+/// cmd: hostname}` both run, the mapping with a deprecation warning, and an `args:` inside the
+/// mapping is merged into the arguments beside it. A first word with a `=` in it is a
+/// `module=command` spelling the reference cannot resolve, which fails the task rather than the
+/// load, and a mapping with no `module:` has "no module/action".
+fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Yaml<'a>)> {
+    match node {
+        Yaml::Value(Scalar::String(text)) => {
+            let text = text.trim();
+            let (name, rest) = text
+                .split_once(char::is_whitespace)
+                .map_or((text, ""), |(name, rest)| (name, rest.trim_start()));
+            if name.is_empty() {
+                bail!("no module/action detected in task.");
+            }
+            if name.contains('=') {
+                return Err(crate::stats::Refusal::at(
+                    2,
+                    format!("Cannot resolve '{name}' to an action or module."),
+                ));
+            }
+            let args = if rest.is_empty() {
+                Yaml::Value(Scalar::Null)
+            } else {
+                Yaml::Value(Scalar::String(rest.to_string().into()))
+            };
+            Ok((name.to_string(), args))
+        }
+        Yaml::Mapping(entries) => {
+            warn_action_mapping(node);
+            let mut name = None;
+            let mut args = saphyr::Mapping::new();
+            for (key, value) in entries {
+                match (key.as_str(), value) {
+                    (Some("module"), Yaml::Value(Scalar::String(module))) => {
+                        name = Some(module.trim().to_string());
+                    }
+                    (Some("args"), Yaml::Mapping(inner)) => {
+                        for (k, v) in inner {
+                            args.insert(k.clone(), v.clone());
+                        }
+                    }
+                    _ => {
+                        args.insert(key.clone(), value.clone());
+                    }
+                }
+            }
+            match name.filter(|name| !name.is_empty()) {
+                Some(name) => Ok((name, Yaml::Mapping(args))),
+                None => bail!("no module/action detected in task."),
+            }
+        }
+        _ => bail!("no module/action detected in task."),
+    }
+}
+
+/// The deprecation the reference prints, on stderr, for a mapping given as an action.
+fn warn_action_mapping(node: &Yaml) {
+    static HEADER: std::sync::Once = std::sync::Once::new();
+    HEADER.call_once(|| {
+        eprintln!(
+            "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
+        );
+    });
+    let origin = value_origin(node)
+        .map(|origin| format!("{}\n\n", crate::render::source_context(&origin)))
+        .unwrap_or_default();
+    eprintln!(
+        "[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n{origin}Use a string value for `action`.\n"
+    );
 }
 
 /// A keyword whose value has to be a boolean, refused in the reference's own words when it is
@@ -891,6 +1011,7 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         dir: dir.to_path_buf(),
         r#become,
         become_user,
+        connect: connect_keywords(yaml, "")?,
         strategy,
         serial,
         no_log: boolean(yaml, "no_log")?,
@@ -1011,6 +1132,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             when: conditions(yaml, "when", &context)?,
             r#become,
             become_user,
+            connect: connect_keywords(yaml, &context)?,
             notify: names(yaml, "notify", &context)?,
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
@@ -1183,6 +1305,7 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             when: conditions(yaml, "when", &context)?,
             r#become,
             become_user,
+            connect: connect_keywords(yaml, &context)?,
             notify: names(yaml, "notify", &context)?,
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
@@ -1210,6 +1333,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         .map(str::to_string);
     let label = name.clone().unwrap_or_else(|| "unnamed".to_string());
     let mut module: Option<(String, &Yaml)> = None;
+    // `action:` or `local_action:`, the spellings that name the module in their value.
+    let mut statement: Option<(&'static str, &Yaml)> = None;
     let mut unsupported = Vec::new();
     for (key, value) in map {
         let key = key
@@ -1223,13 +1348,19 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         }
         match task_keyword(key) {
             Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
+            Some(k) if matches!(k.name, "action" | "local_action") => {
+                if statement.is_some() {
+                    bail!("action and local_action are mutually exclusive");
+                }
+                statement = Some((k.name, value));
+            }
             Some(_) => {}
             // Whatever is left is the module, which is how the reference reads a task too: a
             // key it does not know is an action, and a second one is the conflict below rather
             // than an unknown-keyword error.
             None => {
                 if let Some((first, _)) = &module {
-                    bail!("task '{label}': conflicting action statements: {first}, {key}");
+                    bail!("conflicting action statements: {first}, {key}");
                 }
                 module = Some((key.to_string(), value));
             }
@@ -1288,8 +1419,26 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         }
     }
     unsupported.sort_unstable();
+    // The statement's value is the action: a string is `module args`, a mapping names the module
+    // under `module:` and holds its arguments beside it. It is read after the whole mapping so a
+    // conflict is reported the same whichever key came first.
+    let rewritten;
+    let mut local = false;
+    let source = statement.map(|(_, node)| node);
+    let module = match statement {
+        Some((word, node)) => {
+            let (name, args) = action_statement(node)?;
+            if let Some((other, _)) = &module {
+                bail!("conflicting action statements: {name}, {other}");
+            }
+            local = word == "local_action";
+            rewritten = args;
+            Some((name, &rewritten))
+        }
+        None => module,
+    };
     // A task whose only content this release cannot execute has no module to find - `block:`
-    // and `local_action:` are the two spellings - so it is loaded empty and refused whole by
+    // is the spelling - so it is loaded empty and refused whole by
     // the pre-flight, instead of being blamed for a module it was never asked to name.
     let (module, value) = match module {
         Some(found) => found,
@@ -1376,7 +1525,12 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         (None, _) => (None, false, None),
     };
     let (r#become, become_user) = escalation(yaml, &context)?;
-    let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
+    let (delegate_facts, mut delegate_to) = delegation(yaml, &context)?;
+    // `local_action` runs on the controller whatever `delegate_to` says: measured, the line reads
+    // `h1 -> localhost` with both written.
+    if local {
+        delegate_to = Some("localhost".to_string());
+    }
     let mut value_origins = std::collections::BTreeMap::new();
     let var = field(value, "var").or_else(|| field(yaml, "args").and_then(|a| field(a, "var")));
     for (key, node) in [
@@ -1389,10 +1543,13 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
             value_origins.insert(key.to_string(), origin);
         }
     }
-    if let Some(origin) = key_origin(value) {
+    if let Some(origin) = key_origin(source.unwrap_or(value)) {
         value_origins.insert("action".to_string(), origin);
     }
-    for node in [Some(value), field(yaml, "args")].into_iter().flatten() {
+    for node in [Some(source.unwrap_or(value)), field(yaml, "args")]
+        .into_iter()
+        .flatten()
+    {
         if let Yaml::Mapping(map) = node {
             for (k, v) in map {
                 if let (Some(k), Some(origin)) = (k.as_str(), value_origin(v)) {
@@ -1426,6 +1583,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         failed_when,
         r#become,
         become_user,
+        connect: connect_keywords(yaml, &context)?,
         notify: names(yaml, "notify", &context)?,
         until: conditions(yaml, "until", &context)?,
         retries: field(yaml, "retries").map(to_json).transpose()?,
@@ -2052,6 +2210,62 @@ mod tests {
         assert_eq!(got, expect, "{line}");
     }
 
+    /// `action:` and `local_action:` read as the module's own key would, in every spelling the
+    /// reference accepts; `local_action` runs on `localhost` whatever `delegate_to` says.
+    #[rstest]
+    #[case::string("action: command hostname", "command", &[("_raw_params", "hostname")], None)]
+    #[case::string_options("action: copy src=a dest=b", "copy", &[("dest", "b"), ("src", "a")], None)]
+    #[case::mapping("action: {module: command, cmd: hostname}", "command", &[("cmd", "hostname")], None)]
+    #[case::mapping_args("action: {module: command, args: {cmd: hostname}}", "command", &[("cmd", "hostname")], None)]
+    #[case::args_beside("action: command\n      args: {cmd: hostname}", "command", &[("cmd", "hostname")], None)]
+    #[case::local("local_action: command hostname", "command", &[("_raw_params", "hostname")], Some("localhost"))]
+    #[case::local_mapping("local_action: {module: command, cmd: hostname}", "command", &[("cmd", "hostname")], Some("localhost"))]
+    #[case::local_beats_delegate("local_action: command hostname\n      delegate_to: h1", "command", &[("_raw_params", "hostname")], Some("localhost"))]
+    fn an_action_statement_names_the_module_in_its_value(
+        #[case] line: &str,
+        #[case] module: &str,
+        #[case] expect: &[(&str, &str)],
+        #[case] delegate: Option<&str>,
+    ) {
+        let pb = parse(&format!("- hosts: all\n  tasks:\n    - {line}\n"), "x.yml")
+            .unwrap_or_else(|e| panic!("{line}: {e:#}"));
+        let task = first(&pb);
+        assert_eq!(
+            (task.module.as_str(), task.delegate_to.as_deref()),
+            (module, delegate)
+        );
+        assert!(task.unsupported.is_empty());
+        let mut got: Vec<(&str, &str)> = task
+            .args
+            .iter()
+            .map(|(k, v)| (k.as_str(), v.as_str().unwrap_or_default()))
+            .collect();
+        got.sort_unstable();
+        assert_eq!(got, expect, "{line}");
+    }
+
+    /// The statements the reference refuses, in its words.
+    #[rstest]
+    #[case::module_equals(
+        "action: module=command cmd=hostname",
+        "Cannot resolve 'module=command' to an action or module."
+    )]
+    #[case::no_module("action: {cmd: hostname}", "no module/action detected in task.")]
+    #[case::empty("action: ''", "no module/action detected in task.")]
+    #[case::two_modules(
+        "local_action: command hostname\n      command: hostname",
+        "conflicting action statements: command, command"
+    )]
+    #[case::both(
+        "action: command a\n      local_action: command b",
+        "action and local_action are mutually exclusive"
+    )]
+    fn an_action_statement_the_reference_refuses_is_refused(#[case] line: &str, #[case] why: &str) {
+        let err =
+            parse(&format!("- hosts: all\n  tasks:\n    - {line}\n"), "x.yml").expect_err(line);
+        assert!(format!("{err:#}").contains(why), "{line}: {err:#}");
+    }
+
     const KEYWORDS: &str = r#"
 - name: Keywords
   hosts: all
@@ -2205,13 +2419,13 @@ mod tests {
     #[test]
     fn what_the_loader_keeps_for_the_preflight() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      local_action: command echo hi\n",
+            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      diff: true\n",
             "x.yml",
         )
         .unwrap();
         let t = first(&pb);
         assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
-        assert_eq!(t.unsupported, ["local_action"]);
+        assert_eq!(t.unsupported, ["diff"]);
         assert_eq!(
             t.tags,
             ["t"],

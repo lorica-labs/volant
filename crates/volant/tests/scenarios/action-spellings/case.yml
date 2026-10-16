@@ -1,0 +1,2 @@
+# action and local_action in a string, a mapping and beside args:; local_action runs on localhost.
+args: [-i, inv.ini, play.yml]

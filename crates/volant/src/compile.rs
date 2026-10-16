@@ -1144,6 +1144,7 @@ pub(crate) fn compile(
         any_errors_fatal: play.any_errors_fatal,
         ignore_errors: play.ignore_errors.clone(),
         ignore_unreachable: play.ignore_unreachable,
+        connect: play.connect.clone(),
         ..PlayTask::empty()
     };
     // `gather_facts` is the play's own first task and nothing else: the reference's `setup`
@@ -1607,6 +1608,7 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
         .chain(&inner.environment)
         .cloned()
         .collect();
+    task.connect = inner.connect.over(&outer.connect);
     task.r#become = inner.r#become.or(outer.r#become);
     task.become_user = inner
         .become_user
@@ -2362,6 +2364,37 @@ mod tests {
         assert_eq!(overrides.vars["only"], serde_json::json!("block"));
         // The block's name belongs to no step: measured, it is shown nowhere.
         assert_eq!(names(&c), ["inherits", "overrides"]);
+    }
+
+    /// `remote_user`, `port` and `connection` come down play, block, task, the innermost first.
+    #[test]
+    fn the_connection_keywords_come_down_to_the_task() {
+        let c = compiled(
+            r#"
+- hosts: all
+  remote_user: play
+  port: 1
+  connection: local
+  tasks:
+    - block:
+        - name: inherits
+          command: "true"
+        - name: overrides
+          command: "true"
+          port: 3
+      remote_user: block
+"#,
+        );
+        let connect = |step: usize| {
+            let c = &c.steps[step].task.connect;
+            (c.remote_user.clone(), c.port.clone(), c.connection.clone())
+        };
+        let local = Some("local".to_string());
+        assert_eq!(
+            connect(0),
+            (Some("block".into()), Some("1".into()), local.clone())
+        );
+        assert_eq!(connect(1), (Some("block".into()), Some("3".into()), local));
     }
 
     /// A `meta` task compiles into a step of its own, so nothing tries to send it to a host.

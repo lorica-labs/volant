@@ -249,7 +249,7 @@ pub fn shorten(text: &str, width: usize) -> String {
 
 /// `Origin: ...`, a blank line, then the task's line and the two before it, numbered, with a
 /// marker under the column: `SourceContext.from_origin` and its `__str__`.
-fn source_context(origin: &crate::playbook::Origin) -> String {
+pub(crate) fn source_context(origin: &crate::playbook::Origin) -> String {
     let mut out = format!("Origin: {}:{}:{}", origin.path, origin.line, origin.col);
     let annotated = annotated_lines(origin);
     if !annotated.is_empty() {

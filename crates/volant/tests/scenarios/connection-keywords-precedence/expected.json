@@ -1,0 +1,10 @@
+[
+  {
+    "code": 2,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [command] *****************************************************************\n[ERROR]: Task failed: the connection plugin 'nosuchconn' was not found\nOrigin: <golden-tmp>/host-variable.yml:5:7\n\n3   connection: nosuchconn\n4   tasks:\n5     - command: echo hi\n        ^ column 7\n\nfatal: [h1]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: the connection plugin 'nosuchconn' was not found\"}\nchanged: [h2]\n\nTASK [debug] *******************************************************************\nok: [h2] => {\n    \"msg\": \"after\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \nh2                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [the play's plugin] *******************************************************\n[ERROR]: Task failed: the connection plugin 'nosuchconn' was not found\nOrigin: <golden-tmp>/task-over-play.yml:5:7\n\n3   connection: nosuchconn\n4   tasks:\n5     - name: the play's plugin\n        ^ column 7\n\nfatal: [h1]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: the connection plugin 'nosuchconn' was not found\"}\n...ignoring\n\nTASK [the task's plugin] *******************************************************\nchanged: [h1]\n\nTASK [inside the block] ********************************************************\nchanged: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=1   \n\n"
+  }
+]

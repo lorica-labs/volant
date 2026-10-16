@@ -245,6 +245,46 @@ fn ssh_a_host_that_cannot_be_reached_says_why(#[case] why: Unreachable, #[case] 
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `remote_user`, `port` and `connection` reach a real `ssh` when the host names none of its own,
+/// and lose to the host's `ansible_user` when it does.
+#[rstest]
+#[case::a_user_the_host_refuses(
+    "remote_user: nosuchuser-volant",
+    false,
+    4,
+    "nosuchuser-volant@127.0.0.1"
+)]
+#[case::a_port_nobody_answers("port: 1", false, 4, "Connection refused")]
+#[case::the_connection_runs_locally("connection: local", false, 0, "changed: [box]")]
+#[case::the_host_variable_wins("remote_user: nosuchuser-volant", true, 0, "changed: [box]")]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_the_connection_keywords_decide_when_the_host_is_silent(
+    #[case] keyword: &str,
+    #[case] host_names_its_user: bool,
+    #[case] code: i32,
+    #[case] says: &str,
+) {
+    let dir = tmp("connection-keywords");
+    let inv = inventory(&dir, &[("box", "")]);
+    if !host_names_its_user {
+        let text = std::fs::read_to_string(&inv).unwrap();
+        std::fs::write(&inv, text.replace(&format!(" ansible_user={}", user()), "")).unwrap();
+    }
+    let play = dir.join("keywords.yml");
+    std::fs::write(
+        &play,
+        format!(
+            "- hosts: box\n  gather_facts: false\n  {keyword}\n  tasks:\n    - command: id -un\n"
+        ),
+    )
+    .unwrap();
+    let out = volant(&["playbook", "-i", &inv, &play.display().to_string()]);
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(code), "{text}");
+    assert!(text.contains(says), "{says}: {text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The ways `ssh_a_host_that_cannot_be_reached_says_why` makes a host unreachable.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Unreachable {

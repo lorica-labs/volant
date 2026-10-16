@@ -1,0 +1,25 @@
+- hosts: h1
+  gather_facts: false
+  connection: local
+  remote_user: nosuchuser
+  port: 2222
+  tasks:
+    - name: play keywords
+      command: echo play
+      register: a
+    - debug: var=a.stdout
+    - name: block keywords
+      block:
+        - command: echo block
+          register: b
+          port: 22
+        - debug: var=b.stdout
+      connection: local
+      remote_user: other
+    - name: task keywords
+      command: echo task
+      register: c
+      connection: local
+      remote_user: third
+      port: 23
+    - debug: var=c.stdout

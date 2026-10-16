@@ -15,7 +15,7 @@ use crate::playbook::{Flag, PlayTask, python_repr};
 use crate::python::ModulePayload;
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError};
-use crate::transport::{ConnectionDefaults, Escalation};
+use crate::transport::{ConnectionDefaults, ConnectionKeywords, Escalation};
 use crate::vars::{HostVars, Scope, VarStore, host_setting, omit_token};
 
 use super::as_bool_value;
@@ -319,6 +319,9 @@ pub(super) enum Prepared {
         /// Present when an action plugin this release runs backs the task. Such a task carries
         /// no payload of its own: the sub-tasks the plugin asks for each carry theirs.
         Option<Kind>,
+        /// The task's `remote_user`, `port` and `connection`, rendered: they decide the link
+        /// together with the host's own variables, and a task that differs ends the batch.
+        Box<ConnectionKeywords>,
     ),
 }
 
@@ -723,6 +726,7 @@ pub(super) fn prepare(
     if is_local(&task.module) {
         return Ok(Prepared::Local(items, delegate));
     }
+    let connect = Box::new(connect_for(task, &base, templar)?);
     // A delegate's variables come back merged under the full precedence, like any host's: its
     // connection is decided by `-e ansible_connection=local`, by a `group_vars` file and by the
     // task's own `vars:` exactly as the delegating host's is. Measured on ansible-core 2.19.12:
@@ -759,6 +763,7 @@ pub(super) fn prepare(
             delegate,
             None,
             Some(kind),
+            connect,
         ));
     }
     // The module's half of the payload, when this module is one the run built one for. The
@@ -772,7 +777,79 @@ pub(super) fn prepare(
         .as_ref()
         .and_then(|union| union.payload(&task.module))
         .map(Box::new);
-    Ok(Prepared::Remote(items, escalation, delegate, payload, None))
+    Ok(Prepared::Remote(
+        items, escalation, delegate, payload, None, connect,
+    ))
+}
+
+/// The task's `remote_user`, `port` and `connection`, rendered once for the task against its
+/// variables, for the reason `delegate_for` renders `delegate_to` that way. An empty result is
+/// no keyword, which is what `"{{ maybe | default('') }}"` renders to when nobody asked.
+fn connect_for(
+    task: &PlayTask,
+    vars: &HostVars,
+    templar: &Templar,
+) -> Result<ConnectionKeywords, TemplateError> {
+    let render = |key: &str, raw: &Option<String>| -> Result<Option<String>, TemplateError> {
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let text = if Templar::is_template(raw) {
+            match templar
+                .render(raw, vars)
+                .map_err(|err| TemplateError(format!("rendering '{key}' {raw}: {}", err.0)))?
+            {
+                Value::String(text) => text,
+                // `port: "{{ ssh_port }}"` with a number behind it.
+                Value::Number(number) => number.to_string(),
+                _ => return Err(TemplateError(format!("'{key}' must render to text: {raw}"))),
+            }
+        } else {
+            raw.clone()
+        };
+        Ok(Some(text.trim().to_string()).filter(|text| !text.is_empty()))
+    };
+    let connect = &task.connect;
+    let port = render("port", &connect.port)?
+        .map(|text| {
+            text.parse::<u16>()
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or_else(|| {
+                    TemplateError(format!("'port' must be a port number, found '{text}'"))
+                })
+        })
+        .transpose()?;
+    // A value a template read from a host can end up here, so what reaches `ssh` is held to the
+    // shape of a name: nothing that starts like an option, splits into words or ends a line.
+    let user = render("remote_user", &connect.remote_user)?;
+    if let Some(user) = &user
+        && (user.starts_with('-')
+            || user
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || c == '"'))
+    {
+        return Err(TemplateError(format!(
+            "'remote_user' must be a user name, found '{}'",
+            user.escape_debug()
+        )));
+    }
+    let connection = render("connection", &connect.connection)?;
+    if let Some(name) = &connection
+        && !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.'))
+    {
+        return Err(TemplateError(format!(
+            "'connection' must be a plugin name, found '{}'",
+            name.escape_debug()
+        )));
+    }
+    Ok(ConnectionKeywords {
+        user,
+        port,
+        connection,
+    })
 }
 
 /// `delegate_to`, rendered once for the task. An empty name is no delegation, which is what
@@ -1045,6 +1122,42 @@ mod tests {
     use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
     use std::path::{Path, PathBuf};
 
+    /// The connection keywords may be templates over a host's facts, and what they render to
+    /// reaches `ssh` as one argument each: a value shaped like an option or a line is refused.
+    #[rstest::rstest]
+    #[case::fact_user("remote_user", "{{ who }}", json!({"who": "deploy"}), Ok(("deploy", None, None)))]
+    #[case::number_port("port", "{{ p }}", json!({"p": 2222}), Ok(("", Some(2222), None)))]
+    #[case::string_port("port", "{{ p }}", json!({"p": " 2222 "}), Ok(("", Some(2222), None)))]
+    #[case::port_zero("port", "{{ p }}", json!({"p": 0}), Err("'port' must be a port number"))]
+    #[case::port_too_big("port", "{{ p }}", json!({"p": 70000}), Err("'port' must be a port number"))]
+    #[case::option_user("remote_user", "{{ who }}", json!({"who": "-oProxyCommand=touch MARKER"}), Err("'remote_user' must be a user name"))]
+    #[case::spaced_user("remote_user", "{{ who }}", json!({"who": "a b"}), Err("'remote_user' must be a user name"))]
+    #[case::quoted_user("remote_user", "{{ who }}", json!({"who": "a\"b"}), Err("'remote_user' must be a user name"))]
+    #[case::newline_user("remote_user", "{{ who }}", json!({"who": "a\nb"}), Err("'remote_user' must be a user name"))]
+    #[case::odd_connection("connection", "{{ c }}", json!({"c": "ssh -o x"}), Err("'connection' must be a plugin name"))]
+    fn the_connection_keywords_render_to_names_ssh_takes_as_one_argument(
+        #[case] key: &str,
+        #[case] raw: &str,
+        #[case] facts: Value,
+        #[case] want: Result<(&str, Option<u16>, Option<&str>), &str>,
+    ) {
+        let mut t = task("command");
+        match key {
+            "remote_user" => t.connect.remote_user = Some(raw.into()),
+            "port" => t.connect.port = Some(raw.into()),
+            _ => t.connect.connection = Some(raw.into()),
+        }
+        let got = connect_for(&t, &hvars(facts), &templar());
+        match (got, want) {
+            (Ok(k), Ok((user, port, connection))) => assert_eq!(
+                (k.user.unwrap_or_default(), k.port, k.connection),
+                (user.to_string(), port, connection.map(str::to_string))
+            ),
+            (Err(err), Err(says)) => assert!(err.0.contains(says), "{}", err.0),
+            (got, want) => panic!("{got:?} against {want:?}"),
+        }
+    }
+
     /// Each shape was run through ansible-core 2.19.12 as a `debug: msg=` argument: an `omit` value
     /// goes and every emptied container stays.
     #[test]
@@ -1149,7 +1262,7 @@ mod tests {
             )
             .expect("the task renders");
             match prepared {
-                Prepared::Remote(_, _, _, payload, kind) => (payload, kind),
+                Prepared::Remote(_, _, _, payload, kind, _) => (payload, kind),
                 _ => panic!("{module} is a remote task"),
             }
         };
@@ -1223,7 +1336,7 @@ mod tests {
                 &mut Vec::new(),
             )
             .expect("the task renders");
-            let Prepared::Remote(items, _, _, Some(payload), _) = prepared else {
+            let Prepared::Remote(items, _, _, Some(payload), _, _) = prepared else {
                 panic!("{module} is a python task");
             };
             super::super::run::protocol_task(
@@ -1306,7 +1419,7 @@ mod tests {
         Ok(match prepared {
             Prepared::Skipped(items)
             | Prepared::Local(items, _)
-            | Prepared::Remote(items, _, _, _, _) => items,
+            | Prepared::Remote(items, _, _, _, _, _) => items,
         })
     }
 
@@ -1602,7 +1715,7 @@ mod tests {
         let items = match prepared {
             Prepared::Skipped(items)
             | Prepared::Local(items, _)
-            | Prepared::Remote(items, _, _, _, _) => items,
+            | Prepared::Remote(items, _, _, _, _, _) => items,
         };
         let vars = &items[0].vars;
         assert_eq!(vars.map["via_lookup"], json!("{{ 1 + 1 }}"));

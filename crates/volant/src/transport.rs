@@ -20,6 +20,8 @@ use crate::vars::host_setting;
 #[derive(Clone, PartialEq, Eq)]
 pub struct ConnectionDefaults {
     pub remote_user: Option<String>,
+    /// The `-c` plugin name; `ansible_connection` and the `connection:` keyword speak over it.
+    pub connection: Option<String>,
     pub private_key: Option<PathBuf>,
     pub host_key_checking: bool,
     pub remote_tmp: String,
@@ -41,6 +43,7 @@ impl std::fmt::Debug for ConnectionDefaults {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("ConnectionDefaults")
             .field("remote_user", &self.remote_user)
+            .field("connection", &self.connection)
             .field("private_key", &self.private_key)
             .field("host_key_checking", &self.host_key_checking)
             .field("remote_tmp", &self.remote_tmp)
@@ -175,6 +178,16 @@ impl std::fmt::Display for ConnectionNotFound {
 
 impl std::error::Error for ConnectionNotFound {}
 
+/// The `remote_user`, `port` and `connection` keywords of one task, after its block and play
+/// were folded in and its templates rendered. They sit under the host's own variables and over
+/// the command line, which is the order measured on ansible-core 2.19.12.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConnectionKeywords {
+    pub user: Option<String>,
+    pub port: Option<u16>,
+    pub connection: Option<String>,
+}
+
 impl Transport {
     /// The connection one host uses, read from its effective variables: the merged view under
     /// the full precedence rather than the inventory object. `ansible_connection` and its
@@ -187,20 +200,33 @@ impl Transport {
         vars: &Map<String, Value>,
         defaults: &ConnectionDefaults,
     ) -> anyhow::Result<Transport> {
+        Self::for_task(host_name, vars, defaults, &ConnectionKeywords::default())
+    }
+
+    /// [`Transport::for_vars`] for a task that carries connection keywords: a host variable
+    /// beats the task's keyword, which beats the command line and `ansible.cfg`.
+    pub fn for_task(
+        host_name: &str,
+        vars: &Map<String, Value>,
+        defaults: &ConnectionDefaults,
+        keywords: &ConnectionKeywords,
+    ) -> anyhow::Result<Transport> {
         let setting_text = |key: &str| {
             host_setting(vars, key)
                 .and_then(Value::as_str)
                 .map(str::to_string)
         };
-        match setting_text("ansible_connection")
-            .as_deref()
-            .unwrap_or("ssh")
-        {
+        let connection = setting_text("ansible_connection")
+            .or_else(|| keywords.connection.clone())
+            .or_else(|| defaults.connection.clone());
+        match connection.as_deref().unwrap_or("ssh") {
             "local" => Ok(Transport::Local),
             "ssh" => Ok(Transport::Ssh(SshTarget {
                 address: setting_text("ansible_host").unwrap_or_else(|| host_name.to_string()),
-                port: port_of(vars),
-                user: setting_text("ansible_user").or_else(|| defaults.remote_user.clone()),
+                port: port_of(vars).or(keywords.port),
+                user: setting_text("ansible_user")
+                    .or_else(|| keywords.user.clone())
+                    .or_else(|| defaults.remote_user.clone()),
                 private_key: setting_text("ansible_ssh_private_key_file")
                     .map(PathBuf::from)
                     .or_else(|| defaults.private_key.clone()),
@@ -2142,6 +2168,95 @@ mod tests {
         assert!(
             text.ends_with("web1 -- true"),
             "the inventory name is the address by default: {text}"
+        );
+    }
+
+    /// The order measured on ansible-core 2.19.12: a host variable beats the task's keyword,
+    /// which beats the command line and `ansible.cfg`.
+    #[rstest]
+    #[case::keyword_over_cli(json!({}), Some("local"), Some("ssh"), "local")]
+    #[case::host_over_keyword(json!({"ansible_connection": "ssh"}), Some("local"), None, "ssh")]
+    #[case::cli_alone(json!({}), None, Some("local"), "local")]
+    #[case::keyword_alone(json!({}), Some("local"), None, "local")]
+    #[case::unknown_keyword(json!({}), Some("nosuch"), None, "the connection plugin 'nosuch' was not found")]
+    #[case::unknown_cli(json!({}), None, Some("nosuch"), "the connection plugin 'nosuch' was not found")]
+    fn the_connection_keyword_ranks_between_the_host_and_the_command_line(
+        #[case] vars: Value,
+        #[case] keyword: Option<&str>,
+        #[case] cli: Option<&str>,
+        #[case] want: &str,
+    ) {
+        let mut d = defaults();
+        d.connection = cli.map(str::to_string);
+        let keywords = ConnectionKeywords {
+            connection: keyword.map(str::to_string),
+            ..ConnectionKeywords::default()
+        };
+        let got = match Transport::for_task("h1", vars.as_object().unwrap(), &d, &keywords) {
+            Ok(Transport::Local) => "local".to_string(),
+            Ok(Transport::Ssh(_)) => "ssh".to_string(),
+            Err(err) => err.to_string(),
+        };
+        assert_eq!(got, want);
+    }
+
+    /// Same order for the user and the port.
+    #[rstest]
+    #[case::keyword_over_cli(json!({}), Some("task"), Some(2222), Some("ops"), "task", Some(2222))]
+    #[case::host_over_keyword(json!({"ansible_user": "host", "ansible_port": 22}), Some("task"), Some(2222), Some("ops"), "host", Some(22))]
+    #[case::cli_alone(json!({}), None, None, Some("ops"), "ops", None)]
+    fn the_user_and_port_keywords_rank_between_the_host_and_the_command_line(
+        #[case] vars: Value,
+        #[case] user: Option<&str>,
+        #[case] port: Option<u16>,
+        #[case] cli_user: Option<&str>,
+        #[case] want_user: &str,
+        #[case] want_port: Option<u16>,
+    ) {
+        let mut d = defaults();
+        d.remote_user = cli_user.map(str::to_string);
+        let keywords = ConnectionKeywords {
+            user: user.map(str::to_string),
+            port,
+            connection: None,
+        };
+        let Transport::Ssh(target) =
+            Transport::for_task("h1", vars.as_object().unwrap(), &d, &keywords).unwrap()
+        else {
+            panic!("expected ssh")
+        };
+        assert_eq!(
+            (target.user.as_deref(), target.port),
+            (Some(want_user), want_port)
+        );
+    }
+
+    /// A managed host cannot choose how it is reached: facts named like the connection settings
+    /// are dropped, and the inventory's answer stands.
+    #[rstest]
+    #[case::user("ansible_user", json!("evil"))]
+    #[case::port("ansible_port", json!(2))]
+    #[case::connection("ansible_connection", json!("local"))]
+    fn facts_cannot_pick_the_user_port_or_connection(#[case] name: &str, #[case] value: Value) {
+        let inventory = crate::inventory::Inventory::parse_ini(
+            "h1 ansible_host=real ansible_user=ops ansible_port=2200\n",
+        )
+        .unwrap();
+        let mut store =
+            crate::vars::VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+        let mut facts = Map::new();
+        facts.insert(name.to_string(), value);
+        assert_eq!(store.gather_facts("h1", &facts), [name]);
+        let vars = store.for_host("h1", &crate::vars::Scope::default());
+        let keywords = ConnectionKeywords::default();
+        let Transport::Ssh(target) =
+            Transport::for_task("h1", &vars, &defaults(), &keywords).unwrap()
+        else {
+            panic!("a fact turned the connection into something else")
+        };
+        assert_eq!(
+            (target.address.as_str(), target.user.as_deref(), target.port),
+            ("real", Some("ops"), Some(2200))
         );
     }
 

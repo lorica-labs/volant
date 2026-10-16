@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  connection: nosuchconn
+  tasks:
+    - name: the play's plugin
+      command: echo play
+      ignore_errors: true
+    - name: the task's plugin
+      command: echo task
+      connection: local
+    - name: a block's plugin
+      block:
+        - name: inside the block
+          command: echo block
+      connection: local

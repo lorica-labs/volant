@@ -622,6 +622,35 @@ fn environment_value(value: &Value) -> String {
     }
 }
 
+/// The play's `gather_subset` as this host renders it: items must be strings, and a template
+/// that renders to a string with a comma is refused, since the module would split it where the
+/// reference lists it whole. A failure here is the host's own task failure.
+fn check_gather_subset(raw: Option<&Value>, rendered: Option<&Value>) -> Result<(), TemplateError> {
+    let Some(rendered) = rendered else {
+        return Ok(());
+    };
+    let items = match rendered {
+        Value::Array(items) => items.as_slice(),
+        one => std::slice::from_ref(one),
+    };
+    if let Some(bad) = items.iter().find(|item| !item.is_string()) {
+        return Err(TemplateError(format!(
+            "Keyword 'gather_subset' items must be of type 'str', not '{}'.",
+            super::python_type(bad)
+        )));
+    }
+    if let (Some(Value::String(text)), Value::String(out)) = (raw, rendered)
+        && Templar::is_template(text)
+        && out.contains(',')
+    {
+        return Err(TemplateError(
+            "a gather_subset template that renders to a string with a comma in it is not supported yet"
+                .to_string(),
+        ));
+    }
+    Ok(())
+}
+
 #[expect(
     clippy::too_many_arguments,
     reason = "the driver's whole context, plus the warnings the render raises on its way"
@@ -814,6 +843,9 @@ pub(super) fn prepare(
             let (mut map, mut untrusted) = templar
                 .render_map_tainted(&raw, &vars)
                 .map_err(finalizing)?;
+            if task.name == "Gathering Facts" && task.module == "ansible.legacy.setup" {
+                check_gather_subset(raw.get("gather_subset"), map.get("gather_subset"))?;
+            }
             // The task's `module_defaults` lie under its own arguments, each rendered once on
             // its own: a default is a template like an argument, and may be a whole template
             // that renders to a mapping. A task's argument wins, `omit` included.

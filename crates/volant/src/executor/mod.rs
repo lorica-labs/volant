@@ -367,10 +367,14 @@ fn check_gather_keywords(
         crate::stats::Refusal::at(4, format!("Error processing keyword '{key}': {why}"))
     };
     if let Some(raw) = &play.gather_subset {
-        let rendered = templar
-            .render_value(raw, vars)
-            .map_err(|err| refuse("gather_subset", err.0))?;
+        let rendered = match templar.render_value(raw, vars) {
+            Ok(rendered) => rendered,
+            // A variable only a host has (a `vars_files` entry, say) is that host's to render.
+            Err(err) if err.0.contains("undefined") => Value::Null,
+            Err(err) => return Err(refuse("gather_subset", err.0)),
+        };
         let items = match &rendered {
+            Value::Null => &[][..],
             Value::Array(items) => items.as_slice(),
             one => std::slice::from_ref(one),
         };
@@ -383,20 +387,13 @@ fn check_gather_keywords(
                 ),
             ));
         }
-        // The module splits a string on commas where the reference lists it whole.
-        if let (Value::String(text), Value::String(out)) = (raw, &rendered)
-            && Templar::is_template(text)
-            && out.contains(',')
-        {
-            anyhow::bail!(
-                "a gather_subset template that renders to a string with a comma in it is not supported yet"
-            );
-        }
     }
     if let Some(raw) = &play.gather_timeout {
-        let rendered = templar
-            .render_value(raw, vars)
-            .map_err(|err| refuse("gather_timeout", err.0))?;
+        let rendered = match templar.render_value(raw, vars) {
+            Ok(rendered) => rendered,
+            Err(err) if err.0.contains("undefined") => Value::from(0),
+            Err(err) => return Err(refuse("gather_timeout", err.0)),
+        };
         let whole = match &rendered {
             Value::Number(n) => n.is_i64() || n.is_u64(),
             Value::String(text) => text.trim().parse::<i64>().is_ok(),

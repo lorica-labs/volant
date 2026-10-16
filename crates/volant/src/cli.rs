@@ -23,7 +23,7 @@ use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
-use crate::{agent, facts_read, playbook, preflight, python};
+use crate::{agent, collection, facts_read, playbook, preflight, python};
 
 #[derive(Parser, Debug)]
 pub struct PlaybookArgs {
@@ -318,8 +318,47 @@ async fn run_all(
     if let Some(helper) = helper {
         bridge.adopt(helper);
     }
+    // What `module_defaults` names, resolved by ansible-core as the reference resolves it when it
+    // loads a play: a key nothing answers to, or a group nobody declares, stops the run before
+    // anything is shown.
+    let (mut wanted_groups, mut wanted_actions) = (
+        std::collections::BTreeSet::new(),
+        std::collections::BTreeSet::new(),
+    );
+    for play in compiled.iter().flatten() {
+        wanted_groups.extend(collection::groups_named(collection::tasks_of(play)));
+        wanted_actions.extend(collection::actions_named(collection::tasks_of(play)));
+    }
+    if !wanted_actions.is_empty() {
+        let wanted: Vec<String> = wanted_actions.into_iter().collect();
+        let found = bridge
+            .actions_resolve(&wanted)
+            .map_err(|e| Refusal::at(4, e.to_string()))?;
+        if let Some((name, _)) = found.iter().find(|(_, resolved)| !**resolved) {
+            return Err(Refusal::at(4, collection::unresolved_action(name)));
+        }
+    }
+    if !wanted_groups.is_empty() {
+        let wanted: Vec<String> = wanted_groups.into_iter().collect();
+        let held = bridge
+            .action_groups(&wanted)
+            .map_err(|e| Refusal::at(4, e.to_string()))?;
+        let mut known = std::collections::BTreeMap::new();
+        for (group, members) in held {
+            known.insert(
+                group.clone(),
+                members.ok_or_else(|| Refusal::at(4, collection::unresolved_group(&group)))?,
+            );
+        }
+        for play in compiled.iter_mut().flatten() {
+            play.action_groups = known.clone();
+        }
+    }
     for plays in &compiled {
         for play in plays {
+            for warning in &play.warnings {
+                out.warning(warning, false);
+            }
             preflight::check_built(play, python.as_ref()).map_err(|e| Refusal::or(4, e))?;
         }
     }

@@ -1,0 +1,9 @@
+action_groups:
+  tools:
+    - hello
+    - ping
+  more:
+    - metadata:
+        extend_group:
+          - tools
+    - other

@@ -1,0 +1,6 @@
+- hello:
+  register: x
+- debug: var=x.who
+- ping:
+  register: y
+- debug: var=y.ping

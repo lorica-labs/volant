@@ -1,0 +1,6 @@
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    nosuchmod: {foo: bar}
+  tasks:
+    - debug: msg=hi

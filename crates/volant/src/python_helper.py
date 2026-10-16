@@ -260,7 +260,9 @@ def track_collection(collection):
     from ansible import constants as C
     from ansible.utils.collection_loader import AnsibleCollectionConfig
 
-    bases = list(AnsibleCollectionConfig.collection_paths)
+    bases = [
+        os.path.join(directory, "collections") for directory in AnsibleCollectionConfig.playbook_paths
+    ] + list(AnsibleCollectionConfig.collection_paths)
     if C.COLLECTIONS_SCAN_SYS_PATH:
         bases.extend(sys.path)
     track_collection_in(collection, bases)
@@ -485,11 +487,92 @@ def plugin_dirs(dirs):
     searched before the configured paths, in the order given, so a `library/stat.py` beside the
     playbook is the `stat` a task gets."""
     from ansible.plugins.loader import add_all_plugin_dirs
+    from ansible.utils.collection_loader import AnsibleCollectionConfig
 
     loaders()
     for directory in dirs:
         add_all_plugin_dirs(directory)
+    # A `collections/` directory beside a playbook is searched for collections, as
+    # ansible-playbook searches it.
+    AnsibleCollectionConfig.playbook_paths = list(dirs)
     return {}
+
+
+def resolve_action(name):
+    """The full name of the module or action plugin that answers `name`, or None, as
+    `FieldAttributeBase._resolve_action` finds it."""
+    from ansible.plugins.loader import action_loader, module_loader
+
+    context = module_loader.find_plugin_with_context(name, ignore_deprecated=True)
+    if context.resolved and not context.action_plugin:
+        prefer = action_loader.find_plugin_with_context(name, ignore_deprecated=True)
+        if prefer.resolved:
+            context = prefer
+    elif not context.resolved:
+        context = action_loader.find_plugin_with_context(name, ignore_deprecated=True)
+    return context.resolved_fqcn if context.resolved else None
+
+
+def actions(names):
+    """Whether each name a `module_defaults` key spells resolves to an action or a module."""
+    loaders()
+    return {name: resolve_action(name) is not None for name in names}
+
+
+def action_groups(groups):
+    """The modules each `module_defaults` group holds, as `FieldAttributeBase._resolve_group`
+    resolves them: the group is declared in its collection's `action_groups`, its members are
+    resolved to the module or action plugin that answers them, and `extend_group` brings in the
+    members of other groups, which may be absent. A group nobody declares is answered as missing.
+    """
+    from ansible.utils.collection_loader import AnsibleCollectionRef
+    from ansible.utils.collection_loader._collection_finder import _get_collection_metadata
+
+    loaders()
+
+    known = {}
+
+    def full(name, collection):
+        return name if AnsibleCollectionRef.is_valid_fqcr(name) else collection + "." + name
+
+    def members(group):
+        """The resolved actions of `group` (a full name), or None when nobody declares it."""
+        collection = ".".join(group.split(".")[0:2])
+        if group in known:
+            return known[group]
+        try:
+            declared = _get_collection_metadata(collection).get("action_groups", {})
+        except ValueError:
+            return None
+        entries = declared.get(group, declared.get(group.split(collection + ".")[-1]))
+        if entries is None:
+            return None
+        actions = []
+        extended = []
+        for entry in entries:
+            if not isinstance(entry, str):
+                # Only the `metadata` entry is anything but a name, and only `extend_group` is
+                # read from it.
+                metadata = entry.get("metadata") if isinstance(entry, dict) else None
+                if isinstance(metadata, dict):
+                    extend = metadata.get("extend_group", [])
+                    extended = [extend] if isinstance(extend, str) else extend
+                    if not isinstance(extended, list):
+                        extended = []
+                continue
+            resolved = resolve_action(full(entry, collection))
+            if resolved:
+                actions.append(resolved)
+        known[group] = actions
+        for other in extended:
+            actions.extend(members(full(other, collection)) or [])
+        return actions
+
+    answers = {}
+    for group in groups:
+        found = members(group)
+        answers[group] = {"actions": found} if found is not None else {"missing": True}
+    return answers
 
 
 CALL_NAME = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*(\.[A-Za-z_][A-Za-z0-9_]*)*$")
@@ -548,6 +631,10 @@ def call(request):
 
     loaders()
     kind, name = request["kind"], request["name"]
+    if kind == "action_groups":
+        return {"value": action_groups(request["args"])}
+    if kind == "actions":
+        return {"value": actions(request["args"])}
     if kind not in EXPRESSIONS:
         return {"error": {"kind": "plugin", "message": "unknown plugin kind '%s'" % kind}}
     # Jinja's own sentence for a filter or a test, ansible-core's for a lookup.

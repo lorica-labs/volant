@@ -234,6 +234,7 @@ pub(crate) fn task_strings(task: &PlayTask) -> (Vec<&str>, Vec<&str>) {
         .chain(&task.retries)
         .chain(&task.delay)
         .chain(&task.environment)
+        .chain(&task.module_defaults)
     {
         strings(value, &mut text);
     }

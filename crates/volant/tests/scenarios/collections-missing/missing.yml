@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  collections: [no.such, my.col]
+  tasks:
+    - debug: msg=ok
+    - hello:
+      register: x
+    - debug: var=x.who

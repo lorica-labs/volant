@@ -665,12 +665,28 @@ pub(super) fn prepare(
             // evaluated, so it is not rendered here: a render error in it would fail the task in
             // the render's words before the conditional could report it, which the reference's
             // `finalize_task_arg` for `assert` does not do.
+            //
+            // The task's `module_defaults` are laid under the arguments before any of it is
+            // rendered, so a default is a template like an argument and the task's own always
+            // wins, `omit` included.
+            let given = if task.module_defaults.is_empty() {
+                std::borrow::Cow::Borrowed(&task.args)
+            } else {
+                let mut all = crate::collection::defaults_for(
+                    &task.module,
+                    &task.module_defaults,
+                    &plan.steps().action_groups,
+                )
+                .map_err(TemplateError)?;
+                all.extend(task.args.clone());
+                std::borrow::Cow::Owned(all)
+            };
             let raw = if volant_protocol::modules::short_name(&task.module) == "assert" {
-                let mut raw = task.args.clone();
+                let mut raw = given.into_owned();
                 raw.remove("that");
                 std::borrow::Cow::Owned(raw)
             } else {
-                std::borrow::Cow::Borrowed(&task.args)
+                given
             };
             let (map, untrusted) = templar.render_map_tainted(&raw, &vars).map_err(|err| {
                 if err.0.starts_with(crate::template::RESOLVING) {

@@ -639,7 +639,6 @@ mod tests {
     #[case::async_(task_play("      command: echo hi\n      async: x\n"), &["keyword 'async' is not supported yet", "play 1", "'T'"])]
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
     #[case::poll(task_play("      command: echo hi\n      poll: x\n"), &["keyword 'poll' is not supported yet", "play 1", "'T'"])]
-    #[case::play_vars_prompt("- hosts: all\n  vars_prompt: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'vars_prompt' is not supported yet"])]
     #[case::parked_in_a_block_body(
         "- hosts: all\n  tasks:\n    - block:\n        - name: Deep\n          command: echo hi\n          diff: probe\n".to_string(),
         &["task 'Deep': keyword 'diff' is not supported yet"]
@@ -998,7 +997,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            10,
+            6,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

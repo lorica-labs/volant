@@ -1,0 +1,6 @@
+# An entry the reference refuses to load ends the run at exit 4; an answer that cannot be hashed
+# ends it at exit 1, with passlib installed or not.
+runs:
+  - args: [-i, inv.ini, no-name.yml]
+  - args: [-i, inv.ini, bad-key.yml]
+  - args: [-i, inv.ini, bad-hash.yml]

@@ -1,0 +1,8 @@
+# gather_subset, gather_timeout and fact_path on a play reach its gathering: a string is one subset
+# name, never split on commas, and a template renders before the module reads it.
+runs:
+  - args: [-i, inv.ini, string.yml]
+  - args: [-i, inv.ini, list.yml]
+  - args: [-i, inv.ini, template.yml]
+  - args: [-i, inv.ini, vars-files.yml]
+needs: ["ansible-core"]

@@ -1,0 +1,31 @@
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+  tasks:
+    - debug: msg="[{{ a }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+      default: pw
+      encrypt: sha512_crypt
+      salt: abcdefgh
+      private: yes
+  tasks:
+    - debug: msg="[{{ a }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      default: dflt
+    - name: b
+      prompt: Enter b
+    - name: c
+      default: kept
+  tasks:
+    - debug: msg="[{{ a }}{{ b }}{{ c }}]"

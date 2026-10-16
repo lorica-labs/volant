@@ -16,6 +16,7 @@ pub(crate) mod listing;
 pub mod playbook;
 pub mod preflight;
 pub mod profile;
+pub(crate) mod prompt;
 pub mod python;
 pub(crate) mod render;
 pub(crate) mod roles;

@@ -1,0 +1,72 @@
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+      default: dflt
+  tasks:
+    - debug: msg="[{{ a }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+      private: yes
+      default: pd
+  tasks:
+    - debug: msg="[{{ a }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+      confirm: yes
+      default: cd
+  tasks:
+    - debug: msg="[{{ a }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+    - name: b
+      default: ""
+    - name: c
+      default: 5
+  tasks:
+    - debug: msg="[{{ a }}][{{ b }}][{{ c }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+      default: "{{ 1+1 }}x{{ 2 }}"
+      unsafe: yes
+  tasks:
+    - debug: msg="[{{ a }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars: {q: SECRET}
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+      default: "{{ \"{{ q }}\" }}"
+      unsafe: yes
+  tasks:
+    - debug: msg="[{{ a }}]"
+
+- hosts: h1
+  gather_facts: false
+  vars: {q: SECRET}
+  vars_prompt:
+    - name: a
+      prompt: Enter a
+      default: "{{ \"{{ q }}\" }}"
+      unsafe: no
+  tasks:
+    - debug: msg="[{{ a }}]"

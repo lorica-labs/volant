@@ -477,6 +477,17 @@ impl Templar {
             .map_err(convert_error)
     }
 
+    /// `render`, one pass: a result that is itself a template is not rendered again, which is how
+    /// the reference templates a play's `vars_prompt` before it asks.
+    pub(crate) fn render_one_pass<'a>(
+        &self,
+        text: &str,
+        vars: impl Into<Vars<'a>>,
+    ) -> Result<Value, TemplateError> {
+        let (ctx, _tainted) = context_of(vars.into());
+        self.render_once(text, &ctx)
+    }
+
     /// Templates every string inside a value. Mapping keys are left alone.
     pub fn render_value<'a>(
         &self,

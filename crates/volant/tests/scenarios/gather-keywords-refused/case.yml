@@ -1,0 +1,5 @@
+# A gather keyword of the wrong type stops the run before the play's banner, exit 4.
+runs:
+  - args: [-i, inv.ini, subset.yml]
+  - args: [-i, inv.ini, timeout.yml]
+  - args: [-i, inv.ini, path.yml]

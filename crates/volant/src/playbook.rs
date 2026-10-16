@@ -94,6 +94,14 @@ pub struct Play {
     /// `max_fail_percentage`, as written: a number, or a template rendered when the play
     /// starts. Play-only - a task or a block carrying it is refused at load.
     pub max_fail_percentage: Option<Value>,
+    /// `gather_subset`, `gather_timeout` and `fact_path`, as written: the gathering step takes
+    /// them as the arguments of its `setup`, and the play start checks their types.
+    pub gather_subset: Option<Value>,
+    pub gather_timeout: Option<Value>,
+    pub fact_path: Option<Value>,
+    /// `vars_prompt`, entry by entry as written, every key already known to the reference's
+    /// list. Templated and asked when the play starts, see `prompt`.
+    pub vars_prompt: Vec<Map<String, Value>>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. The
     /// loader keeps the play rather than refusing it, so a playbook parses and lists the same
     /// way it does in the reference; the pre-flight then refuses the run before the first
@@ -1097,8 +1105,58 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
             None | Some(Yaml::Value(Scalar::Null)) => None,
             Some(v) => Some(to_json(v).context("'max_fail_percentage'")?),
         },
+        gather_subset: raw_keyword(yaml, "gather_subset")?,
+        gather_timeout: raw_keyword(yaml, "gather_timeout")?,
+        fact_path: raw_keyword(yaml, "fact_path")?,
+        vars_prompt: vars_prompt(yaml)?,
         unsupported,
     })
+}
+
+/// A keyword kept as written, `None` when it is absent or null.
+fn raw_keyword(yaml: &Yaml, key: &str) -> anyhow::Result<Option<Value>> {
+    match field(yaml, key) {
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
+        Some(v) => Ok(Some(to_json(v).with_context(|| format!("'{key}'"))?)),
+    }
+}
+
+/// The keys of a `vars_prompt` entry, as the reference's loader lists them.
+const PROMPT_KEYS: &[&str] = &[
+    "name",
+    "prompt",
+    "default",
+    "private",
+    "confirm",
+    "encrypt",
+    "salt_size",
+    "salt",
+    "unsafe",
+];
+
+/// The play's `vars_prompt`: a list of mappings, or one mapping, each with a `name` and no key
+/// the reference does not know.
+fn vars_prompt(yaml: &Yaml) -> anyhow::Result<Vec<Map<String, Value>>> {
+    let entries = match raw_keyword(yaml, "vars_prompt")? {
+        None => return Ok(Vec::new()),
+        Some(Value::Array(items)) => items,
+        Some(one) => vec![one],
+    };
+    entries
+        .into_iter()
+        .map(|entry| {
+            let Value::Object(map) = entry else {
+                bail!("Invalid vars_prompt data structure, expected a mapping per entry");
+            };
+            if !map.contains_key("name") {
+                bail!("Invalid vars_prompt data structure, missing 'name' key");
+            }
+            if let Some(key) = map.keys().find(|k| !PROMPT_KEYS.contains(&k.as_str())) {
+                bail!("Invalid vars_prompt data structure, found unsupported key '{key}'");
+            }
+            Ok(map)
+        })
+        .collect()
 }
 
 /// `environment`, wherever it is written: at most one layer per level, kept raw because its

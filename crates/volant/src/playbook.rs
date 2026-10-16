@@ -873,6 +873,9 @@ fn is_free_form(module: &str) -> bool {
         || local(module).is_some_and(|m| m.free_form)
         || import_module(module) == Some(true)
         || include_module(module) == Some(true)
+        // A command line like `command`'s, in the reference's `MODULE_REQUIRE_ARGS`.
+        || crate::action_plugins::kind(module)
+            == Some(crate::action_plugins::Kind::Bridged("script"))
 }
 
 /// Reads and parses one playbook. A file that is not there stops the run with exit 1; a file
@@ -2015,6 +2018,20 @@ fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<String, Value>>
         Yaml::Mapping(_) => {
             if let Value::Object(map) = to_json(value)? {
                 args = map;
+            }
+        }
+        // `script`'s line is the reference's `parse_kv` with `check_raw`: its options come out,
+        // the rest is the script and its arguments.
+        Yaml::Value(Scalar::String(s))
+            if crate::action_plugins::kind(module)
+                == Some(crate::action_plugins::Kind::Bridged("script")) =>
+        {
+            let (options, raw) = crate::splitter::parse_kv_raw(s)?;
+            for (k, v) in options {
+                args.insert(k, Value::String(v));
+            }
+            if let Some(raw) = raw {
+                args.insert("_raw_params".into(), Value::String(raw));
             }
         }
         Yaml::Value(Scalar::String(s)) if is_free_form(module) => {

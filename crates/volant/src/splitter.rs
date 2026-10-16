@@ -78,6 +78,28 @@ pub type Options = Vec<(String, String)>;
 /// decoded, and the other words joined back as `_raw_params` would hold them (`None` when there
 /// is none). A key repeated keeps its last value.
 pub fn parse_kv(args: &str) -> anyhow::Result<(Options, Option<String>)> {
+    parse_kv_with(args, false)
+}
+
+/// The keys `parse_kv` with `check_raw` still reads as options; any other `key=value` word stays
+/// in the command line.
+const RAW_OPTIONS: &[&str] = &[
+    "creates",
+    "removes",
+    "chdir",
+    "executable",
+    "warn",
+    "stdin",
+    "stdin_add_newline",
+    "strip_empty_ends",
+];
+
+/// `parse_kv` with `check_raw`, as the reference reads a free-form action's string.
+pub fn parse_kv_raw(args: &str) -> anyhow::Result<(Options, Option<String>)> {
+    parse_kv_with(args, true)
+}
+
+fn parse_kv_with(args: &str, check_raw: bool) -> anyhow::Result<(Options, Option<String>)> {
     let mut options = Options::new();
     let mut raw = Vec::new();
     for orig in split_args(args)? {
@@ -96,6 +118,10 @@ pub fn parse_kv(args: &str) -> anyhow::Result<(Options, Option<String>)> {
             raw.push(x.replace("\\=", "="));
             continue;
         };
+        if check_raw && !RAW_OPTIONS.contains(&&x[..pos]) {
+            raw.push(orig);
+            continue;
+        }
         let key = x[..pos].trim().to_string();
         let value = unquote(x[pos + 1..].trim()).to_string();
         options.retain(|(k, _)| *k != key);
@@ -190,6 +216,15 @@ fn decode_escapes(s: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// With `check_raw`, only the command options leave the line: `script`'s other words,
+    /// `key=value` or not, are its arguments.
+    #[test]
+    fn check_raw_keeps_every_other_word_in_the_line() {
+        let (options, raw) = parse_kv_raw("run.sh a=1 'b c' creates=/x chdir=/tmp").unwrap();
+        assert_eq!(options, pairs(&[("creates", "/x"), ("chdir", "/tmp")]));
+        assert_eq!(raw.as_deref(), Some("run.sh a=1 'b c'"));
+    }
 
     fn kv(args: &str) -> Vec<(String, String)> {
         parse_kv(args).unwrap().0

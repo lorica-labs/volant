@@ -6,7 +6,7 @@
 //! 27 names in both. A module with a plugin cannot be run by sending its payload to the agent:
 //! the action plugin is where its real behaviour lives. `script` reads its file on the
 //! controller, `wait_for_connection` waits there for the host. A plugin not written here runs as
-//! ansible-core's own, in the controller's Python helper ([`bridged`]), and so does a written one
+//! ansible-core's own, in the controller's Python helper (`bridged`), and so does a written one
 //! given a shape it does not take, before it has asked the host anything.
 //!
 //! A plugin that is written here runs on the controller as a small state machine: asked for the

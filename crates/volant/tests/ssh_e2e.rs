@@ -847,6 +847,7 @@ fn ssh_a_bridged_plugin_puts_its_file_and_runs_it() {
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(text.contains("changed: [box]"), "{text}");
     assert!(text.contains("\"hi arg1\""), "{text}");
+    assert!(text.contains("\"hi arg2\""), "{text}");
     assert_eq!(
         made(),
         before,

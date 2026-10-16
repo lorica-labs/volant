@@ -8,3 +8,10 @@
     - name: Show it
       debug:
         msg: "{{ s.stdout_lines }}"
+    - name: The same script named by cmd
+      script:
+        cmd: hello.sh arg2
+      register: c
+    - name: Show that one
+      debug:
+        msg: "{{ c.stdout_lines }}"

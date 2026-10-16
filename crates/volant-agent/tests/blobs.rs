@@ -461,6 +461,65 @@ fn a_file_put_and_never_taken_is_gone_when_the_connection_ends() {
     assert_eq!(entries(&cache_dir(&scratch.0)), Vec::<String>::new());
 }
 
+/// A staged file is moved to an absolute path, once; a relative path is refused and still
+/// consumes the staged file.
+#[test]
+fn a_staged_file_is_put_at_a_path_and_a_relative_path_is_refused() {
+    let scratch = Scratch::new("put-file");
+    let mut link = Link::open(&scratch.0);
+    let at = scratch.0.join("put-here");
+    let file = link.stage(b"the content");
+    link.send(&ToAgent::PutFile {
+        hash: file.clone(),
+        path: at.to_string_lossy().into_owned(),
+        mode: Some(0o640),
+    });
+    assert_eq!(
+        link.recv(),
+        FromAgent::PutFileDone {
+            hash: file.clone(),
+            changed: true,
+            error: None
+        }
+    );
+    assert_eq!(fs::read(&at).unwrap(), b"the content");
+    assert_eq!(
+        std::os::unix::fs::PermissionsExt::mode(&fs::metadata(&at).unwrap().permissions()) & 0o777,
+        0o640
+    );
+    assert!(entries(&link.stage_dir(&scratch.0)).is_empty());
+
+    let file = link.stage(b"the content");
+    link.send(&ToAgent::PutFile {
+        hash: file.clone(),
+        path: at.to_string_lossy().into_owned(),
+        mode: None,
+    });
+    assert_eq!(
+        link.recv(),
+        FromAgent::PutFileDone {
+            hash: file.clone(),
+            changed: false,
+            error: None
+        }
+    );
+    let file = link.stage(b"other");
+    link.send(&ToAgent::PutFile {
+        hash: file.clone(),
+        path: "relative".into(),
+        mode: None,
+    });
+    match link.recv() {
+        FromAgent::PutFileDone {
+            changed: false,
+            error: Some(why),
+            ..
+        } => assert!(why.ends_with("the path is not absolute"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+    assert!(entries(&link.stage_dir(&scratch.0)).is_empty());
+}
+
 /// `has_blob` answers for the shared cache only, never for a file this or any connection staged.
 #[test]
 fn has_blob_never_answers_for_a_staged_file() {

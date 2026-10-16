@@ -291,6 +291,16 @@ pub fn take(remote_tmp: &str, hash: &str) -> io::Result<PathBuf> {
     Ok(staged)
 }
 
+/// Removes the file this connection staged under `hash`, if any: what a caller does when the
+/// file cannot be used, so a refused secret does not wait for the connection to end.
+pub fn discard(remote_tmp: &str, hash: &str) {
+    if path(remote_tmp, hash).is_ok()
+        && let Ok(dir) = stage_dir(remote_tmp)
+    {
+        let _ = fs::remove_file(dir.join(hash));
+    }
+}
+
 /// Removes this connection's staged files, taken or not, once the controller has gone.
 ///
 /// A file put and never taken - a batch cancelled first, a link dropped between the put and the

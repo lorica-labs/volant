@@ -31,7 +31,10 @@ use serde_json::{Map, Value};
 /// 7 added `Task.job`: a task the controller wants started in the background. An agent that did
 /// not know the field would run the task to the end in front of the controller and answer a
 /// result with no job id, which is the "accepted then ignored" shape again.
-pub const PROTOCOL_VERSION: u32 = 7;
+///
+/// 8 added `PutFile`: a staged blob moved to a path of the host. An agent that does not know the
+/// message would drop it as malformed and leave the controller waiting for an answer.
+pub const PROTOCOL_VERSION: u32 = 8;
 
 /// How the frame after a `PutBlob` carries the blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -78,6 +81,14 @@ pub enum ToAgent {
         /// other's task.
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         staged: bool,
+    },
+    /// Moves the staged blob `hash` to `path`, an absolute path, atomically, with `mode` (0600
+    /// when absent). Answered by [`FromAgent::PutFileDone`].
+    PutFile {
+        hash: String,
+        path: String,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mode: Option<u32>,
     },
 }
 
@@ -128,6 +139,14 @@ pub enum FromAgent {
     BlobState {
         hash: String,
         present: bool,
+    },
+    /// The end of a `put_file`: `error` says why the file is not at its path, `changed` whether
+    /// its content differs from what the path held.
+    PutFileDone {
+        hash: String,
+        changed: bool,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
     },
 }
 
@@ -472,7 +491,7 @@ mod tests {
         );
         assert_eq!(serde_json::from_str::<Ran>(&text).unwrap(), ran);
         assert_eq!(
-            PROTOCOL_VERSION, 7,
+            PROTOCOL_VERSION, 8,
             "additive fields do not move the version"
         );
     }
@@ -642,6 +661,23 @@ mod tests {
         };
         let back: FromAgent = serde_json::from_slice(&serde_json::to_vec(&state).unwrap()).unwrap();
         assert_eq!(back, state);
+
+        let put_file = ToAgent::PutFile {
+            hash: "ff".into(),
+            path: "/etc/x".into(),
+            mode: None,
+        };
+        assert_eq!(
+            serde_json::to_string(&put_file).unwrap(),
+            r#"{"type":"put_file","hash":"ff","path":"/etc/x"}"#
+        );
+        let done = FromAgent::PutFileDone {
+            hash: "ff".into(),
+            changed: true,
+            error: None,
+        };
+        let back: FromAgent = serde_json::from_slice(&serde_json::to_vec(&done).unwrap()).unwrap();
+        assert_eq!(back, done);
     }
 
     /// A task that stages a file names the blob and the argument, and a task that stages none
@@ -675,8 +711,8 @@ mod tests {
 
     /// The version moves with the shape.
     #[test]
-    fn the_protocol_version_is_seven() {
-        assert_eq!(PROTOCOL_VERSION, 7);
+    fn the_protocol_version_is_eight() {
+        assert_eq!(PROTOCOL_VERSION, 8);
     }
 
     #[test]

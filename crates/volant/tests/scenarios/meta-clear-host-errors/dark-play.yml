@@ -1,0 +1,15 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - command: "true"
+      changed_when: false
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=a
+    - meta: clear_host_errors
+    - debug: msg=b
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=c

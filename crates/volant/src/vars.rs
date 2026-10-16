@@ -198,8 +198,8 @@ pub struct VarStore {
     /// The hosts that hold at least one untrusted name, built on demand and dropped by the same
     /// rule as `hostvars`: every write that can change it already goes through `set_fact`.
     untrusted_hosts: Option<Arc<BTreeSet<String>>>,
-    /// The inventory-wide values, with the three host lists they were built from. `groups` is
-    /// fixed for the run, but the lists come from the coordinator's last published progress and
+    /// The inventory-wide values, with the three host lists they were built from. `groups` only
+    /// moves when `meta: refresh_inventory` reads the inventory again, but the lists come from the coordinator's last published progress and
     /// move whenever a host drops out, so the map is good for one triple and no longer.
     shared: Option<(SharedKey, Arc<Map<String, Value>>)>,
     /// See [`VarStore::templated_facts`]. Never goes back to `false`: the fact outlives the play.
@@ -412,6 +412,56 @@ fn split_facts(
     (flat, namespaced, restricted)
 }
 
+/// What a host that has gathered nothing, or whose facts were cleared, answers for its facts:
+/// `ansible_facts` is there and empty. Measured on ansible-core 2.19.12, `ansible_facts | length`
+/// reads 0 on a host that never ran `setup`, and `ansible_facts is defined` is true.
+fn no_facts() -> &'static Arc<Map<String, Value>> {
+    static EMPTY: std::sync::OnceLock<Arc<Map<String, Value>>> = std::sync::OnceLock::new();
+    EMPTY.get_or_init(|| {
+        Arc::new(Map::from_iter([(
+            "ansible_facts".to_string(),
+            Value::Object(Map::new()),
+        )]))
+    })
+}
+
+/// The four maps a store keeps of an inventory: its groups, each host's own variables, the
+/// variables written on its line, and the names of the groups it belongs to.
+#[expect(
+    clippy::type_complexity,
+    reason = "one value per map the store keeps, built together and assigned together"
+)]
+fn inventory_maps(
+    inventory: &Inventory,
+) -> (
+    BTreeMap<String, Vec<String>>,
+    BTreeMap<String, Map<String, Value>>,
+    BTreeMap<String, Map<String, Value>>,
+    BTreeMap<String, Vec<String>>,
+) {
+    let groups = inventory.groups();
+    let mut inventory_vars = BTreeMap::new();
+    let mut host_line_vars = BTreeMap::new();
+    let mut group_names = BTreeMap::new();
+    for host in &groups["all"] {
+        // Not `resolve`: a name that is both a group and a host resolves as the group, and
+        // an empty group would leave this host without its own inventory variables.
+        let resolved = inventory.host_with_vars(host);
+        inventory_vars.insert(host.clone(), resolved.vars.into_iter().collect());
+        host_line_vars.insert(
+            host.clone(),
+            inventory
+                .host_line_vars(host)
+                .cloned()
+                .unwrap_or_default()
+                .into_iter()
+                .collect(),
+        );
+        group_names.insert(host.clone(), inventory.group_names_of(host));
+    }
+    (groups, inventory_vars, host_line_vars, group_names)
+}
+
 /// An inventory name without its domain, which is what `inventory_hostname_short` reports.
 fn short_name(host: &str) -> String {
     host.split('.').next().unwrap_or(host).to_string()
@@ -436,26 +486,7 @@ impl VarStore {
                 host_files[i] = load_vars_dir(&root.join("host_vars"))?;
             }
         }
-        let groups = inventory.groups();
-        let mut inventory_vars = BTreeMap::new();
-        let mut host_line_vars = BTreeMap::new();
-        let mut group_names = BTreeMap::new();
-        for host in &groups["all"] {
-            // Not `resolve`: a name that is both a group and a host resolves as the group, and
-            // an empty group would leave this host without its own inventory variables.
-            let resolved = inventory.host_with_vars(host);
-            inventory_vars.insert(host.clone(), resolved.vars.into_iter().collect());
-            host_line_vars.insert(
-                host.clone(),
-                inventory
-                    .host_line_vars(host)
-                    .cloned()
-                    .unwrap_or_default()
-                    .into_iter()
-                    .collect(),
-            );
-            group_names.insert(host.clone(), inventory.group_names_of(host));
-        }
+        let (groups, inventory_vars, host_line_vars, group_names) = inventory_maps(inventory);
         Ok(Self {
             inventory_dir,
             inventory_file: inventory_path.map(Path::to_path_buf),
@@ -499,6 +530,37 @@ impl VarStore {
             .chain(self.inventory_vars.values())
             .chain(self.host_line_vars.values())
             .chain([&self.extra])
+    }
+
+    /// The inventory file this run reads, which `meta: refresh_inventory` reads again.
+    pub fn inventory_file(&self) -> Option<&Path> {
+        self.inventory_file.as_deref()
+    }
+
+    /// Replaces what the store knows of the inventory with `inventory`'s groups, hosts and
+    /// variables, as `meta: refresh_inventory` does mid-play. The facts hosts gathered and the
+    /// facts the playbook set stay where they are: the reference's refresh re-reads its sources
+    /// and touches neither.
+    pub fn refresh_inventory(&mut self, inventory: &Inventory) {
+        (
+            self.groups,
+            self.inventory_vars,
+            self.host_line_vars,
+            self.group_names,
+        ) = inventory_maps(inventory);
+        self.forget_hostvars();
+        self.shared = None;
+    }
+
+    /// Forgets the facts modules gathered for `hosts`, which is what `meta: clear_facts` clears.
+    /// The facts `set_fact` wrote stay: measured on ansible-core 2.19.12, `ansible_facts` is empty
+    /// afterwards and a fact set by hand still reads back.
+    pub fn clear_gathered(&mut self, hosts: &[String]) {
+        for host in hosts {
+            self.gathered.remove(host);
+            self.host_facts.remove(host);
+            self.forget_host(host);
+        }
     }
 
     /// What `ansible_forks` reports for this run.
@@ -709,8 +771,9 @@ impl VarStore {
         let mut vars = Map::new();
         extend(&mut vars, &scope.role_defaults);
         extend(&mut vars, &self.host_base(host));
-        if let Some(gathered) = self.gathered.get(host) {
-            extend(&mut vars, gathered);
+        match self.gathered.get(host) {
+            Some(gathered) => extend(&mut vars, gathered),
+            None => extend(&mut vars, no_facts()),
         }
         extend(&mut vars, &scope.play_vars);
         for file in &scope.vars_files {
@@ -744,25 +807,23 @@ impl VarStore {
     pub fn layered_for_host(&mut self, host: &str, scope: &Scope) -> Layers {
         let shared = self.shared_values(scope);
         let magic = self.magic(host);
-        let (shadowed, answering): (BTreeSet<String>, BTreeSet<String>) =
-            match self.gathered.get(host) {
-                None => Default::default(),
-                Some(gathered) => {
-                    let above = [
-                        Some(&scope.play_vars),
-                        Some(&scope.role_vars),
-                        Some(&scope.task_vars),
-                        self.facts.get(host),
-                        Some(&scope.role_params),
-                        Some(&self.extra),
-                        Some(&magic),
-                    ];
-                    gathered.keys().cloned().partition(|name| {
-                        above.iter().flatten().any(|m| m.contains_key(name))
-                            || scope.vars_files.iter().any(|m| m.contains_key(name))
-                    })
-                }
-            };
+        // A host that gathered nothing still answers `ansible_facts`, empty: see `no_facts`.
+        let gathered = self.gathered.get(host).unwrap_or_else(|| no_facts());
+        let (shadowed, answering): (BTreeSet<String>, BTreeSet<String>) = {
+            let above = [
+                Some(&scope.play_vars),
+                Some(&scope.role_vars),
+                Some(&scope.task_vars),
+                self.facts.get(host),
+                Some(&scope.role_params),
+                Some(&self.extra),
+                Some(&magic),
+            ];
+            gathered.keys().cloned().partition(|name| {
+                above.iter().flatten().any(|m| m.contains_key(name))
+                    || scope.vars_files.iter().any(|m| m.contains_key(name))
+            })
+        };
         let mut map = Map::new();
         extend_except(&mut map, &scope.role_defaults, &answering);
         extend_except(&mut map, &self.host_base(host), &answering);
@@ -786,9 +847,7 @@ impl VarStore {
     /// `shadowed`, a copy without those names otherwise, kept until the host gathers again, the
     /// set changes or the host leaves the play.
     fn facts_for(&mut self, host: &str, shadowed: BTreeSet<String>) -> Arc<Map<String, Value>> {
-        let Some(gathered) = self.gathered.get(host) else {
-            return Arc::default();
-        };
+        let gathered = self.gathered.get(host).unwrap_or_else(|| no_facts());
         if shadowed.is_empty() {
             return Arc::clone(gathered);
         }
@@ -880,8 +939,9 @@ impl VarStore {
     /// naming another host can ask who that host is.
     fn host_view(&self, host: &str) -> Map<String, Value> {
         let mut base = self.host_base(host);
-        if let Some(gathered) = self.gathered.get(host) {
-            extend(&mut base, gathered);
+        match self.gathered.get(host) {
+            Some(gathered) => extend(&mut base, gathered),
+            None => extend(&mut base, no_facts()),
         }
         if let Some(facts) = self.facts.get(host) {
             extend(&mut base, facts);
@@ -895,10 +955,9 @@ impl VarStore {
         base
     }
 
-    /// The shared inventory-wide map is deliberately not dropped here: `groups` is assigned in
-    /// `new` and never touched again, and the host lists are keyed on in `shared_values`. The
-    /// day a module adds a host to the inventory mid-run, `groups` starts moving and this has
-    /// to drop `self.shared` too, or the run keeps reading the inventory it started with.
+    /// The shared inventory-wide map is deliberately not dropped here: the host lists are keyed
+    /// on in `shared_values`, and `groups` only moves in `refresh_inventory`, which drops
+    /// `self.shared` itself.
     fn forget_hostvars(&mut self) {
         self.hostvars = None;
         self.stale.clear();
@@ -969,8 +1028,8 @@ impl VarStore {
         completed
     }
 
-    /// The values every host of a batch reads the same: `groups`, which is fixed for the run,
-    /// and the three live host lists, which are fixed for as long as nobody drops out. Each is
+    /// The values every host of a batch reads the same: `groups`, which only a refresh of the
+    /// inventory moves, and the three live host lists, which are fixed for as long as nobody drops out. Each is
     /// the size of the inventory, so they are built once and handed to templates as one shared
     /// object rather than copied into every host's map for every task.
     ///
@@ -2136,5 +2195,43 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// `clear_gathered` empties what a module gathered and leaves a `set_fact`; a refreshed
+    /// inventory shows its new host in `groups` at once.
+    #[test]
+    fn clearing_facts_keeps_set_facts_and_a_refresh_shows_the_new_host() {
+        let tmp = scratch();
+        let inv = Inventory::parse_ini(
+            "[g]
+h1
+",
+        )
+        .unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        let gathered = json!({"ansible_os_family": "Debian"});
+        store.gather_facts("h1", gathered.as_object().unwrap());
+        store.set_fact("h1", "mine", json!(1));
+        let at = scope(&["h1"]);
+        let before = store.for_host("h1", &at);
+        assert_eq!(before["ansible_os_family"], "Debian");
+        store.clear_gathered(&["h1".to_string()]);
+        let after = store.for_host("h1", &at);
+        assert!(!after.contains_key("ansible_os_family"), "{after:?}");
+        assert_eq!(after["ansible_facts"], json!({}), "{after:?}");
+        assert_eq!(after["mine"], 1);
+
+        assert_eq!(store.shared_values(&at)["groups"]["g"], json!(["h1"]));
+        store.refresh_inventory(
+            &Inventory::parse_ini(
+                "[g]
+h1
+h2
+",
+            )
+            .unwrap(),
+        );
+        assert_eq!(store.shared_values(&at)["groups"]["g"], json!(["h1", "h2"]));
+        assert!(store.hostvars_shared("h1").contains_key("h2"));
     }
 }

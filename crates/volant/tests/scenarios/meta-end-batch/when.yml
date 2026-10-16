@@ -1,0 +1,8 @@
+- hosts: all
+  serial: 2
+  gather_facts: false
+  tasks:
+    - debug: msg=a
+    - meta: end_batch
+      when: inventory_hostname == 'h1'
+    - debug: msg=b

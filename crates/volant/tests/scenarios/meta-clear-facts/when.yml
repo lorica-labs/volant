@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - setup: gather_subset=min
+    - meta: clear_facts
+      when: inventory_hostname == 'h2'
+    - debug: msg="{{ ansible_facts | length > 0 }}"
+    - meta: clear_facts
+      when: inventory_hostname == 'h1'
+    - debug: msg="{{ ansible_facts | length }}"

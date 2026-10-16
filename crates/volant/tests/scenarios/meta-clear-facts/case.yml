@@ -1,0 +1,5 @@
+# clear_facts forgets what setup gathered for every host and keeps what set_fact wrote.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, when.yml]
+needs: ["ansible-core"]

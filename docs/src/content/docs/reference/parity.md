@@ -15,7 +15,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (block) | 23 | 1 | 7 | 0 |
 | keyword (task) | 55 | 1 | 10 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
-| meta action | 2 | 0 | 8 | 0 |
+| meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
 | module | 62 | 0 | 9 | 0 |
@@ -206,16 +206,16 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `clear_facts` | <span class="kw kw-notyet">not yet</span> |  |
-| `clear_host_errors` | <span class="kw kw-notyet">not yet</span> |  |
-| `end_batch` | <span class="kw kw-notyet">not yet</span> |  |
-| `end_host` | <span class="kw kw-notyet">not yet</span> |  |
-| `end_play` | <span class="kw kw-notyet">not yet</span> |  |
-| `end_role` | <span class="kw kw-notyet">not yet</span> |  |
+| `clear_facts` | <span class="kw kw-runs">runs</span> |  |
+| `clear_host_errors` | <span class="kw kw-runs">runs</span> |  |
+| `end_batch` | <span class="kw kw-runs">runs</span> |  |
+| `end_host` | <span class="kw kw-runs">runs</span> |  |
+| `end_play` | <span class="kw kw-runs">runs</span> |  |
+| `end_role` | <span class="kw kw-runs">runs</span> |  |
 | `flush_handlers` | <span class="kw kw-runs">runs</span> |  |
 | `noop` | <span class="kw kw-runs">runs</span> |  |
-| `refresh_inventory` | <span class="kw kw-notyet">not yet</span> |  |
-| `reset_connection` | <span class="kw kw-notyet">not yet</span> |  |
+| `refresh_inventory` | <span class="kw kw-runs">runs</span> |  |
+| `reset_connection` | <span class="kw kw-runs">runs</span> |  |
 
 ## ansible-playbook option
 

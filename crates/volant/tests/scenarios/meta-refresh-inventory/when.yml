@@ -1,0 +1,6 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - meta: refresh_inventory
+      when: false
+    - debug: msg=after

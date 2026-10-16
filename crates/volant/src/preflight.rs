@@ -104,6 +104,7 @@ pub(crate) fn check_steps(
         if !matches!(step.kind, crate::compile::StepKind::Flush { .. }) {
             check_task(&step.task).map_err(|e| Refusal::or(CODE, e))?;
         }
+        check_end_role(step)?;
         check_pause(compiled, step, prompts).map_err(|e| Refusal::or(CODE, e))?;
     }
     for handler in &compiled.handlers {
@@ -527,7 +528,7 @@ fn check_arguments(task: &PlayTask) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// A `meta` task: the action has to be one the reference has, and one this release honours.
+/// A `meta` task: the action has to be one the reference has.
 ///
 /// Exit 1 for an action nobody has, which is the reference's own code for it - measured, and
 /// notably not the 4 a playbook it cannot load gets. Where the two differ is the moment: the
@@ -535,14 +536,27 @@ fn check_arguments(task: &PlayTask) -> anyhow::Result<()> {
 /// connection, so nothing has run when the operator reads the message.
 fn check_meta(task: &PlayTask) -> anyhow::Result<()> {
     let action = meta_action(task);
-    match META_ACTIONS.iter().find(|(name, _)| *name == action) {
-        Some((_, true)) => Ok(()),
-        Some((name, false)) => bail!("task '{}': meta '{name}' is not supported yet", task.name),
-        None => Err(Refusal::at(
+    if META_ACTIONS.contains(&action) {
+        Ok(())
+    } else {
+        Err(Refusal::at(
             1,
             format!("invalid meta action requested: {action}"),
-        )),
+        ))
     }
+}
+
+/// `end_role` written where no role is: the reference stops loading the playbook, exit 4. Only the
+/// compiled steps know which role a task belongs to, so this is asked of them and not of the
+/// play's own lists.
+fn check_end_role(step: &crate::compile::Step) -> anyhow::Result<()> {
+    if is_meta(&step.task) && meta_action(&step.task) == "end_role" && step.role.is_none() {
+        return Err(Refusal::at(
+            CODE,
+            "Cannot execute 'end_role' from outside of a role",
+        ));
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -977,7 +991,7 @@ mod tests {
     }
 
     /// Every keyword the tables mark `Preflight` stops the run, naming itself, and every `meta`
-    /// action is honoured or refused by its own name.
+    /// action the reference has is accepted.
     #[test]
     fn every_table_row_is_refused_by_its_own_name() {
         let probes = preflight_probes();
@@ -995,19 +1009,9 @@ mod tests {
         }
         let play =
             |action: &str| format!("- hosts: all\n  tasks:\n    - name: M\n      meta: {action}\n");
-        for (action, supported) in META_ACTIONS {
+        for action in META_ACTIONS {
             let pb = parse(&play(action), "x.yml").expect("the loader takes every action");
-            let checked = check(&pb);
-            if *supported {
-                assert!(checked.is_ok(), "{action} runs");
-            } else {
-                let err = checked.unwrap_err();
-                assert_eq!(error_code(&err), 4, "{err:#}");
-                assert!(
-                    format!("{err:#}").contains(&format!("meta '{action}' is not supported yet")),
-                    "{err:#}"
-                );
-            }
+            assert!(check(&pb).is_ok(), "{action} runs");
         }
         // Measured on ansible-core 2.19.12: `invalid meta action requested: nosuchaction`,
         // exit 1 - not the 4 an unloadable playbook gets.
@@ -1016,6 +1020,24 @@ mod tests {
         assert_eq!(error_code(&err), 1, "{err:#}");
         assert!(
             format!("{err:#}").contains("invalid meta action requested: nosuchaction"),
+            "{err:#}"
+        );
+    }
+
+    /// `end_role` written where no role is stops the run at exit 4, as the reference stops
+    /// loading the playbook.
+    #[test]
+    fn end_role_outside_a_role_is_refused_at_exit_4() {
+        let steps = crate::testing::compiled(
+            "- hosts: all
+  tasks:
+    - meta: end_role
+",
+        );
+        let err = check_steps(&steps, false).unwrap_err();
+        assert_eq!(error_code(&err), 4, "{err:#}");
+        assert!(
+            format!("{err:#}").contains("Cannot execute 'end_role' from outside of a role"),
             "{err:#}"
         );
     }

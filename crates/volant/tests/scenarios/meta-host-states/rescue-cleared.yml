@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+          when: inventory_hostname == 'h2'
+      rescue:
+        - debug: msg=rescued
+    - meta: clear_host_errors
+    - debug: msg=after

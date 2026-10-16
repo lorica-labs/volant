@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=a
+    - meta: end_host
+      when: inventory_hostname == 'h1'
+    - debug: msg=once
+      run_once: true
+    - debug: msg=b

@@ -22,7 +22,7 @@ use tokio::sync::watch;
 
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::Compiled;
-use crate::inventory::Host;
+use crate::inventory::{Host, Inventory};
 use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::stats::Stats;
@@ -174,6 +174,14 @@ pub struct RunState {
     pub templar: Arc<Templar>,
     pub vars: Arc<Mutex<VarStore>>,
     pub failed_hosts: HashSet<String>,
+    /// The hosts of `failed_hosts` that went unreachable and stayed so at the end of a batch.
+    /// Measured on ansible-core 2.19.12: such a host is out of every play after, and
+    /// `meta: clear_host_errors` brings it back for the play it runs in and no further, while a
+    /// host that failed is back in the plays after the one that cleared it.
+    pub unreachable_hosts: HashSet<String>,
+    /// The inventory a `meta: refresh_inventory` read again, for the plays behind the one that
+    /// asked: the command line takes it before the next play's hosts are resolved.
+    pub refreshed: Option<Inventory>,
     pub verbosity: u8,
     /// Agents kept alive between plays, the way Ansible keeps its ssh connections open. Only
     /// the connecting user's own link per host is kept; see `keep_links`.
@@ -258,9 +266,11 @@ pub async fn run_play(
         // The reference divides by the batch as the inventory cut it, hosts that failed in an
         // earlier play included, and counts only the failures of this batch.
         let batch_size = batch.len();
+        let whole: Vec<String> = batch.iter().map(|h| h.name.clone()).collect();
         let live: Vec<Host> = batch
-            .into_iter()
+            .iter()
             .filter(|h| !state.failed_hosts.contains(&h.name))
+            .cloned()
             .collect();
         // One banner per batch, measured - and it prints even when the batch has nothing left to
         // run, which is the shape a play gets when every host it resolved has already failed.
@@ -293,13 +303,24 @@ pub async fn run_play(
         // number or does not render at all stops the run before the banner, with nothing on
         // stdout.
         out.play(&play.name);
-        run_batch(
+        // The ones of the batch that went unreachable in an earlier play: out of this one, and
+        // the only hosts a `clear_host_errors` brings back at its first step.
+        let dormant: Vec<String> = whole
+            .iter()
+            .filter(|h| state.unreachable_hosts.contains(*h))
+            .cloned()
+            .collect();
+        let limit = max_fail.map(|limit| (limit, batch_size));
+        let mut end = run_batch(
             play,
             compiled,
             &live,
+            &whole,
+            &dormant,
             &all,
             &vars_files,
-            max_fail.map(|limit| (limit, batch_size)),
+            limit,
+            None,
             agents,
             options,
             state,
@@ -307,6 +328,57 @@ pub async fn run_play(
             stats,
         )
         .await?;
+        let mut ended_play = end.end_play;
+        state.unreachable_hosts.extend(end.dark.drain(..));
+        // The hosts a `clear_host_errors` brought back run the steps they missed, alone, once the
+        // others are done: the reference's linear strategy goes back for them when its list of
+        // tasks has run out. Each round can bring back more.
+        while !end.revived.is_empty() && options.abort.reason().is_none() && !*options.stop.borrow()
+        {
+            let again: Vec<Host> = batch
+                .iter()
+                .filter(|h| end.revived.iter().any(|(name, _)| name == &h.name))
+                .cloned()
+                .collect();
+            let starts: HashMap<String, usize> = end.revived.drain(..).collect();
+            let steps = end.steps.take().unwrap_or_else(|| compiled.clone());
+            let again_names: Vec<String> = again.iter().map(|h| h.name.clone()).collect();
+            let files = load_play_vars_files(
+                play,
+                &again,
+                &play_hosts,
+                &again_names,
+                &all,
+                &playbook_dir,
+                state,
+                out,
+            )?;
+            end = run_batch(
+                play,
+                &steps,
+                &again,
+                &whole,
+                &[],
+                &all,
+                &files,
+                limit,
+                Some(&starts),
+                agents,
+                options,
+                state,
+                out,
+                stats,
+            )
+            .await?;
+            ended_play |= end.end_play;
+            state.unreachable_hosts.extend(end.dark.drain(..));
+        }
+        // What stays unreachable goes back among the failed, forgiven for a while or not.
+        for host in &whole {
+            if state.unreachable_hosts.contains(host) {
+                state.failed_hosts.insert(host.clone());
+            }
+        }
         if let Some(reason) = options.abort.reason() {
             return Err(crate::stats::Refusal::at(options.abort.code(), reason));
         }
@@ -315,6 +387,10 @@ pub async fn run_play(
         // over a host that failed in an earlier play prints its banner and the next batch runs.
         if live.iter().all(|h| state.failed_hosts.contains(&h.name)) {
             return Ok(PlayEnd { stop_run: true });
+        }
+        // `meta: end_play`: the batches after this one never start.
+        if ended_play {
+            break;
         }
     }
     Ok(PlayEnd { stop_run: false })

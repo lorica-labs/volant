@@ -1,0 +1,7 @@
+# refresh_inventory reads the inventory file again: groups change at once, a new host joins the next play.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, when.yml]
+  - args: [-i, inv.ini, removed.yml]
+  - args: [-i, inv.ini, invalid.yml]
+  - args: [-i, inv.ini, gone.yml]

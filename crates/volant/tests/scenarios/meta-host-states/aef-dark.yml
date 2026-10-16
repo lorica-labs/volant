@@ -1,0 +1,8 @@
+- hosts: all
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - command: "true"
+      changed_when: false
+    - meta: clear_host_errors
+    - debug: msg=c

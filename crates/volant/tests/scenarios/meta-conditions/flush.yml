@@ -1,0 +1,13 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=n
+      changed_when: true
+      notify: hand
+    - meta: flush_handlers
+      when: inventory_hostname == 'h2'
+    - debug: msg=after-flush
+    - meta: flush_handlers
+  handlers:
+    - name: hand
+      debug: msg=handled

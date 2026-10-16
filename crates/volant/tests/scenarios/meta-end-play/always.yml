@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=a
+    - meta: end_play
+    - debug: msg=b
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=play2

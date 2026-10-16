@@ -95,6 +95,7 @@ export default defineConfig({
             { label: 'Serial batches', slug: 'playbooks/serial' },
             { label: 'Includes and imports', slug: 'playbooks/includes' },
             { label: 'Delegation and run_once', slug: 'playbooks/delegation' },
+            { label: 'Meta tasks', slug: 'playbooks/meta' },
             { label: 'Environment and no_log', slug: 'playbooks/environment' },
             { label: 'What is not supported yet', slug: 'playbooks/preflight' },
           ],

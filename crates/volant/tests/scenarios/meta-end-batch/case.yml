@@ -1,0 +1,6 @@
+# end_batch ends the batch for every host of it, and the next batch starts.
+runs:
+  - args: [-i, inv.ini, when.yml]
+  - args: [-i, inv.ini, always.yml]
+  - args: [-i, inv.ini, block.yml]
+  - args: [-i, inv.ini, unserial.yml]

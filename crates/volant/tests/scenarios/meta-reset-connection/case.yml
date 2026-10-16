@@ -1,0 +1,4 @@
+# reset_connection and noop run once per host and ignore a when; the next task connects again.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, when.yml]

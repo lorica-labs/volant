@@ -1,0 +1,4 @@
+- debug: msg=i1
+- meta: end_role
+  when: inventory_hostname == 'h2'
+- debug: msg=i2

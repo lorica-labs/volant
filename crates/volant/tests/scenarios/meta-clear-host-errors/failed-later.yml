@@ -1,0 +1,15 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h2'
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=play2
+    - meta: clear_host_errors
+    - debug: msg=play2b
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=play3

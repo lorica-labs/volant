@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - meta: clear_facts
+      when: inventory_hostname == 'h2'
+    - meta: clear_host_errors
+      when: inventory_hostname == 'h1'
+    - meta: end_batch
+      when: inventory_hostname == 'h3'
+    - debug: msg=b

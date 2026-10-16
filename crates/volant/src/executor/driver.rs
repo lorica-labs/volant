@@ -21,11 +21,12 @@ use crate::playbook::PlayTask;
 use crate::profile::{Phase, Profile, TaskRecord, micros};
 use crate::python::ModulePayload;
 use crate::render::Dump;
+use crate::stats::Outcome;
 use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, Escalation, Transport};
 use crate::vars::{HostVars, VarStore};
 
-use super::coordinator::{Event, Progress, escalated_links, render_name};
+use super::coordinator::{Event, MetaEffect, Progress, escalated_links, render_name};
 use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, failure_text, pause_of, prepare, retry_name};
 use super::report::report_task;
@@ -39,6 +40,10 @@ use super::run::{
     stamp_discovery, step_tasks, take_warnings, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
+
+/// The `meta` actions whose `when` the reference does not read: it warns that the task does not
+/// support one and runs the action all the same.
+const NO_WHEN: [&str; 3] = ["noop", "refresh_inventory", "reset_connection"];
 
 /// Names whose value depends on what the other hosts have done: another host's variables, and
 /// the play's own live host list. A task whose raw text mentions one of them must not run ahead
@@ -452,6 +457,7 @@ pub(super) async fn drive_host(
     forks: Arc<Semaphore>,
     progress: watch::Receiver<Progress>,
     tx: mpsc::Sender<Event>,
+    start: Option<usize>,
 ) {
     let name = host.name.clone();
     let mut driver = Driver {
@@ -492,10 +498,16 @@ pub(super) async fn drive_host(
     let mut silent_failure = false;
     // Not always step 0: a block with an empty `block:` list lays its rescue out there, and
     // nothing has failed. The steps in front of the first one are stepped over like any other.
-    let mut pos = first(&plan.steps());
+    let mut pos = start.unwrap_or_else(|| first(&plan.steps()));
     // An interrupt here leaves `pos` where it is; the run loop's own `stop` test below is what
     // ends the play for this host, and the `Finished` at the end of this function still goes.
-    if let Some(grown) = driver.stepped_over(0..pos).await {
+    //
+    // A host brought back by `clear_host_errors` starts at the step it left off, and the
+    // coordinator has already filed everything in front of it: reporting those steps again would
+    // wait at splice points that never come in a round that splices nothing.
+    if start.is_none()
+        && let Some(grown) = driver.stepped_over(0..pos).await
+    {
         pos += grown;
     }
     let mut batch_id = first_batch_id();
@@ -797,8 +809,70 @@ pub(super) async fn drive_host(
                 // Measured: an explicit `meta: flush_handlers` shows one `TASK [meta]` per live
                 // host with nothing under it, and the three the compiler adds show nothing at
                 // all. A host already out of the play shows nothing either.
+                //
+                // Its `when` is read per host: a host it leaves out shows `skipping:` under the
+                // banner and runs no handler at this flush - the ones it notified wait for the
+                // next.
+                let mut skipped_flush = false;
                 if explicit && !handlers_only && !masked_out {
+                    if !task.when.is_empty() {
+                        let live = driver.progress.borrow().clone();
+                        let mut ignored = Vec::new();
+                        match prepare(
+                            step,
+                            &name,
+                            &plan,
+                            &live,
+                            &templar,
+                            &store,
+                            &options.defaults,
+                            &mut ignored,
+                        ) {
+                            Ok(Prepared::Skipped(_)) => skipped_flush = true,
+                            Ok(_) => {}
+                            // A `when` that cannot be read fails the statement for this host,
+                            // after the splice it still owes the others, like a failed include.
+                            Err(err) => {
+                                let results =
+                                    vec![(None, TaskResult::failed_with(failure_text(&err)))];
+                                let rescuable = rescue_target(&c, pos).is_some();
+                                if let Some(result) = report_task(
+                                    &tx,
+                                    &name,
+                                    pos,
+                                    task,
+                                    &results,
+                                    &[None],
+                                    &[],
+                                    &[],
+                                    &[],
+                                    Dump::No,
+                                    rescuable,
+                                    None,
+                                )
+                                .await
+                                {
+                                    failed |= !rescuable;
+                                    failed_at = Some((pos, result));
+                                }
+                                if driver.wait_for_splice(pos, n).await.is_none() {
+                                    break 'run;
+                                }
+                                if failed_at.is_some() {
+                                    break;
+                                }
+                                let Some(next) = driver.advance(pos).await else {
+                                    break 'run;
+                                };
+                                pos = next;
+                                break;
+                            }
+                        }
+                    }
                     driver.banner(pos).await;
+                    if skipped_flush {
+                        driver.meta_skipped(pos, "flush_handlers", None).await;
+                    }
                 }
                 driver.task_done(pos).await;
                 // `n` is the length of the list this host is walking, read before the word it
@@ -810,7 +884,18 @@ pub(super) async fn drive_host(
                 // splice like everyone else, but it has not performed a flush: the handler steps
                 // behind it carry that same mask, so it runs none of them, and the line below
                 // would otherwise throw away the notifications it is still carrying to the next
-                // flush it does reach.
+                // flush it does reach. A host whose `when` left it out is in the same position,
+                // and walks past the handler steps the splice put behind the flush by reporting
+                // them.
+                if skipped_flush {
+                    let grown = plan.steps().steps.len() - n;
+                    driver.skipped(pos + 1..pos + 1 + grown).await;
+                    let Some(next) = driver.advance(pos + grown).await else {
+                        break 'run;
+                    };
+                    pos = next;
+                    break;
+                }
                 if !masked_out {
                     in_flush = true;
                 }
@@ -974,6 +1059,17 @@ pub(super) async fn drive_host(
                     }
                     RunOnce::Done => {}
                 }
+                // The runner of a `meta: end_batch` or `end_play` found its condition true: the
+                // play is over for this host as well, and neither its `always` sections nor
+                // its handlers run.
+                if driver.progress.borrow().ending.contains(&pos) {
+                    break 'run;
+                }
+                // The inventory a `meta: refresh_inventory` read no longer holds this host for the
+                // play: it leaves where it stands, not failed.
+                if driver.progress.borrow().dismissed.contains(&name) {
+                    break 'run;
+                }
                 driver.task_done(pos).await;
                 let Some(next) = driver.advance(pos).await else {
                     break 'run;
@@ -1039,6 +1135,118 @@ pub(super) async fn drive_host(
                     deferred_error = Some((pos, err));
                     break;
                 }
+                // A `meta` asks the engine for something rather than the host: it shows a banner
+                // and, when its condition does not hold, a `skipping:` line that the recap does
+                // not count. Which of the two the reference reads the condition of is
+                // `NO_WHEN`'s: for those three it says so and runs the action anyway.
+                Ok(prepared) if step.kind == StepKind::Meta => {
+                    if !batch.is_empty() {
+                        break;
+                    }
+                    let action = crate::compile::meta_action(task);
+                    let ignores_when = NO_WHEN.contains(&action);
+                    if ignores_when && !task.when.is_empty() {
+                        let _ = tx
+                            .send(Event::Warning {
+                                host: name.clone(),
+                                index: pos,
+                                message: format!("{action} task does not support when conditional"),
+                                censored: false,
+                            })
+                            .await;
+                    }
+                    driver.banner(pos).await;
+                    let held = ignores_when || !matches!(prepared, Prepared::Skipped(_));
+                    let role = step
+                        .role
+                        .and_then(|i| c.roles.get(i))
+                        .map(|role| role.name.as_str());
+                    let mut leaves = false;
+                    let mut jump = false;
+                    if !held {
+                        driver.meta_skipped(pos, action, role).await;
+                    } else {
+                        match action {
+                            "end_host" => {
+                                driver.meta(pos, MetaEffect::EndHost).await;
+                                leaves = true;
+                            }
+                            "end_batch" => {
+                                driver.meta(pos, MetaEffect::EndBatch).await;
+                                leaves = true;
+                            }
+                            "end_play" => {
+                                driver.meta(pos, MetaEffect::EndPlay).await;
+                                leaves = true;
+                            }
+                            "clear_facts" => driver.meta(pos, MetaEffect::ClearFacts).await,
+                            "clear_host_errors" => {
+                                driver.meta(pos, MetaEffect::ClearHostErrors).await;
+                            }
+                            "refresh_inventory" => {
+                                driver.meta(pos, MetaEffect::RefreshInventory).await;
+                            }
+                            // The host's links go, the shared connection's master with them: the
+                            // next task opens both again.
+                            "reset_connection" => {
+                                let keys: Vec<LinkKey> =
+                                    links.keys().filter(|k| k.host == name).cloned().collect();
+                                for key in keys {
+                                    checked.remove(&key);
+                                    if let Some(link) = links.remove(&key) {
+                                        link.shutdown().await;
+                                    }
+                                    key.transport.stop_shared().await;
+                                }
+                            }
+                            "end_role" => jump = true,
+                            // `noop` and `flush_handlers`, whose flush point is not this arm's.
+                            _ => {}
+                        }
+                    }
+                    driver.task_done(pos).await;
+                    if leaves {
+                        break 'run;
+                    }
+                    // The runner of a `refresh_inventory` learns from the verdict, as the others
+                    // do, whether the new inventory still holds it.
+                    if held
+                        && action == "refresh_inventory"
+                        && (driver.wait_for_run_once(&name, pos).await.is_none()
+                            || driver.progress.borrow().dismissed.contains(&name))
+                    {
+                        break 'run;
+                    }
+                    if jump {
+                        // Every step of the role behind this one is stepped over, an `always`
+                        // included: measured, the reference skips them all up to the role's end.
+                        let Some(role) = step.role else {
+                            options.abort.raise(
+                                "Cannot execute 'end_role' from outside of a role".to_string(),
+                            );
+                            break 'run;
+                        };
+                        let mut target = (pos + 1..c.steps.len())
+                            .find(|&i| c.steps[i].role != Some(role))
+                            .unwrap_or(c.steps.len());
+                        // A host draining an `always` after a failure stops at the end of it.
+                        if let Some(end) = driver.cleanup {
+                            target = target.min(end);
+                        }
+                        let Some(grown) = driver.stepped_over(pos + 1..target).await else {
+                            break 'run;
+                        };
+                        if let Some(end) = driver.cleanup.as_mut() {
+                            *end += grown;
+                        }
+                        pos = target + grown;
+                    } else {
+                        let Some(next) = driver.advance(pos).await else {
+                            break 'run;
+                        };
+                        pos = next;
+                    }
+                }
                 Ok(Prepared::Skipped(mut items)) => {
                     if !batch.is_empty() {
                         break;
@@ -1083,20 +1291,6 @@ pub(super) async fn drive_host(
                         &results,
                         &[],
                     );
-                    let Some(next) = driver.advance(pos).await else {
-                        break 'run;
-                    };
-                    pos = next;
-                }
-                // A `meta` asks the engine for something rather than the host: it shows a
-                // banner, reports nothing and moves on. Every action that reaches here is one
-                // this release honours by doing nothing; the pre-flight refused the rest.
-                Ok(_) if step.kind == StepKind::Meta => {
-                    if !batch.is_empty() {
-                        break;
-                    }
-                    driver.banner(pos).await;
-                    driver.task_done(pos).await;
                     let Some(next) = driver.advance(pos).await else {
                         break 'run;
                     };
@@ -2570,6 +2764,76 @@ impl Driver<'_> {
             .send(Event::TaskDone {
                 host: self.name.to_string(),
                 index,
+            })
+            .await;
+    }
+
+    /// Tells the coordinator what the `meta` action at `index` asks of the batch.
+    async fn meta(&self, index: usize, effect: MetaEffect) {
+        let _ = self
+            .tx
+            .send(Event::Meta {
+                host: self.name.to_string(),
+                index,
+                effect,
+            })
+            .await;
+    }
+
+    /// The line of a `meta` whose condition did not hold, with the words the reference gives it
+    /// at `-v`. It is no result the recap counts: measured, a skipped `meta` adds nothing.
+    async fn meta_skipped(&self, index: usize, action: &str, role: Option<&str>) {
+        let host = self.name;
+        let held = format!("{action} conditional evaluated to False");
+        let (msg, why) = match action {
+            "flush_handlers" => (
+                action.to_string(),
+                format!("{held}, not running handlers for {host}"),
+            ),
+            "clear_facts" => (
+                action.to_string(),
+                format!("{held}, not clearing facts and fact cache for {host}"),
+            ),
+            "clear_host_errors" => (
+                action.to_string(),
+                format!("{held}, not clearing host error state for {host}"),
+            ),
+            "end_batch" => (
+                action.to_string(),
+                format!("{held}, continuing current batch"),
+            ),
+            "end_play" => (action.to_string(), format!("{held}, continuing play")),
+            "end_host" => (
+                format!("end_host conditional evaluated to false, continuing execution for {host}"),
+                format!("{held}, continuing execution for {host}"),
+            ),
+            // The reference's sentence runs the two halves together, and so does this.
+            _ => (
+                action.to_string(),
+                format!(
+                    "{held}continuing role {} for {host}",
+                    role.unwrap_or_default()
+                ),
+            ),
+        };
+        let mut result = TaskResult::default();
+        result.0.insert("msg".into(), Value::String(msg));
+        result.0.insert("skipped".into(), Value::Bool(true));
+        result.0.insert("skip_reason".into(), Value::String(why));
+        let _ = self
+            .tx
+            .send(Event::Result {
+                host: host.to_string(),
+                index,
+                label: None,
+                outcome: Outcome::Skipped,
+                result,
+                dump: Dump::No,
+                show: true,
+                counts: false,
+                censored: false,
+                delegate: None,
+                error: None,
             })
             .await;
     }

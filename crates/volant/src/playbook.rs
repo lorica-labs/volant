@@ -386,9 +386,25 @@ impl PlayTask {
     /// reference. Measured on ansible-core 2.19.12 with two hosts: a `pause` shows `ok: [h1]`
     /// alone, registers nothing on h2, a `when` that leaves h1 out skips it for both, and one
     /// that fails takes h2 out of the play the way a failed `run_once` does. Where the two
-    /// differ is `register`, which `run_once` writes for every host: see `fact_targets`.
+    /// differ is `register`, which `run_once` writes for every host: see `fact_targets`. A `meta`
+    /// action the reference runs through its first host is the third such task: see
+    /// [`PlayTask::meta_once`].
     pub fn bypasses_host_loop(&self) -> bool {
-        self.runs_once() || self.pauses()
+        self.runs_once() || self.pauses() || self.meta_once()
+    }
+
+    /// Whether this is a `meta` action the reference runs once for the whole batch, through its
+    /// first host: its `when` is read on that host alone and the others only wait for the answer.
+    /// Measured on ansible-core 2.19.12: `end_play`, `end_batch`, `refresh_inventory`,
+    /// `clear_facts` and `clear_host_errors` print one `TASK [meta]` banner, and a `when` that
+    /// holds for a later host and not for the first one leaves the play as it was.
+    pub fn meta_once(&self) -> bool {
+        is_meta(self)
+            && self
+                .args
+                .get("_raw_params")
+                .and_then(Value::as_str)
+                .is_some_and(|action| META_ONCE.contains(&action))
     }
 
     fn pauses(&self) -> bool {
@@ -413,6 +429,7 @@ impl PlayTask {
         (self.runs_once() && crate::keywords::is_barrier("run_once"))
             || self.pauses()
             || self.fails_all()
+            || self.meta_once()
     }
 
     /// Whether a failure of this task on one host fails the whole batch. A barrier too: the
@@ -732,6 +749,15 @@ fn python_str_repr(s: &str) -> String {
 pub fn is_meta(task: &PlayTask) -> bool {
     short_name(&task.module) == META
 }
+
+/// The `meta` actions that run once for the batch; see [`PlayTask::meta_once`].
+pub(crate) const META_ONCE: [&str; 5] = [
+    "clear_facts",
+    "clear_host_errors",
+    "end_batch",
+    "end_play",
+    "refresh_inventory",
+];
 
 /// The collection modules the reference reads a string argument of as one command line: the two
 /// of `ansible.windows` in ansible-core 2.19.12's `FREEFORM_ACTIONS`, whose other entries are all

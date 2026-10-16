@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h2'
+      ignore_errors: true
+    - meta: clear_host_errors
+    - fail:
+      when: inventory_hostname == 'h3'
+    - debug: msg=after

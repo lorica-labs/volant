@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - command: "true"
+          changed_when: false
+      rescue:
+        - debug: msg=rescued
+    - meta: clear_host_errors
+    - debug: msg=after

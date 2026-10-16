@@ -39,6 +39,11 @@ pub struct Stats {
     /// count - while the run still exits 2. A counter would have printed a line the reference
     /// does not, so the exit code reads this set and the recap does not.
     unreported: std::collections::BTreeSet<String>,
+    /// The hosts whose failures and unreachability still count for the exit code. The recap keeps
+    /// every count; `meta: clear_host_errors` takes a host out of these two sets and leaves its
+    /// recap line as it was. Measured on ansible-core 2.19.12: `failed=1` in the recap and exit 0.
+    failing: std::collections::BTreeSet<String>,
+    dark: std::collections::BTreeSet<String>,
 }
 
 impl Stats {
@@ -49,7 +54,10 @@ impl Stats {
         let h = self.hosts.entry(host.to_string()).or_default();
         match outcome {
             Outcome::Skipped => h.skipped += 1,
-            Outcome::Failed => h.failed += 1,
+            Outcome::Failed => {
+                h.failed += 1;
+                self.failing.insert(host.to_string());
+            }
             // Counted in its own column and nowhere else. Measured on ansible-core 2.19.12: a
             // failure a rescue takes reads `failed=0 rescued=1`, and it does not count as `ok`
             // either, however the play ends for that host.
@@ -73,6 +81,19 @@ impl Stats {
 
     pub fn unreachable(&mut self, host: &str) {
         self.hosts.entry(host.to_string()).or_default().unreachable += 1;
+        self.dark.insert(host.to_string());
+    }
+
+    /// `meta: clear_host_errors` for `host`: its failures stop counting for the exit code, and so
+    /// does its unreachability unless `keep_dark` says the reference still holds the host
+    /// unreachable - one that went unreachable in an earlier play stays so for every play after
+    /// it, measured, and the exit code says 4 whatever a later play cleared.
+    pub fn clear_errors(&mut self, host: &str, keep_dark: bool) {
+        self.failing.remove(host);
+        self.unreported.remove(host);
+        if !keep_dark {
+            self.dark.remove(host);
+        }
     }
 
     #[cfg(test)]
@@ -139,10 +160,10 @@ pub fn error_code(err: &anyhow::Error) -> i32 {
 /// ansible-playbook's exit status: 2 for failed hosts, 4 for unreachable hosts, combined.
 pub fn exit_code(stats: &Stats) -> i32 {
     let mut code = 0;
-    if stats.hosts().any(|(_, h)| h.failed > 0) || !stats.unreported.is_empty() {
+    if !stats.failing.is_empty() || !stats.unreported.is_empty() {
         code |= 2;
     }
-    if stats.hosts().any(|(_, h)| h.unreachable > 0) {
+    if !stats.dark.is_empty() {
         code |= 4;
     }
     code
@@ -212,6 +233,28 @@ mod tests {
         assert_eq!(exit_code(&s), 2);
         s.unreachable("b");
         assert_eq!(exit_code(&s), 6);
+    }
+
+    /// A cleared host keeps its recap counts and stops counting for the exit code, but for the
+    /// unreachability the reference keeps.
+    #[test]
+    fn cleared_errors_leave_the_recap_and_the_exit_code() {
+        let mut s = Stats::default();
+        s.record("a", Outcome::Failed, false);
+        s.unreachable("b");
+        s.unreachable("c");
+        s.failed_unreported("d");
+        assert_eq!(exit_code(&s), 6);
+        for host in ["a", "b", "d"] {
+            s.clear_errors(host, false);
+        }
+        s.clear_errors("c", true);
+        assert_eq!(exit_code(&s), 4, "c is still unreachable for the reference");
+        s.clear_errors("c", false);
+        assert_eq!(exit_code(&s), 0);
+        assert_eq!((s.host("a").failed, s.host("b").unreachable), (1, 1));
+        s.unreachable("b");
+        assert_eq!((exit_code(&s), s.host("b").unreachable), (4, 2));
     }
 
     #[test]

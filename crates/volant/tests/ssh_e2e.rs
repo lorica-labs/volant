@@ -2024,3 +2024,84 @@ fn ssh_one_connection_per_inventory_host() {
          ssh configuration that already multiplexes that host keeps Volant's own out:\n{text}"
     );
 }
+
+/// `meta: reset_connection` makes the host's shared connection exit; a run without it leaves the
+/// master to `ControlPersist`.
+#[cfg(target_os = "linux")]
+#[test]
+#[ignore = "needs VOLANT_TARGET_HOST or a CI runner, run through just ssh-test"]
+fn ssh_reset_connection_stops_the_shared_master() {
+    use std::os::unix::fs::{DirBuilderExt as _, FileTypeExt as _};
+    let machine = Machine::from_env();
+    let local = tmp("reset");
+    let pid = std::process::id();
+    let remote_tmp = format!("/var/tmp/volant-e2e-reset-remote-{pid}");
+    let inv = local.join("inventory.ini");
+    std::fs::write(&inv, format!("{}\n", machine.line("one", &remote_tmp))).unwrap();
+    let cleanup = machine.cleanup_dirs(&[&remote_tmp]);
+    // The run and the control sockets it left, which are then asked to exit.
+    let run = |name: &str, tasks: &str| -> (Output, Vec<PathBuf>) {
+        let runtime = PathBuf::from(format!("/tmp/vcm-{pid}-{name}"));
+        let _ = std::fs::remove_dir_all(&runtime);
+        std::fs::DirBuilder::new()
+            .mode(0o700)
+            .create(&runtime)
+            .unwrap();
+        let playbook = local.join(format!("{name}.yml"));
+        std::fs::write(
+            &playbook,
+            format!("- hosts: all\n  gather_facts: false\n  tasks:\n{tasks}"),
+        )
+        .unwrap();
+        let out = volant_env_within(
+            &[
+                "playbook",
+                "-i",
+                inv.to_str().unwrap(),
+                playbook.to_str().unwrap(),
+            ],
+            &[("XDG_RUNTIME_DIR", runtime.to_str().unwrap())],
+            Duration::from_secs(120),
+        );
+        let sockets: Vec<PathBuf> = std::fs::read_dir(runtime.join("volant-cm"))
+            .map(|entries| {
+                entries
+                    .filter_map(Result::ok)
+                    .filter(|entry| entry.file_type().is_ok_and(|t| t.is_socket()))
+                    .map(|entry| entry.path())
+                    .collect()
+            })
+            .unwrap_or_default();
+        for socket in &sockets {
+            let _ = Command::new("ssh")
+                .arg("-o")
+                .arg(format!("ControlPath={}", socket.display()))
+                .args(["-O", "exit", "unused"])
+                .output();
+        }
+        let _ = std::fs::remove_dir_all(&runtime);
+        (out, sockets)
+    };
+    let (kept, left) = run("kept", "    - stat: {path: /}\n");
+    let (reset, gone) = run(
+        "reset",
+        "    - stat: {path: /}\n    - meta: reset_connection\n",
+    );
+    drop(cleanup);
+    let _ = std::fs::remove_dir_all(&local);
+    assert_eq!(kept.status.code(), Some(0), "{}", both(&kept));
+    assert_eq!(reset.status.code(), Some(0), "{}", both(&reset));
+    assert_eq!(
+        left.len(),
+        1,
+        "without a reset the master stays for ControlPersist, found {left:?}; with \
+         VOLANT_TARGET_HOST, an ssh configuration that already multiplexes that host keeps \
+         Volant's own out:\n{}",
+        both(&kept)
+    );
+    assert!(
+        gone.is_empty(),
+        "reset_connection must stop the master, found {gone:?}:\n{}",
+        both(&reset)
+    );
+}

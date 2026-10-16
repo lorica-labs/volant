@@ -1,0 +1,8 @@
+# end_play ends the play for every host, once its condition holds on the first one.
+runs:
+  - args: [-i, inv.ini, when.yml]
+  - args: [-i, inv.ini, always.yml]
+  - args: [-i, inv.ini, serial.yml]
+  - args: [-i, inv.ini, serial-later.yml]
+  - args: [-i, inv.ini, block.yml]
+  - args: [-i, inv.ini, failed.yml]

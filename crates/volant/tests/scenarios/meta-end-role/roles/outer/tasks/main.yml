@@ -1,0 +1,8 @@
+- debug: msg=o1
+- block:
+    - meta: end_role
+      when: inventory_hostname == 'h3'
+    - debug: msg=in-block
+  always:
+    - debug: msg=o-always
+- debug: msg=o2

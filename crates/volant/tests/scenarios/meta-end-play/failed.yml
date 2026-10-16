@@ -1,0 +1,7 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h2'
+    - meta: end_play
+    - debug: msg=b

@@ -1,0 +1,13 @@
+# A host that ended, failed, went unreachable or was forgiven leaves the same recap and exit code as the reference, whatever else the play says.
+runs:
+  - args: [-i, inv.ini, aef-ended.yml]
+  - args: [-i, inv.ini, mfp-ended.yml]
+  - args: [-i, inv.ini, mfp-cleared.yml]
+  - args: [-i, inv.ini, rescue-cleared.yml]
+  - args: [-i, inv.ini, rescue-ended-serial.yml]
+  - args: [-i, inv.ini, forced.yml]
+  - args: [-i, dark.ini, ignored.yml]
+  - args: [-i, dark.ini, serial.yml]
+  - args: [-i, dark.ini, batch-ended.yml]
+  - args: [-i, dark.ini, aef-dark.yml]
+  - args: [-i, dark.ini, dark-rescue.yml]

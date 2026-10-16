@@ -1,0 +1,12 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+          when: inventory_hostname == 'h2'
+      always:
+        - debug: msg=always
+        - meta: end_host
+          when: inventory_hostname == 'h2'
+        - debug: msg=rest-of-always
+    - debug: msg=after

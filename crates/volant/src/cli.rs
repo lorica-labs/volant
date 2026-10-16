@@ -162,7 +162,7 @@ async fn run_all(
         return Ok(2);
     }
     let inventory_path = args.inventory.clone().or_else(|| config.inventory.clone());
-    let inventory = match &inventory_path {
+    let mut inventory = match &inventory_path {
         Some(path) => Inventory::load(path)?,
         None => Inventory::empty(),
     };
@@ -460,6 +460,8 @@ async fn run_all(
         )),
         vars: Arc::new(Mutex::new(store)),
         failed_hosts: HashSet::new(),
+        unreachable_hosts: HashSet::new(),
+        refreshed: None,
         verbosity: args.verbose,
         links: HashMap::new(),
         python: python.map(Arc::new),
@@ -522,6 +524,11 @@ async fn run_all(
                     play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
                 )
                 .await?;
+                // `meta: refresh_inventory` read the file again: the plays behind this one
+                // resolve their hosts against what it found.
+                if let Some(fresh) = state.refreshed.take() {
+                    inventory = fresh;
+                }
                 // A batch that lost every live host it had ends the whole run, measured: no
                 // further play, and the recap prints straight away. The recap below belongs to
                 // the playbook loop this leaves, so `stopped` carries it past the `break`.

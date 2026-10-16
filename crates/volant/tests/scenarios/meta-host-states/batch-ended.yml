@@ -1,0 +1,8 @@
+- hosts: all
+  serial: 3
+  gather_facts: false
+  tasks:
+    - command: "true"
+      changed_when: false
+    - meta: end_batch
+    - debug: msg=never

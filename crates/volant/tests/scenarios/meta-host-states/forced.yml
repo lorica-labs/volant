@@ -1,0 +1,13 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=n
+      changed_when: true
+      notify: hand
+    - meta: end_host
+      when: inventory_hostname == 'h1'
+    - fail:
+      when: inventory_hostname == 'h2'
+  handlers:
+    - name: hand
+      debug: msg=handled

@@ -1,0 +1,10 @@
+- hosts: all
+  max_fail_percentage: 25
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h2'
+    - meta: clear_host_errors
+    - fail:
+      when: inventory_hostname == 'h3'
+    - debug: msg=c

@@ -1837,9 +1837,8 @@ fn run_probe_env(
     (out.status.code().unwrap_or(-1), text)
 }
 
-/// Standard input is a terminal: `vars_prompt` asks, an empty answer takes the default, a hidden
-/// answer is read with the echo off, and `-e` is never asked. The answers are typed ahead into a
-/// pseudo-terminal, and the run is killed at the deadline if it waits for more.
+/// On a terminal `vars_prompt` asks (default, visible, hidden) and `-e` is never asked; the
+/// answers are typed ahead into a pty and the run dies at the deadline if it waits for more.
 #[test]
 fn vars_prompt_asks_on_a_terminal() {
     use std::os::fd::{FromRawFd as _, OwnedFd};

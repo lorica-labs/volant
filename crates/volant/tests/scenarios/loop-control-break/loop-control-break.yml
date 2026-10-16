@@ -1,0 +1,37 @@
+- name: Loop control, break_when
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: msg="{{ item }}"
+      loop: [1, 2, 3, 4, 5]
+      loop_control: {break_when: "item == 2"}
+      register: r
+    - debug: msg="{{ r.msg }} {{ r.results | length }} {{ r.skipped }}"
+    - debug: msg="{{ item }}"
+      loop: [1, 2, 3]
+      loop_control: {break_when: ["item == 2", "item == 9"], label: "lbl{{ item }}"}
+      register: r2
+    - debug: msg="{{ r2.results | map(attribute=\"item\") | list }} {{ r2.skipped | default(\"-\") }} {{ r2.changed }}"
+    - debug: msg="{{ item }}"
+      loop: [1, 2, 3]
+      loop_control: {break_when: "item == 1"}
+      when: item != 1
+      register: r3
+    - debug: msg="{{ r3.msg }} {{ r3.results | length }} {{ r3.skipped }}"
+    - command: echo {{ item }}
+      loop: [1, 2, 3, 4]
+      loop_control: {break_when: "cmd.stdout == '2'"}
+      register: cmd
+    - debug: msg="{{ cmd.results | map(attribute=\"item\") | list }}"
+    - debug: msg="{{ item }}"
+      loop: [1, 2, 3]
+      loop_control: {break_when: "true"}
+      when: item != 1
+      register: r4
+    - debug: msg="{{ r4.msg }} {{ r4.results | length }} {{ r4.skipped }}"
+    - command: "false"
+      loop: [1, 2, 3]
+      loop_control: {break_when: "item == 2"}
+      ignore_errors: true
+      register: r5
+    - debug: msg="{{ r5.results | map(attribute=\"item\") | list }} {{ r5.msg }} {{ r5.failed }}"

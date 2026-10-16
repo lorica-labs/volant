@@ -16,8 +16,8 @@ use crate::transport::ConnectionDefaults;
 use crate::vars::VarStore;
 
 use super::coordinator::{Event, Progress};
-use super::prepare::{Item, PlayPlan, Prepared, prepare};
-use super::run::{classify, empty_loop_result, loops, registered_value};
+use super::prepare::{Item, PlayPlan, Prepared, pause_of, prepare};
+use super::run::{break_after, classify, empty_loop_result, loops, registered_value};
 
 /// One expansion a host asked for at an include step.
 pub(super) struct IncludeGroup {
@@ -62,7 +62,7 @@ pub(super) fn resolve_include(
     defaults: &ConnectionDefaults,
     warnings: &mut Vec<String>,
     abort: &super::Abort,
-) -> (Vec<IncludeGroup>, Vec<Shown>) {
+) -> (Vec<IncludeGroup>, Vec<Shown>, std::time::Duration) {
     let items = match prepare(step, host, plan, live, templar, store, defaults, warnings) {
         Ok(
             Prepared::Skipped(items)
@@ -79,24 +79,40 @@ pub(super) fn resolve_include(
                 vec![Shown {
                     element: None,
                     label: None,
-                    result: TaskResult::failed_with(format!("Task failed: {}", err.0)),
+                    result: TaskResult::failed_with(super::prepare::failure_text(&err)),
                     failed: true,
                     ignored: None,
                 }],
+                std::time::Duration::ZERO,
             );
         }
     };
+    // `break_when` ends an include loop after the item it holds for, a skipped one included, and
+    // `pause` waits after every other item that has another behind it: measured on ansible-core
+    // 2.19.12, `include_tasks` over `[1, 2, 3]` with `break_when: item == 2` includes 1 and 2.
+    // The wait is returned for the driver to take, which can be interrupted; nothing is shown in
+    // the meantime, so the order is the same.
+    let pause = pause_of(&step.task, &items, templar);
+    let mut passed = 0_u32;
+    let mut broke = false;
     let mut groups = Vec::new();
     let mut shown = Vec::new();
     for item in items {
         if let Some(skipped) = &item.skipped {
+            let mut result = skipped.clone();
+            broke = break_after(&step.task, &item, &mut result, templar);
+            let failed = result.failed();
             shown.push(Shown {
                 element: item.element.clone(),
                 label: item.label.clone(),
-                result: skipped.clone(),
-                failed: false,
-                ignored: None,
+                result,
+                failed,
+                ignored: failed.then_some(false),
             });
+            if broke {
+                break;
+            }
+            passed += 1;
             continue;
         }
         let result = match include_request(compiled, step, kind, &item, templar) {
@@ -113,6 +129,22 @@ pub(super) fn resolve_include(
                 },
             ) {
                 Ok(expanded) => {
+                    let mut included = TaskResult(Map::from_iter([
+                        ("changed".to_string(), json!(false)),
+                        ("include".to_string(), json!(request.what)),
+                    ]));
+                    broke = break_after(&step.task, &item, &mut included, templar);
+                    if included.failed() {
+                        // A `break_when` that cannot be evaluated fails the item.
+                        shown.push(Shown {
+                            element: item.element,
+                            label: item.label,
+                            result: included,
+                            failed: true,
+                            ignored: Some(false),
+                        });
+                        break;
+                    }
                     groups.push(IncludeGroup {
                         key: request.key(),
                         what: request.what,
@@ -120,6 +152,10 @@ pub(super) fn resolve_include(
                         params: request.vars,
                         expanded,
                     });
+                    if broke {
+                        break;
+                    }
+                    passed += 1;
                     continue;
                 }
                 // A file the reference cannot parse ends the run at exit 4, after the
@@ -130,7 +166,7 @@ pub(super) fn resolve_include(
                         .is_some() =>
                 {
                     abort.raise_with(4, format!("{err:#}"));
-                    return (Vec::new(), Vec::new());
+                    return (Vec::new(), Vec::new(), std::time::Duration::ZERO);
                 }
                 Err(err) => {
                     let mut body = Map::new();
@@ -153,7 +189,12 @@ pub(super) fn resolve_include(
             ignored: Some(false),
         });
     }
-    (groups, shown)
+    let owed = if broke {
+        passed
+    } else {
+        passed.saturating_sub(1)
+    };
+    (groups, shown, pause.unwrap_or_default() * owed)
 }
 
 /// One item of an include statement that has a line to show: a `when` left it out, or resolving
@@ -221,11 +262,18 @@ fn include_request(
         }
     }
     if item.element.is_some() {
-        if let Some(value) = item.vars.get(&task.loop_var) {
-            if item.vars.untrusted.contains(&task.loop_var) {
-                vars.untrusted.insert(task.loop_var.clone());
+        let bound = [Some(&task.loop_var), task.index_var.as_ref()]
+            .into_iter()
+            .flatten()
+            .map(String::as_str)
+            .chain(["ansible_loop"]);
+        for name in bound {
+            if let Some(value) = item.vars.get(name) {
+                if item.vars.untrusted.contains(name) {
+                    vars.untrusted.insert(name.to_string());
+                }
+                vars.values.insert(name.to_string(), value.clone());
             }
-            vars.values.insert(task.loop_var.clone(), value.clone());
         }
         vars.values.insert(
             "ansible_loop_var".into(),

@@ -7,3 +7,4 @@ runs:
   - args: [-i, inv.ini, rescue.yml]
   - args: [-i, inv.ini, ignore-errors-play.yml]
   - args: [-i, inv.ini, register.yml]
+  - args: [-i, inv.ini, rescue-block.yml]

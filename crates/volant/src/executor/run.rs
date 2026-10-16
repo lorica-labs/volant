@@ -910,6 +910,71 @@ fn unevaluable(mut result: TaskResult, condition: &str, err: &TemplateError) -> 
     result
 }
 
+/// Whether the loop ends after this item: every `break_when` condition holds against the item's
+/// variables with the result under the registered name, the way the reference evaluates it
+/// right after the item. A condition that cannot be evaluated fails the item instead, and the
+/// loop ends there too.
+pub(super) fn break_after(
+    task: &PlayTask,
+    item: &Item,
+    result: &mut TaskResult,
+    templar: &Templar,
+) -> bool {
+    if task.break_when.is_empty() {
+        return false;
+    }
+    let mut vars = item.vars.clone();
+    if let Some(name) = &task.register {
+        // What the host returned: data, never templated again.
+        vars.insert_untrusted(name.clone(), Value::Object(result.0.clone()));
+    }
+    for condition in &task.break_when {
+        match templar.condition(condition, &vars) {
+            Ok(true) => {}
+            Ok(false) => return false,
+            Err(err) => {
+                *result = unevaluable(std::mem::take(result), "break", &err);
+                return true;
+            }
+        }
+    }
+    true
+}
+
+/// Walks the items `from` up to `upto` and says which one `break_when` ends the loop at, if any,
+/// and how many items it passed without one. A skipped item counts, as in the reference; an item
+/// that never ran has no result and is passed. The reference pauses after every item that does
+/// not end the loop and has another behind it, so the caller owes one pause per item passed,
+/// less one when `upto` is the end of the loop.
+pub(super) fn broke_before(
+    task: &PlayTask,
+    items: &[Item],
+    received: &mut [Option<TaskResult>],
+    from: &mut usize,
+    upto: usize,
+    templar: &Templar,
+) -> (Option<usize>, usize) {
+    let mut passed = 0;
+    while *from < upto {
+        let ii = *from;
+        *from += 1;
+        let mut result = match (&items[ii].skipped, &received[ii]) {
+            (Some(s), _) => s.clone(),
+            (None, Some(r)) => r.clone(),
+            (None, None) => {
+                passed += 1;
+                continue;
+            }
+        };
+        if break_after(task, &items[ii], &mut result, templar) {
+            received[ii] = Some(result);
+            return (Some(ii), passed);
+        }
+        passed += 1;
+    }
+    (None, passed)
+}
+
 /// The variables `changed_when`, `failed_when` and `until` read for one result: the item's, with
 /// the facts the result returned laid over them, then the registered name and `result`.
 ///
@@ -6586,6 +6651,32 @@ mod tests {
             panic!("a passing run ends the loop");
         };
         assert_eq!(r.0["attempts"], json!(1));
+    }
+
+    /// `break_when` reads the registered result, holds only when every condition does, and an
+    /// undefined name fails the item and ends the loop.
+    #[test]
+    fn break_when_reads_the_result_and_fails_on_an_unevaluable_condition() {
+        let mut t = task("command");
+        t.register = Some("r".into());
+        let item = bare_item();
+        let templar = Templar::new(PathBuf::from("."));
+        let rc = || TaskResult(vars(json!({"stdout": "2", "changed": false})));
+        for (conditions, breaks) in [
+            (vec!["r.stdout == '2'"], true),
+            (vec!["r.stdout == '2'", "r.stdout == '3'"], false),
+            (vec!["r.stdout == '3'"], false),
+        ] {
+            t.break_when = conditions.iter().map(ToString::to_string).collect();
+            let mut result = rc();
+            assert_eq!(break_after(&t, &item, &mut result, &templar), breaks);
+            assert!(!result.failed(), "{result:?}");
+        }
+        t.break_when = vec!["nosuch == 1".into()];
+        let mut result = rc();
+        assert!(break_after(&t, &item, &mut result, &templar));
+        assert!(result.failed(), "{result:?}");
+        assert!(result.0.contains_key("break_when_result"), "{result:?}");
     }
 
     /// `attempts` is on the result before `changed_when` and `failed_when` read it, and still on

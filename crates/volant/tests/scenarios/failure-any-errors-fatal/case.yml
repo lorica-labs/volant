@@ -8,3 +8,4 @@ runs:
   - args: [-i, inv.ini, task-rescue.yml]
   - args: [-i, inv.ini, block.yml]
   - args: [-i, unreach.ini, unreachable.yml]
+  - args: [-i, unreach.ini, unreachable-ignore-errors.yml]

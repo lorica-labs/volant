@@ -1,0 +1,3 @@
+# index_var counts from 0, extended adds ansible_loop without previtem on the first item or
+# nextitem on the last, extended_allitems: false drops allitems, and pause waits between items.
+args: [loop-control-extended.yml]

@@ -1203,7 +1203,7 @@ pub(super) async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Remote(items, escalation, delegate, payload, action)) => {
+                Ok(Prepared::Remote(items, escalation, delegate, payload, action, connect)) => {
                     // A different target user is a different agent on the host, a different
                     // delegate is a different host entirely, and a different connection is a
                     // different machine even under one name, so any of the three ends the batch
@@ -1220,8 +1220,9 @@ pub(super) async fn drive_host(
                     let target_vars = running_host_vars(delegate.as_ref(), &items);
                     // The host's own map is enough here: every connection setting is a name a
                     // gather strips, so none of them is ever in the facts layer beside it.
+                    let vars = &target_vars.map;
                     let transport =
-                        match Transport::for_vars(&target, &target_vars.map, &options.defaults) {
+                        match Transport::for_task(&target, vars, &options.defaults, &connect) {
                             Ok(transport) => transport.shared(
                                 options.control_dir.as_deref(),
                                 &name,

@@ -21,6 +21,7 @@ fn agent_path() -> PathBuf {
 fn defaults() -> ConnectionDefaults {
     ConnectionDefaults {
         remote_user: None,
+        connection: None,
         private_key: None,
         host_key_checking: true,
         remote_tmp: "~/.ansible/tmp".to_string(),

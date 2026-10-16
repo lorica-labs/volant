@@ -11,12 +11,12 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 20 | 1 | 20 | 0 |
-| keyword (block) | 18 | 1 | 12 | 0 |
-| keyword (task) | 48 | 1 | 17 | 0 |
+| keyword (play) | 23 | 1 | 17 | 0 |
+| keyword (block) | 21 | 1 | 9 | 0 |
+| keyword (task) | 53 | 1 | 12 | 0 |
 | keyword (loop_control) | 2 | 0 | 5 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
-| ansible-playbook option | 17 | 3 | 18 | 0 |
+| ansible-playbook option | 18 | 3 | 17 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
 | module | 62 | 0 | 9 | 0 |
 | action plugin | 19 | 0 | 9 | 0 |
@@ -49,7 +49,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
 | `collections` | <span class="kw kw-notyet">not yet</span> |  |
-| `connection` | <span class="kw kw-notyet">not yet</span> |  |
+| `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-notyet">not yet</span> |  |
 | `diff` | <span class="kw kw-notyet">not yet</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
@@ -67,10 +67,10 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `name` | <span class="kw kw-runs">runs</span> |  |
 | `no_log` | <span class="kw kw-runs">runs</span> |  |
 | `order` | <span class="kw kw-notyet">not yet</span> |  |
-| `port` | <span class="kw kw-notyet">not yet</span> |  |
+| `port` | <span class="kw kw-runs">runs</span> |  |
 | `post_tasks` | <span class="kw kw-runs">runs</span> |  |
 | `pre_tasks` | <span class="kw kw-runs">runs</span> |  |
-| `remote_user` | <span class="kw kw-notyet">not yet</span> |  |
+| `remote_user` | <span class="kw kw-runs">runs</span> |  |
 | `roles` | <span class="kw kw-runs">runs</span> |  |
 | `run_once` | <span class="kw kw-runs">runs</span> |  |
 | `serial` | <span class="kw kw-runs">runs</span> |  |
@@ -97,7 +97,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `block` | <span class="kw kw-runs">runs</span> |  |
 | `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
 | `collections` | <span class="kw kw-notyet">not yet</span> |  |
-| `connection` | <span class="kw kw-notyet">not yet</span> |  |
+| `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-notyet">not yet</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
@@ -109,8 +109,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `name` | <span class="kw kw-runs">runs</span> |  |
 | `no_log` | <span class="kw kw-runs">runs</span> |  |
 | `notify` | <span class="kw kw-runs">runs</span> |  |
-| `port` | <span class="kw kw-notyet">not yet</span> |  |
-| `remote_user` | <span class="kw kw-notyet">not yet</span> |  |
+| `port` | <span class="kw kw-runs">runs</span> |  |
+| `remote_user` | <span class="kw kw-runs">runs</span> |  |
 | `rescue` | <span class="kw kw-runs">runs</span> |  |
 | `run_once` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
@@ -123,7 +123,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `action` | <span class="kw kw-notyet">not yet</span> |  |
+| `action` | <span class="kw kw-runs">runs</span> |  |
 | `any_errors_fatal` | <span class="kw kw-notyet">not yet</span> |  |
 | `args` | <span class="kw kw-runs">runs</span> |  |
 | `async` | <span class="kw kw-notyet">not yet</span> |  |
@@ -135,7 +135,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `changed_when` | <span class="kw kw-runs">runs</span> |  |
 | `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
 | `collections` | <span class="kw kw-notyet">not yet</span> |  |
-| `connection` | <span class="kw kw-notyet">not yet</span> |  |
+| `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-notyet">not yet</span> |  |
 | `delay` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
@@ -145,7 +145,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `failed_when` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_unreachable` | <span class="kw kw-notyet">not yet</span> |  |
-| `local_action` | <span class="kw kw-notyet">not yet</span> |  |
+| `local_action` | <span class="kw kw-runs">runs</span> |  |
 | `loop` | <span class="kw kw-runs">runs</span> |  |
 | `loop_control` | <span class="kw kw-runs">runs</span> |  |
 | `module_defaults` | <span class="kw kw-notyet">not yet</span> |  |
@@ -153,9 +153,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `no_log` | <span class="kw kw-runs">runs</span> |  |
 | `notify` | <span class="kw kw-runs">runs</span> |  |
 | `poll` | <span class="kw kw-notyet">not yet</span> |  |
-| `port` | <span class="kw kw-notyet">not yet</span> |  |
+| `port` | <span class="kw kw-runs">runs</span> |  |
 | `register` | <span class="kw kw-runs">runs</span> |  |
-| `remote_user` | <span class="kw kw-notyet">not yet</span> |  |
+| `remote_user` | <span class="kw kw-runs">runs</span> |  |
 | `retries` | <span class="kw kw-runs">runs</span> |  |
 | `run_once` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
@@ -229,7 +229,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `--become-pass-file, --become-password-file` | <span class="kw kw-notyet">not yet</span> |  |
 | `--become-user` | <span class="kw kw-runs">runs</span> |  |
 | `-C, --check` | <span class="kw kw-notyet">not yet</span> |  |
-| `-c, --connection` | <span class="kw kw-notyet">not yet</span> |  |
+| `-c, --connection` | <span class="kw kw-runs">runs</span> |  |
 | `--conn-pass-file, --connection-password-file` | <span class="kw kw-notyet">not yet</span> |  |
 | `-D, --diff` | <span class="kw kw-notyet">not yet</span> |  |
 | `-e, --extra-vars` | <span class="kw kw-runs">runs</span> |  |

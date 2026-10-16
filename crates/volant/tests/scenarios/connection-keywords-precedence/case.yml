@@ -1,0 +1,4 @@
+# A host variable beats the keywords; a task beats its play; an unknown plugin fails the host's task.
+runs:
+  - args: [-i, inv.ini, host-variable.yml]
+  - args: [-i, inv.ini, task-over-play.yml]

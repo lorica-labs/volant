@@ -678,7 +678,6 @@ mod tests {
     #[case::async_(task_play("      command: echo hi\n      async: x\n"), &["keyword 'async' is not supported yet", "play 1", "'T'"])]
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
     #[case::poll(task_play("      command: echo hi\n      poll: x\n"), &["keyword 'poll' is not supported yet", "play 1", "'T'"])]
-    #[case::remote_user(task_play("      command: echo hi\n      remote_user: x\n"), &["keyword 'remote_user' is not supported yet", "play 1", "'T'"])]
     #[case::throttle(task_play("      command: echo hi\n      throttle: x\n"), &["keyword 'throttle' is not supported yet", "play 1", "'T'"])]
     #[case::play_any_errors_fatal("- hosts: all\n  any_errors_fatal: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'any_errors_fatal' is not supported yet"])]
     #[case::play_vars_prompt("- hosts: all\n  vars_prompt: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'vars_prompt' is not supported yet"])]
@@ -1039,7 +1038,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            54,
+            43,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

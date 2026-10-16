@@ -1,0 +1,4 @@
+# An action statement the reference refuses at load, exit 4, nothing on stdout.
+runs:
+  - args: [two-actions.yml]
+  - args: [no-module.yml]

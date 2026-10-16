@@ -37,6 +37,8 @@ Volant reads these per host, from the inventory or from any other variable sourc
 | `ansible_become_method` | Must be `sudo` |
 | `ansible_become_password`, `ansible_become_pass` | Escalation password |
 
+`remote_user`, `port` and `connection` also work as keywords on a play, a block and a task, and `-c` sets the connection for hosts that name none. The order is the one Ansible uses: a host variable such as `ansible_user` wins, then the task, the block and the play, then the command line and `ansible.cfg`. Facts a host reports about itself never choose its user, port or connection.
+
 An unbalanced quote in `ansible_ssh_common_args` or `ansible_ssh_extra_args` fails the host instead of being dropped. That matters behind a bastion: silently discarding a `ProxyCommand` would connect straight to an address that may belong to a different machine.
 
 The `ansible.cfg` settings that affect connections, such as `timeout`, `remote_user`, `host_key_checking` and `forks`, are listed in [Configuration](/reference/configuration/).

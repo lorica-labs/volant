@@ -1099,8 +1099,9 @@ pub(super) fn registered_value(task: &PlayTask, results: &[(Option<Value>, TaskR
 ///
 /// A keyword this release parks reads `null` here rather than the reference's default. The
 /// default would describe something nothing in this engine honours, and a rescue reading
-/// `ansible_failed_task.connection` is better told nothing than told `ssh` by an engine that
-/// never looked at the keyword.
+/// `ansible_failed_task.diff` is better told nothing than told `false` by an engine that
+/// never looked at the keyword. `connection`, `port` and `remote_user` read what the task, its
+/// block or its play wrote, and `null` when none did.
 ///
 /// `become_method` is not one of those: this release honours it. It reads `null` here anyway
 /// because its resolved value lives with the host's variables, not on `PlayTask`, and this
@@ -1118,6 +1119,7 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
             "become" => json!(task.r#become),
             "become_user" => json!(task.become_user),
             "changed_when" => strings(&task.changed_when),
+            "connection" => json!(task.connect.connection),
             "failed_when" => strings(&task.failed_when),
             "ignore_errors" => match &task.ignore_errors {
                 Some(crate::playbook::Flag::Fixed(b)) => json!(b),
@@ -1127,7 +1129,14 @@ pub(super) fn failed_task_value(task: &PlayTask) -> Value {
             "loop" => task.loop_items.clone().unwrap_or(Value::Null),
             "loop_control" => json!({"loop_var": task.loop_var, "label": task.loop_label}),
             "name" => json!(task.name),
+            "port" => match &task.connect.port {
+                Some(port) => port
+                    .parse::<u16>()
+                    .map_or_else(|_| json!(port), |n| json!(n)),
+                None => Value::Null,
+            },
             "register" => json!(task.register),
+            "remote_user" => json!(task.connect.remote_user),
             "tags" => strings(&task.tags),
             "timeout" => json!(task.timeout),
             "vars" => Value::Object(task.vars.clone()),
@@ -3885,6 +3894,7 @@ mod tests {
         task.when = vec!["true".to_string()];
         task.tags = vec!["t1".to_string()];
         task.vars = vars(json!({"v": 1}));
+        task.connect.port = Some("22".to_string());
         let value = failed_task_value(&task);
         let object = value.as_object().expect("an object");
         assert_eq!(object.len(), 40, "{value}");
@@ -3916,10 +3926,11 @@ mod tests {
             object["loop_control"],
             json!({"loop_var": "item", "label": null})
         );
+        assert_eq!(object["port"], json!(22));
         assert_eq!(
             object["connection"],
             Value::Null,
-            "a keyword nothing here honours says nothing rather than the reference's default"
+            "a keyword nobody wrote says nothing rather than the reference's default"
         );
     }
 
@@ -7329,6 +7340,7 @@ mod tests {
             let v = store.for_host("h1", &crate::vars::Scope::default());
             let defaults = ConnectionDefaults {
                 remote_user: None,
+                connection: None,
                 private_key: None,
                 host_key_checking: true,
                 remote_tmp: "~/.ansible/tmp".to_string(),
@@ -7451,6 +7463,7 @@ mod tests {
         };
         let defaults = ConnectionDefaults {
             remote_user: None,
+            connection: None,
             private_key: None,
             host_key_checking: true,
             remote_tmp: "~/.ansible/tmp".to_string(),
@@ -7916,6 +7929,7 @@ mod tests {
             };
             let defaults = ConnectionDefaults {
                 remote_user: None,
+                connection: None,
                 private_key: None,
                 host_key_checking: true,
                 remote_tmp: "~/.ansible/tmp".to_string(),
@@ -7948,6 +7962,7 @@ mod tests {
             json!({"ansible_host": "probe-hostname", "ansible_ssh_common_args": "-F /dev/null"});
         let defaults = ConnectionDefaults {
             remote_user: None,
+            connection: None,
             private_key: None,
             host_key_checking: true,
             remote_tmp: "~/.ansible/tmp".to_string(),
@@ -8279,6 +8294,7 @@ mod tests {
         }
         let defaults = ConnectionDefaults {
             remote_user: None,
+            connection: None,
             private_key: None,
             host_key_checking: true,
             remote_tmp: "~/.ansible/tmp".to_string(),

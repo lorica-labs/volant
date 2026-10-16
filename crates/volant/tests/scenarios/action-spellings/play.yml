@@ -1,0 +1,27 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - local_action: command echo a
+      register: a
+    - debug: var=a.stdout
+    - local_action: {module: command, cmd: echo b}
+      register: b
+    - debug: var=b.stdout
+    - action: command echo c
+      register: c
+    - debug: var=c.stdout
+    - action: {module: command, args: {cmd: echo d}}
+      register: d
+    - debug: var=d.stdout
+    - name: named
+      local_action: command echo e
+      register: e
+    - debug: var=e.stdout
+    - local_action: command echo f
+      delegate_to: h1
+      register: f
+    - debug: var=f.stdout
+    - action: command
+      args: {cmd: echo g}
+      register: g
+    - debug: var=g.stdout

@@ -15,7 +15,7 @@ use crate::playbook::{Flag, PlayTask, python_repr};
 use crate::python::ModulePayload;
 use crate::render::ansible_json;
 use crate::template::{Templar, TemplateError};
-use crate::transport::{ConnectionDefaults, Escalation};
+use crate::transport::{ConnectionDefaults, ConnectionKeywords, Escalation};
 use crate::vars::{HostVars, Scope, VarStore, host_setting, omit_token};
 
 use super::as_bool_value;
@@ -315,6 +315,9 @@ pub(super) enum Prepared {
         /// Present when an action plugin this release runs backs the task. Such a task carries
         /// no payload of its own: the sub-tasks the plugin asks for each carry theirs.
         Option<Kind>,
+        /// The task's `remote_user`, `port` and `connection`, rendered: they decide the link
+        /// together with the host's own variables, and a task that differs ends the batch.
+        Box<ConnectionKeywords>,
     ),
 }
 
@@ -579,6 +582,7 @@ pub(super) fn prepare(
     if is_local(&task.module) {
         return Ok(Prepared::Local(items, delegate));
     }
+    let connect = Box::new(connect_for(task, &base, templar)?);
     // A delegate's variables come back merged under the full precedence, like any host's: its
     // connection is decided by `-e ansible_connection=local`, by a `group_vars` file and by the
     // task's own `vars:` exactly as the delegating host's is. Measured on ansible-core 2.19.12:
@@ -615,6 +619,7 @@ pub(super) fn prepare(
             delegate,
             None,
             Some(kind),
+            connect,
         ));
     }
     // The module's half of the payload, when this module is one the run built one for. The
@@ -628,7 +633,47 @@ pub(super) fn prepare(
         .as_ref()
         .and_then(|union| union.payload(&task.module))
         .map(Box::new);
-    Ok(Prepared::Remote(items, escalation, delegate, payload, None))
+    Ok(Prepared::Remote(
+        items, escalation, delegate, payload, None, connect,
+    ))
+}
+
+/// The task's `remote_user`, `port` and `connection`, rendered once for the task against its
+/// variables, for the reason `delegate_for` renders `delegate_to` that way. An empty result is
+/// no keyword, which is what `"{{ maybe | default('') }}"` renders to when nobody asked.
+fn connect_for(
+    task: &PlayTask,
+    vars: &HostVars,
+    templar: &Templar,
+) -> Result<ConnectionKeywords, TemplateError> {
+    let render = |key: &str, raw: &Option<String>| -> Result<Option<String>, TemplateError> {
+        let Some(raw) = raw else {
+            return Ok(None);
+        };
+        let text = if Templar::is_template(raw) {
+            templar
+                .render(raw, vars)
+                .map_err(|err| TemplateError(format!("rendering '{key}' {raw}: {}", err.0)))?
+                .as_str()
+                .map(str::to_string)
+                .ok_or_else(|| TemplateError(format!("'{key}' must render to text: {raw}")))?
+        } else {
+            raw.clone()
+        };
+        Ok(Some(text.trim().to_string()).filter(|text| !text.is_empty()))
+    };
+    let connect = &task.connect;
+    let port = render("port", &connect.port)?
+        .map(|text| {
+            text.parse::<u16>()
+                .map_err(|_| TemplateError(format!("'port' must be a port number, found '{text}'")))
+        })
+        .transpose()?;
+    Ok(ConnectionKeywords {
+        user: render("remote_user", &connect.remote_user)?,
+        port,
+        connection: render("connection", &connect.connection)?,
+    })
 }
 
 /// `delegate_to`, rendered once for the task. An empty name is no delegation, which is what
@@ -1005,7 +1050,7 @@ mod tests {
             )
             .expect("the task renders");
             match prepared {
-                Prepared::Remote(_, _, _, payload, kind) => (payload, kind),
+                Prepared::Remote(_, _, _, payload, kind, _) => (payload, kind),
                 _ => panic!("{module} is a remote task"),
             }
         };
@@ -1079,7 +1124,7 @@ mod tests {
                 &mut Vec::new(),
             )
             .expect("the task renders");
-            let Prepared::Remote(items, _, _, Some(payload), _) = prepared else {
+            let Prepared::Remote(items, _, _, Some(payload), _, _) = prepared else {
                 panic!("{module} is a python task");
             };
             super::super::run::protocol_task(
@@ -1162,7 +1207,7 @@ mod tests {
         Ok(match prepared {
             Prepared::Skipped(items)
             | Prepared::Local(items, _)
-            | Prepared::Remote(items, _, _, _, _) => items,
+            | Prepared::Remote(items, _, _, _, _, _) => items,
         })
     }
 
@@ -1458,7 +1503,7 @@ mod tests {
         let items = match prepared {
             Prepared::Skipped(items)
             | Prepared::Local(items, _)
-            | Prepared::Remote(items, _, _, _, _) => items,
+            | Prepared::Remote(items, _, _, _, _, _) => items,
         };
         let vars = &items[0].vars;
         assert_eq!(vars.map["via_lookup"], json!("{{ 1 + 1 }}"));

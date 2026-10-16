@@ -664,6 +664,18 @@ fn fake_sudo(name: &str, body: &str) -> std::path::PathBuf {
     dir
 }
 
+/// An `ssh` on `PATH` that prints its own command line and fails the way an unreachable host does.
+fn fake_ssh_echoing(name: &str) -> std::path::PathBuf {
+    use std::os::unix::fs::PermissionsExt;
+    let dir = std::env::temp_dir().join(format!("volant-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let ssh = dir.join("ssh");
+    std::fs::write(&ssh, "#!/bin/sh\necho \"fake-ssh $*\" >&2\nexit 255\n").unwrap();
+    std::fs::set_permissions(&ssh, std::fs::Permissions::from_mode(0o755)).unwrap();
+    dir
+}
+
 /// A `python3` on `PATH` with no ansible-core behind it, so a probe that needs the controller to
 /// have none reads the same on a machine that has one.
 fn fake_python3_without_ansible(name: &str) -> std::path::PathBuf {
@@ -2187,6 +2199,94 @@ const BRIDGED_LOOPS: &[&str] = &[
 const RUNS_PROBES: &[RunsProbe] = &[
     runs(
         "task",
+        "remote_user",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      remote_user: probe-user\n",
+        &[],
+        4,
+        "-l probe-user",
+    ),
+    runs(
+        "play",
+        "remote_user",
+        "- hosts: h1\n  gather_facts: false\n  remote_user: probe-user\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+        &[],
+        4,
+        "-l probe-user",
+    ),
+    runs(
+        "block",
+        "remote_user",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      remote_user: probe-user\n",
+        &[],
+        4,
+        "-l probe-user",
+    ),
+    runs(
+        "task",
+        "port",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      port: 2222\n",
+        &[],
+        4,
+        "-p 2222",
+    ),
+    runs(
+        "play",
+        "port",
+        "- hosts: h1\n  gather_facts: false\n  port: 2222\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+        &[],
+        4,
+        "-p 2222",
+    ),
+    runs(
+        "block",
+        "port",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      port: 2222\n",
+        &[],
+        4,
+        "-p 2222",
+    ),
+    runs(
+        "task",
+        "connection",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      connection: local\n",
+        &[],
+        0,
+        "changed: [h1]",
+    ),
+    runs(
+        "play",
+        "connection",
+        "- hosts: h1\n  gather_facts: false\n  connection: local\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+        &[],
+        0,
+        "changed: [h1]",
+    ),
+    runs(
+        "block",
+        "connection",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      connection: local\n",
+        &[],
+        0,
+        "changed: [h1]",
+    ),
+    runs(
+        "task",
+        "action",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      action: command echo hi\n      connection: local\n",
+        &[],
+        0,
+        "changed: [h1]",
+    ),
+    runs(
+        "task",
+        "local_action",
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      local_action: command echo hi\n",
+        &[],
+        0,
+        "changed: [h1 -> localhost]",
+    ),
+    runs(
+        "task",
         "args",
         "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      args:\n        chdir: /nonexistent-volant-probe\n",
         &[],
@@ -3186,6 +3286,7 @@ fn every_runs_keyword_changes_something_observable() {
     let dir = probe_dir("runs");
     let sudo_dir = fake_sudo("runs-become-user", FAKE_SUDO_FOR_BECOME_USER);
     let no_ansible = fake_python3_without_ansible("runs-gather-facts");
+    let ssh_dir = fake_ssh_echoing("runs-connection");
     // The role the `play.roles` row reads, beside the playbook where the reference looks first.
     std::fs::create_dir_all(dir.join("roles/probe_role/tasks")).expect("the probe role is written");
     std::fs::write(
@@ -3224,6 +3325,9 @@ name = vol
         let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
         let path = match (is_become_user_probe(probe), probe.kw) {
             (true, _) => Some(sudo_dir.as_path()),
+            (_, "remote_user" | "port" | "connection" | "action" | "local_action") => {
+                Some(ssh_dir.as_path())
+            }
             (_, "gather_facts") => Some(no_ansible.as_path()),
             _ => None,
         };
@@ -3242,6 +3346,16 @@ name = vol
                 "h1 ansible_connection=local\nh2 ansible_connection=local\n",
             )
             .expect("the probe's inventory is written");
+            args.extend(["-i", inventory.as_str()]);
+        }
+        // The connection rows name `h1`, an address nothing answers: the `ssh` on `PATH` is a stub
+        // that says how it was called and fails, so the run shows which user and port it chose.
+        if matches!(
+            probe.kw,
+            "remote_user" | "port" | "connection" | "action" | "local_action"
+        ) {
+            std::fs::write(&inventory, "h1 ansible_host=probe-host\n")
+                .expect("the probe's inventory is written");
             args.extend(["-i", inventory.as_str()]);
         }
         // These loops read through the controller's Python helper; with no ansible-core to run

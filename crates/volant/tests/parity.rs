@@ -229,6 +229,7 @@ fn test_status(t: &volant::template::Templar, fqcn: &str, short: Option<&str>) -
 fn defaults() -> volant::transport::ConnectionDefaults {
     volant::transport::ConnectionDefaults {
         remote_user: None,
+        connection: None,
         private_key: None,
         host_key_checking: false,
         remote_tmp: "~/.ansible/tmp".into(),

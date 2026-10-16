@@ -66,6 +66,9 @@ pub struct PlaybookArgs {
     /// Log in to remote hosts as this user.
     #[arg(short = 'u', long = "user", value_name = "REMOTE_USER")]
     pub user: Option<String>,
+    /// Connection plugin to use.
+    #[arg(short = 'c', long = "connection", value_name = "CONNECTION")]
+    pub connection: Option<String>,
     /// Private key file for ssh authentication.
     #[arg(long = "private-key", value_name = "PRIVATE_KEY_FILE")]
     pub private_key: Option<PathBuf>,
@@ -375,6 +378,7 @@ async fn run_all(
     }
     let defaults = ConnectionDefaults {
         remote_user: args.user.clone().or(config.remote_user),
+        connection: args.connection.clone(),
         private_key: args.private_key.clone().or(config.private_key_file),
         host_key_checking: config.host_key_checking,
         remote_tmp: config.remote_tmp,

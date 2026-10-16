@@ -14,18 +14,29 @@ use serde_json::Map;
 
 use crate::bridge::{Bridge, BridgeError, PluginKind};
 
-/// Names never sent to the helper. Vault secrets come in a later release (`vault`, `unvault`,
-/// `vault_encrypted`, `vaulted_file`); `inventory_hostnames` and `varnames` read the run's
-/// inventory and variables, which the helper does not have.
-const NOT_SENT: &[(PluginKind, &str)] = &[
-    (PluginKind::Filter, "vault"),
-    (PluginKind::Filter, "unvault"),
-    (PluginKind::Test, "vault_encrypted"),
-    (PluginKind::Test, "vaulted_file"),
-    (PluginKind::Lookup, "unvault"),
-    (PluginKind::Lookup, "inventory_hostnames"),
-    (PluginKind::Lookup, "varnames"),
+/// Names never sent to the helper, with why. Vault secrets come in a later release;
+/// `inventory_hostnames` and `varnames` read the run's inventory and variables, which the helper
+/// does not have.
+const NOT_SENT: &[(PluginKind, &str, &str)] = &[
+    (PluginKind::Filter, "vault", VAULT),
+    (PluginKind::Filter, "unvault", VAULT),
+    (PluginKind::Test, "vault_encrypted", VAULT),
+    (PluginKind::Test, "vaulted_file", VAULT),
+    (PluginKind::Lookup, "unvault", VAULT),
+    (PluginKind::Lookup, "inventory_hostnames", RUN_DATA),
+    (PluginKind::Lookup, "varnames", RUN_DATA),
 ];
+const VAULT: &str = "vault secrets are not supported yet";
+const RUN_DATA: &str =
+    "reads the run's inventory and variables, which the Python helper does not have";
+
+/// Why `name` is never sent to the helper, when it is not.
+pub fn not_sent_reason(kind: PluginKind, name: &str) -> Option<&'static str> {
+    NOT_SENT
+        .iter()
+        .find(|(k, n, _)| *k == kind && *n == short(name))
+        .map(|(_, _, why)| *why)
+}
 
 /// Whether a template's `kind` named `name` runs in the Python helper: the engine has no native
 /// implementation of it, and it is not one of the names the helper is never sent.
@@ -41,7 +52,7 @@ pub fn bridged_name(kind: PluginKind, name: &str) -> bool {
 
 /// Whether `name` may be sent to the helper at all.
 pub(super) fn sendable_name(kind: PluginKind, name: &str) -> bool {
-    !NOT_SENT.contains(&(kind, short(name)))
+    not_sent_reason(kind, name).is_none()
 }
 
 /// `name` without the `ansible.builtin.` or `ansible.legacy.` the reference accepts on its own.

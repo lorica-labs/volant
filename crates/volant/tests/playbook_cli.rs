@@ -1659,10 +1659,6 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
             "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      throttle: probe\n",
         ),
         (
-            "any_errors_fatal",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      block:\n        - command: echo hi\n      any_errors_fatal: probe\n",
-        ),
-        (
             "order",
             "- hosts: localhost\n  gather_facts: false\n  order: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
         ),
@@ -2185,6 +2181,75 @@ const BRIDGED_LOOPS: &[&str] = &[
 /// naming the account, which is a `become_user` that reached it intact, and dropping either
 /// escalation keyword lets the task run as the invoking user and succeed.
 const RUNS_PROBES: &[RunsProbe] = &[
+    // A failure on one host fails every host of the batch: h1 skipped the failing task and never
+    // runs the one behind it, so its recap shows no `ok`. Without the keyword h1 runs it.
+    runs(
+        "task",
+        "any_errors_fatal",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      fail:\n      when: inventory_hostname == 'h2'\n      any_errors_fatal: true\n    - debug: msg=second\n",
+        &[],
+        2,
+        "h1                         : ok=0    changed=0    unreachable=0    failed=0    skipped=1",
+    ),
+    runs(
+        "play",
+        "any_errors_fatal",
+        "- hosts: all\n  gather_facts: false\n  any_errors_fatal: true\n  tasks:\n    - name: Probe task\n      fail:\n      when: inventory_hostname == 'h2'\n    - debug: msg=second\n",
+        &[],
+        2,
+        "h1                         : ok=0    changed=0    unreachable=0    failed=0    skipped=1",
+    ),
+    runs(
+        "block",
+        "any_errors_fatal",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          fail:\n          when: inventory_hostname == 'h2'\n      any_errors_fatal: true\n    - debug: msg=second\n",
+        &[],
+        2,
+        "h1                         : ok=0    changed=0    unreachable=0    failed=0    skipped=1",
+    ),
+    // An unreachable host stays in the play: the line says `...ignoring` and the run exits 0.
+    runs(
+        "task",
+        "ignore_unreachable",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: \"true\"\n      ignore_unreachable: true\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    runs(
+        "play",
+        "ignore_unreachable",
+        "- hosts: all\n  gather_facts: false\n  ignore_unreachable: true\n  tasks:\n    - name: Probe task\n      command: \"true\"\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    runs(
+        "block",
+        "ignore_unreachable",
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: \"true\"\n      ignore_unreachable: true\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    // The play's `ignore_errors` covers a failing task like the task's own.
+    runs(
+        "play",
+        "ignore_errors",
+        "- hosts: localhost\n  gather_facts: false\n  ignore_errors: true\n  tasks:\n    - name: Probe task\n      command: nosuchbinary-volant-probe\n",
+        &[],
+        0,
+        "...ignoring",
+    ),
+    // More failures than the percentage allows end the run, and the reference says so.
+    runs(
+        "play",
+        "max_fail_percentage",
+        "- hosts: all\n  gather_facts: false\n  max_fail_percentage: 0\n  tasks:\n    - name: Probe task\n      fail:\n      when: inventory_hostname == 'h2'\n    - debug: msg=second\n",
+        &[],
+        2,
+        "NO MORE HOSTS LEFT",
+    ),
     runs(
         "task",
         "args",
@@ -3235,11 +3300,25 @@ name = vol
         let inventory = dir.join("serial.inv.ini").display().to_string();
         if matches!(
             probe.kw,
-            "serial" | "run_once" | "delegate_to" | "delegate_facts"
+            "serial"
+                | "run_once"
+                | "delegate_to"
+                | "delegate_facts"
+                | "any_errors_fatal"
+                | "max_fail_percentage"
         ) {
             std::fs::write(
                 &inventory,
                 "h1 ansible_connection=local\nh2 ansible_connection=local\n",
+            )
+            .expect("the probe's inventory is written");
+            args.extend(["-i", inventory.as_str()]);
+        }
+        // Nothing listens on port 1: the second host is the unreachable one, and refuses at once.
+        if probe.kw == "ignore_unreachable" {
+            std::fs::write(
+                &inventory,
+                "h1 ansible_connection=local\nh2 ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=1\n",
             )
             .expect("the probe's inventory is written");
             args.extend(["-i", inventory.as_str()]);

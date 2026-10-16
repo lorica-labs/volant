@@ -72,6 +72,14 @@ pub struct Play {
     pub environment: Vec<Value>,
     pub check_mode: Option<bool>,
     pub run_once: Option<bool>,
+    /// The play's `any_errors_fatal`, `ignore_errors` and `ignore_unreachable`: task keywords a
+    /// play may carry, folded into every task as the outermost layer like `no_log` above.
+    pub any_errors_fatal: Option<bool>,
+    pub ignore_errors: Option<Flag>,
+    pub ignore_unreachable: Option<bool>,
+    /// `max_fail_percentage`, as written: a number, or a template rendered when each batch
+    /// starts. Play-only - a task or a block carrying it is refused at load.
+    pub max_fail_percentage: Option<Value>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. The
     /// loader keeps the play rather than refusing it, so a playbook parses and lists the same
     /// way it does in the reference; the pre-flight then refuses the run before the first
@@ -257,6 +265,11 @@ pub struct PlayTask {
     /// produced. Three-state for the same reason `ignore_errors` is - a block saying `true` and
     /// a task saying `false` inside it have to be told apart from a task that says nothing.
     pub run_once: Option<bool>,
+    /// `any_errors_fatal`: a failure of this task on one host fails every host of the batch.
+    /// `ignore_unreachable`: an unreachable host stays in the play. Both three-state for the
+    /// same reason `ignore_errors` is.
+    pub any_errors_fatal: Option<bool>,
+    pub ignore_unreachable: Option<bool>,
     /// `delegate_to`, raw: the task runs on that host's connection while everything else about
     /// it - `inventory_hostname`, the registered variable, the recap line - stays with the host
     /// it was written for. Kept as written because it is a template rendered per task.
@@ -323,6 +336,8 @@ impl PlayTask {
             environment: Vec::new(),
             check_mode: None,
             run_once: None,
+            any_errors_fatal: None,
+            ignore_unreachable: None,
             delegate_facts: None,
             delegate_to: None,
             unsupported: Vec::new(),
@@ -376,7 +391,20 @@ impl PlayTask {
     /// `keywords::tests::run_once_is_the_only_barrier_keyword`: a second row marked `barrier`
     /// would look declared and be ignored here, and that test refuses one.
     pub fn barrier(&self) -> bool {
-        (self.runs_once() && crate::keywords::is_barrier("run_once")) || self.pauses()
+        (self.runs_once() && crate::keywords::is_barrier("run_once"))
+            || self.pauses()
+            || self.fails_all()
+    }
+
+    /// Whether a failure of this task on one host fails the whole batch. A barrier too: the
+    /// hosts meet in front of it and learn together how it ended.
+    pub fn fails_all(&self) -> bool {
+        self.any_errors_fatal == Some(true)
+    }
+
+    /// Whether an unreachable host stays in the play after this task.
+    pub fn ignores_unreachable(&self) -> bool {
+        self.ignore_unreachable == Some(true)
     }
 }
 
@@ -855,6 +883,13 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         environment: environment(yaml, "")?,
         check_mode: boolean(yaml, "check_mode")?,
         run_once: boolean(yaml, "run_once")?,
+        any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+        ignore_errors: flag(yaml, "ignore_errors")?,
+        ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
+        max_fail_percentage: match field(yaml, "max_fail_percentage") {
+            None | Some(Yaml::Value(Scalar::Null)) => None,
+            Some(v) => Some(to_json(v).context("'max_fail_percentage'")?),
+        },
         unsupported,
     })
 }
@@ -967,6 +1002,8 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             environment: environment(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
             run_once: boolean(yaml, "run_once")?,
+            any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+            ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
             delegate_facts,
             delegate_to,
             unsupported,
@@ -1137,6 +1174,8 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             environment: environment(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
             run_once: boolean(yaml, "run_once")?,
+            any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+            ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
             delegate_facts,
             delegate_to,
             unsupported,
@@ -1359,6 +1398,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         environment: environment(yaml, &context)?,
         check_mode: boolean(yaml, "check_mode")?,
         run_once: boolean(yaml, "run_once")?,
+        any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+        ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
         delegate_facts,
         delegate_to,
         unsupported,

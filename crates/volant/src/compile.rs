@@ -1141,6 +1141,9 @@ pub(crate) fn compile(
         environment: play.environment.clone(),
         check_mode: play.check_mode,
         run_once: play.run_once,
+        any_errors_fatal: play.any_errors_fatal,
+        ignore_errors: play.ignore_errors.clone(),
+        ignore_unreachable: play.ignore_unreachable,
         ..PlayTask::empty()
     };
     // `gather_facts` is the play's own first task and nothing else: the reference's `setup`
@@ -1588,6 +1591,8 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     // Three-state for the same reason, and inherited the same way: `Block.fattributes` carries
     // all three, `Play.fattributes` carries `run_once` alone, and the innermost value wins.
     task.run_once = inner.run_once.or(outer.run_once);
+    task.any_errors_fatal = inner.any_errors_fatal.or(outer.any_errors_fatal);
+    task.ignore_unreachable = inner.ignore_unreachable.or(outer.ignore_unreachable);
     task.delegate_facts = inner.delegate_facts.or(outer.delegate_facts);
     task.delegate_to = inner
         .delegate_to

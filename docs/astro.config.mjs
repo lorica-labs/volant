@@ -106,6 +106,7 @@ export default defineConfig({
             { label: 'Precedence', slug: 'variables/precedence' },
             { label: 'Templating', slug: 'variables/templating' },
             { label: 'Trusted and untrusted values', slug: 'variables/trust' },
+            { label: 'Filters, tests and lookups in Python', slug: 'variables/python-helper' },
             { label: 'Facts', slug: 'variables/facts' },
           ],
         },

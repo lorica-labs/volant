@@ -7,6 +7,7 @@ use std::fmt::Write as _;
 
 use clap::Parser as _;
 use serde_json::Value;
+use volant::bridge::PluginKind;
 use volant::keywords::{self, Support};
 use volant_protocol::modules;
 
@@ -178,6 +179,20 @@ fn keyword_status(k: &keywords::Keyword) -> (Status, String) {
     }
 }
 
+/// What a name the engine has no native implementation of does: it runs in the Python helper,
+/// except the few names the helper is never sent.
+fn bridged(kind: PluginKind, fqcn: &str) -> (Status, &'static str) {
+    if volant::template::bridged_name(kind, fqcn) {
+        return (
+            Status::Runs,
+            "through the Python helper; needs the plugin's Python libraries",
+        );
+    }
+    let why = volant::template::not_sent_reason(kind, fqcn)
+        .expect("a name that is not bridged is one the helper is never sent");
+    (Status::NotYet, why)
+}
+
 /// A filter or test is known when minijinja does not call it unknown. An error about the
 /// probe's input (`'x' | combine`) still means the filter exists.
 fn jinja_known(t: &volant::template::Templar, expr: &str, unknown: &str) -> bool {
@@ -318,38 +333,30 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         rows.push(row("action plugin", &a, s, ""));
     }
     for f in names(&r, &["builtin", "filter"]) {
-        let s = filter_status(&t, &format!("ansible.builtin.{f}"), Some(&f));
-        rows.push(row(
-            "filter",
-            &f,
-            s,
-            if s == Status::Partial {
-                "one spelling only"
-            } else {
-                ""
-            },
-        ));
+        let fqcn = format!("ansible.builtin.{f}");
+        let (s, note) = match filter_status(&t, &fqcn, Some(&f)) {
+            Status::NotYet => bridged(PluginKind::Filter, &fqcn),
+            Status::Partial => (Status::Partial, "one spelling only"),
+            s => (s, ""),
+        };
+        rows.push(row("filter", &f, s, note));
     }
     for f in names(&r, &["builtin", "test"]) {
-        let s = test_status(&t, &format!("ansible.builtin.{f}"), Some(&f));
-        rows.push(row(
-            "test",
-            &f,
-            s,
-            if s == Status::Partial {
-                "one spelling only"
-            } else {
-                ""
-            },
-        ));
+        let fqcn = format!("ansible.builtin.{f}");
+        let (s, note) = match test_status(&t, &fqcn, Some(&f)) {
+            Status::NotYet => bridged(PluginKind::Test, &fqcn),
+            Status::Partial => (Status::Partial, "one spelling only"),
+            s => (s, ""),
+        };
+        rows.push(row("test", &f, s, note));
     }
     for l in names(&r, &["builtin", "lookup"]) {
-        let s = if volant::template::lookup_supported(&l) {
-            Status::Runs
+        let (s, note) = if volant::template::lookup_supported(&l) {
+            (Status::Runs, "")
         } else {
-            Status::NotYet
+            bridged(PluginKind::Lookup, &l)
         };
-        rows.push(row("lookup", &l, s, ""));
+        rows.push(row("lookup", &l, s, note));
     }
     for (category, runs) in [
         (
@@ -405,18 +412,26 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             }
         }
         for f in names(c, &["filter"]) {
-            push("filter", &f, filter_status(&t, &f, None), "");
+            let (s, note) = match filter_status(&t, &f, None) {
+                Status::NotYet => bridged(PluginKind::Filter, &f),
+                s => (s, ""),
+            };
+            push("filter", &f, s, note);
         }
         for x in names(c, &["test"]) {
-            push("test", &x, test_status(&t, &x, None), "");
+            let (s, note) = match test_status(&t, &x, None) {
+                Status::NotYet => bridged(PluginKind::Test, &x),
+                s => (s, ""),
+            };
+            push("test", &x, s, note);
         }
         for l in names(c, &["lookup"]) {
-            let s = if volant::template::lookup_supported(&l) {
-                Status::Runs
+            let (s, note) = if volant::template::lookup_supported(&l) {
+                (Status::Runs, "")
             } else {
-                Status::NotYet
+                bridged(PluginKind::Lookup, &l)
             };
-            push("lookup", &l, s, "");
+            push("lookup", &l, s, note);
         }
     }
     rows

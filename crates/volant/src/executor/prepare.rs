@@ -41,6 +41,10 @@ pub(super) struct PlayPlan {
     /// Whether a host that failed still runs the handlers it notified: the play's own keyword,
     /// or the run's `--force-handlers` when the play says nothing.
     pub(super) force_handlers: bool,
+    /// Whether the hosts meet in front of every step: a play with `max_fail_percentage` decides
+    /// after each task whether the batch goes on, and a host that ran ahead would run a task the
+    /// reference never starts.
+    pub(super) lockstep: bool,
     pub(super) play_vars: Map<String, Value>,
     /// The `vars_files` maps of each host, in the order the play lists the files.
     pub(super) vars_files: HashMap<String, Vec<Map<String, Value>>>,
@@ -1473,6 +1477,7 @@ mod tests {
         PlayPlan {
             plan: watch::channel(Arc::new(Compiled::default())).1,
             force_handlers: false,
+            lockstep: false,
             play_vars: Map::new(),
             vars_files: HashMap::new(),
             all_play_hosts: Vec::new(),

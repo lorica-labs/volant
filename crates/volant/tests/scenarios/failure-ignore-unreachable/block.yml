@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - command: "true"
+        - debug: msg=inblock
+      ignore_unreachable: true
+    - debug: msg=second

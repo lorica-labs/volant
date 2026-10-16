@@ -425,6 +425,12 @@ impl Renderer {
         let _ = writeln!(self.out, "{}", self.paint(OK, &line));
     }
 
+    /// What the reference prints, once from the task and once from the play, when a batch fails
+    /// more hosts than `max_fail_percentage` allows.
+    pub fn no_more_hosts(&mut self) {
+        self.banner("NO MORE HOSTS LEFT");
+    }
+
     pub fn no_hosts(&mut self) {
         let _ = writeln!(
             self.out,

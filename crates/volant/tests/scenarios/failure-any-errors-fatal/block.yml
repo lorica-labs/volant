@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - block:
+        - fail:
+          when: inventory_hostname == 'h3'
+        - debug: msg=inblock
+      any_errors_fatal: true
+    - debug: msg=after

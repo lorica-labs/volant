@@ -28,7 +28,7 @@ mod lookups;
 mod tests;
 mod yaml_dump;
 
-pub use bridged::bridged_name;
+pub use bridged::{bridged_name, not_sent_reason};
 pub use file::FileRender;
 pub use lookups::supported as lookup_supported;
 

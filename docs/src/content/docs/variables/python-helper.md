@@ -7,11 +7,15 @@ Volant implements the common filters, tests and lookups in Rust. Every other one
 
 ## What needs the helper
 
-A name needs the helper when Volant has no Rust version of it. The [parity page](/reference/parity/) marks those rows `runs` with the note "through the Python helper". Examples are `hash`, `password_hash`, `json_query`, `ipaddr`, `random`, and the `lines`, `url` and `community.general` lookups.
+A name needs the helper when Volant has no Rust version of it. The [parity page](/reference/parity/) marks those rows `runs` with the note "through the Python helper; needs the plugin's Python libraries". Examples are the `hash`, `password_hash`, `json_query` and `ipaddr` filters, and the `lines` and `url` lookups.
 
 A name with a Rust version never reaches the helper, whatever it is called. `ansible.utils.ipwrap` stays in Rust.
 
 A play that uses only Rust filters, tests and lookups never starts Python for templating. The helper starts on the first bridged call and then serves the rest of the run.
+
+A bridged plugin also needs what it imports. `json_query` needs `jmespath` and `ipaddr` needs `netaddr`, and a collection's plugin needs that collection, all installed for the interpreter the helper runs under. Without them the task fails with the plugin's own message.
+
+The helper takes about 0.55 s to start. A run pays that once, on its first bridged call, measured with `hash`.
 
 ## What the helper receives
 
@@ -21,7 +25,7 @@ Volant renders every argument first and sends the result as data. The helper doe
 
 The helper is the same Python 3 with `ansible-core` that builds module payloads. Volant uses `VOLANT_PYTHON` when it is set, and nothing else. Otherwise it tries the active virtual environment, then `python3` on your `PATH`.
 
-An interpreter without `ansible-core` is refused by name, and the message says which interpreters were tried. A task that calls a bridged name fails with `the Python helper could not start`, followed by the reason, and the run exits non-zero.
+An interpreter without `ansible-core` is refused by name, and the message says which interpreters were tried. A task that calls a bridged name fails with a message such as `filter 'hash' needs the Python helper, which could not start: …`, followed by the reason, and the run exits non-zero.
 
 ## Failures
 

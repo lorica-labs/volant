@@ -183,9 +183,14 @@ fn keyword_status(k: &keywords::Keyword) -> (Status, String) {
 /// except the few names the helper is never sent.
 fn bridged(kind: PluginKind, fqcn: &str) -> (Status, &'static str) {
     if volant::template::bridged_name(kind, fqcn) {
-        return (Status::Runs, "through the Python helper");
+        return (
+            Status::Runs,
+            "through the Python helper; needs the plugin's Python libraries",
+        );
     }
-    (Status::NotYet, "vault secrets are not supported yet")
+    let why = volant::template::not_sent_reason(kind, fqcn)
+        .expect("a name that is not bridged is one the helper is never sent");
+    (Status::NotYet, why)
 }
 
 /// A filter or test is known when minijinja does not call it unknown. An error about the

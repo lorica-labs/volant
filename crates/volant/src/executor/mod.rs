@@ -165,6 +165,8 @@ impl Abort {
 pub struct LinkKey {
     pub host: String,
     pub become_user: Option<String>,
+    /// The program, method and flags of an escalated link; see `EscalationProgram`.
+    pub become_program: Option<crate::transport::EscalationProgram>,
     pub transport: Transport,
 }
 

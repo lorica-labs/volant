@@ -2404,6 +2404,10 @@ pub(super) trait AgentChannel {
     fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
         None
     }
+    /// Where to look for what a stopped agent said; see `AgentLink::stderr_note`.
+    fn stderr_note(&self) -> String {
+        String::new()
+    }
 }
 
 /// How a plugin that expects its host to go away gets a link to it again.
@@ -2501,6 +2505,10 @@ impl AgentChannel for AgentLink {
 
     fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {
         Some(self.ledger())
+    }
+
+    fn stderr_note(&self) -> String {
+        AgentLink::stderr_note(self)
     }
 }
 
@@ -2856,7 +2864,12 @@ async fn send_batch<C: AgentChannel>(
             // the caller decides for the whole batch.
             Ok(Some(FromAgent::Log { message, .. })) => logs.push(format!("[{host}] {message}")),
             Ok(Some(FromAgent::Ready { .. } | FromAgent::BlobState { .. })) => {}
-            Ok(None) => break Err("agent stopped before the batch finished".to_string()),
+            Ok(None) => {
+                break Err(format!(
+                    "agent stopped before the batch finished{}",
+                    link.stderr_note()
+                ));
+            }
             Err(err) => break Err(format!("reading from the agent: {err}")),
         }
     };
@@ -8195,6 +8208,7 @@ mod tests {
         let key = |become_user: Option<&str>| LinkKey {
             host: "h1".to_string(),
             become_user: become_user.map(str::to_string),
+            become_program: None,
             transport: transport.clone(),
         };
         let (escalated, plain) = (key(Some("root")), key(None));
@@ -8247,6 +8261,7 @@ mod tests {
         let key = |become_user: Option<&str>| LinkKey {
             host: "h1".to_string(),
             become_user: become_user.map(str::to_string),
+            become_program: None,
             transport: transport.clone(),
         };
         let (escalated, plain) = (key(Some("root")), key(None));
@@ -8438,6 +8453,7 @@ mod tests {
         LinkKey {
             host: host.to_string(),
             become_user: user.map(str::to_string),
+            become_program: None,
             transport: Transport::Local,
         }
     }

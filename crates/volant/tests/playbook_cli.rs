@@ -714,9 +714,8 @@ fn fake_su_host(name: &str) -> std::path::PathBuf {
     dir
 }
 
-/// `become_method: su` through [`fake_su_host`]: the password answers the prompt and never
-/// reaches a command line; a wrong one and a missing one end as the reference ends them, and so
-/// does a `su` that never prompts (`-T 1`, so its timeout is 3 seconds).
+/// `su` through [`fake_su_host`]: the password answers the prompt, off every command line; a wrong,
+/// a missing one and a silent `su` end as the reference ends them (`-T 1`: a 3-second timeout).
 #[rstest]
 #[case::the_password(Some("s3cret-su"), false, 0, "changed: [box]")]
 #[case::a_wrong_password(

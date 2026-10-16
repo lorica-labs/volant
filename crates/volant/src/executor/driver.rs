@@ -1447,11 +1447,13 @@ pub(super) async fn drive_host(
             let key = LinkKey {
                 host: target,
                 become_user: batch_escalation.as_ref().map(|e| e.user.clone()),
+                become_program: batch_escalation.as_ref().map(Escalation::program),
                 transport,
             };
             // One escalated link at a time, now that they are no longer released at every
             // barrier: a batch escalating differently from the one in hand - another
-            // `become_user`, another transport - retires the one it is replacing rather than
+            // `become_user`, another escalation program or flags, another transport - retires the
+            // one it is replacing rather than
             // adding to it. So a host holds its own link plus at most one escalated link
             // whatever the number of users the play names, which is what the run was measured
             // for. Closed off-task: `shutdown` grants its agent two seconds and this batch has
@@ -1491,11 +1493,17 @@ pub(super) async fn drive_host(
                     let index = batch[0].0;
                     let mut task = c.steps[index].task.clone();
                     task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    // The reference raises these from its connection, so the task's result is
-                    // `changed: false` and a `msg` that already says `Task failed: `, measured
-                    // for `Incorrect su password` (scout case `c5w`).
-                    let mut refused = TaskResult::failed_with(crate::render::task_failed(&msg));
-                    refused.0.insert("changed".into(), Value::Bool(false));
+                    // Measured for `Incorrect su password` (scout case `c5w`): the reference
+                    // raises it from its connection, so the result is `changed: false` and a
+                    // `msg` that already says `Task failed: `. The other refusals keep their shape
+                    // until they are measured too.
+                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD {
+                        let mut shaped = TaskResult::failed_with(crate::render::task_failed(&msg));
+                        shaped.0.insert("changed".into(), Value::Bool(false));
+                        shaped
+                    } else {
+                        TaskResult::failed_with(msg)
+                    };
                     let results = vec![(None, refused)];
                     let rescuable = !handlers_only && rescue_target(&c, index).is_some();
                     let result = report_task(

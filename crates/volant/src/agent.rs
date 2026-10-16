@@ -173,6 +173,8 @@ pub struct AgentLink {
     /// stdin then reaches nobody, so the link ends by stopping `ssh`, whose hangup is the end
     /// of input the agent stops on.
     tty: bool,
+    /// Where, on the host, the agent's stderr goes when it cannot share the link's stream.
+    stderr_file: Option<String>,
 }
 
 /// A blob as it goes on the wire in the frame after its `put_blob`.
@@ -339,15 +341,26 @@ impl AgentLink {
             natives: Vec::new(),
             ledger: crate::profile::Ledger::default(),
             tty: false,
+            stderr_file: None,
         })
     }
 
     /// The same, for an agent whose stdin and stdout are a remote terminal that `ssh -tt`
-    /// carries; see the `tty` field.
-    pub fn new_over_tty(child: Child) -> anyhow::Result<Self> {
+    /// carries (see the `tty` field), and whose stderr is `stderr_file` on the host.
+    pub fn new_over_tty(child: Child, stderr_file: String) -> anyhow::Result<Self> {
         let mut link = Self::new(child)?;
         link.tty = true;
+        link.stderr_file = Some(stderr_file);
         Ok(link)
+    }
+
+    /// Where to look for what an agent that stopped said, for a message about it: empty when
+    /// its stderr reached the controller's own.
+    pub fn stderr_note(&self) -> String {
+        self.stderr_file
+            .as_ref()
+            .map(|file| format!(" (its stderr is in {file} on the host)"))
+            .unwrap_or_default()
     }
 
     /// The same, having first written `preamble` to the child's stdin unframed. That is how a

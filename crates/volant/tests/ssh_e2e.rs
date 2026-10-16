@@ -445,10 +445,8 @@ fn ssh_become_over_ssh() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `become_method: su` through a real terminal to a throwaway account whose password the test
-/// sets: the right one runs the task as that account, a wrong one is the reference's
-/// `Incorrect su password`, none is its timeout (`-T 1` there, so 3 seconds). The default
-/// `~/.ansible/tmp` is used, so the agent is cached in the account's own home.
+/// Real `su` to a throwaway account: the right password runs the task as it, a wrong one is
+/// `Incorrect su password`, none is the timeout; the agent is cached in the account's home.
 #[rstest]
 #[case::the_password(Some(true), 0)]
 #[case::a_wrong_password(Some(false), 2)]

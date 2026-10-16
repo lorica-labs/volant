@@ -62,7 +62,7 @@ impl std::fmt::Debug for ConnectionDefaults {
 }
 
 /// The escalation programs this release drives, by the name a playbook gives them.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(Clone, Copy, PartialEq, Eq, Hash, Debug)]
 pub enum BecomeMethod {
     Sudo,
     Su,
@@ -89,6 +89,28 @@ pub struct Escalation {
     pub exe: Vec<String>,
     /// `become_flags`, split into shell words; `None` keeps the method's own default.
     pub flags: Option<Vec<String>>,
+}
+
+/// How a link escalates, less the user and the password: two links to one user through
+/// different programs or flags are different agents, started under different rules. The
+/// password is left out on purpose, so a password that changes in the middle of a play keeps
+/// the link it already has, the escalation it proved being the same.
+#[derive(Clone, Debug, PartialEq, Eq, Hash)]
+pub struct EscalationProgram {
+    pub method: BecomeMethod,
+    pub exe: Vec<String>,
+    pub flags: Option<Vec<String>>,
+}
+
+impl Escalation {
+    /// What of this escalation keys its link, beside the user.
+    pub fn program(&self) -> EscalationProgram {
+        EscalationProgram {
+            method: self.method,
+            exe: self.exe.clone(),
+            flags: self.flags.clone(),
+        }
+    }
 }
 
 /// Also written by hand, and for the same reason: `Escalation` travels through the executor,
@@ -539,10 +561,24 @@ fn preparing_for(err: ConnectError, escalation: Option<&Escalation>) -> ConnectE
 }
 
 /// The line the command behind `su` prints once `su` has let it in and its terminal is raw:
-/// everything before it is `su` talking, everything after it is the command's own.
-const BECOME_SUCCESS: &str = "VOLANT-BECOME-SUCCESS";
+/// everything before it is `su` talking, everything after it is the command's own. A fresh one
+/// for every `su`, like the reference's `BECOME-SUCCESS-<random>`, so nothing printed before
+/// `su` lets the command in can pass for it.
+fn become_success() -> String {
+    static COUNT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    let seed = format!(
+        "{:?} {} {}",
+        std::time::SystemTime::now(),
+        std::process::id(),
+        COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed)
+    );
+    format!(
+        "VOLANT-BECOME-SUCCESS-{}",
+        &blake3::hash(seed.as_bytes()).to_hex()[..32]
+    )
+}
 
-/// The most `su` may print before [`BECOME_SUCCESS`]: a prompt and a refusal are a few dozen
+/// The most `su` may print before its success line: a prompt and a refusal are a few dozen
 /// bytes, and something printing without end is not `su` asking for anything.
 const SU_TALK_LIMIT: usize = 4096;
 
@@ -599,10 +635,10 @@ fn su_prompt() -> &'static regex::Regex {
 ///
 /// Before `command`, the shell `su` started makes its terminal raw: the agent's frames are
 /// binary, and a terminal left as it is would echo them, turn their carriage returns into new
-/// lines and read some of their bytes as signals. Only then does it print [`BECOME_SUCCESS`],
-/// so nothing is sent before the terminal is ready for it.
-fn su_command(escalation: &Escalation, command: &str) -> String {
-    let inner = format!("stty raw -echo -iexten || exit 1; echo {BECOME_SUCCESS}; {command}");
+/// lines and read some of their bytes as signals. Only then does it print `success` (see
+/// [`become_success`]), so nothing is sent before the terminal is ready for it.
+fn su_command(escalation: &Escalation, command: &str, success: &str) -> String {
+    let inner = format!("stty raw -echo -iexten || exit 1; echo {success}; {command}");
     let program = if escalation.exe.is_empty() {
         vec!["su".to_string()]
     } else {
@@ -626,14 +662,19 @@ fn su_command(escalation: &Escalation, command: &str) -> String {
 /// failure` line is the wrong password. Without a password no prompt is answered, so `su` waits
 /// and the link times out, which is what the reference reports too.
 ///
-/// Reads one byte at a time, so nothing the command prints after [`BECOME_SUCCESS`] is taken
-/// off the stream. `Ok(None)` is the command running; `Ok(Some(said))` is the stream ending
-/// before it did, with what `su` had said, for the caller to tell a dead connection from a
-/// refusal by the exit code.
+/// `success` is taken before any prompt as well, as the reference takes it: a connecting user
+/// who is already root, or a PAM that lets this one in, gets no prompt at all. Being fresh for
+/// every `su`, it can only come from the shell `su` started.
+///
+/// Reads one byte at a time, so nothing the command prints after `success` is taken off the
+/// stream. `Ok(None)` is the command running; `Ok(Some(said))` is the stream ending before it
+/// did, with what `su` had said, for the caller to tell a dead connection from a refusal by the
+/// exit code.
 async fn su_exchange<R, W>(
     out: &mut R,
     input: &mut W,
     password: Option<&str>,
+    success: &str,
     timeout: Duration,
 ) -> Result<Option<String>, ConnectError>
 where
@@ -673,7 +714,7 @@ where
             // Ends with rather than equals: util-linux 2.41's `su` opens the session with an
             // `OSC 3008` context sequence that has no line end of its own, measured on the
             // development machine, and the reference too looks for the marker within the line.
-            if complete.trim_end().ends_with(BECOME_SUCCESS) {
+            if complete.trim_end().ends_with(success) {
                 return Ok(None);
             }
             if complete.contains("Authentication failure") {
@@ -1283,8 +1324,9 @@ impl SshTarget {
 
     /// Reads the agent from stdin into the cache, atomically, after checking free space. It
     /// reads the byte count it was told rather than up to the end of its input, because behind
-    /// `su` that input is a terminal, where no end ever comes. The
-    /// byte count is verified before the temporary copy is made executable and renamed, so a
+    /// `su` that input is a terminal, where no end ever comes; `head -c` has that on every host
+    /// an agent is built for (GNU coreutils, BusyBox and toybox alike). The byte count is
+    /// verified before the temporary copy is made executable and renamed, so a
     /// transfer cut short never lands under the final name; older cached versions are removed
     /// afterwards, and failing to remove one does not fail an upload that has already landed.
     /// The temporary name carries the remote shell's pid, so two uploads racing on one host
@@ -1477,14 +1519,16 @@ impl SshTarget {
         self.bootstrap(agents, RunAs::Su(escalation), Some(probe))
             .await
             .map_err(|err| preparing_for(err, Some(escalation)))?;
-        // `HUP` is ignored, and stays ignored through the `exec`, so the agent reads the hangup
-        // that ends this link as the end of its input and stops its tasks the way it does when
-        // a pipe closes; its default would kill it with its tasks still running. Its stderr
-        // would land in the stream it answers on, so it goes nowhere.
+        // The agent's stderr would land in the stream it answers on, so it goes to a file
+        // beside it, which a dead link names. Its hangup at the end of the link is what the
+        // agent's own `SIGHUP` handler is for.
         let agent = shell_word(&self.agent_path());
+        let stderr_file = format!("{}/agent.stderr", self.cache_dir());
+        let success = become_success();
         let mut child = self.spawn_su(
             escalation,
-            &format!("trap '' HUP; exec {agent} 2>/dev/null"),
+            &format!("exec {agent} 2>{}", shell_word(&stderr_file)),
+            &success,
             false,
             Stdio::inherit(),
         )?;
@@ -1494,15 +1538,17 @@ impl SshTarget {
             ));
         };
         let password = escalation.password.as_deref();
+        let timeout = self.escalation_timeout();
         if let Some(said) =
-            su_exchange(&mut stdout, &mut stdin, password, self.escalation_timeout()).await?
+            su_exchange(&mut stdout, &mut stdin, password, &success, timeout).await?
         {
             let code = child.wait().await.ok().and_then(|status| status.code());
             return Err(su_ended(code, &said, "", password));
         }
         child.stdin = Some(stdin);
         child.stdout = Some(stdout);
-        AgentLink::new_over_tty(child).map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
+        AgentLink::new_over_tty(child, stderr_file)
+            .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
     }
 
     /// How long `su` may stay silent before the link is given up: the connection timeout and
@@ -1520,6 +1566,7 @@ impl SshTarget {
         &self,
         escalation: &Escalation,
         command: &str,
+        success: &str,
         compress: bool,
         stderr: Stdio,
     ) -> Result<tokio::process::Child, ConnectError> {
@@ -1530,7 +1577,7 @@ impl SshTarget {
                 escalation.user
             )));
         }
-        let mut argv = self.ssh_argv_with(&su_command(escalation, command), compress);
+        let mut argv = self.ssh_argv_with(&su_command(escalation, command, success), compress);
         let address = argv.len() - 3;
         argv.splice(
             address..address,
@@ -1555,7 +1602,14 @@ impl SshTarget {
         command: &str,
         payload: Option<&[u8]>,
     ) -> Result<Captured, ConnectError> {
-        let mut child = self.spawn_su(escalation, command, payload.is_some(), Stdio::piped())?;
+        let success = become_success();
+        let mut child = self.spawn_su(
+            escalation,
+            command,
+            &success,
+            payload.is_some(),
+            Stdio::piped(),
+        )?;
         let (Some(mut stdin), Some(mut stdout), Some(mut stderr)) =
             (child.stdin.take(), child.stdout.take(), child.stderr.take())
         else {
@@ -1569,8 +1623,9 @@ impl SshTarget {
             String::from_utf8_lossy(&bytes).into_owned()
         });
         let password = escalation.password.as_deref();
+        let timeout = self.escalation_timeout();
         if let Some(said) =
-            su_exchange(&mut stdout, &mut stdin, password, self.escalation_timeout()).await?
+            su_exchange(&mut stdout, &mut stdin, password, &success, timeout).await?
         {
             let code = child.wait().await.ok().and_then(|status| status.code());
             let stderr = stderr.await.unwrap_or_default();
@@ -2027,8 +2082,8 @@ mod tests {
             ..escalation(None)
         };
         assert_eq!(
-            su_command(&e, "uname -m"),
-            r"exec 'su' 'root' -c '/bin/sh -c '\''stty raw -echo -iexten || exit 1; echo VOLANT-BECOME-SUCCESS; uname -m'\'''"
+            su_command(&e, "uname -m", BECOME_SUCCESS),
+            r"exec 'su' 'root' -c '/bin/sh -c '\''stty raw -echo -iexten || exit 1; echo MARK-42; uname -m'\'''"
         );
         let e = Escalation {
             exe: vec!["/bin/su".into()],
@@ -2036,11 +2091,24 @@ mod tests {
             ..e
         };
         assert!(
-            su_command(&e, ":").starts_with("exec '/bin/su' '-' 'root' -c "),
+            su_command(&e, ":", BECOME_SUCCESS).starts_with("exec '/bin/su' '-' 'root' -c "),
             "{}",
-            su_command(&e, ":")
+            su_command(&e, ":", BECOME_SUCCESS)
+        );
+        assert_ne!(
+            become_success(),
+            become_success(),
+            "a fresh line every time"
+        );
+        assert_ne!(
+            e.program(),
+            escalation(None).program(),
+            "su and sudo to one user are two links"
         );
     }
+
+    /// The success line the fakes below print.
+    const BECOME_SUCCESS: &str = "MARK-42";
 
     /// What a fake `su` on the other end of [`su_exchange`] does.
     #[derive(Clone, Copy, Debug)]
@@ -2121,7 +2189,14 @@ mod tests {
         let (mut ours, theirs) = tokio::io::duplex(1024);
         let su = tokio::spawn(fake_su(mode, theirs, "pw"));
         let (mut read, mut write) = tokio::io::split(&mut ours);
-        let got = su_exchange(&mut read, &mut write, password, Duration::from_millis(300)).await;
+        let got = su_exchange(
+            &mut read,
+            &mut write,
+            password,
+            BECOME_SUCCESS,
+            Duration::from_millis(300),
+        )
+        .await;
         match (got, want) {
             (Ok(None), Ok(None)) => {
                 let mut rest = [0u8; 6];
@@ -2913,6 +2988,7 @@ mod tests {
         let key = |port| LinkKey {
             host: "node".to_string(),
             become_user: None,
+            become_program: None,
             transport: Transport::for_vars(
                 "node",
                 json!({"ansible_host": "10.0.0.5", "ansible_port": port})

@@ -1,0 +1,2 @@
+# `chdir`, `creates` and `removes` expand ~ and $VAR; `expand_argument_vars` is read on command only.
+args: [-i, inv.ini, play.yml]

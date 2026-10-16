@@ -1,0 +1,46 @@
+- hosts: all
+  gather_facts: false
+  environment:
+    HOME: /tmp/volant-command-paths
+    S3V: fromenv
+  tasks:
+  - shell: mkdir -p $HOME/s3dir && touch $HOME/s3dir/marker $HOME/s3dir/rm_me
+  - command: echo $HOME $S3V $UNDEF_S3 ~
+    register: c1
+  - command: echo $HOME $S3V $UNDEF_S3 ~
+    args: {expand_argument_vars: false}
+    register: c2
+  - command: pwd
+    args: {chdir: "~/s3dir"}
+    register: d1
+  - command: pwd
+    args: {chdir: "$HOME/s3dir"}
+    register: d2
+  - shell: pwd
+    args: {chdir: "~/s3dir"}
+    register: d3
+  - shell: pwd
+    args: {chdir: "$HOME/s3dir"}
+    register: d4
+  - command: pwd
+    args: {chdir: "/nonexistent_s3"}
+    register: d5
+    ignore_errors: true
+  - command: echo ran
+    args: {creates: "~/s3dir/marker"}
+    register: k1
+  - command: echo ran
+    args: {removes: "$HOME/s3dir/nonexist"}
+    register: k2
+  - shell: echo ran
+    args: {removes: "$HOME/s3dir/rm_me"}
+    register: k3
+  - debug:
+      msg:
+      - "{{ c1.cmd | join(' ') }} {{ c1.stdout }}"
+      - "{{ c2.cmd | join(' ') }} {{ c2.stdout }}"
+      - "{{ d1.stdout }} {{ d2.stdout }} {{ d3.stdout }} {{ d4.stdout }}"
+      - "{{ d5.msg }} {{ d5.rc is none }}"
+      - "{{ k1.msg }} {{ k1.stdout }}"
+      - "{{ k2.msg }} {{ k2.stdout }}"
+      - "{{ k3.stdout }} {{ k3.changed }}"

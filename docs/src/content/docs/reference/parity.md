@@ -17,7 +17,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (loop_control) | 2 | 0 | 5 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
 | ansible-playbook option | 17 | 3 | 18 | 0 |
-| YAML tag | 0 | 0 | 2 | 0 |
+| YAML tag | 1 | 0 | 1 | 0 |
 | module | 62 | 0 | 9 | 0 |
 | action plugin | 19 | 0 | 9 | 0 |
 | filter | 73 | 0 | 49 | 0 |
@@ -264,7 +264,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `!unsafe` | <span class="kw kw-notyet">not yet</span> |  |
+| `!unsafe` | <span class="kw kw-runs">runs</span> |  |
 | `!vault` | <span class="kw kw-notyet">not yet</span> |  |
 
 ## module

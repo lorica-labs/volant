@@ -1,0 +1,48 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    plain: !unsafe "{{ lookup('pipe', 'touch MARKER_VARS') }}"
+    quoted: !unsafe 'say "{{ 1 + 1 }}" \ and {% if x %}y{% endif %}'
+    nested:
+      - !unsafe "{{ 1 + 1 }}"
+      - key: !unsafe "{{ 2 + 2 }}"
+    wrapped: "{{ plain }}"
+  tasks:
+    - debug:
+        var: plain
+    - debug:
+        msg: "{{ plain }}"
+    - debug:
+        var: quoted
+    - debug:
+        var: nested
+    - debug:
+        var: wrapped
+    - debug:
+        msg: "{{ plain | to_json }}"
+    - debug:
+        var: from_file
+    - debug:
+        msg: !unsafe "{{ lookup('pipe', 'touch MARKER_ARG') }}"
+    - set_fact:
+        fact: !unsafe "{{ lookup('pipe', 'touch MARKER_FACT') }}"
+        facts: [!unsafe "{{ 3 + 3 }}"]
+    - debug:
+        var: fact
+    - debug:
+        var: facts
+    - debug:
+        var: item
+      loop:
+        - !unsafe "{{ lookup('pipe', 'touch MARKER_LOOP') }}"
+        - "{{ 1 + 1 }}"
+    - include_vars: vars.yml
+    - debug:
+        var: included
+    - name: no marker was written
+      stat:
+        path: "{{ item }}"
+      loop: [MARKER_FILE, MARKER_VARS, MARKER_ARG, MARKER_FACT, MARKER_LOOP, MARKER_INCLUDE]
+      register: markers
+    - assert:
+        that: markers.results | map(attribute='stat.exists') | select | list | length == 0

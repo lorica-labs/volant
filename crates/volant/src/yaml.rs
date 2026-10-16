@@ -3,6 +3,8 @@
 //! Ansible content relies on (`yes`/`no` booleans, leading-zero and underscore-grouped
 //! integers) and the tags Ansible adds (`!vault`, `!unsafe`).
 
+use std::fmt::Write;
+
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Mapping, MarkedYaml, Scalar, Yaml, YamlData, YamlLoader};
 use serde_json::{Map, Value};
@@ -334,9 +336,39 @@ pub fn bool_from_str(text: &str) -> Option<bool> {
     PYYAML_FALSE.contains(&text).then_some(false)
 }
 
-/// Converts a node to JSON. Tagged nodes are refused with a message naming the tag: vault
-/// decryption and unsafe marking arrive with a later release, and silently dropping either
-/// would change what a playbook does.
+/// A string under `!unsafe` is data, never a template. Where it holds template syntax it is
+/// stored as a one-expression template that renders back to its own text through
+/// `volant_unsafe`, which also stops the render from going over the result again. Every string
+/// leaf of a list or mapping is treated the same way; mapping keys are never rendered.
+fn unsafe_data(value: Value) -> Value {
+    match value {
+        Value::String(s) if s.contains("{{") || s.contains("{%") => {
+            let mut lit = String::from("{{ \"");
+            for c in s.chars() {
+                match c {
+                    '\\' => lit.push_str(r"\\"),
+                    '"' => lit.push_str(r#"\""#),
+                    '\n' => lit.push_str(r"\n"),
+                    '\r' => lit.push_str(r"\r"),
+                    '\t' => lit.push_str(r"\t"),
+                    c if c.is_control() => _ = write!(lit, "\\u{:04x}", c as u32),
+                    c => lit.push(c),
+                }
+            }
+            lit.push_str("\" | volant_unsafe }}");
+            Value::String(lit)
+        }
+        Value::Array(items) => Value::Array(items.into_iter().map(unsafe_data).collect()),
+        Value::Object(map) => {
+            Value::Object(map.into_iter().map(|(k, v)| (k, unsafe_data(v))).collect())
+        }
+        other => other,
+    }
+}
+
+/// Converts a node to JSON. A vault tag is refused with a message naming it: decryption arrives
+/// with a later release, and silently dropping it would change what a playbook does. `!unsafe`
+/// is loaded as data, see [`unsafe_data`].
 pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
     Ok(match node {
         Yaml::Value(Scalar::Null) => Value::Null,
@@ -361,8 +393,8 @@ pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
         Yaml::Tagged(tag, _) if tag.handle == "!" && tag.suffix == "vault" => {
             bail!("vault-encrypted values (!vault) are not supported yet")
         }
-        Yaml::Tagged(tag, _) if tag.handle == "!" && tag.suffix == "unsafe" => {
-            bail!("!unsafe values are not supported yet")
+        Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => {
+            unsafe_data(to_json(inner)?)
         }
         Yaml::Tagged(tag, _) => bail!("unsupported YAML tag {}{}", tag.handle, tag.suffix),
         Yaml::Alias(_) => bail!("YAML aliases are not supported yet"),
@@ -505,7 +537,7 @@ a: 3
     }
 
     #[test]
-    fn vault_and_unsafe_tags_are_detected_and_refused_for_now() {
+    fn vault_is_refused_and_unsafe_text_loads_as_data() {
         let docs = load(
             "secret: !vault |\n  $ANSIBLE_VAULT;1.1;AES256\n  3132\n",
             "t.yml",
@@ -513,9 +545,18 @@ a: 3
         .unwrap();
         let err = to_json(&docs[0]).unwrap_err();
         assert!(format!("{err:#}").contains("vault"), "{err:#}");
-        let docs = load("raw: !unsafe '{{ not a template }}'\n", "t.yml").unwrap();
-        let err = to_json(&docs[0]).unwrap_err();
-        assert!(format!("{err:#}").contains("unsafe"), "{err:#}");
+        let docs = load(
+            "raw: !unsafe 'a \"{{ x }}\" \\ b'\nl: [!unsafe '{{ y }}', 3, plain]\n",
+            "t.yml",
+        )
+        .unwrap();
+        assert_eq!(
+            to_json(&docs[0]).unwrap(),
+            json!({
+                "raw": r#"{{ "a \"{{ x }}\" \\ b" | volant_unsafe }}"#,
+                "l": [r#"{{ "{{ y }}" | volant_unsafe }}"#, 3, "plain"],
+            })
+        );
     }
 
     #[test]

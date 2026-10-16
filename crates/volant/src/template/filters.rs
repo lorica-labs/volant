@@ -8,7 +8,7 @@ use std::path::PathBuf;
 use std::str::FromStr;
 
 use minijinja::value::{Kwargs, Rest, ValueKind};
-use minijinja::{Environment, Error, ErrorKind, Value};
+use minijinja::{Environment, Error, ErrorKind, State, Value};
 
 use volant_protocol::encoding::{b64_decode, b64_encode, sha1_hex};
 
@@ -16,6 +16,15 @@ use super::truthy;
 use super::{add_filter, add_test, add_text_filter};
 
 pub fn register(env: &mut Environment<'static>, base_dir: PathBuf) {
+    // What `!unsafe` text loads as: the text itself, marked as data so no further pass renders it.
+    env.add_filter("volant_unsafe", |state: &State, text: String| {
+        if let Some(sink) = state.lookup(super::TAINT_KEY)
+            && let Some(sink) = sink.downcast_object_ref::<super::TaintSink>()
+        {
+            sink.taint();
+        }
+        text
+    });
     // minijinja's own filters and tests, registered again so that an undefined input stays
     // undefined through them as well (see `add_filter`), and so that they answer under
     // `ansible.builtin.` the way the reference's Jinja builtins do (`[1] | ansible.builtin.length`

@@ -1,0 +1,3 @@
+# A value under !unsafe is data in every position: shown as written, never rendered, never run.
+needs: ["ansible-core"]
+args: [-i, inv.ini, -e, "@extra.yml", unsafe.yml]

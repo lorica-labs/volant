@@ -1837,6 +1837,8 @@ pub(super) async fn drive_host(
                     match AgentLink::dead() {
                         Ok(dead) => {
                             links.insert(key.clone(), dead);
+                            // Not proved alive: the next batch handshakes again.
+                            checked.remove(&key);
                             Ok(links.get_mut(&key).expect("inserted just above"))
                         }
                         Err(err) => Err(ConnectError::Unreachable(err.to_string())),
@@ -2135,7 +2137,12 @@ pub(super) async fn drive_host(
                     };
                     stopped = driver.pause_for(pause, owed).await.is_none();
                 }
-                links.insert(key.clone(), owned);
+                // The stand-in for a host that never answered is not kept: the next batch connects.
+                if owned.is_stand_in() {
+                    tokio::spawn(owned.shutdown());
+                } else {
+                    links.insert(key.clone(), owned);
+                }
                 if stopped {
                     if let Some(link) = links.get_mut(&key) {
                         file_timings(

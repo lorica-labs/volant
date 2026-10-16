@@ -1005,7 +1005,9 @@ def run_action(ident, request):
             result = _error_utils.result_dict_from_exception(wrapped, accept_result_contribution=True)
             result.setdefault("changed", False)
             # Raised, so the result never goes through the part of `_execute` that adds `failed`.
-            if result.get("skipped") and not result.get("failed"):
+            from ansible.errors import AnsibleActionSkip
+
+            if isinstance(failure, AnsibleActionSkip):
                 result["_volant_raised_skip"] = True
         # The summary object carries the traceback text only when ansible-core is set to keep it.
         summary = result.pop("exception", None)

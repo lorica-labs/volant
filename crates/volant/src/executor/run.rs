@@ -2204,7 +2204,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
                 // A host that was down from the start has no interpreter to name yet: the probe
                 // is built again once a try has connected.
                 let built = sub_task(task, item, &probe, union, interpreters, asked);
-                if let (Err(failure), false) = (&built, interpreters.is_empty()) {
+                if let (Err(failure), false) = (&built, link.stand_in()) {
                     return Ok(failure.clone());
                 }
                 let left = deadline.saturating_duration_since(Instant::now());
@@ -2302,7 +2302,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
             Ok(built) => built,
             // The ping of a host that was down from the start: the plugin's own loop goes on to
             // reconnect, and names the interpreter once the host answers.
-            Err(_) if dropping && interpreters.is_empty() => {
+            Err(_) if dropping && link.stand_in() => {
                 last = Some(gone("the host has not answered yet"));
                 continue;
             }
@@ -2869,6 +2869,10 @@ pub(super) trait AgentChannel {
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
     /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
+    /// Whether this channel stands in for a host that never answered.
+    fn stand_in(&self) -> bool {
+        false
+    }
     /// The interpreters the agent behind this channel found, empty when it has none to tell.
     fn interpreters(&self) -> Vec<String> {
         Vec::new()
@@ -2981,6 +2985,10 @@ impl AgentChannel for AgentLink {
 
     fn interpreters(&self) -> Vec<String> {
         AgentLink::interpreters(self).to_vec()
+    }
+
+    fn stand_in(&self) -> bool {
+        self.is_stand_in()
     }
 
     fn timings(&mut self) -> Option<&mut crate::profile::Ledger> {

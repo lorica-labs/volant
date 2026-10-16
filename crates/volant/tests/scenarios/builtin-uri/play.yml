@@ -1,12 +1,17 @@
 - hosts: h1
   gather_facts: false
-  vars: {u: "http://127.0.0.1:18765"}
   tasks:
-    - shell: nohup python3 server.py > /dev/null 2>&1 & echo $!
+    - command: python3 -c "import socket; s = socket.socket(); s.bind(('127.0.0.1', 0)); print(s.getsockname()[1])"
+      register: free
+      changed_when: false
+    - set_fact:
+        port: "{{ free.stdout }}"
+        u: "http://127.0.0.1:{{ free.stdout }}"
+    - shell: nohup python3 server.py {{ port }} > /dev/null 2>&1 & echo $!
       args: {chdir: "{{ playbook_dir }}"}
       register: server
     - block:
-        - wait_for: {host: 127.0.0.1, port: 18765, timeout: 10}
+        - wait_for: {host: 127.0.0.1, port: "{{ port }}", timeout: 10}
         - uri: {url: "{{ u }}/hello.txt", return_content: true}
           register: r1
         - debug: msg="{{ r1 | dict2items | map(attribute='key') | sort | join(',') }} {{ r1.msg }} {{ r1.content }}"
@@ -31,9 +36,10 @@
         - debug: msg="{{ r4.json | to_json }} {{ r4.status }} {{ r4.content_type }}"
         - uri: {url: "{{ u }}/redir"}
           register: r5
-        - debug: msg="{{ r5.status }} {{ r5.url }} {{ r5.redirected }}"
+        - debug: msg="{{ r5.status }} {{ r5.url | basename }} {{ r5.redirected }}"
         - uri: {url: "{{ u }}/redir", follow_redirects: none, status_code: 302}
           register: r6
-        - debug: msg="{{ r6.status }} {{ r6.url }} {{ r6.redirected }}"
+        - debug: msg="{{ r6.status }} {{ r6.url | basename }} {{ r6.redirected }}"
       always:
-        - command: kill {{ server.stdout }}
+        - shell: kill {{ server.stdout }} || true
+        - file: {path: "{{ playbook_dir }}/dest.txt", state: absent}

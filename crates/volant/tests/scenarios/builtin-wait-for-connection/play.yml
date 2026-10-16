@@ -3,7 +3,7 @@
   tasks:
     - wait_for_connection: {timeout: 5, delay: 0}
       register: r
-    - debug: {var: r}
+    - debug: msg="{{ r.changed }} {{ r.failed }}"
 - hosts: down
   gather_facts: false
   tasks:

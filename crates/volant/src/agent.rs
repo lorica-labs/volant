@@ -175,6 +175,8 @@ pub struct AgentLink {
     tty: bool,
     /// Where, on the host, the agent's stderr goes when it cannot share the link's stream.
     stderr_file: Option<String>,
+    /// Whether this is [`AgentLink::dead`]'s stand-in for a host that never answered.
+    stand_in: bool,
 }
 
 /// A blob as it goes on the wire in the frame after its `put_blob`.
@@ -342,6 +344,7 @@ impl AgentLink {
             ledger: crate::profile::Ledger::default(),
             tty: false,
             stderr_file: None,
+            stand_in: false,
         })
     }
 
@@ -354,7 +357,14 @@ impl AgentLink {
             .stdout(std::process::Stdio::piped())
             .spawn()
             .context("could not start the stand-in for a host that is down")?;
-        Self::new(child)
+        let mut link = Self::new(child)?;
+        link.stand_in = true;
+        Ok(link)
+    }
+
+    /// Whether this link is [`AgentLink::dead`]'s, which no batch may be left to run on.
+    pub fn is_stand_in(&self) -> bool {
+        self.stand_in
     }
 
     /// The same, for an agent whose stdin and stdout are a remote terminal that `ssh -tt`
@@ -786,6 +796,15 @@ mod tests {
     /// An agent that speaks the protocol before this one is refused at the handshake with the
     /// sentence every mismatch gets, before any blob could reach it in a shape it would misread.
     #[cfg(unix)]
+    /// The stand-in for a host that never answered says so, and has no agent to answer a frame.
+    #[tokio::test]
+    async fn the_stand_in_link_has_no_agent() {
+        let mut link = AgentLink::dead().expect("the stand-in starts");
+        assert!(link.is_stand_in());
+        let answered = link.recv().await;
+        assert!(matches!(answered, Ok(None) | Err(_)));
+    }
+
     #[tokio::test]
     async fn an_agent_that_speaks_protocol_six_is_refused_at_the_handshake() {
         let ready = br#"{"type":"ready","protocol":6,"version":"0.1.0-alpha.7","arch":"x86_64"}"#;

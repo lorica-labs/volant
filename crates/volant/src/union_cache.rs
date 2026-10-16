@@ -759,6 +759,7 @@ mod tests {
                 "ns.c.act".to_string(),
                 Resolved::ActionPlugin {
                     fqcn: "ns.c.act".into(),
+                    with_module: true,
                 },
             ),
             (

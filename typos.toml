@@ -9,6 +9,7 @@ extend-exclude = [
   "crates/volant/tests/golden/module/",
   # The reference's plugin names: `just parity-reference` and `just docs-parity` write them.
   "crates/volant/tests/parity/reference.json",
+  "crates/volant/src/later_actions.txt",
   "docs/src/content/docs/reference/parity.md",
 ]
 

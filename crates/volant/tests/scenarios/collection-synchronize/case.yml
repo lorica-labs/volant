@@ -1,0 +1,3 @@
+# synchronize runs its own module through the controller's rsync; a second run changes nothing.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

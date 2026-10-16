@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - ansible.posix.synchronize: {src: src/, dest: "{{ playbook_dir }}/out/"}
+      register: s1
+    - debug: {var: s1}
+    - ansible.posix.synchronize: {src: src/, dest: "{{ playbook_dir }}/out/"}
+      register: s2
+    - debug: {msg: "rerun changed={{ s2.changed }}"}

@@ -2044,6 +2044,22 @@ fn sub_task(
     })
 }
 
+/// A plugin's result that ansible-core shaped as an unreachable host (`unreachable: true` and not
+/// failed: a connection failure the plugin did not catch) ends the item with no result, as a link
+/// that went away does, so the driver reports the host unreachable. The written plugins' own
+/// `gone` results are failed ones and stay results.
+fn unreachable_ending(result: TaskResult) -> Result<TaskResult, Result<BatchOutcome, String>> {
+    if result.0.get("unreachable") != Some(&Value::Bool(true)) || result.failed() {
+        return Ok(result);
+    }
+    let msg = result
+        .0
+        .get("msg")
+        .and_then(Value::as_str)
+        .unwrap_or("the plugin reported the host unreachable");
+    Err(Err(msg.to_string()))
+}
+
 /// One item of a task an action plugin backs, run to its end.
 ///
 /// Each sub-task the plugin asks for goes out alone, as a batch of one over the link the task
@@ -2121,7 +2137,7 @@ pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
             return Ok(timeout_result());
         }
         let (sub, dropping) = match plugin.next(last.take()) {
-            Step::Done(result) => return Ok(result),
+            Step::Done(result) => return unreachable_ending(result),
             Step::Wait(ready) => {
                 let mut watcher = stop.clone();
                 let stopped = async move {
@@ -6015,6 +6031,25 @@ mod tests {
 
     fn python3() -> Vec<String> {
         vec!["/usr/bin/python3".to_string()]
+    }
+
+    /// A plugin's result shaped as an unreachable host ends the item like a lost link; a failed
+    /// one, or one that is not unreachable, stays the item's result.
+    #[rstest::rstest]
+    #[case::unreachable(json!({"changed": false, "failed": false, "msg": "boom", "unreachable": true}), true)]
+    #[case::gone_and_failed(json!({"failed": true, "msg": "boom", "unreachable": true}), false)]
+    #[case::plain(json!({"changed": true}), false)]
+    fn an_unreachable_result_ends_the_item(#[case] result: Value, #[case] ends: bool) {
+        let Value::Object(map) = result else {
+            unreachable!("the rows are objects")
+        };
+        let ran = unreachable_ending(TaskResult(map));
+        assert_eq!(
+            matches!(ran, Err(Err(ref msg)) if ends && msg == "boom"),
+            ends,
+            "{ran:?}"
+        );
+        assert_eq!(ran.is_ok(), !ends);
     }
 
     /// A `package` task reaches the host as the module its manager names, asking `setup` for

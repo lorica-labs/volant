@@ -229,12 +229,19 @@ impl Bridged {
                     ));
                 }
                 let short = short_name(&name);
-                let module = (!name.contains('.')
-                    || name.starts_with("ansible.builtin.")
-                    || name.starts_with("ansible.legacy."))
-                .then(|| self.modules.iter().find(|m| **m == short))
-                .flatten()
-                .ok_or_else(|| {
+                // A collection plugin's module is named whole; a builtin one by its short name.
+                let module = self
+                    .modules
+                    .iter()
+                    .find(|m| **m == name)
+                    .or_else(|| {
+                        (!name.contains('.')
+                            || name.starts_with("ansible.builtin.")
+                            || name.starts_with("ansible.legacy."))
+                        .then(|| self.modules.iter().find(|m| **m == short))
+                        .flatten()
+                    })
+                    .ok_or_else(|| {
                     Reply::Error(format!(
                         "the module '{name}' is not supported yet in the action plugin '{}'",
                         self.name

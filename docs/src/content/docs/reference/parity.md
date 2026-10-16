@@ -31,7 +31,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | cache | 1 | 0 | 1 | 0 |
 | callback | 1 | 0 | 0 | 4 |
 | connection | 2 | 0 | 0 | 4 |
-| collection module | 5985 | 0 | 1 | 3457 |
+| collection module | 5986 | 0 | 0 | 3457 |
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection lookup | 95 | 0 | 0 | 0 |
 | collection filter | 136 | 0 | 0 | 0 |
@@ -701,7 +701,7 @@ For each collection, how many of its rows run, out of the total.
 |---|---|---|---|---|---|---|
 | `amazon.aws` | 10.1.2 | 140/140 | 0/0 | 0/0 | 5/5 | 1/1 |
 | `ansible.netcommon` | 8.2.0 | 2/16 | 9/9 | 0/0 | 0/0 | 3/11 |
-| `ansible.posix` | 2.1.0 | 13/14 | 0/0 | 0/0 | 0/0 | 2/2 |
+| `ansible.posix` | 2.1.0 | 14/14 | 0/0 | 0/0 | 0/0 | 2/2 |
 | `ansible.utils` | 6.0.0 | 3/4 | 32/32 | 25/25 | 4/4 | 3/4 |
 | `ansible.windows` | 3.3.0 | later | 1/1 | 0/0 | 0/0 | later |
 | `arista.eos` | 12.0.0 | later | 0/0 | 0/0 | 0/0 | later |

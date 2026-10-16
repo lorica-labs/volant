@@ -315,6 +315,9 @@ async fn run_all(
         },
     )
     .map_err(|e| Refusal::or(4, e))?;
+    for play in compiled.iter().flatten() {
+        preflight::check_collection_actions(play).map_err(|e| Refusal::or(4, e))?;
+    }
     // The filters, tests and lookups only ansible-core has run in the helper the union was
     // built with, or in one started on the first of them.
     let bridge = Bridge::new(reach.plugin_dirs.clone());

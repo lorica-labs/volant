@@ -157,8 +157,11 @@ pub fn is_resolved_name(module: &str) -> bool {
 /// action plugins, which run in the helper rather than as a module.
 pub(crate) fn note_action_plugins(resolved: &BTreeMap<String, Resolved>) {
     for (name, answer) in resolved {
-        if matches!(answer, Resolved::ActionPlugin { .. }) {
-            crate::action_plugins::note_collection_action(name);
+        if let Resolved::ActionPlugin { fqcn, with_module } = answer
+            && !crate::action_plugins::waits_for_later(name)
+            && !crate::action_plugins::waits_for_later(fqcn)
+        {
+            crate::action_plugins::note_collection_action(name, fqcn, *with_module);
         }
     }
 }
@@ -177,8 +180,10 @@ pub enum Resolved {
         collection: Option<(String, String)>,
     },
     /// A name a collection serves through an action plugin, its own or one its `runtime.yml`
-    /// routes it to: run in the helper as ansible-core's action plugin.
-    ActionPlugin { fqcn: String },
+    /// routes it to: run in the helper as ansible-core's action plugin. `fqcn` is the plugin
+    /// that runs (`runtime.yml`'s `action_plugin`, else the one of the module's name), and
+    /// `with_module` says the module of the asked name builds, for a plugin that runs it.
+    ActionPlugin { fqcn: String, with_module: bool },
     /// A name ansible-core knows and this release cannot run: a module its collection removed
     /// (a `runtime.yml` tombstone), one with no Python source (a `.ps1` module whose `.py` holds
     /// only its documentation), or one the helper failed to build. `reason` is ansible-core's
@@ -773,9 +778,16 @@ fn union_keeping(
             }
         }
         names.retain(|m| {
-            resolved
-                .get(m)
-                .is_none_or(|r| matches!(r, Resolved::Module { .. }))
+            resolved.get(m).is_none_or(|r| {
+                matches!(
+                    r,
+                    Resolved::Module { .. }
+                        | Resolved::ActionPlugin {
+                            with_module: true,
+                            ..
+                        }
+                )
+            })
         });
     }
     if names.is_empty() {
@@ -1278,7 +1290,10 @@ pub(crate) fn resolved_from(asked: &str, value: &Value) -> anyhow::Result<Resolv
         };
         Resolved::Module { fqcn, collection }
     } else if let Some(fqcn) = text(value, "action_plugin") {
-        Resolved::ActionPlugin { fqcn }
+        Resolved::ActionPlugin {
+            fqcn,
+            with_module: value.get("with_module") == Some(&Value::Bool(true)),
+        }
     } else if let Some(reason) = text(value, "unusable") {
         Resolved::Unusable { reason }
     } else if let Some(missing) = value.get("missing") {
@@ -1299,7 +1314,9 @@ pub(crate) fn resolved_json(resolved: &Resolved) -> Value {
             "module": fqcn,
             "collection": collection.as_ref().map(|(name, version)| [name, version]),
         }),
-        Resolved::ActionPlugin { fqcn } => serde_json::json!({ "action_plugin": fqcn }),
+        Resolved::ActionPlugin { fqcn, with_module } => {
+            serde_json::json!({ "action_plugin": fqcn, "with_module": with_module })
+        }
         Resolved::Unusable { reason } => serde_json::json!({ "unusable": reason }),
         Resolved::Missing { collection } => serde_json::json!({ "missing": collection }),
     }
@@ -1403,7 +1420,8 @@ mod tests {
                 (
                     "a.b.act".to_string(),
                     Resolved::ActionPlugin {
-                        fqcn: "a.b.act".into()
+                        fqcn: "a.b.act".into(),
+                        with_module: false
                     }
                 ),
                 (
@@ -1632,8 +1650,10 @@ mod tests {
         );
         assert_eq!(
             resolved["volanttest.coll.routed"],
+            // The plugin `runtime.yml` routes the module to runs, and the module builds.
             Resolved::ActionPlugin {
-                fqcn: "volanttest.coll.routed".into()
+                fqcn: "volanttest.coll.act".into(),
+                with_module: true
             }
         );
         assert!(
@@ -1664,7 +1684,7 @@ mod tests {
             .expect("good is built");
         assert_eq!(
             built.modules.keys().collect::<Vec<_>>(),
-            ["volanttest.coll.good"]
+            ["volanttest.coll.good", "volanttest.coll.routed"]
         );
         // What was set aside is kept in the pre-flight's words, even with nothing left to build,
         // and an include reaching one says it: the install hint for a missing collection, not
@@ -1780,7 +1800,8 @@ mod tests {
         assert_eq!(
             resolved["ansible.posix.synchronize"],
             Resolved::ActionPlugin {
-                fqcn: "ansible.posix.synchronize".into()
+                fqcn: "ansible.posix.synchronize".into(),
+                with_module: true
             }
         );
         assert_eq!(
@@ -1858,9 +1879,12 @@ mod tests {
         let built = union_from(PythonBuilder::start, &modules, &[], None, &mut |_| {})
             .unwrap()
             .expect("ping is built");
-        assert_eq!(built.modules.keys().collect::<Vec<_>>(), ["ping"]);
+        assert_eq!(
+            built.modules.keys().collect::<Vec<_>>(),
+            ["ansible.posix.synchronize", "ping"]
+        );
         let named = [("Sync".to_string(), "ansible.posix.synchronize".to_string())];
-        // Served by an action plugin, the name is run in the helper and nothing is built for it.
+        // Served by an action plugin, the name runs in the helper; its module is in the union.
         union_from(PythonBuilder::start, &modules, &named, None, &mut |_| {}).unwrap();
         assert!(crate::action_plugins::kind("ansible.posix.synchronize").is_some());
     }
@@ -2439,6 +2463,7 @@ mod tests {
                 "ns.c.sync".to_string(),
                 Resolved::ActionPlugin {
                     fqcn: "ns.c.sync".into(),
+                    with_module: false,
                 },
             )]),
         };

@@ -150,10 +150,6 @@ fn row(category: &str, name: &str, status: Status, note: &str) -> Row {
     }
 }
 
-/// Collection action plugins that run a module of their own on the host, which the bridge cannot
-/// send yet.
-const NEEDS_OWN_MODULE: &[&str] = &["ansible.posix.synchronize"];
-
 /// Names outside this milestone, with why. Decided here, never on the page.
 const LATER: &[(&str, &str, &str)] = &[
     ("become", "runas", "Windows"),
@@ -419,14 +415,6 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             // A module that runs through an action plugin runs on the bridge, as that plugin.
             match (later(&m), c["module_action"][&m].as_str()) {
                 (Some(why), _) => push("module", &m, Status::Later, why),
-                (None, Some(action)) if NEEDS_OWN_MODULE.contains(&m.as_str()) => {
-                    push(
-                        "module",
-                        &m,
-                        Status::NotYet,
-                        &format!("needs `{action}` to run its module"),
-                    );
-                }
                 (None, Some(_)) => push("module", &m, Status::Runs, "through its action plugin"),
                 (None, None) => push("module", &m, Status::Runs, ""),
             }
@@ -686,4 +674,25 @@ fn every_builtin_action_plugin_is_implemented_or_refused() {
             "action plugin '{a}' is neither implemented nor refused"
         );
     }
+}
+
+/// The engine refuses by name the collection plugins and modules this page marks `later`, from a
+/// list written out of the same reference data.
+#[test]
+fn the_names_the_engine_refuses_are_the_ones_marked_later() {
+    let mut waiting = std::collections::BTreeSet::new();
+    for c in reference()["collections"].as_object().unwrap().values() {
+        let held = |name: &str| {
+            !c["module_action"][name].is_null()
+                || c["action"].as_array().unwrap().iter().any(|a| a == name)
+        };
+        for name in c["later"].as_object().unwrap().keys().filter(|n| held(n)) {
+            waiting.insert(name.clone());
+        }
+    }
+    let written: Vec<&str> = include_str!("../src/later_actions.txt").lines().collect();
+    assert_eq!(
+        written,
+        waiting.iter().map(String::as_str).collect::<Vec<_>>()
+    );
 }

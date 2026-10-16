@@ -465,11 +465,20 @@ def resolve_one(name):
     # `runtime.yml` routes the module to comes first, then one of the module's own name. Every
     # module resolves to `normal` when nothing else claims it, so that one is the absence of an
     # action plugin, not one.
-    if module.action_plugin:
-        return {"action_plugin": module.resolved_fqcn}
-    action = action_loader.find_plugin_with_context(name)
-    if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
-        return {"action_plugin": module.resolved_fqcn}
+    handler = module.action_plugin
+    if not handler:
+        action = action_loader.find_plugin_with_context(name)
+        if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
+            handler = action.resolved_fqcn
+    if handler:
+        # The plugin that runs is named, and whether the module of the asked name builds: a
+        # plugin may run it (`synchronize`), and then the union has to hold it.
+        try:
+            build(name)
+            built = True
+        except Exception:
+            built = False
+        return {"action_plugin": handler, "with_module": built}
     try:
         build(name)
     except RuntimeError as unbuildable:

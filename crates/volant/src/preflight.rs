@@ -351,8 +351,16 @@ pub(crate) fn check_resolved(
 pub(crate) fn refusal_of(module: &str, answer: &crate::python::Resolved) -> Option<String> {
     use crate::python::Resolved;
     match answer {
-        // A collection's action plugin runs in the Python helper, as ansible-core's own.
-        Resolved::Module { .. } | Resolved::ActionPlugin { .. } => None,
+        Resolved::Module { .. } => None,
+        // A collection's action plugin runs in the Python helper, as ansible-core's own, unless
+        // it needs Windows or a network device's connection.
+        Resolved::ActionPlugin { fqcn, .. } => (action_plugins::waits_for_later(module)
+            || action_plugins::waits_for_later(fqcn))
+        .then(|| {
+            format!(
+                "module '{fqcn}' needs an action plugin from its collection, which this release does not run"
+            )
+        }),
         Resolved::Unusable { reason } => Some(format!("module '{module}' cannot run: {reason}")),
         Resolved::Missing { collection: None } => Some(unresolved_tail(module)),
         Resolved::Missing {
@@ -389,6 +397,7 @@ pub(crate) fn check_built(
     expanded: &crate::compile::Compiled,
     union: Option<&crate::python::Union>,
 ) -> anyhow::Result<()> {
+    check_collection_actions(expanded)?;
     for task in set_aside(expanded).filter(|task| action_plugins::kind(&task.module).is_none()) {
         let (name, module) = (&task.name, &task.module);
         if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(module))) {
@@ -403,6 +412,12 @@ pub(crate) fn check_built(
         }
     }
     Ok(())
+}
+
+/// `async` on a collection's action plugin, which the first pass could not see for a plugin until
+/// the controller had resolved the name: refused as it is on the builtin ones.
+pub(crate) fn check_collection_actions(compiled: &crate::compile::Compiled) -> anyhow::Result<()> {
+    set_aside(compiled).try_for_each(refuse_async)
 }
 
 /// Why a `pause` that would wait for an answer is refused on a terminal.
@@ -584,6 +599,20 @@ mod tests {
     use crate::playbook::parse;
     use crate::stats::error_code;
     use rstest::rstest;
+
+    /// `async` on a collection's action plugin is refused once the name is known to be one.
+    #[test]
+    fn async_on_a_collection_action_plugin_is_refused_after_resolution() {
+        let mut task = crate::testing::task("ns.preflightcoll.shutdown");
+        task.async_val = 5;
+        assert!(refuse_async(&task).is_ok());
+        action_plugins::note_collection_action(&task.module, &task.module, false);
+        let err = refuse_async(&task).unwrap_err().to_string();
+        assert!(
+            err.contains("keyword 'async' is not supported yet on 'ns.preflightcoll.shutdown'"),
+            "{err}"
+        );
+    }
 
     /// A `pause` with a prompt and a duration on a terminal is refused before anything connects
     /// when the step is sure to run, and left to the run when something may leave it out.
@@ -870,9 +899,20 @@ mod tests {
         );
         assert!(
             verdict(Resolved::ActionPlugin {
-                fqcn: "ns.coll.mod".into()
+                fqcn: "ns.coll.mod".into(),
+                with_module: false,
             })
             .is_ok()
+        );
+        // A plugin that needs Windows or a network device's connection is refused by name.
+        let waiting = include_str!("later_actions.txt").lines().next().unwrap();
+        assert_eq!(
+            verdict(Resolved::ActionPlugin {
+                fqcn: waiting.into(),
+                with_module: false,
+            })
+            .map_err(|text| text.ends_with("which this release does not run")),
+            Err(true)
         );
         let typo = "task 'T': couldn't resolve module/action 'ns.coll.mod'. This often indicates a misspelling, missing collection, or incorrect module path.";
         assert_eq!(

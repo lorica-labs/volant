@@ -473,7 +473,7 @@ fn escalation(yaml: &Yaml, context: &str) -> anyhow::Result<(Option<bool>, Optio
 /// mapping is merged into the arguments beside it. A first word with a `=` in it is a
 /// `module=command` spelling the reference cannot resolve, which fails the task rather than the
 /// load, and a mapping with no `module:` has "no module/action".
-fn action_statement<'a>(word: &str, node: &Yaml<'a>) -> anyhow::Result<(String, Yaml<'a>)> {
+fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Yaml<'a>)> {
     match node {
         Yaml::Value(Scalar::String(text)) => {
             let text = text.trim();
@@ -497,7 +497,7 @@ fn action_statement<'a>(word: &str, node: &Yaml<'a>) -> anyhow::Result<(String, 
             Ok((name.to_string(), args))
         }
         Yaml::Mapping(entries) => {
-            warn_action_mapping(word, node);
+            warn_action_mapping(node);
             let mut name = None;
             let mut args = saphyr::Mapping::new();
             for (key, value) in entries {
@@ -525,7 +525,7 @@ fn action_statement<'a>(word: &str, node: &Yaml<'a>) -> anyhow::Result<(String, 
 }
 
 /// The deprecation the reference prints, on stderr, for a mapping given as an action.
-fn warn_action_mapping(word: &str, node: &Yaml) {
+fn warn_action_mapping(node: &Yaml) {
     static HEADER: std::sync::Once = std::sync::Once::new();
     HEADER.call_once(|| {
         eprintln!(
@@ -536,7 +536,7 @@ fn warn_action_mapping(word: &str, node: &Yaml) {
         .map(|origin| format!("{}\n\n", crate::render::source_context(&origin)))
         .unwrap_or_default();
     eprintln!(
-        "[DEPRECATION WARNING]: Using a mapping for `{word}` is deprecated. This feature will be removed from ansible-core version 2.23.\n{origin}Use a string value for `{word}`.\n"
+        "[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n{origin}Use a string value for `action`.\n"
     );
 }
 
@@ -1357,7 +1357,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     let source = statement.map(|(_, node)| node);
     let module = match statement {
         Some((word, node)) => {
-            let (name, args) = action_statement(word, node)?;
+            let (name, args) = action_statement(node)?;
             if let Some((other, _)) = &module {
                 bail!("conflicting action statements: {name}, {other}");
             }

@@ -651,12 +651,15 @@ fn connect_for(
             return Ok(None);
         };
         let text = if Templar::is_template(raw) {
-            templar
+            match templar
                 .render(raw, vars)
                 .map_err(|err| TemplateError(format!("rendering '{key}' {raw}: {}", err.0)))?
-                .as_str()
-                .map(str::to_string)
-                .ok_or_else(|| TemplateError(format!("'{key}' must render to text: {raw}")))?
+            {
+                Value::String(text) => text,
+                // `port: "{{ ssh_port }}"` with a number behind it.
+                Value::Number(number) => number.to_string(),
+                _ => return Err(TemplateError(format!("'{key}' must render to text: {raw}"))),
+            }
         } else {
             raw.clone()
         };
@@ -666,13 +669,42 @@ fn connect_for(
     let port = render("port", &connect.port)?
         .map(|text| {
             text.parse::<u16>()
-                .map_err(|_| TemplateError(format!("'port' must be a port number, found '{text}'")))
+                .ok()
+                .filter(|port| *port != 0)
+                .ok_or_else(|| {
+                    TemplateError(format!("'port' must be a port number, found '{text}'"))
+                })
         })
         .transpose()?;
+    // A value a template read from a host can end up here, so what reaches `ssh` is held to the
+    // shape of a name: nothing that starts like an option, splits into words or ends a line.
+    let user = render("remote_user", &connect.remote_user)?;
+    if let Some(user) = &user
+        && (user.starts_with('-')
+            || user
+                .chars()
+                .any(|c| c.is_whitespace() || c.is_control() || c == '"'))
+    {
+        return Err(TemplateError(format!(
+            "'remote_user' must be a user name, found '{}'",
+            user.escape_debug()
+        )));
+    }
+    let connection = render("connection", &connect.connection)?;
+    if let Some(name) = &connection
+        && !name
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | '.'))
+    {
+        return Err(TemplateError(format!(
+            "'connection' must be a plugin name, found '{}'",
+            name.escape_debug()
+        )));
+    }
     Ok(ConnectionKeywords {
-        user: render("remote_user", &connect.remote_user)?,
+        user,
         port,
-        connection: render("connection", &connect.connection)?,
+        connection,
     })
 }
 
@@ -945,6 +977,42 @@ mod tests {
     use super::*;
     use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
     use std::path::{Path, PathBuf};
+
+    /// The connection keywords may be templates over a host's facts, and what they render to
+    /// reaches `ssh` as one argument each: a value shaped like an option or a line is refused.
+    #[rstest::rstest]
+    #[case::fact_user("remote_user", "{{ who }}", json!({"who": "deploy"}), Ok(("deploy", None, None)))]
+    #[case::number_port("port", "{{ p }}", json!({"p": 2222}), Ok(("", Some(2222), None)))]
+    #[case::string_port("port", "{{ p }}", json!({"p": " 2222 "}), Ok(("", Some(2222), None)))]
+    #[case::port_zero("port", "{{ p }}", json!({"p": 0}), Err("'port' must be a port number"))]
+    #[case::port_too_big("port", "{{ p }}", json!({"p": 70000}), Err("'port' must be a port number"))]
+    #[case::option_user("remote_user", "{{ who }}", json!({"who": "-oProxyCommand=touch MARKER"}), Err("'remote_user' must be a user name"))]
+    #[case::spaced_user("remote_user", "{{ who }}", json!({"who": "a b"}), Err("'remote_user' must be a user name"))]
+    #[case::quoted_user("remote_user", "{{ who }}", json!({"who": "a\"b"}), Err("'remote_user' must be a user name"))]
+    #[case::newline_user("remote_user", "{{ who }}", json!({"who": "a\nb"}), Err("'remote_user' must be a user name"))]
+    #[case::odd_connection("connection", "{{ c }}", json!({"c": "ssh -o x"}), Err("'connection' must be a plugin name"))]
+    fn the_connection_keywords_render_to_names_ssh_takes_as_one_argument(
+        #[case] key: &str,
+        #[case] raw: &str,
+        #[case] facts: Value,
+        #[case] want: Result<(&str, Option<u16>, Option<&str>), &str>,
+    ) {
+        let mut t = task("command");
+        match key {
+            "remote_user" => t.connect.remote_user = Some(raw.into()),
+            "port" => t.connect.port = Some(raw.into()),
+            _ => t.connect.connection = Some(raw.into()),
+        }
+        let got = connect_for(&t, &hvars(facts), &templar());
+        match (got, want) {
+            (Ok(k), Ok((user, port, connection))) => assert_eq!(
+                (k.user.unwrap_or_default(), k.port, k.connection),
+                (user.to_string(), port, connection.map(str::to_string))
+            ),
+            (Err(err), Err(says)) => assert!(err.0.contains(says), "{}", err.0),
+            (got, want) => panic!("{got:?} against {want:?}"),
+        }
+    }
 
     /// Each shape was run through ansible-core 2.19.12 as a `debug: msg=` argument: an `omit` value
     /// goes and every emptied container stays.

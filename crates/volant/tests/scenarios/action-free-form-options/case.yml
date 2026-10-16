@@ -1,0 +1,2 @@
+# `command` takes cmd=x as the program to run, not as an option.
+args: [-i, inv.ini, play.yml]

@@ -1,0 +1,4 @@
+# The setup module's own gather_subset, fact_path and gather_timeout: a bad fact file is an error
+# message in its place, a missing directory is no facts, and a timeout that is no number fails.
+args: [-i, inv.ini, play.yml]
+needs: ["ansible-core"]

@@ -1,0 +1,5 @@
+- hosts: h1
+  gather_facts: true
+  gather_subset: "{{ ['!all', '!min', 'env'] }}"
+  tasks:
+    - debug: msg="{{ ansible_facts.keys() | reject('equalto', '_ansible_facts_gathered') | sort | list }}"

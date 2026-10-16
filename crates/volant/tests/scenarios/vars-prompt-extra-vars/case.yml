@@ -1,0 +1,2 @@
+# A name given with -e is never asked, defaulted or hashed; the others still take their default.
+args: [-i, inv.ini, -e, a=cli, -e, b=Y, play.yml]

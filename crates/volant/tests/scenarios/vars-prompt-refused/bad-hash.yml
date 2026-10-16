@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  vars_prompt:
+    - name: a
+      default: x
+      encrypt: nosuchalgo
+  tasks:
+    - debug: msg="[{{ a }}]"

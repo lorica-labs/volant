@@ -197,9 +197,10 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 ///
 /// `gather_facts` runs: a play that asks for facts opens with the reference's own `setup`
 /// module, built on the controller and run on the host through the payload path, and what it
-/// returns lands under `ansible_facts` and flat, as the host's own words. `gather_subset` and
-/// `gather_timeout` stay refused, so the full set is what a play gets. `strategy`
-/// counts as `Runs`: `linear` is what the engine does, and any other strategy is refused by its
+/// returns lands under `ansible_facts` and flat, as the host's own words. `gather_subset`,
+/// `gather_timeout` and `fact_path` are the arguments of that `setup`, checked when the play
+/// starts. `vars_prompt` is asked when the play starts too, and `-e` answers it first.
+/// `strategy` counts as `Runs`: `linear` is what the engine does, and any other strategy is refused by its
 /// own name.
 ///
 /// `roles`, `pre_tasks` and `post_tasks` run: the compiler reads each role from disk and splices
@@ -233,11 +234,11 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("debugger", Preflight),
     kw("diff", Preflight),
     kw("environment", Runs),
-    kw("fact_path", Preflight),
+    kw("fact_path", Runs),
     kw("force_handlers", Runs),
     kw("gather_facts", Runs),
-    kw("gather_subset", Preflight),
-    kw("gather_timeout", Preflight),
+    kw("gather_subset", Runs),
+    kw("gather_timeout", Runs),
     kw("handlers", Runs),
     kw("hosts", Runs),
     kw("ignore_errors", Runs),
@@ -261,7 +262,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("timeout", Preflight),
     kw("vars", Runs),
     kw("vars_files", Runs),
-    kw("vars_prompt", Preflight),
+    kw("vars_prompt", Runs),
 ];
 
 /// `loop_control` sub-keys, as `LoopControl.fattributes` lists them on ansible-core 2.19.12.

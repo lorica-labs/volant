@@ -11,7 +11,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 27 | 1 | 13 | 0 |
+| keyword (play) | 31 | 1 | 9 | 0 |
 | keyword (block) | 23 | 1 | 7 | 0 |
 | keyword (task) | 55 | 1 | 10 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
@@ -53,11 +53,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `debugger` | <span class="kw kw-notyet">not yet</span> |  |
 | `diff` | <span class="kw kw-notyet">not yet</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
-| `fact_path` | <span class="kw kw-notyet">not yet</span> |  |
+| `fact_path` | <span class="kw kw-runs">runs</span> |  |
 | `force_handlers` | <span class="kw kw-runs">runs</span> |  |
 | `gather_facts` | <span class="kw kw-runs">runs</span> |  |
-| `gather_subset` | <span class="kw kw-notyet">not yet</span> |  |
-| `gather_timeout` | <span class="kw kw-notyet">not yet</span> |  |
+| `gather_subset` | <span class="kw kw-runs">runs</span> |  |
+| `gather_timeout` | <span class="kw kw-runs">runs</span> |  |
 | `handlers` | <span class="kw kw-runs">runs</span> |  |
 | `hosts` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
@@ -81,7 +81,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `timeout` | <span class="kw kw-notyet">not yet</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
 | `vars_files` | <span class="kw kw-runs">runs</span> |  |
-| `vars_prompt` | <span class="kw kw-notyet">not yet</span> |  |
+| `vars_prompt` | <span class="kw kw-runs">runs</span> |  |
 
 ## keyword (block)
 

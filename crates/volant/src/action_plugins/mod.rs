@@ -84,6 +84,12 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
     }
 }
 
+/// Whether the plugin only edits the controller's inventory and statistics: the reference runs it
+/// without a connection, so it goes the way `set_fact` does, whatever state the host is in.
+pub(crate) fn controller_side(module: &str) -> bool {
+    builtin_spelling(module) && matches!(short_name(module), "add_host" | "group_by" | "set_stats")
+}
+
 /// Every module a plugin may run, which the union has to hold before the first connection.
 ///
 /// A run that names `package` or `service` carries every builtin backend and `setup`. Measured
@@ -230,7 +236,6 @@ pub(crate) struct Context<'a> {
 /// so the written plugin's refusal of it stands.
 pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
     let unwritten = match kind {
-        Kind::Copy => copy::unwritten(&ctx),
         Kind::Unarchive => unarchive::unwritten(&ctx),
         _ => false,
     };

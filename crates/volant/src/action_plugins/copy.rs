@@ -72,22 +72,6 @@ pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
     }
 }
 
-/// Whether `src` is a directory of the controller, which this plugin does not copy and
-/// ansible-core's does.
-pub(super) fn unwritten(ctx: &Context<'_>) -> bool {
-    let args = ctx.args;
-    let Some(src) = text(args, "src") else {
-        return false;
-    };
-    args.get("content").is_none_or(Value::is_null)
-        && text(args, "dest").is_some()
-        && !flag(args, "remote_src", false)
-        && search_paths(ctx.origin, ctx.playbook_dir, "files", src)
-            .iter()
-            .find(|p| p.exists())
-            .is_some_and(|p| p.is_dir())
-}
-
 /// A plugin that fails the item with `msg` before the host is asked anything.
 pub(super) fn failing(msg: String) -> Box<dyn Plugin> {
     Box::new(Then(Some(Step::Done(TaskResult::failed_with(msg)))))

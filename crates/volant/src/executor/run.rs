@@ -129,6 +129,8 @@ pub(super) async fn run_local(
 ) -> Option<TaskResult> {
     let mut result = if short_name(&task.module) == "pause" {
         pause(&task.module, item, std::io::stdin().is_terminal(), stop).await?
+    } else if crate::action_plugins::controller_side(&task.module) {
+        controller_side(task, item, step, templar, stop).await?
     } else {
         local_result(task, item, step, templar, store, verbosity)
     };
@@ -136,6 +138,67 @@ pub(super) async fn run_local(
     // ran, the way `run_agent_batch` normalises an agent's.
     summarise_exception(&mut result);
     Some(result)
+}
+
+/// An action plugin that never touches the host (`add_host`, `group_by`, `set_stats`), run as
+/// ansible-core's own with no link: the reference runs these on the controller and never
+/// connects. What the plugin asks of a host is answered with a failure it reports itself.
+/// `None` when the run's stop came first.
+async fn controller_side(
+    task: &PlayTask,
+    item: &Item,
+    step: &Step,
+    templar: &Templar,
+    stop: &mut watch::Receiver<bool>,
+) -> Option<TaskResult> {
+    use crate::action_plugins::{Context, Step as Next, kind, start};
+    let Some(kind) = kind(&task.module) else {
+        return Some(TaskResult::failed_with(format!(
+            "no action plugin runs '{}'",
+            task.module
+        )));
+    };
+    let mut warnings = Vec::new();
+    let mut plugin = start(
+        kind,
+        Context {
+            args: &item.args,
+            args_untrusted: &item.args_untrusted,
+            running_vars: &item.vars,
+            delegated: false,
+            escalated: false,
+            local: true,
+            item_vars: &item.vars,
+            templar,
+            origin: &step.origin,
+            playbook_dir: std::path::Path::new("."),
+            warnings: &mut warnings,
+            environment: Some(&item.environment),
+            timeout: task.timeout,
+        },
+    );
+    let mut last = None;
+    loop {
+        match plugin.next(last.take()) {
+            Next::Done(result) => return Some(result),
+            Next::Wait(ready) => {
+                tokio::select! {
+                    () = ready.notified() => {}
+                    stopped = stop.wait_for(|stopped| *stopped) => {
+                        if stopped.is_ok() {
+                            return None;
+                        }
+                    }
+                }
+            }
+            _ => {
+                last = Some(TaskResult::failed_with(format!(
+                    "'{}' runs on the controller and cannot reach a host",
+                    task.module
+                )));
+            }
+        }
+    }
 }
 
 /// The names a `set_fact` sets, each with its value and whether it is data from a managed host.

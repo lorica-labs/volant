@@ -953,7 +953,7 @@ pub(super) fn prepare(
         return Ok(Prepared::Skipped(items));
     }
     let delegate = delegate_for(task, &base, templar)?;
-    if is_local(&task.module) {
+    if is_local(&task.module) || crate::action_plugins::controller_side(&task.module) {
         return Ok(Prepared::Local(items, delegate));
     }
     let connect = Box::new(connect_for(task, &base, templar)?);
@@ -1687,6 +1687,29 @@ mod tests {
             | Prepared::Local(items, _)
             | Prepared::Remote(items, _, _, _, _, _) => items,
         })
+    }
+
+    /// `add_host`, `group_by` and `set_stats` never connect, as in the reference: they are
+    /// prepared as controller-side items, so a host that is down still runs them.
+    #[rstest::rstest]
+    #[case("group_by", true)]
+    #[case("ansible.builtin.add_host", true)]
+    #[case("set_stats", true)]
+    #[case("uri", false)]
+    fn inventory_actions_are_prepared_without_a_link(#[case] module: &str, #[case] local: bool) {
+        let step = step_of(task(module), Origin::default());
+        let prepared = prepare(
+            &step,
+            "h1",
+            &plan(),
+            &Progress::default(),
+            &Templar::new(PathBuf::from(".")),
+            &store_at(Path::new(".")),
+            &defaults(),
+            &mut Vec::new(),
+        )
+        .expect("prepared");
+        assert_eq!(matches!(prepared, Prepared::Local(..)), local);
     }
 
     fn failing(ignore_errors: &str) -> Step {

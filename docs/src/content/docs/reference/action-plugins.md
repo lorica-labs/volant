@@ -1,6 +1,6 @@
 ---
 title: Action plugins
-description: How Volant runs copy, package, service, template and unarchive, which ansible-core runs through an action plugin on the controller.
+description: How Volant runs the modules ansible-core runs through an action plugin on the controller, in Rust or on the Python bridge.
 ---
 
 Most modules ansible-core ships run as themselves: the controller sends a payload, the host runs it, the result comes back. A handful run differently: the reference itself decides what to send, sometimes after asking the host something first, and the module name on the task is only the entry point. `package` is one: what runs is `apt` or `dnf`, chosen after the host says which one it has. `copy` is another: whether anything travels to the host at all depends on a checksum the host reports back first.
@@ -9,7 +9,7 @@ Volant runs eight of these itself: `copy`, `dnf`, `fetch`, `package`, `reboot`, 
 
 A task's own `timeout:` keyword bounds the whole item this way, on any of the eight: every sub-task and every wait for the host to come back, `reboot`'s reconnecting included. Running out of it ends the task there with `Task failed: Timed out after <seconds> second(s).`, never whatever the plugin would have made of the time it had left.
 
-Nine other names the reference also runs through an action plugin are not supported yet: Volant names them before the first connection, because sending their module alone would run something other than what the playbook asked for: `add_host`, `assemble`, `async_status`, `gather_facts`, `group_by`, `script`, `set_stats`, `uri`, `wait_for_connection`. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
+The names the reference also runs through an action plugin, and every action plugin of the collections in the corpus, run on a second road: the plugin's own Python, from ansible-core, in the controller's helper. See [On the bridge](#on-the-bridge) below. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
 
 ## `copy`
 
@@ -120,6 +120,36 @@ Once the shutdown command has gone out, this release drops the connection and op
 The shutdown line follows the reference's own table: `shutdown -r <minutes> "<msg>"` on most distributions, bare `reboot` on Alpine, `shutdown -r +<minutes> "<msg>"` on Void, or `reboot_command` split at its first space when the task gives one. `search_paths` (five directories by default) is where the shutdown program is found when `reboot_command` does not already name an absolute path; not finding it there fails the task, naming every path searched.
 
 Rejected before the host is asked anything: an argument outside the reference's own nine (`boot_time_command`, `connect_timeout`, `msg`, `post_reboot_delay`, `pre_reboot_delay`, `reboot_command`, `reboot_timeout`, `search_paths`, `test_command`) fails the task, sorted and named: `Invalid options for reboot: <name>[,<name>...]`.
+
+## On the bridge
+
+`add_host`, `assemble`, `async_status`, `gather_facts`, `group_by`, `script`, `set_stats`, `uri` and `wait_for_connection` run ansible-core's own action plugin in the helper, and so does every action plugin a collection ships (`ansible.posix.synchronize` and the plugins that need a Windows host or another connection type excepted; the [parity](/reference/parity/) page counts them). `copy` and `unarchive` take the same road for the two shapes the Rust plugins refuse: `copy` of a directory, and `unarchive` with a `~` in `dest` or `creates`. A `src` a managed host named never takes it: the Rust plugin's refusal stands.
+
+The plugin asks for what it needs and the controller answers: run this module, run this command, read a variable, make a temporary directory, put this file. Every answer is bounded by the task's `timeout:`. A plugin that never returns, or a helper that dies, fails that task and not the run; a temporary directory the plugin left on the host is removed. `add_host`, `group_by` and `set_stats` need no host and run without a connection. What they return is applied by the executor: new hosts and groups for the next tasks, and the custom stats printed after the recap. A value of `add_host` rendered from a fact stays data: it is kept as a fact of the new host, never as an inventory variable.
+
+The helper stands in for the controller's connection, so some things the reference lets a plugin do are refused, by name, before they do anything:
+
+- A member of the connection or play context that is not one of the few the shim carries: `Connection.<name> is not supported yet`, `the connection option <name> is not supported yet`, `the play context field <name> is not supported yet`, `the shell plugin <name> is not supported yet`.
+- An `async_status` mode other than `status` and `cleanup`.
+- A module that is not UTF-8 text where the shim reads it as text.
+- The task keywords `action`, `local_action` and `module_defaults` inside the helper: the controller merged the defaults already.
+
+Three behaviours differ from the reference on purpose:
+
+- `wrap_async` is emulated. The module runs to its end when the plugin asks for it, and `async_status` then answers that the job finished. Parallel jobs run one after the other. A job's `async:` limit is judged after the module ran, as `Timeout exceeded`; the module is not interrupted.
+- A command a plugin sends with `sudoable=False` runs on the task's own link, so under `become` it runs escalated.
+- `script` over `ssh` runs without a terminal. The reference gives the script one, which merges its stderr into stdout with a carriage return and closes the shared connection on a stderr write. The agent has no terminal to give a command, so those two details differ.
+
+### Known gaps
+
+- Template delimiters (`variable_start_string` and the five others) are not bridged; `template` still refuses them.
+- `wait_for_connection` on a host that is down from the first connection ends `UNREACHABLE` for a plugin item that never got a link; the reference reports `failed` with `timed out waiting for ping module test`.
+- A bridged result that is `unreachable` at the result level (`ansible.posix.synchronize`, whose module the shim refuses) prints as `ok`.
+- A skipped bridged result carries `"failed": false`.
+- The warnings a plugin writes with `display` go to the helper's standard error, not to the task's output; so does ansible-core's `Error loading plugin` warning for an unknown collection name.
+- A module that `runtime.yml` routes to a differently named action plugin runs under the task's own name.
+- `fact_diff` prints no diff, because `diff` is not supported yet.
+- `ansible_play_hosts_all` does not grow for a host added inside a `serial` play, and a delegated `add_host` or `group_by` applies to the task's own host.
 
 ## A source file a managed host named
 

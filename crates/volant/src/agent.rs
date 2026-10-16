@@ -795,8 +795,8 @@ mod tests {
 
     /// An agent that speaks the protocol before this one is refused at the handshake with the
     /// sentence every mismatch gets, before any blob could reach it in a shape it would misread.
-    #[cfg(unix)]
     /// The stand-in for a host that never answered says so, and has no agent to answer a frame.
+    #[cfg(unix)]
     #[tokio::test]
     async fn the_stand_in_link_has_no_agent() {
         let mut link = AgentLink::dead().expect("the stand-in starts");

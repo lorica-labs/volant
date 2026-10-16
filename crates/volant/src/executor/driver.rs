@@ -234,6 +234,7 @@ pub(crate) fn task_strings(task: &PlayTask) -> (Vec<&str>, Vec<&str>) {
         .chain(&task.retries)
         .chain(&task.delay)
         .chain(&task.environment)
+        .chain(&task.module_defaults)
     {
         strings(value, &mut text);
     }
@@ -462,6 +463,7 @@ pub(super) async fn drive_host(
         stop: options.stop.clone(),
         stop_broken: false,
         cleanup: None,
+        peer_fatal: None,
     };
     // One entry per target user on this host: the connecting user's own agent, and one more
     // for each `become_user` the play escalates to. Connections this play never uses itself
@@ -483,6 +485,7 @@ pub(super) async fn drive_host(
     // `UNREACHABLE!` line carries. Measured on ansible-core 2.19.12: the delegating host is the
     // one the recap counts, and the delegate only shows in the line.
     let mut unreachable_delegate: Option<String> = None;
+    let mut unreachable_index: Option<usize> = None;
     let mut failed = false;
     // Set when this host leaves the play with nothing to show for it: the one runner of a
     // `run_once` step failed, so this host never ran the task and has no line, and the run
@@ -516,10 +519,30 @@ pub(super) async fn drive_host(
     // it lives on `Driver::cleanup`; the coordinator still knows one thing about a host, that
     // it failed.
     let mut failed_at: Option<(usize, TaskResult)> = None;
+    // Set when `failed_at` is another host's failure under `any_errors_fatal`: this host has no
+    // failed task, so a rescue it enters has no `ansible_failed_task` to read.
+    let mut peer_failure = false;
 
     'run: loop {
         let c = plan.steps();
         let n = c.steps.len();
+        // Another host failed at an `any_errors_fatal` step this host has just finished: this
+        // one fails there too, through the ordinary failure path - a `rescue` of the enclosing
+        // block takes it, and `always` runs - without a line or a recap entry of its own.
+        let fatal_at = driver.peer_fatal.take();
+        if failed_at.is_none()
+            && !handlers_only
+            && let Some(at) = fatal_at
+        {
+            // The batch was lost at that step: nothing rescues, the hosts just leave.
+            if driver.progress.borrow().aborted {
+                failed = true;
+                break 'run;
+            }
+            failed |= rescue_target(&c, at).is_none();
+            failed_at = Some((at, TaskResult::default()));
+            peer_failure = true;
+        }
         // The fork permit goes back before either failure arm below waits at a splice point: the
         // step loop's own release reads the success successor and never the range a host that
         // has just failed steps over. Only on the failure paths, so a batch that ended cleanly
@@ -553,7 +576,7 @@ pub(super) async fn drive_host(
             // `ansible_failed_task`.
             if let Some(next) = rescue_target(&c, index) {
                 let task = &c.steps[index].task;
-                {
+                if !std::mem::take(&mut peer_failure) {
                     let mut vars = store.lock().expect("vars lock");
                     vars.set_untrusted_fact(&name, "ansible_failed_task", failed_task_value(task));
                     vars.set_untrusted_fact(
@@ -576,6 +599,7 @@ pub(super) async fn drive_host(
                 };
                 pos = next + grown;
             } else {
+                peer_failure = false;
                 // Measured on ansible-core 2.19.12: a task failing inside a nested block runs
                 // the inner `always`, then the outer one, and only then leaves the play. A
                 // `cleanup` already in hand is left where it is: a failure raised while
@@ -655,6 +679,11 @@ pub(super) async fn drive_host(
         // over until its own result is in.
         let mut undecided: Option<usize> = None;
         while pos < n {
+            // The step this host just finished failed on another host, and `any_errors_fatal`
+            // makes it fail here: nothing else is collected.
+            if driver.peer_fatal.is_some() {
+                break;
+            }
             // The list grew behind this host at a flush point it stepped over, so every index
             // past that point has moved: go back and read the list again rather than walk the
             // one it used to be. Nothing collected so far moved - a flush ends a batch, so every
@@ -680,7 +709,7 @@ pub(super) async fn drive_host(
             // holds at most one of them at a time.
             if batch.is_empty()
                 && permit.is_some()
-                && (is_boundary(&c, pos, strict(options.batching, &store))
+                && (is_boundary(&c, pos, strict(options.batching, &store) || plan.lockstep)
                     || crate::compile::is_splice_point(&step.kind)
                     || driver.steps_over_a_splice_point(&c, pos))
             {
@@ -717,7 +746,7 @@ pub(super) async fn drive_host(
             // because a host that walked into one of those without stopping here would report a
             // step the others have not reached, and every wait in this file opens on the
             // coordinator's frontier.
-            if is_boundary(&c, pos, strict(options.batching, &store)) && pos > 0 {
+            if is_boundary(&c, pos, strict(options.batching, &store) || plan.lockstep) && pos > 0 {
                 if !batch.is_empty() {
                     break;
                 }
@@ -727,6 +756,13 @@ pub(super) async fn drive_host(
                     .profile
                     .phase(Some(&name), Phase::BarrierWait, micros(waiting));
                 if waited.is_none() {
+                    break 'run;
+                }
+                // The batch lost more hosts than `max_fail_percentage` allows while this host
+                // was waiting: it leaves with the others, and the coordinator has already
+                // counted it among the failed.
+                if driver.progress.borrow().aborted {
+                    failed = true;
                     break 'run;
                 }
             }
@@ -1327,9 +1363,30 @@ pub(super) async fn drive_host(
                             // below: the arrow names the delegate this task asked for, and
                             // `no_log` censors the reason.
                             Err(err) => {
+                                // The task said an unreachable host stays: the reason is
+                                // shown and the host moves on to the next step.
+                                if task.ignores_unreachable() {
+                                    ignore_unreachable(
+                                        &tx,
+                                        &name,
+                                        pos,
+                                        task,
+                                        format!("{err:#}"),
+                                        delegate_name.as_deref(),
+                                        &store,
+                                        &register_hosts,
+                                    )
+                                    .await;
+                                    let Some(next) = driver.advance(pos).await else {
+                                        break 'run;
+                                    };
+                                    pos = next;
+                                    continue;
+                                }
                                 unreachable_censored = task.censors();
                                 unreachable_origin = task.origin.clone();
                                 unreachable_delegate = delegate_name;
+                                unreachable_index = Some(pos);
                                 unreachable = Some(format!("{err:#}"));
                                 break 'run;
                             }
@@ -1351,7 +1408,9 @@ pub(super) async fn drive_host(
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
                     // A task an action plugin backs does the same, one trip per sub-task.
-                    if (retried || action.is_some()) && !batch.is_empty() {
+                    if (retried || action.is_some() || task.ignores_unreachable())
+                        && !batch.is_empty()
+                    {
                         break;
                     }
                     batch_action = action.map(|kind| PluginBatch {
@@ -1377,7 +1436,8 @@ pub(super) async fn drive_host(
                         || !task.changed_when.is_empty()
                         || !task.failed_when.is_empty()
                         || batch_retry.is_some()
-                        || batch_action.is_some();
+                        || batch_action.is_some()
+                        || task.ignores_unreachable();
                     if let Some(module) = payload {
                         // Off the same variables the connection was resolved from, which is the
                         // point: the module runs where the link goes, so its interpreter has to
@@ -1398,7 +1458,11 @@ pub(super) async fn drive_host(
                     // very rescue and tell the coordinator so. A flush point between here and
                     // where the step leads ends the batch for its own reason - `advance` would
                     // wait for a splice the coordinator cannot publish without this step's word.
-                    if rescue_target(&c, pos).is_some() || driver.steps_over_a_splice_point(&c, pos)
+                    // An `any_errors_fatal` step waits for the batch's verdict before it leaves, which
+                    // is a wait it can only make once its own result is in.
+                    if rescue_target(&c, pos).is_some()
+                        || task.fails_all()
+                        || driver.steps_over_a_splice_point(&c, pos)
                     {
                         undecided = Some(pos);
                         break;
@@ -1422,6 +1486,7 @@ pub(super) async fn drive_host(
             unreachable_censored = c.steps[batch[0].0].task.censors();
             unreachable_origin = c.steps[batch[0].0].task.origin.clone();
             unreachable_delegate = batch_delegate.clone();
+            unreachable_index = Some(batch[0].0);
             if permit.is_none() {
                 if let Ok(p) = Arc::clone(&forks).acquire_owned().await {
                     permit = Some(p);
@@ -1532,6 +1597,26 @@ pub(super) async fn drive_host(
                     continue 'run;
                 }
                 Err(err) => {
+                    if c.steps[batch[0].0].task.ignores_unreachable() {
+                        permit = None;
+                        if !ignore_the_batch(
+                            &mut driver,
+                            &tx,
+                            &name,
+                            &c,
+                            batch[0].0,
+                            err.to_string(),
+                            batch_delegate.as_deref(),
+                            &store,
+                            undecided,
+                            &mut pos,
+                        )
+                        .await
+                        {
+                            break 'run;
+                        }
+                        continue 'run;
+                    }
                     unreachable = Some(err.to_string());
                     break 'run;
                 }
@@ -1978,6 +2063,7 @@ pub(super) async fn drive_host(
             // without a result for it and advancing past a step with no `TaskDone` behind it
             // stalls every barrier behind it.
             let mut undecided_reported = false;
+            let mut any_reported = false;
             let found = links
                 .get(&key)
                 .and_then(|link| link.interpreters().first().cloned());
@@ -2124,6 +2210,7 @@ pub(super) async fn drive_host(
                         .await;
                 }
                 let rescuable = !handlers_only && rescue_target(&c, *index).is_some();
+                any_reported = true;
                 let retried: &[Vec<RetryLine>] = if bi == 0 { &lefts } else { &[] };
                 let retried_names: &[String] = if bi == 0 { &names } else { &[] };
                 if let Some(result) = report_task(
@@ -2163,6 +2250,32 @@ pub(super) async fn drive_host(
             }
             match ended {
                 Err(msg) => {
+                    // The link died with the task unanswered and the task said an unreachable
+                    // host stays. The dead link is dropped so the next step connects again.
+                    if !any_reported
+                        && failed_at.is_none()
+                        && c.steps[batch[0].0].task.ignores_unreachable()
+                    {
+                        links.remove(&key);
+                        checked.remove(&key);
+                        if !ignore_the_batch(
+                            &mut driver,
+                            &tx,
+                            &name,
+                            &c,
+                            batch[0].0,
+                            msg,
+                            batch_delegate.as_deref(),
+                            &store,
+                            undecided,
+                            &mut pos,
+                        )
+                        .await
+                        {
+                            break 'run;
+                        }
+                        continue 'run;
+                    }
                     unreachable = Some(msg);
                     break 'run;
                 }
@@ -2255,6 +2368,7 @@ pub(super) async fn drive_host(
                 censored: unreachable_censored,
                 delegate: unreachable_delegate,
                 origin: unreachable_origin,
+                index: unreachable_index,
             })
             .await;
     }
@@ -2285,6 +2399,83 @@ pub(super) async fn drive_host(
             links: links.into_iter().collect(),
         })
         .await;
+}
+
+/// An unreachable host under `ignore_unreachable`: the step shows the reason and the host stays.
+/// What a `register` on the task reads is the reference's own unreachable result.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the step's whole context: the sender, the host, the step, the reason and the stores"
+)]
+async fn ignore_unreachable(
+    tx: &mpsc::Sender<Event>,
+    host: &str,
+    index: usize,
+    task: &PlayTask,
+    msg: String,
+    delegate: Option<&str>,
+    store: &Mutex<VarStore>,
+    register_hosts: &[String],
+) {
+    let mut result = TaskResult::default();
+    result.0.insert("changed".into(), Value::Bool(false));
+    result.0.insert("msg".into(), Value::String(msg.clone()));
+    result.0.insert("unreachable".into(), Value::Bool(true));
+    record_registered(
+        &mut store.lock().expect("vars lock"),
+        task,
+        register_hosts,
+        &[(None, result)],
+        &[],
+    );
+    let _ = tx
+        .send(Event::UnreachableIgnored {
+            host: host.to_string(),
+            index,
+            msg,
+            censored: task.censors(),
+            delegate: delegate.map(str::to_string),
+            origin: task.origin.clone(),
+        })
+        .await;
+    let _ = tx
+        .send(Event::TaskDone {
+            host: host.to_string(),
+            index,
+        })
+        .await;
+}
+
+/// `ignore_unreachable` for a batch that never got an answer: shows the step, then moves `pos`
+/// past it when the batch stopped short of doing so itself. `false` when the run was
+/// interrupted on the way.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the step's whole context: the driver, the sender, the list, the reason and the stores"
+)]
+async fn ignore_the_batch(
+    driver: &mut Driver<'_>,
+    tx: &mpsc::Sender<Event>,
+    host: &str,
+    compiled: &Compiled,
+    index: usize,
+    msg: String,
+    delegate: Option<&str>,
+    store: &Mutex<VarStore>,
+    undecided: Option<usize>,
+    pos: &mut usize,
+) -> bool {
+    let task = &compiled.steps[index].task;
+    let live = driver.progress.borrow().live_hosts.clone();
+    let targets = fact_targets(task, host, &live);
+    ignore_unreachable(tx, host, index, task, msg, delegate, store, &targets).await;
+    if let Some(step) = undecided {
+        let Some(next) = driver.advance(step).await else {
+            return false;
+        };
+        *pos = next;
+    }
+    true
 }
 
 /// Files what `link` measured since it was last asked: its blob and wire time, and one record
@@ -2376,6 +2567,9 @@ struct Driver<'a> {
     /// The index the `always` section this host is draining ends at, when it is draining one.
     /// The one index it carries that sits past a splice point, so the one a splice moves.
     cleanup: Option<usize>,
+    /// The `any_errors_fatal` step another host failed at, found when this host finished it. Read
+    /// at the top of the host's loop, where it becomes a failure at that step.
+    peer_fatal: Option<usize>,
 }
 
 impl Driver<'_> {
@@ -2434,7 +2628,13 @@ impl Driver<'_> {
                 return None;
             }
             let p = self.progress.borrow().clone();
-            if p.live_hosts.len() <= 1 || p.completed_through.is_some_and(|c| c + 1 >= pos) {
+            // Alone in the batch there is nobody to wait for, except under `max_fail_percentage`:
+            // the coordinator decides there, once this host has reported the step behind it,
+            // whether the batch is lost, and a lone host that raced ahead would run a step the
+            // reference never starts.
+            let alone = p.live_hosts.len() <= 1 && !self.plan.lockstep;
+            if p.live_hosts.is_empty() || alone || p.completed_through.is_some_and(|c| c + 1 >= pos)
+            {
                 return Some(());
             }
             tokio::select! {
@@ -2443,6 +2643,52 @@ impl Driver<'_> {
                     // and waiting on it would never end.
                     if changed.is_err() {
                         return Some(());
+                    }
+                }
+                res = self.stop.changed(), if !self.stop_broken => {
+                    if res.is_err() {
+                        self.stop_broken = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+    }
+
+    /// Waits until every live host has finished the `any_errors_fatal` step at `at`, and says
+    /// whether one of them failed there. A failure answers at once: nothing a host that has not
+    /// finished yet could do changes it.
+    ///
+    /// The verdict is read from the same snapshot as the live set, and the coordinator writes it
+    /// before the failing host leaves that set, so a snapshot with every live host past `at` and
+    /// no verdict is one where nobody failed. A host the coordinator no longer counts live has
+    /// failed already and waits for nobody.
+    ///
+    /// `None` when the run was interrupted.
+    async fn fatal_verdict(&mut self, at: usize) -> Option<bool> {
+        loop {
+            if self.stopped() {
+                return None;
+            }
+            let p = self.progress.borrow().clone();
+            // Under `max_fail_percentage` the batch may be lost at this very step, which the
+            // coordinator decides once every live host has finished it: this host has to know
+            // that before it picks a rescue.
+            let decided = !self.plan.lockstep || p.aborted;
+            if p.fatal.contains(&at) && (decided || p.completed_through.is_some_and(|c| c >= at)) {
+                return Some(true);
+            }
+            if p.live_hosts.len() <= 1
+                || !p.live_hosts.iter().any(|h| h == self.name)
+                || p.completed_through.is_some_and(|c| c >= at)
+            {
+                return Some(false);
+            }
+            tokio::select! {
+                changed = self.progress.changed() => {
+                    if changed.is_err() {
+                        return Some(false);
                     }
                 }
                 res = self.stop.changed(), if !self.stop_broken => {
@@ -2528,6 +2774,15 @@ impl Driver<'_> {
     /// driver's own bound reads as "done", and `None` when the run was interrupted on the way.
     async fn advance(&mut self, pos: usize) -> Option<usize> {
         let compiled = self.plan.steps();
+        // An `any_errors_fatal` step is finished for this host only when it is finished for the
+        // batch. A host that failed there makes this one fail at the same step: it does not step
+        // over anything, since the failure decides where it goes.
+        if compiled.steps.get(pos).is_some_and(|s| s.task.fails_all())
+            && self.fatal_verdict(pos).await?
+        {
+            self.peer_fatal = Some(pos);
+            return Some(pos + 1);
+        }
         let next = match self.cleanup {
             Some(end) => after_pending(&compiled, pos, end).map(|(next, end)| {
                 self.cleanup = Some(end);

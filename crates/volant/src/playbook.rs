@@ -74,6 +74,18 @@ pub struct Play {
     pub environment: Vec<Value>,
     pub check_mode: Option<bool>,
     pub run_once: Option<bool>,
+    /// The play's `module_defaults` and `collections`, folded into every task the same way. A
+    /// role is the exception for `collections`: it does not inherit the play's.
+    pub module_defaults: Vec<Value>,
+    pub collections: Option<Vec<String>>,
+    /// The play's `any_errors_fatal`, `ignore_errors` and `ignore_unreachable`: task keywords a
+    /// play may carry, folded into every task as the outermost layer like `no_log` above.
+    pub any_errors_fatal: Option<bool>,
+    pub ignore_errors: Option<Flag>,
+    pub ignore_unreachable: Option<bool>,
+    /// `max_fail_percentage`, as written: a number, or a template rendered when the play
+    /// starts. Play-only - a task or a block carrying it is refused at load.
+    pub max_fail_percentage: Option<Value>,
     /// Keywords the reference accepts and this release does not execute yet, sorted. The
     /// loader keeps the play rather than refusing it, so a playbook parses and lists the same
     /// way it does in the reference; the pre-flight then refuses the run before the first
@@ -263,6 +275,14 @@ pub struct PlayTask {
     /// block's, then the task's. They are rendered and merged when the task runs, the later
     /// layer winning, because a layer is a mapping whose values may be templates.
     pub environment: Vec<Value>,
+    /// `module_defaults`, one mapping per layer that wrote one, outermost first. The innermost
+    /// layer naming a module replaces the outer layers' defaults for it as a whole, which is
+    /// settled when the task runs, because the values are templates.
+    pub module_defaults: Vec<Value>,
+    /// `collections`, searched before `ansible.builtin` for a module written by its short name.
+    /// `None` when no layer wrote one, `Some` of an empty list for a role that has none: a role
+    /// does not inherit the play's.
+    pub collections: Option<Vec<String>>,
     /// `check_mode`. `false` is what this release does, so it is accepted and changes nothing;
     /// `true` asks for a mode this release has not written and the pre-flight refuses it.
     pub check_mode: Option<bool>,
@@ -270,6 +290,11 @@ pub struct PlayTask {
     /// produced. Three-state for the same reason `ignore_errors` is - a block saying `true` and
     /// a task saying `false` inside it have to be told apart from a task that says nothing.
     pub run_once: Option<bool>,
+    /// `any_errors_fatal`: a failure of this task on one host fails every host of the batch.
+    /// `ignore_unreachable`: an unreachable host stays in the play. Both three-state for the
+    /// same reason `ignore_errors` is.
+    pub any_errors_fatal: Option<bool>,
+    pub ignore_unreachable: Option<bool>,
     /// `delegate_to`, raw: the task runs on that host's connection while everything else about
     /// it - `inventory_hostname`, the registered variable, the recap line - stays with the host
     /// it was written for. Kept as written because it is a template rendered per task.
@@ -340,8 +365,12 @@ impl PlayTask {
             delay: None,
             no_log: None,
             environment: Vec::new(),
+            module_defaults: Vec::new(),
+            collections: None,
             check_mode: None,
             run_once: None,
+            any_errors_fatal: None,
+            ignore_unreachable: None,
             delegate_facts: None,
             delegate_to: None,
             unsupported: Vec::new(),
@@ -395,7 +424,20 @@ impl PlayTask {
     /// `keywords::tests::run_once_is_the_only_barrier_keyword`: a second row marked `barrier`
     /// would look declared and be ignored here, and that test refuses one.
     pub fn barrier(&self) -> bool {
-        (self.runs_once() && crate::keywords::is_barrier("run_once")) || self.pauses()
+        (self.runs_once() && crate::keywords::is_barrier("run_once"))
+            || self.pauses()
+            || self.fails_all()
+    }
+
+    /// Whether a failure of this task on one host fails the whole batch. A barrier too: the
+    /// hosts meet in front of it and learn together how it ended.
+    pub fn fails_all(&self) -> bool {
+        self.any_errors_fatal == Some(true)
+    }
+
+    /// Whether an unreachable host stays in the play after this task.
+    pub fn ignores_unreachable(&self) -> bool {
+        self.ignore_unreachable == Some(true)
     }
 }
 
@@ -994,8 +1036,17 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         serial,
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, "")?,
+        module_defaults: module_defaults(yaml, "")?,
+        collections: collections(yaml, "")?,
         check_mode: boolean(yaml, "check_mode")?,
         run_once: boolean(yaml, "run_once")?,
+        any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+        ignore_errors: flag(yaml, "ignore_errors")?,
+        ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
+        max_fail_percentage: match field(yaml, "max_fail_percentage") {
+            None | Some(Yaml::Value(Scalar::Null)) => None,
+            Some(v) => Some(to_json(v).context("'max_fail_percentage'")?),
+        },
         unsupported,
     })
 }
@@ -1012,6 +1063,35 @@ fn environment(yaml: &Yaml, context: &str) -> anyhow::Result<Vec<Value>> {
         Some(v) => Ok(vec![
             to_json(v).with_context(|| format!("{context}'environment'"))?,
         ]),
+    }
+}
+
+/// `module_defaults`, wherever it is written: one layer per level, a mapping or a list of
+/// mappings. The keys are action or group names and are read as they are; the values are
+/// templates, rendered when a task runs.
+fn module_defaults(yaml: &Yaml, context: &str) -> anyhow::Result<Vec<Value>> {
+    let layers = match field(yaml, "module_defaults") {
+        None | Some(Yaml::Value(Scalar::Null)) => return Ok(Vec::new()),
+        Some(Yaml::Sequence(items)) => items.iter().collect(),
+        Some(node) => vec![node],
+    };
+    layers
+        .into_iter()
+        .map(|node| match to_json(node).with_context(|| format!("{context}'module_defaults'"))? {
+            layer @ Value::Object(_) => Ok(layer),
+            _ => bail!(
+                "{context}The field 'module_defaults' is supposed to be a dictionary or list of dictionaries, the keys of which must be static action, module, or group names. Only the values may contain templates. For example: {{'ping': \"{{{{ ping_defaults }}}}\"}}"
+            ),
+        })
+        .collect()
+}
+
+/// `collections`, wherever it is written: a name or a list of names, searched in order. Absent
+/// is `None`, so the layer above is not hidden; a null or an empty list says none.
+fn collections(yaml: &Yaml, context: &str) -> anyhow::Result<Option<Vec<String>>> {
+    match field(yaml, "collections") {
+        None => Ok(None),
+        Some(_) => names(yaml, "collections", context).map(Some),
     }
 }
 
@@ -1107,8 +1187,12 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             notify: names(yaml, "notify", &context)?,
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
+            module_defaults: module_defaults(yaml, &context)?,
+            collections: collections(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
             run_once: boolean(yaml, "run_once")?,
+            any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+            ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
             delegate_facts,
             delegate_to,
             unsupported,
@@ -1278,8 +1362,12 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             notify: names(yaml, "notify", &context)?,
             no_log: boolean(yaml, "no_log")?,
             environment: environment(yaml, &context)?,
+            module_defaults: module_defaults(yaml, &context)?,
+            collections: collections(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
             run_once: boolean(yaml, "run_once")?,
+            any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+            ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
             delegate_facts,
             delegate_to,
             unsupported,
@@ -1558,8 +1646,12 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         delay: field(yaml, "delay").map(to_json).transpose()?,
         no_log: boolean(yaml, "no_log")?,
         environment: environment(yaml, &context)?,
+        module_defaults: module_defaults(yaml, &context)?,
+        collections: collections(yaml, &context)?,
         check_mode: boolean(yaml, "check_mode")?,
         run_once: boolean(yaml, "run_once")?,
+        any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
+        ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
         delegate_facts,
         delegate_to,
         unsupported,

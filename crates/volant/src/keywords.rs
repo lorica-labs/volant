@@ -122,7 +122,7 @@ pub fn is_barrier(name: &str) -> bool {
 /// `Block.fattributes` has none of them, so a block carrying one is refused at load.
 pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("action", Runs),
-    kw("any_errors_fatal", Preflight),
+    kw("any_errors_fatal", Runs),
     kw("args", Runs),
     kw("async", Preflight),
     kw("become", Runs),
@@ -132,7 +132,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("become_user", Runs),
     kw("changed_when", Runs),
     partial_kw("check_mode", CHECK_MODE_MISSING),
-    kw("collections", Preflight),
+    kw("collections", Runs),
     kw("connection", Runs),
     kw("debugger", Preflight),
     kw("delay", Runs),
@@ -142,11 +142,11 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("environment", Runs),
     kw("failed_when", Runs),
     kw("ignore_errors", Runs),
-    kw("ignore_unreachable", Preflight),
+    kw("ignore_unreachable", Runs),
     kw("local_action", Runs),
     kw("loop", Runs),
     kw("loop_control", Runs),
-    kw("module_defaults", Preflight),
+    kw("module_defaults", Runs),
     kw("name", Runs),
     kw("no_log", Runs),
     kw("notify", Runs),
@@ -216,15 +216,19 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
 /// `serial` runs: the play is cut into batches of hosts and the coordinator plays each of them
 /// in turn, banner and handlers included, and the run ends where the reference ends it - at the
 /// batch whose live hosts all failed.
+///
+/// `any_errors_fatal`, `ignore_unreachable` and `ignore_errors` are task keywords a play may
+/// carry, so the compiler folds them into every task like `no_log`. `max_fail_percentage` is the
+/// play's alone: the coordinator ends a batch that lost more of its hosts than the limit allows.
 pub const PLAY_KEYWORDS: &[Keyword] = &[
-    kw("any_errors_fatal", Preflight),
+    kw("any_errors_fatal", Runs),
     kw("become", Runs),
     kw("become_exe", Runs),
     kw("become_flags", Runs),
     kw("become_method", Runs),
     kw("become_user", Runs),
     partial_kw("check_mode", CHECK_MODE_MISSING),
-    kw("collections", Preflight),
+    kw("collections", Runs),
     kw("connection", Runs),
     kw("debugger", Preflight),
     kw("diff", Preflight),
@@ -236,10 +240,10 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("gather_timeout", Preflight),
     kw("handlers", Runs),
     kw("hosts", Runs),
-    kw("ignore_errors", Preflight),
-    kw("ignore_unreachable", Preflight),
-    kw("max_fail_percentage", Preflight),
-    kw("module_defaults", Preflight),
+    kw("ignore_errors", Runs),
+    kw("ignore_unreachable", Runs),
+    kw("max_fail_percentage", Runs),
+    kw("module_defaults", Runs),
     kw("name", Runs),
     kw("no_log", Runs),
     kw("order", Preflight),
@@ -289,7 +293,7 @@ pub const LOOP_CONTROL_KEYWORDS: &[Keyword] = &[
 /// own names.
 pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("always", Runs),
-    kw("any_errors_fatal", Preflight),
+    kw("any_errors_fatal", Runs),
     kw("become", Runs),
     kw("become_exe", Runs),
     kw("become_flags", Runs),
@@ -297,7 +301,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("become_user", Runs),
     kw("block", Runs),
     partial_kw("check_mode", CHECK_MODE_MISSING),
-    kw("collections", Preflight),
+    kw("collections", Runs),
     kw("connection", Runs),
     kw("debugger", Preflight),
     kw("delegate_facts", Runs),
@@ -305,8 +309,8 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("diff", Preflight),
     kw("environment", Runs),
     kw("ignore_errors", Runs),
-    kw("ignore_unreachable", Preflight),
-    kw("module_defaults", Preflight),
+    kw("ignore_unreachable", Runs),
+    kw("module_defaults", Runs),
     kw("name", Runs),
     kw("no_log", Runs),
     kw("notify", Runs),

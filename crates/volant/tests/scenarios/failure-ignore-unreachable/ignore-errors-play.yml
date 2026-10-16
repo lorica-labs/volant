@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  ignore_errors: true
+  tasks:
+    - command: "true"
+    - fail:
+      when: inventory_hostname == 'h2'
+    - debug: msg=second

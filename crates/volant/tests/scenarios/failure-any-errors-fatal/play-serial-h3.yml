@@ -1,0 +1,8 @@
+- hosts: all
+  serial: 2
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - fail:
+      when: inventory_hostname == 'h3'
+    - debug: msg=second

@@ -1,0 +1,3 @@
+# A listed collection that is not installed is skipped: builtin names still resolve, and the next collection answers.
+args: [-i, inv.ini, missing.yml]
+needs: [ansible-core]

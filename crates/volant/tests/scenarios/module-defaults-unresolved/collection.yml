@@ -1,0 +1,6 @@
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    group/my.col.nosuch: {foo: bar}
+  tasks:
+    - debug: msg=hi

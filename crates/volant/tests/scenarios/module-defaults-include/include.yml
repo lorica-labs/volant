@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    which: extra
+  tasks:
+    - my.col.hello:
+      register: r
+    - debug: var=r.who
+    - include_tasks: "{{ which }}.yml"

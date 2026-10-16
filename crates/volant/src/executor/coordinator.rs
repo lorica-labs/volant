@@ -3,7 +3,7 @@
 //! the terminal.
 
 use std::collections::hash_map::Entry;
-use std::collections::{BTreeMap, HashMap, HashSet};
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
@@ -71,6 +71,14 @@ pub struct Progress {
     /// that found nobody always read: every live host is outside the mask, reports the step and
     /// moves on.
     pub elected: BTreeMap<usize, String>,
+    /// The `any_errors_fatal` steps some host failed or went unreachable at. Every other host
+    /// of the batch fails there too, once it has finished the step: the entry is written before
+    /// the failing host leaves the live set, so a host that sees every live host past the step
+    /// and no entry knows nobody failed.
+    pub fatal: BTreeSet<usize>,
+    /// The batch lost more hosts than `max_fail_percentage` allows. Every host still running
+    /// leaves at its next step, and the run ends behind the batch.
+    pub aborted: bool,
 }
 
 pub(super) enum Event {
@@ -187,7 +195,43 @@ pub(super) enum Event {
         delegate: Option<String>,
         /// Where the task the host could not be reached for was written.
         origin: Option<crate::playbook::Origin>,
+        /// The step the batch that could not be reached began at, for `any_errors_fatal`.
+        index: Option<usize>,
     },
+    /// A host could not be reached for step `index` and the step said `ignore_unreachable`: the
+    /// reference prints the same block and line as for a host that left, then `...ignoring`,
+    /// and counts the step as `ok` and `ignored` with `unreachable` untouched. Queued behind the
+    /// step's key like a result, since the host carries on and the step prints in host order.
+    UnreachableIgnored {
+        host: String,
+        index: usize,
+        msg: String,
+        censored: bool,
+        delegate: Option<String>,
+        origin: Option<crate::playbook::Origin>,
+    },
+}
+
+/// What a host that could not be reached shows: the reference's error block, then the
+/// `UNREACHABLE!` line.
+struct Unreached {
+    msg: String,
+    censored: bool,
+    delegate: Option<String>,
+    origin: Option<crate::playbook::Origin>,
+}
+
+impl Unreached {
+    fn show(&self, host: &str, out: &mut Renderer) {
+        // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
+        // the reason censored.
+        out.error(&crate::render::ErrorBlock::unreachable(
+            &self.msg,
+            self.origin.as_ref(),
+            self.censored,
+        ));
+        out.unreachable(host, &self.msg, self.censored, self.delegate.as_deref());
+    }
 }
 
 /// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list
@@ -202,6 +246,7 @@ pub(super) async fn run_batch(
     hosts: &[Host],
     all: &[String],
     vars_files: &HashMap<String, Vec<Map<String, Value>>>,
+    max_fail: Option<(f64, usize)>,
     agents: &AgentSource,
     options: &RunOptions,
     state: &mut RunState,
@@ -234,6 +279,7 @@ pub(super) async fn run_batch(
     let plan = Arc::new(PlayPlan {
         plan: plan_rx,
         force_handlers: play.force_handlers.unwrap_or(options.force_handlers),
+        lockstep: max_fail.is_some(),
         play_vars: play.vars.clone(),
         vars_files: vars_files.clone(),
         all_play_hosts: all.to_vec(),
@@ -252,7 +298,18 @@ pub(super) async fn run_batch(
         spliced_through: None,
         run_once: BTreeMap::new(),
         elected: BTreeMap::new(),
+        fatal: BTreeSet::new(),
+        aborted: false,
+        aborted_at: None,
+        failed_here: HashSet::new(),
+        last_failure: None,
+        limit: max_fail.map(|(limit, _)| limit),
+        batch_size: max_fail.map_or(hosts.len(), |(_, size)| size),
     };
+    // Whether the two `NO MORE HOSTS LEFT` of `max_fail_percentage` are out. They follow the last
+    // line of the step the batch was lost at.
+    let mut said_no_more = false;
+    let mut marked_failed = false;
     // This first publish is what decides the runner of a `run_once` step at index 0, before any
     // driver exists to disagree about it. There is no barrier in front of index 0 - nobody has
     // anything to wait for there - so nothing else could make that election unanimous.
@@ -304,6 +361,7 @@ pub(super) async fn run_batch(
                             censored: false,
                             delegate: None,
                             origin: None,
+                            index: None,
                         })
                         .await;
                     let _ = watchdog_tx
@@ -329,6 +387,10 @@ pub(super) async fn run_batch(
     // host reports its request and then blocks, which it may do while this loop is still holding
     // an earlier index for a slower host.
     let mut includes: HashMap<usize, Vec<(String, Vec<IncludeGroup>)>> = HashMap::new();
+    // What a host that could not be reached owes the terminal, by host and the step its batch
+    // began at. The host leaves the play on arrival; its block and line print where the host
+    // stands in the step's order, like a result, instead of in front of the hosts before it.
+    let mut unreached: HashMap<(String, usize), Unreached> = HashMap::new();
     let mut index = 0;
     // Not `for .. in steps.iter()`: the list grows at a flush point, so its length is read again
     // each time round. The step is cloned rather than borrowed for the same reason - the splice
@@ -337,6 +399,12 @@ pub(super) async fn run_batch(
         let mut header_shown = false;
         for host in &play_hosts {
             loop {
+                // The batch is lost: every host of it is out of the play, the way the reference
+                // marks them all failed.
+                if coordinator.aborted && !marked_failed {
+                    marked_failed = true;
+                    state.failed_hosts.extend(play_hosts.iter().cloned());
+                }
                 let key = (host.clone(), index);
                 if done.contains(&key) {
                     // The header goes in front of the first event that shows something, not in
@@ -360,6 +428,19 @@ pub(super) async fn run_batch(
                     break;
                 }
                 if gone.contains(host) {
+                    if let Some(blame) = unreached.remove(&key) {
+                        if !header_shown {
+                            let live = progress_tx.borrow().clone();
+                            let spoken = names.get(&key);
+                            header(
+                                &step,
+                                &task_name(&step, host, &plan, &live, state, spoken),
+                                out,
+                            );
+                            header_shown = true;
+                        }
+                        blame.show(host, out);
+                    }
                     break;
                 }
                 match rx.recv().await {
@@ -399,8 +480,22 @@ pub(super) async fn run_batch(
                         // shrunken host list without racing the driver that is shutting down.
                         if lost {
                             state.failed_hosts.insert(key.0.clone());
+                            coordinator.failed_here.insert(key.0.clone());
+                            coordinator.last_failure = coordinator.last_failure.max(Some(key.1));
                         }
-                        if lost || announced {
+                        // A failure `any_errors_fatal` covers, rescued or not: the verdict is
+                        // published with the failing host's change of state, before any other
+                        // host can see the step finished.
+                        let fatal = sank
+                            && plan
+                                .steps()
+                                .steps
+                                .get(key.1)
+                                .is_some_and(|s| s.task.fails_all());
+                        if fatal {
+                            coordinator.fatal.insert(key.1);
+                        }
+                        if lost || announced || fatal {
                             coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                         }
                         pending.entry(key).or_default().push(event);
@@ -411,13 +506,17 @@ pub(super) async fn run_batch(
                         event @ (Event::Banner { .. }
                         | Event::Retrying { .. }
                         | Event::Warning { .. }
-                        | Event::Display { .. }),
+                        | Event::Display { .. }
+                        | Event::UnreachableIgnored { .. }),
                     ) => {
                         let (host, index) = match &event {
                             Event::Banner { host, index }
                             | Event::Retrying { host, index, .. }
                             | Event::Warning { host, index, .. }
-                            | Event::Display { host, index, .. } => (host.clone(), *index),
+                            | Event::Display { host, index, .. }
+                            | Event::UnreachableIgnored { host, index, .. } => {
+                                (host.clone(), *index)
+                            }
                             _ => unreachable!(),
                         };
                         pending.entry((host, index)).or_default().push(event);
@@ -476,33 +575,53 @@ pub(super) async fn run_batch(
                         censored,
                         delegate,
                         origin,
+                        index: at,
                     }) => {
-                        if !header_shown {
-                            let live = progress_tx.borrow().clone();
-                            let spoken = names.get(&(host.clone(), index));
-                            header(
-                                &step,
-                                &task_name(&step, &host, &plan, &live, state, spoken),
-                                out,
-                            );
-                            header_shown = true;
-                        }
                         stats.unreachable(&host);
-                        // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
-                        // the reason censored.
-                        out.error(&crate::render::ErrorBlock::unreachable(
-                            &msg,
-                            origin.as_ref(),
+                        let blame = Unreached {
+                            msg,
                             censored,
-                        ));
-                        out.unreachable(&host, &msg, censored, delegate.as_deref());
+                            delegate,
+                            origin,
+                        };
+                        if let Some(at) = at {
+                            unreached.insert((host.clone(), at), blame);
+                        } else {
+                            if !header_shown {
+                                let live = progress_tx.borrow().clone();
+                                let spoken = names.get(&(host.clone(), index));
+                                header(
+                                    &step,
+                                    &task_name(&step, &host, &plan, &live, state, spoken),
+                                    out,
+                                );
+                                header_shown = true;
+                            }
+                            blame.show(&host, out);
+                        }
                         state.failed_hosts.insert(host.clone());
+                        if let Some(at) = at
+                            && plan
+                                .steps()
+                                .steps
+                                .get(at)
+                                .is_some_and(|s| s.task.fails_all() && !s.task.ignores_errors())
+                        {
+                            coordinator.fatal.insert(at);
+                        }
                         gone.insert(host);
                         coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                     }
                     None => break,
                 }
             }
+        }
+        // The reference says so once for the task and once for the play, behind the last line the
+        // task printed.
+        if !said_no_more && coordinator.aborted_at.is_some_and(|at| at <= index) {
+            said_no_more = true;
+            out.no_more_hosts();
+            out.no_more_hosts();
         }
         // Every host is now either done with this step or out of the play, which is the moment
         // the plan's one dynamic primitive is safe: no driver can be past this index, whether it
@@ -596,6 +715,14 @@ pub(super) async fn run_batch(
         }
         index += 1;
     }
+    // A block the step loop never reached for a host that left: it still prints, in the order it
+    // would have, in front of what the drain below finds.
+    let mut missed: Vec<((String, usize), Unreached)> = unreached.into_iter().collect();
+    missed.sort_by_key(|((host, at), _)| (*at, play_hosts.iter().position(|h| h == host)));
+    for ((host, at), blame) in missed {
+        header_for(at, &plan, &play_hosts, &progress_tx, state, &names, out);
+        blame.show(&host, out);
+    }
     // The channel is bounded, so a host still owing a send would block forever if reading
     // stopped here: the coordinator's own `worker.await` below would then wait on a task that
     // is waiting on the coordinator. Every host owes at least its `Finished`, and a host whose
@@ -609,6 +736,7 @@ pub(super) async fn run_batch(
                 censored,
                 delegate,
                 origin,
+                index: at,
             } => {
                 stats.unreachable(&host);
                 // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
@@ -620,6 +748,15 @@ pub(super) async fn run_batch(
                 ));
                 out.unreachable(&host, &msg, censored, delegate.as_deref());
                 state.failed_hosts.insert(host);
+                if let Some(at) = at
+                    && plan
+                        .steps()
+                        .steps
+                        .get(at)
+                        .is_some_and(|s| s.task.fails_all() && !s.task.ignores_errors())
+                {
+                    coordinator.fatal.insert(at);
+                }
                 coordinator.publish(&state.failed_hosts, &plan.steps().steps);
             }
             Event::Finished {
@@ -669,7 +806,8 @@ pub(super) async fn run_batch(
             event @ (Event::Result { .. }
             | Event::Retrying { .. }
             | Event::Warning { .. }
-            | Event::Display { .. }) => {
+            | Event::Display { .. }
+            | Event::UnreachableIgnored { .. }) => {
                 report_result(event, stats, out);
             }
         }
@@ -709,7 +847,10 @@ fn shows_a_line(event: &Event) -> bool {
         Event::Result { show, outcome, .. } => *show || *outcome == Outcome::Ignored,
         // A retry line is the first thing a retried task prints, and the reference shows the
         // task's banner above it: a task whose every attempt is still to come has no result yet.
-        Event::Banner { .. } | Event::Retrying { .. } | Event::Display { .. } => true,
+        Event::Banner { .. }
+        | Event::Retrying { .. }
+        | Event::Display { .. }
+        | Event::UnreachableIgnored { .. } => true,
         // `Event::Warning` falls here with the rest: a warning goes to stderr, beside the
         // display rather than in it, so it never conjures the banner of a step that shows
         // nothing on stdout.
@@ -781,6 +922,25 @@ fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
         out.display(line);
         return;
     }
+    if let Event::UnreachableIgnored {
+        host,
+        msg,
+        censored,
+        delegate,
+        origin,
+        ..
+    } = &event
+    {
+        stats.record(host, Outcome::Ignored, false);
+        out.error(&crate::render::ErrorBlock::unreachable(
+            msg,
+            origin.as_ref(),
+            *censored,
+        ));
+        out.unreachable(host, msg, *censored, delegate.as_deref());
+        out.ignoring();
+        return;
+    }
     let Event::Result {
         host,
         outcome,
@@ -850,6 +1010,21 @@ struct Coordinator<'a> {
     /// Who runs each `run_once` step. Written once per index and never rewritten. See
     /// `Progress::elected`.
     elected: BTreeMap<usize, String>,
+    /// The `any_errors_fatal` steps a host failed at. See `Progress::fatal`.
+    fatal: BTreeSet<usize>,
+    /// Set once `max_fail_percentage` ended the batch. See `Progress::aborted`.
+    aborted: bool,
+    /// The step the batch was lost at, which the two `NO MORE HOSTS LEFT` follow.
+    aborted_at: Option<usize>,
+    /// The hosts of this batch whose task failed, for `max_fail_percentage`. Unreachable hosts
+    /// are not in it: the reference counts failures alone.
+    failed_here: HashSet<String>,
+    /// The latest step one of them failed at.
+    last_failure: Option<usize>,
+    /// `max_fail_percentage`, rendered.
+    limit: Option<f64>,
+    /// The batch as the inventory cut it, failed hosts of earlier plays included.
+    batch_size: usize,
 }
 
 impl Coordinator<'_> {
@@ -876,6 +1051,15 @@ impl Coordinator<'_> {
     /// that have moved.
     fn forget_elections_past(&mut self, index: usize) {
         self.elected.split_off(&(index + 1));
+    }
+
+    /// The share of the batch that failed. A step under `any_errors_fatal` that a host failed at
+    /// fails the whole batch, and the reference counts them all before it compares.
+    fn lost_share(&self) -> f64 {
+        if self.last_failure.is_some_and(|s| self.fatal.contains(&s)) {
+            return 1.0;
+        }
+        self.failed_here.len() as f64 / self.batch_size as f64
     }
 
     /// Republishes the batch's progress. `live_hosts` is the batch's own list minus the hosts
@@ -906,6 +1090,25 @@ impl Coordinator<'_> {
             .filter(|h| !lost.contains(*h))
             .cloned()
             .collect();
+        // `max_fail_percentage`: once the step a host failed at is finished on every host still
+        // live, the batch is lost if more of it failed than the limit allows - strictly more, so
+        // one failure in four is within a limit of 25. Decided here, in the publish that would
+        // open the barrier behind that step, so no host can start the next one first. Every host
+        // is then out of the live set: the reference marks them all failed.
+        if let Some(limit) = self.limit
+            && !self.aborted
+            && let Some(step) = self.last_failure
+            && self.lost_share() > limit / 100.0
+        {
+            let finished = live_hosts
+                .iter()
+                .all(|h| self.frontier.get(h).is_some_and(|f| *f >= step));
+            if finished {
+                self.aborted = true;
+                self.aborted_at = Some(step);
+            }
+        }
+        let live_hosts = if self.aborted { Vec::new() } else { live_hosts };
         // `None` sorts below every `Some`, so a live host that has reported nothing yet holds the
         // minimum at `None` and no barrier opens on it.
         let completed_through = live_hosts
@@ -937,6 +1140,8 @@ impl Coordinator<'_> {
             spliced_through: self.spliced_through,
             run_once: self.run_once.clone(),
             elected: self.elected.clone(),
+            fatal: self.fatal.clone(),
+            aborted: self.aborted,
         });
     }
 }
@@ -1072,6 +1277,13 @@ mod tests {
             spliced_through: None,
             run_once: BTreeMap::new(),
             elected: BTreeMap::new(),
+            fatal: BTreeSet::new(),
+            aborted: false,
+            aborted_at: None,
+            failed_here: HashSet::new(),
+            last_failure: None,
+            limit: None,
+            batch_size: hosts.len(),
         }
     }
 

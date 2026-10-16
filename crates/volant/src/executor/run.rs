@@ -279,6 +279,17 @@ fn local_result(
             r.insert("failed".into(), json!(false));
         }
         "debug" => {
+            // The action refuses both before it looks at either, which is how a `module_defaults`
+            // `msg` turns a task's own `var` into a failure.
+            if item.args.contains_key("msg") && item.args.contains_key("var") {
+                let msg = "parameters are mutually exclusive: msg|var";
+                let mut failed = TaskResult::failed_with(msg);
+                failed.0.insert(
+                    crate::render::ERROR_KEY.into(),
+                    Value::from(crate::render::task_failed(msg)),
+                );
+                return failed;
+            }
             let wanted: u8 = item
                 .args
                 .get("verbosity")

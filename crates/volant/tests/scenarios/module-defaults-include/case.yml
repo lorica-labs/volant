@@ -1,0 +1,3 @@
+# A group named only in a file an include reads while the play runs is resolved then.
+args: [-i, inv.ini, include.yml]
+needs: [ansible-core]

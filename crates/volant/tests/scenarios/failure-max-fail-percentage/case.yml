@@ -1,0 +1,16 @@
+# A batch that loses more hosts than the percentage allows ends the run, and says so twice.
+runs:
+  - args: [-i, inv.ini, -e, size=2, -e, pct=0, -e, '{"fail_on": ["h1", "h2"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=4, -e, pct=0, -e, '{"fail_on": ["h1", "h2"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=2, -e, pct=49, -e, '{"fail_on": ["h1", "h2"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=4, -e, pct=49, -e, '{"fail_on": ["h1", "h2"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=2, -e, pct=50, -e, '{"fail_on": ["h1", "h2"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=4, -e, pct=50, -e, '{"fail_on": ["h1", "h2"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=4, -e, pct=24, -e, '{"fail_on": ["h1"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=4, -e, pct=25, -e, '{"fail_on": ["h1"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=2, -e, pct=49, -e, '{"fail_on": ["h1"]}', play.yml]
+  - args: [-i, inv.ini, -e, size=2, -e, pct=50, -e, '{"fail_on": ["h1"]}', play.yml]
+  - args: [-i, inv.ini, -e, pct=40, earlier.yml]
+  - args: [-i, inv.ini, -e, pct=30, earlier.yml]
+  - args: [-i, inv.ini, -e, pct=20, earlier.yml]
+  - args: [-i, inv.ini, aef-plain.yml]

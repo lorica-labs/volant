@@ -1,0 +1,6 @@
+# A group nobody declares, or a key nothing answers to, stops the run before anything is shown.
+runs:
+  - args: [-i, inv.ini, bare.yml]
+  - args: [-i, inv.ini, collection.yml]
+  - args: [-i, inv.ini, action.yml]
+needs: [ansible-core]

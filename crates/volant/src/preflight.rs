@@ -626,9 +626,7 @@ mod tests {
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
     #[case::poll(task_play("      command: echo hi\n      poll: x\n"), &["keyword 'poll' is not supported yet", "play 1", "'T'"])]
     #[case::throttle(task_play("      command: echo hi\n      throttle: x\n"), &["keyword 'throttle' is not supported yet", "play 1", "'T'"])]
-    #[case::play_any_errors_fatal("- hosts: all\n  any_errors_fatal: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'any_errors_fatal' is not supported yet"])]
     #[case::play_vars_prompt("- hosts: all\n  vars_prompt: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'vars_prompt' is not supported yet"])]
-    #[case::play_max_fail_percentage("- hosts: all\n  max_fail_percentage: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'max_fail_percentage' is not supported yet"])]
     #[case::play_order("- hosts: all\n  order: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'order' is not supported yet"])]
     #[case::parked_in_a_block_body(
         "- hosts: all\n  tasks:\n    - block:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
@@ -985,7 +983,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            32,
+            18,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

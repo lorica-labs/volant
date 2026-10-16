@@ -1,0 +1,11 @@
+# One failed host fails the batch, and a rescue of the block runs on every host.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, play-rescue.yml]
+  - args: [-i, inv.ini, play-serial.yml]
+  - args: [-i, inv.ini, play-serial-h3.yml]
+  - args: [-i, inv.ini, task.yml]
+  - args: [-i, inv.ini, task-rescue.yml]
+  - args: [-i, inv.ini, block.yml]
+  - args: [-i, unreach.ini, unreachable.yml]
+  - args: [-i, unreach.ini, unreachable-ignore-errors.yml]

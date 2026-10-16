@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - command: "true"
+      register: probe
+      ignore_unreachable: true
+    - debug:
+        msg: "{{ probe.unreachable | default(false) }}"

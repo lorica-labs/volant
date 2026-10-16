@@ -1,0 +1,11 @@
+{
+  "dir": "/var/tmp/volant-golden-fs",
+  "files": {
+    "a.txt": "hi\n",
+    "b.txt": "there\n",
+    "x.ini": "[s]\nk = v1\n",
+    "x.csv": "k,v\nr,val\n"
+  },
+  "dirs": ["sub"],
+  "links": {"ln": "a.txt", "dangling": "nowhere"}
+}

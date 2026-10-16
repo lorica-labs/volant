@@ -564,11 +564,12 @@ def call(request):
     expression = EXPRESSIONS[kind] if kind == "lookup" else EXPRESSIONS[kind] % name
     try:
         variables = request.get("vars") or {}
-        # The loader file lookups resolve a relative path through: the playbook's directory
-        # when the controller sent it, as the reference's does.
+        # The loader a lookup resolves relative names and runs commands through, anchored where
+        # the reference anchors it: the playbook's directory, else the first search path entry.
         loader = DataLoader()
-        if isinstance(variables.get("playbook_dir"), str):
-            loader.set_basedir(variables["playbook_dir"])
+        anchor = variables.get("playbook_dir") or next(iter(variables.get("ansible_search_path") or []), None)
+        if isinstance(anchor, str) and anchor:
+            loader.set_basedir(anchor)
         templar = Templar(loader=loader, variables=variables)
         # The environment resolves a plugin on `in`, which may raise the not-found error or the
         # load error of a broken plugin file: both are answered below like a failed call.

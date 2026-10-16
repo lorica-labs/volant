@@ -1183,5 +1183,1029 @@
       }
     },
     "result": "{{ 1 + 1 }}"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'ab' | center(6) }}"
+    },
+    "result": "  ab  "
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'abc' | checksum }}"
+    },
+    "result": "a9993e364706816aba3e25717850c26c9cd0d89d"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'abc' | sha1 }}"
+    },
+    "result": "a9993e364706816aba3e25717850c26c9cd0d89d"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'abc' | md5 }}"
+    },
+    "result": "900150983cd24fb0d6963f7d28e17f72"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'abc' | hash('sha256') }}"
+    },
+    "result": "ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'abc' | hash('nope') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.hash' failed: unsupported hash type nope"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2, 3] | combinations(2) | list }}"
+    },
+    "result": [
+      [
+        1,
+        2
+      ],
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2, 3] | permutations(2) | list }}"
+    },
+    "result": [
+      [
+        1,
+        2
+      ],
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        1
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        3,
+        1
+      ],
+      [
+        3,
+        2
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | product([3, 4]) | list }}"
+    },
+    "result": [
+      [
+        1,
+        3
+      ],
+      [
+        1,
+        4
+      ],
+      [
+        2,
+        3
+      ],
+      [
+        2,
+        4
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | zip_longest([3]) | list }}"
+    },
+    "result": [
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        null
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | zip_longest([3], fillvalue=0) | list }}"
+    },
+    "result": [
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        0
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['/a/b/c', '/a/b/d'] | commonpath }}"
+    },
+    "result": "/a/b"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ s | from_yaml_all | list }}",
+      "vars": {
+        "s": "a: 1\n---\nb: 2"
+      }
+    },
+    "result": [
+      {
+        "a": 1
+      },
+      {
+        "b": 2
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 1536 | human_readable }}"
+    },
+    "result": "1.50 KB"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 1536 | human_readable(isbits=true) }}"
+    },
+    "result": "1.50 Kb"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '1K' | human_to_bytes }}"
+    },
+    "result": 1024
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'x' | human_to_bytes }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.human_to_bytes' failed: human_to_bytes() can't interpret the input: human_to_bytes() can't interpret following string: x"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 8 | log(2) }}"
+    },
+    "result": 3.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 1 | log }}"
+    },
+    "result": 0.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 2 | pow(10) }}"
+    },
+    "result": 1024.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 9 | root }}"
+    },
+    "result": 3.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 27 | root(3) }}"
+    },
+    "result": 3.0
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'a/../b//c' | normpath }}"
+    },
+    "result": "b/c"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'a/b.tar.gz' | splitext }}"
+    },
+    "result": [
+      "a/b.tar",
+      ".gz"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['a', 'b', 'c'] | path_join }}"
+    },
+    "result": "a/b/c"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/a/b/c' | relpath('/a') }}"
+    },
+    "result": "b/c"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ p | win_basename }}",
+      "vars": {
+        "p": "C:\\a\\b.txt"
+      }
+    },
+    "result": "b.txt"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ p | win_dirname }}",
+      "vars": {
+        "p": "C:\\a\\b.txt"
+      }
+    },
+    "result": "C:\\a"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ p | win_splitdrive }}",
+      "vars": {
+        "p": "C:\\a\\b.txt"
+      }
+    },
+    "result": [
+      "C:",
+      "\\a\\b.txt"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'n': 'a', 'v': 1}] | rekey_on_member('n') }}"
+    },
+    "result": {
+      "a": {
+        "n": "a",
+        "v": 1
+      }
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'n': 'a', 'v': 1}, {'n': 'a', 'v': 2}] | rekey_on_member('n') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.rekey_on_member' failed: Key 'a' is not unique, cannot convert to dict."
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [{'n': 'a', 's': [1, 2]}] | subelements('s') | list }}"
+    },
+    "result": [
+      [
+        {
+          "n": "a",
+          "s": [
+            1,
+            2
+          ]
+        },
+        1
+      ],
+      [
+        {
+          "n": "a",
+          "s": [
+            1,
+            2
+          ]
+        },
+        2
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] | symmetric_difference([2, 3]) | sort }}"
+    },
+    "result": [
+      1,
+      3
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2020-01-02 03:04:05' | to_datetime }}"
+    },
+    "result": "2020-01-02T03:04:05"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '2020-01-02' | to_datetime('%Y-%m-%d') }}"
+    },
+    "result": "2020-01-02T00:00:00"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'nope' | to_datetime }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.to_datetime' failed: time data 'nope' does not match format '%Y-%m-%d %H:%M:%S'"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '<b>hi</b>  there' | striptags }}"
+    },
+    "result": "hi there"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'hello world again' | truncate(10) }}"
+    },
+    "result": "hello..."
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'hello world again' | truncate(10, true) }}"
+    },
+    "result": "hello w..."
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'a%20b%2Fc' | urldecode }}"
+    },
+    "result": "a b/c"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'a b/c' | urlencode }}"
+    },
+    "result": "a%20b/c"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': 'b c', 'd': 1} | urlencode }}"
+    },
+    "result": "a=b+c&d=1"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'see example.com now' | urlize }}"
+    },
+    "result": "see <a href=\"https://example.com\" rel=\"noopener\">example.com</a> now"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'http://u:p@h:80/p?q=1#f' | urlsplit('query') }}"
+    },
+    "result": "q=1"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'http://u:p@h:80/p?q=1#f' | urlsplit('hostname') }}"
+    },
+    "result": "h"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'http://u:p@h:80/p?q=1#f' | urlsplit }}"
+    },
+    "result": {
+      "fragment": "f",
+      "hostname": "h",
+      "netloc": "u:p@h:80",
+      "password": "p",
+      "path": "/p",
+      "port": 80,
+      "query": "q=1",
+      "scheme": "http",
+      "username": "u"
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'one two three' | wordcount }}"
+    },
+    "result": 3
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'aaa bbb ccc' | wordwrap(7) }}"
+    },
+    "result": "aaa bbb\nccc"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': 1, 'b': 'x y'} | xmlattr }}"
+    },
+    "result": " a=\"1\" b=\"x y\""
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 1000 | filesizeformat }}"
+    },
+    "result": "1.0 kB"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 3000000 | filesizeformat(true) }}"
+    },
+    "result": "2.9 MiB"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ {'a': 1} | tojson }}"
+    },
+    "result": "{\"a\": 1}"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '<a>' | forceescape }}"
+    },
+    "result": "&lt;a&gt;"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 10 | random(seed=1) }}"
+    },
+    "result": 2
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 10 | random(start=5, seed=1) }}"
+    },
+    "result": 6
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ ['a', 'b', 'c'] | random(seed='x') }}"
+    },
+    "result": "c"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2, 3, 4] | shuffle(seed=1) }}"
+    },
+    "result": [
+      4,
+      1,
+      3,
+      2
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '%Y-%m-%d %H:%M:%S' | strftime(86400, true) }}"
+    },
+    "result": "1970-01-02 00:00:00"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '%Y' | strftime(0, true) }}"
+    },
+    "result": "1970"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'x' | password_hash('nope') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.password_hash' failed: Unable to encrypt nor hash, passlib must be installed: No module named 'passlib'"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/a' is abs }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'a' is is_abs }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] is all }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [0, ''] is all }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [0, 1] is any }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [0, ''] is any }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1] is subset([1, 2]) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [3] is issubset([1, 2]) }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1, 2] is superset([1]) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ [1] is issuperset([1, 2]) }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 1.5 is nan }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 1 is isnan }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'x:y' is uri }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'http://h/p' is url }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'urn:isbn:123' is urn }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ 'x' is callable }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/ln' | realpath }}"
+    },
+    "result": "/var/tmp/volant-golden-fs/a.txt"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '~root/x' | expanduser }}"
+    },
+    "result": "/root/x"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '$VOLANT_GOLDEN_ENV/x' | expandvars }}"
+    },
+    "result": "golden-env-value/x"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/*.txt' | fileglob | sort }}"
+    },
+    "result": [
+      "/var/tmp/volant-golden-fs/a.txt",
+      "/var/tmp/volant-golden-fs/b.txt"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/*.nope' | fileglob }}"
+    },
+    "result": []
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/sub' is directory }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/a.txt' is is_dir }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/a.txt' is file }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/sub' is is_file }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/ln' is link }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/a.txt' is is_link }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/a.txt' is exists }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/dangling' is exists }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/dangling' is link_exists }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/' is mount }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/sub' is is_mount }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/a.txt' is same_file('/var/tmp/volant-golden-fs/ln') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ '/var/tmp/volant-golden-fs/a.txt' is is_same_file('/var/tmp/volant-golden-fs/b.txt') }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('dict', {'a': 1}) }}"
+    },
+    "result": {
+      "key": "a",
+      "value": 1
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('indexed_items', ['a', 'b']) }}"
+    },
+    "result": [
+      [
+        0,
+        "a"
+      ],
+      [
+        1,
+        "b"
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('items', ['a', 'b']) }}"
+    },
+    "result": "a,b"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('items', ['a', 'b'], wantlist=true) }}"
+    },
+    "result": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('list', 'a', 'b') }}"
+    },
+    "result": "a,b"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('list', 'a', 'b', wantlist=true) }}"
+    },
+    "result": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('nested', [1, 2], [3]) }}"
+    },
+    "result": [
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        3
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('sequence', 'start=1 end=3') }}"
+    },
+    "result": "1,2,3"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('sequence', 'start=1 end=7 stride=3 format=n%02d', wantlist=true) }}"
+    },
+    "result": [
+      "n01",
+      "n04",
+      "n07"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('sequence', 'end=0') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'sequence' failed: to count backwards make stride negative"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('subelements', [{'n': 'a', 's': [1, 2]}], 's') }}"
+    },
+    "result": [
+      [
+        {
+          "n": "a"
+        },
+        1
+      ],
+      [
+        {
+          "n": "a"
+        },
+        2
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('together', [1, 2], [3]) }}"
+    },
+    "result": [
+      [
+        1,
+        3
+      ],
+      [
+        2,
+        null
+      ]
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('random_choice', 'only') }}"
+    },
+    "result": "only"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('dict', 'nope', errors='ignore') }}"
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('dict', 'nope') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'dict' failed: the 'dict' lookup plugin expects a dictionary, got 'nope' of type <class 'str'>)"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('password', '/dev/null length=12') | length }}"
+    },
+    "result": 12
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('password', '/dev/null length=8 chars=digits') is match('^[0-9]{8}$') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('lines', 'echo hi') }}"
+    },
+    "result": "hi"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('ini', 'k section=s file=/var/tmp/volant-golden-fs/x.ini') }}"
+    },
+    "result": "v1"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('ini', 'nope section=s file=/var/tmp/volant-golden-fs/x.ini default=d') }}"
+    },
+    "result": "d"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('csvfile', 'r file=/var/tmp/volant-golden-fs/x.csv delimiter=, col=1') }}"
+    },
+    "result": "val"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore') }}"
+    },
+    "result": null
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore', wantlist=true) }}"
+    },
+    "result": []
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='warn') }}"
+    },
+    "result": null
   }
 ]

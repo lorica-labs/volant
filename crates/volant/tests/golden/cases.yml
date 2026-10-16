@@ -232,3 +232,127 @@
 # that register, which is exactly how such a value arrives in a real play.
 - template: "{{ reg }}"
   untrusted: {reg: "{{ 1 + 1 }}"}
+# Builtin filters, tests and lookups that only ansible-core implements: Volant answers them
+# through the Python helper, so these rows run in reference_modules.rs and not in reference.rs.
+# The controller-fs rows read the files bridge_fs.json lists, which both sides write first.
+- {bridge: true, template: "{{ 'ab' | center(6) }}"}
+- {bridge: true, template: "{{ 'abc' | checksum }}"}
+- {bridge: true, template: "{{ 'abc' | sha1 }}"}
+- {bridge: true, template: "{{ 'abc' | md5 }}"}
+- {bridge: true, template: "{{ 'abc' | hash('sha256') }}"}
+- {bridge: true, template: "{{ 'abc' | hash('nope') }}"}
+- {bridge: true, template: "{{ [1, 2, 3] | combinations(2) | list }}"}
+- {bridge: true, template: "{{ [1, 2, 3] | permutations(2) | list }}"}
+- {bridge: true, template: "{{ [1, 2] | product([3, 4]) | list }}"}
+- {bridge: true, template: "{{ [1, 2] | zip_longest([3]) | list }}"}
+- {bridge: true, template: "{{ [1, 2] | zip_longest([3], fillvalue=0) | list }}"}
+- {bridge: true, template: "{{ ['/a/b/c', '/a/b/d'] | commonpath }}"}
+- {bridge: true, template: "{{ s | from_yaml_all | list }}", vars: {s: "a: 1\n---\nb: 2"}}
+- {bridge: true, template: "{{ 1536 | human_readable }}"}
+- {bridge: true, template: "{{ 1536 | human_readable(isbits=true) }}"}
+- {bridge: true, template: "{{ '1K' | human_to_bytes }}"}
+- {bridge: true, template: "{{ 'x' | human_to_bytes }}"}
+- {bridge: true, template: "{{ 8 | log(2) }}"}
+- {bridge: true, template: "{{ 1 | log }}"}
+- {bridge: true, template: "{{ 2 | pow(10) }}"}
+- {bridge: true, template: "{{ 9 | root }}"}
+- {bridge: true, template: "{{ 27 | root(3) }}"}
+- {bridge: true, template: "{{ 'a/../b//c' | normpath }}"}
+- {bridge: true, template: "{{ 'a/b.tar.gz' | splitext }}"}
+- {bridge: true, template: "{{ ['a', 'b', 'c'] | path_join }}"}
+- {bridge: true, template: "{{ '/a/b/c' | relpath('/a') }}"}
+- {bridge: true, template: "{{ p | win_basename }}", vars: {p: 'C:\a\b.txt'}}
+- {bridge: true, template: "{{ p | win_dirname }}", vars: {p: 'C:\a\b.txt'}}
+- {bridge: true, template: "{{ p | win_splitdrive }}", vars: {p: 'C:\a\b.txt'}}
+- {bridge: true, template: "{{ [{'n': 'a', 'v': 1}] | rekey_on_member('n') }}"}
+- {bridge: true, template: "{{ [{'n': 'a', 'v': 1}, {'n': 'a', 'v': 2}] | rekey_on_member('n') }}"}
+- {bridge: true, template: "{{ [{'n': 'a', 's': [1, 2]}] | subelements('s') | list }}"}
+- {bridge: true, template: "{{ [1, 2] | symmetric_difference([2, 3]) | sort }}"}
+- {bridge: true, template: "{{ '2020-01-02 03:04:05' | to_datetime }}"}
+- {bridge: true, template: "{{ '2020-01-02' | to_datetime('%Y-%m-%d') }}"}
+- {bridge: true, template: "{{ 'nope' | to_datetime }}"}
+- {bridge: true, template: "{{ '<b>hi</b>  there' | striptags }}"}
+- {bridge: true, template: "{{ 'hello world again' | truncate(10) }}"}
+- {bridge: true, template: "{{ 'hello world again' | truncate(10, true) }}"}
+- {bridge: true, template: "{{ 'a%20b%2Fc' | urldecode }}"}
+- {bridge: true, template: "{{ 'a b/c' | urlencode }}"}
+- {bridge: true, template: "{{ {'a': 'b c', 'd': 1} | urlencode }}"}
+- {bridge: true, template: "{{ 'see example.com now' | urlize }}"}
+- {bridge: true, template: "{{ 'http://u:p@h:80/p?q=1#f' | urlsplit('query') }}"}
+- {bridge: true, template: "{{ 'http://u:p@h:80/p?q=1#f' | urlsplit('hostname') }}"}
+- {bridge: true, template: "{{ 'http://u:p@h:80/p?q=1#f' | urlsplit }}"}
+- {bridge: true, template: "{{ 'one two three' | wordcount }}"}
+- {bridge: true, template: "{{ 'aaa bbb ccc' | wordwrap(7) }}"}
+- {bridge: true, template: "{{ {'a': 1, 'b': 'x y'} | xmlattr }}"}
+- {bridge: true, template: "{{ 1000 | filesizeformat }}"}
+- {bridge: true, template: "{{ 3000000 | filesizeformat(true) }}"}
+- {bridge: true, template: "{{ {'a': 1} | tojson }}"}
+- {bridge: true, template: "{{ '<a>' | forceescape }}"}
+- {bridge: true, template: "{{ 10 | random(seed=1) }}"}
+- {bridge: true, template: "{{ 10 | random(start=5, seed=1) }}"}
+- {bridge: true, template: "{{ ['a', 'b', 'c'] | random(seed='x') }}"}
+- {bridge: true, template: "{{ [1, 2, 3, 4] | shuffle(seed=1) }}"}
+- {bridge: true, template: "{{ '%Y-%m-%d %H:%M:%S' | strftime(86400, true) }}"}
+- {bridge: true, template: "{{ '%Y' | strftime(0, true) }}"}
+- {bridge: true, template: "{{ 'x' | password_hash('nope') }}"}
+# Tests
+- {bridge: true, template: "{{ '/a' is abs }}"}
+- {bridge: true, template: "{{ 'a' is is_abs }}"}
+- {bridge: true, template: "{{ [1, 2] is all }}"}
+- {bridge: true, template: "{{ [0, ''] is all }}"}
+- {bridge: true, template: "{{ [0, 1] is any }}"}
+- {bridge: true, template: "{{ [0, ''] is any }}"}
+- {bridge: true, template: "{{ [1] is subset([1, 2]) }}"}
+- {bridge: true, template: "{{ [3] is issubset([1, 2]) }}"}
+- {bridge: true, template: "{{ [1, 2] is superset([1]) }}"}
+- {bridge: true, template: "{{ [1] is issuperset([1, 2]) }}"}
+- {bridge: true, template: "{{ 1.5 is nan }}"}
+- {bridge: true, template: "{{ 1 is isnan }}"}
+- {bridge: true, template: "{{ 'x:y' is uri }}"}
+- {bridge: true, template: "{{ 'http://h/p' is url }}"}
+- {bridge: true, template: "{{ 'urn:isbn:123' is urn }}"}
+- {bridge: true, template: "{{ 'x' is callable }}"}
+# Controller files
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/ln' | realpath }}"}
+- {bridge: true, template: "{{ '~root/x' | expanduser }}"}
+- {bridge: true, template: "{{ '$VOLANT_GOLDEN_ENV/x' | expandvars }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/*.txt' | fileglob | sort }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/*.nope' | fileglob }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/sub' is directory }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/a.txt' is is_dir }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/a.txt' is file }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/sub' is is_file }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/ln' is link }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/a.txt' is is_link }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/a.txt' is exists }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/dangling' is exists }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/dangling' is link_exists }}"}
+- {bridge: true, template: "{{ '/' is mount }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/sub' is is_mount }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/a.txt' is same_file('/var/tmp/volant-golden-fs/ln') }}"}
+- {bridge: true, template: "{{ '/var/tmp/volant-golden-fs/a.txt' is is_same_file('/var/tmp/volant-golden-fs/b.txt') }}"}
+# Lookups
+- {bridge: true, template: "{{ lookup('dict', {'a': 1}) }}"}
+- {bridge: true, template: "{{ lookup('indexed_items', ['a', 'b']) }}"}
+- {bridge: true, template: "{{ lookup('items', ['a', 'b']) }}"}
+- {bridge: true, template: "{{ lookup('items', ['a', 'b'], wantlist=true) }}"}
+- {bridge: true, template: "{{ lookup('list', 'a', 'b') }}"}
+- {bridge: true, template: "{{ lookup('list', 'a', 'b', wantlist=true) }}"}
+- {bridge: true, template: "{{ lookup('nested', [1, 2], [3]) }}"}
+- {bridge: true, template: "{{ lookup('sequence', 'start=1 end=3') }}"}
+- {bridge: true, template: "{{ lookup('sequence', 'start=1 end=7 stride=3 format=n%02d', wantlist=true) }}"}
+- {bridge: true, template: "{{ lookup('sequence', 'end=0') }}"}
+- {bridge: true, template: "{{ lookup('subelements', [{'n': 'a', 's': [1, 2]}], 's') }}"}
+- {bridge: true, template: "{{ lookup('together', [1, 2], [3]) }}"}
+- {bridge: true, template: "{{ lookup('random_choice', 'only') }}"}
+- {bridge: true, template: "{{ lookup('dict', 'nope', errors='ignore') }}"}
+- {bridge: true, template: "{{ lookup('dict', 'nope') }}"}
+- {bridge: true, template: "{{ lookup('password', '/dev/null length=12') | length }}"}
+- {bridge: true, template: "{{ lookup('password', '/dev/null length=8 chars=digits') is match('^[0-9]{8}$') }}"}
+- {bridge: true, template: "{{ lookup('lines', 'echo hi') }}"}
+- {bridge: true, template: "{{ lookup('ini', 'k section=s file=/var/tmp/volant-golden-fs/x.ini') }}"}
+- {bridge: true, template: "{{ lookup('ini', 'nope section=s file=/var/tmp/volant-golden-fs/x.ini default=d') }}"}
+- {bridge: true, template: "{{ lookup('csvfile', 'r file=/var/tmp/volant-golden-fs/x.csv delimiter=, col=1') }}"}
+- {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore') }}"}
+- {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='ignore', wantlist=true) }}"}
+- {bridge: true, template: "{{ lookup('file', '/var/tmp/volant-golden-fs/nope', errors='warn') }}"}

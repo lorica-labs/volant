@@ -64,8 +64,14 @@ fn every_golden_case_matches_the_reference() {
     unsafe { std::env::set_var("VOLANT_GOLDEN_ENV", "golden-env-value") };
     let templar = Templar::new(base.clone());
     let mut failures = Vec::new();
+    let mut bridged = 0;
     for entry in expected() {
         let case = &entry["case"];
+        // Answered by the Python helper, which `reference_modules.rs` runs.
+        if case["bridge"] == true {
+            bridged += 1;
+            continue;
+        }
         let mut vars: Map<String, Value> = case
             .get("vars")
             .and_then(Value::as_object)
@@ -124,6 +130,7 @@ fn every_golden_case_matches_the_reference() {
         }
     }
     std::fs::remove_dir_all(&base).ok();
+    assert!(bridged >= 80, "{bridged} bridge cases: cases.yml lost some");
     assert!(
         failures.is_empty(),
         "{} case(s) differ from ansible-core:\n{}",

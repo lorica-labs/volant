@@ -1,6 +1,8 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The `template` kind: every row of cases.yml as one `debug` task, recorded in expected.json."""
+import json
 import os
+import shutil
 
 import yaml
 
@@ -8,7 +10,33 @@ from . import GOLDEN, REFERENCE
 from .run import json_report, outcomes, run, scratch, write_json
 
 
+def write_fixtures():
+    """The controller files the `bridge` cases read, laid out as bridge_fs.json says; the Rust
+    test lays out the same."""
+    with open(os.path.join(GOLDEN, "bridge_fs.json"), encoding="utf-8") as f:
+        spec = json.load(f)
+    shutil.rmtree(spec["dir"], ignore_errors=True)
+    os.makedirs(spec["dir"])
+    for name in spec["dirs"]:
+        os.mkdir(os.path.join(spec["dir"], name))
+    for name, text in spec["files"].items():
+        with open(os.path.join(spec["dir"], name), "w", encoding="utf-8") as f:
+            f.write(text)
+    for name, target in spec["links"].items():
+        os.symlink(target, os.path.join(spec["dir"], name))
+
+
 def record():
+    with open(os.path.join(GOLDEN, "bridge_fs.json"), encoding="utf-8") as f:
+        fixtures = json.load(f)["dir"]
+    write_fixtures()
+    try:
+        _record()
+    finally:
+        shutil.rmtree(fixtures, ignore_errors=True)
+
+
+def _record():
     with open(os.path.join(GOLDEN, "cases.yml"), encoding="utf-8") as f:
         cases = yaml.safe_load(f)
     tasks = []

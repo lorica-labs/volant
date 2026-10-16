@@ -15,7 +15,7 @@ mod compare;
 use compare::{
     check_native_path, compare_native, compare_shape, failed_tasks, keep_live, module_file,
     native_lock, native_profile, native_result, redact_staged, replace_in_strings, results_by_task,
-    same_names, shape_result, unit_after,
+    same, same_names, shape_result, unit_after,
 };
 
 /// The reasons the native `setup` hands back for a host outside its subset, the agent's own list.
@@ -765,4 +765,96 @@ fn the_bridge_runs_what_only_ansible_core_can(
         }
         (got, want) => panic!("{got:?} is not {want:?}"),
     }
+}
+
+/// Every `bridge` row of `cases.yml` rendered with the Python helper behind the templar: the
+/// value or the failure ansible-core recorded. The controller files are laid out first.
+#[test]
+fn every_bridge_case_matches_the_reference() {
+    use volant::bridge::Bridge;
+    use volant::template::{Templar, Vars};
+
+    // Panics under `VOLANT_PYTHON` when that interpreter cannot reproduce the recording.
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let fs: Value = serde_json::from_str(include_str!("golden/bridge_fs.json")).unwrap();
+    let dir = std::path::PathBuf::from(fs["dir"].as_str().unwrap());
+    // The directory is the same for every run on this machine: one run at a time lays it out,
+    // and it goes away when the test ends, a panic included.
+    struct Removed(std::path::PathBuf);
+    impl Drop for Removed {
+        fn drop(&mut self) {
+            let _ = std::fs::remove_dir_all(&self.0);
+        }
+    }
+    let _lock = native_lock();
+    let _removed = Removed(dir.clone());
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    for name in fs["dirs"].as_array().unwrap() {
+        std::fs::create_dir(dir.join(name.as_str().unwrap())).unwrap();
+    }
+    for (name, text) in fs["files"].as_object().unwrap() {
+        std::fs::write(dir.join(name), text.as_str().unwrap()).unwrap();
+    }
+    for (name, target) in fs["links"].as_object().unwrap() {
+        std::os::unix::fs::symlink(target.as_str().unwrap(), dir.join(name)).unwrap();
+    }
+    // Safety: nextest runs each test in its own process; nothing else reads the environment here.
+    unsafe { std::env::set_var("VOLANT_GOLDEN_ENV", "golden-env-value") };
+    let templar = Templar::with_bridge(dir.clone(), Some(Bridge::under(python, Vec::new())));
+    let entries: Vec<Value> =
+        serde_json::from_str(include_str!("golden/expected.json")).expect("expected.json parses");
+    let mut failures = Vec::new();
+    let mut ran = 0;
+    for entry in entries.iter().filter(|e| e["case"]["bridge"] == true) {
+        ran += 1;
+        let case = &entry["case"];
+        let vars: Map<String, Value> = case
+            .get("vars")
+            .and_then(Value::as_object)
+            .cloned()
+            .unwrap_or_default();
+        let vars = Vars {
+            map: &vars,
+            hostvars: None,
+            shared: None,
+            facts: None,
+            untrusted: None,
+            untrusted_hosts: None,
+        };
+        let text = case["template"].as_str().expect("template is a string");
+        let ours = templar.render(text, vars).map_err(|e| e.to_string());
+        // A failure holds the reference's `The <kind> plugin '<name>' failed` sentence.
+        let right = match (&ours, entry.get("error"), entry.get("result")) {
+            (Err(text), Some(want), _) => {
+                let want = want.as_str().unwrap_or_default();
+                let start = want.find("The ").unwrap_or(0);
+                let sentence = want[start..].split(" failed").next().unwrap_or_default();
+                text.contains(&format!("{sentence} failed"))
+            }
+            (Ok(v), None, Some(want)) => same(v, want),
+            _ => false,
+        };
+        if !right {
+            failures.push(format!(
+                "{case}
+  reference: {}
+  ours: {ours:?}",
+                serde_json::to_string(entry).unwrap()
+            ));
+        }
+    }
+    assert!(ran >= 80, "{ran} bridge cases: cases.yml lost some");
+    assert!(
+        failures.is_empty(),
+        "{} case(s) differ from ansible-core:
+{}",
+        failures.len(),
+        failures.join(
+            "
+"
+        )
+    );
 }

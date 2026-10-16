@@ -20,9 +20,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | YAML tag | 1 | 0 | 1 | 0 |
 | module | 62 | 0 | 9 | 0 |
 | action plugin | 19 | 0 | 9 | 0 |
-| filter | 73 | 0 | 49 | 0 |
-| test | 49 | 0 | 33 | 0 |
-| lookup | 9 | 0 | 16 | 0 |
+| filter | 120 | 0 | 2 | 0 |
+| test | 80 | 0 | 2 | 0 |
+| lookup | 24 | 0 | 1 | 0 |
 | become | 1 | 0 | 1 | 1 |
 | strategy | 1 | 0 | 3 | 0 |
 | inventory | 1 | 0 | 8 | 0 |
@@ -33,9 +33,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | connection | 2 | 0 | 0 | 4 |
 | collection module | 4320 | 0 | 1666 | 3457 |
 | collection action plugin | 0 | 0 | 1665 | 419 |
-| collection lookup | 0 | 0 | 95 | 0 |
-| collection filter | 1 | 0 | 135 | 0 |
-| collection test | 0 | 0 | 29 | 0 |
+| collection lookup | 95 | 0 | 0 | 0 |
+| collection filter | 136 | 0 | 0 | 0 |
+| collection test | 29 | 0 | 0 | 0 |
 
 ## keyword (play)
 
@@ -388,12 +388,12 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `batch` | <span class="kw kw-runs">runs</span> |  |
 | `bool` | <span class="kw kw-runs">runs</span> |  |
 | `capitalize` | <span class="kw kw-runs">runs</span> |  |
-| `center` | <span class="kw kw-notyet">not yet</span> |  |
-| `checksum` | <span class="kw kw-notyet">not yet</span> |  |
-| `combinations` | <span class="kw kw-notyet">not yet</span> |  |
+| `center` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `checksum` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `combinations` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `combine` | <span class="kw kw-runs">runs</span> |  |
 | `comment` | <span class="kw kw-runs">runs</span> |  |
-| `commonpath` | <span class="kw kw-notyet">not yet</span> |  |
+| `commonpath` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `count` | <span class="kw kw-runs">runs</span> |  |
 | `d` | <span class="kw kw-runs">runs</span> |  |
 | `default` | <span class="kw kw-runs">runs</span> |  |
@@ -403,23 +403,23 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `dirname` | <span class="kw kw-runs">runs</span> |  |
 | `e` | <span class="kw kw-runs">runs</span> |  |
 | `escape` | <span class="kw kw-runs">runs</span> |  |
-| `expanduser` | <span class="kw kw-notyet">not yet</span> |  |
-| `expandvars` | <span class="kw kw-notyet">not yet</span> |  |
+| `expanduser` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `expandvars` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `extract` | <span class="kw kw-runs">runs</span> |  |
-| `fileglob` | <span class="kw kw-notyet">not yet</span> |  |
-| `filesizeformat` | <span class="kw kw-notyet">not yet</span> |  |
+| `fileglob` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `filesizeformat` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `first` | <span class="kw kw-runs">runs</span> |  |
 | `flatten` | <span class="kw kw-runs">runs</span> |  |
 | `float` | <span class="kw kw-runs">runs</span> |  |
-| `forceescape` | <span class="kw kw-notyet">not yet</span> |  |
+| `forceescape` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `format` | <span class="kw kw-runs">runs</span> |  |
 | `from_json` | <span class="kw kw-runs">runs</span> |  |
 | `from_yaml` | <span class="kw kw-runs">runs</span> |  |
-| `from_yaml_all` | <span class="kw kw-notyet">not yet</span> |  |
+| `from_yaml_all` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `groupby` | <span class="kw kw-runs">runs</span> |  |
-| `hash` | <span class="kw kw-notyet">not yet</span> |  |
-| `human_readable` | <span class="kw kw-notyet">not yet</span> |  |
-| `human_to_bytes` | <span class="kw kw-notyet">not yet</span> |  |
+| `hash` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `human_readable` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `human_to_bytes` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `indent` | <span class="kw kw-runs">runs</span> |  |
 | `int` | <span class="kw kw-runs">runs</span> |  |
 | `intersect` | <span class="kw kw-runs">runs</span> |  |
@@ -429,164 +429,164 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `last` | <span class="kw kw-runs">runs</span> |  |
 | `length` | <span class="kw kw-runs">runs</span> |  |
 | `list` | <span class="kw kw-runs">runs</span> |  |
-| `log` | <span class="kw kw-notyet">not yet</span> |  |
+| `log` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `lower` | <span class="kw kw-runs">runs</span> |  |
 | `mandatory` | <span class="kw kw-runs">runs</span> |  |
 | `map` | <span class="kw kw-runs">runs</span> |  |
 | `max` | <span class="kw kw-runs">runs</span> |  |
-| `md5` | <span class="kw kw-notyet">not yet</span> |  |
+| `md5` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `min` | <span class="kw kw-runs">runs</span> |  |
-| `normpath` | <span class="kw kw-notyet">not yet</span> |  |
-| `password_hash` | <span class="kw kw-notyet">not yet</span> |  |
-| `path_join` | <span class="kw kw-notyet">not yet</span> |  |
-| `permutations` | <span class="kw kw-notyet">not yet</span> |  |
-| `pow` | <span class="kw kw-notyet">not yet</span> |  |
+| `normpath` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `password_hash` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `path_join` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `permutations` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `pow` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `pprint` | <span class="kw kw-runs">runs</span> |  |
-| `product` | <span class="kw kw-notyet">not yet</span> |  |
+| `product` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `quote` | <span class="kw kw-runs">runs</span> |  |
-| `random` | <span class="kw kw-notyet">not yet</span> |  |
-| `realpath` | <span class="kw kw-notyet">not yet</span> |  |
+| `random` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `realpath` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `regex_escape` | <span class="kw kw-runs">runs</span> |  |
 | `regex_findall` | <span class="kw kw-runs">runs</span> |  |
 | `regex_replace` | <span class="kw kw-runs">runs</span> |  |
 | `regex_search` | <span class="kw kw-runs">runs</span> |  |
 | `reject` | <span class="kw kw-runs">runs</span> |  |
 | `rejectattr` | <span class="kw kw-runs">runs</span> |  |
-| `rekey_on_member` | <span class="kw kw-notyet">not yet</span> |  |
-| `relpath` | <span class="kw kw-notyet">not yet</span> |  |
+| `rekey_on_member` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `relpath` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `replace` | <span class="kw kw-runs">runs</span> |  |
 | `reverse` | <span class="kw kw-runs">runs</span> |  |
-| `root` | <span class="kw kw-notyet">not yet</span> |  |
+| `root` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `round` | <span class="kw kw-runs">runs</span> |  |
 | `safe` | <span class="kw kw-runs">runs</span> |  |
 | `select` | <span class="kw kw-runs">runs</span> |  |
 | `selectattr` | <span class="kw kw-runs">runs</span> |  |
-| `sha1` | <span class="kw kw-notyet">not yet</span> |  |
-| `shuffle` | <span class="kw kw-notyet">not yet</span> |  |
+| `sha1` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `shuffle` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `slice` | <span class="kw kw-runs">runs</span> |  |
 | `sort` | <span class="kw kw-runs">runs</span> |  |
 | `split` | <span class="kw kw-runs">runs</span> |  |
-| `splitext` | <span class="kw kw-notyet">not yet</span> |  |
-| `strftime` | <span class="kw kw-notyet">not yet</span> |  |
+| `splitext` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `strftime` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `string` | <span class="kw kw-runs">runs</span> |  |
-| `striptags` | <span class="kw kw-notyet">not yet</span> |  |
-| `subelements` | <span class="kw kw-notyet">not yet</span> |  |
+| `striptags` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `subelements` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `sum` | <span class="kw kw-runs">runs</span> |  |
-| `symmetric_difference` | <span class="kw kw-notyet">not yet</span> |  |
+| `symmetric_difference` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `ternary` | <span class="kw kw-runs">runs</span> |  |
 | `title` | <span class="kw kw-runs">runs</span> |  |
-| `to_datetime` | <span class="kw kw-notyet">not yet</span> |  |
+| `to_datetime` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `to_json` | <span class="kw kw-runs">runs</span> |  |
 | `to_nice_json` | <span class="kw kw-runs">runs</span> |  |
 | `to_nice_yaml` | <span class="kw kw-runs">runs</span> |  |
 | `to_uuid` | <span class="kw kw-runs">runs</span> |  |
 | `to_yaml` | <span class="kw kw-runs">runs</span> |  |
-| `tojson` | <span class="kw kw-notyet">not yet</span> |  |
+| `tojson` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `trim` | <span class="kw kw-runs">runs</span> |  |
-| `truncate` | <span class="kw kw-notyet">not yet</span> |  |
+| `truncate` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `type_debug` | <span class="kw kw-runs">runs</span> |  |
 | `union` | <span class="kw kw-runs">runs</span> |  |
 | `unique` | <span class="kw kw-runs">runs</span> |  |
-| `unvault` | <span class="kw kw-notyet">not yet</span> |  |
+| `unvault` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
 | `upper` | <span class="kw kw-runs">runs</span> |  |
-| `urldecode` | <span class="kw kw-notyet">not yet</span> |  |
-| `urlencode` | <span class="kw kw-notyet">not yet</span> |  |
-| `urlize` | <span class="kw kw-notyet">not yet</span> |  |
-| `urlsplit` | <span class="kw kw-notyet">not yet</span> |  |
-| `vault` | <span class="kw kw-notyet">not yet</span> |  |
-| `win_basename` | <span class="kw kw-notyet">not yet</span> |  |
-| `win_dirname` | <span class="kw kw-notyet">not yet</span> |  |
-| `win_splitdrive` | <span class="kw kw-notyet">not yet</span> |  |
-| `wordcount` | <span class="kw kw-notyet">not yet</span> |  |
-| `wordwrap` | <span class="kw kw-notyet">not yet</span> |  |
-| `xmlattr` | <span class="kw kw-notyet">not yet</span> |  |
+| `urldecode` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `urlencode` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `urlize` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `urlsplit` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `vault` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
+| `win_basename` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `win_dirname` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `win_splitdrive` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `wordcount` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `wordwrap` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `xmlattr` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `zip` | <span class="kw kw-runs">runs</span> |  |
-| `zip_longest` | <span class="kw kw-notyet">not yet</span> |  |
+| `zip_longest` | <span class="kw kw-runs">runs</span> | through the Python helper |
 
 ## test
 
 | Name | Status | Note |
 |---|---|---|
-| `abs` | <span class="kw kw-notyet">not yet</span> |  |
-| `all` | <span class="kw kw-notyet">not yet</span> |  |
-| `any` | <span class="kw kw-notyet">not yet</span> |  |
+| `abs` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `all` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `any` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `boolean` | <span class="kw kw-runs">runs</span> |  |
-| `callable` | <span class="kw kw-notyet">not yet</span> |  |
+| `callable` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `change` | <span class="kw kw-runs">runs</span> |  |
 | `changed` | <span class="kw kw-runs">runs</span> |  |
 | `contains` | <span class="kw kw-runs">runs</span> |  |
 | `defined` | <span class="kw kw-runs">runs</span> |  |
-| `directory` | <span class="kw kw-notyet">not yet</span> |  |
+| `directory` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `divisibleby` | <span class="kw kw-runs">runs</span> |  |
 | `eq` | <span class="kw kw-runs">runs</span> |  |
 | `equalto` | <span class="kw kw-runs">runs</span> |  |
 | `escaped` | <span class="kw kw-runs">runs</span> |  |
 | `even` | <span class="kw kw-runs">runs</span> |  |
-| `exists` | <span class="kw kw-notyet">not yet</span> |  |
+| `exists` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `failed` | <span class="kw kw-runs">runs</span> |  |
 | `failure` | <span class="kw kw-runs">runs</span> |  |
 | `false` | <span class="kw kw-runs">runs</span> |  |
 | `falsy` | <span class="kw kw-runs">runs</span> |  |
-| `file` | <span class="kw kw-notyet">not yet</span> |  |
+| `file` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `filter` | <span class="kw kw-runs">runs</span> |  |
-| `finished` | <span class="kw kw-notyet">not yet</span> |  |
+| `finished` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `float` | <span class="kw kw-runs">runs</span> |  |
 | `ge` | <span class="kw kw-runs">runs</span> |  |
 | `greaterthan` | <span class="kw kw-runs">runs</span> |  |
 | `gt` | <span class="kw kw-runs">runs</span> |  |
 | `in` | <span class="kw kw-runs">runs</span> |  |
 | `integer` | <span class="kw kw-runs">runs</span> |  |
-| `is_abs` | <span class="kw kw-notyet">not yet</span> |  |
-| `is_dir` | <span class="kw kw-notyet">not yet</span> |  |
-| `is_file` | <span class="kw kw-notyet">not yet</span> |  |
-| `is_link` | <span class="kw kw-notyet">not yet</span> |  |
-| `is_mount` | <span class="kw kw-notyet">not yet</span> |  |
-| `is_same_file` | <span class="kw kw-notyet">not yet</span> |  |
-| `isnan` | <span class="kw kw-notyet">not yet</span> |  |
-| `issubset` | <span class="kw kw-notyet">not yet</span> |  |
-| `issuperset` | <span class="kw kw-notyet">not yet</span> |  |
+| `is_abs` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `is_dir` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `is_file` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `is_link` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `is_mount` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `is_same_file` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `isnan` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `issubset` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `issuperset` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `iterable` | <span class="kw kw-runs">runs</span> |  |
 | `le` | <span class="kw kw-runs">runs</span> |  |
 | `lessthan` | <span class="kw kw-runs">runs</span> |  |
-| `link` | <span class="kw kw-notyet">not yet</span> |  |
-| `link_exists` | <span class="kw kw-notyet">not yet</span> |  |
+| `link` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `link_exists` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `lower` | <span class="kw kw-runs">runs</span> |  |
 | `lt` | <span class="kw kw-runs">runs</span> |  |
 | `mapping` | <span class="kw kw-runs">runs</span> |  |
 | `match` | <span class="kw kw-runs">runs</span> |  |
-| `mount` | <span class="kw kw-notyet">not yet</span> |  |
-| `nan` | <span class="kw kw-notyet">not yet</span> |  |
+| `mount` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `nan` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `ne` | <span class="kw kw-runs">runs</span> |  |
 | `none` | <span class="kw kw-runs">runs</span> |  |
 | `number` | <span class="kw kw-runs">runs</span> |  |
 | `odd` | <span class="kw kw-runs">runs</span> |  |
-| `reachable` | <span class="kw kw-notyet">not yet</span> |  |
+| `reachable` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `regex` | <span class="kw kw-runs">runs</span> |  |
-| `same_file` | <span class="kw kw-notyet">not yet</span> |  |
+| `same_file` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `sameas` | <span class="kw kw-runs">runs</span> |  |
 | `search` | <span class="kw kw-runs">runs</span> |  |
 | `sequence` | <span class="kw kw-runs">runs</span> |  |
 | `skip` | <span class="kw kw-runs">runs</span> |  |
 | `skipped` | <span class="kw kw-runs">runs</span> |  |
-| `started` | <span class="kw kw-notyet">not yet</span> |  |
+| `started` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `string` | <span class="kw kw-runs">runs</span> |  |
-| `subset` | <span class="kw kw-notyet">not yet</span> |  |
+| `subset` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `succeeded` | <span class="kw kw-runs">runs</span> |  |
 | `success` | <span class="kw kw-runs">runs</span> |  |
 | `successful` | <span class="kw kw-runs">runs</span> |  |
-| `superset` | <span class="kw kw-notyet">not yet</span> |  |
+| `superset` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `test` | <span class="kw kw-runs">runs</span> |  |
-| `timedout` | <span class="kw kw-notyet">not yet</span> |  |
+| `timedout` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `true` | <span class="kw kw-runs">runs</span> |  |
 | `truthy` | <span class="kw kw-runs">runs</span> |  |
 | `undefined` | <span class="kw kw-runs">runs</span> |  |
-| `unreachable` | <span class="kw kw-notyet">not yet</span> |  |
+| `unreachable` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `upper` | <span class="kw kw-runs">runs</span> |  |
-| `uri` | <span class="kw kw-notyet">not yet</span> |  |
-| `url` | <span class="kw kw-notyet">not yet</span> |  |
-| `urn` | <span class="kw kw-notyet">not yet</span> |  |
-| `vault_encrypted` | <span class="kw kw-notyet">not yet</span> |  |
-| `vaulted_file` | <span class="kw kw-notyet">not yet</span> |  |
+| `uri` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `url` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `urn` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `vault_encrypted` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
+| `vaulted_file` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
 | `version` | <span class="kw kw-runs">runs</span> |  |
 | `version_compare` | <span class="kw kw-runs">runs</span> |  |
 
@@ -594,29 +594,29 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `config` | <span class="kw kw-notyet">not yet</span> |  |
-| `csvfile` | <span class="kw kw-notyet">not yet</span> |  |
-| `dict` | <span class="kw kw-notyet">not yet</span> |  |
+| `config` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `csvfile` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `dict` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `env` | <span class="kw kw-runs">runs</span> |  |
 | `file` | <span class="kw kw-runs">runs</span> |  |
 | `fileglob` | <span class="kw kw-runs">runs</span> |  |
 | `first_found` | <span class="kw kw-runs">runs</span> |  |
-| `indexed_items` | <span class="kw kw-notyet">not yet</span> |  |
-| `ini` | <span class="kw kw-notyet">not yet</span> |  |
+| `indexed_items` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `ini` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `inventory_hostnames` | <span class="kw kw-runs">runs</span> |  |
-| `items` | <span class="kw kw-notyet">not yet</span> |  |
-| `lines` | <span class="kw kw-notyet">not yet</span> |  |
-| `list` | <span class="kw kw-notyet">not yet</span> |  |
-| `nested` | <span class="kw kw-notyet">not yet</span> |  |
-| `password` | <span class="kw kw-notyet">not yet</span> |  |
+| `items` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `lines` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `list` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `nested` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `password` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `pipe` | <span class="kw kw-runs">runs</span> |  |
-| `random_choice` | <span class="kw kw-notyet">not yet</span> |  |
-| `sequence` | <span class="kw kw-notyet">not yet</span> |  |
-| `subelements` | <span class="kw kw-notyet">not yet</span> |  |
+| `random_choice` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `sequence` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `subelements` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `template` | <span class="kw kw-runs">runs</span> |  |
-| `together` | <span class="kw kw-notyet">not yet</span> |  |
-| `unvault` | <span class="kw kw-notyet">not yet</span> |  |
-| `url` | <span class="kw kw-notyet">not yet</span> |  |
+| `together` | <span class="kw kw-runs">runs</span> | through the Python helper |
+| `unvault` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
+| `url` | <span class="kw kw-runs">runs</span> | through the Python helper |
 | `varnames` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
 
@@ -699,17 +699,17 @@ For each collection, how many of its rows run, out of the total.
 
 | Collection | Version | modules | filters | tests | lookups | action plugins |
 |---|---|---|---|---|---|---|
-| `amazon.aws` | 10.1.2 | 139/140 | 0/0 | 0/0 | 0/5 | 0/1 |
-| `ansible.netcommon` | 8.2.0 | 0/16 | 0/9 | 0/0 | 0/0 | 0/11 |
+| `amazon.aws` | 10.1.2 | 139/140 | 0/0 | 0/0 | 5/5 | 0/1 |
+| `ansible.netcommon` | 8.2.0 | 0/16 | 9/9 | 0/0 | 0/0 | 0/11 |
 | `ansible.posix` | 2.1.0 | 12/14 | 0/0 | 0/0 | 0/0 | 0/2 |
-| `ansible.utils` | 6.0.0 | 0/4 | 1/32 | 0/25 | 0/4 | 0/4 |
-| `ansible.windows` | 3.3.0 | later | 0/1 | 0/0 | 0/0 | later |
+| `ansible.utils` | 6.0.0 | 0/4 | 32/32 | 25/25 | 4/4 | 0/4 |
+| `ansible.windows` | 3.3.0 | later | 1/1 | 0/0 | 0/0 | later |
 | `arista.eos` | 12.0.0 | later | 0/0 | 0/0 | 0/0 | later |
-| `awx.awx` | 24.6.1 | 47/47 | 0/0 | 0/0 | 0/3 | 0/0 |
-| `azure.azcollection` | 3.12.0 | 390/391 | 0/0 | 0/0 | 0/2 | 0/1 |
+| `awx.awx` | 24.6.1 | 47/47 | 0/0 | 0/0 | 3/3 | 0/0 |
+| `azure.azcollection` | 3.12.0 | 390/391 | 0/0 | 0/0 | 2/2 | 0/1 |
 | `check_point.mgmt` | 6.7.0 | later | 0/0 | 0/0 | 0/0 | later |
 | `chocolatey.chocolatey` | 1.5.3 | later | 0/0 | 0/0 | 0/0 | 0/0 |
-| `cisco.aci` | 2.13.0 | later | 0/1 | 0/0 | 0/1 | 0/0 |
+| `cisco.aci` | 2.13.0 | later | 1/1 | 0/0 | 1/1 | 0/0 |
 | `cisco.dnac` | 6.43.0 | 84/1141 | 0/0 | 0/0 | 0/0 | 0/1057 |
 | `cisco.intersight` | 2.12.0 | 110/110 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `cisco.ios` | 11.1.1 | later | 0/0 | 0/0 | 0/0 | later |
@@ -721,73 +721,73 @@ For each collection, how many of its rows run, out of the total.
 | `cloudscale_ch.cloud` | 2.5.2 | 14/14 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.aws` | 10.0.0 | 141/141 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.ciscosmb` | 1.0.11 | later | 0/0 | 0/0 | 0/0 | 0/0 |
-| `community.crypto` | 3.0.5 | 37/38 | 0/9 | 0/0 | 0/1 | 0/1 |
+| `community.crypto` | 3.0.5 | 37/38 | 9/9 | 0/0 | 1/1 | 0/1 |
 | `community.digitalocean` | 1.27.0 | 56/56 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `community.dns` | 3.4.1 | 17/17 | 0/7 | 0/0 | 0/4 | 0/0 |
+| `community.dns` | 3.4.1 | 17/17 | 7/7 | 0/0 | 4/4 | 0/0 |
 | `community.docker` | 4.8.5 | 37/38 | 0/0 | 0/0 | 0/0 | 0/1 |
-| `community.general` | 11.4.2 | 573/575 | 0/40 | 0/3 | 0/35 | 0/2 |
-| `community.grafana` | 2.3.0 | 11/11 | 0/0 | 0/0 | 0/1 | 0/0 |
-| `community.hashi_vault` | 7.1.0 | 25/25 | 0/1 | 0/0 | 0/9 | 0/0 |
+| `community.general` | 11.4.2 | 573/575 | 40/40 | 3/3 | 35/35 | 0/2 |
+| `community.grafana` | 2.3.0 | 11/11 | 0/0 | 0/0 | 1/1 | 0/0 |
+| `community.hashi_vault` | 7.1.0 | 25/25 | 1/1 | 0/0 | 9/9 | 0/0 |
 | `community.hrobot` | 2.7.0 | 22/22 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.library_inventory_filtering_v1` | 1.1.5 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.libvirt` | 2.0.0 | 5/5 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `community.mongodb` | 1.7.10 | 21/21 | 0/0 | 0/0 | 0/1 | 0/0 |
+| `community.mongodb` | 1.7.10 | 21/21 | 0/0 | 0/0 | 1/1 | 0/0 |
 | `community.mysql` | 3.16.1 | 7/7 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.okd` | 5.0.0 | 11/13 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.postgresql` | 4.2.0 | 23/23 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.proxmox` | 1.4.0 | 37/37 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.proxysql` | 1.7.0 | 11/11 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `community.rabbitmq` | 1.6.0 | 14/14 | 0/0 | 0/0 | 0/1 | 0/0 |
-| `community.routeros` | 3.14.0 | 5/7 | 0/5 | 0/0 | 0/0 | 0/0 |
+| `community.rabbitmq` | 1.6.0 | 14/14 | 0/0 | 0/0 | 1/1 | 0/0 |
+| `community.routeros` | 3.14.0 | 5/7 | 5/5 | 0/0 | 0/0 | 0/0 |
 | `community.sap_libs` | 1.5.0 | 9/9 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `community.sops` | 2.2.7 | 1/2 | 0/2 | 0/0 | 0/1 | 0/1 |
+| `community.sops` | 2.2.7 | 1/2 | 2/2 | 0/0 | 1/1 | 0/1 |
 | `community.vmware` | 5.10.0 | 176/176 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `community.windows` | 3.1.0 | later | 0/0 | 0/0 | 0/1 | later |
+| `community.windows` | 3.1.0 | later | 0/0 | 0/0 | 1/1 | later |
 | `community.zabbix` | 4.1.1 | later | 0/0 | 0/0 | 0/0 | 0/0 |
 | `containers.podman` | 1.18.0 | 31/31 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `cyberark.conjur` | 1.3.9 | 0/0 | 0/0 | 0/0 | 0/1 | 0/0 |
+| `cyberark.conjur` | 1.3.9 | 0/0 | 0/0 | 0/0 | 1/1 | 0/0 |
 | `cyberark.pas` | 1.0.36 | 4/4 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `dellemc.enterprise_sonic` | 3.2.0 | 83/87 | 0/0 | 0/0 | 0/0 | later |
 | `dellemc.openmanage` | 9.12.3 | 105/105 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `dellemc.powerflex` | 2.6.1 | 16/16 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `dellemc.unity` | 2.1.0 | 18/18 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `f5networks.f5_modules` | 1.39.0 | later | 0/2 | 0/0 | 0/2 | later |
+| `f5networks.f5_modules` | 1.39.0 | later | 2/2 | 0/0 | 2/2 | later |
 | `fortinet.fortimanager` | 2.11.0 | later | 0/0 | 0/0 | 0/0 | 0/0 |
 | `fortinet.fortios` | 2.4.2 | later | 0/0 | 0/0 | 0/0 | 0/0 |
-| `google.cloud` | 1.10.2 | 176/176 | 0/2 | 0/0 | 0/2 | 0/0 |
+| `google.cloud` | 1.10.2 | 176/176 | 2/2 | 0/0 | 2/2 | 0/0 |
 | `grafana.grafana` | 6.0.6 | 9/9 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `hetzner.hcloud` | 5.4.0 | 38/38 | 0/1 | 0/0 | 0/0 | 0/0 |
+| `hetzner.hcloud` | 5.4.0 | 38/38 | 1/1 | 0/0 | 0/0 | 0/0 |
 | `hitachivantara.vspone_block` | 4.5.0 | 148/148 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `hitachivantara.vspone_object` | 1.1.1 | 28/28 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `ibm.qradar` | 4.0.0 | later | 0/0 | 0/0 | 0/0 | later |
 | `ibm.storage_virtualize` | 2.7.4 | 48/48 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `ieisystem.inmanage` | 3.0.0 | 130/130 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `infinidat.infinibox` | 1.6.3 | 21/21 | 0/1 | 0/0 | 0/0 | 0/0 |
-| `infoblox.nios_modules` | 1.8.0 | 35/35 | 0/0 | 0/0 | 0/4 | 0/0 |
+| `infinidat.infinibox` | 1.6.3 | 21/21 | 1/1 | 0/0 | 0/0 | 0/0 |
+| `infoblox.nios_modules` | 1.8.0 | 35/35 | 0/0 | 0/0 | 4/4 | 0/0 |
 | `inspur.ispim` | 2.2.4 | 128/128 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `junipernetworks.junos` | 11.0.0 | later | 0/0 | 0/0 | 0/0 | later |
 | `kaytus.ksmanage` | 2.0.0 | 130/130 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `kubernetes.core` | 6.2.0 | 4/20 | 0/1 | 0/0 | 0/2 | 0/16 |
+| `kubernetes.core` | 6.2.0 | 4/20 | 1/1 | 0/0 | 2/2 | 0/16 |
 | `kubevirt.core` | 2.2.3 | 3/3 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `lowlydba.sqlserver` | 2.7.0 | later | 0/0 | 0/0 | 0/0 | 0/0 |
-| `microsoft.ad` | 1.10.0 | later | 0/6 | 0/0 | 0/0 | later |
+| `microsoft.ad` | 1.10.0 | later | 6/6 | 0/0 | 0/0 | later |
 | `microsoft.iis` | 1.1.0 | later | 0/0 | 0/0 | 0/0 | 0/0 |
 | `netapp.cloudmanager` | 21.24.0 | 13/13 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `netapp.ontap` | 23.2.0 | 162/162 | 0/2 | 0/0 | 0/0 | 0/0 |
+| `netapp.ontap` | 23.2.0 | 162/162 | 2/2 | 0/0 | 0/0 | 0/0 |
 | `netapp.storagegrid` | 21.15.0 | 34/34 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `netapp_eseries.santricity` | 1.4.1 | 55/55 | 0/0 | 0/0 | 0/5 | 0/0 |
-| `netbox.netbox` | 3.21.0 | 90/90 | 0/0 | 0/0 | 0/1 | 0/0 |
+| `netapp_eseries.santricity` | 1.4.1 | 55/55 | 0/0 | 0/0 | 5/5 | 0/0 |
+| `netbox.netbox` | 3.21.0 | 90/90 | 0/0 | 0/0 | 1/1 | 0/0 |
 | `ngine_io.cloudstack` | 2.5.0 | 53/53 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `openstack.cloud` | 2.5.0 | 98/98 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `ovirt.ovirt` | 3.2.1 | 58/58 | 0/13 | 0/1 | 0/0 | 0/0 |
+| `ovirt.ovirt` | 3.2.1 | 58/58 | 13/13 | 1/1 | 0/0 | 0/0 |
 | `purestorage.flasharray` | 1.40.0 | 67/67 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `purestorage.flashblade` | 1.22.0 | 53/53 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `ravendb.ravendb` | 1.0.4 | 5/5 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `splunk.es` | 4.0.0 | later | 0/0 | 0/0 | 0/0 | later |
 | `telekom_mms.icinga_director` | 2.5.0 | 42/42 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `theforeman.foreman` | 5.7.0 | 91/91 | 0/1 | 0/0 | 0/0 | 0/0 |
-| `vmware.vmware` | 2.6.0 | 38/38 | 0/0 | 0/0 | 0/1 | 0/0 |
-| `vmware.vmware_rest` | 4.9.0 | 134/134 | 0/0 | 0/0 | 0/8 | 0/0 |
+| `theforeman.foreman` | 5.7.0 | 91/91 | 1/1 | 0/0 | 0/0 | 0/0 |
+| `vmware.vmware` | 2.6.0 | 38/38 | 0/0 | 0/0 | 1/1 | 0/0 |
+| `vmware.vmware_rest` | 4.9.0 | 134/134 | 0/0 | 0/0 | 8/8 | 0/0 |
 | `vultr.cloud` | 1.13.0 | 31/31 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `vyos.vyos` | 6.0.0 | later | 0/0 | 0/0 | 0/0 | later |
 | `wti.remote` | 1.0.10 | 34/34 | 0/0 | 0/0 | 0/0 | 0/0 |

@@ -68,7 +68,7 @@
     - debug: var=cut
 
     - name: a failing job
-      command: /bin/false
+      command: "false"
       async: 30
       poll: 0
       register: g

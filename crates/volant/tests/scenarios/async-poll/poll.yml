@@ -19,7 +19,7 @@
     - debug: var=kept.stdout
 
     - name: a failing job
-      command: /bin/false
+      command: "false"
       async: 30
       poll: 3
       register: f

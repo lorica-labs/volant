@@ -19,6 +19,7 @@ import collections.abc
 import datetime
 import importlib.util
 import io
+import itertools
 import json
 import os
 import re
@@ -712,6 +713,9 @@ def ask(ident, op, **fields):
 
 
 SHIM = {}
+# The results of the jobs `wrap_async` started, by (request id, job id), until polled.
+JOBS = {}
+JOB_IDS = itertools.count(1)
 
 
 def shim():
@@ -810,18 +814,45 @@ def shim():
                        ignore_unknown_opts=False):
         # `tmp` and `delete_remote_tmp` are ignored as ansible-core ignores them; `persist_files`
         # and `task_vars` shape the module's upload and interpreter, which the controller owns.
-        if wrap_async:
-            raise Unsupported("ActionBase._execute_module with wrap_async is not supported yet")
-        if ignore_unknown_opts:
-            raise Unsupported(
-                "ActionBase._execute_module with ignore_unknown_opts is not supported yet"
-            )
         name = self._task.action if module_name is None else module_name
-        args = self._task.args if module_args is None else module_args
-        result = answered(self._connection._ask("module", name=name, args=plain(args), files=[]))
+        args = plain(self._task.args if module_args is None else module_args)
+        ident = self._connection._ident
+        if name.rsplit(".", 1)[-1] == "async_status" and not wrap_async:
+            return poll(ident, args)
+        if ignore_unknown_opts:
+            # The module drops what it does not declare, as it does for the reference.
+            args = dict(args, _ansible_ignore_unknown_opts=True)
+        result = answered(self._connection._ask("module", name=name, args=args, files=[]))
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
+        if wrap_async:
+            # ponytail: the module runs to its end before the job is handed back, so parallel
+            # jobs run one after the other; a poll finds each one finished.
+            jid = "j%s.%d" % (ident, next(JOB_IDS))
+            JOBS[(ident, jid)] = result
+            return {
+                "started": 1,
+                "finished": 0,
+                "ansible_job_id": jid,
+                "results_file": "/volant-async/%s" % jid,
+                "_ansible_suppress_tmpdir_delete": True,
+            }
         return result
+
+    def poll(ident, args):
+        jid = args.get("jid")
+        if args.get("mode", "status") != "status":
+            raise Unsupported("async_status mode %s is not supported yet" % args.get("mode"))
+        result = JOBS.pop((ident, jid), None)
+        if result is None:
+            return {
+                "failed": True,
+                "msg": "could not find job",
+                "ansible_job_id": jid,
+                "started": 1,
+                "finished": 1,
+            }
+        return dict(result, started=1, finished=1, ansible_job_id=jid)
 
     def make_tmp_path(self, remote_user=None):
         path = answered(self._connection._ask("tmp", action="make", remote_user=remote_user))

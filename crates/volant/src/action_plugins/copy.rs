@@ -62,6 +62,21 @@ fn text<'a>(args: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
+/// Whether the item is a copy of a controller directory, which the reference's own plugin
+/// handles and this one does not.
+pub(super) fn unwritten(ctx: &Context<'_>) -> bool {
+    let args = ctx.args;
+    let Some(src) = text(args, "src") else {
+        return false;
+    };
+    args.get("content").is_none_or(Value::is_null)
+        && !flag(args, "remote_src", false)
+        && search_paths(ctx.origin, ctx.playbook_dir, "files", src)
+            .iter()
+            .find(|p| p.exists())
+            .is_some_and(|found| found.is_dir())
+}
+
 pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
     match source(&ctx) {
         Ok(Some(of)) => copy_bytes(of),

@@ -236,6 +236,7 @@ pub(crate) struct Context<'a> {
 /// so the written plugin's refusal of it stands.
 pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
     let unwritten = match kind {
+        Kind::Copy => copy::unwritten(&ctx),
         Kind::Unarchive => unarchive::unwritten(&ctx),
         _ => false,
     };

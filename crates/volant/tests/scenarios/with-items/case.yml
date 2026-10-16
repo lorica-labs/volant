@@ -1,0 +1,2 @@
+# with_items flattens one level.
+args: [play.yml]

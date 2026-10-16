@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    probe_a: 1
+    probe_b: 2
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item }}"
+      with_varnames: ["^probe_"]

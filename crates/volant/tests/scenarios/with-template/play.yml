@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    v: seven
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item }}"
+      with_template: [t.j2]

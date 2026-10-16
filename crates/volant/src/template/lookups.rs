@@ -2,11 +2,13 @@
 //! `lookup(...)`: the lookup plugins the engine has, as one global function.
 
 use std::cell::Cell;
-use std::collections::BTreeSet;
+use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 
 use minijinja::value::{Kwargs, Rest, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, State, Value};
+
+use crate::inventory::Inventory;
 
 use super::{Context, FileRender, Templar, TemplateError, Vars};
 
@@ -43,9 +45,11 @@ const SUPPORTED: &[&str] = &[
     "file",
     "fileglob",
     "first_found",
+    "inventory_hostnames",
     "pipe",
     "template",
     "vars",
+    "varnames",
 ];
 
 /// Whether `lookup(name)` runs in this release. A pure name check: it never runs the lookup.
@@ -72,6 +76,17 @@ fn lookup(
     }
     if matches!(name, "fileglob" | "ansible.builtin.fileglob") {
         return fileglob(state, terms, kwargs, base_dir);
+    }
+    if matches!(
+        name,
+        "inventory_hostnames" | "ansible.builtin.inventory_hostnames"
+    ) {
+        kwargs.assert_all_used()?;
+        return inventory_hostnames(state, terms);
+    }
+    if matches!(name, "varnames" | "ansible.builtin.varnames") {
+        kwargs.assert_all_used()?;
+        return varnames(state, terms);
     }
     let default_value: Option<Value> = kwargs.get::<Option<Value>>("default")?;
     kwargs.assert_all_used()?;
@@ -159,6 +174,75 @@ fn lookup(
         results.push(found);
     }
     Ok(results)
+}
+
+/// `lookup('inventory_hostnames', pattern...)`: the hosts of the inventory the pattern selects,
+/// matched with the pattern grammar `hosts:` and `--limit` use, over the `groups` the run has.
+fn inventory_hostnames(state: &State, terms: &[Value]) -> Result<Vec<Value>, Error> {
+    let mut groups = BTreeMap::new();
+    if let Some(all) = state.lookup("groups")
+        && let Ok(names) = all.try_iter()
+    {
+        for name in names {
+            let hosts = all.get_item(&name).ok().and_then(|h| h.try_iter().ok());
+            let hosts = hosts.into_iter().flatten().map(|h| text_of(&h)).collect();
+            groups.insert(text_of(&name), hosts);
+        }
+    }
+    let pattern = terms.iter().map(text_of).collect::<Vec<_>>().join(":");
+    Ok(Inventory::from_groups(&groups)
+        .resolve(&pattern)
+        .hosts
+        .into_iter()
+        .map(|h| Value::from(h.name))
+        .collect())
+}
+
+/// `lookup('varnames', regex...)`: the names of the variables in scope that each regex finds
+/// somewhere in them, term by term, as Python's `re.search` does.
+fn varnames(state: &State, terms: &[Value]) -> Result<Vec<Value>, Error> {
+    let names: Vec<String> = state
+        .lookup(super::CONTEXT_KEY)
+        .and_then(|root| root.try_iter().ok())
+        .into_iter()
+        .flatten()
+        .map(|n| text_of(&n))
+        .filter(|n| !n.starts_with("__volant_"))
+        .collect();
+    let mut found = Vec::new();
+    for term in terms {
+        let Some(pattern) = term.as_str() else {
+            return Err(invalid(format!(
+                "Invalid setting identifier, \"{term}\" is not a string, its a {}",
+                python_type(term)
+            )));
+        };
+        let regex = regex::Regex::new(pattern).map_err(|e| {
+            invalid(format!(
+                "Unable to use \"{pattern}\" as a search parameter: {e}"
+            ))
+        })?;
+        found.extend(
+            names
+                .iter()
+                .filter(|n| regex.is_match(n))
+                .map(|n| Value::from(n.as_str())),
+        );
+    }
+    Ok(found)
+}
+
+/// Python's name for the type of a template value, as an error message prints it.
+fn python_type(value: &Value) -> &'static str {
+    match value.kind() {
+        ValueKind::Bool => "<class 'bool'>",
+        ValueKind::Number if value.is_integer() => "<class 'int'>",
+        ValueKind::Number => "<class 'float'>",
+        ValueKind::Seq => "<class 'list'>",
+        ValueKind::Map => "<class 'dict'>",
+        ValueKind::None => "<class 'NoneType'>",
+        _ => "<class 'str'>",
+    }
 }
 
 /// The shape a plugin's list takes through `lookup()` without `wantlist=True`, read from
@@ -661,6 +745,8 @@ mod tests {
             "template",
             "first_found",
             "fileglob",
+            "inventory_hostnames",
+            "varnames",
         ] {
             assert!(super::supported(name), "{name}");
             assert!(

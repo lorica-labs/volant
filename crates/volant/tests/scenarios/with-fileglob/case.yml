@@ -1,0 +1,2 @@
+# with_fileglob walks the files a pattern matches.
+args: [play.yml]

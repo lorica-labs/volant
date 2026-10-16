@@ -88,28 +88,28 @@ This page is generated from the tables the loader and the pre-flight read, so it
 <tr><td><code>with_config</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_csvfile</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_dict</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
-<tr><td><code>with_env</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
-<tr><td><code>with_file</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
+<tr><td><code>with_env</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_file</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_fileglob</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_first_found</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_indexed_items</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_ini</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
-<tr><td><code>with_inventory_hostnames</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
+<tr><td><code>with_inventory_hostnames</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_items</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_lines</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_list</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_nested</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_password</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
-<tr><td><code>with_pipe</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
+<tr><td><code>with_pipe</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_random_choice</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_sequence</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_subelements</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
-<tr><td><code>with_template</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
+<tr><td><code>with_template</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_together</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_unvault</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>with_url</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
-<tr><td><code>with_varnames</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
-<tr><td><code>with_vars</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
+<tr><td><code>with_varnames</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_vars</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 </tbody>
 </table>
 </div>

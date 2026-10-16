@@ -1,0 +1,2 @@
+# with_pipe runs a command.
+args: [play.yml]

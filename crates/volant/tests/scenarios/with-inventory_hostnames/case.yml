@@ -1,0 +1,2 @@
+# with_inventory_hostnames walks the hosts a pattern matches.
+args: [-i, inv.ini, play.yml]

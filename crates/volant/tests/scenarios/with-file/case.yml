@@ -1,0 +1,2 @@
+# with_file reads a file of the playbook.
+args: [play.yml]

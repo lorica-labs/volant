@@ -1,0 +1,2 @@
+# with_vars reads variables by name.
+args: [play.yml]

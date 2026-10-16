@@ -163,38 +163,34 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("vars", Runs),
     kw("when", Runs),
     // One row per lookup plugin `ansible.builtin` ships, because the reference accepts
-    // `with_<lookup>` for every one of them and refuses any other `with_*` name outright. They
-    // exist there, so they are refused here by the pre-flight rather than mistaken for a
-    // module name. `with_items` runs, and so does `with_<lookup>` for the two lookups this
-    // release has whose `with_` form was measured, `fileglob` and `first_found`: the loop walks
-    // what the lookup returns as a list. The loader and `prepare` read any `with_*` row that
-    // runs this way, so a row stays refused until its lookup exists and its `with_` form has
-    // been measured.
+    // `with_<lookup>` for every one of them and refuses any other `with_*` name outright. A row
+    // runs once its lookup exists and its `with_` form has been measured: the loop walks what the
+    // lookup returns as a list. The loader and `prepare` read any `with_*` row that runs this way.
     kw("with_config", Preflight),
     kw("with_csvfile", Preflight),
     kw("with_dict", Preflight),
-    kw("with_env", Preflight),
-    kw("with_file", Preflight),
+    kw("with_env", Runs),
+    kw("with_file", Runs),
     kw("with_fileglob", Runs),
     kw("with_first_found", Runs),
     kw("with_indexed_items", Preflight),
     kw("with_ini", Preflight),
-    kw("with_inventory_hostnames", Preflight),
+    kw("with_inventory_hostnames", Runs),
     kw("with_items", Runs),
     kw("with_lines", Preflight),
     kw("with_list", Preflight),
     kw("with_nested", Preflight),
     kw("with_password", Preflight),
-    kw("with_pipe", Preflight),
+    kw("with_pipe", Runs),
     kw("with_random_choice", Preflight),
     kw("with_sequence", Preflight),
     kw("with_subelements", Preflight),
-    kw("with_template", Preflight),
+    kw("with_template", Runs),
     kw("with_together", Preflight),
     kw("with_unvault", Preflight),
     kw("with_url", Preflight),
-    kw("with_varnames", Preflight),
-    kw("with_vars", Preflight),
+    kw("with_varnames", Runs),
+    kw("with_vars", Runs),
 ];
 
 /// Play keywords, alphabetical, as `Play.fattributes` lists them.

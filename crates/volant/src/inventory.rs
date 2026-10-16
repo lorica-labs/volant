@@ -66,6 +66,19 @@ impl Inventory {
         Self::parse_ini(&text).with_context(|| format!("parsing inventory {}", path.display()))
     }
 
+    /// An inventory holding the groups `groups` lists, in that order, and `all`'s hosts in the
+    /// order it gives them: what `lookup('inventory_hostnames')` matches a pattern against.
+    pub fn from_groups(groups: &BTreeMap<String, Vec<String>>) -> Self {
+        let mut inv = Inventory::default();
+        for name in groups.get("all").into_iter().flatten() {
+            inv.add_host(name, BTreeMap::new());
+        }
+        for (name, hosts) in groups {
+            inv.group_mut(name).hosts.clone_from(hosts);
+        }
+        inv
+    }
+
     pub fn parse_ini(text: &str) -> Result<Self, InventoryError> {
         let mut inv = Inventory::default();
         let mut section = Section::Hosts("ungrouped".to_string());

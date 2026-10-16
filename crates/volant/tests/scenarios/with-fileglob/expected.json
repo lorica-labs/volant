@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Walk] ********************************************************************\nok: [localhost] => (item=<golden-tmp>/files/a1.txt) => {\n    \"msg\": \"<golden-tmp>/files/a1.txt\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

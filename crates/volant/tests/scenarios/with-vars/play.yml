@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    one: 1
+    two: [a, b]
+  tasks:
+    - name: Walk
+      debug:
+        msg: "{{ item }}"
+      with_vars: [one, two]

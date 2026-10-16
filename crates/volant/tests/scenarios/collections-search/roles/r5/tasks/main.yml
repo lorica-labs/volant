@@ -1,0 +1,6 @@
+- ping:
+  register: x
+- debug: var=x.ping
+- my.col.hello:
+  register: x
+- debug: var=x.who

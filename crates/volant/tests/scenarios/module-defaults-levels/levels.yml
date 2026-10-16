@@ -1,0 +1,78 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug:
+      module_defaults:
+        debug: {msg: short-first}
+        ansible.builtin.debug: {msg: fq-second}
+    - debug:
+      module_defaults:
+        ansible.builtin.debug: {msg: fq-first}
+        debug: {msg: short-second}
+    - ansible.builtin.debug:
+      module_defaults:
+        debug: {msg: short-first}
+        ansible.builtin.debug: {msg: fq-second}
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    debug:
+      msg: play-msg
+      verbosity: 0
+  tasks:
+    - name: play short, task fqcn
+      debug:
+      module_defaults:
+        ansible.builtin.debug:
+          msg: task-fqcn
+    - name: play short, task legacy key
+      debug:
+      module_defaults:
+        ansible.legacy.debug:
+          msg: task-legacy
+    - name: task short, called as legacy
+      ansible.legacy.debug:
+      module_defaults:
+        debug:
+          msg: task-short-for-legacy
+    - name: task fqcn key, called short
+      debug:
+      module_defaults:
+        ansible.builtin.debug:
+          msg: fq-key
+        debug:
+          msg: sh-key
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    debug:
+      msg: play-short
+    ansible.builtin.command:
+      cmd: echo play-cmd
+  tasks:
+    - debug:
+    - debug:
+        msg: task-arg
+    - ansible.builtin.debug:
+    - ansible.legacy.debug:
+    - block:
+        - debug:
+      module_defaults:
+        debug:
+          msg: block-short
+    - block:
+        - block:
+            - debug:
+          module_defaults:
+            debug:
+              verbosity: 0
+      module_defaults:
+        debug:
+          msg: outer-block
+    - debug:
+      module_defaults:
+        ansible.builtin.debug:
+          msg: task-fqcn
+    - ansible.builtin.command:
+      register: r
+    - debug: var=r.stdout

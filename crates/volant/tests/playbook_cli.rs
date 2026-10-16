@@ -1250,6 +1250,58 @@ fn a_lookup_reads_the_controller_after_the_tasks_in_front_of_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// What `module_defaults` and `collections` say when they cannot be honoured, in the reference's
+/// words and with its code.
+#[rstest]
+#[case::group_nobody_declares(
+    "group_nobody_declares",
+    "  module_defaults:\n    group/nosuchgroup: {a: 1}\n",
+    4,
+    "could not resolve the module_defaults group ansible.builtin.nosuchgroup"
+)]
+#[case::key_nothing_answers_to(
+    "key_nothing_answers_to",
+    "  module_defaults:\n    nosuchmod: {a: 1}\n",
+    4,
+    "Could not resolve action ansible.legacy.nosuchmod in module_defaults"
+)]
+#[case::not_a_mapping(
+    "not_a_mapping",
+    "  module_defaults: 3\n",
+    4,
+    "The field 'module_defaults' is supposed to be a dictionary or list of dictionaries"
+)]
+#[case::collection_nobody_installed(
+    "collection_nobody_installed",
+    "  collections: [no.such]\n",
+    0,
+    "[WARNING]: Error loading plugin 'debug': No module named 'ansible_collections.no'"
+)]
+fn module_defaults_and_collections_that_cannot_be_honoured_say_why(
+    #[case] name: &str,
+    #[case] keywords: &str,
+    #[case] code: i32,
+    #[case] said: &str,
+) {
+    // The names ansible-core resolves need it; the other rows are said by the controller alone.
+    let python = python::reference_python().map(|p| p.display().to_string());
+    if python.is_none() && keywords.contains("nosuch") {
+        return;
+    }
+    let envs: Vec<(&str, &str)> = python
+        .iter()
+        .map(|python| ("VOLANT_PYTHON", python.as_str()))
+        .collect();
+    let dir = probe_dir(&format!("defaults-refused-{name}"));
+    let body = format!(
+        "- hosts: localhost\n  gather_facts: false\n{keywords}  tasks:\n    - debug: msg=hi\n"
+    );
+    let (got, text) = run_probe_env(&dir, "refused", &body, &[], None, &envs);
+    assert_eq!(got, code, "{text}");
+    assert!(text.contains(said), "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// Every task of a batch is rendered before the batch goes out, so a task that writes facts ends
 /// its batch.
 #[test]
@@ -3224,6 +3276,57 @@ ok: [localhost] => (item=one) => {
         0,
         "\"msg\": \"block-value\"",
     ),
+    // The default is what the task prints; dropping the keyword leaves `Hello world!`.
+    runs(
+        "task",
+        "module_defaults",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n      module_defaults:\n        debug:\n          msg: task-default\n",
+        &[],
+        0,
+        "\"msg\": \"task-default\"",
+    ),
+    runs(
+        "play",
+        "module_defaults",
+        "- hosts: localhost\n  gather_facts: false\n  module_defaults:\n    ansible.builtin.debug:\n      msg: play-default\n  tasks:\n    - name: Probe task\n      debug:\n",
+        &[],
+        0,
+        "\"msg\": \"play-default\"",
+    ),
+    runs(
+        "block",
+        "module_defaults",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          debug:\n      module_defaults:\n        debug:\n          msg: block-default\n",
+        &[],
+        0,
+        "\"msg\": \"block-default\"",
+    ),
+    // `probe_hello` lives only in the collection the keyword lists: dropping the keyword leaves a
+    // name nothing resolves, and the run stops before any task.
+    runs(
+        "task",
+        "collections",
+        "- hosts: localhost\n  gather_facts: false\n  vars:\n    ansible_python_interpreter: /usr/bin/python3\n  tasks:\n    - name: Probe task\n      probe_hello:\n      collections: [probe.col]\n      register: r\n    - debug:\n        msg: \"{{ r.who }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"probe-col\"",
+    ),
+    runs(
+        "play",
+        "collections",
+        "- hosts: localhost\n  gather_facts: false\n  collections: [probe.col]\n  vars:\n    ansible_python_interpreter: /usr/bin/python3\n  tasks:\n    - name: Probe task\n      probe_hello:\n      register: r\n    - debug:\n        msg: \"{{ r.who }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"probe-col\"",
+    ),
+    runs(
+        "block",
+        "collections",
+        "- hosts: localhost\n  gather_facts: false\n  vars:\n    ansible_python_interpreter: /usr/bin/python3\n  tasks:\n    - block:\n        - name: Probe task\n          probe_hello:\n          register: r\n        - debug:\n            msg: \"{{ r.who }}\"\n      collections: [probe.col]\n",
+        &[],
+        0,
+        "\"msg\": \"probe-col\"",
+    ),
     // `check_mode` is honoured for `false` and refused by its value for `true`, the way
     // `become_method` and `strategy` are. The row would still be `Runs` with the refusal gone,
     // so what these three assert is the sentence that names the value: parked again, the message
@@ -3423,6 +3526,18 @@ fn every_runs_keyword_changes_something_observable() {
         "- name: Probe task\n  debug:\n    msg: role-body\n",
     )
     .expect("the probe role's tasks are written");
+    // The collection the `collections` rows list, beside the playbook where the reference looks.
+    let modules = dir.join("collections/ansible_collections/probe/col/plugins/modules");
+    std::fs::create_dir_all(&modules).expect("the probe collection is written");
+    std::fs::write(
+        modules.join("probe_hello.py"),
+        "#!/usr/bin/python
+from ansible.module_utils.basic import AnsibleModule
+m = AnsibleModule(argument_spec={})
+m.exit_json(changed=False, who='probe-col')
+",
+    )
+    .expect("the probe module is written");
     // Every probe runs before anything is asserted, so one failing run reports every row that
     // broke rather than only the first: a change that touches several keywords is read once.
     let python = python::reference_python().map(|p| p.display().to_string());
@@ -3504,7 +3619,7 @@ name = vol
         // These loops read through the controller's Python helper; with no ansible-core to run
         // it the row is skipped, as every other reference-dependent test is.
         let mut envs: Vec<(&str, &str)> = Vec::new();
-        if BRIDGED_LOOPS.contains(&probe.kw) {
+        if BRIDGED_LOOPS.contains(&probe.kw) || probe.kw == "collections" {
             let Some(python) = &python else { continue };
             envs.push(("VOLANT_PYTHON", python));
         }

@@ -1,0 +1,3 @@
+# A whole module_defaults value may be a template that renders to a mapping, for a key and for a group.
+args: [-i, inv.ini, templated.yml]
+needs: [ansible-core]

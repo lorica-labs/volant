@@ -1,0 +1,16 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    ping_defaults: {data: from-var}
+    group_defaults: {who: from-group, how: "{{ mode }}"}
+    mode: templated
+  module_defaults:
+    ping: "{{ ping_defaults }}"
+    group/my.col.tools: "{{ group_defaults }}"
+  tasks:
+    - ping:
+      register: p
+    - debug: var=p.ping
+    - my.col.hello:
+      register: r
+    - debug: msg="{{ r.who }} {{ r.how }}"

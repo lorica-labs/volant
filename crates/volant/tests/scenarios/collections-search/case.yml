@@ -1,0 +1,4 @@
+# `collections` is searched before ansible.builtin; a role keeps to its own meta list, and the
+# innermost list wins.
+args: [-i, inv.ini, search.yml]
+needs: [ansible-core]

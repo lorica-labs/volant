@@ -330,6 +330,12 @@ pub(crate) struct Compiled {
     /// variables. A list out of step with `steps` - never filled - makes every step a boundary:
     /// that costs time, and never lets a host read ahead of the host it reads.
     pub crosses: Vec<bool>,
+    /// What ansible-core said about the groups and keys of `module_defaults`, shared by the plays
+    /// of a run and by the includes read while one runs. The run fills it before the first
+    /// connection; a name an include brings in later is asked about when its task is prepared.
+    pub resolved: Arc<crate::collection::Resolved>,
+    /// What compiling the play had to say, for the run to print before the first banner.
+    pub warnings: Vec<String>,
 }
 
 impl Compiled {
@@ -896,7 +902,10 @@ impl Builder<'_> {
         if self.depth > DEPTH {
             return Err(Refusal::at(1, RECURSION));
         }
-        let kw = merge(inherited, &entry.keywords);
+        let mut kw = merge(inherited, &entry.keywords);
+        // A role does not inherit the play's `collections`: it searches its own `meta/main.yml`
+        // list, which may be empty, and a block or task inside it may still write another.
+        kw.collections = Some(role.collections.clone());
         for dependency in &role.dependencies {
             self.role(dependency, &kw, seen, block, section)?;
         }
@@ -1139,6 +1148,8 @@ pub(crate) fn compile(
         tags: play.tags.clone(),
         no_log: play.no_log,
         environment: play.environment.clone(),
+        module_defaults: play.module_defaults.clone(),
+        collections: play.collections.clone(),
         check_mode: play.check_mode,
         run_once: play.run_once,
         any_errors_fatal: play.any_errors_fatal,
@@ -1214,8 +1225,21 @@ pub(crate) fn compile(
     builder.flush_point(mark);
     // The play's own handlers run behind every role's, measured.
     for handler in &play.handlers {
+        // The play's `module_defaults` and `collections` reach a handler as they reach a task.
+        let mut task = handler.task.clone();
+        task.module_defaults = empty
+            .module_defaults
+            .iter()
+            .chain(&handler.task.module_defaults)
+            .cloned()
+            .collect();
+        task.collections = handler
+            .task
+            .collections
+            .clone()
+            .or_else(|| empty.collections.clone());
         builder.handlers.push(Handler {
-            task: handler.task.clone(),
+            task,
             listen: handler.listen.clone(),
             role: None,
         });
@@ -1237,17 +1261,22 @@ pub(crate) fn compile(
         role.defaults = layered(&exported.defaults, &role.defaults);
         role.vars = layered(&exported.vars, &role.vars);
     }
+    let mut steps = builder.steps;
+    let mut handlers = builder.handlers;
+    let warnings = crate::collection::resolve_all(&mut steps, &mut handlers, search);
     Ok(Compiled {
-        steps: builder.steps,
+        steps,
         blocks: builder.blocks,
         roles,
         exported,
-        handlers: builder.handlers,
+        handlers,
         inherited: empty,
         search: search.clone(),
         selection: selection.clone(),
         gathers,
         crosses: Vec::new(),
+        resolved: Arc::default(),
+        warnings,
     })
 }
 
@@ -1359,12 +1388,17 @@ pub(crate) fn expand_include(
             builder.role(entry, &inherited, &mut Vec::new(), None, parent.section)?;
         }
     }
+    let mut steps = builder.steps;
+    let mut handlers = builder.handlers;
+    // Warned about by the compilation of the play; an include read while it runs has no
+    // place to say it.
+    let _ = crate::collection::resolve_all(&mut steps, &mut handlers, &base.search);
     let expanded = Compiled {
-        steps: builder.steps,
+        steps,
         blocks: builder.blocks,
         roles: builder.roles,
         exported: RoleVars::default(),
-        handlers: builder.handlers,
+        handlers,
         inherited,
         search: base.search.clone(),
         selection: base.selection.clone(),
@@ -1372,6 +1406,8 @@ pub(crate) fn expand_include(
         // gather step of its own.
         gathers: false,
         crosses: Vec::new(),
+        resolved: Arc::clone(&base.resolved),
+        warnings: Vec::new(),
     };
     // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,
     // before anything is spliced, so what a file this release cannot execute gets is the
@@ -1608,6 +1644,18 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
         .chain(&inner.environment)
         .cloned()
         .collect();
+    // `module_defaults` stacks layers like `environment`; the winner per module is settled when
+    // the task runs, where the values are rendered.
+    task.module_defaults = outer
+        .module_defaults
+        .iter()
+        .chain(&inner.module_defaults)
+        .cloned()
+        .collect();
+    task.collections = inner
+        .collections
+        .clone()
+        .or_else(|| outer.collections.clone());
     task.connect = inner.connect.over(&outer.connect);
     task.r#become = inner.r#become.or(outer.r#become);
     task.become_user = inner

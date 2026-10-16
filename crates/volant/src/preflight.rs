@@ -997,7 +997,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            30,
+            24,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

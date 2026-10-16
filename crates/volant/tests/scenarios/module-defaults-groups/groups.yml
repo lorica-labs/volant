@@ -1,0 +1,36 @@
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    group/my.col.more: {who: group, how: by-group}
+  tasks:
+    - my.col.hello:
+      register: r
+    - debug: var=r.who
+    - my.col.other:
+      register: r
+    - debug: var=r.how
+    - my.col.solo:
+      register: r
+    - debug: var=r.who
+    - my.col.hello:
+        who: arg
+      register: r
+    - debug: msg="{{ r.who }} {{ r.how }}"
+    - block:
+        - my.col.ping:
+          register: r
+        - debug: msg="{{ r.who }} {{ r.how }}"
+      module_defaults:
+        my.col.ping: {who: own}
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    group/testgroup:
+      data: from-testgroup
+  tasks:
+    - ping:
+      register: p
+    - debug: var=p.ping
+    - ansible.builtin.ping:
+      register: p
+    - debug: var=p.ping

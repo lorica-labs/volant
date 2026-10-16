@@ -23,7 +23,7 @@ use crate::stats::{Refusal, Stats, error_code, exit_code};
 use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
-use crate::{agent, facts_read, playbook, preflight, python};
+use crate::{agent, collection, facts_read, playbook, preflight, python};
 
 #[derive(Parser, Debug)]
 pub struct PlaybookArgs {
@@ -318,8 +318,32 @@ async fn run_all(
     if let Some(helper) = helper {
         bridge.adopt(helper);
     }
+    // What `module_defaults` names, resolved by ansible-core as the reference resolves it when it
+    // loads a play: a key nothing answers to, or a group nobody declares, stops the run before
+    // anything is shown.
+    let resolved = Arc::new(collection::Resolved::default());
+    resolved
+        .ensure(
+            compiled
+                .iter()
+                .flatten()
+                .flat_map(collection::tasks_of)
+                .collect::<Vec<_>>(),
+            Some(&bridge),
+        )
+        .map_err(|e| Refusal::at(4, e))?;
+    for play in compiled.iter_mut().flatten() {
+        play.resolved = Arc::clone(&resolved);
+    }
+    // Said once per run, as the reference says a warning once however many plays raise it.
+    let mut said: HashSet<&String> = HashSet::new();
     for plays in &compiled {
         for play in plays {
+            for warning in &play.warnings {
+                if said.insert(warning) {
+                    out.warning(warning, false);
+                }
+            }
             preflight::check_built(play, python.as_ref()).map_err(|e| Refusal::or(4, e))?;
         }
     }

@@ -412,7 +412,8 @@ impl Reach {
             return Ok(());
         }
         // Its `meta/main.yml` dependencies run with it, wherever it was reached from.
-        for dependency in crate::roles::meta(dir)?.0 {
+        let (dependencies, _, collections) = crate::roles::meta(dir)?;
+        for dependency in dependencies {
             if let Ok(found) = search.locate(&dependency.name) {
                 self.role(&found, search)?;
             }
@@ -421,7 +422,7 @@ impl Reach {
         for sub in ["tasks", "handlers"] {
             for path in yaml_files(&dir.join(sub))? {
                 self.files.insert(path.clone());
-                let tasks = if sub == "tasks" {
+                let mut tasks = if sub == "tasks" {
                     let mut tasks = Vec::new();
                     flatten(&crate::playbook::parse_tasks_file(&path)?, &mut tasks);
                     tasks
@@ -431,6 +432,8 @@ impl Reach {
                         .map(|h| h.task)
                         .collect()
                 };
+                // A role searches the collections its own `meta/main.yml` lists, and nobody's else.
+                crate::collection::scope(&mut tasks, Some(&collections), search);
                 self.tasks(
                     &tasks,
                     &path,
@@ -490,6 +493,8 @@ impl Reach {
                 };
                 let mut tasks = Vec::new();
                 flatten(&items, &mut tasks);
+                // What the statement searches, its play's or its role's, is what the file does.
+                crate::collection::scope(&mut tasks, task.collections.as_deref(), search);
                 self.tasks(
                     &tasks,
                     &path,

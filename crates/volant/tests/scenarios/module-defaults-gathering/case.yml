@@ -1,0 +1,3 @@
+# A play's module_defaults for setup narrow the implicit Gathering Facts, whichever spelling names it.
+args: [-i, inv.ini, gathering.yml]
+needs: [ansible-core]

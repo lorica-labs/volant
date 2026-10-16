@@ -635,6 +635,14 @@ pub(super) fn prepare(
         }
         Some(Err(e)) => return Err(e),
     };
+    // The groups and keys of `module_defaults` an include brought in while the play runs have
+    // not been asked about yet.
+    if !task.module_defaults.is_empty() {
+        plan.steps()
+            .resolved
+            .ensure([task], templar.bridge().map(|bridge| &**bridge))
+            .map_err(TemplateError)?;
+    }
     let mut items = Vec::new();
     // What `ansible_loop` reads: every item, kept only when the loop asks for `extended`.
     let options = if task.loop_items.is_some() {
@@ -737,6 +745,7 @@ pub(super) fn prepare(
             // evaluated, so it is not rendered here: a render error in it would fail the task in
             // the render's words before the conditional could report it, which the reference's
             // `finalize_task_arg` for `assert` does not do.
+            //
             let raw = if volant_protocol::modules::short_name(&task.module) == "assert" {
                 let mut raw = task.args.clone();
                 raw.remove("that");
@@ -744,7 +753,7 @@ pub(super) fn prepare(
             } else {
                 std::borrow::Cow::Borrowed(&task.args)
             };
-            let (map, untrusted) = templar.render_map_tainted(&raw, &vars).map_err(|err| {
+            let finalizing = |err: TemplateError| {
                 if err.0.starts_with(crate::template::RESOLVING) {
                     TemplateError(format!(
                         "{FINALIZING}'{}' failed: {}",
@@ -754,7 +763,30 @@ pub(super) fn prepare(
                 } else {
                     err
                 }
-            })?;
+            };
+            let (mut map, mut untrusted) = templar
+                .render_map_tainted(&raw, &vars)
+                .map_err(finalizing)?;
+            // The task's `module_defaults` lie under its own arguments, each rendered once on
+            // its own: a default is a template like an argument, and may be a whole template
+            // that renders to a mapping. A task's argument wins, `omit` included.
+            if !task.module_defaults.is_empty() {
+                let mut from_default = BTreeSet::new();
+                let mut defaults = crate::collection::defaults_for(
+                    &task.module,
+                    &task.module_defaults,
+                    &plan.steps().resolved.groups(),
+                    &mut |key, value| {
+                        render_default(templar, &vars, key, value, &mut from_default)
+                            .map_err(|err| finalizing(err).0)
+                    },
+                )
+                .map_err(TemplateError)?;
+                from_default.retain(|name| !map.contains_key(name));
+                untrusted.extend(from_default);
+                defaults.extend(std::mem::take(&mut map));
+                map = defaults;
+            }
             let mut rendered = Value::Object(map);
             remove_omit(&mut rendered);
             let Value::Object(map) = rendered else {
@@ -856,6 +888,42 @@ pub(super) fn prepare(
     Ok(Prepared::Remote(
         items, escalation, delegate, payload, None, connect,
     ))
+}
+
+/// One `module_defaults` value as the mapping it stands for: a mapping with each of its values
+/// rendered, or a whole template that renders to one. The names that read something a managed
+/// host wrote go into `untrusted`, so the arguments they become are never rendered again.
+fn render_default(
+    templar: &Templar,
+    vars: &HostVars,
+    key: &str,
+    value: &Value,
+    untrusted: &mut BTreeSet<String>,
+) -> Result<Map<String, Value>, TemplateError> {
+    let not_a_mapping = || TemplateError(format!("module_defaults for '{key}' must be a mapping"));
+    match value {
+        Value::Null => Ok(Map::new()),
+        Value::Object(map) => {
+            let (map, tainted) = templar.render_map_tainted(map, vars)?;
+            untrusted.extend(tainted);
+            Ok(map)
+        }
+        other => {
+            let mut wrapped = Map::new();
+            wrapped.insert("value".into(), other.clone());
+            let (mut rendered, tainted) = templar.render_map_tainted(&wrapped, vars)?;
+            match rendered.remove("value") {
+                Some(Value::Object(map)) => {
+                    if tainted.contains("value") {
+                        untrusted.extend(map.keys().cloned());
+                    }
+                    Ok(map)
+                }
+                Some(Value::Null) => Ok(Map::new()),
+                _ => Err(not_a_mapping()),
+            }
+        }
+    }
 }
 
 /// The task's `remote_user`, `port` and `connection`, rendered once for the task against its

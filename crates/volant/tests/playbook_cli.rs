@@ -111,6 +111,10 @@ fn volant_within_full(
     if let Some(dir) = cwd {
         command.current_dir(dir);
     }
+    // Never the developer's terminal: a play that asks a question would wait for them.
+    if stdin_line.is_none() {
+        command.stdin(std::process::Stdio::null());
+    }
     process::run_within(&mut command, deadline, stdin_line.map(str::as_bytes))
 }
 
@@ -1862,6 +1866,81 @@ fn run_probe_env(
     (out.status.code().unwrap_or(-1), text)
 }
 
+/// On a terminal `vars_prompt` asks (default, visible, hidden) and `-e` is never asked; the
+/// answers are typed ahead into a pty and the run dies at the deadline if it waits for more.
+#[test]
+fn vars_prompt_asks_on_a_terminal() {
+    use std::os::fd::{FromRawFd as _, OwnedFd};
+
+    let dir = probe_dir("pty");
+    let file = dir.join("ask.yml");
+    std::fs::write(
+        &file,
+        "- hosts: localhost
+  gather_facts: false
+  vars_prompt:
+    - {name: a, prompt: Enter a, default: dflt, private: false}
+    - {name: b, prompt: Enter b, private: false}
+    - {name: c, prompt: Enter c}
+    - {name: d, prompt: Enter d}
+  tasks:
+    - debug: msg=\"[{{ a }}|{{ b }}|{{ c }}|{{ d }}]\"
+",
+    )
+    .expect("the probe is written");
+    let (mut master, mut slave) = (-1, -1);
+    // SAFETY: both descriptors are written by `openpty` and owned by nothing else.
+    let opened = unsafe {
+        libc::openpty(
+            &raw mut master,
+            &raw mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    assert_eq!(opened, 0, "a pseudo-terminal opens");
+    // SAFETY: `openpty` just returned them, and each is wrapped once.
+    let (master, slave) = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+    // Typed ahead: the terminal holds each line until the run reads it.
+    let typed = b"
+second
+hidden
+";
+    // SAFETY: `typed` is valid for its length and `master` is open.
+    let written = unsafe {
+        libc::write(
+            std::os::fd::AsRawFd::as_raw_fd(&master),
+            typed.as_ptr().cast(),
+            typed.len(),
+        )
+    };
+    assert_eq!(usize::try_from(written).ok(), Some(typed.len()));
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
+        .args(["playbook", "-e", "d=cli"])
+        .arg(&file)
+        .env("NO_COLOR", "1")
+        .env_remove("VOLANT_PYTHON")
+        .stdin(std::process::Stdio::from(slave));
+    let out = process::run_within(&mut command, DEFAULT_DEADLINE, None);
+    drop(master);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{stdout}
+{stderr}"
+    );
+    assert!(stdout.contains("Enter a [dflt]: Enter b: "), "{stdout}");
+    assert!(stdout.contains("[dflt|second|hidden|cli]"), "{stdout}");
+    assert!(stderr.contains("Enter c: "), "{stderr}");
+    assert!(!stderr.contains("Not prompting"), "{stderr}");
+    assert!(!stderr.contains("Enter d"), "-e is never asked: {stderr}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// Nothing comes out before a pre-flight refusal: no banner, no task header, no recap.
 #[test]
 fn a_preflight_refusal_lets_nothing_out_before_it() {
@@ -3058,6 +3137,64 @@ ok: [localhost] => (item=one) => {
     // because the play asked for facts, and the same playbook writing `false` exits 0 on the same
     // machine. The probe puts a `python3` with no ansible-core in front of whatever this machine
     // has, so the row reads the same either way.
+    // The three gathering keywords are read when the play starts, before any host is asked for
+    // facts: a value of the wrong type stops the run with the reference's words. Without the
+    // keyword the play would be refused as unsupported instead.
+    runs(
+        "play",
+        "gather_subset",
+        "- hosts: localhost
+  gather_facts: false
+  gather_subset: [1]
+  tasks:
+    - debug: msg=probe
+",
+        &[],
+        4,
+        "Keyword 'gather_subset' items must be of type 'str', not 'int'.",
+    ),
+    runs(
+        "play",
+        "gather_timeout",
+        "- hosts: localhost
+  gather_facts: false
+  gather_timeout: probe
+  tasks:
+    - debug: msg=probe
+",
+        &[],
+        4,
+        "The value 'probe' could not be converted to 'int'.",
+    ),
+    runs(
+        "play",
+        "fact_path",
+        "- hosts: localhost
+  gather_facts: false
+  fact_path: [probe]
+  tasks:
+    - debug: msg=probe
+",
+        &[],
+        4,
+        "The field 'fact_path' is supposed to be a string type",
+    ),
+    // With no terminal on standard input the entry takes its default; `-e` would win over it.
+    runs(
+        "play",
+        "vars_prompt",
+        "- hosts: localhost
+  gather_facts: false
+  vars_prompt:
+    - name: probe
+      default: dflt
+  tasks:
+    - debug: msg=\"[{{ probe }}]\"
+",
+        &[],
+        0,
+        "[dflt]",
+    ),
     runs(
         "play",
         "gather_facts",

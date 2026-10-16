@@ -45,12 +45,12 @@ This page is generated from the tables the loader and the pre-flight read, so it
 <tr><td><code>delegate_to</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>diff</code></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
 <tr><td><code>environment</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
-<tr><td><code>fact_path</code></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>fact_path</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>failed_when</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>force_handlers</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>gather_facts</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
-<tr><td><code>gather_subset</code></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
-<tr><td><code>gather_timeout</code></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>gather_subset</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>gather_timeout</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>handlers</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>hosts</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>ignore_errors</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
@@ -83,7 +83,7 @@ This page is generated from the tables the loader and the pre-flight read, so it
 <tr><td><code>until</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>vars</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>vars_files</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
-<tr><td><code>vars_prompt</code></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>vars_prompt</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>when</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_config</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_csvfile</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>

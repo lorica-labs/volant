@@ -1,0 +1,5 @@
+- hosts: h1
+  gather_facts: false
+  fact_path: [x]
+  tasks:
+    - debug: msg=unreached

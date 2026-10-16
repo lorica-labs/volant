@@ -252,6 +252,7 @@ pub async fn run_play(
     let batches =
         crate::compile::batches(&hosts, play.serial.as_ref(), &state.templar, &play_vars)?;
     let max_fail = max_fail_percentage(play, &state.templar, &play_vars)?;
+    check_gather_keywords(play, &state.templar, &play_vars)?;
     let all: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
     let playbook_dir = state
         .vars
@@ -429,6 +430,73 @@ fn max_fail_percentage(
         .ok_or_else(|| refuse(format!("The value {rendered} is not a number.")))
 }
 
+/// The play's `gather_subset`, `gather_timeout` and `fact_path`, checked when the play starts,
+/// before its banner: the reference validates a play's keywords then, whether it gathers or not.
+/// The values themselves travel as the gathering step's `setup` arguments, see
+/// `compile::gather_args`.
+fn check_gather_keywords(
+    play: &Play,
+    templar: &Templar,
+    vars: &Map<String, Value>,
+) -> anyhow::Result<()> {
+    let refuse = |key: &str, why: String| {
+        crate::stats::Refusal::at(4, format!("Error processing keyword '{key}': {why}"))
+    };
+    if let Some(raw) = &play.gather_subset {
+        let rendered = match templar.render_value(raw, vars) {
+            Ok(rendered) => rendered,
+            // A variable only a host has (a `vars_files` entry, say) is that host's to render.
+            Err(err) if err.0.contains("undefined") => Value::Null,
+            Err(err) => return Err(refuse("gather_subset", err.0)),
+        };
+        let items = match &rendered {
+            Value::Null => &[][..],
+            Value::Array(items) => items.as_slice(),
+            one => std::slice::from_ref(one),
+        };
+        if let Some(bad) = items.iter().find(|item| !item.is_string()) {
+            return Err(refuse(
+                "gather_subset",
+                format!(
+                    "Keyword 'gather_subset' items must be of type 'str', not '{}'.",
+                    python_type(bad)
+                ),
+            ));
+        }
+    }
+    if let Some(raw) = &play.gather_timeout {
+        let rendered = match templar.render_value(raw, vars) {
+            Ok(rendered) => rendered,
+            Err(err) if err.0.contains("undefined") => Value::from(0),
+            Err(err) => return Err(refuse("gather_timeout", err.0)),
+        };
+        let whole = match &rendered {
+            Value::Number(n) => n.is_i64() || n.is_u64(),
+            Value::String(text) => text.trim().parse::<i64>().is_ok(),
+            _ => false,
+        };
+        if !whole {
+            let shown = rendered
+                .as_str()
+                .map_or_else(|| rendered.to_string(), str::to_string);
+            return Err(refuse(
+                "gather_timeout",
+                format!("The value '{shown}' could not be converted to 'int'."),
+            ));
+        }
+    }
+    if let Some(Value::Array(_) | Value::Object(_)) = &play.fact_path {
+        let kind = play.fact_path.as_ref().map_or("", python_type);
+        return Err(crate::stats::Refusal::at(
+            4,
+            format!(
+                "The field 'fact_path' is supposed to be a string type, however the incoming data structure is a {kind}"
+            ),
+        ));
+    }
+    Ok(())
+}
+
 /// A variable's boolean, whether the inventory typed it as one or spelled it the way Ansible
 /// content spells one (`yes`, `on`, `"true"`).
 pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
@@ -569,7 +637,7 @@ fn load_play_vars_files(
 
 /// The name Python would give a value, so a message about a mistyped playbook key reads the way
 /// the reference's does.
-fn python_type(value: &Value) -> &'static str {
+pub(crate) fn python_type(value: &Value) -> &'static str {
     match value {
         Value::Null => "NoneType",
         Value::Bool(_) => "bool",

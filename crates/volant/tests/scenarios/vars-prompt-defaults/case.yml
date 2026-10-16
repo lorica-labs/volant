@@ -1,0 +1,3 @@
+# With no terminal an entry takes its default, templated once unless it is unsafe; one with no
+# default is the text None. The warning is on stderr, so only the values are compared.
+args: [-i, inv.ini, play.yml]

@@ -1,0 +1,18 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Gathering Facts] *********************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"ansible_local\": {\n        \"a\": {\n            \"sec\": {\n                \"k\": \"v\",\n                \"n\": \"3\"\n            }\n        },\n        \"b\": {\n            \"j\": [\n                1,\n                2\n            ],\n            \"s\": \"x\"\n        },\n        \"d\": \"error loading facts as JSON or ini - please check content: <golden-tmp>/facts/d.fact\"\n    }\n}\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"!all,!min,local True False\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Gathering Facts] *********************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": [\n        \"ansible_local\",\n        \"discovered_interpreter_python\",\n        \"gather_subset\",\n        \"module_setup\"\n    ]\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Gathering Facts] *********************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": [\n        \"discovered_interpreter_python\",\n        \"env\",\n        \"gather_subset\",\n        \"module_setup\"\n    ]\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Gathering Facts] *********************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"min\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

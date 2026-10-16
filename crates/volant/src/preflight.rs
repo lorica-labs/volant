@@ -669,7 +669,6 @@ mod tests {
     #[case::async_on_an_include(task_play("      include_tasks: inc.yml\n      async: 5\n"), &["keyword 'async' is not supported yet on 'include_tasks'"])]
     #[case::diff(task_play("      command: echo hi\n      diff: x\n"), &["keyword 'diff' is not supported yet", "play 1", "'T'"])]
     #[case::throttle(task_play("      command: echo hi\n      throttle: x\n"), &["keyword 'throttle' is not supported yet", "play 1", "'T'"])]
-    #[case::play_vars_prompt("- hosts: all\n  vars_prompt: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'vars_prompt' is not supported yet"])]
     #[case::play_order("- hosts: all\n  order: 1\n  tasks:\n    - command: echo hi\n".to_string(), &["play keyword 'order' is not supported yet"])]
     #[case::parked_in_a_block_body(
         "- hosts: all\n  tasks:\n    - block:\n        - name: Deep\n          command: echo hi\n          throttle: probe\n".to_string(),
@@ -1026,7 +1025,7 @@ mod tests {
         let probes = preflight_probes();
         assert_eq!(
             probes.len(),
-            16,
+            12,
             "the tables carry the whole grammar; this count is the record"
         );
         for (kw, body) in &probes {

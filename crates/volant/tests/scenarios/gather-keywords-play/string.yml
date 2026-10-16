@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: true
+  gather_subset: "!all,!min,local"
+  gather_timeout: 5
+  fact_path: "{{ playbook_dir }}/facts"
+  tasks:
+    - debug: var=ansible_local
+    - debug: msg="{{ ansible_facts.gather_subset | join('|') }} {{ 'hostname' in ansible_facts }} {{ 'default_ipv4' in ansible_facts }}"

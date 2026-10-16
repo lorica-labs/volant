@@ -354,7 +354,7 @@ pub fn bool_from_str(text: &str) -> Option<bool> {
 /// stored as a one-expression template that renders back to its own text through
 /// `volant_unsafe`, which also stops the render from going over the result again. Every string
 /// leaf of a list or mapping is treated the same way; mapping keys are never rendered.
-fn unsafe_data(value: Value) -> Value {
+pub(crate) fn unsafe_data(value: Value) -> Value {
     match value {
         Value::String(s) if s.contains("{{") || s.contains("{%") => {
             let mut lit = String::from("{{ \"");

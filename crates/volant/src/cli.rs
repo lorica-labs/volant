@@ -516,6 +516,8 @@ async fn run_all(
         )
     };
     let mut local_agent_checked = false;
+    // The reference's display says a warning once for the run, however many plays repeat it.
+    let mut prompt_warned = false;
     let mut current_dir = playbook_dir;
     // Set when a batch ended the run by losing every live host it had. The recap still prints,
     // measured, so it is printed once past the loop rather than inside it.
@@ -541,6 +543,16 @@ async fn run_all(
                     state.vars.lock().expect("vars lock").rebase(&play.dir)?;
                     current_dir.clone_from(&play.dir);
                 }
+                // Asked before the banner and before the hosts are looked at, as the reference does.
+                let play_vars = state.vars.lock().expect("vars lock").play_scope(&play.vars);
+                let prompted = crate::prompt::prompted(
+                    play,
+                    &state.templar,
+                    &play_vars,
+                    &extra_for_check,
+                    &mut prompt_warned,
+                )?;
+                let play = &*prompted;
                 let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned);
                 if !local_agent_checked && hosts.iter().any(&is_local) {
                     agents.local()?;
@@ -695,52 +707,14 @@ fn play_hosts(
     }
 }
 
-/// Reads the escalation password from the terminal, with the prompt on stderr so a redirected
-/// stdout still carries only the run's own output.
-///
-/// The echo is turned off by the shell that reads the line rather than from here, and that
-/// shell arms its `trap` before touching the terminal: a Ctrl-C, a Ctrl-\ or a `SIGTERM` while
-/// the operator is typing reaches the whole foreground process group, so the shell restores the
-/// echo on its way out even though this process is dying too. `QUIT` is in the list because
-/// Ctrl-\ is a key an operator reaches for at a prompt that seems stuck, and it would otherwise
-/// kill the shell with the echo still off, leaving a terminal that types nothing back. Doing
-/// this from Rust would need a `Drop` that a signal never runs, and a terminal left with the
-/// echo off is a poor parting gift. Where stdin is not a terminal, `stty` fails, its complaint
-/// is dropped and the line is read as it comes.
-#[cfg(unix)]
+/// Reads the escalation password from the terminal, with the prompt on stderr.
 fn ask_become_password() -> anyhow::Result<String> {
-    use std::process::Stdio;
-    const READ_LINE: &str = "trap 'stty echo 2>/dev/null' EXIT INT QUIT TERM HUP\n\
-         stty -echo 2>/dev/null\n\
-         IFS= read -r password || exit 1\n\
-         printf %s \"$password\"\n";
-    eprint!("BECOME password: ");
-    let out = std::process::Command::new("sh")
-        .arg("-c")
-        .arg(READ_LINE)
-        .stdin(Stdio::inherit())
-        .stdout(Stdio::piped())
-        .stderr(Stdio::inherit())
-        .output()
-        .map_err(|e| anyhow::anyhow!("reading the become password: {e}"))?;
-    eprintln!();
-    if !out.status.success() {
+    let Some(typed) = crate::prompt::hidden_line("BECOME password: ")? else {
         anyhow::bail!("no become password was given");
-    }
+    };
     // `from_utf8` rather than `from_utf8_lossy`: a password quietly rewritten with replacement
     // characters would be sent to `sudo` and refused, and the run would blame the operator.
-    String::from_utf8(out.stdout).map_err(|_| anyhow::anyhow!("the become password is not UTF-8"))
-}
-
-#[cfg(not(unix))]
-fn ask_become_password() -> anyhow::Result<String> {
-    use std::io::BufRead;
-    eprint!("BECOME password: ");
-    let mut line = String::new();
-    if std::io::stdin().lock().read_line(&mut line)? == 0 {
-        anyhow::bail!("no become password was given");
-    }
-    Ok(line.trim_end_matches(['\r', '\n']).to_string())
+    String::from_utf8(typed).map_err(|_| anyhow::anyhow!("the become password is not UTF-8"))
 }
 
 /// Ctrl-C and SIGTERM both request a clean stop: running batches are cancelled, the recap is

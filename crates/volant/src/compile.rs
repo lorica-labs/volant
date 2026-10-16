@@ -1110,6 +1110,34 @@ fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
     })
 }
 
+/// The play's `gather_subset`, `gather_timeout` and `fact_path` as the arguments of its `setup`.
+///
+/// A `gather_subset` written as one plain string is a one-item list, never split on commas:
+/// measured on ansible-core 2.19.12, `"!all,!min,local"` names nothing the module knows and
+/// leaves `min`. A template stays as written, and the play start refuses one that renders to a
+/// string with a comma in it, which the module would split where the reference does not.
+fn gather_args(play: &Play) -> Map<String, Value> {
+    let mut args = Map::new();
+    if let Some(subset) = &play.gather_subset {
+        let subset = match subset {
+            Value::String(text) if !Templar::is_template(text) => {
+                Value::Array(vec![subset.clone()])
+            }
+            other => other.clone(),
+        };
+        args.insert("gather_subset".into(), subset);
+    }
+    for (name, value) in [
+        ("gather_timeout", &play.gather_timeout),
+        ("fact_path", &play.fact_path),
+    ] {
+        if let Some(value) = value {
+            args.insert(name.into(), value.clone());
+        }
+    }
+    args
+}
+
 /// A play's sections, flattened into one numbered list.
 ///
 /// The order is the reference's own, measured: `pre_tasks`, then the roles with each one's
@@ -1184,6 +1212,7 @@ pub(crate) fn compile(
             tags
         },
         run_once: None,
+        args: gather_args(play),
         ..empty.clone()
     };
     let gathers = play.gather_facts && selection.selects(&gather.tags);

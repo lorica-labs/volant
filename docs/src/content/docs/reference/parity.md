@@ -14,7 +14,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (play) | 23 | 1 | 17 | 0 |
 | keyword (block) | 21 | 1 | 9 | 0 |
 | keyword (task) | 53 | 1 | 12 | 0 |
-| keyword (loop_control) | 2 | 0 | 5 | 0 |
+| keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 2 | 0 | 8 | 0 |
 | ansible-playbook option | 18 | 3 | 17 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
@@ -194,13 +194,13 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `break_when` | <span class="kw kw-notyet">not yet</span> |  |
-| `extended` | <span class="kw kw-notyet">not yet</span> |  |
-| `extended_allitems` | <span class="kw kw-notyet">not yet</span> |  |
-| `index_var` | <span class="kw kw-notyet">not yet</span> |  |
+| `break_when` | <span class="kw kw-runs">runs</span> |  |
+| `extended` | <span class="kw kw-runs">runs</span> |  |
+| `extended_allitems` | <span class="kw kw-runs">runs</span> |  |
+| `index_var` | <span class="kw kw-runs">runs</span> |  |
 | `label` | <span class="kw kw-runs">runs</span> |  |
 | `loop_var` | <span class="kw kw-runs">runs</span> |  |
-| `pause` | <span class="kw kw-notyet">not yet</span> |  |
+| `pause` | <span class="kw kw-runs">runs</span> |  |
 
 ## meta action
 

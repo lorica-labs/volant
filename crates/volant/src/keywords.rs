@@ -263,19 +263,17 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
 /// `loop_control` sub-keys, as `LoopControl.fattributes` lists them on ansible-core 2.19.12.
 ///
 /// A keyword whose value is a mapping needs a table of its own, or the split between loading
-/// and refusing reopens one level down: `loop_control` was read for `loop_var` and `label`
-/// alone, and `index_var`, `pause`, `break_when`, `extended` and `extended_allitems` were
-/// accepted, waved past the pre-flight and dropped, so the run reported success having ignored
-/// what the operator wrote. They are parked here instead, and the pre-flight refuses them by
-/// their own names.
+/// and refusing reopens one level down: a sub-key read by nobody would be accepted, waved past
+/// the pre-flight and dropped, so the run would report success having ignored what the operator
+/// wrote. A sub-key this release could not honour would be parked here as `Preflight`.
 pub const LOOP_CONTROL_KEYWORDS: &[Keyword] = &[
-    kw("break_when", Preflight),
-    kw("extended", Preflight),
-    kw("extended_allitems", Preflight),
-    kw("index_var", Preflight),
+    kw("break_when", Runs),
+    kw("extended", Runs),
+    kw("extended_allitems", Runs),
+    kw("index_var", Runs),
     kw("label", Runs),
     kw("loop_var", Runs),
-    kw("pause", Preflight),
+    kw("pause", Runs),
 ];
 
 /// Block keywords, alphabetical, as `Block.fattributes` lists them on ansible-core 2.19.12.

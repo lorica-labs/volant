@@ -136,10 +136,10 @@ A sub-key ansible-core does not know is rejected when the playbook loads.
 
 | Sub-key | Status |
 |---|---|
-| `break_when` | <span class="kw kw-notyet">not yet</span> |
-| `extended` | <span class="kw kw-notyet">not yet</span> |
-| `extended_allitems` | <span class="kw kw-notyet">not yet</span> |
-| `index_var` | <span class="kw kw-notyet">not yet</span> |
+| `break_when` | <span class="kw kw-runs">runs</span> |
+| `extended` | <span class="kw kw-runs">runs</span> |
+| `extended_allitems` | <span class="kw kw-runs">runs</span> |
+| `index_var` | <span class="kw kw-runs">runs</span> |
 | `label` | <span class="kw kw-runs">runs</span> |
 | `loop_var` | <span class="kw kw-runs">runs</span> |
-| `pause` | <span class="kw kw-notyet">not yet</span> |
+| `pause` | <span class="kw kw-runs">runs</span> |

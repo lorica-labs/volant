@@ -27,16 +27,16 @@ use crate::vars::{HostVars, VarStore};
 
 use super::coordinator::{Event, Progress, escalated_links, render_name};
 use super::include::{report_include, resolve_include};
-use super::prepare::{Item, PlayPlan, Prepared, prepare, retry_name};
+use super::prepare::{Item, PlayPlan, Prepared, failure_text, pause_of, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Relinker, RetryLine,
-    any_retried, chosen_interpreter, discovers_interpreter, discovery_warning, fact_targets,
-    failed_task_value, finish, judge_attempt, local_timed_out, notify, pause_lines, python_for,
-    raw_params_refusal, record_facts, record_local_facts, record_registered, requested_interpreter,
-    retry_plans, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
-    running_host_vars, silent_discovery, stamp_discovery, step_tasks, take_warnings,
-    unresolved_notify, wait_or_stop,
+    any_retried, break_after, broke_before, chosen_interpreter, discovers_interpreter,
+    discovery_warning, fact_targets, failed_task_value, finish, judge_attempt, local_timed_out,
+    notify, pause_lines, python_for, raw_params_refusal, record_facts, record_local_facts,
+    record_registered, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch,
+    run_local, run_plugin_attempts, running_host_vars, silent_discovery, stamp_discovery,
+    step_tasks, take_warnings, unresolved_notify, wait_or_stop,
 };
 use super::{LinkKey, RunOptions};
 
@@ -804,7 +804,7 @@ pub(super) async fn drive_host(
                     Vec::new()
                 } else {
                     let mut warnings = Vec::new();
-                    let (groups, shown) = resolve_include(
+                    let (groups, shown, waited) = resolve_include(
                         &c,
                         step,
                         kind,
@@ -817,6 +817,9 @@ pub(super) async fn drive_host(
                         &mut warnings,
                         &options.abort,
                     );
+                    if !waited.is_zero() && driver.sleep_between(waited).await.is_none() {
+                        break 'run;
+                    }
                     if options.abort.reason().is_some() {
                         // The statement's banner is the last line the reference prints.
                         let _ = tx
@@ -1001,15 +1004,23 @@ pub(super) async fn drive_host(
                     deferred_error = Some((pos, err));
                     break;
                 }
-                Ok(Prepared::Skipped(items)) => {
+                Ok(Prepared::Skipped(mut items)) => {
                     if !batch.is_empty() {
                         break;
+                    }
+                    // A `break_when` ends the loop at a skipped item as at any other.
+                    let mut decided = vec![None; items.len()];
+                    if let (Some(at), _) =
+                        broke_before(task, &items, &mut decided, &mut 0, items.len(), &templar)
+                    {
+                        items.truncate(at + 1);
                     }
                     let labels: Vec<Option<String>> =
                         items.iter().map(|i| i.label.clone()).collect();
                     let results: Vec<(Option<Value>, TaskResult)> = items
                         .into_iter()
-                        .map(|i| (i.element, i.skipped.unwrap_or_default()))
+                        .zip(decided)
+                        .map(|(i, r)| (i.element, r.or(i.skipped).unwrap_or_default()))
                         .collect();
                     // A skipped task fails nothing, so no rescue is in question for it, and it
                     // made no attempt to retry.
@@ -1070,11 +1081,15 @@ pub(super) async fn drive_host(
                         _ => register_hosts.clone(),
                     };
                     let plans = retry_plans(task, &items, &templar);
+                    let pause = pause_of(task, &items, &templar);
                     let mut results = Vec::new();
                     let mut labels = Vec::new();
                     let mut lefts: Vec<Vec<RetryLine>> = Vec::new();
                     let mut names: Vec<String> = Vec::new();
-                    for (item, plan) in items.iter().zip(&plans) {
+                    for (ii, (item, plan)) in items.iter().zip(&plans).enumerate() {
+                        if ii > 0 && driver.pause_for(pause, 1).await.is_none() {
+                            break 'run;
+                        }
                         names.push(retry_name(task, &item.vars, &templar));
                         let mut mine = Vec::new();
                         let r = if let Some(s) = &item.skipped {
@@ -1138,9 +1153,14 @@ pub(super) async fn drive_host(
                                 }
                             }
                         };
+                        let mut r = r;
+                        let broke = break_after(task, item, &mut r, &templar);
                         results.push((item.element.clone(), r));
                         labels.push(item.label.clone());
                         lefts.push(mine);
+                        if broke {
+                            break;
+                        }
                     }
                     if let Some(reason) = unresolved_notify(&c, task, &results) {
                         options.abort.raise(reason);
@@ -1304,7 +1324,11 @@ pub(super) async fn drive_host(
                         break;
                     }
                     let plans = retry_plans(task, &items, &templar);
-                    let retried = any_retried(&plans);
+                    // A loop that pauses or can break runs its items one at a time, like a retried
+                    // one: the agent cannot be told to stop after an item it has not answered yet.
+                    let retried = any_retried(&plans)
+                        || !task.break_when.is_empty()
+                        || task.loop_pause.is_some();
                     // A retried task runs its items one at a time, each on its own trip to the
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
@@ -1496,6 +1520,10 @@ pub(super) async fn drive_host(
             // Whether `received` already holds results the conditions have been applied to. The
             // retry loop has to apply them itself, since `until` reads what they decided.
             let mut decided = false;
+            // Where `break_when` ended the first task's loop, when it did, and how far its
+            // items have been checked for it.
+            let mut broken_at: Option<usize> = None;
+            let mut checked_to = 0;
             // Lines the agent asked to show while this batch ran. They are shown in full, even
             // under `no_log`, for the same reason the `environment` warning is: every emitter of
             // `FromAgent::Log` carries transport or protocol text and none can carry task data -
@@ -1551,6 +1579,7 @@ pub(super) async fn drive_host(
                     .playbook_dir()
                     .to_path_buf();
                 let mut stopped = false;
+                let pause = pause_of(&step.task, items, &templar);
                 let mut outcome = Ok(BatchOutcome::Completed);
                 // Under `retries`/`until` the attempts judge each result themselves, since
                 // `until` reads what `changed_when` and `failed_when` decided.
@@ -1563,6 +1592,22 @@ pub(super) async fn drive_host(
                         .collect();
                 }
                 for (ii, item) in items.iter().enumerate() {
+                    let (at, passed) = broke_before(
+                        &step.task,
+                        items,
+                        &mut received[0],
+                        &mut checked_to,
+                        ii,
+                        &templar,
+                    );
+                    if driver.pause_for(pause, passed).await.is_none() {
+                        stopped = true;
+                        break;
+                    }
+                    if at.is_some() {
+                        broken_at = at;
+                        break;
+                    }
                     if item.skipped.is_some() {
                         continue;
                     }
@@ -1645,6 +1690,24 @@ pub(super) async fn drive_host(
                             .await;
                     }
                 }
+                if broken_at.is_none() && !stopped && outcome.is_ok() {
+                    let (at, passed) = broke_before(
+                        &step.task,
+                        items,
+                        &mut received[0],
+                        &mut checked_to,
+                        items.len(),
+                        &templar,
+                    );
+                    broken_at = at;
+                    // The pause after the last item is owed to no one.
+                    let owed = if at.is_some() {
+                        passed
+                    } else {
+                        passed.saturating_sub(1)
+                    };
+                    stopped = driver.pause_for(pause, owed).await.is_none();
+                }
                 links.insert(key.clone(), owned);
                 if stopped {
                     if let Some(link) = links.get_mut(&key) {
@@ -1670,6 +1733,7 @@ pub(super) async fn drive_host(
                     .map(|item| retry_name(task, &item.vars, &templar))
                     .collect();
                 let mut outcome = Ok(BatchOutcome::Completed);
+                let pause = pause_of(task, items, &templar);
                 // Once for the step, never once per item: the payload and the interpreter are
                 // read off the step and the host, and nothing about an item can change either.
                 let chosen = payloads
@@ -1692,6 +1756,24 @@ pub(super) async fn drive_host(
                 // sit between the two result lines, so the items do not retry together.
                 'items: for (ii, built) in step_tasks(task, items, &python, &mut received[0]) {
                     let item = &items[ii];
+                    let (at, passed) =
+                        broke_before(task, items, &mut received[0], &mut checked_to, ii, &templar);
+                    if driver.pause_for(pause, passed).await.is_none() {
+                        file_timings(
+                            link,
+                            &options.profile,
+                            &name,
+                            &c,
+                            &[],
+                            batch[0].0,
+                            &prepare_micros,
+                        );
+                        break 'run;
+                    }
+                    if at.is_some() {
+                        broken_at = at;
+                        break 'items;
+                    }
                     let retry = match &plans[ii] {
                         Err(failed) => {
                             received[0][ii] = Some(failed.clone());
@@ -1753,6 +1835,39 @@ pub(super) async fn drive_host(
                             );
                             break 'run;
                         }
+                    }
+                }
+                if broken_at.is_none()
+                    && matches!(
+                        outcome,
+                        Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. })
+                    )
+                {
+                    let (at, passed) = broke_before(
+                        task,
+                        items,
+                        &mut received[0],
+                        &mut checked_to,
+                        items.len(),
+                        &templar,
+                    );
+                    broken_at = at;
+                    let owed = if at.is_some() {
+                        passed
+                    } else {
+                        passed.saturating_sub(1)
+                    };
+                    if driver.pause_for(pause, owed).await.is_none() {
+                        file_timings(
+                            link,
+                            &options.profile,
+                            &name,
+                            &c,
+                            &[],
+                            batch[0].0,
+                            &prepare_micros,
+                        );
+                        break 'run;
                     }
                 }
                 outcome
@@ -1841,8 +1956,11 @@ pub(super) async fn drive_host(
                 let mut labels = Vec::new();
                 let mut reached = true;
                 for (ii, item) in items.iter().enumerate() {
+                    if bi == 0 && broken_at.is_some_and(|at| ii > at) {
+                        break;
+                    }
                     let r = match (&item.skipped, received[bi][ii].take()) {
-                        (Some(s), _) => s.clone(),
+                        (Some(s), found) => found.unwrap_or_else(|| s.clone()),
                         // The retry loop has already applied `changed_when` and `failed_when`:
                         // `until` reads what they decided, so applying them twice would judge a
                         // result that is not the module's any more.
@@ -2027,7 +2145,7 @@ pub(super) async fn drive_host(
             // reports `Task failed: Error while evaluating conditional: ...`, so a playbook
             // testing `'Task failed' in result.msg` must still see it. `failed_when` does not get
             // it: there the reference leaves `msg` empty and fills `failed_when_result`.
-            let mut result = TaskResult::failed_with(format!("Task failed: {}", err.0));
+            let mut result = TaskResult::failed_with(failure_text(&err));
             if let Some(causes) = finalization_causes(task, &err.0) {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
             }
@@ -2230,6 +2348,16 @@ impl Driver<'_> {
     /// Waits `delay`, or gives up when the run is interrupted.
     async fn sleep_between(&mut self, delay: Duration) -> Option<()> {
         wait_or_stop(delay, &mut self.stop, &mut self.stop_broken).await
+    }
+
+    /// A loop's `pause`, `times` over; `None` when the run was interrupted.
+    async fn pause_for(&mut self, pause: Option<Duration>, times: usize) -> Option<()> {
+        if let Some(pause) = pause {
+            for _ in 0..times {
+                self.sleep_between(pause).await?;
+            }
+        }
+        Some(())
     }
 
     /// Waits until every other live host of the batch has finished the step in front of `pos`.

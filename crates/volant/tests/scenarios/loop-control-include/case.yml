@@ -1,0 +1,2 @@
+# break_when ends an include loop after the item it holds for, and pause is accepted there.
+args: [loop-control-include.yml]

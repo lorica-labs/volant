@@ -1,0 +1,14 @@
+- name: Loop control on includes
+  hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_tasks: inc.yml
+      loop: [1, 2, 3]
+      loop_control: {break_when: "item == 2"}
+    - include_tasks: inc.yml
+      loop: [1, 2, 3]
+      loop_control: {pause: 0.1}
+    - include_tasks: inc.yml
+      loop: [1, 2, 3]
+      loop_control: {break_when: "item == 1"}
+      when: item != 1

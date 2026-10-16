@@ -1,0 +1,2 @@
+# A notify that cannot render fails the task before it runs, changed or not.
+args: [-i, inv.ini, play.yml]

@@ -53,7 +53,7 @@ Handlers do not appear in any listing, and neither do the three automatic flush 
 
 ## Differences from Ansible
 
-- A `notify` and a handler `name` can be templates. They are rendered for each host when the task reports `changed`, and a template that renders to a list notifies every name in it. `listen` is always the literal text.
+- A `notify` and a handler `name` can be templates. They are rendered for each host when the task reports `changed`, and a template that renders to a list notifies every name in it. `listen` is always the literal text. A `notify` that cannot be rendered fails the task before it runs, as in Ansible, and a rescue or `ignore_errors` can take that failure. In a loop, Volant fails the whole task where Ansible fails the item.
 - A `notify` that names no handler ends the run with exit code 1 and the message `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`, as in Ansible: after the task's banner, with no recap. It happens only when the task reports `changed` without failing, and no `ignore_errors` and no `rescue` can catch it.
 - A block inside a `handlers:` list is rejected. A flush has nowhere to put a block's `rescue`.
 - A `force_handlers` value that is neither true nor false leaves the setting unchanged. Ansible reads it as false.

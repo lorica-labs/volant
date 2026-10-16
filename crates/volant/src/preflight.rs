@@ -135,8 +135,8 @@ pub(crate) fn check_steps(
 ///
 /// No `notify` is looked up here or in the passes above: a name may be a template, and the
 /// reference itself finds a name nothing answers to only when the task changes something. The
-/// driver does it then, against the play's handlers. Nor does the pre-flight's `pause` check run here: a `pause` an include brings in is
-/// refused by `pause()` when it is reached.
+/// driver does it then, against the play's handlers. Nor does the pre-flight's `pause` check run
+/// here: a `pause` an include brings in is refused by `pause()` when it is reached.
 pub(crate) fn check_spliced(expanded: &crate::compile::Compiled) -> anyhow::Result<()> {
     for step in &expanded.steps {
         // As in `check_steps`: a flush point the compiler put in itself carries no task to judge.

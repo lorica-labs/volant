@@ -1,0 +1,2 @@
+# A handler name that cannot render answers to nothing, with a warning.
+args: [-i, inv.ini, play.yml]

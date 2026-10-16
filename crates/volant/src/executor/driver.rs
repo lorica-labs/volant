@@ -1163,7 +1163,19 @@ pub(super) async fn drive_host(
                         }
                     }
                     let to_notify = match notified_handlers(&c, task, &items, &templar, &results) {
-                        Ok(found) => found,
+                        Ok((found, notes)) => {
+                            for message in notes {
+                                let _ = tx
+                                    .send(Event::Warning {
+                                        host: name.clone(),
+                                        index: pos,
+                                        message,
+                                        censored: false,
+                                    })
+                                    .await;
+                            }
+                            found
+                        }
                         Err(reason) => {
                             // The task's banner is the last line the reference prints.
                             driver.banner(pos).await;
@@ -1982,7 +1994,19 @@ pub(super) async fn drive_host(
                     break;
                 }
                 let to_notify = match notified_handlers(&c, task, items, &templar, &results) {
-                    Ok(found) => found,
+                    Ok((found, notes)) => {
+                        for message in notes {
+                            let _ = tx
+                                .send(Event::Warning {
+                                    host: name.clone(),
+                                    index: *index,
+                                    message,
+                                    censored: false,
+                                })
+                                .await;
+                        }
+                        found
+                    }
                     Err(reason) => {
                         // The task's banner is the last line the reference prints.
                         driver.banner(*index).await;
@@ -2157,6 +2181,19 @@ pub(super) async fn drive_host(
             let mut result = TaskResult::failed_with(failure_text(&err));
             if let Some(causes) = finalization_causes(task, &err.0) {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
+            } else if let Some(detail) = err.0.strip_prefix("Task failed: ")
+                && detail
+                    .starts_with(super::prepare::NOTIFY_FAILED.trim_start_matches("Task failed: "))
+            {
+                // Measured: one cause, the keyword's sentence at where its value was written.
+                result.0.insert(
+                    crate::render::CHAIN_KEY.into(),
+                    serde_json::json!([crate::render::cause(
+                        detail,
+                        task.value_origins.get("notify"),
+                        None
+                    )]),
+                );
             }
             let results = vec![(None, result)];
             // Measured on ansible-core 2.19.12: an undefined variable in a task's arguments

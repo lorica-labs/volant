@@ -1344,6 +1344,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         ("until", field(yaml, "until")),
         ("retries", field(yaml, "retries")),
         ("delay", field(yaml, "delay")),
+        ("notify", field(yaml, "notify")),
         ("var", var),
     ] {
         if let Some(origin) = node.and_then(value_origin) {

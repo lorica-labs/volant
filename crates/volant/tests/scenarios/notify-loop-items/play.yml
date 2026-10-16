@@ -1,0 +1,12 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: msg={{ item }}
+      loop: [H1, H2]
+      changed_when: item == "H2"
+      notify: "{{ item }}"
+  handlers:
+    - name: H1
+      debug: msg=h1
+    - name: H2
+      debug: msg=h2

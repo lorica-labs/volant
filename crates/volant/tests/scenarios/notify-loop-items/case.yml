@@ -1,0 +1,2 @@
+# Each item of a changed loop notifies the name it renders to, the unchanged ones' included.
+args: [-i, inv.ini, play.yml]

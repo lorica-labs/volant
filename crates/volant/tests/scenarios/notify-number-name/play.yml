@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: msg=chg
+      changed_when: true
+      notify: "{{ 5 }}"
+  handlers:
+    - name: H1
+      debug: msg=h1
+    - name: H2
+      debug: msg=h2

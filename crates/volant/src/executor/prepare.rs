@@ -394,7 +394,7 @@ pub(super) const KEYWORD_ERROR: &str = "Error processing keyword ";
 /// The text a task that dies before it runs reports: the reference's `Task failed: ` prefix,
 /// except on a keyword error, which it states as it is.
 pub(super) fn failure_text(err: &TemplateError) -> String {
-    if err.0.starts_with(KEYWORD_ERROR) {
+    if err.0.starts_with(KEYWORD_ERROR) || err.0.starts_with(NOTIFY_FAILED) {
         err.0.clone()
     } else {
         format!("Task failed: {}", err.0)
@@ -435,6 +435,9 @@ pub(super) struct Item {
     /// A `set_fact`'s keys as rendered, once: see `run::set_fact_names`. Each entry is the key as
     /// written, the name it rendered to, and whether that name holds a managed host's value.
     pub(super) set_fact_names: std::sync::OnceLock<Result<Vec<FactName>, TaskResult>>,
+    /// The handler names the task's `notify` rendered to for this item, empty for an item a `when`
+    /// left out.
+    pub(super) notify: Vec<String>,
 }
 
 /// One rendered `set_fact` key: the key as written, the name it rendered to, and whether that
@@ -482,6 +485,71 @@ fn environment_for(
         }
     }
     Ok(out)
+}
+
+/// The handler names one item's `notify` renders to. Measured on ansible-core 2.19.12: a template
+/// that fails fails the task with `Error processing keyword 'notify': ...` before the module
+/// runs; a rendered list notifies each of its names; a number or boolean is looked up as the text
+/// `str()` makes of it, so `{{ 5 }}` finds no handler called `5`. A mapping makes the reference
+/// crash, and is refused here.
+/// The reference names the variable a keyword template read and found missing, bare. The engine
+/// cannot say which one, so a template that is nothing but `{{ name }}` is worded here and any
+/// other keeps the engine's sentence.
+fn undefined_name(template: &str, detail: String) -> String {
+    let inner = template
+        .trim()
+        .strip_prefix("{{")
+        .and_then(|t| t.strip_suffix("}}"))
+        .map(str::trim);
+    match inner {
+        Some(name)
+            if detail.starts_with("The task includes an option with an undefined variable.")
+                && !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
+        {
+            format!("'{name}' is undefined")
+        }
+        _ => detail,
+    }
+}
+
+/// How the message of a `notify` that fails to render starts: the reference's `Task failed: ` and
+/// the keyword, which [`failure_text`] leaves alone.
+pub(super) const NOTIFY_FAILED: &str = "Task failed: Error processing keyword 'notify': ";
+
+fn notify_for(
+    task: &PlayTask,
+    vars: &HostVars,
+    templar: &Templar,
+) -> Result<Vec<String>, TemplateError> {
+    let keyword = |detail: String| TemplateError(format!("{NOTIFY_FAILED}{detail}"));
+    let mut names = Vec::new();
+    for entry in &task.notify {
+        let rendered = if Templar::is_template(entry) {
+            templar
+                .render(entry, vars)
+                .map_err(|e| keyword(undefined_name(entry, e.0)))?
+        } else {
+            Value::String(entry.clone())
+        };
+        let list = match rendered {
+            Value::Array(list) => list,
+            one => vec![one],
+        };
+        for name in list {
+            names.push(match name {
+                Value::String(s) => s,
+                Value::Bool(_) | Value::Number(_) | Value::Null => display(&name),
+                other => {
+                    return Err(keyword(format!(
+                        "{} is not a handler name",
+                        python_repr(&other)
+                    )));
+                }
+            });
+        }
+    }
+    Ok(names)
 }
 
 /// One environment value as the process sees it, which is what `str()` makes of the Python
@@ -700,6 +768,13 @@ pub(super) fn prepare(
         } else {
             environment_for(task, &vars, templar, warnings)?
         };
+        // As `environment`: a keyword the reference renders before the module runs, so an
+        // undefined name fails the task even when nothing changes, and a skipped item renders none.
+        let notify = if skipped.is_some() {
+            Vec::new()
+        } else {
+            notify_for(task, &vars, templar)?
+        };
         items.push(Item {
             element,
             label,
@@ -710,6 +785,7 @@ pub(super) fn prepare(
             skipped,
             ignore_errors,
             set_fact_names: std::sync::OnceLock::new(),
+            notify,
         });
     }
     if items.iter().all(|i| i.skipped.is_some()) {

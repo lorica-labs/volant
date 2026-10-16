@@ -1,0 +1,2 @@
+# A notify that cannot render is a task failure a rescue takes.
+args: [-i, inv.ini, play.yml]

@@ -1,0 +1,2 @@
+# A task that stays ok still fails on a notify that cannot render; ignore_errors takes it.
+args: [-i, inv.ini, play.yml]

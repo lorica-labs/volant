@@ -394,9 +394,9 @@ pub(crate) fn beside_or_in_role(file_dir: &Path, role_dir: Option<&Path>, name: 
 /// of them is ever reached.
 ///
 /// `names` is what each handler's `name` renders to for the host asking, one per handler in
-/// order: a handler name may be a template, `listen` never is.
-pub(crate) fn resolve_notify(c: &Compiled, name: &str, names: &[String]) -> Vec<usize> {
-    let named = names.iter().position(|n| n == name);
+/// order, `None` for one that does not render: a handler name may be a template, `listen` never is.
+pub(crate) fn resolve_notify(c: &Compiled, name: &str, names: &[Option<String>]) -> Vec<usize> {
+    let named = names.iter().position(|n| n.as_deref() == Some(name));
     c.handlers
         .iter()
         .enumerate()
@@ -2712,7 +2712,11 @@ mod tests {
 "#,
         );
         assert_eq!(c.handlers.len(), 5);
-        let names: Vec<String> = c.handlers.iter().map(|h| h.task.name.clone()).collect();
+        let names: Vec<Option<String>> = c
+            .handlers
+            .iter()
+            .map(|h| Some(h.task.name.clone()))
+            .collect();
         assert_eq!(resolve_notify(&c, "twice", &names), [0, 2]);
         assert_eq!(resolve_notify(&c, "listening", &names), [2]);
         assert!(resolve_notify(&c, "nobody", &names).is_empty());

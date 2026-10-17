@@ -158,6 +158,18 @@ impl<'a> ParseCx<'a> {
         self.notes.borrow_mut().push(Note::Verbose(level, text));
     }
 
+    /// A `[WARNING]:` line the run has not shown yet.
+    pub fn warn_once(&self, text: String) {
+        let seen = self
+            .notes
+            .borrow()
+            .iter()
+            .any(|n| matches!(n, Note::Warning(t) if *t == text));
+        if !seen {
+            self.warn(text);
+        }
+    }
+
     /// A `[WARNING]:` line.
     pub fn warn(&self, text: String) {
         self.notes.borrow_mut().push(Note::Warning(text));

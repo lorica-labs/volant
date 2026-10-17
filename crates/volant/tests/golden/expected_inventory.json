@@ -1266,6 +1266,26 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Invalid \"children\" entry for \"db\" group, requires a list, found \"<class 'dict'>\" instead.\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nInvalid \"children\" entry for \"db\" group, requires a list, found \"<class 'dict'>\" instead.\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/bad_children.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/bad_children.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
+    "toml_empty": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "empty.toml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Parsed empty TOML file\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nParsed empty TOML file\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/empty.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/empty.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
     "toml_hosts_list": {
       "env": {},
       "hosts": [],
@@ -1285,6 +1305,26 @@
         "bad_hosts.toml"
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Invalid \"hosts\" entry for \"web\" group, requires a dict, found \"<class 'list'>\" instead.\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nInvalid \"hosts\" entry for \"web\" group, requires a dict, found \"<class 'list'>\" instead.\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/bad_hosts.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/bad_hosts.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "toml_plugin": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "plugin.toml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Plugin configuration TOML file, not TOML inventory\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration TOML file, not TOML inventory\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/plugin.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/plugin.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "toml_then_yaml": {
       "env": {},
@@ -2093,6 +2133,37 @@
       "rc": 0,
       "sources": [
         "basic.yml"
+      ],
+      "stderr": ""
+    },
+    "yaml_empty_sections": {
+      "env": {},
+      "hosts": [
+        "web1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "s"
+          ]
+        },
+        "s": {
+          "children": [
+            "g"
+          ],
+          "hosts": [
+            "web1"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "empty_sections.yml"
       ],
       "stderr": ""
     },

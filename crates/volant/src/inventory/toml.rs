@@ -5,7 +5,7 @@
 use serde_json::{Map, Value};
 use toml_edit::{DocumentMut, Item};
 
-use super::yaml::{Dialect, read_groups};
+use super::yaml::{Dialect, falsy, read_groups};
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source};
 
 pub(super) struct Toml;
@@ -58,7 +58,14 @@ pub(super) fn read_text(
             e.message()
         )
     })?;
-    read_groups(&table(doc.iter()), Dialect::Toml, inv, None, cx)
+    let data = table(doc.iter());
+    if data.as_object().is_some_and(Map::is_empty) {
+        return Err("Parsed empty TOML file".to_string());
+    }
+    if data.get("plugin").is_some_and(|p| !falsy(p)) {
+        return Err("Plugin configuration TOML file, not TOML inventory".to_string());
+    }
+    read_groups(&data, Dialect::Toml, inv, None, cx)
 }
 
 fn table<'a>(entries: impl Iterator<Item = (&'a str, &'a Item)>) -> Value {

@@ -130,10 +130,22 @@ fn groups_value(node: &Yaml) -> Result<Value, String> {
     let mut out = Map::new();
     if let Yaml::Mapping(map) = node {
         for (name, data) in map {
-            out.insert(scalar_text(name), group_value(data)?);
+            out.insert(group_name(name)?, group_value(data)?);
         }
     }
     Ok(Value::Object(out))
+}
+
+fn group_name(key: &Yaml) -> Result<String, String> {
+    let class = match key {
+        Yaml::Value(Scalar::Integer(_)) => "int",
+        Yaml::Value(Scalar::FloatingPoint(_)) => "float",
+        Yaml::Value(Scalar::Boolean(_)) => "bool",
+        Yaml::Value(Scalar::Null) => "NoneType",
+        _ => return Ok(scalar_text(key)),
+    };
+    let text = scalar_text(key);
+    Err(bad_group(&text, &format!("<class '{class}'>")))
 }
 
 fn group_value(node: &Yaml) -> Result<Value, String> {
@@ -169,8 +181,15 @@ fn group_value(node: &Yaml) -> Result<Value, String> {
     Ok(Value::Object(out))
 }
 
+/// What `add_group` says of a group name that is no string.
+fn bad_group(text: &str, class: &str) -> String {
+    format!(
+        "Unable to add group {text}: Invalid group name supplied, expected a string but got {class} for {text}"
+    )
+}
+
 /// Python truthiness of a loaded value.
-fn falsy(value: &Value) -> bool {
+pub(super) fn falsy(value: &Value) -> bool {
     match value {
         Value::Null => true,
         Value::Bool(b) => !b,
@@ -202,7 +221,6 @@ pub(super) fn read_groups(
         dialect,
         file,
         cx,
-        warned: false,
     };
     if let Value::Object(map) = groups {
         for (name, data) in map {
@@ -217,7 +235,6 @@ struct Reader<'a, 'c> {
     dialect: Dialect,
     file: Option<&'a Path>,
     cx: &'a ParseCx<'c>,
-    warned: bool,
 }
 
 impl Reader<'_, '_> {
@@ -233,6 +250,7 @@ impl Reader<'_, '_> {
         let Value::Object(map) = data else {
             return Ok(true);
         };
+        let map = &self.sections(name, map)?;
         let (word, list) = match self.dialect {
             Dialect::Yaml => ("dictionary", "dictionary"),
             Dialect::Toml => ("dict", "list"),
@@ -245,6 +263,20 @@ impl Reader<'_, '_> {
                     this.dialect.type_name(data)
                 )
             };
+            if self.dialect == Dialect::Yaml {
+                if !matches!(data, Value::Null | Value::Object(_)) {
+                    self.cx.warn(format!(
+                        "Skipping key ({key}) in group ({name}) as it is not a mapping, it is a {}",
+                        self.dialect.type_name(data)
+                    ));
+                    continue;
+                }
+                if data.is_null() {
+                    self.cx
+                        .verbose(3, format!("Skipping empty key ({key}) in group ({name})"));
+                    continue;
+                }
+            }
             match (key.as_str(), data) {
                 ("vars", Value::Object(vars)) => {
                     for (var, value) in vars {
@@ -262,9 +294,11 @@ impl Reader<'_, '_> {
                 }
                 ("children", Value::Array(children)) if self.dialect == Dialect::Toml => {
                     for child in children {
-                        let child = show(child);
-                        self.group(&child, &Value::Object(Map::new()))?;
-                        self.child(name, &child)?;
+                        let Value::String(child) = child else {
+                            return Err(bad_group(&show(child), &self.dialect.type_name(child)));
+                        };
+                        self.group(child, &Value::Object(Map::new()))?;
+                        self.child(name, child)?;
                     }
                 }
                 ("children", _) => return Err(invalid(self, "children", list)),
@@ -278,28 +312,46 @@ impl Reader<'_, '_> {
                     "Skipping unexpected key \"{key}\" in group \"{name}\", only \"vars\", \
                      \"children\" and \"hosts\" are valid"
                 )),
-                (_, Value::Object(_)) => self.cx.warn(format!(
+                _ => self.cx.warn(format!(
                     "Skipping unexpected key ({key}) in group ({name}), only \"vars\", \
                      \"children\" and \"hosts\" are valid"
-                )),
-                _ => self.cx.warn(format!(
-                    "Skipping key ({key}) in group ({name}) as it is not a mapping, it is a {}",
-                    self.dialect.type_name(data)
                 )),
             }
         }
         Ok(true)
     }
 
+    /// For the yaml plugin, a string section is `{string: None}` and every section must be a
+    /// mapping or empty, all checked before any is read.
+    fn sections(&self, name: &str, map: &Map<String, Value>) -> Result<Map<String, Value>, String> {
+        let mut map = map.clone();
+        if self.dialect == Dialect::Toml {
+            return Ok(map);
+        }
+        for section in ["vars", "children", "hosts"] {
+            if let Some(Value::String(s)) = map.get(section) {
+                let single = Map::from_iter([(s.clone(), Value::Null)]);
+                map.insert(section.to_string(), Value::Object(single));
+            }
+            if let Some(v) = map.get(section)
+                && !matches!(v, Value::Null | Value::Object(_))
+            {
+                return Err(format!(
+                    "Invalid \"{section}\" entry for \"{name}\" group, requires a dictionary, found \"{}\" instead.",
+                    self.dialect.type_name(v)
+                ));
+            }
+        }
+        Ok(map)
+    }
+
     /// `add_group`, which warns once about a name with characters outside `[A-Za-z0-9_]`.
     fn add_group(&mut self, name: &str) {
-        if !self.warned
-            && name
-                .chars()
-                .any(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+        if name
+            .chars()
+            .any(|c| !(c.is_ascii_alphanumeric() || c == '_'))
         {
-            self.warned = true;
-            self.cx.warn(
+            self.cx.warn_once(
                 "Invalid characters were found in group names but not replaced, use -vvvv to \
                  see details"
                     .to_string(),

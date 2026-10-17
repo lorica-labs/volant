@@ -1,0 +1,8 @@
+g:
+  hosts:
+  vars:
+  children: ~
+  foo: ~
+s:
+  hosts: web1
+  children: g

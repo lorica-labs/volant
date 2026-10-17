@@ -11,9 +11,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 37 | 4 | 0 | 0 |
-| keyword (block) | 27 | 4 | 0 | 0 |
-| keyword (task) | 61 | 5 | 0 | 0 |
+| keyword (play) | 38 | 3 | 0 | 0 |
+| keyword (block) | 28 | 3 | 0 | 0 |
+| keyword (task) | 62 | 4 | 0 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 34 | 3 | 1 | 0 |
@@ -47,7 +47,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `become_flags` | <span class="kw kw-runs">runs</span> |  |
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
-| `check_mode` | <span class="kw kw-partial">partial</span> | `copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running |
+| `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
@@ -95,7 +95,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `block` | <span class="kw kw-runs">runs</span> |  |
-| `check_mode` | <span class="kw kw-partial">partial</span> | `copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running |
+| `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
@@ -133,7 +133,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `changed_when` | <span class="kw kw-runs">runs</span> |  |
-| `check_mode` | <span class="kw kw-partial">partial</span> | `copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running |
+| `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |

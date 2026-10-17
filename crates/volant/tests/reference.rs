@@ -597,6 +597,12 @@ fn inventory_sources_match_the_reference() {
                 stderr.push_str(&[label, text, "\n"].concat());
             }
         }
+        // What looking the hosts up warns, as `ansible-inventory` does after reading the sources.
+        for warning in loaded.inventory.resolve("all").warnings {
+            if seen.insert(warning.clone()) {
+                stderr.push_str(&["[WARNING]: ", warning.as_str(), "\n"].concat());
+            }
+        }
         if let Some(fatal) = &loaded.error {
             stderr.push_str(
                 &[

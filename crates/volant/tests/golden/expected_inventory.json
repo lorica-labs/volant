@@ -845,6 +845,148 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Inventory script returned non-zero exit code 3.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nInventory script returned non-zero exit code 3.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_fail.sh'>\n\nStandard error from inventory script:\noops\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: oops\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: oops\nOrigin: <golden-tmp>/script_fail.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_fail.sh as an inventory source\n"
     },
+    "script_host_bad": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_host_bad.sh"
+      ],
+      "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_host_bad.sh'>\n\n[WARNING]: Failed to parse inventory with 'script' plugin: Inventory script result for host 'h1' could not be parsed as JSON: JSON parsing failed: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nInventory script result for host 'h1' could not be parsed as JSON.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_host_bad.sh'>\n\n<<< caused by >>>\n\nJSON parsing failed: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\nOrigin: <inventory script output from '<golden-tmp>/script_host_bad.sh'> for host 'h1':1:2\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: $1\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: $1\nOrigin: <golden-tmp>/script_host_bad.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_host_bad.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "script_host_empty": {
+      "env": {},
+      "hosts": [
+        "h1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "g"
+          ]
+        },
+        "g": {
+          "hosts": [
+            "h1"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_host_empty.sh"
+      ],
+      "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_host_empty.sh'>\n\n"
+    },
+    "script_hosts_str": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_hosts_str.sh"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains 'g.hosts' which is 'str' instead of 'list'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains 'g.hosts' which is 'str' instead of 'list'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_hosts_str.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":\"h1\"}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":\"h1\"}}\nOrigin: <golden-tmp>/script_hosts_str.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_hosts_str.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "script_hostvars_late": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_hostvars_late.sh"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_hostvars_late.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\nOrigin: <golden-tmp>/script_hostvars_late.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_hostvars_late.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "script_hostvars_late_then_ini": {
+      "env": {},
+      "hosts": [
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "v": "one_h1",
+              "wv": "one"
+            },
+            "h2": {
+              "wv": "one"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "a": {
+          "hosts": [
+            "h1"
+          ]
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "a",
+            "web",
+            "shared"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h3",
+            "h1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h1",
+            "h2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_hostvars_late.sh",
+        "one.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_hostvars_late.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\nOrigin: <golden-tmp>/script_hostvars_late.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_hostvars_late.sh as an inventory source\n"
+    },
     "script_list": {
       "env": {},
       "hosts": [],
@@ -864,6 +1006,41 @@
         "script_list.sh"
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Unable to get JSON decoder for inventory script result: Value is 'list' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nUnable to get JSON decoder for inventory script result: Value is 'list' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_list.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: [1,2]\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: [1,2]\nOrigin: <golden-tmp>/script_list.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_list.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "script_malformed": {
+      "env": {},
+      "hosts": [
+        "m"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "m": {
+              "m": {
+                "x": 1
+              },
+              "x": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "m"
+          ]
+        },
+        "m": {
+          "hosts": [
+            "m"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_malformed.sh"
+      ],
+      "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Treating malformed group 'm' as the sole host of that group. Variables provided in this manner cannot be templated. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_malformed.sh'>\n\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_malformed.sh'>\n\n[WARNING]: Found both group and host with same name: m\n"
     },
     "script_meta": {
       "env": {},
@@ -922,6 +1099,26 @@
         "script_meta.sh"
       ],
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Group 'c' was converted to 'dict' from 'list'. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_meta.sh'>\n\n"
+    },
+    "script_meta_int": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_meta_int.sh"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Unable to get JSON decoder for inventory script result: Value contains '_meta' which is 'int' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nUnable to get JSON decoder for inventory script result: Value contains '_meta' which is 'int' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_meta_int.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":[\"h1\"]},\"_meta\":1}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":[\"h1\"]},\"_meta\":1}\nOrigin: <golden-tmp>/script_meta_int.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_meta_int.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_noexec": {
       "env": {},
@@ -1002,6 +1199,41 @@
       ],
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_nometa.sh'>\n\n"
     },
+    "script_order": {
+      "env": {},
+      "hosts": [
+        "h1",
+        "h2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "zed",
+            "alpha"
+          ]
+        },
+        "alpha": {
+          "hosts": [
+            "h2"
+          ]
+        },
+        "zed": {
+          "hosts": [
+            "h1"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_order.sh"
+      ],
+      "stderr": ""
+    },
     "script_then_ini": {
       "env": {},
       "hosts": [
@@ -1077,6 +1309,26 @@
         "one.ini"
       ],
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Group 'c' was converted to 'dict' from 'list'. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_meta.sh'>\n\n"
+    },
+    "script_vars_list": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "script_vars_list.sh"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains 'g.vars' which is 'list' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains 'g.vars' which is 'list' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_vars_list.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"vars\":[1]}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"vars\":[1]}}\nOrigin: <golden-tmp>/script_vars_list.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_vars_list.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "two_sources": {
       "env": {},

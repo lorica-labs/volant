@@ -20,7 +20,7 @@ impl InventoryPlugin for Script {
         sources::executable(source)
     }
 
-    /// Groups in name order, as the reference walks them, then each host's variables: from
+    /// Groups in the order the script gives them, then each host's variables: from
     /// `_meta.hostvars`, or from one `--host` run per host when there is none. What was added
     /// before an error stays.
     fn parse(
@@ -30,15 +30,15 @@ impl InventoryPlugin for Script {
         cx: &ParseCx,
     ) -> Result<(), PluginError> {
         let path = source.text();
-        let mut groups = run(path, &["--list"])?;
+        let groups = run(path, &["--list"])?;
         let mut hostvars = None;
-        if let Some(meta) = groups.shift_remove("_meta") {
-            hostvars = Some(meta_hostvars(meta)?);
-        }
-        groups.sort_keys();
         let mut hosts: Vec<String> = Vec::new();
         for (name, data) in groups {
-            group(&name, data, source, into, cx, &mut hosts)?;
+            if name == "_meta" {
+                hostvars = Some(meta_hostvars(&data)?);
+            } else {
+                group(&name, data, source, into, cx, &mut hosts)?;
+            }
         }
         let origin = Some(source.path());
         if let Some(mut all) = hostvars {
@@ -48,8 +48,8 @@ impl InventoryPlugin for Script {
                     Some(Value::Object(vars)) => vars,
                     Some(other) => {
                         return Err(failure(format!(
-                            "Improperly formatted host information for {host}: '{}' object \
-                                 has no attribute 'items'",
+                            "Improperly formatted host information for {host}: '{}' object has \
+                             no attribute 'items'",
                             type_name(&other)
                         )));
                     }
@@ -57,15 +57,14 @@ impl InventoryPlugin for Script {
                 into.add_source_host(host, None, vars.into_iter().collect(), origin);
             }
         } else {
-            cx.deprecate(format!(
-                "Inventory scripts should always provide 'meta.hostvars'. Host variables \
-                     will be collected by running the inventory script with the '--host' \
-                     option for each host. This feature will be removed from inventory plugin \
-                     'script' in ansible-core version 2.23.\nOrigin: {}\n",
-                shown_origin(path)
+            cx.deprecate(deprecation(
+                path,
+                "Inventory scripts should always provide 'meta.hostvars'. Host variables will \
+                 be collected by running the inventory script with the '--host' option for each \
+                 host.",
             ));
             for host in &hosts {
-                let vars = run(path, &["--host", host])?;
+                let vars = host_variables(path, host)?;
                 into.add_source_host(host, None, vars.into_iter().collect(), origin);
             }
         }
@@ -73,14 +72,55 @@ impl InventoryPlugin for Script {
     }
 }
 
-fn shown_origin(path: &str) -> String {
-    format!("<inventory script output from '{path}'>")
+/// A deprecation of the script plugin, worded and ended as the reference's `display.deprecated`.
+fn deprecation(path: &str, what: &str) -> String {
+    format!(
+        "{what} This feature will be removed from inventory plugin 'script' in ansible-core \
+         version 2.23.\nOrigin: <inventory script output from {}>\n",
+        py_repr(path)
+    )
+}
+
+/// Python's `repr` of a string.
+fn py_repr(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::from(quote);
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            '\t' => out.push_str("\\t"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}
+
+/// `shlex.quote`.
+fn shell_quote(word: &str) -> String {
+    let safe = |c: char| c.is_ascii_alphanumeric() || "@%+=:,./-_".contains(c);
+    if !word.is_empty() && word.chars().all(safe) {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', "'\"'\"'"))
+    }
 }
 
 fn failure(message: String) -> PluginError {
     PluginError {
         message,
         origin: None,
+        cause: None,
         unsupported: false,
     }
 }
@@ -98,60 +138,158 @@ fn type_name(value: &Value) -> &'static str {
 }
 
 /// `_meta`'s `hostvars`, which has to be a mapping.
-fn meta_hostvars(meta: Value) -> Result<Map<String, Value>, PluginError> {
-    let decoder = |what: &str, value: &Value| {
-        failure(format!(
-            "Value contains '{what}' which is '{}' instead of 'dict'.",
-            type_name(value)
-        ))
-    };
-    let Value::Object(mut meta) = meta else {
-        return Err(decoder("_meta", &meta));
-    };
-    match meta.shift_remove("hostvars") {
-        Some(Value::Object(hostvars)) => Ok(hostvars),
-        other => Err(decoder("_meta.hostvars", &other.unwrap_or(Value::Null))),
+fn meta_hostvars(meta: &Value) -> Result<Map<String, Value>, PluginError> {
+    match meta.get("hostvars") {
+        Some(Value::Object(hostvars)) => Ok(hostvars.clone()),
+        other => Err(failure(format!(
+            "Value contains '_meta.hostvars' which is '{}' instead of 'dict'.",
+            type_name(other.unwrap_or(&Value::Null))
+        ))),
     }
 }
 
-/// The script's answer to `args`: a JSON mapping, or the reference's words for why not.
-fn run(path: &str, args: &[&str]) -> Result<Map<String, Value>, PluginError> {
-    let output = Command::new(path)
-        .args(args)
-        .output()
-        .map_err(|e| failure(format!("problem running {path} {} ({e})", args.join(" "))))?;
+/// An error that carries the script's standard error, the way the reference's `help_text`
+/// does: a block after the `Origin:` line (the chain adds the line's own newline).
+fn with_stderr(path: &str, message: String, stderr: &str) -> PluginError {
+    let help = (!stderr.trim().is_empty()).then(|| {
+        format!(
+            "<inventory plugin 'script' with source '{path}'>\n\nStandard error from inventory \
+             script:\n{}",
+            stderr.strip_suffix('\n').unwrap_or(stderr)
+        )
+    });
+    PluginError {
+        message,
+        origin: help,
+        cause: None,
+        unsupported: false,
+    }
+}
+
+/// `run_command`: the script's standard output as text, or the reference's words for why not.
+fn run_command(path: &str, args: &[&str]) -> Result<(String, String), PluginError> {
+    let output = Command::new(path).args(args).output().map_err(|_| {
+        let words: Vec<String> = std::iter::once(path)
+            .chain(args.iter().copied())
+            .map(shell_quote)
+            .collect();
+        failure(format!(
+            "Failed to execute inventory script command {}.",
+            py_repr(&words.join(" "))
+        ))
+    })?;
+    let stderr = String::from_utf8_lossy(&output.stderr).into_owned();
     if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        let stderr = stderr.trim_end_matches('\n');
-        return Err(PluginError {
-            message: format!(
+        return Err(with_stderr(
+            path,
+            format!(
                 "Inventory script returned non-zero exit code {}.",
                 exit_code(output.status)
             ),
-            origin: (!stderr.is_empty()).then(|| {
-                format!(
-                    "<inventory plugin 'script' with source '{path}'>\n\nStandard error from \
-                     inventory script:\n{stderr}"
-                )
-            }),
-            unsupported: false,
-        });
+            &stderr,
+        ));
     }
+    let text = String::from_utf8(output.stdout).map_err(|_| {
+        with_stderr(
+            path,
+            "Inventory script result contained characters that cannot be interpreted as UTF-8."
+                .to_string(),
+            &stderr,
+        )
+    })?;
+    Ok((text, stderr))
+}
+
+/// `--list`: a JSON mapping, or the reference's words for why not.
+fn run(path: &str, args: &[&str]) -> Result<Map<String, Value>, PluginError> {
+    let (text, stderr) = run_command(path, args)?;
     let decoder = |reason: String| {
-        failure(format!(
-            "Unable to get JSON decoder for inventory script result: {reason}"
-        ))
+        with_stderr(
+            path,
+            format!("Unable to get JSON decoder for inventory script result: {reason}"),
+            &stderr,
+        )
     };
-    match serde_json::from_slice::<Value>(&output.stdout) {
-        Ok(Value::Object(map)) => Ok(map),
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(map)) => {
+            match map.get("_meta") {
+                Some(Value::Object(_)) | None => {}
+                Some(other) => {
+                    return Err(decoder(format!(
+                        "Value contains '_meta' which is '{}' instead of 'dict'.",
+                        type_name(other)
+                    )));
+                }
+            }
+            match map.get("_meta").and_then(|m| m.get("profile")) {
+                None => {}
+                Some(Value::String(p)) if p.starts_with("inventory_") => {}
+                Some(Value::String(p)) => {
+                    return Err(decoder(format!(
+                        "Non-inventory profile {} is not allowed.",
+                        py_repr(p)
+                    )));
+                }
+                Some(other) => {
+                    return Err(decoder(format!(
+                        "Value contains '_meta.profile' which is '{}' instead of 'str'.",
+                        type_name(other)
+                    )));
+                }
+            }
+            Ok(map)
+        }
         Ok(other) => Err(decoder(format!(
             "Value is '{}' instead of 'dict'.",
             type_name(&other)
         ))),
         Err(e) => Err(decoder(format!(
             "Value could not be parsed as JSON: {}",
-            python_json_error(&output.stdout, &e)
+            python_json_error(text.as_bytes(), &e)
         ))),
+    }
+}
+
+/// `--host`: the host's variables; nothing but white space is an empty mapping.
+fn host_variables(path: &str, host: &str) -> Result<Map<String, Value>, PluginError> {
+    let (text, stderr) = run_command(path, &["--host", host])?;
+    if text.trim().is_empty() {
+        return Ok(Map::new());
+    }
+    match serde_json::from_str::<Value>(&text) {
+        Ok(Value::Object(vars)) => Ok(vars),
+        Err(e) => {
+            let mut error = with_stderr(
+                path,
+                format!(
+                    "Inventory script result for host {} could not be parsed as JSON.",
+                    py_repr(host)
+                ),
+                &stderr,
+            );
+            error.cause = Some((
+                format!(
+                    "JSON parsing failed: {}",
+                    python_json_error(text.as_bytes(), &e)
+                ),
+                format!(
+                    "<inventory script output from {}> for host {}:{}:{}",
+                    py_repr(path),
+                    py_repr(host),
+                    e.line(),
+                    e.column()
+                ),
+            ));
+            Err(error)
+        }
+        Ok(_) => Err(with_stderr(
+            path,
+            format!(
+                "Inventory script result for host {} could not be parsed as JSON.",
+                py_repr(host)
+            ),
+            &stderr,
+        )),
     }
 }
 
@@ -214,9 +352,10 @@ fn group(
     cx: &ParseCx,
     hosts: &mut Vec<String>,
 ) -> Result<(), PluginError> {
-    let bad = |what: &str, data: &Value| {
+    let wrong = |key: &str, got: &Value, wanted: &str| {
         failure(format!(
-            "You defined a group '{name}' with bad data for the {what}:\n {data}"
+            "Value contains '{name}.{key}' which is '{}' instead of '{wanted}'.",
+            type_name(got)
         ))
     };
     into.group_mut(name);
@@ -228,30 +367,39 @@ fn group(
             {
                 map
             } else {
-                // A mapping with none of the group keys is one host and its variables.
+                cx.deprecate(deprecation(
+                    source.text(),
+                    &format!(
+                        "Treating malformed group {} as the sole host of that group. Variables \
+                         provided in this manner cannot be templated.",
+                        py_repr(name)
+                    ),
+                ));
                 Map::from_iter([
                     ("hosts".to_string(), Value::from(vec![name])),
                     ("vars".to_string(), Value::Object(map)),
                 ])
             }
         }
-        list => {
-            cx.deprecate(format!(
-                "Group '{name}' was converted to 'dict' from 'list'. This feature will be \
-                 removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: \
-                 {}\n",
-                shown_origin(source.text())
+        other => {
+            cx.deprecate(deprecation(
+                source.text(),
+                &format!(
+                    "Group {} was converted to 'dict' from '{}'.",
+                    py_repr(name),
+                    type_name(&other)
+                ),
             ));
-            Map::from_iter([("hosts".to_string(), list)])
+            Map::from_iter([("hosts".to_string(), other)])
         }
     };
     if let Some(listed) = data.get("hosts") {
         let Value::Array(listed) = listed else {
-            return Err(bad("host list", &Value::Object(data.clone())));
+            return Err(wrong("hosts", listed, "list"));
         };
         for host in listed {
             let Value::String(host) = host else {
-                return Err(bad("host list", &Value::Object(data.clone())));
+                return Err(wrong("hosts", host, "str"));
             };
             if !hosts.contains(host) {
                 hosts.push(host.clone());
@@ -262,7 +410,7 @@ fn group(
     }
     if let Some(vars) = data.get("vars") {
         let Value::Object(vars) = vars else {
-            return Err(bad("variables", &Value::Object(data.clone())));
+            return Err(wrong("vars", vars, "dict"));
         };
         for (key, value) in vars {
             if key == "ansible_group_priority" {
@@ -276,11 +424,11 @@ fn group(
     }
     if let Some(children) = data.get("children") {
         let Value::Array(children) = children else {
-            return Err(bad("children list", &Value::Object(data.clone())));
+            return Err(wrong("children", children, "list"));
         };
         for child in children {
             let Value::String(child) = child else {
-                return Err(bad("children list", &Value::Object(data.clone())));
+                return Err(wrong("children", child, "str"));
             };
             into.add_child(name, child);
         }

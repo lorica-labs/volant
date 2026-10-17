@@ -171,7 +171,9 @@ pub fn compare_native(
         // bookkeeping the JSON callback shows and the reference strips from both a registered
         // value and a `-vvv` line (`strip_internal_keys`): `_ansible_no_log`, and `setup`'s
         // `_ansible_verbose_override`.
+        // `setup`'s line never shows its result, so its `invocation` cannot be read back.
         if path == "action"
+            || (path == "invocation" && ours.is_none() && spec["module"] == "setup")
             || (IF_BOTH.contains(&path.as_str()) && (reference.is_none() || ours.is_none()))
             || (key.starts_with("_ansible_") && prefix.is_empty() && ours.is_none())
         {

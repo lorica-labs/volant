@@ -28,5 +28,3 @@
       register: out
     - debug:
         msg: "{{ out.size }}"
-    - debug:
-        msg: "{{ undefined_var.attr }}"

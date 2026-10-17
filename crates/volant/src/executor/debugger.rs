@@ -2,7 +2,10 @@
 //! The debugger prompt: what a task's `debugger` keyword, or `strategy: debug`, opens behind a
 //! result.
 
+use std::collections::HashMap;
 use std::io::{BufRead, IsTerminal};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use tokio::sync::watch;
 
@@ -82,7 +85,7 @@ fn quit(out: &mut Renderer, abort: &Abort) {
 /// One line of the terminal, read on a thread of its own so an interruption does not wait for
 /// the operator to press Enter. `None` at the end of input, on a stdin that is not a terminal,
 /// and when the run is stopped.
-async fn read_line(stop: &mut watch::Receiver<bool>) -> Option<String> {
+pub(super) async fn read_line(stop: &mut watch::Receiver<bool>) -> Option<String> {
     if !std::io::stdin().is_terminal() {
         return None;
     }
@@ -95,6 +98,68 @@ async fn read_line(stop: &mut watch::Receiver<bool>) -> Option<String> {
     tokio::select! {
         line = rx => line.ok().flatten(),
         _ = stop.wait_for(|stopped| *stopped) => None,
+    }
+}
+
+/// `--step`: the answer to "Perform task", asked once per task whichever host reaches it first.
+pub(super) struct Stepper {
+    /// Set by `c`: no task is asked about from then on, in this play and the ones behind it.
+    carry_on: Arc<AtomicBool>,
+    /// Keyed by the step's index and its task, because a splice can put another task on an
+    /// index a host has already been asked about.
+    answers: tokio::sync::Mutex<HashMap<(usize, String), bool>>,
+    /// Set once the input ended or the run stopped: nobody is asked again, and the hosts that
+    /// come after the first get the same `None` without a prompt of their own.
+    closed: AtomicBool,
+}
+
+impl Stepper {
+    pub(super) fn new(carry_on: Arc<AtomicBool>) -> Self {
+        Stepper {
+            carry_on,
+            answers: tokio::sync::Mutex::default(),
+            closed: AtomicBool::new(false),
+        }
+    }
+
+    /// Whether the task at `index` named `task`, shown as `label`, runs. Anything but `y`, `yes`, `c` and
+    /// `continue` skips it, as the reference does. `None` when the input ended or the run was
+    /// stopped.
+    pub(super) async fn runs(
+        &self,
+        index: usize,
+        task: &str,
+        label: &str,
+        stop: &mut watch::Receiver<bool>,
+    ) -> Option<bool> {
+        if self.carry_on.load(Ordering::SeqCst) {
+            return Some(true);
+        }
+        let mut answers = self.answers.lock().await;
+        if self.closed.load(Ordering::SeqCst) {
+            return None;
+        }
+        let key = (index, task.to_string());
+        if let Some(known) = answers.get(&key) {
+            return Some(*known);
+        }
+        // `c` may have been answered while this host waited for the lock.
+        if self.carry_on.load(Ordering::SeqCst) {
+            return Some(true);
+        }
+        print!("Perform task: TASK: {label} (N)o/(y)es/(c)ontinue: ");
+        let _ = std::io::Write::flush(&mut std::io::stdout());
+        let Some(line) = read_line(stop).await else {
+            self.closed.store(true, Ordering::SeqCst);
+            return None;
+        };
+        let answer = line.trim().to_lowercase();
+        if answer == "c" || answer == "continue" {
+            self.carry_on.store(true, Ordering::SeqCst);
+        }
+        let runs = matches!(answer.as_str(), "y" | "yes" | "c" | "continue");
+        answers.insert(key, runs);
+        Some(runs)
     }
 }
 

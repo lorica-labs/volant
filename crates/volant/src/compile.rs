@@ -336,6 +336,10 @@ pub(crate) struct Compiled {
     pub resolved: Arc<crate::collection::Resolved>,
     /// What compiling the play had to say, for the run to print before the first banner.
     pub warnings: Vec<String>,
+    /// `--start-at-task`: the step every host starts at, the steps in front of it being left out
+    /// as the reference's iterator leaves them. The length of the list when the task is in a
+    /// later play, so this one runs nothing. The `Gathering Facts` step still runs.
+    pub start_at: Option<usize>,
 }
 
 impl Compiled {
@@ -1167,7 +1171,7 @@ pub(crate) fn compile(
     // The play's own tags are the outermost layer of the merge, so every task under it - in a
     // role, in an imported file, at any block depth - carries them for the selection and for
     // the listing. Measured: `--skip-tags <play tag>` leaves a play with nothing to do.
-    // `no_log`, `environment`, `check_mode` and `run_once` join the play's tags here: all four
+    // `no_log`, `environment`, `check_mode`, `diff` and `run_once` join the play's tags here: all
     // are task keywords a play may also carry, so putting them in the outermost layer of the
     // merge is what
     // makes a play-wide `environment` reach a task inside a role inside a block, with no second
@@ -1179,6 +1183,7 @@ pub(crate) fn compile(
         module_defaults: play.module_defaults.clone(),
         collections: play.collections.clone(),
         check_mode: play.check_mode,
+        diff: play.diff,
         run_once: play.run_once,
         timeout: play.timeout,
         throttle: play.throttle,
@@ -1270,6 +1275,10 @@ pub(crate) fn compile(
             .collections
             .clone()
             .or_else(|| empty.collections.clone());
+        // And the play's check and diff modes, `--check` and `--diff` among them: a handler
+        // that ran for real under `--check` would change the host.
+        task.check_mode = task.check_mode.or(empty.check_mode);
+        task.diff = task.diff.or(empty.diff);
         builder.handlers.push(Handler {
             task,
             listen: handler.listen.clone(),
@@ -1309,6 +1318,7 @@ pub(crate) fn compile(
         crosses: Vec::new(),
         resolved: Arc::default(),
         warnings,
+        start_at: None,
     })
 }
 
@@ -1440,6 +1450,7 @@ pub(crate) fn expand_include(
         crosses: Vec::new(),
         resolved: Arc::clone(&base.resolved),
         warnings: Vec::new(),
+        start_at: None,
     };
     // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,
     // before anything is spliced, so what a file this release cannot execute gets is the
@@ -1655,10 +1666,11 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     task.timeout = inner.timeout.or(outer.timeout);
     task.throttle = inner.throttle.or(outer.throttle);
     task.debugger = inner.debugger.or(outer.debugger);
-    // Both three-state for the same reason `ignore_errors` is: a play or a block that says one
+    // All three-state for the same reason `ignore_errors` is: a play or a block that says one
     // thing and a task that says the other have to be told apart from a task that says nothing.
     task.no_log = inner.no_log.or(outer.no_log);
     task.check_mode = inner.check_mode.or(outer.check_mode);
+    task.diff = inner.diff.or(outer.diff);
     // Three-state for the same reason, and inherited the same way: `Block.fattributes` carries
     // all three, `Play.fattributes` carries `run_once` alone, and the innermost value wins.
     task.run_once = inner.run_once.or(outer.run_once);
@@ -1807,7 +1819,20 @@ pub(crate) fn listed(c: &Compiled, index: usize) -> bool {
 /// The step a host starts the play on. Not always the first one: `block: []` with a `rescue`
 /// lays that rescue out at index 0, and nothing has failed yet.
 pub(crate) fn first(c: &Compiled) -> usize {
-    seek(c, 0, &[])
+    match c.start_at {
+        Some(at) if c.gathers && at < c.steps.len() => 0,
+        Some(at) => seek(c, at, &[]),
+        None => seek(c, 0, &[]),
+    }
+}
+
+/// The first step `--start-at-task` names, as the reference finds it: a task (or the statement of
+/// an include) whose name matches the pattern, `Gathering Facts` and handlers apart.
+pub(crate) fn find_task(c: &Compiled, pattern: &str) -> Option<usize> {
+    (usize::from(c.gathers)..c.steps.len()).find(|&i| {
+        matches!(c.steps[i].kind, StepKind::Task | StepKind::Include(_))
+            && crate::inventory::glob_match(pattern, &c.steps[i].task.name)
+    })
 }
 
 /// The index a host moves to after finishing `pos` without failing: the next step it has a
@@ -1815,6 +1840,14 @@ pub(crate) fn first(c: &Compiled) -> usize {
 /// block whose `block:` list is empty is entered *on* its rescue, so entry needs the same care
 /// as exit.
 pub(crate) fn after(c: &Compiled, pos: usize) -> usize {
+    // The `Gathering Facts` step is followed by the step `--start-at-task` named.
+    if let Some(at) = c.start_at
+        && c.gathers
+        && pos == 0
+        && at < c.steps.len()
+    {
+        return seek(c, at, &[]);
+    }
     seek(c, pos + 1, &entered(c, pos))
 }
 
@@ -2711,18 +2744,14 @@ mod tests {
         )));
         assert_eq!(under_block.no_log, Some(true), "the block's no_log");
         assert_eq!(under_block.when, ["gate"], "the block's when");
-        // `check_mode: true` is one this release refuses: inherited, it is refused in the file it
-        // reaches too, rather than dropped and every change in there made for real.
-        let refused = expansion(
-            &dir,
-            &tasks(&format!(
-                "block: [include_tasks: {inc}]\n      check_mode: true"
-            )),
-            &all,
-        )
-        .unwrap()
-        .expect_err("an inherited check_mode: true");
-        assert!(format!("{refused:#}").contains("check_mode"), "{refused:#}");
+        let under_block = first(&tasks(&format!(
+            "block: [include_tasks: {inc}]\n      check_mode: true\n      diff: false"
+        )));
+        assert_eq!(
+            (under_block.check_mode, under_block.diff),
+            (Some(true), Some(false)),
+            "the block's check_mode and diff"
+        );
     }
 
     /// Inserting steps one past the last step of a block's body grows that body and shifts the two

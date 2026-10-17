@@ -83,12 +83,13 @@ pub fn register(
                 .map(|plain| String::from_utf8_lossy(&plain).into_owned())
         },
     );
-    // A `!vault` value reads as its text, so a text some vaulted value of this run decrypted to
-    // answers true: the reference tells the two apart by a tag this engine does not carry.
+    // `NAME is vault_encrypted` is rewritten to carry the name (see `route_calls`): the
+    // reference tells a vaulted variable by a tag this engine does not carry.
     add_test(env, "vault_encrypted", |value: Value| {
         value
             .as_str()
-            .is_some_and(|s| crate::yaml::vault_text(s).is_some() || crate::vault::was_revealed(s))
+            .and_then(|s| s.strip_prefix(super::VAULT_NAME))
+            .is_some_and(crate::vault::is_name)
     });
     add_test(env, "vaulted_file", |path: String| {
         std::fs::File::open(&path)

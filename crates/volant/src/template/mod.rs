@@ -76,6 +76,9 @@ pub(crate) const CONTEXT_KEY: &str = "volant::context";
 
 /// The global every `~` is compiled to call, see [`route_calls`]. Unwritable in Jinja for the
 /// same reason as `TAINT_KEY`, and `Context` answers nothing for it, so no variable shadows it.
+/// What `route_calls` puts in place of the name in `NAME is vault_encrypted`, before the name.
+pub(crate) const VAULT_NAME: &str = "volant::vault_name:";
+
 const CONCAT_KEY: &str = "volant::concat";
 
 /// The global a call to `query` or `q` is compiled to call, see [`route_calls`]. Not a global of
@@ -658,6 +661,9 @@ impl Templar {
         // What `!unsafe` loaded as is text from here on: a sibling that reads it must see the
         // text, not the wrapper, and the name is data so no pass renders it.
         for (k, v) in &mut current {
+            if matches!(v, Value::String(s) if crate::yaml::vault_text(s).is_some()) {
+                crate::vault::note_name(k);
+            }
             if !untrusted.contains(k) && unwrap_unsafe(v) {
                 untrusted.insert(k.clone());
             }
@@ -1018,7 +1024,21 @@ fn concat(
 /// order, and a call keeps its own, so every jump target stays where it was.
 fn route_calls(instructions: &mut Instructions<'_>) {
     let mut idx = 0;
-    while let Some(op) = instructions.get_mut(idx) {
+    loop {
+        let named = match (instructions.get(idx), instructions.get(idx + 1)) {
+            (Some(Instruction::Lookup(name)), Some(Instruction::PerformTest(test, ..)))
+                if bridged::short(test) == "vault_encrypted" =>
+            {
+                Some(format!("{VAULT_NAME}{name}"))
+            }
+            _ => None,
+        };
+        let Some(op) = instructions.get_mut(idx) else {
+            break;
+        };
+        if let Some(named) = named {
+            *op = Instruction::LoadConst(minijinja::Value::from(named));
+        }
         match op {
             Instruction::StringConcat => *op = Instruction::CallFunction(CONCAT_KEY, Some(2)),
             Instruction::CallFunction(name, args) if matches!(*name, "query" | "q") => {

@@ -36,10 +36,6 @@ A run the pre-flight stops exits with code 4, which is what Ansible uses for a p
 
 [Exit codes](/reference/exit-codes/) lists every code Volant uses.
 
-## check_mode
-
-`check_mode: false` is accepted and changes nothing, since running the task for real is what this release does anyway. `check_mode: true` is not supported yet, because there is no check mode. Running a task for real when the playbook asked to be told what it would do is worse than stopping.
-
 Listings and `--syntax-check` never call the pre-flight, so you can read a playbook before the release that runs it ships.
 
 ## Differences from Ansible

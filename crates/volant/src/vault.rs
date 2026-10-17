@@ -66,6 +66,7 @@ static RUN_SECRETS: RwLock<Option<Arc<Secrets>>> = RwLock::new(None);
 pub fn install(secrets: Secrets) {
     *RUN_SECRETS.write().expect("secrets lock") = Some(Arc::new(secrets));
     REVEALED.lock().expect("revealed lock").clear();
+    NAMES.lock().expect("names lock").clear();
 }
 
 type Revealed = HashMap<String, Result<String, String>>;
@@ -111,13 +112,33 @@ pub fn sentence(reason: &str) -> String {
     }
 }
 
-/// Whether some vaulted value of this run decrypted to exactly `text`.
-pub fn was_revealed(text: &str) -> bool {
-    REVEALED
-        .lock()
-        .expect("revealed lock")
-        .values()
-        .any(|done| done.as_deref() == Ok(text))
+/// The names of the variables that held a `!vault` value, for `NAME is vault_encrypted`.
+/// Kept by name for the whole run, not per host.
+static NAMES: LazyLock<Mutex<std::collections::BTreeSet<String>>> = LazyLock::new(Mutex::default);
+
+pub fn note_name(name: &str) {
+    NAMES.lock().expect("names lock").insert(name.to_string());
+}
+
+pub fn is_name(name: &str) -> bool {
+    NAMES.lock().expect("names lock").contains(name)
+}
+
+/// A text file, decrypted first when it is vaulted: every file the reference reads through its
+/// loader.
+pub fn read_to_string(path: &Path) -> std::io::Result<String> {
+    let bytes = std::fs::read(path)?;
+    let bytes = if is_encrypted(&bytes) {
+        decrypt(&bytes, &run_secrets()).map_err(|e| std::io::Error::other(sentence(&e.0)))?
+    } else {
+        bytes
+    };
+    String::from_utf8(bytes).map_err(|_| {
+        std::io::Error::new(
+            std::io::ErrorKind::InvalidData,
+            "stream did not contain valid UTF-8",
+        )
+    })
 }
 
 /// Whether `data` starts like vault data.

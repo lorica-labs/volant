@@ -687,6 +687,48 @@ fn ssh_runs_a_python_module_and_changes_the_disk() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `--check` changes nothing on the host through natives, agent commands, action plugins and
+/// handlers, while a task with `check_mode: false` still runs.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_check_mode_leaves_the_host_as_it_was() {
+    assert_host_and_controller_pythons_are_distinct();
+    let dir = tmp("checkmode");
+    let inv = inventory(&dir, &[("box", "")]);
+    let play = dir.join("check.yml");
+    std::fs::write(
+        &play,
+        "- hosts: all\n  gather_facts: false\n  handlers:\n    - name: H\n      command: touch {{ d }}/handled\n  tasks:\n    - file: path={{ d }}/file state=touch\n    - lineinfile: path={{ d }}/line line=x create=true\n    - command: touch {{ d }}/command\n    - shell: touch {{ d }}/shell\n    - raw: touch {{ d }}/raw\n    - copy: content=x dest={{ d }}/copy\n      ignore_errors: true\n    - command: touch {{ d }}/real\n      check_mode: false\n      notify: H\n",
+    )
+    .expect("the play is written");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &inv,
+            "--check",
+            "-e",
+            &format!("d={}", dir.display()),
+            play.to_str().expect("a path"),
+        ],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains("is not supported yet in check mode"),
+        "copy is refused rather than run: {text}"
+    );
+    for name in ["file", "line", "command", "shell", "raw", "copy", "handled"] {
+        assert!(!dir.join(name).exists(), "{name} changed the host: {text}");
+    }
+    assert!(
+        dir.join("real").exists(),
+        "check_mode: false did not run: {text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A python module's own result is untrusted like any other module's, all the way to the CLI a user
 /// actually runs.
 #[test]

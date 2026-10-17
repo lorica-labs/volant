@@ -1,0 +1,56 @@
+- hosts: all
+  gather_facts: false
+  handlers:
+    - name: Handler
+      command: touch {{ playbook_dir }}/handled
+  tasks:
+    - name: Magic variables
+      debug:
+        msg: "check={{ ansible_check_mode }} diff={{ ansible_diff_mode }}"
+
+    - name: Forced into check mode
+      command: touch {{ playbook_dir }}/forced
+      check_mode: true
+      register: r
+    - debug:
+        msg: "keys={{ r.keys() | list | sort | join(',') }} changed={{ r.changed }} skipped={{ r.skipped | default('-') }} msg={{ r.msg }}"
+
+    - name: Forced out of check mode
+      command: touch {{ playbook_dir }}/real
+      check_mode: false
+      register: r
+      notify: Handler
+    - debug:
+        msg: "changed={{ r.changed }} skipped={{ r.skipped | default('-') }} msg={{ r.msg }}"
+
+    - name: Raw
+      raw: touch {{ playbook_dir }}/raw
+      register: r
+    - debug:
+        msg: "keys={{ r.keys() | list | sort | join(',') }} changed={{ r.changed }} skipped={{ r.skipped | default('-') }}"
+
+    - name: A guard that lets the command through
+      command:
+        cmd: touch {{ playbook_dir }}/guarded
+        creates: "{{ playbook_dir }}/absent"
+      register: r
+    - debug:
+        msg: "changed={{ r.changed }} skipped={{ r.skipped | default('-') }} msg={{ r.msg }}"
+
+    - name: A guard that stops the command
+      command:
+        cmd: touch {{ playbook_dir }}/stopped
+        removes: "{{ playbook_dir }}/absent"
+      register: r
+    - debug:
+        msg: "changed={{ r.changed }} skipped={{ r.skipped | default('-') }} msg={{ r.msg }}"
+
+    - meta: flush_handlers
+
+    - name: What the host holds
+      stat:
+        path: "{{ playbook_dir }}/{{ item }}"
+      loop: [forced, real, raw, guarded, stopped, handled]
+      register: st
+    - debug:
+        msg: "{{ st.results | map(attribute='stat.exists') | list }}"

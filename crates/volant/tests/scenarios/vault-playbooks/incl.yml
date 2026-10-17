@@ -1,0 +1,5 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - include_tasks: tasks_enc.yml
+    - import_tasks: tasks_enc.yml

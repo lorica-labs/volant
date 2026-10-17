@@ -1,0 +1,8 @@
+# check_mode on a task and a handler, the magic variables, and command, raw and stat in the four
+# modes: plain, --check, --check --diff and --diff.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, --check, play.yml]
+  - args: [-i, inv.ini, --check, --diff, play.yml]
+  - args: [-i, inv.ini, --diff, play.yml]
+needs: [ansible-core]

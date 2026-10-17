@@ -598,7 +598,7 @@ fn implicit_localhost(name: &str) -> Host {
 /// search exactly, including its one subtlety: a `]` immediately after `[` or after `[!` counts as
 /// a literal first set member, not the terminator, which is also why an empty `[]` and a bare
 /// `[!]` fail to find a real close and fall back to literal text.
-fn glob_match(pattern: &str, text: &str) -> bool {
+pub(crate) fn glob_match(pattern: &str, text: &str) -> bool {
     let p: Vec<char> = pattern.chars().collect();
     let t: Vec<char> = text.chars().collect();
     let (mut pi, mut ti) = (0usize, 0usize);

@@ -420,4 +420,47 @@ mod tests {
             "{warnings:?}"
         );
     }
+    /// The reference's own file, with the origin tags emptied, comes out of a read and a write
+    /// byte for byte: this writer keeps no origin tags.
+    #[test]
+    fn the_reference_s_file_is_written_back_byte_for_byte() {
+        fn strip(value: &mut Value) {
+            match value {
+                Value::Object(map) => {
+                    if let Some(tags) = map.get_mut("tags") {
+                        *tags = json!([]);
+                    }
+                    map.values_mut().for_each(strip);
+                }
+                Value::Array(items) => items.iter_mut().for_each(strip),
+                _ => {}
+            }
+        }
+        let text = include_str!("../tests/golden/fact_cache/pfx_s1_hostA");
+        let dir = tempfile::tempdir().unwrap();
+        let c = cache(dir.path(), 0);
+        std::fs::write(dir.path().join("pfx_s1_hostA"), text).unwrap();
+        let mut payload = serde_json::from_str::<Value>(
+            serde_json::from_str::<Value>(text).unwrap()["__payload__"]
+                .as_str()
+                .unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            dumps(&json!({ "__payload__": dumps(&payload) })),
+            text,
+            "the writer spells the reference's file as the reference does"
+        );
+        strip(&mut payload);
+        let expected = dumps(&json!({ "__payload__": dumps(&payload) }));
+        // The file is named `s1_<host>`: read it under that name, write it back, compare.
+        std::fs::rename(dir.path().join("pfx_s1_hostA"), dir.path().join("pfx_s1_h")).unwrap();
+        let facts = c.read("h").unwrap().unwrap();
+        let tagged: Map<String, Value> = facts.iter().map(|(k, v)| (k.clone(), tag(v))).collect();
+        c.write("h", &tagged).unwrap();
+        assert_eq!(
+            std::fs::read_to_string(dir.path().join("pfx_s1_h")).unwrap(),
+            expected
+        );
+    }
 }

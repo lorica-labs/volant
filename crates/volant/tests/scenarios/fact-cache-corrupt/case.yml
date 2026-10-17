@@ -1,0 +1,2 @@
+# A cache file that is not JSON: a warning, an error, the file erased and the run stopped.
+args: [-i, inv.ini, play.yml]

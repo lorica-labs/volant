@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [hostA] => {\n    \"msg\": \"hostA fixture=True cached=none\"\n}\nok: [hostB] => {\n    \"msg\": \"hostB fixture=True cached=none\"\n}\n\nPLAY RECAP *********************************************************************\nhostA                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nhostB                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [Gathering Facts] *********************************************************\nok: [hostC]\n\nTASK [debug] *******************************************************************\nok: [hostC] => {\n    \"msg\": \"hostC fixture=False cached=x\"\n}\n\nPLAY RECAP *********************************************************************\nhostC                      : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

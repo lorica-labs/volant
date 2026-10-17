@@ -1,0 +1,6 @@
+# gathering = smart over a cache: hosts with gathered facts skip the Gathering Facts task, and a
+# host whose entry holds only a cacheable fact still gathers.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, -l, "hostA,hostB", play.yml]
+  - args: [-i, inv.ini, -l, hostC, play.yml]

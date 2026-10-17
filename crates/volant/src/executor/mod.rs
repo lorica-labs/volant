@@ -329,6 +329,15 @@ pub async fn run_play(
         // number or does not render at all stops the run before the banner, with nothing on
         // stdout.
         out.play(&play.name);
+        // A cache file the run could not read stops it here, after the banner: warning, error,
+        // exit 1, no recap.
+        let failure = state.vars.lock().expect("vars lock").take_cache_failure();
+        if let Some(failure) = failure {
+            if let Some(warning) = &failure.warning {
+                out.warning(warning, false);
+            }
+            return Err(crate::stats::Refusal::plain(1, failure.error));
+        }
         // The ones of the batch that went unreachable in an earlier play: out of this one, and
         // the only hosts a `clear_host_errors` brings back at its first step.
         let dormant: Vec<String> = whole

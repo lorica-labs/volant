@@ -3981,6 +3981,7 @@ pub(super) fn record_local_facts(
     if results.iter().any(|(_, r)| r.failed()) {
         return;
     }
+    let mut written = BTreeSet::new();
     for (item, (_, result)) in items.iter().zip(results) {
         let Some(facts) = result.0.get("ansible_facts").and_then(Value::as_object) else {
             continue;
@@ -3996,6 +3997,7 @@ pub(super) fn record_local_facts(
             for host in hosts {
                 if cacheable {
                     vars.cache_fact(host, key, value);
+                    written.insert(host.clone());
                 }
                 if set_fact && data.contains(key) {
                     vars.set_untrusted_fact(host, key, value.clone());
@@ -4004,6 +4006,10 @@ pub(super) fn record_local_facts(
                 }
             }
         }
+    }
+    // One file write per host for the whole task, however many names it set.
+    for host in written {
+        vars.write_cache(&host);
     }
 }
 

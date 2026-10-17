@@ -356,7 +356,10 @@ pub fn run(args: PlaybookArgs) -> i32 {
     let code = match runtime.block_on(run_all(&args, &mut out, &profile)) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("ERROR! {err:#}");
+            match err.downcast_ref::<Refusal>() {
+                Some(r) if r.plain => eprintln!("[ERROR]: {}", r.message),
+                _ => eprintln!("ERROR! {err:#}"),
+            }
             error_code(&err)
         }
     };
@@ -793,12 +796,10 @@ async fn run_all(
             match cache.read(name) {
                 Ok(Some(facts)) => store.load_cached(name, facts),
                 Ok(None) => {}
+                // Reported once the play's banner is out, as the reference does.
                 Err(failure) => {
-                    if let Some(warning) = &failure.warning {
-                        out.warning(warning, false);
-                    }
-                    eprintln!("[ERROR]: {}", failure.error);
-                    return Ok(1);
+                    store.fail_cache(failure);
+                    break;
                 }
             }
         }

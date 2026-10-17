@@ -84,11 +84,6 @@ const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. I
     on statements, and on `raw` and `async_status`, which the reference refuses too. \
     `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are.";
 
-/// One sentence for the three `check_mode` rows, so the page cannot say one thing about a play
-/// and another about the task under it.
-const CHECK_MODE_MISSING: &str =
-    "`copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running";
-
 /// One sentence for the three `diff` rows.
 const DIFF_MISSING: &str =
     "modules are told to report their differences, which are not printed yet";
@@ -141,7 +136,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("become_method", Runs),
     kw("become_user", Runs),
     kw("changed_when", Runs),
-    partial_kw("check_mode", CHECK_MODE_MISSING),
+    kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
     partial_kw("debugger", DEBUGGER_MISSING),
@@ -238,7 +233,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("become_flags", Runs),
     kw("become_method", Runs),
     kw("become_user", Runs),
-    partial_kw("check_mode", CHECK_MODE_MISSING),
+    kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
     partial_kw("debugger", DEBUGGER_MISSING),
@@ -311,7 +306,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("become_method", Runs),
     kw("become_user", Runs),
     kw("block", Runs),
-    partial_kw("check_mode", CHECK_MODE_MISSING),
+    kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
     partial_kw("debugger", DEBUGGER_MISSING),

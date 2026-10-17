@@ -1182,8 +1182,8 @@ pub(crate) fn compile(
         environment: play.environment.clone(),
         module_defaults: play.module_defaults.clone(),
         collections: play.collections.clone(),
-        check_mode: play.check_mode,
-        diff: play.diff,
+        check_mode: play.check_mode.clone(),
+        diff: play.diff.clone(),
         run_once: play.run_once,
         timeout: play.timeout,
         throttle: play.throttle,
@@ -1277,8 +1277,8 @@ pub(crate) fn compile(
             .or_else(|| empty.collections.clone());
         // And the play's check and diff modes, `--check` and `--diff` among them: a handler
         // that ran for real under `--check` would change the host.
-        task.check_mode = task.check_mode.or(empty.check_mode);
-        task.diff = task.diff.or(empty.diff);
+        task.check_mode = task.check_mode.or_else(|| empty.check_mode.clone());
+        task.diff = task.diff.or_else(|| empty.diff.clone());
         builder.handlers.push(Handler {
             task,
             listen: handler.listen.clone(),
@@ -1669,8 +1669,11 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     // All three-state for the same reason `ignore_errors` is: a play or a block that says one
     // thing and a task that says the other have to be told apart from a task that says nothing.
     task.no_log = inner.no_log.or(outer.no_log);
-    task.check_mode = inner.check_mode.or(outer.check_mode);
-    task.diff = inner.diff.or(outer.diff);
+    task.check_mode = inner
+        .check_mode
+        .clone()
+        .or_else(|| outer.check_mode.clone());
+    task.diff = inner.diff.clone().or_else(|| outer.diff.clone());
     // Three-state for the same reason, and inherited the same way: `Block.fattributes` carries
     // all three, `Play.fattributes` carries `run_once` alone, and the innermost value wins.
     task.run_once = inner.run_once.or(outer.run_once);
@@ -2749,7 +2752,10 @@ mod tests {
         )));
         assert_eq!(
             (under_block.check_mode, under_block.diff),
-            (Some(true), Some(false)),
+            (
+                Some(crate::playbook::Flag::Fixed(true)),
+                Some(crate::playbook::Flag::Fixed(false))
+            ),
             "the block's check_mode and diff"
         );
     }

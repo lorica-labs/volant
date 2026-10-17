@@ -1,0 +1,146 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    T: "{{ playbook_dir }}/t"
+  tasks:
+    - name: Set up
+      shell: |
+        mkdir -p {{ T }}/o {{ T }}/fr
+        printf 'old\n' > {{ T }}/f
+        printf 'old\n' > {{ T }}/f2
+        printf 'a\n' > {{ T }}/l
+        printf 'src\n' > {{ T }}/s
+        printf 'frag\n' > {{ T }}/fr/one
+        printf '#!/bin/sh\ntouch {{ T }}/scripted\n' > {{ T }}/sc.sh
+        chmod +x {{ T }}/sc.sh
+        printf 'x\n' > {{ T }}/x && tar czf {{ T }}/a.tgz -C {{ T }} x
+      check_mode: false
+
+    - name: file directory
+      file: {path: "{{ T }}/d", state: directory}
+      register: r
+    - debug: &sum
+        msg: "keys={{ r.keys() | list | sort | join(',') }} changed={{ r.changed }} skipped={{ r.skipped | default('-') }} msg={{ r.msg | default('-') | replace(playbook_dir, 'D') }}"
+
+    - name: file mode
+      file: {path: "{{ T }}/f", mode: "0600"}
+      register: r
+    - debug: *sum
+
+    - name: file absent
+      file: {path: "{{ T }}/f2", state: absent}
+      register: r
+    - debug: *sum
+
+    - name: file link
+      file: {src: "{{ T }}/f", dest: "{{ T }}/lnk", state: link}
+      register: r
+    - debug: *sum
+
+    - name: file missing
+      file: {path: "{{ T }}/nope", state: file}
+      register: r
+      ignore_errors: true
+    - debug: *sum
+
+    - name: copy content
+      copy: {content: "hello\n", dest: "{{ T }}/c"}
+      register: r
+    - debug: *sum
+
+    - name: copy src
+      copy: {src: "{{ T }}/s", dest: "{{ T }}/c2"}
+      register: r
+    - debug: *sum
+
+    - name: copy missing src
+      copy: {src: "{{ T }}/missing", dest: "{{ T }}/c3"}
+      register: r
+      ignore_errors: true
+    - debug: *sum
+
+    - name: template
+      template: {src: tpl.j2, dest: "{{ T }}/tp"}
+      register: r
+    - debug: *sum
+
+    - name: lineinfile
+      lineinfile: {path: "{{ T }}/l", line: b}
+      register: r
+    - debug: *sum
+
+    - name: stat
+      stat: {path: "{{ T }}/f"}
+      register: r
+    - debug: *sum
+
+    - name: unarchive
+      unarchive: {src: "{{ T }}/a.tgz", dest: "{{ T }}/o", remote_src: true}
+      register: r
+    - debug: *sum
+
+    - name: fetch
+      fetch: {src: "{{ T }}/f", dest: "{{ T }}/fetched/", flat: true}
+      register: r
+    - debug: *sum
+
+    - name: assemble
+      assemble: {src: "{{ T }}/fr", dest: "{{ T }}/asm"}
+      register: r
+    - debug: *sum
+
+    - name: script
+      script: "{{ T }}/sc.sh"
+      register: r
+    - debug: *sum
+
+    - name: command
+      command: touch {{ T }}/cmd
+      register: r
+    - debug: *sum
+
+    - name: shell with a guard that stops it
+      shell: touch {{ T }}/sh
+      args: {creates: "{{ T }}/f"}
+      register: r
+    - debug: *sum
+
+    - name: shell with a removes guard that lets it through
+      shell: touch {{ T }}/sh2
+      args: {removes: "{{ T }}/f"}
+      register: r
+    - debug: *sum
+
+    - name: failing command
+      command: "false"
+      register: r
+      ignore_errors: true
+    - debug: *sum
+
+    - name: set_fact
+      set_fact: {answer: 42}
+      register: r
+    - debug: *sum
+
+    - name: assert
+      assert: {that: [answer == 42]}
+      register: r
+    - debug: *sum
+
+    - name: assert failing
+      assert: {that: [answer == 0]}
+      register: r
+      ignore_errors: true
+    - debug: *sum
+
+    - name: What the host holds
+      stat:
+        path: "{{ T }}/{{ item }}"
+      loop: [d, lnk, c, c2, c3, tp, cmd, sh, sh2, scripted, asm, fetched/f, o/x]
+      register: st
+    - debug:
+        msg: "{{ st.results | map(attribute='stat.exists') | list }}"
+    - slurp: {src: "{{ T }}/l"}
+      register: l
+    - debug:
+        msg: "{{ l.content | b64decode | trim }}"

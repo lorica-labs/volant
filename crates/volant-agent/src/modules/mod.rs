@@ -116,13 +116,19 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
                     }
                 }
             }
-            let mut args = args.clone();
-            for (key, on) in [(CHECK_MODE_ARG, check_mode), (DIFF_ARG, diff)] {
-                if on {
-                    args.insert(key.into(), Value::Bool(true));
+            let mut flagged;
+            let args = if check_mode || diff {
+                flagged = args.clone();
+                for (key, on) in [(CHECK_MODE_ARG, check_mode), (DIFF_ARG, diff)] {
+                    if on {
+                        flagged.insert(key.into(), Value::Bool(true));
+                    }
                 }
-            }
-            let (run, timing) = crate::python::run(payload, &args, &context, cancelled);
+                &flagged
+            } else {
+                args
+            };
+            let (run, timing) = crate::python::run(payload, args, &context, cancelled);
             ran.fork_micros = timing.fork;
             ran.import_micros = timing.import;
             ran.module_micros = timing.module;

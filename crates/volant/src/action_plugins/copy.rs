@@ -62,19 +62,22 @@ fn text<'a>(args: &'a Map<String, Value>, name: &str) -> Option<&'a str> {
         .filter(|s| !s.is_empty())
 }
 
-/// Whether the item is a copy of a controller directory, which the reference's own plugin
-/// handles and this one does not.
+/// Whether the item is one the reference's own plugin answers: a copy of a controller directory,
+/// which this one does not do, or of an absolute path that is not there, whose failure the
+/// reference shapes as a result of its own (`changed`, `exception`, and no search list).
 pub(super) fn unwritten(ctx: &Context<'_>) -> bool {
     let args = ctx.args;
     let Some(src) = text(args, "src") else {
         return false;
     };
-    args.get("content").is_none_or(Value::is_null)
-        && !flag(args, "remote_src", false)
-        && search_paths(ctx.origin, ctx.playbook_dir, "files", src)
-            .iter()
-            .find(|p| p.exists())
-            .is_some_and(|found| found.is_dir())
+    if !args.get("content").is_none_or(Value::is_null) || flag(args, "remote_src", false) {
+        return false;
+    }
+    let searched = search_paths(ctx.origin, ctx.playbook_dir, "files", src);
+    match searched.iter().find(|p| p.exists()) {
+        Some(found) => found.is_dir(),
+        None => std::path::Path::new(src).is_absolute(),
+    }
 }
 
 pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {

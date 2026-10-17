@@ -80,8 +80,8 @@ pub struct Play {
     /// neither: the reference takes them on a block and on a task and nowhere else.
     pub no_log: Option<bool>,
     pub environment: Vec<Value>,
-    pub check_mode: Option<bool>,
-    pub diff: Option<bool>,
+    pub check_mode: Option<Flag>,
+    pub diff: Option<Flag>,
     pub run_once: Option<bool>,
     /// The play's `module_defaults` and `collections`, folded into every task the same way. A
     /// role is the exception for `collections`: it does not inherit the play's.
@@ -311,8 +311,8 @@ pub struct PlayTask {
     pub collections: Option<Vec<String>>,
     /// `check_mode` and `diff`, inherited from the block, the role and the play, whose own
     /// default is the command line's `--check` and `--diff`.
-    pub check_mode: Option<bool>,
-    pub diff: Option<bool>,
+    pub check_mode: Option<Flag>,
+    pub diff: Option<Flag>,
     /// `run_once`: one host of the batch runs the task and every other host reads what it
     /// produced. Three-state for the same reason `ignore_errors` is - a block saying `true` and
     /// a task saying `false` inside it have to be told apart from a task that says nothing.
@@ -672,7 +672,7 @@ fn warn_action_mapping(node: &Yaml) {
 /// All three are refused here, at load. That is one step earlier than the reference refuses
 /// `ignore_errors` and `become`, and the divergence is deliberate: no task has run yet, so
 /// there is nothing half-applied to explain. A template is the one exception, for
-/// `ignore_errors`: see [`flag`].
+/// `ignore_errors`, `check_mode` and `diff`: see [`flag`].
 fn boolean(yaml: &Yaml, key: &str) -> anyhow::Result<Option<bool>> {
     match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
@@ -693,7 +693,7 @@ pub enum Flag {
     Template(String),
 }
 
-/// `ignore_errors`, which may be a template. Measured on ansible-core 2.19.12:
+/// `ignore_errors`, `check_mode` and `diff`, which may be templates. Measured on ansible-core 2.19.12:
 /// `ignore_errors: "{{ ansible_check_mode }}"`, which `geerlingguy.ntp` and `geerlingguy.docker`
 /// write, is rendered when the task runs, so it is kept as written here and rendered by
 /// `prepare`. Anything else that is not a boolean is still refused by [`boolean`].
@@ -1117,8 +1117,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         environment: environment(yaml, "")?,
         module_defaults: module_defaults(yaml, "")?,
         collections: collections(yaml, "")?,
-        check_mode: boolean(yaml, "check_mode")?,
-        diff: boolean(yaml, "diff")?,
+        check_mode: flag(yaml, "check_mode")?,
+        diff: flag(yaml, "diff")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
         ignore_errors: flag(yaml, "ignore_errors")?,
@@ -1321,8 +1321,8 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             environment: environment(yaml, &context)?,
             module_defaults: module_defaults(yaml, &context)?,
             collections: collections(yaml, &context)?,
-            check_mode: boolean(yaml, "check_mode")?,
-            diff: boolean(yaml, "diff")?,
+            check_mode: flag(yaml, "check_mode")?,
+            diff: flag(yaml, "diff")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -1499,8 +1499,8 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             environment: environment(yaml, &context)?,
             module_defaults: module_defaults(yaml, &context)?,
             collections: collections(yaml, &context)?,
-            check_mode: boolean(yaml, "check_mode")?,
-            diff: boolean(yaml, "diff")?,
+            check_mode: flag(yaml, "check_mode")?,
+            diff: flag(yaml, "diff")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -1792,8 +1792,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         environment: environment(yaml, &context)?,
         module_defaults: module_defaults(yaml, &context)?,
         collections: collections(yaml, &context)?,
-        check_mode: boolean(yaml, "check_mode")?,
-        diff: boolean(yaml, "diff")?,
+        check_mode: flag(yaml, "check_mode")?,
+        diff: flag(yaml, "diff")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
         ignore_unreachable: boolean(yaml, "ignore_unreachable")?,

@@ -2,6 +2,7 @@
 //! The `constructed` inventory plugin of ansible-core 2.19.12: variables, groups and keyed groups
 //! built, for each host an earlier source added, from Jinja expressions over its variables.
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -175,7 +176,7 @@ impl Run {
             let vars = host_vars(inv, host);
             for (name, expr) in &self.options.compose {
                 match self.evaluate(expr, &vars) {
-                    Ok(value) => set_var(inv, host, name, value, expr),
+                    Ok(value) => set_var(inv, host, name, value, &vars),
                     Err(e) if self.options.strict => {
                         return Err(Failure::Chained(format!(
                             "Could not set {name} for host {host}: {e}"
@@ -326,10 +327,17 @@ impl Run {
                     })
                     .collect(),
                 other => {
+                    // A value read from the inventory carries the loader's tag; a computed one
+                    // is a plain Python type.
+                    let dialect = if is_original(other, vars) {
+                        Dialect::Yaml
+                    } else {
+                        Dialect::Toml
+                    };
                     return Err(Failure::Parser(format!(
                         "Invalid group name format, expected a string or a list of them or \
                          dictionary, got: {}",
-                        Dialect::Toml.type_name(other)
+                        dialect.type_name(other)
                     )));
                 }
             }
@@ -370,20 +378,58 @@ fn host_vars(inv: &Inventory, host: &str) -> Map<String, Value> {
     vars
 }
 
-/// Sets a composed variable. A string an expression computed is marked unsafe; one it only
-/// passed through, a bare variable, keeps what it was.
-fn set_var(inv: &mut Inventory, host: &str, name: &str, value: Value, expr: &Value) {
-    let passed_through = matches!(expr, Value::String(e)
-        if e.trim().chars().all(|c| c.is_alphanumeric() || c == '_' || c == '.'));
+/// Sets a composed variable. The strings of it that no other variable of the host holds were
+/// computed, and are marked: a run treats the variable as data, `--list` wraps those strings.
+// ponytail: a computed string equal to an original one (`os | lower` on a lowercase value) stays
+// plain here and is wrapped in the reference; tracking the tags would need a tagged value type.
+fn set_var(inv: &mut Inventory, host: &str, name: &str, value: Value, vars: &Map<String, Value>) {
+    let mut originals = HashSet::new();
+    for (key, v) in vars.iter().filter(|(k, _)| !MAGIC.contains(&k.as_str())) {
+        if key != name {
+            leaves(v, &mut originals);
+        }
+    }
+    // An empty string is too often a literal to count as a copy, unless the whole value is one.
+    originals.remove("");
+    let mut all = HashSet::new();
+    if !is_original(&value, vars) {
+        leaves(&value, &mut all);
+    }
+    let computed: HashSet<String> = all.difference(&originals).cloned().collect();
     let key = (host.to_string(), name.to_string());
-    if !passed_through {
-        inv.unsafe_vars.insert(key);
-    } else {
+    if computed.is_empty() {
         inv.unsafe_vars.remove(&key);
+    } else {
+        inv.unsafe_vars.insert(key, computed);
     }
     if let Some(h) = inv.hosts.iter_mut().find(|h| h.name == host) {
         h.vars.insert(name.to_string(), value);
     }
+}
+
+const MAGIC: [&str; 3] = [
+    "inventory_hostname",
+    "inventory_hostname_short",
+    "group_names",
+];
+
+/// Every string in a value, mapping keys left out.
+fn leaves(value: &Value, out: &mut HashSet<String>) {
+    match value {
+        Value::String(s) => {
+            out.insert(s.clone());
+        }
+        Value::Array(items) => items.iter().for_each(|v| leaves(v, out)),
+        Value::Object(map) => map.values().for_each(|v| leaves(v, out)),
+        _ => {}
+    }
+}
+
+/// Whether a non-string value is a variable passed through, which the reference keeps tagged.
+fn is_original(value: &Value, vars: &Map<String, Value>) -> bool {
+    vars.iter()
+        .filter(|(k, _)| !MAGIC.contains(&k.as_str()))
+        .any(|(_, v)| v == value)
 }
 
 /// `add_group`: the group exists afterwards, and a name with nothing in it is refused.

@@ -574,7 +574,7 @@ impl VarStore {
             fact_cache: None,
             smart: false,
             cache_failure: None,
-            untrusted: BTreeMap::new(),
+            untrusted: inventory.untrusted_vars(),
             extra,
             forks: crate::config::DEFAULT_FORKS,
             run_tags: vec!["all".to_string()],

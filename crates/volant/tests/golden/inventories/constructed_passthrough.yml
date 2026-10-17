@@ -1,0 +1,14 @@
+plugin: constructed
+compose:
+  p_default: os | default("z")
+  p_cond: os if true else "q"
+  p_string: os | string
+  p_paren: (os)
+  p_list: "[os]"
+  p_dict: '{"a": os}'
+  p_host_default: ansible_host | default(os)
+  u_literal: "'lit'"
+  u_concat: os ~ "x"
+  u_upper: os | upper
+  u_name: inventory_hostname
+  u_short: inventory_hostname_short

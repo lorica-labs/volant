@@ -80,3 +80,6 @@ yaml_list_hosts: {sources: [yaml_list_hosts.yml]}
 yaml_skipped_child: {sources: [yaml_skipped_child.yml]}
 yaml_empty_map: {sources: [yaml_empty_map.yml]}
 yaml_plugin_key: {sources: [yaml_plugin_key.yml]}
+constructed_passthrough: {sources: [constructed_base.ini, constructed_passthrough.yml]}
+constructed_int_key: {sources: [constructed_base.ini, constructed_int_key.yml]}
+constructed_int_key_computed: {sources: [constructed_base.ini, constructed_int_key_computed.yml]}

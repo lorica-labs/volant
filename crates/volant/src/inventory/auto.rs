@@ -118,7 +118,7 @@ fn with_root<R>(
         [one] => one,
         _ => {
             return Err(failed(
-                "YAML parsing failed: Expected a single document in the stream but found another \n                 document."
+                "YAML parsing failed: Expected a single document in the stream but found \n                 another document."
                     .to_string(),
             ));
         }

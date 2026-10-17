@@ -789,6 +789,126 @@
       ],
       "stderr": ""
     },
+    "constructed_int_key": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_int_key.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_int_key.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_int_key.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_int_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_int_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_int_key.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_int_key.yml as an inventory source\n"
+    },
+    "constructed_int_key_computed": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_int_key_computed.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_int_key_computed.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_int_key_computed.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_int_key_computed.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_int_key_computed.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_int_key_computed.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_int_key_computed.yml as an inventory source\n"
+    },
     "constructed_keyed_10": {
       "env": {},
       "hosts": [
@@ -1192,6 +1312,144 @@
       "rc": 0,
       "sources": [
         "constructed.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_passthrough": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian",
+              "p_cond": "Debian",
+              "p_default": "Debian",
+              "p_dict": {
+                "a": "Debian"
+              },
+              "p_host_default": "Debian",
+              "p_list": [
+                "Debian"
+              ],
+              "p_paren": "Debian",
+              "p_string": "Debian",
+              "u_concat": {
+                "__ansible_unsafe": "Debianx"
+              },
+              "u_literal": {
+                "__ansible_unsafe": "lit"
+              },
+              "u_name": {
+                "__ansible_unsafe": "d1"
+              },
+              "u_short": {
+                "__ansible_unsafe": "d1"
+              },
+              "u_upper": {
+                "__ansible_unsafe": "DEBIAN"
+              }
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "p_cond": "Debian",
+              "p_default": "Debian",
+              "p_dict": {
+                "a": "Debian"
+              },
+              "p_host_default": "web1.example.com",
+              "p_list": [
+                "Debian"
+              ],
+              "p_paren": "Debian",
+              "p_string": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "u_concat": {
+                "__ansible_unsafe": "Debianx"
+              },
+              "u_literal": {
+                "__ansible_unsafe": "lit"
+              },
+              "u_name": {
+                "__ansible_unsafe": "w1"
+              },
+              "u_short": {
+                "__ansible_unsafe": "w1"
+              },
+              "u_upper": {
+                "__ansible_unsafe": "DEBIAN"
+              },
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "p_cond": "RedHat",
+              "p_default": "RedHat",
+              "p_dict": {
+                "a": "RedHat"
+              },
+              "p_host_default": "RedHat",
+              "p_list": [
+                "RedHat"
+              ],
+              "p_paren": "RedHat",
+              "p_string": "RedHat",
+              "role": "",
+              "u_concat": {
+                "__ansible_unsafe": "RedHatx"
+              },
+              "u_literal": {
+                "__ansible_unsafe": "lit"
+              },
+              "u_name": {
+                "__ansible_unsafe": "w2"
+              },
+              "u_short": {
+                "__ansible_unsafe": "w2"
+              },
+              "u_upper": {
+                "__ansible_unsafe": "REDHAT"
+              },
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_passthrough.yml"
       ],
       "stderr": ""
     },

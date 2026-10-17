@@ -479,8 +479,9 @@ impl Templar {
         if !Self::is_template(text) {
             return Ok(Value::String(text.to_string()));
         }
-        // A final newline is text: the reference keeps it, so the result is a string.
-        if !text.ends_with('\n')
+        // Whitespace around the expression, a final newline included, is text: the reference
+        // keeps it, so the result is a string.
+        if text.trim() == text
             && let Some(expr) = single_expression(text)
         {
             return self.evaluate_in(expr, ctx);

@@ -5,6 +5,7 @@
     n: null
     d: {k: 1, s: x}
     nl: x
+    five: 5
   tasks:
     - debug:
         msg: "list={{ l }} dict={{ d }} none=[{{ n }}] nested={{ [l, n, d] }}"
@@ -28,3 +29,7 @@
       register: out
     - debug:
         msg: "{{ out.size }}"
+    - debug:
+        msg: "{{ five }} "
+    - debug:
+        msg: " {{ five }}"

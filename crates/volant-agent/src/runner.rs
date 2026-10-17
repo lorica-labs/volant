@@ -36,6 +36,18 @@ where
         }
         let started = Instant::now();
         let (run, mut ran) = match &task.job {
+            // The reference's `ActionBase.run` refuses the pair before the module starts.
+            Some(_)
+                if task.args.get(volant_protocol::modules::CHECK_MODE_ARG)
+                    == Some(&serde_json::Value::Bool(true)) =>
+            {
+                (
+                    Run::Done(volant_protocol::TaskResult::failed_with(
+                        "check mode and async cannot be used on same task.",
+                    )),
+                    modules::ran_natively(),
+                )
+            }
             Some(job) => (
                 Run::Done(crate::jobs::start(task, job)),
                 modules::ran_natively(),

@@ -8,7 +8,9 @@ use std::time::Duration;
 
 use serde_json::{Map, Value, json};
 use tokio::sync::watch;
-use volant_protocol::modules::{ASSERT, FAIL, ModuleSpec, PAUSE, short_name};
+use volant_protocol::modules::{
+    ASSERT, CHECK_MODE_ARG, DIFF_ARG, FAIL, ModuleSpec, PAUSE, short_name,
+};
 use volant_protocol::{BatchOutcome, FromAgent, StagedFile, Task, TaskResult, ToAgent};
 
 use crate::agent::{AgentLink, AgentSource, BlobFrame, BlobMemory};
@@ -182,6 +184,8 @@ async fn controller_side(
             warnings: &mut warnings,
             environment: Some(&item.environment),
             timeout: task.timeout,
+            check_mode: task.check_mode == Some(true),
+            diff: task.diff == Some(true),
         },
     );
     let mut last = None;
@@ -2016,7 +2020,7 @@ fn sub_task(
     if volant_protocol::modules::native(sub.module).is_some() {
         return Ok(Task {
             module: sub.module.to_string(),
-            args: sub.args.clone(),
+            args: with_modes(task, sub.args.clone()),
             job: None,
             ..protocol_task(task, item, None)
         });
@@ -2027,7 +2031,7 @@ fn sub_task(
     let interpreter = chosen_interpreter(asked, interpreters)?;
     Ok(Task {
         module: sub.module.to_string(),
-        args: sub.args.clone(),
+        args: with_modes(task, sub.args.clone()),
         ignore_errors: item.ignore_errors.unwrap_or_else(|| task.ignores_errors())
             || task.loop_items.is_some(),
         timeout: task.timeout,
@@ -2501,6 +2505,8 @@ pub(super) async fn run_plugin_attempts<C: AgentChannel, R: Relink<C>>(
                     warnings: &mut *warnings,
                     environment: Some(&item.environment),
                     timeout: task.timeout,
+                    check_mode: task.check_mode == Some(true),
+                    diff: task.diff == Some(true),
                 },
             );
             run_plugin_item(
@@ -2642,7 +2648,7 @@ pub(super) fn protocol_task(
     }
     Task {
         module: task.module.clone(),
-        args,
+        args: with_modes(task, args),
         // An item is not the task: a failing item never stops the ones behind it, exactly as in
         // Ansible. The task's own failure is decided later, by `report_task`, from every item's
         // result.
@@ -2660,6 +2666,19 @@ pub(super) fn protocol_task(
             dir: async_dir(&item.vars),
         }),
     }
+}
+
+/// `args` with what ansible-core's `_update_module_args` adds for the task's check and diff
+/// modes, sent only when on. Whatever the playbook wrote under those names goes, as the reference
+/// overwrites it: a task cannot talk a module out of check mode through its arguments.
+fn with_modes(task: &PlayTask, mut args: Map<String, Value>) -> Map<String, Value> {
+    for (key, on) in [(CHECK_MODE_ARG, task.check_mode), (DIFF_ARG, task.diff)] {
+        args.remove(key);
+        if on == Some(true) {
+            args.insert(key.into(), Value::Bool(true));
+        }
+    }
+    args
 }
 
 /// The key a started job's id comes back under, in a result rather than among a host's variables.
@@ -6153,6 +6172,8 @@ mod tests {
 
                     environment: None,
                     timeout: None,
+                    check_mode: false,
+                    diff: false,
                 },
             );
             run_plugin_item(

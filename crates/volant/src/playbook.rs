@@ -73,7 +73,7 @@ pub struct Play {
     /// the play's variables. Kept raw because it is rendered when the play starts, which is where
     /// the reference renders it - see `compile::batches`.
     pub serial: Option<Value>,
-    /// The play's own `no_log`, `environment`, `check_mode` and `run_once`. All four are task
+    /// The play's own `no_log`, `environment`, `check_mode`, `diff` and `run_once`. All five are task
     /// keywords a play may also carry, so they are folded into every task at compile time rather
     /// than read again per step - see `compile`, which uses them as the outermost layer of the
     /// merge. `delegate_to` and `delegate_facts` are not here because `Play.fattributes` has
@@ -81,6 +81,7 @@ pub struct Play {
     pub no_log: Option<bool>,
     pub environment: Vec<Value>,
     pub check_mode: Option<bool>,
+    pub diff: Option<bool>,
     pub run_once: Option<bool>,
     /// The play's `module_defaults` and `collections`, folded into every task the same way. A
     /// role is the exception for `collections`: it does not inherit the play's.
@@ -308,9 +309,10 @@ pub struct PlayTask {
     /// `None` when no layer wrote one, `Some` of an empty list for a role that has none: a role
     /// does not inherit the play's.
     pub collections: Option<Vec<String>>,
-    /// `check_mode`. `false` is what this release does, so it is accepted and changes nothing;
-    /// `true` asks for a mode this release has not written and the pre-flight refuses it.
+    /// `check_mode` and `diff`, inherited from the block, the role and the play, whose own
+    /// default is the command line's `--check` and `--diff`.
     pub check_mode: Option<bool>,
+    pub diff: Option<bool>,
     /// `run_once`: one host of the batch runs the task and every other host reads what it
     /// produced. Three-state for the same reason `ignore_errors` is - a block saying `true` and
     /// a task saying `false` inside it have to be told apart from a task that says nothing.
@@ -397,6 +399,7 @@ impl PlayTask {
             module_defaults: Vec::new(),
             collections: None,
             check_mode: None,
+            diff: None,
             run_once: None,
             any_errors_fatal: None,
             ignore_unreachable: None,
@@ -1115,6 +1118,7 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         module_defaults: module_defaults(yaml, "")?,
         collections: collections(yaml, "")?,
         check_mode: boolean(yaml, "check_mode")?,
+        diff: boolean(yaml, "diff")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
         ignore_errors: flag(yaml, "ignore_errors")?,
@@ -1318,6 +1322,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             module_defaults: module_defaults(yaml, &context)?,
             collections: collections(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
+            diff: boolean(yaml, "diff")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -1495,6 +1500,7 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             module_defaults: module_defaults(yaml, &context)?,
             collections: collections(yaml, &context)?,
             check_mode: boolean(yaml, "check_mode")?,
+            diff: boolean(yaml, "diff")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -1787,6 +1793,7 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         module_defaults: module_defaults(yaml, &context)?,
         collections: collections(yaml, &context)?,
         check_mode: boolean(yaml, "check_mode")?,
+        diff: boolean(yaml, "diff")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
         ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -2375,7 +2382,7 @@ mod tests {
 
     /// Keywords the reference has and this release cannot run are parked for the pre-flight.
     #[rstest]
-    #[case::diff("diff")]
+    #[case::with_unvault("with_unvault")]
     fn a_keyword_is_parked_for_the_preflight(#[case] kw: &str) {
         let pb = parse(
             &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
@@ -2687,13 +2694,13 @@ mod tests {
     #[test]
     fn what_the_loader_keeps_for_the_preflight() {
         let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      diff: true\n",
+            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      with_unvault: x\n",
             "x.yml",
         )
         .unwrap();
         let t = first(&pb);
         assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
-        assert_eq!(t.unsupported, ["diff"]);
+        assert_eq!(t.unsupported, ["with_unvault"]);
         assert_eq!(
             t.tags,
             ["t"],

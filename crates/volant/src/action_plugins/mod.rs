@@ -295,6 +295,9 @@ pub(crate) struct Context<'a> {
     /// the Python helper.
     pub environment: Option<&'a BTreeMap<String, String>>,
     pub timeout: Option<u64>,
+    /// The task's `check_mode` and `diff`, `--check` and `--diff` included.
+    pub check_mode: bool,
+    pub diff: bool,
 }
 
 /// The plugin for `kind`. A written one given a shape it does not take hands the item to
@@ -313,6 +316,24 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
             "unarchive"
         };
         return bridged::start(name, modules_for(kind), ctx);
+    }
+    // The written plugins that put something on the host or the controller have no check mode
+    // yet, and running them for real is the one answer check mode must never give. `package`,
+    // `service` and `dnf` only pick the module, which is told about check mode itself.
+    if ctx.check_mode {
+        let name = match kind {
+            Kind::Copy => Some("copy"),
+            Kind::Fetch => Some("fetch"),
+            Kind::Reboot => Some("reboot"),
+            Kind::Template => Some("template"),
+            Kind::Unarchive => Some("unarchive"),
+            Kind::Dnf | Kind::Package | Kind::Service | Kind::Bridged(_) => None,
+        };
+        if let Some(name) = name {
+            return copy::failing(format!(
+                "the action plugin '{name}' is not supported yet in check mode"
+            ));
+        }
     }
     match kind {
         Kind::Copy => copy::start(ctx),

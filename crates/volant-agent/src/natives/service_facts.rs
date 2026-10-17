@@ -998,6 +998,7 @@ esac
                     environment: BTreeMap::new(),
                     interpreter: None,
                     remote_tmp: "/tmp".into(),
+                    check_mode: false,
                 };
                 let args = json!({"x": 1});
                 match run(args.as_object().unwrap(), &context, &|| false) {

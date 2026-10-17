@@ -220,6 +220,12 @@ pub const ASYNC_STATUS: ModuleSpec = ModuleSpec {
 /// Every module the agent implements natively, sorted by name.
 pub const NATIVE_MODULES: &[ModuleSpec] = &[ASYNC_STATUS, COMMAND, RAW, SHELL];
 
+/// The arguments ansible-core's `_update_module_args` adds for a task in check mode and for one
+/// that shows diffs. The controller sends them, set to `true`, only when they are; the agent
+/// takes them out before a module of its own reads the arguments and hands them to a Python one.
+pub const CHECK_MODE_ARG: &str = "_ansible_check_mode";
+pub const DIFF_ARG: &str = "_ansible_diff";
+
 /// The Python modules the agent may run natively instead, by the reference's name. The agent
 /// decides per task: a native answers only inside the subset of arguments it implements and
 /// hands anything else back to the Python payload before it touches the host. Which of these an

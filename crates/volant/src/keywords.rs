@@ -86,10 +86,12 @@ const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. I
 
 /// One sentence for the three `check_mode` rows, so the page cannot say one thing about a play
 /// and another about the task under it.
-const CHECK_MODE_MISSING: &str = "only `false` is accepted, and the task runs for real. `true` is \
-    not supported yet because this release has no check mode: the run stops before the first \
-    connection when the playbook writes it, and at the include statement when a dynamic include \
-    brings it in";
+const CHECK_MODE_MISSING: &str =
+    "`copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running";
+
+/// One sentence for the three `diff` rows.
+const DIFF_MISSING: &str =
+    "modules are told to report their differences, which are not printed yet";
 
 /// One sentence for the `debugger` rows. The reference's prompt also evaluates Python.
 const DEBUGGER_MISSING: &str = "the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input";
@@ -126,11 +128,6 @@ pub fn is_barrier(name: &str) -> bool {
 ///
 /// `gather_facts` has no row here because it belongs to the play; see [`PLAY_KEYWORDS`].
 ///
-/// `check_mode` is partial: `false` is what this release does and is honoured, `true` is refused
-/// by the pre-flight naming the value, and there is no check mode behind either. Nothing written
-/// under it is accepted and then ignored, which is why it is not a `Preflight` row; half of what
-/// the reference does with it is missing, which is why it is not a `Runs` row.
-///
 /// `until`, `retries` and `delay` run on a task and appear in no other table: the reference's
 /// `Block.fattributes` has none of them, so a block carrying one is refused at load.
 pub const TASK_KEYWORDS: &[Keyword] = &[
@@ -151,7 +148,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("delay", Runs),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
-    kw("diff", Preflight),
+    partial_kw("diff", DIFF_MISSING),
     kw("environment", Runs),
     kw("failed_when", Runs),
     kw("ignore_errors", Runs),
@@ -245,7 +242,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("collections", Runs),
     kw("connection", Runs),
     partial_kw("debugger", DEBUGGER_MISSING),
-    kw("diff", Preflight),
+    partial_kw("diff", DIFF_MISSING),
     kw("environment", Runs),
     kw("fact_path", Runs),
     kw("force_handlers", Runs),
@@ -320,7 +317,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     partial_kw("debugger", DEBUGGER_MISSING),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
-    kw("diff", Preflight),
+    partial_kw("diff", DIFF_MISSING),
     kw("environment", Runs),
     kw("ignore_errors", Runs),
     kw("ignore_unreachable", Runs),

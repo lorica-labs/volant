@@ -32,7 +32,6 @@ A diff prints only for a task that changed something. `copy` and `template` prin
 
 ## Known gaps
 
-- A `template` task whose file sits in a role's `templates` directory fails under `--check` with "Could not find or access", because the plugin run in the helper does not search the role's directory. Outside `--check` it works.
 - `--step` does not ask before a `meta` or `flush_handlers` step. This has not been compared with the reference.
 - `-vv` does not print the handler notification lines.
 - `-vvvv` prints fewer options and no per-task ssh or plugin-path lines.

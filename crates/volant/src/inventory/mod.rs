@@ -7,6 +7,8 @@ mod host_list;
 mod ini;
 pub mod ranges;
 mod sources;
+mod toml;
+mod yaml;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
@@ -22,11 +24,8 @@ pub use sources::{
 /// Every inventory plugin this release knows, the ones `enable_plugins` picks from. A plugin it
 /// does not read yet takes what the reference's would and refuses it by name.
 const PLUGINS: &[&dyn InventoryPlugin] = &[
-    &host_list::HostList,
-    &sources::Pending {
-        name: "advanced_host_list",
-        verify: |s| s.text().contains(',') && !s.path().exists(),
-    },
+    &host_list::HostList { advanced: false },
+    &host_list::HostList { advanced: true },
     &sources::Pending {
         name: "script",
         verify: sources::executable,
@@ -35,17 +34,9 @@ const PLUGINS: &[&dyn InventoryPlugin] = &[
         name: "auto",
         verify: |s| sources::file_with_extension(s, &[Some("yml"), Some("yaml")]),
     },
-    &sources::Pending {
-        name: "yaml",
-        verify: |s| {
-            sources::file_with_extension(s, &[None, Some("yaml"), Some("yml"), Some("json")])
-        },
-    },
+    &yaml::YamlInventory,
     &ini::Ini,
-    &sources::Pending {
-        name: "toml",
-        verify: |s| sources::file_with_extension(s, &[Some("toml")]),
-    },
+    &toml::Toml,
     &sources::Pending {
         name: "constructed",
         verify: |s| {
@@ -468,10 +459,26 @@ impl Inventory {
         let has_parent: HashSet<&str> = self
             .groups
             .iter()
+            .filter(|g| g.name != "all")
             .flat_map(|g| g.children.iter().map(String::as_str))
             .collect();
+        // The groups a source put under `all` itself come first, then the ones nobody holds.
+        let explicit = self
+            .group("all")
+            .map(|g| g.children.as_slice())
+            .unwrap_or_default();
+        out.extend(
+            explicit
+                .iter()
+                .filter(|c| c.as_str() != "ungrouped")
+                .filter_map(|c| self.group(c)),
+        );
         for g in &self.groups {
-            if g.name != "all" && g.name != "ungrouped" && !has_parent.contains(g.name.as_str()) {
+            if g.name != "all"
+                && g.name != "ungrouped"
+                && !has_parent.contains(g.name.as_str())
+                && !explicit.contains(&g.name)
+            {
                 out.push(g);
             }
         }

@@ -574,6 +574,13 @@ fn inventory_sources_match_the_reference() {
             any_unparsed_is_failed: env
                 .get("ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED")
                 .is_some(),
+            enabled: env
+                .get("ANSIBLE_INVENTORY_ENABLED")
+                .and_then(|v| v.as_str())
+                .map_or_else(
+                    || PluginConfig::default().enabled,
+                    |v| v.split(',').map(String::from).collect(),
+                ),
             ..PluginConfig::default()
         };
         let loaded = load_sources(&sources, &config);

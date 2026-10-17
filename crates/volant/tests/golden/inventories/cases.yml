@@ -20,3 +20,15 @@ late_children: {sources: [late_children.ini]}
 undefined_child: {sources: [undefined_child.ini]}
 undefined_vars: {sources: [undefined_vars.ini]}
 priority: {sources: [priority.ini]}
+yaml: {sources: [basic.yml]}
+yaml_odd: {sources: [odd.yml]}
+yaml_late_children: {sources: [children.yml]}
+yaml_then_ini: {sources: [basic.yml, base.ini]}
+ini_then_yaml: {sources: [base.ini, basic.yml]}
+toml: {sources: [basic.toml]}
+toml_then_yaml: {sources: [basic.toml, basic.yml]}
+toml_hosts_list: {sources: [bad_hosts.toml]}
+toml_children_table: {sources: [bad_children.toml]}
+host_list_ranges: {sources: ["web[1:3],"]}
+advanced_host_list: {sources: ["web[1:3],db[a:b]:2222,x:y,"], env: {ANSIBLE_INVENTORY_ENABLED: "advanced_host_list,host_list"}}
+advanced_host_list_only: {sources: ["web[1:3],"], env: {ANSIBLE_INVENTORY_ENABLED: "advanced_host_list"}}

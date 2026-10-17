@@ -194,6 +194,85 @@
     }
   },
   "sources": {
+    "advanced_host_list": {
+      "env": {
+        "ANSIBLE_INVENTORY_ENABLED": "advanced_host_list,host_list"
+      },
+      "hosts": [
+        "web1",
+        "web2",
+        "web3",
+        "dba",
+        "dbb",
+        "x:y"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "dba": {
+              "ansible_port": 2222
+            },
+            "dbb": {
+              "ansible_port": 2222
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "web1",
+            "web2",
+            "web3",
+            "dba",
+            "dbb",
+            "x:y"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "web[1:3],db[a:b]:2222,x:y,"
+      ],
+      "stderr": ""
+    },
+    "advanced_host_list_only": {
+      "env": {
+        "ANSIBLE_INVENTORY_ENABLED": "advanced_host_list"
+      },
+      "hosts": [
+        "web1",
+        "web2",
+        "web3"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "web1",
+            "web2",
+            "web3"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "web[1:3],"
+      ],
+      "stderr": ""
+    },
     "any_unparsed_failed": {
       "env": {
         "ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED": "1"
@@ -407,6 +486,33 @@
       ],
       "stderr": ""
     },
+    "host_list_ranges": {
+      "env": {},
+      "hosts": [
+        "web[1:3]"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "web[1:3]"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "web[1:3],"
+      ],
+      "stderr": ""
+    },
     "host_list_then_file": {
       "env": {},
       "hosts": [
@@ -458,6 +564,312 @@
       "sources": [
         "h1,h9,",
         "one.ini"
+      ],
+      "stderr": ""
+    },
+    "ini_then_yaml": {
+      "env": {},
+      "hosts": [
+        "loose",
+        "w1",
+        "new_ini",
+        "web01",
+        "web02",
+        "web03",
+        "dba",
+        "dbb",
+        "dbc",
+        "n1",
+        "n4",
+        "n7",
+        "n10",
+        "both",
+        "123",
+        "d1",
+        "w",
+        "::1",
+        "d2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "123": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "host",
+              "x": 1
+            },
+            "::1": {
+              "ansible_port": 22,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "both": {
+              "av": "from_all",
+              "extra": true,
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "d1": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "d2": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "dba": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbb": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbc": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "loose": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "n1": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n10": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n4": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n7": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "new_ini": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "w": {
+              "ansible_port": 2200,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "w1": {
+              "av": "from_all",
+              "from_ini": 1,
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web01": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web02": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web03": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "children": [
+            "sub"
+          ],
+          "hosts": [
+            "d1",
+            "both",
+            "w",
+            "::1"
+          ]
+        },
+        "sub": {
+          "hosts": [
+            "d2"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "loose"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "new_ini",
+            "web01",
+            "web02",
+            "web03",
+            "dba",
+            "dbb",
+            "dbc",
+            "n1",
+            "n4",
+            "n7",
+            "n10",
+            "both",
+            "123"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "base.ini",
+        "basic.yml"
       ],
       "stderr": ""
     },
@@ -737,6 +1149,467 @@
       ],
       "stderr": ""
     },
+    "toml": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "w3",
+        "d1",
+        "d2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "av": "a"
+            },
+            "d2": {
+              "av": "a"
+            },
+            "w1": {
+              "av": "a",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "x": 1
+            },
+            "w2": {
+              "ansible_port": 2200,
+              "av": "a",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "x": 1
+            },
+            "w3": {
+              "ansible_port": 2200,
+              "av": "a",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "x": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "solo"
+          ]
+        },
+        "db": {
+          "children": [
+            "sub"
+          ],
+          "hosts": [
+            "d1"
+          ]
+        },
+        "sub": {
+          "hosts": [
+            "d2"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2",
+            "w3"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "basic.toml"
+      ],
+      "stderr": "[WARNING]: Skipping unexpected key \"lonely\" in group \"solo\", only \"vars\", \"children\" and \"hosts\" are valid\n"
+    },
+    "toml_children_table": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "bad_children.toml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Invalid \"children\" entry for \"db\" group, requires a list, found \"<class 'dict'>\" instead.\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nInvalid \"children\" entry for \"db\" group, requires a list, found \"<class 'dict'>\" instead.\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/bad_children.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/bad_children.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "toml_hosts_list": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "bad_hosts.toml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Invalid \"hosts\" entry for \"web\" group, requires a dict, found \"<class 'list'>\" instead.\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nInvalid \"hosts\" entry for \"web\" group, requires a dict, found \"<class 'list'>\" instead.\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/bad_hosts.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/bad_hosts.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "toml_then_yaml": {
+      "env": {},
+      "hosts": [
+        "loose",
+        "w1",
+        "w2",
+        "w3",
+        "web01",
+        "web02",
+        "web03",
+        "dba",
+        "dbb",
+        "dbc",
+        "n1",
+        "n4",
+        "n7",
+        "n10",
+        "both",
+        "123",
+        "d1",
+        "w",
+        "::1",
+        "d2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "123": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "host",
+              "x": 1
+            },
+            "::1": {
+              "ansible_port": 22,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "both": {
+              "av": "from_all",
+              "extra": true,
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "d1": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "d2": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "dba": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbb": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbc": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "loose": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "n1": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n10": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n4": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n7": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "w": {
+              "ansible_port": 2200,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "w1": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "w2": {
+              "ansible_port": 2200,
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "w3": {
+              "ansible_port": 2200,
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web01": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web02": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web03": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "solo"
+          ]
+        },
+        "db": {
+          "children": [
+            "sub"
+          ],
+          "hosts": [
+            "d1",
+            "both",
+            "w",
+            "::1"
+          ]
+        },
+        "sub": {
+          "hosts": [
+            "d2"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "loose"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2",
+            "w3",
+            "web01",
+            "web02",
+            "web03",
+            "dba",
+            "dbb",
+            "dbc",
+            "n1",
+            "n4",
+            "n7",
+            "n10",
+            "both",
+            "123"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "basic.toml",
+        "basic.yml"
+      ],
+      "stderr": "[WARNING]: Skipping unexpected key \"lonely\" in group \"solo\", only \"vars\", \"children\" and \"hosts\" are valid\n"
+    },
     "two_sources": {
       "env": {},
       "hosts": [
@@ -950,6 +1823,663 @@
         "one.ini"
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n"
+    },
+    "yaml": {
+      "env": {},
+      "hosts": [
+        "loose",
+        "web01",
+        "web02",
+        "web03",
+        "dba",
+        "dbb",
+        "dbc",
+        "n1",
+        "n4",
+        "n7",
+        "n10",
+        "both",
+        "123",
+        "d1",
+        "w",
+        "::1",
+        "d2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "123": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "host",
+              "x": 1
+            },
+            "::1": {
+              "ansible_port": 22,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "both": {
+              "av": "from_all",
+              "extra": true,
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "d1": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "d2": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "dba": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbb": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbc": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "loose": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "n1": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n10": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n4": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n7": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "w": {
+              "ansible_port": 2200,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "web01": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web02": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web03": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "children": [
+            "sub"
+          ],
+          "hosts": [
+            "d1",
+            "both",
+            "w",
+            "::1"
+          ]
+        },
+        "sub": {
+          "hosts": [
+            "d2"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "loose"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "web01",
+            "web02",
+            "web03",
+            "dba",
+            "dbb",
+            "dbc",
+            "n1",
+            "n4",
+            "n7",
+            "n10",
+            "both",
+            "123"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "basic.yml"
+      ],
+      "stderr": ""
+    },
+    "yaml_late_children": {
+      "env": {},
+      "hosts": [
+        "e1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "e1": {
+              "v": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "late"
+          ]
+        },
+        "early": {
+          "hosts": [
+            "e1"
+          ]
+        },
+        "late": {
+          "children": [
+            "early"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "children.yml"
+      ],
+      "stderr": ""
+    },
+    "yaml_odd": {
+      "env": {},
+      "hosts": [
+        "a",
+        "b",
+        "c",
+        "d"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "g",
+            "web-1"
+          ]
+        },
+        "g": {
+          "children": [
+            "k"
+          ],
+          "hosts": [
+            "a",
+            "b",
+            "c"
+          ]
+        },
+        "web-1": {
+          "hosts": [
+            "d"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "odd.yml"
+      ],
+      "stderr": "[WARNING]: Skipping unexpected key (foo) in group (g), only \"vars\", \"children\" and \"hosts\" are valid\n[WARNING]: Skipping key (zz) in group (g) as it is not a mapping, it is a <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n[WARNING]: Skipping 'bad_group' as this is not a valid group definition\n"
+    },
+    "yaml_then_ini": {
+      "env": {},
+      "hosts": [
+        "loose",
+        "web01",
+        "web02",
+        "web03",
+        "dba",
+        "dbb",
+        "dbc",
+        "n1",
+        "n4",
+        "n7",
+        "n10",
+        "both",
+        "123",
+        "w1",
+        "new_ini",
+        "d1",
+        "w",
+        "::1",
+        "d2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "123": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "host",
+              "x": 1
+            },
+            "::1": {
+              "ansible_port": 22,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "both": {
+              "av": "from_all",
+              "extra": true,
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "d1": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "d2": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "dba": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbb": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "dbc": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "loose": {
+              "av": "from_all",
+              "shared": "all"
+            },
+            "n1": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n10": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n4": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "n7": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "new_ini": {
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "w": {
+              "ansible_port": 2200,
+              "av": "from_all",
+              "shared": "all"
+            },
+            "w1": {
+              "av": "from_all",
+              "from_ini": 1,
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web01": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web02": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            },
+            "web03": {
+              "ansible_host": "10.0.0.1",
+              "av": "from_all",
+              "nested": {
+                "a": [
+                  1,
+                  2
+                ],
+                "b": {
+                  "c": "d"
+                }
+              },
+              "shared": "web",
+              "x": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "children": [
+            "sub"
+          ],
+          "hosts": [
+            "d1",
+            "both",
+            "w",
+            "::1"
+          ]
+        },
+        "sub": {
+          "hosts": [
+            "d2"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "loose"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "web01",
+            "web02",
+            "web03",
+            "dba",
+            "dbb",
+            "dbc",
+            "n1",
+            "n4",
+            "n7",
+            "n10",
+            "both",
+            "123",
+            "w1",
+            "new_ini"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "basic.yml",
+        "base.ini"
+      ],
+      "stderr": ""
     }
   }
 }

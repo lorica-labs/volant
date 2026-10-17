@@ -145,7 +145,14 @@ pub struct ParseCx<'a> {
     notes: RefCell<Vec<Note>>,
 }
 
-impl ParseCx<'_> {
+impl<'a> ParseCx<'a> {
+    pub(super) fn new(config: &'a PluginConfig) -> Self {
+        Self {
+            config,
+            notes: RefCell::new(Vec::new()),
+        }
+    }
+
     /// A line shown from verbosity `level` on.
     pub fn verbose(&self, level: u8, text: String) {
         self.notes.borrow_mut().push(Note::Verbose(level, text));
@@ -194,10 +201,7 @@ pub struct Loaded {
 /// the earlier ones and wins a variable both set.
 pub fn load_sources(sources: &[Source], config: &PluginConfig) -> Loaded {
     let mut loaded = Loaded::default();
-    let cx = ParseCx {
-        config,
-        notes: RefCell::new(Vec::new()),
-    };
+    let cx = ParseCx::new(config);
     let mut plugins: Vec<&dyn InventoryPlugin> = Vec::new();
     for name in &config.enabled {
         let short = name.strip_prefix("ansible.builtin.").unwrap_or(name);
@@ -466,10 +470,9 @@ h1
             .map(|p| format!("{p} {}", DECLINED.replace("{}", file)))
             .collect();
         if parsed_by.is_empty() {
-            assert_eq!(
-                loaded.error.map(|e| e.code),
-                Some(4),
-                "toml is refused by name"
+            assert!(
+                loaded.error.is_none() && !loaded.parsed,
+                "only toml takes the file, and it cannot read INI"
             );
         } else {
             want.push(format!(

@@ -1,0 +1,12 @@
+g:
+  foo: {a: 1}
+  zz: 1
+  hosts:
+    a: 0
+    b: ""
+    c: ~
+  children:
+    k: ~
+web-1:
+  hosts: {d: }
+bad_group: 7

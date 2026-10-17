@@ -38,6 +38,7 @@ sha2.workspace = true
 shlex.workspace = true
 tempfile.workspace = true
 tokio.workspace = true
+toml_edit.workspace = true
 volant-protocol.workspace = true
 
 [dev-dependencies]

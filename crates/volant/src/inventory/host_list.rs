@@ -1,15 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The `host_list` inventory plugin: `-i 'a,b:2222,[::1]:22,'`.
+//! The `host_list` inventory plugin, `-i 'a,b:2222,[::1]:22,'`, and `advanced_host_list`, which
+//! also expands ranges: `-i 'web[1:3],'`.
 
 use std::collections::BTreeMap;
 
+use super::ini::expand_hostpattern;
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source, ranges};
 
-pub(super) struct HostList;
+pub(super) struct HostList {
+    /// Read ranges too, which is what `advanced_host_list` adds.
+    pub(super) advanced: bool,
+}
 
 impl InventoryPlugin for HostList {
     fn name(&self) -> &'static str {
-        "host_list"
+        if self.advanced {
+            "advanced_host_list"
+        } else {
+            "host_list"
+        }
     }
 
     /// A comma, and no file of that name.
@@ -29,15 +38,22 @@ impl InventoryPlugin for HostList {
             if item.is_empty() {
                 continue;
             }
-            let (host, port) = ranges::parse_address(item, false).unwrap_or_else(|reason| {
+            let (hosts, port) = if self.advanced {
+                expand_hostpattern(item)
+            } else {
+                ranges::parse_address(item, false).map(|(host, port)| (vec![host], port))
+            }
+            .unwrap_or_else(|reason| {
                 cx.verbose(
                     3,
                     format!("Unable to parse address from hostname, leaving unchanged: {reason}"),
                 );
-                (item.to_string(), None)
+                (vec![item.to_string()], None)
             });
-            if into.add_source_host(&host, port, BTreeMap::new(), None) {
-                into.add_member(&host, "ungrouped");
+            for host in hosts {
+                if into.add_source_host(&host, port, BTreeMap::new(), None) {
+                    into.add_member(&host, "ungrouped");
+                }
             }
         }
         Ok(())

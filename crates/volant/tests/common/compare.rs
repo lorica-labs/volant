@@ -510,9 +510,8 @@ pub fn native_result(
     spec: &Value,
     results: &Map<String, Value>,
 ) -> Result<Value, String> {
-    let shown = results
-        .get(case)
-        .ok_or("no result line: the task did not run, or did not report")?;
+    // `setup` never shows its result on its line, at any verbosity, as the reference.
+    let shown = results.get(case);
     let mut registered = results
         .get(&format!("registered-{case}"))
         .and_then(|shown| shown.get("last"))
@@ -526,7 +525,7 @@ pub fn native_result(
     if map.get("failed") == Some(&Value::Bool(false)) {
         map.remove("failed");
     }
-    if let Some(invocation) = shown.get("invocation") {
+    if let Some(invocation) = shown.and_then(|shown| shown.get("invocation")) {
         map.insert("invocation".into(), invocation.clone());
     }
     if ["file", "copy", "lineinfile"].contains(&spec["module"].as_str().unwrap_or_default()) {

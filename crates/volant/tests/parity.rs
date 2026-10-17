@@ -240,6 +240,8 @@ fn defaults() -> volant::transport::ConnectionDefaults {
         become_exe: None,
         become_flags: None,
         become_password: None,
+        ssh_common_args: Vec::new(),
+        ssh_extra_args: Vec::new(),
     }
 }
 
@@ -300,6 +302,20 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             (Status::NotYet, String::new())
         } else {
             (Status::Partial, format!("only {}", known.join(", ")))
+        };
+        // Parsed, and without effect: Volant moves files over its agent link, never `scp`
+        // or `sftp`.
+        let (s, note) = if s == Status::Runs
+            && flags
+                .iter()
+                .any(|f| matches!(*f, "--scp-extra-args" | "--sftp-extra-args"))
+        {
+            (
+                Status::Partial,
+                "accepted with no effect: files move over the agent link".to_string(),
+            )
+        } else {
+            (s, note)
         };
         rows.push(row("ansible-playbook option", &flags.join(", "), s, &note));
     }

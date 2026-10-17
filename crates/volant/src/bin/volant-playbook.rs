@@ -12,5 +12,6 @@ struct Cli {
 }
 
 fn main() {
+    volant::askpass::answer_if_asked();
     std::process::exit(volant::cli::run(Cli::parse().args));
 }

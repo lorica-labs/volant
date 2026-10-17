@@ -2,7 +2,7 @@
 //! The `playbook` command: the same arguments as `ansible-playbook`, for the subset that exists.
 
 use std::collections::{HashMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 
 use anstream::ColorChoice;
@@ -100,6 +100,40 @@ pub struct PlaybookArgs {
     /// Ask for the escalation password on the terminal.
     #[arg(short = 'K', long = "ask-become-pass")]
     pub ask_become_pass: bool,
+    /// Read the escalation password from the first line of this file.
+    #[arg(
+        long = "become-password-file",
+        visible_alias = "become-pass-file",
+        value_name = "BECOME_PASSWORD_FILE",
+        conflicts_with = "ask_become_pass"
+    )]
+    pub become_password_file: Option<PathBuf>,
+    /// Ask for the connection password on the terminal.
+    #[arg(
+        short = 'k',
+        long = "ask-pass",
+        conflicts_with = "connection_password_file"
+    )]
+    pub ask_pass: bool,
+    /// Read the connection password from the first line of this file.
+    #[arg(
+        long = "connection-password-file",
+        visible_alias = "conn-pass-file",
+        value_name = "CONNECTION_PASSWORD_FILE"
+    )]
+    pub connection_password_file: Option<PathBuf>,
+    /// Arguments added to every `ssh` command line.
+    #[arg(long = "ssh-common-args", value_name = "SSH_COMMON_ARGS")]
+    pub ssh_common_args: Option<String>,
+    /// Arguments added to the `ssh` command lines only.
+    #[arg(long = "ssh-extra-args", value_name = "SSH_EXTRA_ARGS")]
+    pub ssh_extra_args: Option<String>,
+    /// Accepted for `scp`, which Volant does not run: files move over the agent link.
+    #[arg(long = "scp-extra-args", value_name = "SCP_EXTRA_ARGS")]
+    pub scp_extra_args: Option<String>,
+    /// Accepted for `sftp`, which Volant does not run: files move over the agent link.
+    #[arg(long = "sftp-extra-args", value_name = "SFTP_EXTRA_ARGS")]
+    pub sftp_extra_args: Option<String>,
 
     /// Ask for the vault password on the terminal.
     #[arg(
@@ -188,11 +222,11 @@ pub fn run(args: PlaybookArgs) -> i32 {
         eprint!("{}", profile.render());
     }
     if let Some(path) = std::env::var_os("VOLANT_PROFILE_JSON").filter(|p| !p.is_empty())
-        && let Err(err) = profile.write_json(std::path::Path::new(&path))
+        && let Err(err) = profile.write_json(Path::new(&path))
     {
         eprintln!(
             "[WARNING]: the profile could not be written to {}: {err}",
-            std::path::Path::new(&path).display()
+            Path::new(&path).display()
         );
     }
     code
@@ -496,6 +530,29 @@ async fn run_all(
             }
         }
     }
+    let become_password = if args.ask_become_pass {
+        Some(ask_become_password()?)
+    } else if let Some(path) = &args.become_password_file {
+        match password_from_file(path) {
+            Ok(password) => Some(password),
+            Err(message) => {
+                eprintln!("[ERROR]: {message}");
+                return Ok(1);
+            }
+        }
+    } else {
+        None
+    };
+    // Held to the end of the run: the file the `ssh` calls ask for the password is removed
+    // when it drops.
+    let _connection_password = match connection_password(args) {
+        Ok(Some(password)) => Some(crate::askpass::install(&password)?),
+        Ok(None) => None,
+        Err(message) => {
+            eprintln!("[ERROR]: {message}");
+            return Ok(1);
+        }
+    };
     let defaults = ConnectionDefaults {
         remote_user: args.user.clone().or(config.remote_user),
         connection: args.connection.clone(),
@@ -513,11 +570,9 @@ async fn run_all(
         become_method,
         become_exe: config.become_exe,
         become_flags: config.become_flags,
-        become_password: if args.ask_become_pass {
-            Some(ask_become_password()?)
-        } else {
-            None
-        },
+        become_password,
+        ssh_common_args: ssh_words("--ssh-common-args", args.ssh_common_args.as_deref())?,
+        ssh_extra_args: ssh_words("--ssh-extra-args", args.ssh_extra_args.as_deref())?,
     };
     let mut stats = Stats::default();
 
@@ -866,6 +921,66 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
+/// The first line of a password file, line ending removed, spaces kept. The wording is the
+/// reference's.
+fn password_from_file(path: &Path) -> Result<String, String> {
+    let bytes = match std::fs::read(path) {
+        Ok(bytes) => bytes,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+            return Err(format!(
+                "The password file {} was not found",
+                path.display()
+            ));
+        }
+        Err(e) => {
+            return Err(format!(
+                "The password file {} could not be read: {e}",
+                path.display()
+            ));
+        }
+    };
+    let text = String::from_utf8(bytes)
+        .map_err(|_| format!("The password file {} is not UTF-8", path.display()))?;
+    let line = text.lines().next().unwrap_or_default();
+    if line.is_empty() {
+        return Err(format!(
+            "Empty password was provided from file ({})",
+            path.display()
+        ));
+    }
+    Ok(line.to_string())
+}
+
+/// The connection password `-k` or `--connection-password-file` asks for. Without a terminal
+/// `-k` reads the end of the input as an empty password, which is what the reference does.
+fn connection_password(args: &PlaybookArgs) -> Result<Option<String>, String> {
+    if args.ask_pass {
+        let typed = crate::prompt::hidden_line("SSH password: ")
+            .map_err(|e| format!("{e:#}"))?
+            .unwrap_or_default();
+        return String::from_utf8(typed)
+            .map(Some)
+            .map_err(|_| "the connection password is not UTF-8".to_string());
+    }
+    args.connection_password_file
+        .as_deref()
+        .map(password_from_file)
+        .transpose()
+}
+
+/// The words of `--ssh-common-args` or `--ssh-extra-args`; an unbalanced quote is refused
+/// by name instead of connecting without an option the operator asked for.
+fn ssh_words(flag: &str, text: Option<&str>) -> anyhow::Result<Vec<String>> {
+    let Some(text) = text else {
+        return Ok(Vec::new());
+    };
+    shlex::split(text).ok_or_else(|| {
+        anyhow::anyhow!(
+            "{flag} has unbalanced quotes and cannot be turned into ssh options: {text}"
+        )
+    })
+}
+
 /// Reads the escalation password from the terminal, with the prompt on stderr.
 fn ask_become_password() -> anyhow::Result<String> {
     let Some(typed) = crate::prompt::hidden_line("BECOME password: ")? else {
@@ -1046,6 +1161,88 @@ mod tests {
             written.lines().next(),
             Some(r#"{"natives":{}}"#),
             "{written}"
+        );
+    }
+
+    /// A password file gives its first line, spaces kept; a missing or empty one is refused
+    /// in the reference's words.
+    #[rstest::rstest]
+    #[case::newline(
+        Some(
+            "sekret
+"
+        ),
+        Ok("sekret")
+    )]
+    #[case::no_newline(Some("sekret"), Ok("sekret"))]
+    #[case::spaces(
+        Some(
+            "sek ret 
+
+"
+        ),
+        Ok("sek ret ")
+    )]
+    #[case::first_line_only(
+        Some(
+            "one
+two
+"
+        ),
+        Ok("one")
+    )]
+    #[case::crlf(
+        Some(
+            "sekret
+"
+        ),
+        Ok("sekret")
+    )]
+    #[case::empty(Some(""), Err("Empty password was provided from file (<path>)"))]
+    #[case::newlines_only(
+        Some(
+            "
+
+"
+        ),
+        Err("Empty password was provided from file (<path>)")
+    )]
+    #[case::missing(None, Err("The password file <path> was not found"))]
+    fn a_password_file_gives_its_first_line(
+        #[case] content: Option<&str>,
+        #[case] want: Result<&str, &str>,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("pw");
+        if let Some(content) = content {
+            std::fs::write(&path, content).unwrap();
+        }
+        let got = password_from_file(&path);
+        let want = want
+            .map(str::to_string)
+            .map_err(|m| m.replace("<path>", &path.display().to_string()));
+        assert_eq!(got, want);
+    }
+
+    /// The prompt and the file for one password are exclusive, and `ssh` arguments with an
+    /// open quote are refused by name.
+    #[rstest::rstest]
+    #[case::ask_and_file(&["-k", "--connection-password-file", "f"], false)]
+    #[case::alias(&["-k", "--conn-pass-file", "f"], false)]
+    #[case::become_ask_and_file(&["-K", "--become-password-file", "f"], false)]
+    #[case::become_alias(&["-K", "--become-pass-file", "f"], false)]
+    #[case::one_each(&["-k", "-K"], true)]
+    #[case::files(&["--conn-pass-file", "f", "--become-pass-file", "g"], true)]
+    fn password_options_exclude_each_other(#[case] flags: &[&str], #[case] parses: bool) {
+        let argv = ["volant"]
+            .into_iter()
+            .chain(flags.iter().copied())
+            .chain(["site.yml"]);
+        assert_eq!(PlaybookArgs::try_parse_from(argv).is_ok(), parses);
+        assert!(ssh_words("--ssh-common-args", Some("-o 'ProxyJump=a")).is_err());
+        assert_eq!(
+            ssh_words("--ssh-extra-args", Some("-o A=1 -v")).unwrap(),
+            ["-o", "A=1", "-v"]
         );
     }
 

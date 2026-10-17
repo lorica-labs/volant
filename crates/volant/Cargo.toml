@@ -36,13 +36,13 @@ saphyr-parser.workspace = true
 serde_json.workspace = true
 sha2.workspace = true
 shlex.workspace = true
+tempfile.workspace = true
 tokio.workspace = true
 volant-protocol.workspace = true
 
 [dev-dependencies]
 insta.workspace = true
 rstest.workspace = true
-tempfile.workspace = true
 
 [[bin]]
 name = "volant-playbook"

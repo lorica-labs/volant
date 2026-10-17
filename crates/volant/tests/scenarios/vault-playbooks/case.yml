@@ -4,3 +4,4 @@ runs:
   - args: [-i, inv, --vault-password-file, pw1, trust.yml]
   - args: [-i, inv, --vault-password-file, pw1, incl.yml]
 needs: ["ansible-core"]
+modes: [check, check-diff, diff]

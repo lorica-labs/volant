@@ -54,6 +54,9 @@ pub(super) struct Bridged {
     pending: Option<Pending>,
     /// The temporary directories made for this action and not yet removed.
     tmps: Vec<String>,
+    /// Holds the decrypted vaulted `src` for as long as the plugin may read it; the helper has no
+    /// secret of its own.
+    _vault_src: Option<tempfile::TempDir>,
     /// The item's result, held while the directories left behind are removed.
     ending: Option<TaskResult>,
     timeout: Option<u64>,
@@ -93,6 +96,14 @@ pub(super) fn start(
     // `command` must not carry a task's own request for one.
     let mut forwarded = ctx.args.clone();
     forwarded.remove("_volant_tty");
+    let vault_src = match decrypted_src(name, &ctx) {
+        Ok(Some((dir, path))) => {
+            forwarded.insert("src".into(), Value::String(path));
+            Some(dir)
+        }
+        Ok(None) => None,
+        Err(msg) => return super::copy::failing(msg),
+    };
     task.insert("args".into(), Value::Object(forwarded));
     if let Some(environment) = ctx.environment.filter(|e| !e.is_empty()) {
         task.insert("environment".into(), json!(environment));
@@ -157,6 +168,7 @@ pub(super) fn start(
         ready,
         pending: None,
         tmps: Vec::new(),
+        _vault_src: vault_src,
         ending: None,
         timeout,
         deadline,
@@ -168,6 +180,51 @@ pub(super) fn start(
                 .unwrap_or(5),
         ),
     })
+}
+
+/// A vaulted controller `src` of `copy` or `template`, decrypted with the run's secrets into a
+/// private directory under its own file name, and the path to hand the plugin. `copy` with
+/// `decrypt: false` keeps the ciphertext. Secrets never reach the helper.
+fn decrypted_src(
+    name: &str,
+    ctx: &Context<'_>,
+) -> Result<Option<(tempfile::TempDir, String)>, String> {
+    let args = ctx.args;
+    let Some(src) = args.get("src").and_then(Value::as_str) else {
+        return Ok(None);
+    };
+    let kept = args.get("decrypt").and_then(Value::as_bool) == Some(false)
+        || args.get("remote_src").and_then(Value::as_bool) == Some(true);
+    let folder = match name {
+        "copy" if !kept => "files",
+        "template" => "templates",
+        _ => return Ok(None),
+    };
+    let searched = super::files::search_paths(ctx.origin, ctx.playbook_dir, folder, src);
+    let Some(found) = searched.iter().find(|p| p.is_file()) else {
+        return Ok(None);
+    };
+    let unreadable =
+        |err: &dyn std::fmt::Display| format!("could not read src={}: {err}", found.display());
+    let bytes = std::fs::read(found).map_err(|e| unreadable(&e))?;
+    if !crate::vault::is_encrypted(&bytes) {
+        return Ok(None);
+    }
+    let plain =
+        crate::vault::decrypt(&bytes, &crate::vault::run_secrets()).map_err(|e| unreadable(&e))?;
+    let dir = tempfile::tempdir().map_err(|e| unreadable(&e))?;
+    let path = dir.path().join(found.file_name().unwrap_or_default());
+    write_private(&path, &plain).map_err(|e| unreadable(&e))?;
+    Ok(Some((dir, path.display().to_string())))
+}
+
+fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {
+    use std::io::Write;
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    options.open(path)?.write_all(bytes)
 }
 
 /// `raw`'s arguments for a command line.
@@ -594,6 +651,7 @@ mod tests {
             ready: Arc::new(Notify::new()),
             pending: None,
             tmps: Vec::new(),
+            _vault_src: None,
             ending: None,
             timeout: None,
             deadline: Instant::now() + Duration::from_secs(600),
@@ -639,6 +697,7 @@ mod tests {
             ready: Arc::new(Notify::new()),
             pending: None,
             tmps: Vec::new(),
+            _vault_src: None,
             ending: None,
             timeout: None,
             deadline: Instant::now() + Duration::from_secs(600),

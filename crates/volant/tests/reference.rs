@@ -349,8 +349,9 @@ fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
     let pid = regex::Regex::new(r#""child_pid": [0-9]+"#).expect("the pattern compiles");
     let stdout = pid.replace_all(&stdout, r#""child_pid": <pid>"#);
     // A controller temp file named in a diff header, drawn anew by every run: the recording
-    // already reads `<golden-ansible-tmp>` there.
-    let stdout = regex::Regex::new(r"\S*/\.ansible/tmp/ansible-local-\w+/tmp\w+")
+    // already reads `<golden-ansible-tmp>` there. Volant's decrypted vaulted source sits in
+    // a private directory of its own.
+    let stdout = regex::Regex::new(r"\S*/\.ansible/tmp/ansible-local-\w+/tmp\w+|\S*/\.tmp\w+/\S+")
         .expect("the pattern compiles")
         .replace_all(&stdout, "<golden-ansible-tmp>")
         .into_owned();

@@ -4,6 +4,7 @@
     out: /tmp/volant-shim-gaps
   tasks:
     - file: {path: "{{ out }}", state: absent}
+      diff: false
     - name: A directory
       copy: {src: tree, dest: "{{ out }}"}
     - name: Again
@@ -22,3 +23,4 @@
       gather_facts: {parallel: true}
     - debug: msg="{{ ansible_facts.system is defined }}"
     - file: {path: "{{ out }}", state: absent}
+      diff: false

@@ -819,6 +819,45 @@ pub(super) async fn drive_host(
                     break 'run;
                 }
             }
+            // `--step`: one answer for the whole batch, asked in front of the task. A task the
+            // operator declined is stepped over like one a mask left this host out of, and shows
+            // nothing, not even in the recap.
+            let mut declined = false;
+            if let Some(stepper) = plan.step.as_ref()
+                && matches!(step.kind, StepKind::Task | StepKind::Include(_))
+                && !masked_out
+                && !handlers_only
+            {
+                if !batch.is_empty() {
+                    break;
+                }
+                let label = {
+                    let live = driver.progress.borrow().clone();
+                    let shown = render_name(step, &name, &plan, &live, &templar, &store);
+                    match step.role.and_then(|i| c.roles.get(i)) {
+                        Some(role) => format!("{} : {shown}", role.name),
+                        None => shown,
+                    }
+                };
+                let Some(runs) = stepper
+                    .runs(
+                        pos,
+                        &format!("{}|{:?}", task.name, step.role),
+                        &label,
+                        &mut driver.stop,
+                    )
+                    .await
+                else {
+                    if !driver.stopped() {
+                        options
+                            .abort
+                            .raise_with(250, "EOF when reading a line".to_string());
+                    }
+                    break 'run;
+                };
+                declined = !runs;
+            }
+            let masked_out = masked_out || declined;
             // Who runs a `run_once` step: read, never decided here, because one value written
             // once is what makes every host agree on it. See `Progress::elected`. With `serial`
             // each batch elects its own, which falls out of the coordinator's `live_hosts` being
@@ -830,6 +869,7 @@ pub(super) async fn drive_host(
             // the two the mask holds both read the registered value back, and the third runs
             // only what follows.
             let follower = task.bypasses_host_loop()
+                && !declined
                 && !handlers_only
                 && runner.as_deref().is_some_and(|h| h != name);
             // Leaving a flush point's handlers behind: every index the flush was asked for goes,

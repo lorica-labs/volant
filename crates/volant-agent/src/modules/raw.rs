@@ -14,6 +14,13 @@ pub const MODULE: Module = Module {
 };
 
 fn run_raw(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() -> bool) -> Run {
+    // The reference's `raw` action skips in check mode without reaching the host.
+    if ctx.check_mode {
+        let mut skipped = Map::new();
+        skipped.insert("changed".into(), json!(false));
+        skipped.insert("skipped".into(), json!(true));
+        return Run::Done(TaskResult(skipped));
+    }
     let line = args
         .get("_raw_params")
         .and_then(Value::as_str)
@@ -73,6 +80,22 @@ mod tests {
 
     #[test]
     fn raw_failure_is_carried_by_rc_alone() {
+        let check = Context {
+            check_mode: true,
+            ..Context::default()
+        };
+        let args: Map<String, Value> = json!({"_raw_params": "exit 3"})
+            .as_object()
+            .unwrap()
+            .clone();
+        let Run::Done(r) = run_raw(&args, &check, &|| false) else {
+            panic!("cancelled")
+        };
+        assert_eq!(
+            Value::Object(r.0),
+            json!({"changed": false, "skipped": true}),
+            "check mode skips raw"
+        );
         let args: Map<String, Value> = json!({"_raw_params": "exit 3"})
             .as_object()
             .unwrap()

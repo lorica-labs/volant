@@ -17,12 +17,28 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
 
 ## Hosts and connections
 
-<Option name="-i, --inventory" arg="PATH" config="[defaults] inventory" env="ANSIBLE_INVENTORY">
+<Option name="-i, --inventory, --inventory-file" arg="PATH" config="[defaults] inventory" env="ANSIBLE_INVENTORY">
   The inventory file. Only INI inventories are read, see [Inventories](/hosts/inventories/). Without one, only the implicit `localhost` exists.
 </Option>
 
 <Option name="-l, --limit" arg="SUBSET">
   Run only on hosts matching this [pattern](/hosts/inventories/#host-patterns). A limit that matches no host warns and narrows the run to what it did match.
+</Option>
+
+<Option name="--start-at-task" arg="NAME">
+  Start at the first task named `NAME`; `*` and `?` match any text. The tasks in front of it are left out, `Gathering Facts` apart, and so are the plays in front of the one that holds it. Only tasks written in the play are searched, as in `ansible-playbook`: a task an `include_tasks` or `include_role` reads while the run goes is not found. A name nothing matches prints the plays with an empty recap, then an error, and exits 0.
+</Option>
+
+<Option name="--step">
+  Ask before each task: `y` runs it, `n` or anything else skips it, `c` runs it and every task after it without asking. It needs a terminal; without one the run stops with exit code 250 before it touches a host.
+</Option>
+
+<Option name="--flush-cache">
+  Accepted and ignored: there is no fact cache plugin yet, so there is nothing to clear.
+</Option>
+
+<Option name="--version">
+  Print the Volant version and the ansible-core release it matches, then stop.
 </Option>
 
 <Option name="-u, --user" arg="REMOTE_USER" config="[defaults] remote_user" env="ANSIBLE_REMOTE_USER">
@@ -33,7 +49,7 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
   The connection plugin for hosts that name none: `ssh` or `local`. A host's `ansible_connection` and a play, block or task `connection` keyword both win over it. Any other name fails the task with `the connection plugin '<name>' was not found`.
 </Option>
 
-<Option name="--private-key" arg="FILE" config="[defaults] private_key_file" env="ANSIBLE_PRIVATE_KEY_FILE">
+<Option name="--private-key, --key-file" arg="FILE" config="[defaults] private_key_file" env="ANSIBLE_PRIVATE_KEY_FILE">
   The private key `ssh` authenticates with, passed as `ssh -i`.
 </Option>
 
@@ -117,6 +133,14 @@ These options read the playbooks and stop. They never connect to a host and neve
   Run notified handlers even on hosts that failed. A `force_handlers` keyword on the play takes priority. See [Handlers](/playbooks/handlers/).
 </Option>
 
+<Option name="-C, --check" default="false">
+  Report what each task would change without changing it. A task's own `check_mode` keyword wins over this option, so a task with `check_mode: false` still runs for real. `copy`, `template`, `fetch`, `unarchive` and `reboot` fail under check mode for now instead of running.
+</Option>
+
+<Option name="-D, --diff" default="false">
+  Ask modules for the changes they make to files. A task's own `diff` keyword wins over this option. The differences are not printed yet.
+</Option>
+
 <Option name="-v" id="verbose">
   Show module results for successful tasks too. Repeatable, like Ansible's `-vvv`.
 </Option>
@@ -167,6 +191,4 @@ These `ansible-playbook` options are not accepted yet:
 
 | Option | What to do meanwhile |
 |---|---|
-| `-C, --check`, `--diff` | Run against a test host. |
 | `-k, --ask-pass` | Use a key file or an ssh-agent. |
-| `--start-at-task`, `--step` | Use tags to select part of a play. |

@@ -70,6 +70,9 @@ pub struct RunOptions {
     pub reboots: Arc<Reboots>,
     /// Where the run's timings go, for `--profile` and `VOLANT_PROFILE_JSON`.
     pub profile: Arc<crate::profile::Profile>,
+    /// `--step`: present when each task is asked about, and set once the operator answers `c`,
+    /// which ends the questions for the rest of the run.
+    pub step: Option<Arc<std::sync::atomic::AtomicBool>>,
 }
 
 /// How many times a task of this run has sent each host away, by the name its links are filed

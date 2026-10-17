@@ -157,6 +157,7 @@ pub(crate) fn execute(
         }
     }
     let guard_base = chdir.map(Path::new);
+    let shoulda = if ctx.check_mode { "Would" } else { "Did" };
     // An empty value applies no guard at all, which is what the reference's own `if creates:`
     // does with it: a template that rendered to nothing must not decide anything.
     let creates = path_arg("creates");
@@ -166,7 +167,7 @@ pub(crate) fn execute(
     {
         return Run::Done(not_run(
             display,
-            format!("Did not run command since '{path}' exists"),
+            format!("{shoulda} not run command since '{path}' exists"),
             format!("skipped, since {path} exists"),
         ));
     }
@@ -177,9 +178,24 @@ pub(crate) fn execute(
     {
         return Run::Done(not_run(
             display,
-            format!("Did not run command since '{path}' does not exist"),
+            format!("{shoulda} not run command since '{path}' does not exist"),
             format!("skipped, since {path} does not exist"),
         ));
+    }
+    if ctx.check_mode {
+        // The reference's check mode: changed when a guard was given and let it through,
+        // skipped when there was no guard to judge by. `creates: ""` counts as given there too.
+        let mut result = not_run(
+            display,
+            "Command would have run if not in check mode".into(),
+            String::new(),
+        );
+        if creates.is_none() && removes.is_none() {
+            result.0.insert("skipped".into(), json!(true));
+        } else {
+            result.0.insert("changed".into(), json!(true));
+        }
+        return Run::Done(result);
     }
 
     // The controller asks for a terminal when ssh would have given one: the text it carries is the
@@ -1054,6 +1070,30 @@ mod tests {
                 })
             );
         }
+    }
+
+    /// Check mode runs nothing, and a guard says "Would" where it said "Did", as the reference does.
+    #[rstest::rstest]
+    #[case::no_guard(json!({"_raw_params": "touch /never"}), "Command would have run if not in check mode", false, true)]
+    #[case::creates_absent(json!({"_raw_params": "touch /never", "creates": "/definitely/not/here"}), "Command would have run if not in check mode", true, false)]
+    #[case::removes_present(json!({"_raw_params": "touch /never", "removes": "/"}), "Command would have run if not in check mode", true, false)]
+    #[case::creates_present(json!({"_raw_params": "touch /never", "creates": "/"}), "Would not run command since '/' exists", false, false)]
+    #[case::removes_absent(json!({"_raw_params": "touch /never", "removes": "/definitely/not/here"}), "Would not run command since '/definitely/not/here' does not exist", false, false)]
+    fn check_mode_runs_no_command(
+        #[case] params: Value,
+        #[case] msg: &str,
+        #[case] changed: bool,
+        #[case] skipped: bool,
+    ) {
+        let ctx = Context {
+            check_mode: true,
+            ..Context::default()
+        };
+        let r = done(execute(&args(params), false, &ctx, &|| false));
+        assert_eq!(r.0["msg"], msg);
+        assert_eq!(r.0["changed"], changed);
+        assert_eq!(r.0.get("skipped").is_some(), skipped, "{:?}", r.0);
+        assert_eq!(r.0["start"], Value::Null, "nothing ran");
     }
 
     /// 4 MiB of standard input does not deadlock the write, and `chdir` sets the working directory.

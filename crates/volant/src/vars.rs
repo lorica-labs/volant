@@ -174,6 +174,10 @@ pub struct VarStore {
     /// What `ansible_run_tags` and `ansible_skip_tags` report: the run's own tag selection.
     run_tags: Vec<String>,
     skip_tags: Vec<String>,
+    /// What `ansible_check_mode` and `ansible_diff_mode` report: `--check` and `--diff`, never a
+    /// play's or a task's own keyword, measured.
+    check_mode: bool,
+    diff_mode: bool,
     /// Every inventory host's view, as `hostvars` shows it. Built on demand; a write to one host's
     /// facts marks that host in `stale` and only its entry is rebuilt, while a rebase drops the
     /// whole map.
@@ -521,6 +525,8 @@ impl VarStore {
             forks: crate::config::DEFAULT_FORKS,
             run_tags: vec!["all".to_string()],
             skip_tags: Vec::new(),
+            check_mode: false,
+            diff_mode: false,
             hostvars: None,
             stale: BTreeSet::new(),
             host_facts: BTreeMap::new(),
@@ -648,6 +654,13 @@ impl VarStore {
     /// What `ansible_forks` reports for this run.
     pub fn set_forks(&mut self, forks: usize) {
         self.forks = forks;
+        self.forget_hostvars();
+    }
+
+    /// What `ansible_check_mode` and `ansible_diff_mode` report for this run.
+    pub fn set_modes(&mut self, check_mode: bool, diff_mode: bool) {
+        self.check_mode = check_mode;
+        self.diff_mode = diff_mode;
         self.forget_hostvars();
     }
 
@@ -1192,8 +1205,11 @@ impl VarStore {
             );
         }
         vars.insert("omit".to_string(), Value::String(omit_token().to_string()));
-        vars.insert("ansible_check_mode".to_string(), Value::Bool(false));
-        vars.insert("ansible_diff_mode".to_string(), Value::Bool(false));
+        vars.insert(
+            "ansible_check_mode".to_string(),
+            Value::Bool(self.check_mode),
+        );
+        vars.insert("ansible_diff_mode".to_string(), Value::Bool(self.diff_mode));
         vars.insert("ansible_forks".to_string(), Value::from(self.forks));
         vars.insert(
             "ansible_run_tags".to_string(),

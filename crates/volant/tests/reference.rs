@@ -524,6 +524,131 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
     }
 }
 
+/// Every case of `inventories/cases.yml` read as `ansible-inventory --list` read it: the exit
+/// code, the warnings and errors, the dump, and the host order `--list-hosts all` printed.
+#[test]
+fn inventory_sources_match_the_reference() {
+    use volant::inventory::{Note, PluginConfig, Source, load_sources};
+    fn copy_tree(from: &Path, to: &Path) {
+        std::fs::create_dir_all(to).unwrap();
+        for entry in std::fs::read_dir(from).unwrap() {
+            let entry = entry.unwrap();
+            let target = to.join(entry.file_name());
+            if entry.file_type().unwrap().is_dir() {
+                copy_tree(&entry.path(), &target);
+            } else {
+                std::fs::copy(entry.path(), target).unwrap();
+            }
+        }
+    }
+    let expected: Value =
+        serde_json::from_str(include_str!("golden/expected_inventory.json")).unwrap();
+    let tmp = tempfile::tempdir().unwrap();
+    let root = tmp.path().canonicalize().unwrap().join("inventories");
+    copy_tree(
+        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/inventories"),
+        &root,
+    );
+    std::fs::create_dir(root.join("empty")).unwrap();
+    let shown_root = root.to_string_lossy().into_owned();
+    let mut failures = Vec::new();
+    let cases = expected["sources"].as_object().unwrap();
+    assert!(!cases.is_empty(), "no recorded inventory source case");
+    for (name, case) in cases {
+        let sources: Vec<Source> = case["sources"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|s| s.as_str().unwrap())
+            .map(|s| {
+                if s.contains(',') {
+                    Source::new(s)
+                } else {
+                    Source::new(&root.join(s).to_string_lossy())
+                }
+            })
+            .collect();
+        let env = &case["env"];
+        let config = PluginConfig {
+            unparsed_is_failed: env.get("ANSIBLE_INVENTORY_UNPARSED_FAILED").is_some(),
+            any_unparsed_is_failed: env
+                .get("ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED")
+                .is_some(),
+            ..PluginConfig::default()
+        };
+        let loaded = load_sources(&sources, &config);
+        let mut stderr = String::new();
+        let mut seen = std::collections::HashSet::new();
+        for note in &loaded.notes {
+            if let Note::Warning(text) = note
+                && seen.insert(text.clone())
+            {
+                stderr.push_str(
+                    &[
+                        "[WARNING]: ",
+                        text,
+                        "
+",
+                    ]
+                    .concat(),
+                );
+            }
+        }
+        if let Some(fatal) = &loaded.error {
+            stderr.push_str(
+                &[
+                    "[ERROR]: ",
+                    fatal.message.as_str(),
+                    "
+",
+                ]
+                .concat(),
+            );
+        }
+        let stderr = stderr.replace(&shown_root, "<golden-tmp>");
+        let rc = loaded.error.as_ref().map_or(0, |f| f.code);
+        if case["rc"] != rc {
+            failures.push(format!("{name}: exit {}, ours {rc}", case["rc"]));
+        }
+        if stderr != case["stderr"].as_str().unwrap() {
+            failures.push(format!(
+                "{name}: stderr
+--- reference
+{}--- ours
+{stderr}",
+                case["stderr"].as_str().unwrap()
+            ));
+        }
+        if !case["list"].is_null() && loaded.inventory.dump() != case["list"] {
+            failures.push(format!(
+                "{name}: --list
+reference {}
+ours      {}",
+                case["list"],
+                loaded.inventory.dump()
+            ));
+        }
+        let hosts: Vec<String> = loaded
+            .inventory
+            .resolve("all")
+            .hosts
+            .into_iter()
+            .map(|h| h.name)
+            .collect();
+        if rc == 0 && Value::from(hosts.clone()) != case["hosts"] {
+            failures.push(format!("{name}: hosts {}, ours {hosts:?}", case["hosts"]));
+        }
+    }
+    assert!(
+        failures.is_empty(),
+        "{}",
+        failures.join(
+            "
+"
+        )
+    );
+}
+
 /// `inventory.ini`'s hosts, variables and groups, and every pattern of `patterns.txt`, resolved
 /// as `ansible-inventory` and `ansible --list-hosts` did.
 #[test]

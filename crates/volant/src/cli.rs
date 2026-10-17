@@ -13,7 +13,7 @@ use crate::bridge::Bridge;
 use crate::compile::{self, Compiled, TagSelection};
 use crate::config::Config;
 use crate::executor::{self, Abort, RunOptions, RunState};
-use crate::inventory::{Host, Inventory};
+use crate::inventory::{Host, Inventory, Note, Source, load_sources};
 use crate::listing::{self, Listing};
 use crate::profile::{Phase, Profile, micros};
 use crate::python::{Facts, Natives};
@@ -31,14 +31,15 @@ pub struct PlaybookArgs {
     /// Playbook files, run in order.
     #[arg(required_unless_present = "version", value_name = "PLAYBOOK")]
     pub playbooks: Vec<PathBuf>,
-    /// Inventory file. Without it only the implicit localhost exists.
+    /// Inventory source: a file, a directory, or a comma-separated host list. Repeatable; the
+    /// sources are merged in order.
     #[arg(
         short = 'i',
         long = "inventory",
         alias = "inventory-file",
-        value_name = "PATH"
+        value_name = "SOURCE"
     )]
-    pub inventory: Option<PathBuf>,
+    pub inventory: Vec<String>,
     /// Extra variables: `key=value` pairs, inline JSON or YAML, or `@file`. Repeatable.
     #[arg(short = 'e', long = "extra-vars", value_name = "VARS")]
     pub extra_vars: Vec<String>,
@@ -222,44 +223,20 @@ fn announce(out: &mut Renderer) {
     out.verbose(4, "setting up inventory plugins");
 }
 
-/// The plugins the reference tries on an inventory file before the `ini` one takes it, at
-/// `-vvv`, and the two callbacks it sets aside at `-vv`. A `.yml` or `.json` file is the
-/// `yaml` plugin's, which this release does not read.
-fn announce_inventory(out: &mut Renderer, path: &Path) {
-    // A `.yml` or `.json` file is the `yaml` plugin's, which this release does not read: no
-    // line is better than a wrong plugin name.
-    let yaml = path
-        .extension()
-        .is_some_and(|e| ["yaml", "yml", "json"].iter().any(|y| e == *y));
-    if !path.is_file() || yaml || !out.verbose_at(3) {
-        return;
+/// The sources a run reads: every `-i`, else the configuration's, else the reference's
+/// `/etc/ansible/hosts`.
+fn inventory_sources(args: &PlaybookArgs, config: &Config) -> Vec<Source> {
+    if !args.inventory.is_empty() {
+        return args.inventory.iter().map(|s| Source::new(s)).collect();
     }
-    let shown = std::path::absolute(path)
-        .unwrap_or_else(|_| path.to_path_buf())
-        .display()
-        .to_string();
-    let extension = path.extension().map(|e| e.to_string_lossy().into_owned());
-    let others = extension
-        .as_deref()
-        .is_some_and(|e| !["yaml", "yml", "json"].contains(&e));
-    let mut tried = vec!["host_list", "script"];
-    if others {
-        tried.extend(["auto", "yaml"]);
-    } else {
-        tried.push("auto");
+    if !config.inventory.is_empty() {
+        return config
+            .inventory
+            .iter()
+            .map(|p| Source::new(&p.to_string_lossy()))
+            .collect();
     }
-    for plugin in tried {
-        out.verbose(
-            3,
-            &format!(
-                "{plugin} declined parsing {shown} as it did not pass its verify_file() method"
-            ),
-        );
-    }
-    out.verbose(
-        3,
-        &format!("Parsed {shown} inventory source with ini plugin"),
-    );
+    vec![Source::default_source()]
 }
 
 /// The options `-vvvv` lists under each playbook's banner. The reference lists every option it
@@ -281,12 +258,15 @@ fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -> Vec<Strin
         .iter()
         .flat_map(|t| crate::config::tag_list(t))
         .collect();
-    let inventory = args
-        .inventory
-        .clone()
-        .or_else(|| config.inventory.clone())
-        .unwrap_or_else(|| PathBuf::from("/etc/ansible/hosts"));
-    let inventory = std::path::absolute(&inventory).unwrap_or(inventory);
+    let inventory: Vec<String> = inventory_sources(args, config)
+        .iter()
+        .map(|s| format!("'{}'", s.text()))
+        .collect();
+    // A Python tuple's repr: a lone item keeps its trailing comma.
+    let inventory = match inventory.as_slice() {
+        [one] => format!("({one},)"),
+        all => format!("({})", all.join(", ")),
+    };
     let playbooks: Vec<String> = args
         .playbooks
         .iter()
@@ -313,7 +293,7 @@ fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -> Vec<Strin
                 tags
             })
         ),
-        format!("inventory: ('{}',)", inventory.display()),
+        format!("inventory: {inventory}"),
         format!("forks: {forks}"),
     ]
 }
@@ -412,14 +392,22 @@ async fn run_all(
         eprintln!("ERROR! The number of processes (--forks) must be >= 1");
         return Ok(2);
     }
-    let inventory_path = args.inventory.clone().or_else(|| config.inventory.clone());
-    let mut inventory = match &inventory_path {
-        Some(path) => Inventory::load(path)?,
-        None => Inventory::empty(),
-    };
-    if let Some(path) = &inventory_path {
-        announce_inventory(out, path);
+    let sources = inventory_sources(args, &config);
+    let loaded = load_sources(&sources, &config.inventory_plugins);
+    for note in &loaded.notes {
+        match note {
+            Note::Verbose(level, text) => out.verbose(*level, text),
+            Note::Warning(text) => out.warning(text, false),
+        }
     }
+    if let Some(fatal) = loaded.error {
+        if fatal.code == 4 {
+            return Err(Refusal::at(4, fatal.message));
+        }
+        eprintln!("[ERROR]: {}", fatal.message);
+        return Ok(fatal.code);
+    }
+    let mut inventory = loaded.inventory;
     for callback in ["minimal", "oneline"] {
         out.verbose(
             2,
@@ -766,7 +754,7 @@ async fn run_all(
     // Kept for the local-agent check below, which runs before any host has an effective view
     // and would otherwise read `ansible_connection` from the inventory alone.
     let extra_for_check = extra.clone();
-    let mut store = VarStore::new(&inventory, inventory_path.as_deref(), &playbook_dir, extra)?;
+    let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra)?;
     store.set_forks(forks);
     // Where `setup` gets its facts, decided once for the whole run from everything its plays can
     // read. The run's native policy goes on whatever union came back, built or kept from an

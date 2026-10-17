@@ -192,5 +192,578 @@
       "hosts": [],
       "warning": false
     }
+  },
+  "sources": {
+    "any_unparsed_failed": {
+      "env": {
+        "ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED": "1"
+      },
+      "hosts": [],
+      "list": null,
+      "rc": 1,
+      "sources": [
+        "bad.ini",
+        "one.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[ERROR]: Completely failed to parse inventory source <golden-tmp>/bad.ini\n"
+    },
+    "bad": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "bad.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "bad_then_good": {
+      "env": {},
+      "hosts": [
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "v": "one_h1",
+              "wv": "one"
+            },
+            "h2": {
+              "wv": "one"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "shared"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h3",
+            "h1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h1",
+            "h2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "bad.ini",
+        "one.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n"
+    },
+    "colon": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "colon.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/colon.ini\n\n[WARNING]: Unable to parse <golden-tmp>/colon.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "directory": {
+      "env": {},
+      "hosts": [
+        "d1",
+        "common",
+        "d2",
+        "s1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "common": {
+              "x": 2,
+              "y": 2
+            },
+            "d1": {
+              "x": 1
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "dbg",
+            "subg"
+          ]
+        },
+        "dbg": {
+          "hosts": [
+            "d2"
+          ]
+        },
+        "subg": {
+          "hosts": [
+            "s1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "d1",
+            "common"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "dir"
+      ],
+      "stderr": ""
+    },
+    "empty_dir": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "empty"
+      ],
+      "stderr": "[WARNING]: Unable to parse <golden-tmp>/empty as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "host_list": {
+      "env": {},
+      "hosts": [
+        "a",
+        "b",
+        "::1",
+        "b:x"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "::1": {
+              "ansible_port": 22
+            },
+            "a": {
+              "ansible_port": 2222
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "a",
+            "b",
+            "::1",
+            "b:x"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "a:2222,,b,[::1]:22,b:x,"
+      ],
+      "stderr": ""
+    },
+    "host_list_then_file": {
+      "env": {},
+      "hosts": [
+        "h9",
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "v": "one_h1",
+              "wv": "one"
+            },
+            "h2": {
+              "wv": "one"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "shared"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h3",
+            "h1"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "h9"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h1",
+            "h2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "h1,h9,",
+        "one.ini"
+      ],
+      "stderr": ""
+    },
+    "missing": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "missing.ini"
+      ],
+      "stderr": "[WARNING]: Unable to parse <golden-tmp>/missing.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "partial": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "partial.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "ranges": {
+      "env": {},
+      "hosts": [
+        "web01",
+        "web02",
+        "web03",
+        "dba",
+        "dbb",
+        "dbc",
+        "n1",
+        "n4",
+        "n7",
+        "n10",
+        "::1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "::1": {
+              "ansible_port": 22,
+              "role": "loopback",
+              "tier": "front"
+            },
+            "dba": {
+              "ansible_port": 2222,
+              "tier": "front"
+            },
+            "dbb": {
+              "ansible_port": 2222,
+              "tier": "front"
+            },
+            "dbc": {
+              "ansible_port": 2222,
+              "tier": "front"
+            },
+            "n1": {
+              "tier": "front"
+            },
+            "n10": {
+              "tier": "front"
+            },
+            "n4": {
+              "tier": "front"
+            },
+            "n7": {
+              "tier": "front"
+            },
+            "web01": {
+              "ansible_host": "10.0.0.9",
+              "tier": "front"
+            },
+            "web02": {
+              "ansible_host": "10.0.0.9",
+              "tier": "front"
+            },
+            "web03": {
+              "ansible_host": "10.0.0.9",
+              "tier": "front"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "web01",
+            "web02",
+            "web03",
+            "dba",
+            "dbb",
+            "dbc",
+            "n1",
+            "n4",
+            "n7",
+            "n10",
+            "::1"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "ranges.ini"
+      ],
+      "stderr": ""
+    },
+    "two_sources": {
+      "env": {},
+      "hosts": [
+        "h1",
+        "h2",
+        "h4",
+        "h3",
+        "h5"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "only_two": 1,
+              "v": "two_h1",
+              "wv": "two"
+            },
+            "h2": {
+              "wv": "two"
+            },
+            "h4": {
+              "wv": "two"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "shared"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h3",
+            "h1",
+            "h5"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h1",
+            "h2",
+            "h4"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "one.ini",
+        "two.ini"
+      ],
+      "stderr": ""
+    },
+    "two_sources_reversed": {
+      "env": {},
+      "hosts": [
+        "h5",
+        "h1",
+        "h3",
+        "h4",
+        "h2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "only_two": 1,
+              "v": "one_h1",
+              "wv": "one"
+            },
+            "h2": {
+              "wv": "one"
+            },
+            "h4": {
+              "wv": "one"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "shared",
+            "web"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h5",
+            "h1",
+            "h3"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h4",
+            "h1",
+            "h2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "two.ini",
+        "one.ini"
+      ],
+      "stderr": ""
+    },
+    "unparsed_failed": {
+      "env": {
+        "ANSIBLE_INVENTORY_UNPARSED_FAILED": "1"
+      },
+      "hosts": [],
+      "list": null,
+      "rc": 1,
+      "sources": [
+        "bad.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n[ERROR]: No inventory was parsed, please check your configuration and options.\n"
+    },
+    "unparsed_failed_one_good": {
+      "env": {
+        "ANSIBLE_INVENTORY_UNPARSED_FAILED": "1"
+      },
+      "hosts": [
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "v": "one_h1",
+              "wv": "one"
+            },
+            "h2": {
+              "wv": "one"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "shared"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h3",
+            "h1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h1",
+            "h2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "bad.ini",
+        "one.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n"
+    }
   }
 }

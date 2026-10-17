@@ -17,7 +17,10 @@ pub const DEFAULT_BECOME_METHOD: &str = "sudo";
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
-    pub inventory: Option<PathBuf>,
+    /// `[defaults] inventory` or `ANSIBLE_INVENTORY`: every source, in order.
+    pub inventory: Vec<PathBuf>,
+    /// The `[inventory]` settings the plugin chain reads.
+    pub inventory_plugins: crate::inventory::PluginConfig,
     pub timeout: Duration,
     pub remote_user: Option<String>,
     pub private_key_file: Option<PathBuf>,
@@ -84,7 +87,8 @@ pub struct Config {
 impl Default for Config {
     fn default() -> Self {
         Self {
-            inventory: None,
+            inventory: Vec::new(),
+            inventory_plugins: crate::inventory::PluginConfig::default(),
             timeout: DEFAULT_CONNECT_TIMEOUT,
             remote_user: None,
             private_key_file: None,
@@ -203,7 +207,36 @@ impl Config {
             None => Config::default(),
         };
         if let Ok(inv) = std::env::var("ANSIBLE_INVENTORY") {
-            config.inventory = Some(PathBuf::from(inv));
+            config.inventory = tag_list(&inv).iter().map(PathBuf::from).collect();
+        }
+        let plugins = &mut config.inventory_plugins;
+        for (name, list) in [
+            ("ANSIBLE_INVENTORY_ENABLED", &mut plugins.enabled),
+            ("ANSIBLE_INVENTORY_IGNORE", &mut plugins.ignore_extensions),
+            (
+                "ANSIBLE_INVENTORY_IGNORE_REGEX",
+                &mut plugins.ignore_patterns,
+            ),
+        ] {
+            if let Ok(value) = std::env::var(name) {
+                *list = tag_list(&value);
+            }
+        }
+        for (env, setting, flag) in [
+            (
+                "ANSIBLE_INVENTORY_UNPARSED_FAILED",
+                "INVENTORY_UNPARSED_IS_FAILED",
+                &mut plugins.unparsed_is_failed,
+            ),
+            (
+                "ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED",
+                "INVENTORY_ANY_UNPARSED_IS_FAILED",
+                &mut plugins.any_unparsed_is_failed,
+            ),
+        ] {
+            if let Ok(value) = std::env::var(env) {
+                *flag = boolean(setting, &format!("env: {env}"), &value)?;
+            }
         }
         if let Ok(t) = std::env::var("ANSIBLE_TIMEOUT") {
             let origin = "env: ANSIBLE_TIMEOUT";
@@ -504,15 +537,34 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
             }
             continue;
         }
+        let plugins = &mut config.inventory_plugins;
+        match (section.as_str(), key.trim()) {
+            ("inventory", "enable_plugins") => plugins.enabled = tag_list(value),
+            ("inventory", "ignore_extensions") | ("defaults", "inventory_ignore_extensions") => {
+                plugins.ignore_extensions = tag_list(value);
+            }
+            ("inventory", "ignore_patterns") | ("defaults", "inventory_ignore_patterns") => {
+                plugins.ignore_patterns = tag_list(value);
+            }
+            ("inventory", "unparsed_is_failed") => {
+                plugins.unparsed_is_failed =
+                    boolean("INVENTORY_UNPARSED_IS_FAILED", origin, value.trim())?;
+            }
+            ("inventory", "any_unparsed_is_failed") => {
+                plugins.any_unparsed_is_failed =
+                    boolean("INVENTORY_ANY_UNPARSED_IS_FAILED", origin, value.trim())?;
+            }
+            _ => {}
+        }
         if section != "defaults" {
             continue;
         }
         match key.trim() {
             "inventory" => {
-                let first = value.split(',').next().unwrap_or("").trim();
-                if !first.is_empty() {
-                    config.inventory = Some(base.join(first));
-                }
+                config.inventory = tag_list(value)
+                    .iter()
+                    .map(|p| expand_home(p, base))
+                    .collect();
             }
             "timeout" => {
                 config.timeout = Duration::from_secs(timeout_secs(
@@ -763,7 +815,13 @@ vault_password_file = ~/.vault_pass
             "[defaults]\ninventory = hosts.ini, other\ntimeout = 3\n[ssh_connection]\ntimeout = 99\n",
             "/etc/x",
         );
-        assert_eq!(c.inventory, Some(PathBuf::from("/etc/x/hosts.ini")));
+        assert_eq!(
+            c.inventory,
+            [
+                PathBuf::from("/etc/x/hosts.ini"),
+                PathBuf::from("/etc/x/other")
+            ]
+        );
         assert_eq!(c.timeout, Duration::from_secs(3));
     }
 
@@ -955,5 +1013,22 @@ vault_password_file = ~/.vault_pass
     fn missing_values_keep_defaults() {
         assert_eq!(cfg("[defaults]\n", "."), Config::default());
         assert_eq!(cfg("", "."), Config::default());
+    }
+
+    #[test]
+    fn the_inventory_section_feeds_the_plugin_chain() {
+        let c = cfg(
+            "[inventory]\nenable_plugins = ini, host_list\nignore_extensions = .ini\n\
+             ignore_patterns = ^sub, 30\nunparsed_is_failed = yes\nany_unparsed_is_failed = 1\n",
+            ".",
+        );
+        let p = &c.inventory_plugins;
+        assert_eq!(p.enabled, ["ini", "host_list"]);
+        assert_eq!(p.ignore_extensions, [".ini"]);
+        assert_eq!(p.ignore_patterns, ["^sub", "30"]);
+        assert!(p.unparsed_is_failed && p.any_unparsed_is_failed);
+        let base = std::env::temp_dir();
+        let bad = parse("[inventory]\nunparsed_is_failed = maybe\n", &base, "x.cfg");
+        assert!(bad.is_err(), "a bad boolean is refused");
     }
 }

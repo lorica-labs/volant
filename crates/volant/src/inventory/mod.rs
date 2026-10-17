@@ -1,13 +1,82 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Static INI inventories, the way `ansible-inventory` reads them.
+//! Inventories, read from every source the way ansible-core 2.19.12's inventory manager reads
+//! them: each source offered to the enabled plugins in turn, directories walked, several
+//! sources merged into one inventory.
+
+mod host_list;
+mod ini;
+pub mod ranges;
+mod sources;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
 use std::fmt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use regex::Regex;
 use serde_json::Value;
+
+pub use sources::{
+    InventoryPlugin, Loaded, Note, ParseCx, PluginConfig, PluginError, Source, load_sources,
+};
+
+/// Every inventory plugin this release knows, the ones `enable_plugins` picks from. A plugin it
+/// does not read yet takes what the reference's would and refuses it by name.
+const PLUGINS: &[&dyn InventoryPlugin] = &[
+    &host_list::HostList,
+    &sources::Pending {
+        name: "advanced_host_list",
+        verify: |s| s.text().contains(',') && !s.path().exists(),
+    },
+    &sources::Pending {
+        name: "script",
+        verify: sources::executable,
+    },
+    &sources::Pending {
+        name: "auto",
+        verify: |s| sources::file_with_extension(s, &[Some("yml"), Some("yaml")]),
+    },
+    &sources::Pending {
+        name: "yaml",
+        verify: |s| {
+            sources::file_with_extension(s, &[None, Some("yaml"), Some("yml"), Some("json")])
+        },
+    },
+    &ini::Ini,
+    &sources::Pending {
+        name: "toml",
+        verify: |s| sources::file_with_extension(s, &[Some("toml")]),
+    },
+    &sources::Pending {
+        name: "constructed",
+        verify: |s| {
+            sources::file_with_extension(
+                s,
+                &[
+                    None,
+                    Some("config"),
+                    Some("yaml"),
+                    Some("yml"),
+                    Some("json"),
+                ],
+            )
+        },
+    },
+    &sources::Pending {
+        name: "generator",
+        verify: |s| {
+            sources::file_with_extension(
+                s,
+                &[
+                    None,
+                    Some("config"),
+                    Some("yaml"),
+                    Some("yml"),
+                    Some("json"),
+                ],
+            )
+        },
+    },
+];
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Host {
@@ -27,6 +96,8 @@ struct Group {
 pub struct Inventory {
     hosts: Vec<Host>,
     groups: Vec<Group>,
+    /// The file each host was first read from, for its `inventory_file` and `inventory_dir`.
+    origins: HashMap<String, PathBuf>,
 }
 
 #[derive(Debug, Default)]
@@ -50,21 +121,121 @@ impl fmt::Display for InventoryError {
 
 impl std::error::Error for InventoryError {}
 
-enum Section {
-    Hosts(String),
-    Children(String),
-    Vars(String),
-}
-
 impl Inventory {
     pub fn empty() -> Self {
         Self::default()
     }
 
+    /// One source read through the default plugin chain, or the reason it could not be.
     pub fn load(path: &Path) -> anyhow::Result<Self> {
-        let text = std::fs::read_to_string(path)
-            .with_context(|| format!("reading inventory {}", path.display()))?;
-        Self::parse_ini(&text).with_context(|| format!("parsing inventory {}", path.display()))
+        let loaded = load_sources(
+            &[Source::new(&path.to_string_lossy())],
+            &PluginConfig::default(),
+        );
+        if let Some(fatal) = loaded.error {
+            anyhow::bail!(fatal.message);
+        }
+        if !loaded.parsed {
+            let reasons: Vec<String> = loaded
+                .notes
+                .into_iter()
+                .filter_map(|n| match n {
+                    Note::Warning(text) => Some(text),
+                    Note::Verbose(..) => None,
+                })
+                .collect();
+            anyhow::bail!(reasons.join(
+                "
+"
+            ));
+        }
+        Ok(loaded.inventory)
+    }
+
+    /// The file `host` was first read from, when a file source added it.
+    pub fn source_of(&self, host: &str) -> Option<&Path> {
+        self.origins.get(host).map(PathBuf::as_path)
+    }
+
+    fn has_host(&self, name: &str) -> bool {
+        self.hosts.iter().any(|h| h.name == name)
+    }
+
+    /// A host a source names, created the way the reference's `InventoryData.add_host` creates
+    /// one: only when it is new, with the port its pattern gave and the file it came from.
+    fn add_source_host(&mut self, name: &str, port: Option<i64>, file: Option<&Path>) {
+        if self.has_host(name) {
+            return;
+        }
+        let mut vars = BTreeMap::new();
+        if let Some(port) = port.filter(|p| *p != 0) {
+            vars.insert("ansible_port".to_string(), Value::from(port));
+        }
+        self.add_host(name, vars);
+        if let Some(file) = file {
+            self.origins.insert(name.to_string(), file.to_path_buf());
+        }
+    }
+
+    /// The reference's `reconcile_inventory` for `ungrouped`, once every source is read: a host
+    /// some other group holds leaves it, a host no group holds joins it.
+    fn reconcile(&mut self) {
+        let names: Vec<String> = self.hosts.iter().map(|h| h.name.clone()).collect();
+        for name in names {
+            let elsewhere = self
+                .groups
+                .iter()
+                .any(|g| g.name != "all" && g.name != "ungrouped" && g.hosts.contains(&name));
+            if elsewhere {
+                if let Some(ungrouped) = self.groups.iter_mut().find(|g| g.name == "ungrouped") {
+                    ungrouped.hosts.retain(|h| *h != name);
+                }
+            } else {
+                self.add_member(&name, "ungrouped");
+            }
+        }
+    }
+
+    /// What `ansible-inventory --list` prints: every host's variables with its groups' folded
+    /// in, `all`'s top groups, and each group's own hosts and children. An empty group has no
+    /// entry of its own.
+    pub fn dump(&self) -> Value {
+        let mut out = serde_json::Map::new();
+        let hostvars: serde_json::Map<String, Value> = self
+            .hosts
+            .iter()
+            .map(|h| (h.name.clone(), self.host_with_vars(&h.name).vars))
+            .filter(|(_, vars)| !vars.is_empty())
+            .map(|(name, vars)| (name, Value::Object(vars.into_iter().collect())))
+            .collect();
+        out.insert("_meta".into(), serde_json::json!({ "hostvars": hostvars }));
+        let nested: HashSet<&str> = self
+            .groups
+            .iter()
+            .filter(|g| g.name != "all")
+            .flat_map(|g| g.children.iter().map(String::as_str))
+            .collect();
+        let mut top = vec!["ungrouped".to_string()];
+        top.extend(
+            self.groups
+                .iter()
+                .map(|g| g.name.clone())
+                .filter(|n| n != "all" && n != "ungrouped" && !nested.contains(n.as_str())),
+        );
+        out.insert("all".into(), serde_json::json!({ "children": top }));
+        for group in self.groups.iter().filter(|g| g.name != "all") {
+            let mut body = serde_json::Map::new();
+            if !group.children.is_empty() {
+                body.insert("children".into(), serde_json::json!(group.children));
+            }
+            if !group.hosts.is_empty() {
+                body.insert("hosts".into(), serde_json::json!(group.hosts));
+            }
+            if !body.is_empty() {
+                out.insert(group.name.clone(), Value::Object(body));
+            }
+        }
+        Value::Object(out)
     }
 
     /// An inventory holding the groups `groups` lists, in that order, and `all`'s hosts in the
@@ -78,73 +249,6 @@ impl Inventory {
             inv.group_mut(name).hosts.clone_from(hosts);
         }
         inv
-    }
-
-    pub fn parse_ini(text: &str) -> Result<Self, InventoryError> {
-        let mut inv = Inventory::default();
-        let mut section = Section::Hosts("ungrouped".to_string());
-        for (idx, raw) in text.lines().enumerate() {
-            let line_no = idx + 1;
-            let line = raw.trim();
-            if line.is_empty() || line.starts_with('#') || line.starts_with(';') {
-                continue;
-            }
-            if line.starts_with('[') {
-                let header = line
-                    .strip_prefix('[')
-                    .and_then(|l| l.strip_suffix(']'))
-                    .ok_or_else(|| InventoryError {
-                        line: line_no,
-                        message: "unbalanced section header".to_string(),
-                    })?;
-                section = match header.rsplit_once(':') {
-                    Some((name, "children")) => Section::Children(name.to_string()),
-                    Some((name, "vars")) => Section::Vars(name.to_string()),
-                    Some((_, kind)) => {
-                        return Err(InventoryError {
-                            line: line_no,
-                            message: format!("unknown section kind '{kind}'"),
-                        });
-                    }
-                    None => Section::Hosts(header.to_string()),
-                };
-                inv.group_mut(section_name(&section));
-                continue;
-            }
-            match &section {
-                Section::Hosts(group) => {
-                    let words = shlex_words(line, line_no)?;
-                    let (name, pairs) = words
-                        .split_first()
-                        .expect("non-empty line has a first word");
-                    if name.is_empty() {
-                        return Err(InventoryError {
-                            line: line_no,
-                            message: "empty host name".to_string(),
-                        });
-                    }
-                    let vars = key_values(pairs, line_no)?;
-                    inv.add_host(name, vars);
-                    let group = group.clone();
-                    let members = &mut inv.group_mut(&group).hosts;
-                    if !members.iter().any(|h| h == name) {
-                        members.push(name.clone());
-                    }
-                }
-                Section::Children(group) => {
-                    let group = group.clone();
-                    inv.group_mut(line);
-                    inv.group_mut(&group).children.push(line.to_string());
-                }
-                Section::Vars(group) => {
-                    let words = shlex_words(line, line_no)?;
-                    let vars = key_values(&words, line_no)?;
-                    let group = group.clone();
-                    inv.group_mut(&group).vars.extend(vars);
-                }
-            }
-        }
-        Ok(inv)
     }
 
     /// Ansible's host pattern grammar: terms separated by `,` or `:`; `all` and `*`; shell
@@ -553,12 +657,6 @@ fn split_terms(pattern: &str) -> Vec<&str> {
     terms
 }
 
-fn section_name(section: &Section) -> &str {
-    match section {
-        Section::Hosts(n) | Section::Children(n) | Section::Vars(n) => n,
-    }
-}
-
 /// The three names ansible-core 2.19.12 conjures a host for when the inventory has none of that
 /// name. Measured against the reference: `hosts: ::1` with no `::1` in the inventory runs
 /// `changed: [::1]` on the controller, like `localhost` and `127.0.0.1`. One copy of the rule,
@@ -759,92 +857,6 @@ fn apply_subscript(names: &[String], sub: Subscript) -> Vec<String> {
             }
         }
     }
-}
-
-fn shlex_words(line: &str, line_no: usize) -> Result<Vec<String>, InventoryError> {
-    shlex::split(line)
-        .filter(|w| !w.is_empty())
-        .ok_or_else(|| InventoryError {
-            line: line_no,
-            message: "unbalanced quotes".to_string(),
-        })
-}
-
-fn key_values(words: &[String], line_no: usize) -> Result<BTreeMap<String, Value>, InventoryError> {
-    words
-        .iter()
-        .map(|w| {
-            w.split_once('=')
-                .map(|(k, v)| (k.to_string(), literal(v)))
-                .ok_or_else(|| InventoryError {
-                    line: line_no,
-                    message: format!("expected key=value, found '{w}'"),
-                })
-        })
-        .collect()
-}
-
-/// An integer the way Python's `ast.literal_eval` accepts one: optional sign, `_` allowed only
-/// between digits (never leading, trailing, or doubled), and no leading zero unless the whole
-/// literal is `0`. Measured against the reference: `leading=010` in an INI stays the string
-/// `"010"` (Python's grammar rejects a leading zero as a syntax error, so `literal_eval` raises
-/// and the ini plugin falls back to the raw text), while `grouped=1_000` becomes the integer
-/// `1000` (`_` is a valid digit separator in Python's integer literals since 3.6).
-///
-/// Deliberate ceiling: Python's integers are unbounded, ours are not. A literal outside
-/// `i64::MIN..=i64::MAX` (`clean.parse` failing) falls back to a string here, same as any other
-/// value `ast.literal_eval` would refuse to call an int for — no inventory host var plausibly
-/// needs more than 63 bits, so this stays a documented ceiling rather than a `serde_json`
-/// arbitrary-precision dependency for a case that never comes up in practice.
-fn python_int(t: &str) -> Option<i64> {
-    let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
-    if digits.is_empty()
-        || digits.starts_with('_')
-        || digits.ends_with('_')
-        || digits.contains("__")
-        || !digits.chars().all(|c| c.is_ascii_digit() || c == '_')
-    {
-        return None;
-    }
-    let clean: String = digits.chars().filter(|c| *c != '_').collect();
-    if clean.len() > 1 && clean.starts_with('0') {
-        return None;
-    }
-    let value: i64 = clean.parse().ok()?;
-    Some(if t.starts_with('-') { -value } else { value })
-}
-
-/// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text.
-/// Integers, floats, `True`/`False`/`None`, quoted strings, and JSON-shaped lists and dicts
-/// are recognised; everything else, `yes` included, stays a string.
-fn literal(text: &str) -> Value {
-    let t = text.trim();
-    if let Some(i) = python_int(t) {
-        return Value::from(i);
-    }
-    if t.contains('.')
-        && let Ok(f) = t.parse::<f64>()
-        && let Some(n) = serde_json::Number::from_f64(f)
-    {
-        return Value::Number(n);
-    }
-    match t {
-        "True" => return Value::Bool(true),
-        "False" => return Value::Bool(false),
-        "None" => return Value::Null,
-        _ => {}
-    }
-    if t.len() >= 2
-        && ((t.starts_with('\'') && t.ends_with('\'')) || (t.starts_with('"') && t.ends_with('"')))
-    {
-        return Value::String(t[1..t.len() - 1].to_string());
-    }
-    if ((t.starts_with('[') && t.ends_with(']')) || (t.starts_with('{') && t.ends_with('}')))
-        && let Ok(v) = serde_json::from_str::<Value>(t)
-    {
-        return v;
-    }
-    Value::String(text.to_string())
 }
 
 #[cfg(test)]
@@ -1061,7 +1073,8 @@ env=prod
     #[test]
     fn ini_integers_follow_pythons_literal_grammar() {
         let expected: Value =
-            serde_json::from_str(include_str!("../tests/golden/expected_inventory.json")).unwrap();
+            serde_json::from_str(include_str!("../../tests/golden/expected_inventory.json"))
+                .unwrap();
         let web1 = &expected["hostvars"]["web1"];
         let inv = Inventory::load(
             Path::new(env!("CARGO_MANIFEST_DIR"))

@@ -1,0 +1,5 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "src={{ src }} hv={{ hv | default('-') }} line={{ line | default('-') }} all={{ a_all }} child={{ child | default('-') }} groups={{ group_names }}"

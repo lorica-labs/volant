@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
-use crate::inventory::{Inventory, is_localhost};
+use crate::inventory::{Inventory, Source, is_localhost};
 use crate::stats::CustomStats;
 use crate::template::{Templar, Vars};
 use crate::yaml;
@@ -149,10 +149,11 @@ pub struct VarStore {
     inventory_dir: Option<PathBuf>,
     inventory_file: Option<PathBuf>,
     playbook_dir: PathBuf,
-    /// Group vars from `group_vars/` directories: inventory-side then playbook-side.
-    group_files: [BTreeMap<String, Map<String, Value>>; 2],
-    /// Host vars from `host_vars/` directories: inventory-side then playbook-side.
-    host_files: [BTreeMap<String, Map<String, Value>>; 2],
+    /// Group vars from `group_vars/` directories: one per inventory source, in source order,
+    /// then the playbook's, last.
+    group_files: Vec<BTreeMap<String, Map<String, Value>>>,
+    /// Host vars from `host_vars/` directories, in the same order as `group_files`.
+    host_files: Vec<BTreeMap<String, Map<String, Value>>>,
     inventory_vars: BTreeMap<String, Map<String, Value>>,
     host_line_vars: BTreeMap<String, Map<String, Value>>,
     group_names: BTreeMap<String, Vec<String>>,
@@ -488,28 +489,48 @@ fn short_name(host: &str) -> String {
 }
 
 impl VarStore {
+    /// A store over one inventory file, or none.
     pub fn new(
         inventory: &Inventory,
         inventory_path: Option<&Path>,
         playbook_dir: &Path,
         extra: Map<String, Value>,
     ) -> anyhow::Result<Self> {
-        let inventory_dir = inventory_path
-            .and_then(|p| p.parent())
-            .map(Path::to_path_buf);
-        let roots: [Option<&Path>; 2] = [inventory_dir.as_deref(), Some(playbook_dir)];
-        let mut group_files = [BTreeMap::new(), BTreeMap::new()];
-        let mut host_files = [BTreeMap::new(), BTreeMap::new()];
-        for (i, root) in roots.iter().enumerate() {
-            if let Some(root) = root {
-                group_files[i] = load_vars_dir(&root.join("group_vars"))?;
-                host_files[i] = load_vars_dir(&root.join("host_vars"))?;
-            }
+        let sources: Vec<Source> = inventory_path
+            .map(|p| Source::new(&p.to_string_lossy()))
+            .into_iter()
+            .collect();
+        Self::with_sources(inventory, &sources, playbook_dir, extra)
+    }
+
+    /// A store over the inventory `sources` made. Each source's directory gives its own
+    /// `group_vars` and `host_vars`, a later source's winning, and the playbook's win over all
+    /// of them within the same kind of file, as the reference ranks them.
+    pub fn with_sources(
+        inventory: &Inventory,
+        sources: &[Source],
+        playbook_dir: &Path,
+        extra: Map<String, Value>,
+    ) -> anyhow::Result<Self> {
+        let mut group_files = Vec::new();
+        let mut host_files = Vec::new();
+        let roots = sources.iter().filter_map(Source::vars_dir);
+        for root in roots.chain([playbook_dir.to_path_buf()]) {
+            group_files.push(load_vars_dir(&root.join("group_vars"))?);
+            host_files.push(load_vars_dir(&root.join("host_vars"))?);
         }
+        // The first file source, for a host no file source added (`add_host`'s).
+        let inventory_file = sources
+            .iter()
+            .find(|s| s.path().is_file())
+            .map(|s| s.path().to_path_buf());
         let (groups, inventory_vars, host_line_vars, group_names) = inventory_maps(inventory);
         Ok(Self {
-            inventory_dir,
-            inventory_file: inventory_path.map(Path::to_path_buf),
+            inventory_dir: inventory_file
+                .as_deref()
+                .and_then(Path::parent)
+                .map(Path::to_path_buf),
+            inventory_file,
             playbook_dir: playbook_dir.to_path_buf(),
             group_files,
             host_files,
@@ -680,8 +701,9 @@ impl VarStore {
     /// Moves the playbook-side roots to another playbook's directory, keeping the facts hosts
     /// have gathered so far. Inventory-side sources do not move.
     pub fn rebase(&mut self, playbook_dir: &Path) -> anyhow::Result<()> {
-        self.group_files[1] = load_vars_dir(&playbook_dir.join("group_vars"))?;
-        self.host_files[1] = load_vars_dir(&playbook_dir.join("host_vars"))?;
+        let last = self.group_files.len() - 1;
+        self.group_files[last] = load_vars_dir(&playbook_dir.join("group_vars"))?;
+        self.host_files[last] = load_vars_dir(&playbook_dir.join("host_vars"))?;
         self.playbook_dir = playbook_dir.to_path_buf();
         self.forget_hostvars();
         Ok(())
@@ -1192,13 +1214,17 @@ impl VarStore {
             "playbook_dir".to_string(),
             Value::String(self.playbook_dir.display().to_string()),
         );
-        if let Some(dir) = &self.inventory_dir {
+        // The file the host was read from, as the reference records it on the host.
+        let own = self.dynamic.source_of(host);
+        let file = own.or(self.inventory_file.as_deref());
+        let dir = own.and_then(Path::parent).or(self.inventory_dir.as_deref());
+        if let Some(dir) = dir {
             vars.insert(
                 "inventory_dir".to_string(),
                 Value::String(dir.display().to_string()),
             );
         }
-        if let Some(file) = &self.inventory_file {
+        if let Some(file) = file {
             vars.insert(
                 "inventory_file".to_string(),
                 Value::String(file.display().to_string()),

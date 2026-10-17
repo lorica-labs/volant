@@ -3,8 +3,13 @@
 resolved by `ansible --list-hosts`, and the homonym fixture, recorded in expected_inventory.json."""
 import json
 import os
+import shutil
+import tempfile
+
+import yaml
 
 from . import GOLDEN
+from .redact import TMP
 from .run import Failed, run, write_json
 
 HOMONYM_WARNING = "Found both group and host with same name"
@@ -16,6 +21,32 @@ def _list_hosts(inventory, pattern):
     # The homonym warning alone, not any warning: an unmatched term or an empty result warn too,
     # which the engine keeps in `unmatched`, not `warnings`.
     return {"hosts": hosts, "warning": HOMONYM_WARNING in result.stderr}
+
+
+def _sources():
+    """Every case of inventories/cases.yml, read in a copy of the directory (plus the empty
+    directory git cannot hold): rc, stderr, the --list dump and the order --list-hosts gives."""
+    with open(os.path.join(GOLDEN, "inventories", "cases.yml"), encoding="utf-8") as f:
+        cases = yaml.safe_load(f)
+    recorded = {}
+    with tempfile.TemporaryDirectory() as tmp:
+        copy = os.path.join(os.path.realpath(tmp), "inventories")
+        shutil.copytree(os.path.join(GOLDEN, "inventories"), copy)
+        os.mkdir(os.path.join(copy, "empty"))
+        for name, case in cases.items():
+            args = [word for source in case["sources"] for word in ("-i", source)]
+            env = case.get("env", {})
+            listed = run(["ansible-inventory", *args, "--list"], cwd=copy, extra_env=env)
+            hosts = run(["ansible", *args, "all", "--list-hosts"], cwd=copy, extra_env=env)
+            recorded[name] = {
+                "sources": case["sources"],
+                "env": env,
+                "rc": listed.returncode,
+                "stderr": listed.stderr.replace(copy, TMP),
+                "list": json.loads(listed.stdout) if listed.returncode == 0 else None,
+                "hosts": [h.strip() for h in hosts.stdout.splitlines()[1:] if h.strip()],
+            }
+    return recorded
 
 
 def record():
@@ -37,6 +68,12 @@ def record():
     homonym = _list_hosts(os.path.join(GOLDEN, "homonym_inventory.ini"), "same")
     write_json(
         os.path.join(GOLDEN, "expected_inventory.json"),
-        {"hostvars": hostvars, "groups": groups, "patterns": patterns, "homonym": homonym},
+        {
+            "hostvars": hostvars,
+            "groups": groups,
+            "patterns": patterns,
+            "homonym": homonym,
+            "sources": _sources(),
+        },
     )
     print(f"inventory golden: {len(hostvars)} hosts, {len(patterns)} patterns")

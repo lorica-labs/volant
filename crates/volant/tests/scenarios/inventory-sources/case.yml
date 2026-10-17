@@ -1,0 +1,5 @@
+# Two inventory sources and a host list, merged in order. Each source directory brings its own
+# group_vars and host_vars, a later source winning, and the playbook directory's come last.
+runs:
+  - {args: [-i, inv1/hosts.ini, -i, inv2, -i, "h9,", play.yml]}
+  - {args: [-i, inv2, -i, inv1/hosts.ini, play.yml]}

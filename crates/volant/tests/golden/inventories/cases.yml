@@ -1,0 +1,17 @@
+# Each case: the inventory sources, given from this directory, and the environment
+# `ansible-inventory --list` reads them with. Recorded into ../expected_inventory.json.
+ranges: {sources: [ranges.ini]}
+host_list: {sources: ["a:2222,,b,[::1]:22,b:x,"]}
+directory: {sources: [dir]}
+two_sources: {sources: [one.ini, two.ini]}
+two_sources_reversed: {sources: [two.ini, one.ini]}
+host_list_then_file: {sources: ["h1,h9,", one.ini]}
+bad: {sources: [bad.ini]}
+bad_then_good: {sources: [bad.ini, one.ini]}
+partial: {sources: [partial.ini]}
+colon: {sources: [colon.ini]}
+missing: {sources: [missing.ini]}
+empty_dir: {sources: [empty]}
+unparsed_failed: {sources: [bad.ini], env: {ANSIBLE_INVENTORY_UNPARSED_FAILED: "1"}}
+unparsed_failed_one_good: {sources: [bad.ini, one.ini], env: {ANSIBLE_INVENTORY_UNPARSED_FAILED: "1"}}
+any_unparsed_failed: {sources: [bad.ini, one.ini], env: {ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED: "1"}}

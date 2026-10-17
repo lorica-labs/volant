@@ -1168,7 +1168,8 @@ fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
         // `AnsibleError`: an empty message is the default one alone, `Action failed.`.
         let by_failed = format!("{by} failed.");
         // `Unexpected AnsibleActionFail error: ...` is the sentence the reference's own `copy`
-        // fails with for a source that is not there, and its block carries it as it is.
+        // fails with for a source that is not there, and its block carries it as it is. Any
+        // other result starting with it only loses the `Action failed: ` in its error block.
         let message = if msg.starts_with("Task failed: ") {
             msg
         } else if msg.starts_with("Unexpected AnsibleActionFail error: ") {
@@ -2027,10 +2028,15 @@ fn sub_task(
             // A command a plugin runs is the connection's, which check mode never reaches: the
             // reference's `_low_level_execute_command` makes its temporary directory and removes
             // it in check mode too.
-            args: if sub.module == "raw" {
-                sub.args.clone()
-            } else {
-                with_modes(item, sub.args.clone())
+            args: {
+                // The agent's own modules know no `_ansible_module_name`, which is for Python.
+                let mut args = sub.args.clone();
+                args.remove("_ansible_module_name");
+                if sub.module == "raw" {
+                    args
+                } else {
+                    with_modes(item, args)
+                }
             },
             job: None,
             ..protocol_task(task, item, None)
@@ -6941,6 +6947,22 @@ mod tests {
             let failure = sub_task(&task("copy"), &bare_item(), &sub, None, &python3(), None)
                 .expect_err("a module the union lacks is never sent as native");
             assert!(msg(&failure).contains("python payload"), "{failure:?}");
+            // A bridged plugin that calls `command` sends the agent's own module no name key.
+            let sub = crate::action_plugins::Sub {
+                module: "command",
+                args: json!({"cmd": "true", "_ansible_module_name": "ansible.legacy.command"})
+                    .as_object()
+                    .cloned()
+                    .expect("an object"),
+                files: Vec::new(),
+            };
+            let built = sub_task(&task("copy"), &bare_item(), &sub, None, &python3(), None)
+                .expect("a native sub-task builds");
+            assert_eq!(built.args.get("cmd"), Some(&json!("true")));
+            assert!(
+                !built.args.contains_key("_ansible_module_name"),
+                "{built:?}"
+            );
         }
     }
 

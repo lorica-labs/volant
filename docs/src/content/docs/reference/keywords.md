@@ -106,7 +106,7 @@ This page is generated from the tables the loader and the pre-flight read, so it
 <tr><td><code>with_subelements</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_template</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_together</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
-<tr><td><code>with_unvault</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
+<tr><td><code>with_unvault</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_url</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_varnames</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>with_vars</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>

@@ -102,6 +102,7 @@ const SUPPORTED: &[&str] = &[
     "inventory_hostnames",
     "pipe",
     "template",
+    "unvault",
     "vars",
     "varnames",
 ];
@@ -163,14 +164,7 @@ fn lookup(
                 Value::from(std::env::var(&term_text).unwrap_or_default())
             }
             "file" | "ansible.builtin.file" => {
-                // `find_file_in_search_path`: each entry's `files/<term>`, then its `<term>`.
-                let search = search_path(state, base_dir);
-                let path = relative_stack(&search, Some("files"), &term_text)
-                    .into_iter()
-                    .find(|p| p.is_file())
-                    .ok_or_else(|| {
-                        invalid(format!("could not locate file in lookup: {term_text}"))
-                    })?;
+                let path = found_file(state, &term_text, base_dir)?;
                 let text = std::fs::read_to_string(&path).map_err(|e| {
                     invalid(format!(
                         "could not locate file in lookup: {}: {e}",
@@ -179,6 +173,25 @@ fn lookup(
                 })?;
                 taint();
                 Value::from(text.trim_end_matches(['\r', '\n']))
+            }
+            // The file as it reads once decrypted, a plain one as it is, and no newline dropped:
+            // measured, `lookup('unvault', 'f.txt')` of `txt_secret\n` keeps the newline.
+            "unvault" | "ansible.builtin.unvault" => {
+                let path = found_file(state, &term_text, base_dir)?;
+                let bytes = std::fs::read(&path).map_err(|e| {
+                    invalid(format!(
+                        "could not locate file in lookup: {}: {e}",
+                        path.display()
+                    ))
+                })?;
+                let bytes = if crate::vault::is_encrypted(&bytes) {
+                    crate::vault::decrypt(&bytes, &crate::vault::run_secrets())
+                        .map_err(|e| invalid(e.0))?
+                } else {
+                    bytes
+                };
+                taint();
+                Value::from(String::from_utf8_lossy(&bytes).into_owned())
             }
             "vars" | "ansible.builtin.vars" => match state.lookup(&term_text) {
                 Some(v) if !v.is_undefined() => v,
@@ -226,6 +239,15 @@ fn lookup(
         results.push(found);
     }
     Ok(results)
+}
+
+/// `find_file_in_search_path`: each entry's `files/<term>`, then its `<term>`.
+fn found_file(state: &State, term: &str, base_dir: &Path) -> Result<PathBuf, Error> {
+    let search = search_path(state, base_dir);
+    relative_stack(&search, Some("files"), term)
+        .into_iter()
+        .find(|p| p.is_file())
+        .ok_or_else(|| invalid(format!("could not locate file in lookup: {term}")))
 }
 
 /// `lookup('inventory_hostnames', pattern...)`: the hosts of the inventory the pattern selects,

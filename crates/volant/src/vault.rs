@@ -3,9 +3,10 @@
 //! secrets a run is given for them. A secret lives in memory only: it is never logged, never
 //! passed to a child process and never sent to an agent.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
-use std::sync::{Arc, RwLock};
+use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 use aes::Aes256;
 use ctr::Ctr128BE;
@@ -64,6 +65,31 @@ static RUN_SECRETS: RwLock<Option<Arc<Secrets>>> = RwLock::new(None);
 /// replaces the earlier set.
 pub fn install(secrets: Secrets) {
     *RUN_SECRETS.write().expect("secrets lock") = Some(Arc::new(secrets));
+    REVEALED.lock().expect("revealed lock").clear();
+}
+
+type Revealed = HashMap<String, Result<String, String>>;
+
+/// What each `!vault` value of the run decrypted to, so a value read by every task of every host
+/// pays for its key derivation once. Held in memory only, like the secrets.
+static REVEALED: LazyLock<Mutex<Revealed>> = LazyLock::new(Mutex::default);
+
+/// The text of one vaulted value under the run's secrets, or the reference's reason it cannot be
+/// read.
+pub fn reveal(ciphertext: &str) -> Result<String, String> {
+    if let Some(done) = REVEALED.lock().expect("revealed lock").get(ciphertext) {
+        return done.clone();
+    }
+    let done = decrypt(ciphertext.as_bytes(), &run_secrets())
+        .map_err(|e| e.0)
+        .and_then(|plain| {
+            String::from_utf8(plain).map_err(|_| "the decrypted value is not valid UTF-8".into())
+        });
+    REVEALED
+        .lock()
+        .expect("revealed lock")
+        .insert(ciphertext.to_string(), done.clone());
+    done
 }
 
 /// The secrets of this run; empty when none were given.
@@ -73,6 +99,25 @@ pub fn run_secrets() -> Arc<Secrets> {
         .expect("secrets lock")
         .clone()
         .unwrap_or_default()
+}
+
+/// The reason as a sentence of the reference's: its `AnsibleError`s end in a period, the format
+/// errors it raises from the cipher do not.
+pub fn sentence(reason: &str) -> String {
+    if reason.starts_with("Vault format") || reason.starts_with("Vault vaulttext format") {
+        reason.to_string()
+    } else {
+        format!("{}.", reason.trim_end_matches('.'))
+    }
+}
+
+/// Whether some vaulted value of this run decrypted to exactly `text`.
+pub fn was_revealed(text: &str) -> bool {
+    REVEALED
+        .lock()
+        .expect("revealed lock")
+        .values()
+        .any(|done| done.as_deref() == Ok(text))
 }
 
 /// Whether `data` starts like vault data.

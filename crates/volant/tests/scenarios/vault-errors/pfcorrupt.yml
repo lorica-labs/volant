@@ -1,0 +1,5 @@
+- hosts: localhost
+  gather_facts: false
+  vars_files: [fcorrupt.yml]
+  tasks:
+    - debug: {var: a}

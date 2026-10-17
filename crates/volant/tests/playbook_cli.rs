@@ -3224,6 +3224,14 @@ ok: [localhost] => (item=one) => {
     ),
     runs(
         "task",
+        "with_unvault",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item }}\"\n      with_unvault: [\"{{ playbook_dir }}/task-with_unvault.yml\"]\n      loop_control: {label: one}\n",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
         "with_varnames",
         "- hosts: localhost\n  gather_facts: false\n  vars:\n    probe_one: alpha\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item }}\"\n      with_varnames: [\"^probe_one$\"]\n",
         &[],

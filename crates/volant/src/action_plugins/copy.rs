@@ -142,7 +142,12 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     // host holds, where the reference would still run `file` on a destination already right.
     let len = std::fs::metadata(found).map_err(unreadable)?.len();
     fits(&basename, usize::try_from(len).unwrap_or(usize::MAX))?;
-    let bytes = std::fs::read(found).map_err(unreadable)?;
+    let mut bytes = std::fs::read(found).map_err(unreadable)?;
+    // A vaulted source is sent as plain text unless `decrypt: false` asks for it as it is.
+    if flag(args, "decrypt", true) && crate::vault::is_encrypted(&bytes) {
+        bytes = crate::vault::decrypt(&bytes, &crate::vault::run_secrets())
+            .map_err(|err| format!("could not read src={}: {err}", found.display()))?;
+    }
     let mut args = args.clone();
     args.insert("src".into(), Value::String(found.display().to_string()));
     // Read off the local file, as the reference does. Left to the module, `preserve` would

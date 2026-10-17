@@ -2252,10 +2252,6 @@ mod tests {
     )]
     #[case::not_a_list("hosts: all\n", &[])]
     #[case::empty("", &[])]
-    #[case::vault(
-        "- hosts: all\n  tasks:\n    - name: Secret\n      command:\n        cmd: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          3132\n",
-        &["vault", "Secret"]
-    )]
     #[case::unbalanced_quote("- hosts: all\n  tasks:\n    - ping: \"a='open\"\n", &[])]
     #[case::when_scalar(
         "- hosts: all\n  tasks:\n    - command: \"true\"\n      when: 3\n",

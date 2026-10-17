@@ -200,7 +200,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("with_subelements", Runs),
     kw("with_template", Runs),
     kw("with_together", Runs),
-    kw("with_unvault", Preflight),
+    kw("with_unvault", Runs),
     kw("with_url", Runs),
     kw("with_varnames", Runs),
     kw("with_vars", Runs),

@@ -1,0 +1,7 @@
+# A vaulted value is read when a task uses it; a vaulted file the play loads must be readable.
+runs:
+  - args: [-i, inv, --vault-password-file, pw2, unused.yml]
+  - args: [-i, inv, --vault-password-file, pw2, pf.yml]
+  - args: [-i, inv, pf.yml]
+  - args: [-i, inv, --vault-password-file, pw1, pfcorrupt.yml]
+  - args: [-i, inv, --vault-password-file, pw2, pi.yml]

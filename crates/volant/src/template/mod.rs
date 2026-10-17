@@ -80,6 +80,10 @@ pub(crate) const CONTEXT_KEY: &str = "volant::context";
 pub(crate) const VAULT_NAME: &str = "volant::vault_name:";
 
 const CONCAT_KEY: &str = "volant::concat";
+const ITEM_KEY: &str = "volant::item";
+/// Prefix of the name an attribute lookup is routed through; the context answers it with a
+/// function that reads that attribute.
+const ATTR_KEY: &str = "volant::attr:";
 
 /// The global a call to `query` or `q` is compiled to call, see [`route_calls`]. Not a global of
 /// either name: measured on ansible-core 2.19.12, `q is defined` is false on a host with no
@@ -182,8 +186,11 @@ impl Object for Context {
         let key = key.as_str()?;
         // Not a variable: the VM looks the root up before the globals, so a variable of that
         // name (`-e '{"volant::concat": 1}'`) would otherwise replace every `~`.
-        if key == CONCAT_KEY || key == QUERY_KEY {
+        if key == CONCAT_KEY || key == QUERY_KEY || key == ITEM_KEY {
             return None;
+        }
+        if let Some(attr) = key.strip_prefix(ATTR_KEY) {
+            return Some(chained_attr(attr.to_string()));
         }
         if key == TAINT_KEY {
             return Some(minijinja::Value::from_object(TaintSink(Arc::clone(
@@ -472,10 +479,17 @@ impl Templar {
         if !Self::is_template(text) {
             return Ok(Value::String(text.to_string()));
         }
-        if let Some(expr) = single_expression(text) {
+        // A final newline is text: the reference keeps it, so the result is a string.
+        if !text.ends_with('\n')
+            && let Some(expr) = single_expression(text)
+        {
             return self.evaluate_in(expr, ctx);
         }
-        render_str(self, "<string>", text, ctx, WhitespaceConfig::default())
+        let ws = WhitespaceConfig {
+            keep_trailing_newline: true,
+            ..WhitespaceConfig::default()
+        };
+        render_str(self, "<string>", text, ctx, ws)
             .map(Value::String)
             .map_err(convert_error)
     }
@@ -779,15 +793,77 @@ fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> Environment<'
     // Strict mode refuses to print an undefined value, not a list or mapping holding one,
     // which minijinja prints as `[undefined]`. Measured on ansible-core 2.19.12,
     // `x {{ [nope] }}` is an undefined read.
+    //
+    // Inside text, measured on the same version: a list or mapping prints as Python's `repr`
+    // does, and a `none` that is a whole part of the text prints nothing.
     env.set_formatter(|out, state, value| {
         if !value.is_undefined() && holds_undefined(value) {
             return Err(minijinja::Error::from(ErrorKind::UndefinedError));
         }
-        minijinja::escape_formatter(out, state, value)
+        if value.is_none() {
+            return Ok(());
+        }
+        match container_repr(value) {
+            Some(text) => out.write_str(&text).map_err(|_| {
+                minijinja::Error::new(ErrorKind::WriteFailure, "failed to write output")
+            }),
+            None => minijinja::escape_formatter(out, state, value),
+        }
     });
     filters::register(&mut env, base_dir, bridge);
     env.add_function(CONCAT_KEY, concat);
+    env.add_function(ITEM_KEY, chained_item);
     env
+}
+
+/// Python's `repr` of a list or mapping, `None` for any other value.
+fn container_repr(value: &minijinja::Value) -> Option<String> {
+    if !matches!(
+        value.kind(),
+        ValueKind::Seq | ValueKind::Map | ValueKind::Iterable
+    ) {
+        return None;
+    }
+    let json = serde_json::to_value(value).ok()?;
+    Some(crate::playbook::python_repr(&json))
+}
+
+/// Attribute access that leaves an undefined parent undefined, as the reference does until
+/// `default`, `is defined` or a use decides. The VM's own lookup fails on an undefined parent.
+fn chained_attr(name: String) -> minijinja::Value {
+    minijinja::Value::from_function(
+        move |parent: minijinja::Value| -> Result<minijinja::Value, minijinja::Error> {
+            if parent.is_undefined() {
+                return Ok(minijinja::Value::UNDEFINED);
+            }
+            parent.get_attr(&name)
+        },
+    )
+}
+
+/// `parent[key]`, chained like [`chained_attr`].
+fn chained_item(
+    parent: minijinja::Value,
+    key: minijinja::Value,
+) -> Result<minijinja::Value, minijinja::Error> {
+    if parent.is_undefined() {
+        return Ok(minijinja::Value::UNDEFINED);
+    }
+    parent.get_item(&key)
+}
+
+/// The function name an attribute lookup is routed through: `ATTR_KEY` then the attribute.
+/// Leaked once per distinct name, because compiled code holds names for as long as it lives.
+fn attr_call(name: &str) -> &'static str {
+    static NAMES: Mutex<BTreeSet<&'static str>> = Mutex::new(BTreeSet::new());
+    let full = format!("{ATTR_KEY}{name}");
+    let mut names = NAMES.lock().unwrap_or_else(PoisonError::into_inner);
+    if let Some(known) = names.get(full.as_str()) {
+        return known;
+    }
+    let leaked: &'static str = Box::leak(full.into_boxed_str());
+    names.insert(leaked);
+    leaked
 }
 
 /// Replaces every `!unsafe` wrapper inside `value` by its text, and every `!vault` wrapper that
@@ -1014,7 +1090,12 @@ fn concat(
     if holds_undefined(&left) || holds_undefined(&right) {
         return Err(minijinja::Error::from(ErrorKind::UndefinedError));
     }
-    Ok(minijinja::Value::from(format!("{left}{right}")))
+    let shown = |v: &minijinja::Value| container_repr(v).unwrap_or_else(|| v.to_string());
+    Ok(minijinja::Value::from(format!(
+        "{}{}",
+        shown(&left),
+        shown(&right)
+    )))
 }
 
 /// Replaces each `~` in compiled code by a call to [`concat()`], and each call to `query` or `q`
@@ -1041,6 +1122,10 @@ fn route_calls(instructions: &mut Instructions<'_>) {
         }
         match op {
             Instruction::StringConcat => *op = Instruction::CallFunction(CONCAT_KEY, Some(2)),
+            Instruction::GetItem => *op = Instruction::CallFunction(ITEM_KEY, Some(2)),
+            Instruction::GetAttr(name) => {
+                *op = Instruction::CallFunction(attr_call(name), Some(1));
+            }
             Instruction::CallFunction(name, args) if matches!(*name, "query" | "q") => {
                 *op = Instruction::CallFunction(QUERY_KEY, *args);
             }
@@ -2012,5 +2097,28 @@ while True:
             err.0,
             "Attempt to use undecryptable variable: Decryption failed (no vault secrets were found that could decrypt)."
         );
+    }
+
+    /// Inside text a container prints as Python's `repr` and a whole `none` prints nothing; an
+    /// undefined parent stays undefined until `default` decides; a final newline is kept.
+    #[test]
+    fn text_prints_containers_none_and_chained_undefined_as_the_reference_does() {
+        let t = templar();
+        let v = vars(json!({"l": ["a", null], "n": null, "d": {"k": true}, "nl": "x"}));
+        for (text, want) in [
+            (
+                "{{ l }} {{ d }}[{{ n }}]",
+                json!("['a', None] {'k': True}[]"),
+            ),
+            ("{{ n }}", json!(null)),
+            ("{{ nope.a.b | default('z') }}", json!("z")),
+            ("{{ d.no.sub | default('z') }}", json!("z")),
+            ("{{ d['no']['sub'] is defined }}", json!(false)),
+            ("{{ nl }}\n", json!("x\n")),
+        ] {
+            assert_eq!(t.render(text, &v).unwrap(), want, "{text}");
+        }
+        assert!(t.render("{{ nope.a }}", &v).is_err());
+        assert!(t.render("x {{ d.no.sub }}", &v).is_err());
     }
 }

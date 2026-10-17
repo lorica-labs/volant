@@ -1,0 +1,3 @@
+# A list, a mapping or a none inside text, an undefined read chained through an attribute, and a
+# final newline: what the text becomes.
+args: [-i, inv.ini, play.yml]

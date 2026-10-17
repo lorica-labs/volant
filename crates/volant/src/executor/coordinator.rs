@@ -1267,12 +1267,18 @@ fn apply_meta(
                 // it stands, not failed; a host the file gained joins the next play. The verdict
                 // goes out in the same publish as the dismissal, for the reason the end of a
                 // batch does.
-                let kept: HashSet<String> = fresh
+                let found: Vec<String> = fresh
                     .resolve(cx.pattern)
                     .hosts
                     .into_iter()
                     .map(|host| host.name)
                     .collect();
+                let kept: HashSet<String> = found.iter().cloned().collect();
+                state
+                    .vars
+                    .lock()
+                    .expect("vars lock")
+                    .set_play_hosts_all(found);
                 let leaving: Vec<String> = coordinator
                     .batch_hosts
                     .iter()

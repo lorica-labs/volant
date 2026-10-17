@@ -915,6 +915,7 @@ async fn run_all(
                     play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
                 )
                 .await?;
+                state.vars.lock().expect("vars lock").end_play();
                 // `meta: refresh_inventory` read the file again: the plays behind this one
                 // resolve their hosts against what it found.
                 if let Some(fresh) = state.refreshed.take() {

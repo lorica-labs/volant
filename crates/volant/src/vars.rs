@@ -226,6 +226,9 @@ pub struct VarStore {
     /// What `add_host` and `group_by` did, in order, which a refresh applies again to the
     /// sources it reads anew.
     added: Vec<Added>,
+    /// The hosts the play's pattern found after a refresh, which `ansible_play_hosts_all` shows
+    /// in place of the play's starting list until the play ends.
+    play_hosts_all: Option<Vec<String>>,
     /// The sources and plugin settings a refresh reads again.
     reload: Option<(Vec<Source>, PluginConfig)>,
     /// Whether `dynamic` moved since the command line last took it.
@@ -590,6 +593,7 @@ impl VarStore {
             dynamic: inventory.clone(),
             added: Vec::new(),
             reload: None,
+            play_hosts_all: None,
             inventory_changed: false,
             custom_stats: CustomStats::default(),
         })
@@ -611,6 +615,20 @@ impl VarStore {
     /// Keeps the sources `meta: refresh_inventory` reads again.
     pub fn set_reload(&mut self, sources: Vec<Source>, config: PluginConfig) {
         self.reload = Some((sources, config));
+    }
+
+    /// After a refresh, `ansible_play_hosts_all` lists `hosts`: new hosts show at once, removed
+    /// ones are gone, and none of them changes who runs the rest of the play.
+    pub fn set_play_hosts_all(&mut self, hosts: Vec<String>) {
+        self.play_hosts_all = Some(hosts);
+        self.shared = None;
+    }
+
+    /// The play is over: `ansible_play_hosts_all` is the next play's own list again.
+    pub fn end_play(&mut self) {
+        if self.play_hosts_all.take().is_some() {
+            self.shared = None;
+        }
     }
 
     /// The sources and plugin settings a refresh reads again, when there are some.
@@ -1304,7 +1322,12 @@ impl VarStore {
         // `add_host` runs inside a `serial` play; here it stays the play's own list.
         map.insert(
             "ansible_play_hosts_all".to_string(),
-            serde_json::to_value(&scope.all_play_hosts).unwrap_or_default(),
+            serde_json::to_value(
+                self.play_hosts_all
+                    .as_ref()
+                    .unwrap_or(&scope.all_play_hosts),
+            )
+            .unwrap_or_default(),
         );
         map.insert("ansible_play_batch".to_string(), batch.clone());
         map.insert("play_hosts".to_string(), batch);

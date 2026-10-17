@@ -16,7 +16,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (task) | 60 | 4 | 2 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
-| ansible-playbook option | 18 | 3 | 17 | 0 |
+| ansible-playbook option | 21 | 3 | 14 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
@@ -223,7 +223,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|
 | `-K, --ask-become-pass` | <span class="kw kw-runs">runs</span> |  |
 | `-k, --ask-pass` | <span class="kw kw-notyet">not yet</span> |  |
-| `-J, --ask-vault-pass, --ask-vault-password` | <span class="kw kw-notyet">not yet</span> |  |
+| `-J, --ask-vault-pass, --ask-vault-password` | <span class="kw kw-runs">runs</span> |  |
 | `-b, --become` | <span class="kw kw-runs">runs</span> |  |
 | `--become-method` | <span class="kw kw-runs">runs</span> |  |
 | `--become-pass-file, --become-password-file` | <span class="kw kw-notyet">not yet</span> |  |
@@ -255,8 +255,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `-t, --tags` | <span class="kw kw-runs">runs</span> |  |
 | `-T, --timeout` | <span class="kw kw-runs">runs</span> |  |
 | `-u, --user` | <span class="kw kw-runs">runs</span> |  |
-| `--vault-id` | <span class="kw kw-notyet">not yet</span> |  |
-| `--vault-pass-file, --vault-password-file` | <span class="kw kw-notyet">not yet</span> |  |
+| `--vault-id` | <span class="kw kw-runs">runs</span> |  |
+| `--vault-pass-file, --vault-password-file` | <span class="kw kw-runs">runs</span> |  |
 | `-v, --verbose` | <span class="kw kw-partial">partial</span> | only -v |
 | `--version` | <span class="kw kw-notyet">not yet</span> |  |
 

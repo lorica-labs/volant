@@ -31,6 +31,10 @@ pub struct Config {
     /// flags in place.
     pub become_exe: Option<String>,
     pub become_flags: Option<String>,
+    /// `vault_password_file` and `vault_identity_list`: where the vault secrets come from besides
+    /// the command line.
+    pub vault_password_file: Option<PathBuf>,
+    pub vault_identity_list: Vec<String>,
     /// Whether a host that failed still runs the handlers it notified. Measured on ansible-core
     /// 2.19.12: `[defaults] force_handlers = True` and `--force-handlers` give the same run, down
     /// to the recap.
@@ -92,6 +96,8 @@ impl Default for Config {
             become_method: DEFAULT_BECOME_METHOD.to_string(),
             become_exe: None,
             become_flags: None,
+            vault_password_file: None,
+            vault_identity_list: Vec::new(),
             force_handlers: false,
             show_custom_stats: false,
             roles_path: default_roles_path(),
@@ -295,6 +301,14 @@ impl Config {
         }
         // The environment replaces the file's list rather than adding to it, the way every
         // other list setting here does; the command line is what adds to whichever won.
+        if let Ok(path) = std::env::var("ANSIBLE_VAULT_PASSWORD_FILE")
+            && !path.is_empty()
+        {
+            config.vault_password_file = Some(PathBuf::from(path));
+        }
+        if let Ok(list) = std::env::var("ANSIBLE_VAULT_IDENTITY_LIST") {
+            config.vault_identity_list = tag_list(&list);
+        }
         if let Ok(list) = std::env::var("ANSIBLE_RUN_TAGS") {
             config.tags_run = tag_list(&list);
         }
@@ -501,6 +515,13 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
                     config.remote_user = Some(user.to_string());
                 }
             }
+            "vault_password_file" => {
+                let path = value.trim();
+                if !path.is_empty() {
+                    config.vault_password_file = Some(base.join(path));
+                }
+            }
+            "vault_identity_list" => config.vault_identity_list = tag_list(value),
             "private_key_file" => {
                 let path = value.trim();
                 if !path.is_empty() {

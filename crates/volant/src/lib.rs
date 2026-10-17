@@ -28,6 +28,7 @@ pub(crate) mod testing;
 pub mod transport;
 pub mod union_cache;
 pub mod vars;
+pub mod vault;
 pub mod yaml;
 
 /// Version string shown by `--version`: semver, git sha and build date.

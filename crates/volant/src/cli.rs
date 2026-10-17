@@ -91,6 +91,25 @@ pub struct PlaybookArgs {
     #[arg(short = 'K', long = "ask-become-pass")]
     pub ask_become_pass: bool,
 
+    /// Ask for the vault password on the terminal.
+    #[arg(
+        short = 'J',
+        long = "ask-vault-pass",
+        visible_alias = "ask-vault-password"
+    )]
+    pub ask_vault_pass: bool,
+    /// File, or executable printing the password, for the vault. Repeatable.
+    #[arg(
+        long = "vault-password-file",
+        alias = "vault-pass-file",
+        value_name = "VAULT_PASSWORD_FILE"
+    )]
+    pub vault_password_file: Vec<PathBuf>,
+    /// Vault identity, `label@source` where the source is a file, an executable or `prompt`.
+    /// Repeatable.
+    #[arg(long = "vault-id", value_name = "VAULT_IDS")]
+    pub vault_id: Vec<String>,
+
     /// Run handlers even if a task fails.
     #[arg(long = "force-handlers")]
     pub force_handlers: bool,
@@ -152,6 +171,21 @@ async fn run_all(
     profile: &Arc<Profile>,
 ) -> anyhow::Result<i32> {
     let config = Config::load()?;
+    let secrets = match crate::vault::load(&crate::vault::Request {
+        ask: args.ask_vault_pass,
+        password_files: args.vault_password_file.clone(),
+        ids: args.vault_id.clone(),
+        config_file: config.vault_password_file.clone(),
+        config_ids: config.vault_identity_list.clone(),
+    }) {
+        Ok(secrets) => secrets,
+        Err(err) => {
+            eprintln!("[WARNING]: {}", err.warning);
+            eprintln!("[ERROR]: {}", err.message);
+            return Ok(1);
+        }
+    };
+    crate::vault::install(secrets);
     let show_custom_stats = config.show_custom_stats;
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
     // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already

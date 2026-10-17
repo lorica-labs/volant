@@ -97,6 +97,20 @@ These options read the playbooks and stop. They never connect to a host and neve
   Ask for the escalation password on the terminal, with echo turned off. The password is written once to `sudo` and appears in no command line, log or result.
 </Option>
 
+## Vault
+
+<Option name="-J, --ask-vault-pass">
+  Ask for the vault password on the terminal, with echo turned off.
+</Option>
+
+<Option name="--vault-password-file, --vault-pass-file" arg="PATH" config="[defaults] vault_password_file" env="ANSIBLE_VAULT_PASSWORD_FILE">
+  A file holding the vault password, or an executable that prints it. Repeatable.
+</Option>
+
+<Option name="--vault-id" arg="LABEL@SOURCE" config="[defaults] vault_identity_list" env="ANSIBLE_VAULT_IDENTITY_LIST">
+  A vault identity: the source is a file, an executable or `prompt`. Repeatable. Every password is tried on every vaulted value, whatever its label.
+</Option>
+
 ## Run and output
 
 <Option name="--force-handlers" default="false" config="[defaults] force_handlers" env="ANSIBLE_FORCE_HANDLERS">
@@ -155,5 +169,4 @@ These `ansible-playbook` options are not accepted yet:
 |---|---|
 | `-C, --check`, `--diff` | Run against a test host. |
 | `-k, --ask-pass` | Use a key file or an ssh-agent. |
-| `--ask-vault-pass`, `--vault-password-file`, `--vault-id` | Keep vaulted playbooks under Ansible for now. |
 | `--start-at-task`, `--step` | Use tags to select part of a play. |

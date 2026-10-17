@@ -18,18 +18,23 @@ build = "build.rs"
 workspace = true
 
 [dependencies]
+aes.workspace = true
 anstream.workspace = true
 anstyle.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 clap.workspace = true
+ctr.workspace = true
+hmac.workspace = true
 libc.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
+pbkdf2.workspace = true
 regex.workspace = true
 saphyr.workspace = true
 saphyr-parser.workspace = true
 serde_json.workspace = true
+sha2.workspace = true
 shlex.workspace = true
 tokio.workspace = true
 volant-protocol.workspace = true

@@ -9411,6 +9411,7 @@ mod tests {
             abort: Arc::new(super::super::Abort::new(stop_tx)),
             reboots: Arc::default(),
             profile: Arc::default(),
+            step: None,
         };
         let to_h1 = local_key("h1", None);
         // `h2`'s driver: its link to `h1`, proved alive once this play.

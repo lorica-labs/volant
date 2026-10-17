@@ -336,6 +336,10 @@ pub(crate) struct Compiled {
     pub resolved: Arc<crate::collection::Resolved>,
     /// What compiling the play had to say, for the run to print before the first banner.
     pub warnings: Vec<String>,
+    /// `--start-at-task`: the step every host starts at, the steps in front of it being left out
+    /// as the reference's iterator leaves them. The length of the list when the task is in a
+    /// later play, so this one runs nothing. The `Gathering Facts` step still runs.
+    pub start_at: Option<usize>,
 }
 
 impl Compiled {
@@ -1309,6 +1313,7 @@ pub(crate) fn compile(
         crosses: Vec::new(),
         resolved: Arc::default(),
         warnings,
+        start_at: None,
     })
 }
 
@@ -1440,6 +1445,7 @@ pub(crate) fn expand_include(
         crosses: Vec::new(),
         resolved: Arc::clone(&base.resolved),
         warnings: Vec::new(),
+        start_at: None,
     };
     // The pre-flight ran once, over the compilation, and none of this was in it. Refused here,
     // before anything is spliced, so what a file this release cannot execute gets is the
@@ -1807,7 +1813,20 @@ pub(crate) fn listed(c: &Compiled, index: usize) -> bool {
 /// The step a host starts the play on. Not always the first one: `block: []` with a `rescue`
 /// lays that rescue out at index 0, and nothing has failed yet.
 pub(crate) fn first(c: &Compiled) -> usize {
-    seek(c, 0, &[])
+    match c.start_at {
+        Some(at) if c.gathers && at < c.steps.len() => 0,
+        Some(at) => seek(c, at, &[]),
+        None => seek(c, 0, &[]),
+    }
+}
+
+/// The first step `--start-at-task` names, as the reference finds it: a task (or the statement of
+/// an include) whose name matches the pattern, `Gathering Facts` and handlers apart.
+pub(crate) fn find_task(c: &Compiled, pattern: &str) -> Option<usize> {
+    (usize::from(c.gathers)..c.steps.len()).find(|&i| {
+        matches!(c.steps[i].kind, StepKind::Task | StepKind::Include(_))
+            && crate::inventory::glob_match(pattern, &c.steps[i].task.name)
+    })
 }
 
 /// The index a host moves to after finishing `pos` without failing: the next step it has a
@@ -1815,6 +1834,14 @@ pub(crate) fn first(c: &Compiled) -> usize {
 /// block whose `block:` list is empty is entered *on* its rescue, so entry needs the same care
 /// as exit.
 pub(crate) fn after(c: &Compiled, pos: usize) -> usize {
+    // The `Gathering Facts` step is followed by the step `--start-at-task` named.
+    if let Some(at) = c.start_at
+        && c.gathers
+        && pos == 0
+        && at < c.steps.len()
+    {
+        return seek(c, at, &[]);
+    }
     seek(c, pos + 1, &entered(c, pos))
 }
 

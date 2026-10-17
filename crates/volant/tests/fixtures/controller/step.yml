@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: first task
+      debug: {msg: one}
+    - name: second task
+      debug: {msg: two}
+    - name: third task
+      debug: {msg: three}
+    - name: tail task
+      debug: {msg: tail}

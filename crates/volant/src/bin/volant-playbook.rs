@@ -5,7 +5,7 @@ use clap::Parser;
 use volant::cli::PlaybookArgs;
 
 #[derive(Parser)]
-#[command(name = "volant-playbook", version = volant::VERSION)]
+#[command(name = "volant-playbook")]
 struct Cli {
     #[command(flatten)]
     args: PlaybookArgs,

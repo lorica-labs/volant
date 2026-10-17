@@ -67,6 +67,8 @@ pub(super) struct PlayPlan {
     /// The module payloads this run sends, built once before the first connection. Shared rather
     /// than copied: it is the base64 of a 631 KB zip and every host of every batch reads it.
     pub(super) python: Option<Arc<crate::python::Union>>,
+    /// `--step`: what the operator answered to each task of the batch.
+    pub(super) step: Option<super::debugger::Stepper>,
 }
 
 /// The play's `strategy`. `Debug` walks as `Linear` does and opens the debugger prompt on a
@@ -2030,6 +2032,7 @@ mod tests {
             r#become: None,
             become_user: None,
             python: None,
+            step: None,
         }
     }
 

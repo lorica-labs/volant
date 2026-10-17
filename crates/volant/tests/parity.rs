@@ -621,7 +621,7 @@ fn a_windows_or_network_collection_waits_only_for_its_modules_and_actions() {
 }
 
 /// An option runs when every spelling the reference accepts parses here, and is partial when only
-/// some do: `-i` and `--inventory` run even though `--inventory-file` does not.
+/// some do.
 #[test]
 fn an_option_is_judged_on_every_spelling() {
     let rows = matrix(&probe_dir("options"));
@@ -632,7 +632,7 @@ fn an_option_is_judged_on_every_spelling() {
     };
     assert_eq!(
         status("-i, --inventory, --inventory-file"),
-        Some(Status::Partial)
+        Some(Status::Runs)
     );
     assert_eq!(status("-C, --check"), Some(Status::NotYet));
 }

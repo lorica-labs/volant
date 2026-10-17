@@ -25,10 +25,8 @@
     - copy:
         content: "{{ nl }}\n"
         dest: "{{ playbook_dir }}/out.txt"
-    - slurp:
-        src: "{{ playbook_dir }}/out.txt"
       register: out
     - debug:
-        msg: "{{ out.content | b64decode }}"
+        msg: "{{ out.size }}"
     - debug:
         msg: "{{ undefined_var.attr }}"

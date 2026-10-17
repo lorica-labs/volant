@@ -1,2 +1,3 @@
 # A handler notifies a handler defined behind it, which runs in the same flush.
 args: [chained.yml]
+modes: [check, check-diff, diff]

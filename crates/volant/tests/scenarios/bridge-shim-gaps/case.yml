@@ -2,3 +2,4 @@
 # ansible-core's own plugins: each passes options or async jobs the written plugins do not model.
 args: [-i, inv.ini, play.yml]
 needs: ["ansible-core", "sudo"]
+modes: [check, check-diff, diff]

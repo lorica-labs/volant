@@ -1,0 +1,6 @@
+# Scout cases the other check and diff scenarios leave out: copy from a controller file or
+# directory, lineinfile replace, remove and no-op, links, assemble, command guards and a handler,
+# in the four modes: plain, --check, --check --diff and --diff.
+args: [-i, inv.ini, play.yml]
+modes: [check, check-diff, diff]
+needs: [ansible-core]

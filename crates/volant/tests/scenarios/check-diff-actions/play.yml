@@ -1,0 +1,59 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    T: "{{ playbook_dir }}/t"
+  tasks:
+    - name: Set up
+      shell: |
+        mkdir -p {{ T }}/ld
+        printf 'old\n' > {{ T }}/c2
+        printf 'new\n' > {{ T }}/csame
+        printf 'a\nb=1\nc\n' > {{ T }}/l1
+        printf 'a\nb=1\n' > {{ T }}/l2
+        printf 'a\nb\n' > {{ T }}/l3
+        printf 'a\nb\n' > {{ T }}/l4
+        printf 'x\n' > {{ T }}/target
+        ln -sfn target {{ T }}/same-link
+      check_mode: false
+
+    - name: copy src new
+      copy: {src: files/new, dest: "{{ T }}/cnew"}
+    - name: copy src differs
+      copy: {src: files/c2, dest: "{{ T }}/c2"}
+    - name: copy src same
+      copy: {src: files/new, dest: "{{ T }}/csame"}
+    - name: copy directory
+      copy: {src: files/dir/, dest: "{{ T }}/cdir"}
+    - name: lineinfile replace
+      lineinfile: {path: "{{ T }}/l1", regexp: '^b=', line: b=2}
+    - name: lineinfile remove
+      lineinfile: {path: "{{ T }}/l2", regexp: '^b=', state: absent}
+    - name: lineinfile unchanged
+      lineinfile: {path: "{{ T }}/l3", line: b}
+    - name: file link new
+      file: {src: target, dest: "{{ T }}/new-link", state: link}
+    - name: file link unchanged
+      file: {src: target, dest: "{{ T }}/same-link", state: link}
+    - name: file directory unchanged
+      file: {path: "{{ T }}/ld", state: directory}
+    - name: file absent on a missing path
+      file: {path: "{{ T }}/nothing", state: absent}
+    - name: assemble
+      assemble: {src: "{{ playbook_dir }}/parts", dest: "{{ T }}/assembled"}
+    - name: command guarded by creates
+      command: echo ran
+      args: {creates: "{{ T }}/target"}
+    - name: command removes
+      command: echo ran
+      args: {removes: "{{ T }}/target"}
+    - name: changed notifies a handler
+      copy: {content: "h\n", dest: "{{ T }}/h"}
+      notify: h1
+    - name: lineinfile registered
+      lineinfile: {path: "{{ T }}/l4", line: c}
+      register: r
+    - debug:
+        msg: "changed={{ r.changed }} msg={{ r.msg | default('-') }}"
+  handlers:
+    - name: h1
+      debug: {msg: handler ran}

@@ -1,2 +1,3 @@
 # `until`, `retries` and `delay`: retry lines, attempts counted, and a loop retrying each item.
 args: [-i, inv.ini, -e, marker=marker, until.yml]
+modes: [check, check-diff, diff]

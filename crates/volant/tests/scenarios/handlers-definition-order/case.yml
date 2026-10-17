@@ -1,2 +1,3 @@
 # Handlers run once each, in definition order, after the tasks; a host that failed runs none.
 args: [-i, inv.ini, handlers.yml]
+modes: [check, check-diff, diff]

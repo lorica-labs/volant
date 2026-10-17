@@ -1,3 +1,4 @@
 # Defaults reach the action plugins: copy takes content and mode, template a mode.
 args: [-i, inv.ini, actions.yml]
 needs: [ansible-core]
+modes: [diff]

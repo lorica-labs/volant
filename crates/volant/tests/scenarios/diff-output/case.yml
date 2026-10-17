@@ -1,6 +1,5 @@
 # The diff blocks ansible-playbook prints in front of a changed result: file, copy and
 # lineinfile under --diff and --check --diff, a loop, `diff: false`, and an unchanged result.
-runs:
-  - args: [-i, inv.ini, --diff, play.yml]
-  - args: [-i, inv.ini, --check, --diff, play.yml]
+args: [-i, inv.ini, play.yml]
+modes: [check, check-diff, diff]
 needs: [ansible-core]

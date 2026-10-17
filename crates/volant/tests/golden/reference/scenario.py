@@ -3,11 +3,13 @@
 copy of its directory, its exit code and stdout recorded in `expected.json`.
 
 case.yml holds `args` (the argv after `ansible-playbook`), or `runs`, a list of `{args: [...]}`
-whose `expected.json` is then a list in the same order; `env`, extra environment for both engines;
+whose `expected.json` is then a list in the same order; `modes`, any of `check`, `check-diff`, `diff`: each run is
+recorded again with `--check`, `--check --diff` and `--diff` appended, in that order, after the run
+itself, and `expected.json` is then a list; `env`, extra environment for both engines;
 `forks`, 1 unless said, so that hosts print in the inventory's order under both engines; `needs`,
 any of `ansible-core`, `sudo`, `systemd`; `unordered`, regexes of the lines whose order may differ
-once `forks` is above 1. The copy's path reads `<golden-tmp>` in stdout, and nothing else is
-normalised.
+once `forks` is above 1. The copy's path reads `<golden-tmp>` in stdout, and a controller temp
+file of a diff header `<golden-ansible-tmp>`; nothing else is normalised.
 """
 import os
 import re
@@ -20,11 +22,15 @@ from . import SCENARIOS
 from .redact import TMP
 from .run import EMPTY_CONFIG, Failed, run, scratch, write_json
 
-KEYS = {"args", "runs", "env", "forks", "needs", "unordered"}
+MODES = {"check": ["--check"], "check-diff": ["--check", "--diff"], "diff": ["--diff"]}
+KEYS = {"args", "runs", "modes", "env", "forks", "needs", "unordered"}
 NEEDS = {"ansible-core", "sudo", "systemd"}
 
 # The two things the reference prints out of a Python set, in an order that changes between
 # processes: a play line's tags (`','.join(set(play.tags))`) and the host list of `--list-hosts`.
+# A controller temp file a diff header names (`copy` and `template` of a rendered source), drawn anew
+# by every run and under the recording user's home.
+ANSIBLE_TMP = re.compile(r"\S*/\.ansible/tmp/ansible-local-\w+/tmp\w+")
 PLAY_TAGS = re.compile(r"^  play #\d+ .*\tTAGS: \[(.*)\]$")
 HOST_COUNT = re.compile(r"^    hosts \((\d+)\):$")
 
@@ -69,6 +75,15 @@ def load(directory):
     for one in runs:
         if not isinstance(one, dict) or set(one) != {"args"} or not _strings(one["args"]):
             raise Failed(f"scenario {name}: a run is not `{{args: [...]}}` with string arguments: {one!r}")
+    modes = case.get("modes") or []
+    if not _strings(modes) or set(modes) - set(MODES):
+        raise Failed(f"scenario {name}: `modes` takes {', '.join(MODES)}, not {modes!r}")
+    if modes:
+        runs = [
+            r
+            for one in runs
+            for r in [one, *({"args": [*one["args"], *flags]} for m, flags in MODES.items() if m in modes)]
+        ]
     env = case.get("env") or {}
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         raise Failed(f"scenario {name}: `env` is not a mapping of strings")
@@ -88,7 +103,7 @@ def load(directory):
             re.compile(pattern)
         except re.error as e:
             raise Failed(f"scenario {name}: `unordered` {pattern!r} is not a regex ({e})") from None
-    return {"runs": runs, "env": env, "forks": forks, "needs": needs, "single": "args" in case}
+    return {"runs": runs, "env": env, "forks": forks, "needs": needs, "single": "args" in case and not modes}
 
 
 def _missing(needs):
@@ -117,7 +132,7 @@ def record_one(directory):
             config = own if os.path.exists(own) else EMPTY_CONFIG
             argv = ["ansible-playbook", *one["args"], "--forks", str(case["forks"])]
             result = run(argv, cwd=copy, config=config, extra_env=case["env"])
-            stdout = result.stdout.replace(copy, TMP)
+            stdout = ANSIBLE_TMP.sub("<golden-ansible-tmp>", result.stdout.replace(copy, TMP))
         bad = unreproducible(stdout)
         if bad:
             raise Failed(

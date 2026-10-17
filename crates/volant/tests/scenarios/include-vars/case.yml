@@ -1,2 +1,3 @@
 # include_vars sets a file's variables over the play's, or under a name.
 args: [-i, inv.ini, vars.yml]
+modes: [check, check-diff, diff]

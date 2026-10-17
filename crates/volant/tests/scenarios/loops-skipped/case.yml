@@ -3,3 +3,4 @@ runs:
   - args: [all-skipped.yml]
   - args: [false.yml]
   - args: [fine.yml]
+modes: [check, check-diff, diff]

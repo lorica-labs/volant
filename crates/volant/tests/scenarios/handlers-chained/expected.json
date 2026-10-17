@@ -1,4 +1,18 @@
-{
-  "code": 0,
-  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [notifies the first handler] **********************************************\nchanged: [localhost]\n\nRUNNING HANDLER [the first handler] ********************************************\nchanged: [localhost]\n\nRUNNING HANDLER [the second handler] *******************************************\nok: [localhost] => {\n    \"msg\": \"second-ran\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
-}
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [notifies the first handler] **********************************************\nchanged: [localhost]\n\nRUNNING HANDLER [the first handler] ********************************************\nchanged: [localhost]\n\nRUNNING HANDLER [the second handler] *******************************************\nok: [localhost] => {\n    \"msg\": \"second-ran\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [notifies the first handler] **********************************************\nskipping: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [notifies the first handler] **********************************************\nskipping: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [notifies the first handler] **********************************************\nchanged: [localhost]\n\nRUNNING HANDLER [the first handler] ********************************************\nchanged: [localhost]\n\nRUNNING HANDLER [the second handler] *******************************************\nok: [localhost] => {\n    \"msg\": \"second-ran\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

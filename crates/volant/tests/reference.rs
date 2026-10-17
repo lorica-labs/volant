@@ -170,7 +170,7 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
 }
 
 /// `case.yml` of a scenario, as the generator's `scenario.py` reads it: the argv of each run,
-/// `env`, `forks`, `needs` and `unordered`.
+/// `modes`, `env`, `forks`, `needs` and `unordered`.
 struct Case {
     runs: Vec<Vec<String>>,
     single: bool,
@@ -179,6 +179,13 @@ struct Case {
     needs: Vec<String>,
     unordered: Vec<String>,
 }
+
+/// The `modes` of a case.yml and the arguments each appends to a run, in the order recorded.
+const MODES: [(&str, &[&str]); 3] = [
+    ("check", &["--check"]),
+    ("check-diff", &["--check", "--diff"]),
+    ("diff", &["--diff"]),
+];
 
 /// A list of strings, or a refusal naming the key.
 fn string_list(value: &Value, what: &str) -> Vec<String> {
@@ -201,11 +208,20 @@ impl Case {
             .unwrap_or_else(|| panic!("{name}/case.yml is not a mapping"));
         for key in map.keys() {
             assert!(
-                ["args", "runs", "env", "forks", "needs", "unordered"].contains(&key.as_str()),
+                [
+                    "args",
+                    "runs",
+                    "modes",
+                    "env",
+                    "forks",
+                    "needs",
+                    "unordered"
+                ]
+                .contains(&key.as_str()),
                 "{name}/case.yml: {key} is not supported"
             );
         }
-        let runs = match (map.get("args"), map.get("runs")) {
+        let mut runs: Vec<Vec<String>> = match (map.get("args"), map.get("runs")) {
             (Some(args), None) => vec![string_list(args, &format!("{name}: args"))],
             (None, Some(runs)) => runs
                 .as_array()
@@ -222,6 +238,35 @@ impl Case {
                 .collect(),
             _ => panic!("{name}/case.yml: `args` or `runs`, not both or neither"),
         };
+        // Each run, then once more per mode, in this fixed order.
+        let modes = map
+            .get("modes")
+            .filter(|v| !v.is_null())
+            .map(|v| string_list(v, &format!("{name}: modes")))
+            .unwrap_or_default();
+        for mode in &modes {
+            assert!(
+                MODES.iter().any(|(m, _)| m == mode),
+                "{name}: modes takes check, check-diff, diff, not {mode}"
+            );
+        }
+        if !modes.is_empty() {
+            runs = runs
+                .into_iter()
+                .flat_map(|run| {
+                    let extra = MODES
+                        .iter()
+                        .filter(|(m, _)| modes.iter().any(|x| x == m))
+                        .map(|(_, flags)| {
+                            let mut run = run.clone();
+                            run.extend(flags.iter().map(ToString::to_string));
+                            run
+                        })
+                        .collect::<Vec<_>>();
+                    std::iter::once(run).chain(extra)
+                })
+                .collect();
+        }
         let env = map
             .get("env")
             .filter(|env| !env.is_null())
@@ -252,7 +297,7 @@ impl Case {
         };
         Self {
             runs,
-            single: map.contains_key("args"),
+            single: map.contains_key("args") && modes.is_empty(),
             env,
             forks,
             needs: list("needs"),
@@ -303,8 +348,14 @@ fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
     let stdout = jid.replace_all(&stdout, "<jid>");
     let pid = regex::Regex::new(r#""child_pid": [0-9]+"#).expect("the pattern compiles");
     let stdout = pid.replace_all(&stdout, r#""child_pid": <pid>"#);
+    // A controller temp file named in a diff header, drawn anew by every run: the recording
+    // already reads `<golden-ansible-tmp>` there.
+    let stdout = regex::Regex::new(r"\S*/\.ansible/tmp/ansible-local-\w+/tmp\w+")
+        .expect("the pattern compiles")
+        .replace_all(&stdout, "<golden-ansible-tmp>")
+        .into_owned();
     if unordered.is_empty() {
-        return stdout.into_owned();
+        return stdout;
     }
     let lines: Vec<&str> = stdout.split_inclusive('\n').collect();
     let loose = |line: &str| {

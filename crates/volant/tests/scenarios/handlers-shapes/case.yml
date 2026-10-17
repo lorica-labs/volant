@@ -1,2 +1,3 @@
 # Handlers with loops and conditions, notified from a rescue.
 args: [shapes.yml]
+modes: [check, check-diff, diff]

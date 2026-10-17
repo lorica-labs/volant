@@ -1,2 +1,3 @@
 # A flush inside an include runs the handlers of the hosts that asked for them.
 args: [-i, inv.ini, flush-in-include.yml]
+modes: [check, check-diff, diff]

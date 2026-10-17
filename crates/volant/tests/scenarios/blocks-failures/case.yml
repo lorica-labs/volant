@@ -6,3 +6,4 @@ runs:
   - args: [-i, inv.ini, rescue.yml]
   - args: [-i, inv.ini, rescue-fails.yml]
   - args: [-i, three-hosts.ini, meta.yml]
+modes: [check, check-diff, diff]

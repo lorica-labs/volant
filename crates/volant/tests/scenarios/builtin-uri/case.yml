@@ -2,3 +2,4 @@
 # download that reports a change again on a rerun, a JSON body and the redirect options.
 args: [-i, inv.ini, play.yml]
 needs: ["ansible-core"]
+modes: [check, check-diff, diff]

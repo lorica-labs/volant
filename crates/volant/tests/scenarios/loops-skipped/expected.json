@@ -5,7 +5,43 @@
   },
   {
     "code": 0,
+    "stdout": "\nPLAY [A loop whose every item a condition leaves out] **************************\n\nTASK [Every item skipped] ******************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [A loop whose every item a condition leaves out] **************************\n\nTASK [Every item skipped] ******************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [A loop whose every item a condition leaves out] **************************\n\nTASK [Every item skipped] ******************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
     "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Copy] ********************************************************************\nskipping: [localhost]\n\nTASK [Inc] *********************************************************************\nskipping: [localhost]\n\nTASK [Show] ********************************************************************\nok: [localhost] => {\n    \"msg\": \"changed,false_condition,skip_reason,skipped\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Copy] ********************************************************************\nskipping: [localhost]\n\nTASK [Inc] *********************************************************************\nskipping: [localhost]\n\nTASK [Show] ********************************************************************\nok: [localhost] => {\n    \"msg\": \"changed,false_condition,skip_reason,skipped\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Copy] ********************************************************************\nskipping: [localhost]\n\nTASK [Inc] *********************************************************************\nskipping: [localhost]\n\nTASK [Show] ********************************************************************\nok: [localhost] => {\n    \"msg\": \"changed,false_condition,skip_reason,skipped\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Copy] ********************************************************************\nskipping: [localhost]\n\nTASK [Inc] *********************************************************************\nskipping: [localhost]\n\nTASK [Show] ********************************************************************\nok: [localhost] => {\n    \"msg\": \"changed,false_condition,skip_reason,skipped\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Copy] ********************************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nTASK [Inc] *********************************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nTASK [Show] ********************************************************************\nok: [localhost] => {\n    \"msg\": \"changed,msg,results,skipped\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Copy] ********************************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nTASK [Inc] *********************************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nTASK [Show] ********************************************************************\nok: [localhost] => {\n    \"msg\": \"changed,msg,results,skipped\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [Copy] ********************************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nTASK [Inc] *********************************************************************\nskipping: [localhost] => (item=a) \nskipping: [localhost] => (item=b) \nskipping: [localhost]\n\nTASK [Show] ********************************************************************\nok: [localhost] => {\n    \"msg\": \"changed,msg,results,skipped\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
   },
   {
     "code": 0,

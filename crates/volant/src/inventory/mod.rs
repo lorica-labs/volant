@@ -208,7 +208,10 @@ impl Inventory {
             .filter(|(_, vars)| !vars.is_empty())
             .map(|(name, vars)| (name, Value::Object(vars.into_iter().collect())))
             .collect();
-        out.insert("_meta".into(), serde_json::json!({ "hostvars": hostvars }));
+        out.insert(
+            "_meta".into(),
+            serde_json::json!({ "hostvars": hostvars, "profile": "inventory_legacy" }),
+        );
         let nested: HashSet<&str> = self
             .groups
             .iter()

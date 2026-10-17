@@ -501,6 +501,61 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
+    "partial_then_good": {
+      "env": {},
+      "hosts": [
+        "h0",
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "v": "one_h1",
+              "wv": "one"
+            },
+            "h2": {
+              "wv": "one"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "g",
+            "web",
+            "shared"
+          ]
+        },
+        "g": {
+          "hosts": [
+            "h0"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h3",
+            "h1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h1",
+            "h2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "partial.ini",
+        "one.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n"
+    },
     "ranges": {
       "env": {},
       "hosts": [

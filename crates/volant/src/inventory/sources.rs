@@ -233,7 +233,11 @@ pub fn load_sources(sources: &[Source], config: &PluginConfig) -> Loaded {
             loaded.parsed = true;
             loaded.inventory.reconcile();
         }
+        // What a source that failed part-way added stays only when a later source is read: the
+        // reference attaches groups to `all` once something parsed, so with nothing parsed the
+        // run sees no host at all.
         Ok(false) if config.unparsed_is_failed => {
+            loaded.inventory = Inventory::default();
             loaded.error = Some(Fatal {
                 code: 1,
                 message: "No inventory was parsed, please check your configuration and options."
@@ -241,6 +245,7 @@ pub fn load_sources(sources: &[Source], config: &PluginConfig) -> Loaded {
             });
         }
         Ok(false) => {
+            loaded.inventory = Inventory::default();
             cx.warn("No inventory was parsed, only implicit localhost is available".into());
         }
         Err(fatal) => loaded.error = Some(fatal),
@@ -418,4 +423,90 @@ pub(super) fn executable(source: &Source) -> bool {
 #[cfg(not(unix))]
 pub(super) fn executable(_source: &Source) -> bool {
     false
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use rstest::rstest;
+
+    const DECLINED: &str = "declined parsing <dir>/{} as it did not pass its verify_file() method";
+
+    /// The `-vvv` lines of the chain for one source, as measured on the reference.
+    #[rstest]
+    #[case::ini("hosts.ini", &["host_list", "script", "auto", "yaml"], "ini")]
+    #[case::no_extension("hosts", &["host_list", "script", "auto"], "ini")]
+    #[case::toml_is_not_ini("hosts.toml", &["host_list", "script", "auto", "yaml", "ini"], "")]
+    fn a_file_is_offered_to_each_plugin_in_turn(
+        #[case] file: &str,
+        #[case] declined: &[&str],
+        #[case] parsed_by: &str,
+    ) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(
+            dir.path().join(file),
+            "[web]
+h1
+",
+        )
+        .unwrap();
+        let shown = dir.path().display().to_string();
+        let source = Source::new(&dir.path().join(file).to_string_lossy());
+        let loaded = load_sources(&[source], &PluginConfig::default());
+        let lines: Vec<String> = loaded
+            .notes
+            .iter()
+            .filter_map(|n| match n {
+                Note::Verbose(3, text) => Some(text.replace(&shown, "<dir>")),
+                _ => None,
+            })
+            .collect();
+        let mut want: Vec<String> = declined
+            .iter()
+            .map(|p| format!("{p} {}", DECLINED.replace("{}", file)))
+            .collect();
+        if parsed_by.is_empty() {
+            assert_eq!(
+                loaded.error.map(|e| e.code),
+                Some(4),
+                "toml is refused by name"
+            );
+        } else {
+            want.push(format!(
+                "Parsed <dir>/{file} inventory source with {parsed_by} plugin"
+            ));
+            assert!(loaded.parsed);
+        }
+        assert_eq!(lines, want);
+    }
+
+    #[test]
+    fn a_host_list_is_shown_as_given_and_ignored_names_are_skipped() {
+        let loaded = load_sources(&[Source::new("a,b,")], &PluginConfig::default());
+        assert_eq!(
+            loaded.notes,
+            [Note::Verbose(
+                3,
+                "Parsed a,b, inventory source with host_list plugin".into()
+            )]
+        );
+        let config = PluginConfig {
+            ignore_patterns: vec!["^sub".into()],
+            ..PluginConfig::default()
+        };
+        let ignored = ignored_names(&config).unwrap();
+        for name in [
+            ".hidden.ini",
+            "group_vars",
+            "x.retry",
+            "notes~",
+            "sub",
+            "a.txt",
+        ] {
+            assert!(ignored.is_match(name), "{name} is skipped");
+        }
+        for name in ["hosts.ini", "hosts", "my_group_vars"] {
+            assert!(!ignored.is_match(name), "{name} is read");
+        }
+    }
 }

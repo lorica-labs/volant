@@ -9,6 +9,7 @@ host_list_then_file: {sources: ["h1,h9,", one.ini]}
 bad: {sources: [bad.ini]}
 bad_then_good: {sources: [bad.ini, one.ini]}
 partial: {sources: [partial.ini]}
+partial_then_good: {sources: [partial.ini, one.ini]}
 colon: {sources: [colon.ini]}
 missing: {sources: [missing.ini]}
 empty_dir: {sources: [empty]}

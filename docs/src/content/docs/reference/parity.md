@@ -11,12 +11,12 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 37 | 3 | 1 | 0 |
-| keyword (block) | 27 | 3 | 1 | 0 |
-| keyword (task) | 60 | 4 | 2 | 0 |
+| keyword (play) | 37 | 4 | 0 | 0 |
+| keyword (block) | 27 | 4 | 0 | 0 |
+| keyword (task) | 60 | 5 | 1 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
-| ansible-playbook option | 27 | 1 | 10 | 0 |
+| ansible-playbook option | 29 | 1 | 8 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
@@ -47,11 +47,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `become_flags` | <span class="kw kw-runs">runs</span> |  |
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
-| `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
+| `check_mode` | <span class="kw kw-partial">partial</span> | `copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
-| `diff` | <span class="kw kw-notyet">not yet</span> |  |
+| `diff` | <span class="kw kw-partial">partial</span> | modules are told to report their differences, which are not printed yet |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `fact_path` | <span class="kw kw-runs">runs</span> |  |
 | `force_handlers` | <span class="kw kw-runs">runs</span> |  |
@@ -95,13 +95,13 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `block` | <span class="kw kw-runs">runs</span> |  |
-| `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
+| `check_mode` | <span class="kw kw-partial">partial</span> | `copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
-| `diff` | <span class="kw kw-notyet">not yet</span> |  |
+| `diff` | <span class="kw kw-partial">partial</span> | modules are told to report their differences, which are not printed yet |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_unreachable` | <span class="kw kw-runs">runs</span> |  |
@@ -133,14 +133,14 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `become_method` | <span class="kw kw-runs">runs</span> |  |
 | `become_user` | <span class="kw kw-runs">runs</span> |  |
 | `changed_when` | <span class="kw kw-runs">runs</span> |  |
-| `check_mode` | <span class="kw kw-partial">partial</span> | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
+| `check_mode` | <span class="kw kw-partial">partial</span> | `copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
 | `delay` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
-| `diff` | <span class="kw kw-notyet">not yet</span> |  |
+| `diff` | <span class="kw kw-partial">partial</span> | modules are told to report their differences, which are not printed yet |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `failed_when` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
@@ -228,10 +228,10 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `--become-method` | <span class="kw kw-runs">runs</span> |  |
 | `--become-pass-file, --become-password-file` | <span class="kw kw-notyet">not yet</span> |  |
 | `--become-user` | <span class="kw kw-runs">runs</span> |  |
-| `-C, --check` | <span class="kw kw-notyet">not yet</span> |  |
+| `-C, --check` | <span class="kw kw-runs">runs</span> |  |
 | `-c, --connection` | <span class="kw kw-runs">runs</span> |  |
 | `--conn-pass-file, --connection-password-file` | <span class="kw kw-notyet">not yet</span> |  |
-| `-D, --diff` | <span class="kw kw-notyet">not yet</span> |  |
+| `-D, --diff` | <span class="kw kw-runs">runs</span> |  |
 | `-e, --extra-vars` | <span class="kw kw-runs">runs</span> |  |
 | `--flush-cache` | <span class="kw kw-runs">runs</span> |  |
 | `--force-handlers` | <span class="kw kw-runs">runs</span> |  |

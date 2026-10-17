@@ -789,6 +789,7 @@ pub(super) async fn run_batch(
                                 whole,
                                 pattern: &play.hosts,
                                 plan: &plan,
+                                abort: &options.abort,
                                 first: crate::compile::first(&plan.steps()),
                             },
                             state,
@@ -1073,6 +1074,7 @@ pub(super) async fn run_batch(
                         whole,
                         pattern: &play.hosts,
                         plan: &plan,
+                        abort: &options.abort,
                         first: crate::compile::first(&plan.steps()),
                     },
                     state,
@@ -1163,6 +1165,8 @@ struct MetaContext<'a> {
     /// The play's `hosts:` pattern, which a refreshed inventory is asked about again.
     pattern: &'a str,
     plan: &'a PlayPlan,
+    /// Ends the run when a refresh cannot read its sources.
+    abort: &'a super::Abort,
     /// The step a host that was unreachable before the play picks it up at.
     first: usize,
 }
@@ -1242,22 +1246,19 @@ fn apply_meta(
             let reload = state.vars.lock().expect("vars lock").reload();
             if let Some((sources, config)) = reload {
                 // Every source is read again, scripts and plugins run anew. What a source says
-                // while it is read is warned about; an inventory that cannot be read any more is
-                // left empty, and the run carries on without any host in it. The fact cache is
-                // not read again.
+                // while it is read is warned about; an error that ends the run at its start ends
+                // it here with the same message and code. The fact cache is not read again.
                 let loaded = crate::inventory::load_sources(&sources, &config);
                 for note in loaded.notes {
                     if let crate::inventory::Note::Warning(text) = note {
                         warned.push(text);
                     }
                 }
-                let fresh = match loaded.error {
-                    Some(fatal) => {
-                        warned.push(fatal.message);
-                        crate::inventory::Inventory::empty()
-                    }
-                    None => loaded.inventory,
-                };
+                let fresh = loaded.inventory;
+                if let Some(fatal) = loaded.error {
+                    cx.abort.raise_with(fatal.code, fatal.message);
+                    return warned;
+                }
                 let fresh = state
                     .vars
                     .lock()

@@ -2,7 +2,7 @@
 //! Variable sources and their precedence, from inventory groups up to extra vars, plus the
 //! magic variables Ansible defines for every host.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -229,6 +229,8 @@ pub struct VarStore {
     /// The hosts the play's pattern found after a refresh, which `ansible_play_hosts_all` shows
     /// in place of the play's starting list until the play ends.
     play_hosts_all: Option<Vec<String>>,
+    /// The hosts `--limit` narrows the run to, which a refresh applies to the play's hosts too.
+    limit: Option<HashSet<String>>,
     /// The sources and plugin settings a refresh reads again.
     reload: Option<(Vec<Source>, PluginConfig)>,
     /// Whether `dynamic` moved since the command line last took it.
@@ -593,6 +595,7 @@ impl VarStore {
             dynamic: inventory.clone(),
             added: Vec::new(),
             reload: None,
+            limit: None,
             play_hosts_all: None,
             inventory_changed: false,
             custom_stats: CustomStats::default(),
@@ -613,13 +616,22 @@ impl VarStore {
     }
 
     /// Keeps the sources `meta: refresh_inventory` reads again.
-    pub fn set_reload(&mut self, sources: Vec<Source>, config: PluginConfig) {
+    pub fn set_reload(
+        &mut self,
+        sources: Vec<Source>,
+        config: PluginConfig,
+        limit: Option<HashSet<String>>,
+    ) {
         self.reload = Some((sources, config));
+        self.limit = limit;
     }
 
     /// After a refresh, `ansible_play_hosts_all` lists `hosts`: new hosts show at once, removed
     /// ones are gone, and none of them changes who runs the rest of the play.
-    pub fn set_play_hosts_all(&mut self, hosts: Vec<String>) {
+    pub fn set_play_hosts_all(&mut self, mut hosts: Vec<String>) {
+        if let Some(limit) = &self.limit {
+            hosts.retain(|h| limit.contains(h));
+        }
         self.play_hosts_all = Some(hosts);
         self.shared = None;
     }

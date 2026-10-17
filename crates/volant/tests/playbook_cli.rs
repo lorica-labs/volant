@@ -6168,3 +6168,59 @@ fn a_throttled_unreachable_host_under_any_errors_fatal_gives_its_turn_back() {
     assert!(text.contains("PLAY RECAP"), "{text}");
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
+
+/// A `cacheable` fact is written to the `jsonfile` cache, read back by the next run, removed by
+/// `--flush-cache`, and a corrupt file stops the run and is erased.
+#[test]
+fn the_jsonfile_cache_keeps_cacheable_facts_between_runs() {
+    let dir = std::env::temp_dir().join(format!("volant-fact-cache-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let hosts = dir.join("hosts");
+    std::fs::write(&hosts, "h1 ansible_connection=local\n").unwrap();
+    let setter = dir.join("set.yml");
+    std::fs::write(
+        &setter,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - set_fact: {kept: 1, cacheable: true}\n",
+    )
+    .unwrap();
+    let reader = dir.join("read.yml");
+    std::fs::write(
+        &reader,
+        "- hosts: all\n  gather_facts: false\n  tasks:\n    - debug: {msg: \"kept={{ kept | default('none') }}\"}\n",
+    )
+    .unwrap();
+    let cache = dir.join("fc");
+    let envs = [
+        ("ANSIBLE_CACHE_PLUGIN", "jsonfile"),
+        ("ANSIBLE_CACHE_PLUGIN_CONNECTION", cache.to_str().unwrap()),
+        ("ANSIBLE_GATHERING", "smart"),
+    ];
+    let run = |play: &Path, more: &[&str]| {
+        let mut args = vec!["playbook", "-i", hosts.to_str().unwrap()];
+        args.extend_from_slice(more);
+        args.push(play.to_str().unwrap());
+        let out = volant_within_env(&args, DEFAULT_DEADLINE, &envs);
+        (
+            out.status.code(),
+            String::from_utf8_lossy(&out.stdout).to_string(),
+            String::from_utf8_lossy(&out.stderr).to_string(),
+        )
+    };
+    assert_eq!(run(&setter, &[]).0, Some(0));
+    let file = cache.join("s1_h1");
+    let bytes = std::fs::read_to_string(&file).unwrap();
+    assert!(
+        bytes.starts_with(r#"{"__payload__": "{\"kept\": {\"value\": 1,"#),
+        "{bytes}"
+    );
+    let (code, text, _) = run(&reader, &[]);
+    assert!(code == Some(0) && text.contains("kept=1"), "{text}");
+    let (_, text, _) = run(&reader, &["--flush-cache"]);
+    assert!(text.contains("kept=none") && !file.exists(), "{text}");
+    std::fs::write(&file, "bad").unwrap();
+    let (code, _, err) = run(&reader, &[]);
+    assert_eq!(code, Some(1), "{err}");
+    assert!(err.contains("was corrupt") && !file.exists(), "{err}");
+    std::fs::remove_dir_all(&dir).unwrap();
+}

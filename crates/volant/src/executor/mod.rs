@@ -261,6 +261,22 @@ pub async fn run_play(
     let max_fail = max_fail_percentage(play, &state.templar, &play_vars)?;
     check_gather_keywords(play, &state.templar, &play_vars)?;
     let all: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
+    // `gathering = smart`: the hosts the cache already answers for leave the `Gathering Facts`
+    // step to the others, and a step nobody runs shows nothing at all.
+    let masked = {
+        let store = state.vars.lock().expect("vars lock");
+        let wanting: Vec<String> = all
+            .iter()
+            .filter(|h| !store.skips_gathering(h))
+            .cloned()
+            .collect();
+        (compiled.gathers && wanting.len() < all.len()).then(|| {
+            let mut copy = compiled.clone();
+            copy.steps[0].hosts = Some(wanting.into());
+            copy
+        })
+    };
+    let compiled = masked.as_ref().unwrap_or(compiled);
     let playbook_dir = state
         .vars
         .lock()

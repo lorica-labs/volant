@@ -165,6 +165,14 @@ pub struct VarStore {
     gathered: BTreeMap<String, Arc<Map<String, Value>>>,
     /// Restricted fact names already warned about: the reference says each once per run.
     warned_restricted: BTreeSet<String>,
+    /// What the fact cache holds per host: the gathered facts as the modules returned them, and
+    /// the `set_fact` ones that said `cacheable`, tagged as the file holds them. A host with an
+    /// entry is a host `gathering = smart` does not gather again.
+    persisted: BTreeMap<String, Map<String, Value>>,
+    /// The `jsonfile` cache the entries are written to, when the run has one.
+    fact_cache: Option<crate::fact_cache::FactCache>,
+    /// `gathering = smart`.
+    smart: bool,
     /// Of the `set_fact` layer's facts, the names that came from a managed host rather than
     /// from the playbook.
     untrusted: BTreeMap<String, BTreeSet<String>>,
@@ -520,6 +528,9 @@ impl VarStore {
             facts: BTreeMap::new(),
             gathered: BTreeMap::new(),
             warned_restricted: BTreeSet::new(),
+            persisted: BTreeMap::new(),
+            fact_cache: None,
+            smart: false,
             untrusted: BTreeMap::new(),
             extra,
             forks: crate::config::DEFAULT_FORKS,
@@ -758,6 +769,55 @@ impl VarStore {
     /// caller's `Removed restricted key from module data` warning. The namespaced copy keeps
     /// them, as the reference's does: nothing reads a connection setting from there.
     pub fn gather_facts(&mut self, host: &str, facts: &Map<String, Value>) -> Vec<String> {
+        let removed = self.merge_gathered(host, facts);
+        self.persisted
+            .entry(host.to_string())
+            .or_default()
+            .extend(facts.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.write_cache(host);
+        removed
+    }
+
+    /// Sets the fact cache the run writes to and whether `gathering` is `smart`.
+    pub fn set_fact_cache(&mut self, cache: Option<crate::fact_cache::FactCache>, smart: bool) {
+        self.fact_cache = cache;
+        self.smart = smart;
+    }
+
+    pub fn fact_cache(&self) -> Option<&crate::fact_cache::FactCache> {
+        self.fact_cache.as_ref()
+    }
+
+    /// Takes what the cache held for `host` as that host's gathered facts, without writing it
+    /// back.
+    pub fn load_cached(&mut self, host: &str, facts: Map<String, Value>) {
+        self.merge_gathered(host, &facts);
+        self.persisted.insert(host.to_string(), facts);
+    }
+
+    /// Whether `gathering = smart` has no need to gather `host`: the cache holds an entry for it.
+    pub fn skips_gathering(&self, host: &str) -> bool {
+        self.smart && self.persisted.contains_key(host)
+    }
+
+    /// Adds a `set_fact` that said `cacheable: true` to `host`'s cache entry.
+    pub fn cache_fact(&mut self, host: &str, key: &str, value: &Value) {
+        self.persisted
+            .entry(host.to_string())
+            .or_default()
+            .insert(key.to_string(), crate::fact_cache::tag(value));
+        self.write_cache(host);
+    }
+
+    fn write_cache(&self, host: &str) {
+        if let (Some(cache), Some(entry)) = (&self.fact_cache, self.persisted.get(host))
+            && let Err(err) = cache.write(host, entry)
+        {
+            eprintln!("[WARNING]: Unable to write the fact cache entry of {host}: {err}");
+        }
+    }
+
+    fn merge_gathered(&mut self, host: &str, facts: &Map<String, Value>) -> Vec<String> {
         // Before the write, so the store holds the only reference it can: a task still holding
         // the gathered map keeps its snapshot, and this write goes to a copy.
         self.host_facts.remove(host);

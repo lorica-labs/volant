@@ -3986,8 +3986,17 @@ pub(super) fn record_local_facts(
             continue;
         };
         let data = set_fact_data(task, item, templar);
+        let cacheable = set_fact
+            && item.args.get("cacheable").is_some_and(|v| match v {
+                Value::Bool(on) => *on,
+                Value::String(text) => crate::yaml::bool_from_str(text.trim()) == Some(true),
+                _ => false,
+            });
         for (key, value) in facts {
             for host in hosts {
+                if cacheable {
+                    vars.cache_fact(host, key, value);
+                }
                 if set_fact && data.contains(key) {
                     vars.set_untrusted_fact(host, key, value.clone());
                 } else {

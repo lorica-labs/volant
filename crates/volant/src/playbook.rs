@@ -34,6 +34,9 @@ pub struct Play {
     /// prints them on the play's own line.
     pub tags: Vec<String>,
     pub gather_facts: bool,
+    /// Whether the play wrote `gather_facts` at all: `gathering = explicit` gathers only for a
+    /// play that did.
+    pub gather_written: bool,
     pub vars: Map<String, Value>,
     pub vars_files: Vec<String>,
     pub tasks: Vec<TaskOrBlock>,
@@ -1045,7 +1048,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         .and_then(Yaml::as_str)
         .unwrap_or(&hosts)
         .to_string();
-    let gather_facts = boolean(yaml, "gather_facts")?.unwrap_or(true);
+    let gather_written = boolean(yaml, "gather_facts")?;
+    let gather_facts = gather_written.unwrap_or(true);
     let vars = match field(yaml, "vars") {
         None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
         Some(v) => match to_json(v).context("'vars'")? {
@@ -1098,6 +1102,7 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         host_patterns,
         tags: tags(yaml, "")?,
         gather_facts,
+        gather_written: gather_written.is_some(),
         vars,
         vars_files,
         tasks,

@@ -1171,7 +1171,7 @@ pub(crate) fn compile(
     // The play's own tags are the outermost layer of the merge, so every task under it - in a
     // role, in an imported file, at any block depth - carries them for the selection and for
     // the listing. Measured: `--skip-tags <play tag>` leaves a play with nothing to do.
-    // `no_log`, `environment`, `check_mode` and `run_once` join the play's tags here: all four
+    // `no_log`, `environment`, `check_mode`, `diff` and `run_once` join the play's tags here: all
     // are task keywords a play may also carry, so putting them in the outermost layer of the
     // merge is what
     // makes a play-wide `environment` reach a task inside a role inside a block, with no second
@@ -1183,6 +1183,7 @@ pub(crate) fn compile(
         module_defaults: play.module_defaults.clone(),
         collections: play.collections.clone(),
         check_mode: play.check_mode,
+        diff: play.diff,
         run_once: play.run_once,
         timeout: play.timeout,
         throttle: play.throttle,
@@ -1274,6 +1275,10 @@ pub(crate) fn compile(
             .collections
             .clone()
             .or_else(|| empty.collections.clone());
+        // And the play's check and diff modes, `--check` and `--diff` among them: a handler
+        // that ran for real under `--check` would change the host.
+        task.check_mode = task.check_mode.or(empty.check_mode);
+        task.diff = task.diff.or(empty.diff);
         builder.handlers.push(Handler {
             task,
             listen: handler.listen.clone(),
@@ -1661,10 +1666,11 @@ fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     task.timeout = inner.timeout.or(outer.timeout);
     task.throttle = inner.throttle.or(outer.throttle);
     task.debugger = inner.debugger.or(outer.debugger);
-    // Both three-state for the same reason `ignore_errors` is: a play or a block that says one
+    // All three-state for the same reason `ignore_errors` is: a play or a block that says one
     // thing and a task that says the other have to be told apart from a task that says nothing.
     task.no_log = inner.no_log.or(outer.no_log);
     task.check_mode = inner.check_mode.or(outer.check_mode);
+    task.diff = inner.diff.or(outer.diff);
     // Three-state for the same reason, and inherited the same way: `Block.fattributes` carries
     // all three, `Play.fattributes` carries `run_once` alone, and the innermost value wins.
     task.run_once = inner.run_once.or(outer.run_once);
@@ -2738,18 +2744,14 @@ mod tests {
         )));
         assert_eq!(under_block.no_log, Some(true), "the block's no_log");
         assert_eq!(under_block.when, ["gate"], "the block's when");
-        // `check_mode: true` is one this release refuses: inherited, it is refused in the file it
-        // reaches too, rather than dropped and every change in there made for real.
-        let refused = expansion(
-            &dir,
-            &tasks(&format!(
-                "block: [include_tasks: {inc}]\n      check_mode: true"
-            )),
-            &all,
-        )
-        .unwrap()
-        .expect_err("an inherited check_mode: true");
-        assert!(format!("{refused:#}").contains("check_mode"), "{refused:#}");
+        let under_block = first(&tasks(&format!(
+            "block: [include_tasks: {inc}]\n      check_mode: true\n      diff: false"
+        )));
+        assert_eq!(
+            (under_block.check_mode, under_block.diff),
+            (Some(true), Some(false)),
+            "the block's check_mode and diff"
+        );
     }
 
     /// Inserting steps one past the last step of a block's body grows that body and shifts the two

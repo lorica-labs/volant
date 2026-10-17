@@ -150,6 +150,25 @@ pub fn enabled_names() -> Vec<String> {
         .collect()
 }
 
+/// The natives that only read the host. The reference's own modules run unchanged in check mode
+/// and show no diff, so these answer a task in either mode as they answer any other.
+const READ_ONLY: [&str; 4] = ["package_facts", "service_facts", "setup", "stat"];
+
+/// Why `native` hands a task in check or diff mode back to its Python module, or `None` when it
+/// answers it. A native that changes the host knows neither what it would have changed without
+/// changing it nor how the reference words the diff, and the Python module knows both.
+pub fn mode_hand_back(native: &Native, check_mode: bool, diff: bool) -> Option<&'static str> {
+    if READ_ONLY.contains(&native.name) {
+        None
+    } else if check_mode {
+        Some("the task runs in check mode")
+    } else if diff {
+        Some("the task shows a diff")
+    } else {
+        None
+    }
+}
+
 const _: () = assert!(
     cfg!(panic = "unwind"),
     "natives::run needs an unwinding build to turn a native's panic into a failed task"
@@ -237,6 +256,40 @@ mod tests {
             for name in std::iter::once(native.name).chain(native.aliases.iter().copied()) {
                 assert!(NATIVE_CANDIDATES.contains(&name), "{name} is no candidate");
             }
+        }
+    }
+
+    /// Under check or diff mode a native that changes the host hands back, and a read-only one
+    /// answers. One row per candidate, so a new native has to take a side.
+    #[rstest::rstest]
+    #[case::setup("setup", false)]
+    #[case::stat("stat", false)]
+    #[case::package_facts("package_facts", false)]
+    #[case::service_facts("service_facts", false)]
+    #[case::file("file", true)]
+    #[case::copy("copy", true)]
+    #[case::lineinfile("lineinfile", true)]
+    #[case::systemd("systemd", true)]
+    #[case::apt("apt", true)]
+    #[case::user("user", true)]
+    #[case::group("group", true)]
+    fn a_native_that_changes_the_host_hands_back_under_check_and_diff(
+        #[case] name: &str,
+        #[case] hands_back: bool,
+    ) {
+        // The rows, plus `systemd_service`, which is `systemd` under another name.
+        assert_eq!(NATIVE_CANDIDATES.len(), 11 + 1, "a candidate has no row");
+        let Some(native) = find(name) else {
+            // Not built on this platform.
+            return;
+        };
+        assert_eq!(mode_hand_back(native, false, false), None);
+        for (check, diff) in [(true, false), (false, true), (true, true)] {
+            assert_eq!(
+                mode_hand_back(native, check, diff).is_some(),
+                hands_back,
+                "{name}, check {check}, diff {diff}"
+            );
         }
     }
 

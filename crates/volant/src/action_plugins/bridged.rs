@@ -97,6 +97,10 @@ pub(super) fn start(
     if let Some(environment) = ctx.environment.filter(|e| !e.is_empty()) {
         task.insert("environment".into(), json!(environment));
     }
+    // The task's own modes, which the plugin reads off `self._task`: `--check` alone would miss a
+    // task's `check_mode: false`, and a plugin that never heard of check mode changes the host.
+    task.insert("check_mode".into(), Value::Bool(ctx.check_mode));
+    task.insert("diff".into(), Value::Bool(ctx.diff));
     let task = Value::Object(task);
     let vars = ctx.running_vars;
     // The layers in the order a read goes through them: the host's own map last.
@@ -106,7 +110,6 @@ pub(super) fn start(
     // Each other host's variables are asked for when a plugin reads them.
     task_vars.remove("hostvars");
     let text = |key: &str| task_vars.get(key).and_then(Value::as_str);
-    let flag = |key: &str| task_vars.get(key).and_then(Value::as_bool).unwrap_or(false);
     let connection = if ctx.local {
         "local"
     } else {
@@ -116,8 +119,8 @@ pub(super) fn start(
         "connection": connection,
         "remote_addr": text("ansible_host").or_else(|| text("inventory_hostname")),
         "remote_user": text("ansible_user"),
-        "check_mode": flag("ansible_check_mode"),
-        "diff": flag("ansible_diff_mode"),
+        "check_mode": ctx.check_mode,
+        "diff": ctx.diff,
     });
     let task_vars = Value::Object(task_vars);
     let (to_plugin, asks) = channel();
@@ -556,6 +559,8 @@ mod tests {
                 warnings: &mut warnings,
                 environment: None,
                 timeout: None,
+                check_mode: false,
+                diff: false,
             },
         );
         let Step::Done(result) = plugin.next(None) else {

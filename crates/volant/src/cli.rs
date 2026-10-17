@@ -158,6 +158,14 @@ pub struct PlaybookArgs {
     #[arg(long = "force-handlers")]
     pub force_handlers: bool,
 
+    /// Don't make any changes; instead, try to predict some of the changes that may occur.
+    #[arg(short = 'C', long = "check")]
+    pub check: bool,
+    /// When changing (small) files and templates, show the differences in those files; works
+    /// great with --check.
+    #[arg(short = 'D', long = "diff")]
+    pub diff: bool,
+
     /// Print where the run's time went on stderr, after the recap.
     #[arg(long = "profile")]
     pub profile: bool,
@@ -271,11 +279,17 @@ async fn run_all(
         None => Inventory::empty(),
     };
     let compiling = std::time::Instant::now();
-    let playbooks = args
+    let mut playbooks = args
         .playbooks
         .iter()
         .map(|p| playbook::load(p))
         .collect::<anyhow::Result<Vec<_>>>()?;
+    // `--check` and `--diff` are each play's default: its own keyword wins, and every block,
+    // role, task and handler under it inherits whichever applies, as in the reference.
+    for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
+        play.check_mode = play.check_mode.or(args.check.then_some(true));
+        play.diff = play.diff.or(args.diff.then_some(true));
+    }
     let mode = Listing {
         tasks: args.list_tasks,
         tags: args.list_tags,
@@ -620,6 +634,7 @@ async fn run_all(
     let python = python.map(|union| armed(union, config.native_modules, facts));
     let (run_tags, skip_tags) = selection.lists();
     store.set_tags(run_tags, skip_tags);
+    store.set_modes(args.check, args.diff);
     let mut state = RunState {
         templar: Arc::new(Templar::with_bridge(
             playbook_dir.clone(),

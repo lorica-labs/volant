@@ -262,6 +262,8 @@ mod tests {
 
             environment: None,
             timeout: None,
+            check_mode: false,
+            diff: false,
         })
     }
 

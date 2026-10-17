@@ -43,7 +43,7 @@ This page is generated from the tables the loader and the pre-flight read, so it
 <tr><td><code>delay</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>delegate_facts</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>delegate_to</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
-<tr><td><code>diff</code></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-notyet">not yet</span></td><td><span class="kw kw-notyet">not yet</span></td></tr>
+<tr><td><code>diff</code></td><td><span class="kw kw-partial">partial</span></td><td><span class="kw kw-partial">partial</span></td><td><span class="kw kw-partial">partial</span></td></tr>
 <tr><td><code>environment</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>fact_path</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
 <tr><td><code>failed_when</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
@@ -121,8 +121,9 @@ Each keyword below behaves the same way in every place the grid marks it `partia
 | Keyword | What is missing |
 |---|---|
 | `async` | runs on modules the agent runs, native or Python. It is refused before the run on the controller's own modules, on the action plugins this release runs on the controller (`package`, `service` and `dnf` among them, which the reference runs as jobs), on statements, and on `raw` and `async_status`, which the reference refuses too. `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are. |
-| `check_mode` | only `false` is accepted, and the task runs for real. `true` is not supported yet because this release has no check mode: the run stops before the first connection when the playbook writes it, and at the include statement when a dynamic include brings it in |
+| `check_mode` | `copy`, `template`, `fetch`, `unarchive` and `reboot` fail in check mode instead of running |
 | `debugger` | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
+| `diff` | modules are told to report their differences, which are not printed yet |
 | `throttle` | a number only; a string or a template is not supported yet |
 
 ## Handlers

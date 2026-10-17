@@ -12,8 +12,10 @@ use std::collections::BTreeMap;
 use std::time::Duration;
 
 use serde_json::{Map, Value};
-use volant_protocol::modules::{ArgStatus, ModuleSpec, arg_bool, short_name};
-use volant_protocol::{ExecPath, Ran, Task, TaskResult};
+use volant_protocol::modules::{
+    ArgStatus, CHECK_MODE_ARG, DIFF_ARG, ModuleSpec, arg_bool, short_name,
+};
+use volant_protocol::{ExecPath, Ran, StagedFile, Task, TaskResult};
 
 use crate::natives::{self, NativeRun};
 
@@ -41,6 +43,8 @@ pub struct Context {
     pub interpreter: Option<String>,
     /// The agent's `remote_tmp`, where a native keeps whatever the module would keep there.
     pub remote_tmp: String,
+    /// The task runs in check mode: report what would change, change nothing.
+    pub check_mode: bool,
 }
 
 /// The function signature every native module implements.
@@ -63,9 +67,13 @@ pub const MODULES: &[Module] = &[
 /// times the whole of this call.
 pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
     let name = short_name(&task.module);
+    let mut args = task.args.clone();
+    let check_mode = args.remove(CHECK_MODE_ARG) == Some(Value::Bool(true));
+    let diff = args.remove(DIFF_ARG) == Some(Value::Bool(true));
     let mut context = Context {
         timeout: task.timeout.map(Duration::from_secs),
         environment: task.environment.clone(),
+        check_mode,
         ..Context::default()
     };
     let mut ran = ran_natively();
@@ -84,7 +92,17 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
             .strip_prefix("ansible.modules.")
             .and_then(natives::find)
             .filter(|native| native.enabled && !task.force_python);
-        let run = staged(task, |args| {
+        // A native that changes the host hands a task in check or diff mode back to its Python
+        // module, which says what it would change and how, as the reference's does.
+        let native = match native.and_then(|n| natives::mode_hand_back(n, check_mode, diff)) {
+            Some(reason) => {
+                ran.path = ExecPath::Fallback;
+                ran.reason = Some(reason.to_string());
+                None
+            }
+            None => native,
+        };
+        let run = staged(args, &task.files, |args| {
             if let Some(native) = native {
                 match natives::run(native, args, &context, cancelled) {
                     NativeRun::Done(result) => {
@@ -98,7 +116,13 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
                     }
                 }
             }
-            let (run, timing) = crate::python::run(payload, args, &context, cancelled);
+            let mut args = args.clone();
+            for (key, on) in [(CHECK_MODE_ARG, check_mode), (DIFF_ARG, diff)] {
+                if on {
+                    args.insert(key.into(), Value::Bool(true));
+                }
+            }
+            let (run, timing) = crate::python::run(payload, &args, &context, cancelled);
             ran.fork_micros = timing.fork;
             ran.import_micros = timing.import;
             ran.module_micros = timing.module;
@@ -116,15 +140,15 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
     }
     let run = match MODULES.iter().find(|m| m.spec.name == name) {
         Some(module) => {
-            if let Some(msg) = unsupported_parameters(module.spec, &task.args) {
+            if let Some(msg) = unsupported_parameters(module.spec, &args) {
                 // `AnsibleModule` fails it with `changed: false`, measured.
                 let mut failed = TaskResult::failed_with(msg);
                 failed.0.insert("changed".into(), Value::Bool(false));
                 Run::Done(failed)
-            } else if let Some(msg) = refused_argument(module.spec, &task.args) {
+            } else if let Some(msg) = refused_argument(module.spec, &args) {
                 Run::Done(TaskResult::failed_with(msg))
             } else {
-                (module.run)(&task.args, &context, cancelled)
+                (module.run)(&args, &context, cancelled)
             }
         }
         None => Run::Done(TaskResult::failed_with(format!(
@@ -166,12 +190,15 @@ pub fn module_result(mut result: Map<String, Value>) -> TaskResult {
 /// Written for a list, used with one: every action plugin sub-task stages a single `src`. With
 /// several, a refusal stops at the first file it cannot take, and the files after it stay
 /// untaken in the connection's own directory, which goes when the connection does.
-fn staged(task: &Task, module: impl FnOnce(&Map<String, Value>) -> Run) -> Run {
+fn staged(
+    mut args: Map<String, Value>,
+    files: &[StagedFile],
+    module: impl FnOnce(&Map<String, Value>) -> Run,
+) -> Run {
     let remote_tmp = crate::blobs::remote_tmp();
-    let mut args = task.args.clone();
     let mut paths = Vec::new();
     let mut refused = None;
-    for file in &task.files {
+    for file in files {
         match crate::blobs::take(&remote_tmp, &file.blob) {
             Ok(path) => {
                 args.insert(

@@ -133,6 +133,14 @@ These options read the playbooks and stop. They never connect to a host and neve
   Run notified handlers even on hosts that failed. A `force_handlers` keyword on the play takes priority. See [Handlers](/playbooks/handlers/).
 </Option>
 
+<Option name="-C, --check" default="false">
+  Report what each task would change without changing it. A task's own `check_mode` keyword wins over this option, so a task with `check_mode: false` still runs for real. `copy`, `template`, `fetch`, `unarchive` and `reboot` fail under check mode for now instead of running.
+</Option>
+
+<Option name="-D, --diff" default="false">
+  Ask modules for the changes they make to files. A task's own `diff` keyword wins over this option. The differences are not printed yet.
+</Option>
+
 <Option name="-v" id="verbose">
   Show module results for successful tasks too. Repeatable, like Ansible's `-vvv`.
 </Option>
@@ -183,5 +191,4 @@ These `ansible-playbook` options are not accepted yet:
 
 | Option | What to do meanwhile |
 |---|---|
-| `-C, --check`, `--diff` | Run against a test host. |
 | `-k, --ask-pass` | Use a key file or an ssh-agent. |

@@ -650,7 +650,7 @@ fn an_option_is_judged_on_every_spelling() {
         status("-i, --inventory, --inventory-file"),
         Some(Status::Runs)
     );
-    assert_eq!(status("-C, --check"), Some(Status::NotYet));
+    assert_eq!(status("-C, --check"), Some(Status::Runs));
 }
 
 /// A collection's module waits for a later release only when it needs another platform: a network

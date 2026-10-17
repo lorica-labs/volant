@@ -2198,12 +2198,12 @@ fn a_preflight_refusal_lets_nothing_out_before_it() {
     let dir = probe_dir("preflight");
     let probes = [
         (
-            "diff",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      diff: true\n",
+            "with_unvault",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      with_unvault: [x]\n",
         ),
         (
-            "diff",
-            "- hosts: localhost\n  gather_facts: false\n  diff: true\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
+            "with_unvault",
+            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n          with_unvault: [x]\n",
         ),
     ];
     for (kw, body) in probes {
@@ -3970,39 +3970,57 @@ ok: [localhost] => (item=one) => {
         0,
         "\"msg\": \"probe-col\"",
     ),
-    // `check_mode` is honoured for `false` and refused by its value for `true`, the way
-    // `become_method` and `strategy` are. The row would still be `Runs` with the refusal gone,
-    // so what these three assert is the sentence that names the value: parked again, the message
-    // loses its `with 'true'` and the probe reddens.
-    //
-    // The play and block bodies carry no task at all. A task would inherit the merged
-    // `check_mode` and get caught by the task-level guard in the second pre-flight pass
-    // (`check_steps`, over the compiled steps) regardless of whether the play's or block's own
-    // guard still runs - which is exactly why an empty body is the shape that isolates each one:
-    // with nothing to merge into, only the guard being probed can refuse the run.
+    // `check_mode: true` keeps the command from running: the agent's `command` skips it, where
+    // it would report a change if the keyword were dropped on the way.
     runs(
         "task",
         "check_mode",
         "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      check_mode: true\n",
         &[],
-        4,
-        "'check_mode' is not supported yet with 'true'",
+        0,
+        "skipping: [localhost]",
     ),
     runs(
         "play",
         "check_mode",
-        "- hosts: localhost\n  gather_facts: false\n  check_mode: true\n  tasks: []\n",
+        "- hosts: localhost\n  gather_facts: false\n  check_mode: true\n  tasks:\n    - name: Probe task\n      command: echo hi\n",
         &[],
-        4,
-        "'check_mode' is not supported yet with 'true'",
+        0,
+        "skipping: [localhost]",
     ),
     runs(
         "block",
         "check_mode",
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block: []\n      check_mode: true\n",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      check_mode: true\n",
         &[],
-        4,
-        "'check_mode' is not supported yet with 'true'",
+        0,
+        "skipping: [localhost]",
+    ),
+    // `diff: true` hands `file` to its Python module, which adds the `diff` key a native answer
+    // and a run without the keyword leave out. `/` is a directory already: nothing changes.
+    runs(
+        "task",
+        "diff",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      file: path=/ state=directory\n      diff: true\n      register: r\n    - debug:\n        msg: \"diff={{ r.diff is defined }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"diff=True\"",
+    ),
+    runs(
+        "play",
+        "diff",
+        "- hosts: localhost\n  gather_facts: false\n  diff: true\n  tasks:\n    - name: Probe task\n      file: path=/ state=directory\n      register: r\n    - debug:\n        msg: \"diff={{ r.diff is defined }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"diff=True\"",
+    ),
+    runs(
+        "block",
+        "diff",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          file: path=/ state=directory\n          register: r\n      diff: true\n    - debug:\n        msg: \"diff={{ r.diff is defined }}\"\n",
+        &[],
+        0,
+        "\"msg\": \"diff=True\"",
     ),
     // `serial` cuts the two hosts of the probe's own inventory into two batches, and each one
     // reads `ansible_play_batch` as itself alone. Without the keyword the play is one batch and
@@ -4270,10 +4288,11 @@ name = vol
                 .expect("the probe's inventory is written");
             args.extend(["-i", inventory.as_str()]);
         }
-        // These loops read through the controller's Python helper; with no ansible-core to run
-        // it the row is skipped, as every other reference-dependent test is.
+        // These loops read through the controller's Python helper, and `diff` needs the Python
+        // `file` module it builds; with no ansible-core to run it the row is skipped, as every
+        // other reference-dependent test is.
         let mut envs: Vec<(&str, &str)> = Vec::new();
-        if BRIDGED_LOOPS.contains(&probe.kw) || probe.kw == "collections" {
+        if BRIDGED_LOOPS.contains(&probe.kw) || matches!(probe.kw, "collections" | "diff") {
             let Some(python) = &python else { continue };
             envs.push(("VOLANT_PYTHON", python));
         }
@@ -4573,59 +4592,55 @@ fn an_include_statement_refuses_an_argument_it_cannot_honour() {
 /// the statement instead of being read and dropped.
 #[test]
 fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
-    for (kind, keyword, sentence) in [
-        (
-            "check-mode",
-            "check_mode: true",
-            "keyword 'check_mode' is not supported yet with 'true'",
+    let (kind, keyword, sentence) = (
+        "with-unvault",
+        "with_unvault: [x]",
+        "keyword 'with_unvault' is not supported yet",
+    );
+    let dir = probe_dir(&format!("spliced-{kind}"));
+    let marker = dir.join("marker");
+    std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Bring in a file\n      include_tasks: inc.yml\n",
+    )
+    .expect("the play");
+    std::fs::write(
+        dir.join("inc.yml"),
+        format!(
+            "- name: Runs for real\n  command: touch {}\n  {keyword}\n",
+            marker.display()
         ),
-        ("diff", "diff: true", "keyword 'diff' is not supported yet"),
-    ] {
-        let dir = probe_dir(&format!("spliced-{kind}"));
-        let marker = dir.join("marker");
-        std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
-        std::fs::write(
-            dir.join("play.yml"),
-            "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Bring in a file\n      include_tasks: inc.yml\n",
-        )
-        .expect("the play");
-        std::fs::write(
-            dir.join("inc.yml"),
-            format!(
-                "- name: Runs for real\n  command: touch {}\n  {keyword}\n",
-                marker.display()
-            ),
-        )
-        .expect("the included file");
-        let out = volant_within(
-            &[
-                "playbook",
-                "-i",
-                dir.join("inv.ini").to_str().expect("a path"),
-                dir.join("play.yml").to_str().expect("a path"),
-            ],
-            PROBE_DEADLINE,
-        );
-        let text = format!(
-            "{}{}",
-            String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        assert!(!marker.exists(), "{kind}: the task ran anyway:\n{text}");
-        assert_eq!(out.status.code(), Some(2), "{kind}: {text}");
-        assert!(
-            text.contains(&format!("task 'Runs for real': {sentence}")),
-            "{kind}: {text}"
-        );
-        assert!(
-            !text.contains("TASK [Runs for real]"),
-            "{kind}: nothing behind the statement ran: {text}"
-        );
-        assert!(
-            text.contains("failed=1"),
-            "{kind}: the statement failed for the host that asked: {text}"
-        );
-    }
+    )
+    .expect("the included file");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        PROBE_DEADLINE,
+    );
+    let text = format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(!marker.exists(), "{kind}: the task ran anyway:\n{text}");
+    assert_eq!(out.status.code(), Some(2), "{kind}: {text}");
+    assert!(
+        text.contains(&format!("task 'Runs for real': {sentence}")),
+        "{kind}: {text}"
+    );
+    assert!(
+        !text.contains("TASK [Runs for real]"),
+        "{kind}: nothing behind the statement ran: {text}"
+    );
+    assert!(
+        text.contains("failed=1"),
+        "{kind}: the statement failed for the host that asked: {text}"
+    );
 }
 
 /// `include_tasks` takes `file`, `_raw_params` and `apply`, and `apply` itself is refused: this

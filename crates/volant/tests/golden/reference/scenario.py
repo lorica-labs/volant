@@ -136,12 +136,10 @@ def record_one(directory):
             config = own if os.path.exists(own) else EMPTY_CONFIG
             argv = ["ansible-playbook", *one["args"], "--forks", str(case["forks"])]
             result = run(argv, cwd=copy, config=config, extra_env=case["env"])
-            stdout = VERSION_BLOCK.sub("<golden-version>
-", result.stdout.replace(copy, TMP))
+            stdout = VERSION_BLOCK.sub("<golden-version>\n", result.stdout.replace(copy, TMP))
             stdout = ANSIBLE_TMP.sub("<golden-ansible-tmp>", stdout)
             # The recording's own callback, which the reference sets aside like the two it ships.
-            stdout = stdout.replace("Skipping callback 'golden_json', as we already have a stdout callback.
-", "")
+            stdout = stdout.replace("Skipping callback 'golden_json', as we already have a stdout callback.\n", "")
         bad = unreproducible(stdout)
         if bad:
             raise Failed(

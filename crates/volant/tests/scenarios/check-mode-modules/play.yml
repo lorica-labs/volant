@@ -5,6 +5,7 @@
   tasks:
     - name: Set up
       shell: |
+        umask 022
         mkdir -p {{ T }}/o {{ T }}/fr
         printf 'old\n' > {{ T }}/f
         printf 'old\n' > {{ T }}/f2

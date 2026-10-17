@@ -1,5 +1,6 @@
 # Each case: the inventory sources, given from this directory, and the environment
 # `ansible-inventory --list` reads them with. Recorded into ../expected_inventory.json.
+# `needs: [ansible-core]` marks a case that runs a collection plugin, which Volant runs in ansible-core.
 ranges: {sources: [ranges.ini]}
 host_list: {sources: ["a:2222,,b,[::1]:22,b:x,"]}
 directory: {sources: [dir]}
@@ -39,3 +40,5 @@ script_vars_list: {sources: [script_vars_list.sh]}
 script_malformed: {sources: [script_malformed.sh]}
 script_host_empty: {sources: [script_host_empty.sh]}
 script_host_bad: {sources: [script_host_bad.sh]}
+nmap: {sources: [nmap.yml], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$PATH"}}
+nmap_then_ini: {sources: [nmap.yml, one.ini], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$PATH"}}

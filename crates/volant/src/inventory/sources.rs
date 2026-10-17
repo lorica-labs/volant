@@ -2,12 +2,14 @@
 //! The inventory manager's side of ansible-core 2.19.12 (`inventory/manager.py`): which sources a
 //! run reads, which plugin takes each one, and what is said when none does.
 
-use std::cell::RefCell;
+use std::cell::{OnceCell, RefCell};
 use std::path::{Component, Path, PathBuf};
+use std::sync::Arc;
 
 use regex::Regex;
 
 use super::{Inventory, PLUGINS};
+use crate::bridge::Bridge;
 
 /// What a run reads hosts from: a path, made absolute the way the reference's `unfrackpath`
 /// makes it, or a host list when the text holds a comma.
@@ -147,9 +149,16 @@ impl PluginError {
 pub struct ParseCx<'a> {
     pub config: &'a PluginConfig,
     notes: RefCell<Vec<Note>>,
+    start: &'a dyn Fn() -> Arc<Bridge>,
+    helper: OnceCell<Arc<Bridge>>,
 }
 
 impl ParseCx<'_> {
+    /// The Python helper that runs collection plugins, started by the first one that needs it.
+    pub fn helper(&self) -> &Arc<Bridge> {
+        self.helper.get_or_init(self.start)
+    }
+
     /// A line shown from verbosity `level` on.
     pub fn verbose(&self, level: u8, text: String) {
         self.notes.borrow_mut().push(Note::Verbose(level, text));
@@ -204,10 +213,21 @@ pub struct Loaded {
 /// Every source, in order, into one inventory: a later source adds its hosts and groups after
 /// the earlier ones and wins a variable both set.
 pub fn load_sources(sources: &[Source], config: &PluginConfig) -> Loaded {
+    load_sources_with(sources, config, &|| Bridge::new(Vec::new()))
+}
+
+/// [`load_sources`] with the way a Python helper is made for the collection plugins.
+pub fn load_sources_with(
+    sources: &[Source],
+    config: &PluginConfig,
+    start: &dyn Fn() -> Arc<Bridge>,
+) -> Loaded {
     let mut loaded = Loaded::default();
     let cx = ParseCx {
         config,
         notes: RefCell::new(Vec::new()),
+        start,
+        helper: OnceCell::new(),
     };
     let mut plugins: Vec<&dyn InventoryPlugin> = Vec::new();
     for name in &config.enabled {
@@ -447,6 +467,91 @@ pub(super) fn executable(_source: &Source) -> bool {
 mod tests {
     use super::*;
     use rstest::rstest;
+
+    fn quiet_cx(config: &PluginConfig) -> ParseCx<'_> {
+        ParseCx {
+            config,
+            notes: RefCell::new(Vec::new()),
+            start: &|| unreachable!("no helper is started"),
+            helper: OnceCell::new(),
+        }
+    }
+
+    /// Only a collection plugin starts the helper; the other YAML files are read without it.
+    #[rstest]
+    #[case::builtin(
+        "plugin: ansible.builtin.constructed
+",
+        0
+    )]
+    #[case::no_key(
+        "hosts: {}
+",
+        0
+    )]
+    #[case::unknown_short_name(
+        "plugin: nothing
+",
+        0
+    )]
+    #[case::collection(
+        "plugin: community.general.nmap
+",
+        1
+    )]
+    fn the_helper_starts_only_for_a_collection_plugin(#[case] body: &str, #[case] starts: usize) {
+        let dir = tempfile::tempdir().unwrap();
+        std::fs::write(dir.path().join("inv.yml"), body).unwrap();
+        let count = std::sync::atomic::AtomicUsize::new(0);
+        let start = || {
+            count.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            Bridge::with_start(Box::new(|| Err(anyhow::anyhow!("no python"))))
+        };
+        let source = Source::new(&dir.path().join("inv.yml").to_string_lossy());
+        load_sources_with(&[source], &PluginConfig::default(), &start);
+        assert_eq!(count.load(std::sync::atomic::Ordering::SeqCst), starts);
+    }
+
+    /// What the helper answers becomes hosts, groups and data; a failure keeps what was said.
+    #[test]
+    fn a_collection_plugin_s_answer_is_read_as_data() {
+        let config = PluginConfig::default();
+        let cx = quiet_cx(&config);
+        let source = Source::new("/tmp/inv.yml");
+        let mut inventory = Inventory::default();
+        let answer = serde_json::json!({
+            "used": true,
+            "warnings": ["Found variable using reserved name 'name'."],
+            "hosts": [{"name": "h1", "vars": {
+                "a": {"__ansible_unsafe": "{{ boom }}"}, "n": 3, "ok": "plain"}}],
+            "groups": [
+                {"name": "all", "hosts": ["h1"], "children": ["g"], "vars": {}},
+                {"name": "g", "hosts": ["h1"], "children": [], "vars": {}},
+            ],
+        });
+        super::super::collection::read(&answer, "x.y.z", &source, &mut inventory, &cx).unwrap();
+        assert_eq!(
+            cx.notes.into_inner(),
+            [
+                Note::Verbose(
+                    1,
+                    "Using inventory plugin 'x.y.z' to process inventory source '/tmp/inv.yml'"
+                        .into()
+                ),
+                Note::Warning("Found variable using reserved name 'name'.".into()),
+            ]
+        );
+        assert_eq!(
+            inventory.dump()["_meta"]["hostvars"]["h1"],
+            serde_json::json!({"a": {"__ansible_unsafe": "{{ boom }}"}, "n": 3, "ok": "plain"})
+        );
+        let cx = quiet_cx(&config);
+        let failed = serde_json::json!({"used": true, "warnings": ["w"], "error": "boom"});
+        let err = super::super::collection::read(&failed, "x.y.z", &source, &mut inventory, &cx)
+            .unwrap_err();
+        assert_eq!(err.message, "boom");
+        assert!(cx.notes.into_inner().contains(&Note::Warning("w".into())));
+    }
 
     const DECLINED: &str = "declined parsing <dir>/{} as it did not pass its verify_file() method";
 

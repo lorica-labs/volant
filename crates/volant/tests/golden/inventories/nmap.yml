@@ -1,0 +1,3 @@
+plugin: community.general.nmap
+address: 192.0.2.0/24
+ports: true

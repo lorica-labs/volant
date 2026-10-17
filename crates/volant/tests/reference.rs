@@ -551,6 +551,7 @@ fn inventory_sources_match_the_reference() {
     );
     std::fs::create_dir(root.join("empty")).unwrap();
     let shown_root = root.to_string_lossy().into_owned();
+    let own_path = std::env::var("PATH").unwrap_or_default();
     let mut failures = Vec::new();
     let cases = expected["sources"].as_object().unwrap();
     assert!(!cases.is_empty(), "no recorded inventory source case");
@@ -569,6 +570,24 @@ fn inventory_sources_match_the_reference() {
             })
             .collect();
         let env = &case["env"];
+        // A collection plugin runs in ansible-core's own Python: no recorded one, no case.
+        if case["needs"].as_array().is_some_and(|n| !n.is_empty()) {
+            let Some(python) = python::reference_python() else {
+                continue;
+            };
+            // Safety: nextest runs each test in its own process; nothing else reads it here.
+            unsafe { std::env::set_var("VOLANT_PYTHON", python) };
+        }
+        if let Some(path) = env.get("PATH").and_then(Value::as_str) {
+            // Safety: nextest runs each test in its own process; nothing else reads it here.
+            unsafe {
+                std::env::set_var(
+                    "PATH",
+                    path.replace("$COPY", &shown_root)
+                        .replace("$PATH", &own_path),
+                );
+            }
+        }
         let config = PluginConfig {
             unparsed_is_failed: env.get("ANSIBLE_INVENTORY_UNPARSED_FAILED").is_some(),
             any_unparsed_is_failed: env

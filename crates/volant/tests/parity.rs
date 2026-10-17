@@ -470,6 +470,10 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             };
             push("test", &x, s, note);
         }
+        // A collection's inventory plugin runs in ansible-core's own Python, as the reference.
+        for i in names(c, &["inventory"]) {
+            push("inventory", &i, Status::Runs, "through the Python helper");
+        }
         for l in names(c, &["lookup"]) {
             let (s, note) = if volant::template::lookup_supported(&l) {
                 (Status::Runs, "")

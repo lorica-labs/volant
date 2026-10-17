@@ -382,6 +382,19 @@ impl Bridge {
         }
     }
 
+    /// A collection inventory plugin run on `path` by ansible-core: the groups, hosts and
+    /// variables it made, the warnings it said, or the `error` it ended with.
+    ///
+    /// # Errors
+    /// [`BridgeError`] when the helper cannot start or breaks the protocol.
+    pub fn inventory(&self, plugin: &str, path: &str) -> Result<Value, BridgeError> {
+        self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "inventory", "name": plugin, "args": [path], "kwargs": {}}),
+        )
+    }
+
     fn defaults_request(
         &self,
         kind: &str,

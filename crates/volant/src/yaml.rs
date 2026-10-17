@@ -367,6 +367,11 @@ pub(crate) fn unsafe_data(value: Value) -> Value {
     }
 }
 
+/// `text` as data that is never rendered, whatever it holds.
+pub(crate) fn unsafe_string(text: &str) -> String {
+    wrap(text, "volant_unsafe")
+}
+
 /// `text` as the one-expression template `{{ "<text>" | <filter> }}`.
 fn wrap(text: &str, filter: &str) -> String {
     let mut lit = String::from("{{ \"");

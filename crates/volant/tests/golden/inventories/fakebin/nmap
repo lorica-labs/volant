@@ -1,0 +1,10 @@
+#!/bin/sh
+cat <<Y
+Starting Nmap 7.94
+Nmap scan report for web1.example (192.0.2.10)
+Host is up (0.0010s latency).
+22/tcp open ssh
+Nmap scan report for db1.example (192.0.2.11)
+Host is up (0.0010s latency).
+Nmap done: 2 IP addresses (2 hosts up) scanned in 0.05 seconds
+Y

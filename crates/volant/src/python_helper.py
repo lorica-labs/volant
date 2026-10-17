@@ -651,6 +651,79 @@ def plain(value):
     raise RuntimeError("a value of type %s cannot be returned" % type(value).__name__)
 
 
+def marked(value):
+    """`plain`, with each string the plugin did not trust as a template as
+    `{"__ansible_unsafe": text}`, the shape `ansible-inventory --list` prints it in."""
+    from ansible.template import is_trusted_as_template
+
+    if isinstance(value, str):
+        text = plain(value)
+        return text if is_trusted_as_template(value) else {"__ansible_unsafe": text}
+    if isinstance(value, collections.abc.Mapping):
+        return {str.__str__(k) if isinstance(k, str) else str(k): marked(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [marked(item) for item in value]
+    return plain(value)
+
+
+def inventory(plugin_name, path):
+    """One collection inventory plugin reading `path`, as the reference's `auto` plugin runs it:
+    the groups, children, hosts and host variables it made as plain JSON, and the warnings it said.
+    A failure is answered as data, so the warnings said before it are kept."""
+    from ansible.errors import AnsibleParserError
+    from ansible.inventory.manager import InventoryManager
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.plugins.loader import inventory_loader
+    from ansible.utils import display as display_module
+    from ansible.vars.manager import VariableManager
+
+    warnings = []
+    display = display_module.Display()
+    said = display._warning
+    format_message = display_module._display_utils.format_message
+    display._warning = lambda warning: warnings.append(
+        format_message(warning, False).rstrip(chr(10)) + chr(10))
+    used = False
+    try:
+        loader = DataLoader()
+        manager = InventoryManager(loader, sources=[path], parse=False)
+        plugin = inventory_loader.get(plugin_name)
+        if not plugin:
+            raise AnsibleParserError(
+                "inventory config '%s' specifies unknown plugin '%s'" % (path, plugin_name))
+        if not plugin.verify_file(path):
+            raise AnsibleParserError(
+                "inventory source '%s' could not be verified by inventory plugin '%s'"
+                % (path, plugin_name))
+        used = True
+        plugin.parse(manager._inventory, loader, path, cache=False)
+        data = manager._inventory
+        # What `ansible-inventory --list` does next: the variables of each host, which is where
+        # the reference warns about a variable that has a reserved name.
+        variables = VariableManager(loader=loader, inventory=manager)
+        for host in data.hosts.values():
+            variables.get_vars(host=host, include_hostvars=False)
+        magic = ("inventory_file", "inventory_dir")
+        return {
+            "used": True,
+            "warnings": warnings,
+            "groups": [
+                {
+                    "name": g.name,
+                    "hosts": [h.name for h in g.hosts],
+                    "children": [c.name for c in g.child_groups],
+                    "vars": marked(g.vars),
+                }
+                for g in data.groups.values()
+            ],
+            "hosts": [{"name": h.name, "vars": marked({k: v for k, v in h.vars.items() if k not in magic})} for h in data.hosts.values()],
+        }
+    except Exception as failure:
+        return {"used": used, "warnings": warnings, "error": str(failure)}
+    finally:
+        display._warning = said
+
+
 def call(request):
     """One filter, test or lookup, run through ansible-core's own Jinja environment so its
     argument handling, error text and `errors`/`wantlist` shaping are the reference's."""
@@ -659,6 +732,8 @@ def call(request):
 
     loaders()
     kind, name = request["kind"], request["name"]
+    if kind == "inventory":
+        return {"value": inventory(name, request["args"][0])}
     if kind == "diff":
         return {"value": diff_text(request["args"][0])}
     if kind == "action_groups":

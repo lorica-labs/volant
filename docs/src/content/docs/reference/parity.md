@@ -33,6 +33,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | connection | 2 | 0 | 0 | 4 |
 | collection module | 5986 | 0 | 0 | 3457 |
 | collection action plugin | 1665 | 0 | 0 | 419 |
+| collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |

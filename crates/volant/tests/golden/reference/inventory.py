@@ -36,11 +36,14 @@ def _sources():
         for name, case in cases.items():
             args = [word for source in case["sources"] for word in ("-i", source)]
             env = case.get("env", {})
-            listed = run(["ansible-inventory", *args, "--list"], cwd=copy, extra_env=env)
-            hosts = run(["ansible", *args, "all", "--list-hosts"], cwd=copy, extra_env=env)
+            # `$COPY` is this copy of the directory and `$PATH` the search path the run has.
+            used = {k: v.replace("$COPY", copy).replace("$PATH", os.environ["PATH"]) for k, v in env.items()}
+            listed = run(["ansible-inventory", *args, "--list"], cwd=copy, extra_env=used)
+            hosts = run(["ansible", *args, "all", "--list-hosts"], cwd=copy, extra_env=used)
             recorded[name] = {
                 "sources": case["sources"],
                 "env": env,
+                "needs": case.get("needs", []),
                 "rc": listed.returncode,
                 "stderr": listed.stderr.replace(copy, TMP),
                 "list": json.loads(listed.stdout) if listed.returncode == 0 else None,

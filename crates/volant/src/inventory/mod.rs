@@ -3,6 +3,7 @@
 //! them: each source offered to the enabled plugins in turn, directories walked, several
 //! sources merged into one inventory.
 
+mod collection;
 mod host_list;
 mod ini;
 pub mod ranges;
@@ -29,10 +30,7 @@ const PLUGINS: &[&dyn InventoryPlugin] = &[
         verify: |s| s.text().contains(',') && !s.path().exists(),
     },
     &script::Script,
-    &sources::Pending {
-        name: "auto",
-        verify: |s| sources::file_with_extension(s, &[Some("yml"), Some("yaml")]),
-    },
+    &collection::Auto,
     &sources::Pending {
         name: "yaml",
         verify: |s| {
@@ -220,7 +218,12 @@ impl Inventory {
             .iter()
             .map(|h| (h.name.clone(), self.host_with_vars(&h.name).vars))
             .filter(|(_, vars)| !vars.is_empty())
-            .map(|(name, vars)| (name, Value::Object(vars.into_iter().collect())))
+            .map(|(name, vars)| {
+                (
+                    name,
+                    show_unsafe(&Value::Object(vars.into_iter().collect())),
+                )
+            })
             .collect();
         out.insert(
             "_meta".into(),
@@ -700,6 +703,24 @@ fn split_terms(pattern: &str) -> Vec<&str> {
 /// name. Measured against the reference: `hosts: ::1` with no `::1` in the inventory runs
 /// `changed: [::1]` on the controller, like `localhost` and `127.0.0.1`. One copy of the rule,
 /// read both here and by the store that gives such a host its local connection.
+/// A value as `ansible-inventory --list` prints it: text that is data, never rendered, as
+/// `{"__ansible_unsafe": text}`.
+fn show_unsafe(value: &Value) -> Value {
+    match value {
+        Value::String(text) => crate::yaml::unsafe_text(text).map_or_else(
+            || value.clone(),
+            |text| serde_json::json!({ "__ansible_unsafe": text }),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(show_unsafe).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), show_unsafe(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 pub fn is_localhost(name: &str) -> bool {
     matches!(name, "localhost" | "127.0.0.1" | "::1")
 }

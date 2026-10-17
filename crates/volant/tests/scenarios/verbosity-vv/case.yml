@@ -1,0 +1,3 @@
+# At -vv the run opens with the version, the callbacks it sets aside and the playbook banner, and each task and fact-gathering banner carries its path.
+args: [-vv, -i, inv.ini, p.yml]
+needs: [ansible-core]

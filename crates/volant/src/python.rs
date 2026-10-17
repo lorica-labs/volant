@@ -531,6 +531,24 @@ impl Reach {
     }
 }
 
+static MODULE_PATH: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
+
+/// Sets the directories of `-M`/`--module-path`, which hold modules directly and lead the
+/// configured module path, so a playbook's or role's `library/` is still searched before them.
+pub fn set_module_path(dirs: Vec<std::path::PathBuf>) {
+    *MODULE_PATH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = dirs;
+}
+
+/// The directories [`set_module_path`] set.
+pub fn module_path() -> Vec<std::path::PathBuf> {
+    MODULE_PATH
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
+
 /// Refuses a run in which one module name finds different files at different points of the
 /// run. The union holds one module per name, built with every directory of
 /// [`Reach::plugin_dirs`] searched; the reference searches only the directories it has added
@@ -984,12 +1002,14 @@ impl PythonBuilder {
     /// adds a playbook's and a role's.
     pub fn add_plugin_dirs(&mut self, dirs: &[std::path::PathBuf]) -> anyhow::Result<()> {
         let dirs: Vec<&str> = dirs.iter().filter_map(|dir| dir.to_str()).collect();
-        if !dirs.is_empty() {
+        let module_path = module_path();
+        let module_path: Vec<&str> = module_path.iter().filter_map(|dir| dir.to_str()).collect();
+        if !dirs.is_empty() || !module_path.is_empty() {
             let stdin = self.stdin.as_mut().expect("stdin is open until drop");
             ask(
                 stdin,
                 self.stdout.as_mut().expect("stdout is read here"),
-                &serde_json::json!({ "plugin_dirs": dirs }),
+                &serde_json::json!({ "plugin_dirs": dirs, "module_path": module_path }),
                 "add the plugin directories",
             )?;
         }

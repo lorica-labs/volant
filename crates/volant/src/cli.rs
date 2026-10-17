@@ -67,8 +67,11 @@ pub struct PlaybookArgs {
     #[arg(long)]
     pub no_color: bool,
     /// Show module results for successful tasks too. Repeatable.
-    #[arg(short = 'v', action = clap::ArgAction::Count)]
+    #[arg(short = 'v', long = "verbose", action = clap::ArgAction::Count)]
     pub verbose: u8,
+    /// Directories searched for modules before the configured ones. Colon-separated, repeatable.
+    #[arg(short = 'M', long = "module-path", value_name = "MODULE_PATH")]
+    pub module_path: Vec<String>,
     /// Log in to remote hosts as this user.
     #[arg(short = 'u', long = "user", value_name = "REMOTE_USER")]
     pub user: Option<String>,
@@ -188,16 +191,150 @@ pub struct PlaybookArgs {
     pub version: bool,
 }
 
+/// What `--version` prints, and what `-vv` opens the run with in place of the reference's block
+/// of machine paths: Volant's own version and the ansible-core release it matches.
+fn version_line() -> String {
+    format!(
+        "volant {} (ansible-core {} compatible)",
+        crate::VERSION,
+        crate::vars::ansible_version()["full"]
+            .as_str()
+            .unwrap_or_default()
+    )
+}
+
+/// The lines the reference prints before it reads an inventory: the version at `-vv`, the
+/// configuration file at `-v`, and at `-vvvv` the plugin set-up.
+fn announce(out: &mut Renderer) {
+    if out.verbose_at(2) {
+        out.plain(2, &version_line());
+    }
+    if out.verbose_at(1) {
+        let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
+        out.verbose(
+            1,
+            &match crate::config::locate() {
+                Some(path) => format!("Using {} as config file", absolute(path).display()),
+                None => "No config file found; using defaults".to_string(),
+            },
+        );
+    }
+    out.verbose(4, "setting up inventory plugins");
+}
+
+/// The plugins the reference tries on an inventory file before the `ini` one takes it, at
+/// `-vvv`, and the two callbacks it sets aside at `-vv`. A `.yml` or `.json` file is the
+/// `yaml` plugin's, which this release does not read.
+fn announce_inventory(out: &mut Renderer, path: &Path) {
+    // A `.yml` or `.json` file is the `yaml` plugin's, which this release does not read: no
+    // line is better than a wrong plugin name.
+    let yaml = path
+        .extension()
+        .is_some_and(|e| ["yaml", "yml", "json"].iter().any(|y| e == *y));
+    if !path.is_file() || yaml || !out.verbose_at(3) {
+        return;
+    }
+    let shown = std::path::absolute(path)
+        .unwrap_or_else(|_| path.to_path_buf())
+        .display()
+        .to_string();
+    let extension = path.extension().map(|e| e.to_string_lossy().into_owned());
+    let others = extension
+        .as_deref()
+        .is_some_and(|e| !["yaml", "yml", "json"].contains(&e));
+    let mut tried = vec!["host_list", "script"];
+    if others {
+        tried.extend(["auto", "yaml"]);
+    } else {
+        tried.push("auto");
+    }
+    for plugin in tried {
+        out.verbose(
+            3,
+            &format!(
+                "{plugin} declined parsing {shown} as it did not pass its verify_file() method"
+            ),
+        );
+    }
+    out.verbose(
+        3,
+        &format!("Parsed {shown} inventory source with ini plugin"),
+    );
+}
+
+/// The options `-vvvv` lists under each playbook's banner. The reference lists every option it
+/// holds a value for; this lists the ones every run has, so a run that sets others shows fewer.
+fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -> Vec<String> {
+    let quoted = |items: Vec<String>| match items.as_slice() {
+        [one] => format!("('{one}',)"),
+        _ => format!(
+            "({})",
+            items
+                .iter()
+                .map(|i| format!("'{i}'"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
+    };
+    let tags: Vec<String> = args
+        .tags
+        .iter()
+        .flat_map(|t| crate::config::tag_list(t))
+        .collect();
+    let inventory = args
+        .inventory
+        .clone()
+        .or_else(|| config.inventory.clone())
+        .unwrap_or_else(|| PathBuf::from("/etc/ansible/hosts"));
+    let inventory = std::path::absolute(&inventory).unwrap_or(inventory);
+    let playbooks: Vec<String> = args
+        .playbooks
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    vec![
+        format!("Positional arguments: {}", playbooks.join(" ")),
+        format!("verbosity: {}", args.verbose),
+        format!(
+            "connection: {}",
+            args.connection.as_deref().unwrap_or("ssh")
+        ),
+        format!(
+            "become_method: {}",
+            args.become_method
+                .as_deref()
+                .unwrap_or(&config.become_method)
+        ),
+        format!(
+            "tags: {}",
+            quoted(if tags.is_empty() {
+                vec!["all".to_string()]
+            } else {
+                tags
+            })
+        ),
+        format!("inventory: ('{}',)", inventory.display()),
+        format!("forks: {forks}"),
+    ]
+}
+
+/// The `-M` directories as the reference reads them: each argument split on `:`, empty parts
+/// dropped, every path made absolute. A later `-M` goes in front of the earlier ones (the
+/// option prepends), and the order inside one argument stays.
+fn module_path_dirs(args: &PlaybookArgs) -> Vec<PathBuf> {
+    args.module_path
+        .iter()
+        .rev()
+        .flat_map(|list| list.split(':'))
+        .filter(|part| !part.is_empty())
+        .map(|part| std::path::absolute(part).unwrap_or_else(|_| PathBuf::from(part)))
+        .collect()
+}
+
 /// Runs the playbooks and returns the process exit code.
 pub fn run(args: PlaybookArgs) -> i32 {
     if args.version {
-        println!(
-            "volant {} (ansible-core {} compatible)",
-            crate::VERSION,
-            crate::vars::ansible_version()["full"]
-                .as_str()
-                .unwrap_or_default()
-        );
+        println!("{}", version_line());
         return 0;
     }
     // Before anything opens a descriptor: every host's link takes three of them.
@@ -246,6 +383,8 @@ async fn run_all(
     profile: &Arc<Profile>,
 ) -> anyhow::Result<i32> {
     let config = Config::load()?;
+    announce(out);
+    python::set_module_path(module_path_dirs(args));
     let secrets = match crate::vault::load(&crate::vault::Request {
         ask: args.ask_vault_pass,
         password_files: args.vault_password_file.clone(),
@@ -277,6 +416,20 @@ async fn run_all(
     let mut inventory = match &inventory_path {
         Some(path) => Inventory::load(path)?,
         None => Inventory::empty(),
+    };
+    if let Some(path) = &inventory_path {
+        announce_inventory(out, path);
+    }
+    for callback in ["minimal", "oneline"] {
+        out.verbose(
+            2,
+            &format!("Skipping callback '{callback}', as we already have a stdout callback."),
+        );
+    }
+    let dump = if out.verbose_at(4) {
+        options_dump(args, &config, forks)
+    } else {
+        Vec::new()
     };
     let compiling = std::time::Instant::now();
     let mut playbooks = args
@@ -700,7 +853,8 @@ async fn run_all(
         }
     }
     let plays: anyhow::Result<()> = async {
-        'plays: for (pb, steps) in playbooks.iter().zip(&compiled) {
+        'plays: for ((pb, steps), file) in playbooks.iter().zip(&compiled).zip(&args.playbooks) {
+            out.playbook(file, pb.plays.len(), &dump);
             for (play, compiled) in pb.plays.iter().zip(steps) {
                 if *stop_rx.borrow() {
                     break 'plays;
@@ -1096,6 +1250,26 @@ mod tests {
         assert_eq!(parse(&["--facts=native"]).unwrap().facts, Facts::Native);
         let err = parse(&["--facts", "nope"]).unwrap_err();
         assert_eq!(err.kind(), clap::error::ErrorKind::InvalidValue, "{err}");
+    }
+
+    /// `-M` and `--module-path` repeat and take colon lists; a later one goes in front, and the order
+    /// inside one stays.
+    #[rstest::rstest]
+    #[case::one(&["-M", "/a"], &["/a"])]
+    #[case::list(&["--module-path", "/a::/b"], &["/a", "/b"])]
+    #[case::later_first(&["-M", "/a:/b", "-M", "/c"], &["/c", "/a", "/b"])]
+    fn module_path_goes_in_front_in_the_reference_order(
+        #[case] flags: &[&str],
+        #[case] expected: &[&str],
+    ) {
+        let args =
+            PlaybookArgs::try_parse_from(["volant"].iter().chain(flags).chain(&["site.yml"]))
+                .unwrap();
+        let dirs: Vec<String> = module_path_dirs(&args)
+            .iter()
+            .map(|d| d.display().to_string())
+            .collect();
+        assert_eq!(dirs, expected);
     }
 
     /// The switch and `--facts` reach every payload the run sends, from the environment through the

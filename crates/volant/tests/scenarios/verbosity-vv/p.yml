@@ -1,0 +1,11 @@
+- hosts: l
+  gather_subset: ["!all", "!min"]
+  tasks:
+    - name: first task
+      debug: msg=one
+    - name: included tasks
+      include_tasks: inc.yml
+    - name: third task
+      ansible.builtin.include_role: {name: r}
+    - name: tail task
+      debug: msg=tail

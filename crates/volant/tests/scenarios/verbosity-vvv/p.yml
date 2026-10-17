@@ -1,0 +1,12 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - name: first task
+      debug: msg=one
+    - name: third task
+      ansible.builtin.include_role: {name: r}
+    - name: tail task
+      debug: msg=tail
+  handlers:
+    - name: a handler
+      debug: msg=handled

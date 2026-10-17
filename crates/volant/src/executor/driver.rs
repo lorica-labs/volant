@@ -1549,11 +1549,7 @@ pub(super) async fn drive_host(
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // Whether a body shows at verbosity 0 is each result's own: see
                     // `VERBOSE_ALWAYS`. The task only says how a `debug`'s is cleaned.
-                    let dump = if short_name(&task.module) == "debug" {
-                        Dump::Debug
-                    } else {
-                        Dump::No
-                    };
+                    let dump = dump_of(task);
                     if let Some(result) = report_task(
                         &tx,
                         &name,
@@ -1646,7 +1642,7 @@ pub(super) async fn drive_host(
                                     &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
                                     &[],
                                     &[],
-                                    Dump::No,
+                                    dump_of(task),
                                     rescuable,
                                     delegate_name.as_deref(),
                                 )
@@ -2623,7 +2619,7 @@ pub(super) async fn drive_host(
                     &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
                     retried,
                     retried_names,
-                    Dump::No,
+                    dump_of(task),
                     rescuable,
                     batch_delegate.as_deref(),
                 )
@@ -2739,7 +2735,7 @@ pub(super) async fn drive_host(
                 &[],
                 &[],
                 &[],
-                Dump::No,
+                dump_of(task),
                 rescuable,
                 None,
             )
@@ -3513,6 +3509,15 @@ fn finalization_causes(task: &PlayTask, message: &str) -> Option<Value> {
         crate::render::cause(&head, origin("action"), None),
         crate::render::cause(resolving, origin(&format!("args.{key}")), None),
     ]))
+}
+
+/// How the reference's callback cleans this task's result lines.
+fn dump_of(task: &PlayTask) -> Dump {
+    match short_name(&task.module) {
+        "debug" => Dump::Debug,
+        "setup" | "gather_facts" => Dump::Setup,
+        _ => Dump::No,
+    }
 }
 
 #[cfg(test)]

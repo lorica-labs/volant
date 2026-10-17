@@ -34,6 +34,10 @@ ANSIBLE_TMP = re.compile(r"\S*/\.ansible/tmp/ansible-local-\w+/tmp\w+")
 PLAY_TAGS = re.compile(r"^  play #\d+ .*\tTAGS: \[(.*)\]$")
 HOST_COUNT = re.compile(r"^    hosts \((\d+)\):$")
 
+# The block `-vv` opens with, naming the machine's paths and interpreter. The test replaces
+# Volant's own version line with the same placeholder.
+VERSION_BLOCK = re.compile(r"^ansible-playbook \[core [^\]\n]*\]\n(?:  .*\n){8}", re.M)
+
 
 def unreproducible(stdout):
     """What in this output the reference would print in another order next time, or None."""
@@ -132,7 +136,12 @@ def record_one(directory):
             config = own if os.path.exists(own) else EMPTY_CONFIG
             argv = ["ansible-playbook", *one["args"], "--forks", str(case["forks"])]
             result = run(argv, cwd=copy, config=config, extra_env=case["env"])
-            stdout = ANSIBLE_TMP.sub("<golden-ansible-tmp>", result.stdout.replace(copy, TMP))
+            stdout = VERSION_BLOCK.sub("<golden-version>
+", result.stdout.replace(copy, TMP))
+            stdout = ANSIBLE_TMP.sub("<golden-ansible-tmp>", stdout)
+            # The recording's own callback, which the reference sets aside like the two it ships.
+            stdout = stdout.replace("Skipping callback 'golden_json', as we already have a stdout callback.
+", "")
         bad = unreproducible(stdout)
         if bad:
             raise Failed(

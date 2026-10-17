@@ -317,6 +317,16 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         } else {
             (s, note)
         };
+        // `-vvvv` prints the options a run holds and the lines of ansible-core's own transport
+        // and plugin files; Volant lists fewer options and has no such lines.
+        let (s, note) = if s == Status::Runs && flags.contains(&"--verbose") {
+            (
+                Status::Partial,
+                "-vvvv lists fewer options and prints no ssh or plugin-path lines".to_string(),
+            )
+        } else {
+            (s, note)
+        };
         rows.push(row("ansible-playbook option", &flags.join(", "), s, &note));
     }
     for tag in names(&r, &["yaml_tags"]) {

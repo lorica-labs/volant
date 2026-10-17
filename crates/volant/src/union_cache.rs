@@ -197,6 +197,11 @@ pub fn key(
         std::env::var_os("HOME").as_deref().map(Path::new),
     );
     files.extend(plugin_files(plugin_dirs, SystemTime::now())?);
+    // The `-M` directories hold modules directly, not under a `library/`.
+    files.extend(module_path_files(
+        &crate::python::module_path(),
+        SystemTime::now(),
+    )?);
     let cwd = std::env::current_dir().unwrap_or_default();
     let controller = std::env::current_exe()
         .and_then(|exe| Source::now(&exe))
@@ -234,6 +239,11 @@ fn plugin_files(dirs: &[PathBuf], now: SystemTime) -> Option<Vec<(PathBuf, Vec<u
             files_under(&dir.join(sub), &mut walked, &mut out);
         }
     }
+    recent_free(out, now)
+}
+
+/// `out`, unless a stamp in it is under two seconds old.
+fn recent_free(out: Vec<(PathBuf, Vec<u8>)>, now: SystemTime) -> Option<Vec<(PathBuf, Vec<u8>)>> {
     let now_ns = i128::try_from(now.duration_since(UNIX_EPOCH).ok()?.as_nanos()).ok()?;
     let recent = out.iter().any(|(_, stamp)| {
         stamp
@@ -243,6 +253,18 @@ fn plugin_files(dirs: &[PathBuf], now: SystemTime) -> Option<Vec<(PathBuf, Vec<u
             .is_some_and(|mtime| i128::from_le_bytes(mtime) > now_ns - 2_000_000_000)
     });
     (!recent).then_some(out)
+}
+
+/// The `-M` directories and every file under them, with the same rule as [`plugin_files`]: `None`
+/// when one was written too recently to vouch for.
+fn module_path_files(dirs: &[PathBuf], now: SystemTime) -> Option<Vec<(PathBuf, Vec<u8>)>> {
+    let mut out = Vec::new();
+    let mut walked = BTreeSet::new();
+    for dir in dirs {
+        out.push((dir.clone(), Vec::new()));
+        files_under(dir, &mut walked, &mut out);
+    }
+    recent_free(out, now)
 }
 
 /// Every file under `dir`, at any depth, in a stable order, each with its stamp: the real path,

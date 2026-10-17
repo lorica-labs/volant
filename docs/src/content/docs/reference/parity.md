@@ -16,7 +16,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (task) | 63 | 3 | 0 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
-| ansible-playbook option | 34 | 3 | 1 | 0 |
+| ansible-playbook option | 35 | 3 | 0 | 0 |
 | YAML tag | 2 | 0 | 0 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
@@ -242,7 +242,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `--list-hosts` | <span class="kw kw-runs">runs</span> |  |
 | `--list-tags` | <span class="kw kw-runs">runs</span> |  |
 | `--list-tasks` | <span class="kw kw-runs">runs</span> |  |
-| `-M, --module-path` | <span class="kw kw-notyet">not yet</span> |  |
+| `-M, --module-path` | <span class="kw kw-runs">runs</span> |  |
 | `--key-file, --private-key` | <span class="kw kw-runs">runs</span> |  |
 | `--scp-extra-args` | <span class="kw kw-partial">partial</span> | accepted with no effect: files move over the agent link |
 | `--sftp-extra-args` | <span class="kw kw-partial">partial</span> | accepted with no effect: files move over the agent link |
@@ -257,7 +257,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `-u, --user` | <span class="kw kw-runs">runs</span> |  |
 | `--vault-id` | <span class="kw kw-runs">runs</span> |  |
 | `--vault-pass-file, --vault-password-file` | <span class="kw kw-runs">runs</span> |  |
-| `-v, --verbose` | <span class="kw kw-partial">partial</span> | only -v |
+| `-v, --verbose` | <span class="kw kw-partial">partial</span> | -vvvv lists fewer options and prints no ssh or plugin-path lines |
 | `--version` | <span class="kw kw-runs">runs</span> |  |
 
 ## YAML tag

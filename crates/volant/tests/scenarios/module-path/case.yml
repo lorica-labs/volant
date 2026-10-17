@@ -1,0 +1,7 @@
+# -M and --module-path lead the configured module path, so a playbook's library/ still wins and the first directory given wins among them; repeated -M go in front of earlier ones, and without -M a module only they hold is not found.
+runs:
+  - args: [-M, lib, -i, inv.ini, p.yml]
+  - args: [--module-path, lib2:lib, -i, inv.ini, p.yml]
+  - args: [-M, lib, -M, lib2, -i, inv.ini, p.yml]
+  - args: [-i, inv.ini, p.yml]
+needs: [ansible-core]

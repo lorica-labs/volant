@@ -17,6 +17,9 @@ pub enum Dump {
     No,
     /// A `debug`'s: cleaned the way the reference's callback cleans one (`_clean_results`).
     Debug,
+    /// A `setup`'s or `gather_facts`': an `ok` or `changed` line carries no body at any
+    /// verbosity (`_clean_results` empties it), measured at `-vv`.
+    Setup,
 }
 
 /// The key a `debug` or a non-`quiet` `assert` puts on its own result, as the reference's action
@@ -358,6 +361,7 @@ const SKIPPED: Style = AnsiColor::Cyan.on_default();
 const WARNING: Style = AnsiColor::BrightMagenta.on_default();
 /// The reference's `dark gray`, its `COLOR_DEBUG`.
 const DEBUG: Style = AnsiColor::BrightBlack.on_default();
+const VERBOSE: Style = AnsiColor::Blue.on_default();
 
 impl Renderer {
     /// Stdout renderer. Colour follows the terminal, `NO_COLOR`, `CLICOLOR_FORCE`, or the caller.
@@ -458,6 +462,53 @@ impl Renderer {
 
     pub fn task(&mut self, name: &str) {
         self.banner(&format!("TASK [{name}]"));
+    }
+
+    /// The `task path:` line under a banner at `-vv`: the file made absolute, and the line the
+    /// task starts on.
+    pub fn task_path(&mut self, origin: &crate::playbook::Origin) {
+        if self.verbosity >= 2 {
+            let path = std::path::absolute(&*origin.path)
+                .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
+            let line = format!("task path: {}:{}", path.display(), origin.line);
+            let _ = writeln!(self.out, "{}", self.paint(DEBUG, &line));
+        }
+    }
+
+    /// Whether `-v` was given `level` times or more.
+    pub fn verbose_at(&self, level: u8) -> bool {
+        self.verbosity >= level
+    }
+
+    /// A line that shows from `level` `-v`s up, in the colour the reference gives them.
+    pub fn verbose(&mut self, level: u8, line: &str) {
+        if self.verbosity >= level {
+            let _ = writeln!(self.out, "{}", self.paint(VERBOSE, line));
+        }
+    }
+
+    /// A line shown as it is: the version block, whose colour the reference leaves alone.
+    pub fn plain(&mut self, level: u8, line: &str) {
+        if self.verbosity >= level {
+            let _ = writeln!(self.out, "{line}");
+        }
+    }
+
+    /// What the reference prints when a playbook starts at `-vv`: its banner, at `-vvvv` the
+    /// options it was run with, and how many plays it holds.
+    pub fn playbook(&mut self, file: &std::path::Path, plays: usize, options: &[String]) {
+        if self.verbosity < 2 {
+            return;
+        }
+        let base = file.file_name().map_or_else(
+            || file.display().to_string(),
+            |name| name.to_string_lossy().into_owned(),
+        );
+        self.banner(&format!("PLAYBOOK: {base}"));
+        for line in options {
+            self.verbose(4, line);
+        }
+        self.verbose(2, &format!("{plays} plays in {}", file.display()));
     }
 
     /// The banner a handler gets instead of a task's, measured on ansible-core 2.19.12:
@@ -687,7 +738,9 @@ impl Renderer {
         // body as `{"censored": ...}` with no `changed` - but shows nothing at verbosity 0:
         // measured, `ok: [h1]` alone there and the censored body from `-v` on.
         let show = verbose || self.verbosity > 0;
-        let tail = if show {
+        let tail = if show
+            && !(dump == Dump::Setup && matches!(outcome, Outcome::Ok | Outcome::Changed))
+        {
             format!(" => {json}")
         } else {
             String::new()
@@ -971,6 +1024,31 @@ mod tests {
 
     fn capture(f: impl FnOnce(&mut Renderer)) -> String {
         capture_with_color(false, f)
+    }
+
+    /// Each verbosity line shows from the level the reference gives it and not before.
+    #[rstest]
+    #[case::v(1, &[])]
+    #[case::vv(2, &["PLAYBOOK: p.yml ", "2 plays in dir/p.yml", "task path: /abs/p.yml:4"])]
+    #[case::vvvv(4, &["PLAYBOOK: p.yml ", "forks: 5", "2 plays in dir/p.yml", "task path: /abs/p.yml:4"])]
+    fn the_playbook_and_task_path_lines_show_at_vv(#[case] level: u8, #[case] shown: &[&str]) {
+        let out = capture_at(false, level, |r| {
+            r.playbook(
+                std::path::Path::new("dir/p.yml"),
+                2,
+                &["forks: 5".to_string()],
+            );
+            r.task_path(&crate::playbook::Origin {
+                path: "/abs/p.yml".into(),
+                line: 4,
+                col: 3,
+            });
+        });
+        let lines: Vec<&str> = out.lines().filter(|l| !l.is_empty()).collect();
+        assert_eq!(lines.len(), shown.len(), "{out}");
+        for (line, start) in lines.iter().zip(shown) {
+            assert!(line.starts_with(start), "{line}");
+        }
     }
 
     /// The source lines under `Origin:`, read the way Python's text mode reads them, and what

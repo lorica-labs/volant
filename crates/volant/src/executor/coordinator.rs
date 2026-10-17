@@ -1347,6 +1347,9 @@ fn header(step: &Step, name: &str, out: &mut Renderer) {
         StepKind::Handler(_) => out.handler(name),
         _ => out.task(name),
     }
+    if let Some(origin) = &step.task.origin {
+        out.task_path(origin);
+    }
 }
 
 /// The banner of step `index`, unless the last line printed already belonged to it: under `free`

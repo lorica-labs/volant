@@ -1,0 +1,9 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - mymod:
+      register: r
+    - libonly:
+      register: s
+    - debug: var=r.hello
+    - debug: var=s.hello

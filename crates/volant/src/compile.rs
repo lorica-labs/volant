@@ -1221,6 +1221,7 @@ pub(crate) fn compile(
         },
         run_once: None,
         args: gather_args(play),
+        origin: play.origin.clone(),
         ..empty.clone()
     };
     let gathers = play.gather_facts && selection.selects(&gather.tags);

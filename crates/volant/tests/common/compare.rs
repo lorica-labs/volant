@@ -171,7 +171,9 @@ pub fn compare_native(
         // bookkeeping the JSON callback shows and the reference strips from both a registered
         // value and a `-vvv` line (`strip_internal_keys`): `_ansible_no_log`, and `setup`'s
         // `_ansible_verbose_override`.
+        // `setup`'s line never shows its result, so its `invocation` cannot be read back.
         if path == "action"
+            || (path == "invocation" && ours.is_none() && spec["module"] == "setup")
             || (IF_BOTH.contains(&path.as_str()) && (reference.is_none() || ours.is_none()))
             || (key.starts_with("_ansible_") && prefix.is_empty() && ours.is_none())
         {
@@ -510,9 +512,8 @@ pub fn native_result(
     spec: &Value,
     results: &Map<String, Value>,
 ) -> Result<Value, String> {
-    let shown = results
-        .get(case)
-        .ok_or("no result line: the task did not run, or did not report")?;
+    // `setup` never shows its result on its line, at any verbosity, as the reference.
+    let shown = results.get(case);
     let mut registered = results
         .get(&format!("registered-{case}"))
         .and_then(|shown| shown.get("last"))
@@ -526,7 +527,7 @@ pub fn native_result(
     if map.get("failed") == Some(&Value::Bool(false)) {
         map.remove("failed");
     }
-    if let Some(invocation) = shown.get("invocation") {
+    if let Some(invocation) = shown.and_then(|shown| shown.get("invocation")) {
         map.insert("invocation".into(), invocation.clone());
     }
     if ["file", "copy", "lineinfile"].contains(&spec["module"].as_str().unwrap_or_default()) {

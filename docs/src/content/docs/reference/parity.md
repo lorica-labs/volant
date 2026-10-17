@@ -16,7 +16,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (task) | 60 | 4 | 2 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
-| ansible-playbook option | 21 | 3 | 14 | 0 |
+| ansible-playbook option | 27 | 1 | 10 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
@@ -233,24 +233,24 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `--conn-pass-file, --connection-password-file` | <span class="kw kw-notyet">not yet</span> |  |
 | `-D, --diff` | <span class="kw kw-notyet">not yet</span> |  |
 | `-e, --extra-vars` | <span class="kw kw-runs">runs</span> |  |
-| `--flush-cache` | <span class="kw kw-notyet">not yet</span> |  |
+| `--flush-cache` | <span class="kw kw-runs">runs</span> |  |
 | `--force-handlers` | <span class="kw kw-runs">runs</span> |  |
 | `-f, --forks` | <span class="kw kw-runs">runs</span> |  |
 | `-h, --help` | <span class="kw kw-runs">runs</span> |  |
-| `-i, --inventory, --inventory-file` | <span class="kw kw-partial">partial</span> | only -i, --inventory |
+| `-i, --inventory, --inventory-file` | <span class="kw kw-runs">runs</span> |  |
 | `-l, --limit` | <span class="kw kw-runs">runs</span> |  |
 | `--list-hosts` | <span class="kw kw-runs">runs</span> |  |
 | `--list-tags` | <span class="kw kw-runs">runs</span> |  |
 | `--list-tasks` | <span class="kw kw-runs">runs</span> |  |
 | `-M, --module-path` | <span class="kw kw-notyet">not yet</span> |  |
-| `--key-file, --private-key` | <span class="kw kw-partial">partial</span> | only --private-key |
+| `--key-file, --private-key` | <span class="kw kw-runs">runs</span> |  |
 | `--scp-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
 | `--sftp-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
 | `--skip-tags` | <span class="kw kw-runs">runs</span> |  |
 | `--ssh-common-args` | <span class="kw kw-notyet">not yet</span> |  |
 | `--ssh-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
-| `--start-at-task` | <span class="kw kw-notyet">not yet</span> |  |
-| `--step` | <span class="kw kw-notyet">not yet</span> |  |
+| `--start-at-task` | <span class="kw kw-runs">runs</span> |  |
+| `--step` | <span class="kw kw-runs">runs</span> |  |
 | `--syntax-check` | <span class="kw kw-runs">runs</span> |  |
 | `-t, --tags` | <span class="kw kw-runs">runs</span> |  |
 | `-T, --timeout` | <span class="kw kw-runs">runs</span> |  |
@@ -258,7 +258,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `--vault-id` | <span class="kw kw-runs">runs</span> |  |
 | `--vault-pass-file, --vault-password-file` | <span class="kw kw-runs">runs</span> |  |
 | `-v, --verbose` | <span class="kw kw-partial">partial</span> | only -v |
-| `--version` | <span class="kw kw-notyet">not yet</span> |  |
+| `--version` | <span class="kw kw-runs">runs</span> |  |
 
 ## YAML tag
 

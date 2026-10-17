@@ -2024,7 +2024,14 @@ fn sub_task(
     if volant_protocol::modules::native(sub.module).is_some() {
         return Ok(Task {
             module: sub.module.to_string(),
-            args: with_modes(item, sub.args.clone()),
+            // A command a plugin runs is the connection's, which check mode never reaches: the
+            // reference's `_low_level_execute_command` makes its temporary directory and removes
+            // it in check mode too.
+            args: if sub.module == "raw" {
+                sub.args.clone()
+            } else {
+                with_modes(item, sub.args.clone())
+            },
             job: None,
             ..protocol_task(task, item, None)
         });

@@ -828,9 +828,11 @@ def shim():
         ident = self._connection._ident
         if name.rsplit(".", 1)[-1] == "async_status" and not wrap_async:
             return poll(ident, args)
+        # What `_update_module_args` adds: the name the module's own messages call it by.
+        args = dict(args, _ansible_module_name=name)
         if ignore_unknown_opts:
             # The module drops what it does not declare, as it does for the reference.
-            args = dict(args, _ansible_ignore_unknown_opts=True)
+            args["_ansible_ignore_unknown_opts"] = True
         started = time.monotonic()
         result = answered(self._connection._ask("module", name=name, args=args, files=[]))
         if not isinstance(result, dict):

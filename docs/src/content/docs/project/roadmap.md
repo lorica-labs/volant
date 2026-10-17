@@ -21,8 +21,6 @@ Native versions of the common modules, native fact gathering, a cache for the Py
 
 ## Then: ready for daily use
 
-- Vault.
-- `--check` and `--diff`.
 - YAML inventories.
 - A `volant check` command that tells you whether a project will run, and what blocks it.
 - A Homebrew formula.

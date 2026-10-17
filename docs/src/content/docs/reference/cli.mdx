@@ -109,6 +109,18 @@ These options read the playbooks and stop. They never connect to a host and neve
   The escalation method: `sudo` or `su`. Other methods stop the run before it starts.
 </Option>
 
+<Option name="-k, --ask-pass">
+  Ask for the SSH password on the terminal, with echo turned off. `ssh` gets it through `SSH_ASKPASS`, so it needs OpenSSH 8.4 or later. The password is in no command line, no environment sent to the host and no log. After `-k`, an empty answer to the `-K` prompt reuses the SSH password, as in `ansible-playbook`.
+</Option>
+
+<Option name="--connection-password-file, --conn-pass-file" arg="PATH">
+  Read the SSH password from the first line of this file. It conflicts with `-k`.
+</Option>
+
+<Option name="--become-password-file, --become-pass-file" arg="PATH">
+  Read the escalation password from the first line of this file. It conflicts with `-K`.
+</Option>
+
 <Option name="-K, --ask-become-pass">
   Ask for the escalation password on the terminal, with echo turned off. The password is written once to `sudo` and appears in no command line, log or result.
 </Option>
@@ -124,7 +136,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 </Option>
 
 <Option name="--vault-id" arg="LABEL@SOURCE" config="[defaults] vault_identity_list" env="ANSIBLE_VAULT_IDENTITY_LIST">
-  A vault identity: the source is a file, an executable or `prompt`. Repeatable. Every password is tried on every vaulted value, whatever its label.
+  A vault identity: the source is a file, an executable or `prompt`. Repeatable. Every password is tried on every vaulted value, whatever its label. See [Vault](/variables/vault/).
 </Option>
 
 ## Run and output
@@ -134,11 +146,11 @@ These options read the playbooks and stop. They never connect to a host and neve
 </Option>
 
 <Option name="-C, --check" default="false">
-  Report what each task would change without changing it. A task's own `check_mode` keyword wins over this option, so a task with `check_mode: false` still runs for real. A host with no Python cannot answer `apt`, `user`, `group` or `file` under `--check` or `--diff`: those modules need it, and the task fails.
+  Report what each task would change without changing it. A task's own `check_mode` keyword wins over this option, so a task with `check_mode: false` still runs for real. A host with no Python cannot answer `apt`, `user`, `group` or `file` under `--check` or `--diff`: those modules need it, and the task fails. See [Check mode and diff](/playbooks/check-and-diff/).
 </Option>
 
 <Option name="-D, --diff" default="false">
-  Print the changes modules make to files, the way `ansible-playbook` does. A task's own `diff` keyword wins over this option, so `diff: false` keeps a task's changes off the screen. A host with no Python cannot answer `apt`, `user`, `group` or `file` under `--diff`: those modules need it, and the task fails.
+  Print the changes modules make to files, the way `ansible-playbook` does. A task's own `diff` keyword wins over this option, so `diff: false` keeps a task's changes off the screen. A host with no Python cannot answer `apt`, `user`, `group` or `file` under `--diff`: those modules need it, and the task fails. See [Check mode and diff](/playbooks/check-and-diff/).
 </Option>
 
 <Option name="-v" id="verbose">
@@ -187,8 +199,4 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 
 ## Not there yet
 
-These `ansible-playbook` options are not accepted yet:
-
-| Option | What to do meanwhile |
-|---|---|
-| `-k, --ask-pass` | Use a key file or an ssh-agent. |
+Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/reference/parity/#ansible-playbook-option) lists the rest.

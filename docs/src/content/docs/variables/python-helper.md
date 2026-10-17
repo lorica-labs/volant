@@ -40,4 +40,4 @@ The next bridged call in the run fails the same way instead of waiting.
 
 ## Not sent to the helper
 
-The vault filters and tests (`vault`, `unvault`, `vault_encrypted`, `vaulted_file`) and the `unvault` lookup are refused, and the parity page lists them as `not yet`. Vault secrets are not supported yet.
+The vault filters, tests and lookup never go to the helper: the vault password stays in the controller process. See [Vault](/variables/vault/).

@@ -170,7 +170,7 @@ pub struct SshTarget {
     /// `ansible_ssh_use_tty`: whether a command sent with no stdin runs on a terminal, as the
     /// reference's `ssh -tt` gives it. On unless the host turns it off.
     pub use_tty: bool,
-    /// What the `ssh -G` that [`SshTarget::resolved`] ran said: the `hostname` it printed and
+    /// What the `ssh -G` that `SshTarget::resolved` ran said: the `hostname` it printed and
     /// whether the operator's configuration already shares the connection. `None` when no dump
     /// was taken, which the closing line of a terminal then asks for on first use.
     pub dumped: Option<Box<(Option<String>, bool)>>,

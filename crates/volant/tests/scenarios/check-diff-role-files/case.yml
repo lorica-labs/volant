@@ -1,0 +1,5 @@
+# A role's template and file, and the playbook's own, found from the bridged plugins under
+# --check, --check --diff and --diff.
+args: [-i, inv.ini, site.yml]
+modes: [check, check-diff, diff]
+needs: [ansible-core]

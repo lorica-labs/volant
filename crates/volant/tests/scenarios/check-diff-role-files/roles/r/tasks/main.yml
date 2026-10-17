@@ -1,0 +1,4 @@
+- name: role template
+  template: {src: conf.j2, dest: "{{ T }}/conf.txt"}
+- name: role file
+  copy: {src: role.txt, dest: "{{ T }}/role.txt"}

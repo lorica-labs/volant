@@ -991,7 +991,11 @@ fn apply_conditions(
         return result;
     }
     result.settle_failed();
-    if task.changed_when.is_empty() && task.failed_when.is_empty() {
+    // `_execute` judges a result with the conditions only when it is not a skip, as check mode
+    // makes of a command it will not run.
+    if result.0.contains_key("skipped")
+        || (task.changed_when.is_empty() && task.failed_when.is_empty())
+    {
         return result;
     }
     let vars = condition_vars(task, item, &result, templar);

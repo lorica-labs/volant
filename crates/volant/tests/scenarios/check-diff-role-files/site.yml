@@ -1,0 +1,13 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    T: "{{ playbook_dir }}/t"
+  tasks:
+    - name: Set up
+      shell: |
+        mkdir -p {{ T }}
+        printf 'old\n' > {{ T }}/role.txt
+      check_mode: false
+    - name: playbook template
+      template: {src: top.j2, dest: "{{ T }}/top.txt"}
+    - ansible.builtin.import_role: {name: r}

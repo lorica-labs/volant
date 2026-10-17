@@ -976,6 +976,7 @@ def run_action(ident, request):
     if not CALL_NAME.match(name) or not plugin_loader.action_loader.has_plugin(name):
         return {"error": {"kind": "not_found", "message": "the handler '%s' was not found" % name}}
     task_vars = dict(request.get("task_vars") or {})
+    search_path = task_vars.pop("_volant_search_path", None)
     task = None
     try:
         context = PlayContext()
@@ -1002,6 +1003,10 @@ def run_action(ident, request):
         # here since no module_defaults reach the plugin.
         task = Task.load(fields, block=Block(play=Play()), loader=loader)
         task.post_validate(templar=templar._engine)
+        if search_path:
+            # The role and file directories the controller compiled the task in, which the
+            # plugin's `_find_needle` reads off the task as the reference's role-bound task gives.
+            task.get_search_path = lambda: list(search_path)
         action = plugin_loader.action_loader.get(
             name,
             task=task,

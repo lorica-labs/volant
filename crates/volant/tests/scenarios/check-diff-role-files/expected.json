@@ -1,0 +1,18 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [Set up] ******************************************************************\nchanged: [h1]\n\nTASK [playbook template] *******************************************************\nchanged: [h1]\n\nTASK [r : role template] *******************************************************\nchanged: [h1]\n\nTASK [r : role file] ***********************************************************\nchanged: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=4    changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [Set up] ******************************************************************\nchanged: [h1]\n\nTASK [playbook template] *******************************************************\nchanged: [h1]\n\nTASK [r : role template] *******************************************************\nchanged: [h1]\n\nTASK [r : role file] ***********************************************************\nchanged: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=4    changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [Set up] ******************************************************************\nchanged: [h1]\n\nTASK [playbook template] *******************************************************\n--- before\n+++ after: <golden-ansible-tmp>/top.j2\n@@ -0,0 +1 @@\n+top 2\n\nchanged: [h1]\n\nTASK [r : role template] *******************************************************\n--- before\n+++ after: <golden-ansible-tmp>/conf.j2\n@@ -0,0 +1 @@\n+conf 5\n\nchanged: [h1]\n\nTASK [r : role file] ***********************************************************\n--- before: <golden-tmp>/t/role.txt\n+++ after: <golden-tmp>/roles/r/files/role.txt\n@@ -1 +1 @@\n-old\n+new\n\nchanged: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=4    changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [Set up] ******************************************************************\nchanged: [h1]\n\nTASK [playbook template] *******************************************************\n--- before\n+++ after: <golden-ansible-tmp>/top.j2\n@@ -0,0 +1 @@\n+top 2\n\nchanged: [h1]\n\nTASK [r : role template] *******************************************************\n--- before\n+++ after: <golden-ansible-tmp>/conf.j2\n@@ -0,0 +1 @@\n+conf 5\n\nchanged: [h1]\n\nTASK [r : role file] ***********************************************************\n--- before: <golden-tmp>/t/role.txt\n+++ after: <golden-tmp>/roles/r/files/role.txt\n@@ -1 +1 @@\n-old\n+new\n\nchanged: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=4    changed=4    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

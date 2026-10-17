@@ -130,7 +130,7 @@ ulimit -Sn; ulimit -Hn
 
 ## Not there yet
 
-- SSH passwords (`-k`, `ansible_password`).
+- The `ansible_password` variable. `-k` and `--connection-password-file` work.
 - `connection` as a play, block or task keyword.
 - Windows and network devices.
 

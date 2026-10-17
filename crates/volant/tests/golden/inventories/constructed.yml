@@ -1,0 +1,32 @@
+plugin: ansible.builtin.constructed
+strict: false
+compose:
+  c_os: os | upper
+  c_ver: ver | int + 1
+  c_bad: nosuch + 1
+  c_gv: gv
+groups:
+  is_deb: os == 'Debian'
+  is_unknown: nosuch == 1
+  ver12: ver == '12'
+keyed_groups:
+  - key: os
+    prefix: os
+  - key: os
+    prefix: ''
+    separator: ''
+    default_value: nope
+  - key: role
+    prefix: role
+    default_value: unset
+  - key: role
+    prefix: r2
+    trailing_separator: false
+  - key: taglist
+    prefix: tag
+    separator: '-'
+  - key: dd
+    prefix: dd
+  - key: os
+    prefix: lead
+    leading_separator: false

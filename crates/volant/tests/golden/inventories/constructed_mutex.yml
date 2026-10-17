@@ -1,0 +1,4 @@
+plugin: constructed
+strict: false
+keyed_groups:
+  - {key: os, default_value: x, trailing_separator: false}

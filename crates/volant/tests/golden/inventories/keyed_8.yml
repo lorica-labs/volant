@@ -1,0 +1,4 @@
+plugin: constructed
+strict: false
+keyed_groups:
+  - {key: nosuch, prefix: np3}

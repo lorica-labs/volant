@@ -286,6 +286,66 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[ERROR]: Completely failed to parse inventory source <golden-tmp>/bad.ini\n"
     },
+    "auto_no_plugin": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "auto_no_plugin.yml"
+      ],
+      "stderr": "[WARNING]: Skipping 'foo' as this is not a valid group definition\n"
+    },
+    "auto_plugin_int": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "auto_plugin_int.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: unsupported type <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nunsupported type <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/auto_plugin_int.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/auto_plugin_int.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/auto_plugin_int.yml\n\n[WARNING]: Unable to parse <golden-tmp>/auto_plugin_int.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "auto_unknown": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "auto_unknown.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: inventory config '<golden-tmp>/auto_unknown.yml' specifies unknown plugin 'nosuch.plugin'\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\ninventory config '<golden-tmp>/auto_unknown.yml' specifies unknown plugin 'nosuch.plugin'\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/auto_unknown.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/auto_unknown.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/auto_unknown.yml\n\n[WARNING]: Unable to parse <golden-tmp>/auto_unknown.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
     "bad": {
       "env": {},
       "hosts": [],
@@ -374,6 +434,973 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/colon.ini\n\n[WARNING]: Unable to parse <golden-tmp>/colon.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
+    "constructed": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "c_os": {
+                "__ansible_unsafe": "DEBIAN"
+              },
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "c_gv": "gval",
+              "c_os": {
+                "__ansible_unsafe": "DEBIAN"
+              },
+              "c_ver": 13,
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "c_gv": "gval",
+              "c_os": {
+                "__ansible_unsafe": "REDHAT"
+              },
+              "c_ver": 10,
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "is_deb",
+            "os_Debian",
+            "Debian",
+            "tag_a",
+            "tag_b",
+            "lead_Debian",
+            "os_RedHat",
+            "RedHat",
+            "role_unset",
+            "lead_RedHat",
+            "dd__k_v_"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "dd__k_v_": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "is_deb": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "lead_Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "lead_RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "os_Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "os_RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "role_unset": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "tag_a": {
+          "hosts": [
+            "w1"
+          ]
+        },
+        "tag_b": {
+          "hosts": [
+            "w1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_dict": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": {
+                "a": {
+                  "__ansible_unsafe": "x"
+                },
+                "b": {
+                  "__ansible_unsafe": ""
+                }
+              },
+              "ll": [
+                {
+                  "__ansible_unsafe": "p"
+                },
+                {
+                  "__ansible_unsafe": ""
+                },
+                {
+                  "__ansible_unsafe": "q"
+                }
+              ],
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "dd": {
+                "a": {
+                  "__ansible_unsafe": "x"
+                },
+                "b": {
+                  "__ansible_unsafe": ""
+                }
+              },
+              "empty": "",
+              "gv": "gval",
+              "ll": [
+                {
+                  "__ansible_unsafe": "p"
+                },
+                {
+                  "__ansible_unsafe": ""
+                },
+                {
+                  "__ansible_unsafe": "q"
+                }
+              ],
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "dd": {
+                "a": {
+                  "__ansible_unsafe": "x"
+                },
+                "b": {
+                  "__ansible_unsafe": ""
+                }
+              },
+              "gv": "gval",
+              "ll": [
+                {
+                  "__ansible_unsafe": "p"
+                },
+                {
+                  "__ansible_unsafe": ""
+                },
+                {
+                  "__ansible_unsafe": "q"
+                }
+              ],
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "d_a_x",
+            "d_b_",
+            "e_a_x",
+            "e_b_DV",
+            "f_a_x",
+            "f_b",
+            "l_p",
+            "l_LD",
+            "l_q",
+            "m_p",
+            "m_",
+            "m_q"
+          ]
+        },
+        "d_a_x": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "d_b_": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "e_a_x": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "e_b_DV": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "f_a_x": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "f_b": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "l_LD": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "l_p": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "l_q": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "m_": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "m_p": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "m_q": {
+          "hosts": [
+            "w1",
+            "w2",
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_dict.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_keyed_10": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "keyed_10.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_keyed_11": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "x_Debian",
+            "x_RedHat"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        },
+        "x_Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "x_RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "keyed_11.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_keyed_3": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "P__Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "P__RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "P__Debian",
+            "P__RedHat"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "keyed_3.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_keyed_8": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "keyed_8.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_keyed_9": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "keyed_9.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_mutex": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_mutex.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_mutex.yml': parameters are mutually exclusive for keyed groups: default_value|trailing_separator\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_mutex.yml': parameters are mutually exclusive for keyed groups: default_value|trailing_separator\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_mutex.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_mutex.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_mutex.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_mutex.yml as an inventory source\n"
+    },
+    "constructed_no_hosts": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_plugin_only": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_plugin_only.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_separators": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "P__Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "P__RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "_Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "_RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "_Debian",
+            "P__Debian",
+            "_RedHat",
+            "P__RedHat"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_separators.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_strict": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_strict.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_strict.yml': Could not set c_bad for host w1: 'nosuch' is undefined\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_strict.yml'.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_strict.yml'>\n\n<<< caused by >>>\n\nCould not set c_bad for host w1: 'nosuch' is undefined\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_strict.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_strict.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_strict.yml as an inventory source\n"
+    },
     "directory": {
       "env": {},
       "hosts": [
@@ -445,6 +1472,333 @@
         "empty"
       ],
       "stderr": "[WARNING]: Unable to parse <golden-tmp>/empty as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "generator": {
+      "env": {},
+      "hosts": null,
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "build-api-dev-runner": {
+              "app": "api",
+              "onlyop": "build"
+            },
+            "build-api-test-runner": {
+              "app": "api",
+              "onlyop": "build"
+            },
+            "build-web-dev-runner": {
+              "app": "web",
+              "onlyop": "build"
+            },
+            "build-web-test-runner": {
+              "app": "web",
+              "onlyop": "build"
+            },
+            "launch-api-dev-runner": {
+              "app": "api",
+              "onlyop": "launch"
+            },
+            "launch-api-test-runner": {
+              "app": "api",
+              "onlyop": "launch"
+            },
+            "launch-web-dev-runner": {
+              "app": "web",
+              "onlyop": "launch"
+            },
+            "launch-web-test-runner": {
+              "app": "web",
+              "onlyop": "launch"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "build",
+            "web",
+            "dev",
+            "api",
+            "test",
+            "launch"
+          ]
+        },
+        "api": {
+          "children": [
+            "build-api",
+            "launch-api"
+          ]
+        },
+        "build": {
+          "children": [
+            "build-web",
+            "build-api"
+          ]
+        },
+        "build-api": {
+          "children": [
+            "build-api-dev",
+            "build-api-test"
+          ]
+        },
+        "build-api-dev": {
+          "hosts": [
+            "build-api-dev-runner"
+          ]
+        },
+        "build-api-test": {
+          "hosts": [
+            "build-api-test-runner"
+          ]
+        },
+        "build-web": {
+          "children": [
+            "build-web-dev",
+            "build-web-test"
+          ]
+        },
+        "build-web-dev": {
+          "hosts": [
+            "build-web-dev-runner"
+          ]
+        },
+        "build-web-test": {
+          "hosts": [
+            "build-web-test-runner"
+          ]
+        },
+        "dev": {
+          "children": [
+            "build-web-dev",
+            "build-api-dev",
+            "launch-web-dev",
+            "launch-api-dev"
+          ]
+        },
+        "launch": {
+          "children": [
+            "launch-web",
+            "launch-api"
+          ]
+        },
+        "launch-api": {
+          "children": [
+            "launch-api-dev",
+            "launch-api-test"
+          ]
+        },
+        "launch-api-dev": {
+          "hosts": [
+            "launch-api-dev-runner"
+          ]
+        },
+        "launch-api-test": {
+          "hosts": [
+            "launch-api-test-runner"
+          ]
+        },
+        "launch-web": {
+          "children": [
+            "launch-web-dev",
+            "launch-web-test"
+          ]
+        },
+        "launch-web-dev": {
+          "hosts": [
+            "launch-web-dev-runner"
+          ]
+        },
+        "launch-web-test": {
+          "hosts": [
+            "launch-web-test-runner"
+          ]
+        },
+        "test": {
+          "children": [
+            "build-web-test",
+            "build-api-test",
+            "launch-web-test",
+            "launch-api-test"
+          ]
+        },
+        "web": {
+          "children": [
+            "build-web",
+            "launch-web"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "generator.yml"
+      ],
+      "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
+    },
+    "generator_then_constructed": {
+      "env": {},
+      "hosts": null,
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "build-api-dev-runner": {
+              "app": "api",
+              "onlyop": "build"
+            },
+            "build-api-test-runner": {
+              "app": "api",
+              "onlyop": "build"
+            },
+            "build-web-dev-runner": {
+              "app": "web",
+              "onlyop": "build"
+            },
+            "build-web-test-runner": {
+              "app": "web",
+              "onlyop": "build"
+            },
+            "launch-api-dev-runner": {
+              "app": "api",
+              "onlyop": "launch"
+            },
+            "launch-api-test-runner": {
+              "app": "api",
+              "onlyop": "launch"
+            },
+            "launch-web-dev-runner": {
+              "app": "web",
+              "onlyop": "launch"
+            },
+            "launch-web-test-runner": {
+              "app": "web",
+              "onlyop": "launch"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "build",
+            "web",
+            "dev",
+            "api",
+            "test",
+            "launch"
+          ]
+        },
+        "api": {
+          "children": [
+            "build-api",
+            "launch-api"
+          ]
+        },
+        "build": {
+          "children": [
+            "build-web",
+            "build-api"
+          ]
+        },
+        "build-api": {
+          "children": [
+            "build-api-dev",
+            "build-api-test"
+          ]
+        },
+        "build-api-dev": {
+          "hosts": [
+            "build-api-dev-runner"
+          ]
+        },
+        "build-api-test": {
+          "hosts": [
+            "build-api-test-runner"
+          ]
+        },
+        "build-web": {
+          "children": [
+            "build-web-dev",
+            "build-web-test"
+          ]
+        },
+        "build-web-dev": {
+          "hosts": [
+            "build-web-dev-runner"
+          ]
+        },
+        "build-web-test": {
+          "hosts": [
+            "build-web-test-runner"
+          ]
+        },
+        "dev": {
+          "children": [
+            "build-web-dev",
+            "build-api-dev",
+            "launch-web-dev",
+            "launch-api-dev"
+          ]
+        },
+        "launch": {
+          "children": [
+            "launch-web",
+            "launch-api"
+          ]
+        },
+        "launch-api": {
+          "children": [
+            "launch-api-dev",
+            "launch-api-test"
+          ]
+        },
+        "launch-api-dev": {
+          "hosts": [
+            "launch-api-dev-runner"
+          ]
+        },
+        "launch-api-test": {
+          "hosts": [
+            "launch-api-test-runner"
+          ]
+        },
+        "launch-web": {
+          "children": [
+            "launch-web-dev",
+            "launch-web-test"
+          ]
+        },
+        "launch-web-dev": {
+          "hosts": [
+            "launch-web-dev-runner"
+          ]
+        },
+        "launch-web-test": {
+          "hosts": [
+            "launch-web-test-runner"
+          ]
+        },
+        "test": {
+          "children": [
+            "build-web-test",
+            "build-api-test",
+            "launch-web-test",
+            "launch-api-test"
+          ]
+        },
+        "web": {
+          "children": [
+            "build-web",
+            "launch-web"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "generator.yml",
+        "constructed.yml"
+      ],
+      "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "host_list": {
       "env": {},
@@ -2729,6 +4083,53 @@
       ],
       "stderr": ""
     },
+    "yaml_cycle": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "yaml_cycle.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_cycle.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_cycle.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Adding group 'b' as child to 'a' creates a recursive dependency loop.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nAdding group 'b' as child to 'a' creates a recursive dependency loop.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_cycle.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_cycle.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "yaml_empty_map": {
+      "env": {},
+      "hosts": [
+        "{}"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "{}"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "yaml_empty_map.yml"
+      ],
+      "stderr": ""
+    },
     "yaml_empty_sections": {
       "env": {},
       "hosts": [
@@ -2759,6 +4160,26 @@
         "empty_sections.yml"
       ],
       "stderr": ""
+    },
+    "yaml_int_host": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "yaml_int_host.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_int_host.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_int_host.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_int_host.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Host pattern 456 must be a string. Enclose integers/floats in quotation marks.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nHost pattern 456 must be a string. Enclose integers/floats in quotation marks.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_int_host.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_int_host.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_int_host.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_late_children": {
       "env": {},
@@ -2796,6 +4217,26 @@
         "children.yml"
       ],
       "stderr": ""
+    },
+    "yaml_list_hosts": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "yaml_list_hosts.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_list_hosts.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_list_hosts.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_list_hosts.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Invalid \"hosts\" entry for \"g\" group, requires a dictionary, found \"<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>\" instead.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nInvalid \"hosts\" entry for \"g\" group, requires a dictionary, found \"<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>\" instead.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_list_hosts.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_list_hosts.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_list_hosts.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_odd": {
       "env": {},
@@ -2838,6 +4279,66 @@
         "odd.yml"
       ],
       "stderr": "[WARNING]: Skipping unexpected key (foo) in group (g), only \"vars\", \"children\" and \"hosts\" are valid\n[WARNING]: Skipping key (zz) in group (g) as it is not a mapping, it is a <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n[WARNING]: Skipping 'bad_group' as this is not a valid group definition\n"
+    },
+    "yaml_own_child": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "yaml_own_child.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_own_child.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_own_child.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_own_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: can't add group to itself\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\ncan't add group to itself\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_own_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_own_child.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_own_child.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "yaml_plugin_key": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "yaml_plugin_key.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: inventory config '<golden-tmp>/yaml_plugin_key.yml' specifies unknown plugin 'x'\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\ninventory config '<golden-tmp>/yaml_plugin_key.yml' specifies unknown plugin 'x'\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_plugin_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_plugin_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_plugin_key.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_plugin_key.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "yaml_skipped_child": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "yaml_skipped_child.yml"
+      ],
+      "stderr": "[WARNING]: Skipping 'm' as this is not a valid group definition\n[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_skipped_child.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_skipped_child.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_skipped_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: m is not a known host nor group\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nm is not a known host nor group\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_skipped_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_skipped_child.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_skipped_child.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_then_ini": {
       "env": {},

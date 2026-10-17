@@ -651,7 +651,7 @@ ours      {}",
             .into_iter()
             .map(|h| h.name)
             .collect();
-        if rc == 0 && Value::from(hosts.clone()) != case["hosts"] {
+        if rc == 0 && !case["hosts"].is_null() && Value::from(hosts.clone()) != case["hosts"] {
             failures.push(format!("{name}: hosts {}, ours {hosts:?}", case["hosts"]));
         }
     }

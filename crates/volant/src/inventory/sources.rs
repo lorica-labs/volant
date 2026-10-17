@@ -125,8 +125,8 @@ pub struct PluginError {
     pub message: String,
     pub origin: Option<String>,
     /// What this error was raised from: its message and its `Origin:`, a second block of the
-    /// reference's chain.
-    pub cause: Option<(String, String)>,
+    /// reference's chain; the `Origin:` line is left out when the cause has none.
+    pub cause: Option<(String, Option<String>)>,
     /// A plugin this release does not have yet: refused by name when no other plugin reads the
     /// source, rather than reported as a source that could not be parsed.
     pub unsupported: bool,
@@ -392,7 +392,10 @@ impl Chain<'_, '_> {
             let (first, more) = match err.cause {
                 Some((cause, cause_origin)) => (
                     format!("{}: {cause}", message.trim_end_matches('.')),
-                    format!("\n<<< caused by >>>\n\n{cause}\nOrigin: {cause_origin}\n"),
+                    format!(
+                        "\n<<< caused by >>>\n\n{cause}\n{}",
+                        cause_origin.map_or_else(String::new, |o| format!("Origin: {o}\n"))
+                    ),
                 ),
                 None => (message.clone(), String::new()),
             };
@@ -424,27 +427,6 @@ impl Chain<'_, '_> {
 pub(super) fn file_with_extension(source: &Source, extensions: &[Option<&str>]) -> bool {
     let ext = source.path().extension().map(|e| e.to_string_lossy());
     source.readable_file() && extensions.contains(&ext.as_deref())
-}
-
-/// A builtin plugin this release does not read yet: it takes what the reference's would, then
-/// says so by name.
-pub(super) struct Pending {
-    pub name: &'static str,
-    pub verify: fn(&Source) -> bool,
-}
-
-impl InventoryPlugin for Pending {
-    fn name(&self) -> &'static str {
-        self.name
-    }
-
-    fn verify(&self, source: &Source) -> bool {
-        (self.verify)(source)
-    }
-
-    fn parse(&self, _: &Source, _: &mut Inventory, _: &ParseCx) -> Result<(), PluginError> {
-        Err(PluginError::unsupported(self.name))
-    }
 }
 
 #[cfg(unix)]

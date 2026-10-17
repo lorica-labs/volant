@@ -272,13 +272,13 @@ fn host_variables(path: &str, host: &str) -> Result<Map<String, Value>, PluginEr
                     "JSON parsing failed: {}",
                     python_json_error(text.as_bytes(), &e)
                 ),
-                format!(
+                Some(format!(
                     "<inventory script output from {}> for host {}:{}:{}",
                     py_repr(path),
                     py_repr(host),
                     e.line(),
                     e.column()
-                ),
+                )),
             ));
             Err(error)
         }

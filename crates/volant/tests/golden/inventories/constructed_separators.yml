@@ -1,0 +1,10 @@
+plugin: constructed
+strict: false
+keyed_groups:
+  - {key: os, prefix: '', separator: '-'}
+  - {key: os, prefix: '', leading_separator: false}
+  - {key: os, prefix: P, leading_separator: true, separator: '__'}
+  - {key: os, separator: '-'}
+  - {key: os, prefix: '', trailing_separator: true}
+  - {key: nosuch, prefix: np, trailing_separator: true}
+  - {key: nosuch, prefix: np2, trailing_separator: false}

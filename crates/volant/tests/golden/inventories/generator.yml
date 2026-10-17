@@ -1,0 +1,19 @@
+plugin: generator
+strict: false
+hosts:
+  name: "{{ operation }}-{{ application }}-{{ environment }}-runner"
+  parents:
+    - name: "{{ operation }}-{{ application }}-{{ environment }}"
+      parents:
+        - name: "{{ operation }}-{{ application }}"
+          parents:
+            - name: "{{ operation }}"
+            - name: "{{ application }}"
+        - name: "{{ environment }}"
+      vars:
+        app: "{{ application }}"
+        onlyop: "{{ operation }}"
+layers:
+  operation: [build, launch]
+  environment: [dev, test]
+  application: [web, api]

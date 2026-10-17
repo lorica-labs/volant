@@ -3,6 +3,9 @@
 //! them: each source offered to the enabled plugins in turn, directories walked, several
 //! sources merged into one inventory.
 
+mod auto;
+mod constructed;
+mod generator;
 mod host_list;
 mod ini;
 pub mod ranges;
@@ -28,43 +31,12 @@ const PLUGINS: &[&dyn InventoryPlugin] = &[
     &host_list::HostList { advanced: false },
     &host_list::HostList { advanced: true },
     &script::Script,
-    &sources::Pending {
-        name: "auto",
-        verify: |s| sources::file_with_extension(s, &[Some("yml"), Some("yaml")]),
-    },
+    &auto::Auto,
     &yaml::YamlInventory,
     &ini::Ini,
     &toml::Toml,
-    &sources::Pending {
-        name: "constructed",
-        verify: |s| {
-            sources::file_with_extension(
-                s,
-                &[
-                    None,
-                    Some("config"),
-                    Some("yaml"),
-                    Some("yml"),
-                    Some("json"),
-                ],
-            )
-        },
-    },
-    &sources::Pending {
-        name: "generator",
-        verify: |s| {
-            sources::file_with_extension(
-                s,
-                &[
-                    None,
-                    Some("config"),
-                    Some("yaml"),
-                    Some("yml"),
-                    Some("json"),
-                ],
-            )
-        },
-    },
+    &constructed::Constructed,
+    &generator::Generator,
 ];
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -84,12 +56,25 @@ struct Group {
     priority: Option<i64>,
 }
 
+/// A computed value as `--list` prints it: every string in it wrapped, mapping keys left alone.
+fn mark_unsafe(value: &mut Value) {
+    match value {
+        Value::String(text) => *value = serde_json::json!({ "__ansible_unsafe": text }),
+        Value::Array(items) => items.iter_mut().for_each(mark_unsafe),
+        Value::Object(map) => map.values_mut().for_each(mark_unsafe),
+        _ => {}
+    }
+}
+
 #[derive(Debug, Default, Clone)]
 pub struct Inventory {
     hosts: Vec<Host>,
     groups: Vec<Group>,
     /// The file each host was first read from, for its `inventory_file` and `inventory_dir`.
     origins: HashMap<String, PathBuf>,
+    /// The `(host, variable)` pairs a `constructed` compose built from a computed string, which
+    /// `--list` marks `__ansible_unsafe`.
+    unsafe_vars: HashSet<(String, String)>,
 }
 
 #[derive(Debug, Default)]
@@ -210,6 +195,16 @@ impl Inventory {
             .hosts
             .iter()
             .map(|h| (h.name.clone(), self.host_with_vars(&h.name).vars))
+            .map(|(name, mut vars)| {
+                for (host, var) in &self.unsafe_vars {
+                    if *host == name
+                        && let Some(value) = vars.get_mut(var)
+                    {
+                        mark_unsafe(value);
+                    }
+                }
+                (name, vars)
+            })
             .filter(|(_, vars)| !vars.is_empty())
             .map(|(name, vars)| (name, Value::Object(vars.into_iter().collect())))
             .collect();

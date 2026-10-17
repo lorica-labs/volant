@@ -1,0 +1,4 @@
+plugin: constructed
+strict: true
+compose:
+  c_bad: nosuch + 1

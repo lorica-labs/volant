@@ -67,7 +67,7 @@ pub(super) enum Dialect {
 
 impl Dialect {
     /// Python's name for the type of `value` as the reference prints it.
-    fn type_name(self, value: &Value) -> String {
+    pub(super) fn type_name(self, value: &Value) -> String {
         let (plain, tagged) = match value {
             Value::Null => return "<class 'NoneType'>".to_string(),
             Value::Bool(_) => return "<class 'bool'>".to_string(),
@@ -231,6 +231,36 @@ pub(super) fn read_groups(
     Ok(())
 }
 
+/// A child group under a parent, refused when it would loop, as the reference's `add_child_group`
+/// refuses it.
+pub(super) fn add_child_checked(
+    inv: &mut Inventory,
+    parent: &str,
+    child: &str,
+) -> Result<(), String> {
+    if parent == child {
+        return Err("can't add group to itself".to_string());
+    }
+    let mut seen = vec![parent.to_string()];
+    let mut at = 0;
+    while let Some(current) = seen.get(at).cloned() {
+        at += 1;
+        for g in &inv.groups {
+            if g.children.contains(&current) && !seen.contains(&g.name) {
+                seen.push(g.name.clone());
+            }
+        }
+    }
+    if seen.iter().any(|g| g == child) {
+        return Err(format!(
+            "Adding group '{child}' as child to '{parent}' creates a recursive dependency \
+             loop."
+        ));
+    }
+    inv.add_child(parent, child);
+    Ok(())
+}
+
 struct Reader<'a, 'c> {
     inv: &'a mut Inventory,
     dialect: Dialect,
@@ -377,27 +407,7 @@ impl Reader<'_, '_> {
 
     /// `add_child`, which refuses a group that is its own ancestor.
     fn child(&mut self, parent: &str, child: &str) -> Result<(), String> {
-        if parent == child {
-            return Err("can't add group to itself".to_string());
-        }
-        let mut seen = vec![parent.to_string()];
-        let mut at = 0;
-        while let Some(current) = seen.get(at).cloned() {
-            at += 1;
-            for g in &self.inv.groups {
-                if g.children.contains(&current) && !seen.contains(&g.name) {
-                    seen.push(g.name.clone());
-                }
-            }
-        }
-        if seen.iter().any(|g| g == child) {
-            return Err(format!(
-                "Adding group '{child}' as child to '{parent}' creates a recursive dependency \
-                 loop."
-            ));
-        }
-        self.inv.add_child(parent, child);
-        Ok(())
+        add_child_checked(self.inv, parent, child)
     }
 
     /// `_populate_host_vars` for every host a pattern expands to.

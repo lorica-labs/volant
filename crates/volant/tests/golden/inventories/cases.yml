@@ -1,5 +1,7 @@
 # Each case: the inventory sources, given from this directory, and the environment
 # `ansible-inventory --list` reads them with. Recorded into ../expected_inventory.json.
+# `hosts: unordered` leaves the `--list-hosts` order unrecorded, where the reference's walk of
+# sibling groups is hashed by name and differs from one run to the next.
 ranges: {sources: [ranges.ini]}
 host_list: {sources: ["a:2222,,b,[::1]:22,b:x,"]}
 directory: {sources: [dir]}
@@ -54,3 +56,27 @@ script_vars_list: {sources: [script_vars_list.sh]}
 script_malformed: {sources: [script_malformed.sh]}
 script_host_empty: {sources: [script_host_empty.sh]}
 script_host_bad: {sources: [script_host_bad.sh]}
+constructed: {sources: [constructed_base.ini, constructed.yml]}
+constructed_strict: {sources: [constructed_base.ini, constructed_strict.yml]}
+constructed_separators: {sources: [constructed_base.ini, constructed_separators.yml]}
+constructed_dict: {sources: [constructed_base.ini, constructed_dict.yml]}
+constructed_mutex: {sources: [constructed_base.ini, constructed_mutex.yml]}
+constructed_plugin_only: {sources: [constructed_base.ini, constructed_plugin_only.yml]}
+constructed_no_hosts: {sources: [constructed.yml]}
+constructed_keyed_3: {sources: [constructed_base.ini, keyed_3.yml]}
+constructed_keyed_8: {sources: [constructed_base.ini, keyed_8.yml]}
+constructed_keyed_9: {sources: [constructed_base.ini, keyed_9.yml]}
+constructed_keyed_10: {sources: [constructed_base.ini, keyed_10.yml]}
+constructed_keyed_11: {sources: [constructed_base.ini, keyed_11.yml]}
+generator: {sources: [generator.yml], hosts: unordered}
+generator_then_constructed: {sources: [generator.yml, constructed.yml], hosts: unordered}
+auto_unknown: {sources: [auto_unknown.yml]}
+auto_plugin_int: {sources: [auto_plugin_int.yml]}
+auto_no_plugin: {sources: [auto_no_plugin.yml]}
+yaml_cycle: {sources: [yaml_cycle.yml]}
+yaml_own_child: {sources: [yaml_own_child.yml]}
+yaml_int_host: {sources: [yaml_int_host.yml]}
+yaml_list_hosts: {sources: [yaml_list_hosts.yml]}
+yaml_skipped_child: {sources: [yaml_skipped_child.yml]}
+yaml_empty_map: {sources: [yaml_empty_map.yml]}
+yaml_plugin_key: {sources: [yaml_plugin_key.yml]}

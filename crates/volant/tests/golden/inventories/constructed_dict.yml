@@ -1,0 +1,10 @@
+plugin: constructed
+compose:
+  dd: "{'a':'x','b':''}"
+  ll: "['p','','q']"
+keyed_groups:
+  - {key: dd, prefix: d}
+  - {key: dd, prefix: e, default_value: DV}
+  - {key: dd, prefix: f, trailing_separator: false}
+  - {key: ll, prefix: l, default_value: LD}
+  - {key: ll, prefix: m}

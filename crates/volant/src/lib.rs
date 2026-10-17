@@ -3,6 +3,7 @@
 
 pub mod action_plugins;
 pub mod agent;
+pub mod askpass;
 pub mod bridge;
 pub mod cli;
 pub(crate) mod collection;

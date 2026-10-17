@@ -8412,6 +8412,8 @@ mod tests {
                 become_exe: None,
                 become_flags: None,
                 become_password: None,
+                ssh_common_args: Vec::new(),
+                ssh_extra_args: Vec::new(),
             };
             let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
                 panic!("a fact turned the host's connection local");
@@ -8537,6 +8539,8 @@ mod tests {
             become_exe: None,
             become_flags: None,
             become_password: None,
+            ssh_common_args: Vec::new(),
+            ssh_extra_args: Vec::new(),
         };
         let transport = Transport::for_host(&host, &defaults).expect("a local transport");
         let mut link = transport
@@ -9006,6 +9010,8 @@ mod tests {
                 become_exe: None,
                 become_flags: None,
                 become_password: None,
+                ssh_common_args: Vec::new(),
+                ssh_extra_args: Vec::new(),
             };
             let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
             let argv = |t: &Transport| match t {
@@ -9041,6 +9047,8 @@ mod tests {
             become_exe: None,
             become_flags: None,
             become_password: None,
+            ssh_common_args: Vec::new(),
+            ssh_extra_args: Vec::new(),
         };
         Transport::for_vars("h1", vars.as_object().expect("an object"), &defaults)
             .expect("an ssh transport")
@@ -9377,6 +9385,8 @@ mod tests {
             become_exe: None,
             become_flags: None,
             become_password: None,
+            ssh_common_args: Vec::new(),
+            ssh_extra_args: Vec::new(),
         };
         (AgentSource::discover(), defaults)
     }

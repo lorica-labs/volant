@@ -37,6 +37,10 @@ pub struct ConnectionDefaults {
     pub become_flags: Option<String>,
     /// The `--ask-become-pass` answer, if one was asked for.
     pub become_password: Option<String>,
+    /// `--ssh-common-args` and `--ssh-extra-args`, already split into words; a host's own
+    /// `ansible_ssh_common_args` or `ansible_ssh_extra_args` replaces the one it names.
+    pub ssh_common_args: Vec<String>,
+    pub ssh_extra_args: Vec<String>,
 }
 
 /// Written by hand so `become_password` cannot reach a log or a `-vvv` dump: a derived `Debug`
@@ -57,6 +61,8 @@ impl std::fmt::Debug for ConnectionDefaults {
             .field("become_exe", &self.become_exe)
             .field("become_flags", &self.become_flags)
             .field("become_password", &redacted(self.become_password.as_ref()))
+            .field("ssh_common_args", &self.ssh_common_args)
+            .field("ssh_extra_args", &self.ssh_extra_args)
             .finish()
     }
 }
@@ -292,8 +298,18 @@ impl Transport {
                 private_key: setting_text("ansible_ssh_private_key_file")
                     .map(PathBuf::from)
                     .or_else(|| defaults.private_key.clone()),
-                common_args: setting_args(host_name, vars, "ansible_ssh_common_args")?,
-                extra_args: setting_args(host_name, vars, "ansible_ssh_extra_args")?,
+                common_args: setting_args(
+                    host_name,
+                    vars,
+                    "ansible_ssh_common_args",
+                    &defaults.ssh_common_args,
+                )?,
+                extra_args: setting_args(
+                    host_name,
+                    vars,
+                    "ansible_ssh_extra_args",
+                    &defaults.ssh_extra_args,
+                )?,
                 host_key_checking: defaults.host_key_checking,
                 connect_timeout: defaults.connect_timeout,
                 // Blank reads as unset, which is what the configuration arms do with the same
@@ -951,13 +967,18 @@ fn unreachable_message(stderr: &str, offered: Option<&str>) -> String {
 }
 
 /// The words of one `ansible_ssh_*_args` variable. An unbalanced quote is refused by name
-/// rather than dropped: silently connecting without a `ProxyJump` or `ProxyCommand` the
+/// rather than dropped (`fallback`, the command line's words, stands when the host sets
+/// nothing): silently connecting without a `ProxyJump` or `ProxyCommand` the
 /// inventory asked for can reach a different machine than the operator meant.
 fn setting_args(
     host_name: &str,
     vars: &Map<String, Value>,
     key: &str,
+    fallback: &[String],
 ) -> anyhow::Result<Vec<String>> {
+    if host_setting(vars, key).is_none() {
+        return Ok(fallback.to_vec());
+    }
     let Some(text) = host_setting(vars, key).and_then(Value::as_str) else {
         return Ok(Vec::new());
     };
@@ -1284,10 +1305,21 @@ impl SshTarget {
         }
         argv.extend([
             "-o".to_string(),
-            "BatchMode=yes".into(),
+            // A password given with `-k` or a password file comes through `SSH_ASKPASS`, which
+            // `BatchMode` would switch off.
+            if crate::askpass::installed() {
+                "BatchMode=no"
+            } else {
+                "BatchMode=yes"
+            }
+            .into(),
             "-o".into(),
             format!("ConnectTimeout={}", self.connect_timeout.as_secs()),
         ]);
+        if crate::askpass::installed() {
+            // One wrong answer is the end of it, as in the reference, not three tries.
+            argv.extend(["-o".into(), "NumberOfPasswordPrompts=1".into()]);
+        }
         if let Some(path) = &self.control_path {
             argv.extend([
                 "-o".into(),
@@ -1551,6 +1583,7 @@ impl SshTarget {
         };
         let child = Command::new(SSH_PROGRAM)
             .args(&self.ssh_argv(&remote)[1..])
+            .envs(crate::askpass::environment())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(Stdio::inherit())
@@ -1660,6 +1693,7 @@ impl SshTarget {
         argv.splice(1..1, ["-tt".to_string(), "-e".into(), "none".into()]);
         Command::new(&argv[0])
             .args(&argv[1..])
+            .envs(crate::askpass::environment())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(stderr)
@@ -1921,6 +1955,7 @@ impl SshTarget {
         let mut command = Command::new(&argv[0]);
         command
             .args(&argv[1..])
+            .envs(crate::askpass::environment())
             .stdout(Stdio::piped())
             .stderr(Stdio::piped())
             .stdin(if stdin.is_some() {

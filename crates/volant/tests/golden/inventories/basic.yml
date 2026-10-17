@@ -1,0 +1,33 @@
+all:
+  vars:
+    av: from_all
+    shared: all
+  hosts:
+    loose:
+  children:
+    web:
+      vars:
+        x: 1
+        nested: {a: [1, 2], b: {c: d}}
+        shared: web
+      hosts:
+        web[01:03]:
+          ansible_host: 10.0.0.1
+        db[a:c]:
+        n[1:10:3]:
+        both: ~
+        "123":
+          shared: host
+    db:
+      children:
+        sub:
+          hosts:
+            d2:
+          vars:
+            ansible_group_priority: 5
+      hosts:
+        d1:
+        both:
+          extra: yes
+        w:2200:
+        "[::1]:22":

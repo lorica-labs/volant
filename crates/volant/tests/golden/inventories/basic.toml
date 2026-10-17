@@ -1,0 +1,16 @@
+[all.vars]
+av = "a"
+[web.hosts.w1]
+[web.hosts."w[2:3]"]
+ansible_port = 2200
+[web.vars]
+x = 1
+nested = { a = [1, 2], b = { c = "d" } }
+[db]
+children = ["sub"]
+[db.hosts.d1]
+[sub.hosts.d2]
+[sub.vars]
+ansible_group_priority = 3
+[solo]
+lonely = 5

@@ -216,7 +216,7 @@ pub(super) fn priority(value: &Value) -> Result<Option<i64>, String> {
 }
 
 /// A host line's first word: the names it stands for and the port they share.
-fn expand_hostpattern(pattern: &str) -> Result<(Vec<String>, Option<i64>), String> {
+pub(super) fn expand_hostpattern(pattern: &str) -> Result<(Vec<String>, Option<i64>), String> {
     let (host, port) =
         ranges::parse_address(pattern, true).unwrap_or_else(|_| (pattern.to_string(), None));
     let names = ranges::expand(&host)?;

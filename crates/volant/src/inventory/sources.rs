@@ -153,7 +153,16 @@ pub struct ParseCx<'a> {
     helper: OnceCell<Arc<Bridge>>,
 }
 
-impl ParseCx<'_> {
+impl<'a> ParseCx<'a> {
+    pub(super) fn new(config: &'a PluginConfig, start: &'a dyn Fn() -> Arc<Bridge>) -> Self {
+        Self {
+            config,
+            notes: RefCell::new(Vec::new()),
+            start,
+            helper: OnceCell::new(),
+        }
+    }
+
     /// The Python helper that runs collection plugins, started by the first one that needs it.
     pub fn helper(&self) -> &Arc<Bridge> {
         self.helper.get_or_init(self.start)
@@ -162,6 +171,18 @@ impl ParseCx<'_> {
     /// A line shown from verbosity `level` on.
     pub fn verbose(&self, level: u8, text: String) {
         self.notes.borrow_mut().push(Note::Verbose(level, text));
+    }
+
+    /// A `[WARNING]:` line the run has not shown yet.
+    pub fn warn_once(&self, text: String) {
+        let seen = self
+            .notes
+            .borrow()
+            .iter()
+            .any(|n| matches!(n, Note::Warning(t) if *t == text));
+        if !seen {
+            self.warn(text);
+        }
     }
 
     /// A `[WARNING]:` line.
@@ -223,12 +244,7 @@ pub fn load_sources_with(
     start: &dyn Fn() -> Arc<Bridge>,
 ) -> Loaded {
     let mut loaded = Loaded::default();
-    let cx = ParseCx {
-        config,
-        notes: RefCell::new(Vec::new()),
-        start,
-        helper: OnceCell::new(),
-    };
+    let cx = ParseCx::new(config, start);
     let mut plugins: Vec<&dyn InventoryPlugin> = Vec::new();
     for name in &config.enabled {
         let short = name.strip_prefix("ansible.builtin.").unwrap_or(name);
@@ -469,12 +485,7 @@ mod tests {
     use rstest::rstest;
 
     fn quiet_cx(config: &PluginConfig) -> ParseCx<'_> {
-        ParseCx {
-            config,
-            notes: RefCell::new(Vec::new()),
-            start: &|| unreachable!("no helper is started"),
-            helper: OnceCell::new(),
-        }
+        ParseCx::new(config, &|| unreachable!("no helper is started"))
     }
 
     /// Only a collection plugin starts the helper; the other YAML files are read without it.
@@ -589,10 +600,9 @@ h1
             .map(|p| format!("{p} {}", DECLINED.replace("{}", file)))
             .collect();
         if parsed_by.is_empty() {
-            assert_eq!(
-                loaded.error.map(|e| e.code),
-                Some(4),
-                "toml is refused by name"
+            assert!(
+                loaded.error.is_none() && !loaded.parsed,
+                "only toml takes the file, and it cannot read INI"
             );
         } else {
             want.push(format!(

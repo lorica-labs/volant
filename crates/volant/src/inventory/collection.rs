@@ -69,7 +69,7 @@ impl InventoryPlugin for Auto {
             .helper()
             .inventory(name, path)
             .map_err(|e| failure(e.to_string()))?;
-        read(&answer, name, source, into, cx)
+        read(&answer, source, into, cx)
     }
 }
 
@@ -110,19 +110,12 @@ fn untrusted(value: &Value) -> Value {
 /// failed, its groups and hosts. Every value is data from a plugin and is never templated.
 pub(super) fn read(
     answer: &Value,
-    name: &str,
     source: &Source,
     into: &mut Inventory,
     cx: &ParseCx,
 ) -> Result<(), PluginError> {
-    if answer.get("used").and_then(Value::as_bool) == Some(true) {
-        cx.verbose(
-            1,
-            format!(
-                "Using inventory plugin '{name}' to process inventory source '{}'",
-                source.text()
-            ),
-        );
+    for line in list(answer.get("verbose"))? {
+        cx.verbose(1, line.as_str().ok_or_else(bad)?.to_string());
     }
     for warning in list(answer.get("warnings"))? {
         cx.warn(warning.as_str().ok_or_else(bad)?.to_string());

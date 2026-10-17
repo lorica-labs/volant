@@ -666,37 +666,35 @@ def marked(value):
     return plain(value)
 
 
-def inventory(plugin_name, path):
-    """One collection inventory plugin reading `path`, as the reference's `auto` plugin runs it:
-    the groups, children, hosts and host variables it made as plain JSON, and the warnings it said.
-    A failure is answered as data, so the warnings said before it are kept."""
-    from ansible.errors import AnsibleParserError
-    from ansible.inventory.manager import InventoryManager
+def inventory(path):
+    """One collection inventory plugin reading `path`, as the reference's `auto` plugin runs it,
+    inside the same `_InventoryDataWrapper` the inventory manager gives it (so a plugin's trust
+    and origins are the reference's) and with its cache: the groups, children, hosts and host
+    variables it made as plain JSON, and the lines it said. A failure is answered as data, so
+    the warnings said before it are kept."""
+    from ansible._internal._datatag._tags import Origin
+    from ansible.inventory.manager import InventoryManager, _InventoryDataWrapper
     from ansible.parsing.dataloader import DataLoader
     from ansible.plugins.loader import inventory_loader
     from ansible.utils import display as display_module
     from ansible.vars.manager import VariableManager
 
     warnings = []
+    verbose = []
     display = display_module.Display()
-    said = display._warning
+    said, spoke = display._warning, display.v
     format_message = display_module._display_utils.format_message
     display._warning = lambda warning: warnings.append(
         format_message(warning, False).rstrip(chr(10)) + chr(10))
-    used = False
+    display.v = lambda message, *_, **__: verbose.append(str(message))
     try:
         loader = DataLoader()
         manager = InventoryManager(loader, sources=[path], parse=False)
-        plugin = inventory_loader.get(plugin_name)
-        if not plugin:
-            raise AnsibleParserError(
-                "inventory config '%s' specifies unknown plugin '%s'" % (path, plugin_name))
-        if not plugin.verify_file(path):
-            raise AnsibleParserError(
-                "inventory source '%s' could not be verified by inventory plugin '%s'"
-                % (path, plugin_name))
-        used = True
-        plugin.parse(manager._inventory, loader, path, cache=False)
+        manager._inventory.current_source = path
+        auto = inventory_loader.get("auto")
+        origin = Origin(description="<inventory plugin 'auto' with source %r>" % path)
+        wrapper = _InventoryDataWrapper(manager._inventory, target_plugin=auto, origin=origin)
+        auto.parse(wrapper, loader, path, cache=True)
         data = manager._inventory
         # What `ansible-inventory --list` does next: the variables of each host, which is where
         # the reference warns about a variable that has a reserved name.
@@ -705,7 +703,7 @@ def inventory(plugin_name, path):
             variables.get_vars(host=host, include_hostvars=False)
         magic = ("inventory_file", "inventory_dir")
         return {
-            "used": True,
+            "verbose": verbose,
             "warnings": warnings,
             "groups": [
                 {
@@ -719,9 +717,9 @@ def inventory(plugin_name, path):
             "hosts": [{"name": h.name, "vars": marked({k: v for k, v in h.vars.items() if k not in magic})} for h in data.hosts.values()],
         }
     except Exception as failure:
-        return {"used": used, "warnings": warnings, "error": str(failure)}
+        return {"verbose": verbose, "warnings": warnings, "error": str(failure)}
     finally:
-        display._warning = said
+        display._warning, display.v = said, spoke
 
 
 def call(request):
@@ -733,7 +731,7 @@ def call(request):
     loaders()
     kind, name = request["kind"], request["name"]
     if kind == "inventory":
-        return {"value": inventory(name, request["args"][0])}
+        return {"value": inventory(request["args"][0])}
     if kind == "diff":
         return {"value": diff_text(request["args"][0])}
     if kind == "action_groups":

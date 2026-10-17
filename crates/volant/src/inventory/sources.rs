@@ -531,7 +531,7 @@ mod tests {
         let source = Source::new("/tmp/inv.yml");
         let mut inventory = Inventory::default();
         let answer = serde_json::json!({
-            "used": true,
+            "verbose": ["Using inventory plugin 'x.y.z' to process inventory source '/tmp/inv.yml'"],
             "warnings": ["Found variable using reserved name 'name'."],
             "hosts": [{"name": "h1", "vars": {
                 "a": {"__ansible_unsafe": "{{ boom }}"}, "n": 3, "ok": "plain"}}],
@@ -540,7 +540,7 @@ mod tests {
                 {"name": "g", "hosts": ["h1"], "children": [], "vars": {}},
             ],
         });
-        super::super::collection::read(&answer, "x.y.z", &source, &mut inventory, &cx).unwrap();
+        super::super::collection::read(&answer, &source, &mut inventory, &cx).unwrap();
         assert_eq!(
             cx.notes.into_inner(),
             [
@@ -557,9 +557,9 @@ mod tests {
             serde_json::json!({"a": {"__ansible_unsafe": "{{ boom }}"}, "n": 3, "ok": "plain"})
         );
         let cx = quiet_cx(&config);
-        let failed = serde_json::json!({"used": true, "warnings": ["w"], "error": "boom"});
-        let err = super::super::collection::read(&failed, "x.y.z", &source, &mut inventory, &cx)
-            .unwrap_err();
+        let failed = serde_json::json!({"verbose": [], "warnings": ["w"], "error": "boom"});
+        let err =
+            super::super::collection::read(&failed, &source, &mut inventory, &cx).unwrap_err();
         assert_eq!(err.message, "boom");
         assert!(cx.notes.into_inner().contains(&Note::Warning("w".into())));
     }

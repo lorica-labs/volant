@@ -21,6 +21,7 @@ use serde_json::Value;
 
 pub use sources::{
     InventoryPlugin, Loaded, Note, ParseCx, PluginConfig, PluginError, Source, load_sources,
+    load_sources_with,
 };
 
 /// Every inventory plugin this release knows, the ones `enable_plugins` picks from. A plugin it

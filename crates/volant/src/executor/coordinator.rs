@@ -1244,11 +1244,12 @@ fn apply_meta(
         }
         MetaEffect::RefreshInventory => {
             let reload = state.vars.lock().expect("vars lock").reload();
-            if let Some((sources, config)) = reload {
+            if let Some((sources, config, bridge)) = reload {
                 // Every source is read again, scripts and plugins run anew. What a source says
                 // while it is read is warned about; an error that ends the run at its start ends
                 // it here with the same message and code. The fact cache is not read again.
-                let loaded = crate::inventory::load_sources(&sources, &config);
+                let loaded =
+                    crate::inventory::load_sources_with(&sources, &config, &|| Arc::clone(&bridge));
                 for note in loaded.notes {
                     if let crate::inventory::Note::Warning(text) = note {
                         warned.push(text);

@@ -57,3 +57,5 @@ script_host_empty: {sources: [script_host_empty.sh]}
 script_host_bad: {sources: [script_host_bad.sh]}
 nmap: {sources: [nmap.yml], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$PATH"}}
 nmap_then_ini: {sources: [nmap.yml, one.ini], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$PATH"}}
+collection_plugin_fails: {sources: [icinga2.yml], needs: [ansible-core]}
+collection_plugin_fails_then_ini: {sources: [icinga2.yml, one.ini], needs: [ansible-core]}

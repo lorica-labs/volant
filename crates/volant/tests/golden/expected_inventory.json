@@ -359,6 +359,80 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n"
     },
+    "collection_plugin_fails": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "needs": [
+        "ansible-core"
+      ],
+      "rc": 0,
+      "sources": [
+        "icinga2.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Required config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nRequired config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/icinga2.yml\n\n[WARNING]: Unable to parse <golden-tmp>/icinga2.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "collection_plugin_fails_then_ini": {
+      "env": {},
+      "hosts": [
+        "h1",
+        "h2",
+        "h3"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "only_one": 1,
+              "v": "one_h1",
+              "wv": "one"
+            },
+            "h2": {
+              "wv": "one"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "shared"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "h3",
+            "h1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "h1",
+            "h2"
+          ]
+        }
+      },
+      "needs": [
+        "ansible-core"
+      ],
+      "rc": 0,
+      "sources": [
+        "icinga2.yml",
+        "one.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Required config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nRequired config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/icinga2.yml\n\n[WARNING]: Unable to parse <golden-tmp>/icinga2.yml as an inventory source\n"
+    },
     "colon": {
       "env": {},
       "hosts": [],

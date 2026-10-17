@@ -9,6 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
+use crate::bridge::Bridge;
 use crate::inventory::{Inventory, PluginConfig, Source, is_localhost};
 use crate::stats::CustomStats;
 use crate::template::{Templar, Vars};
@@ -232,7 +233,7 @@ pub struct VarStore {
     /// The hosts `--limit` narrows the run to, which a refresh applies to the play's hosts too.
     limit: Option<HashSet<String>>,
     /// The sources and plugin settings a refresh reads again.
-    reload: Option<(Vec<Source>, PluginConfig)>,
+    reload: Option<(Vec<Source>, PluginConfig, Arc<Bridge>)>,
     /// Whether `dynamic` moved since the command line last took it.
     inventory_changed: bool,
     /// What `set_stats` collected, printed after the recap when the run asks for it.
@@ -620,9 +621,10 @@ impl VarStore {
         &mut self,
         sources: Vec<Source>,
         config: PluginConfig,
+        bridge: Arc<Bridge>,
         limit: Option<HashSet<String>>,
     ) {
-        self.reload = Some((sources, config));
+        self.reload = Some((sources, config, bridge));
         self.limit = limit;
     }
 
@@ -644,7 +646,7 @@ impl VarStore {
     }
 
     /// The sources and plugin settings a refresh reads again, when there are some.
-    pub fn reload(&self) -> Option<(Vec<Source>, PluginConfig)> {
+    pub fn reload(&self) -> Option<(Vec<Source>, PluginConfig, Arc<Bridge>)> {
         self.reload.clone()
     }
 

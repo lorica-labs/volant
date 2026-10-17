@@ -16,7 +16,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | keyword (task) | 60 | 5 | 1 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
-| ansible-playbook option | 29 | 1 | 8 | 0 |
+| ansible-playbook option | 34 | 3 | 1 | 0 |
 | YAML tag | 1 | 0 | 1 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
@@ -222,15 +222,15 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `-K, --ask-become-pass` | <span class="kw kw-runs">runs</span> |  |
-| `-k, --ask-pass` | <span class="kw kw-notyet">not yet</span> |  |
+| `-k, --ask-pass` | <span class="kw kw-runs">runs</span> |  |
 | `-J, --ask-vault-pass, --ask-vault-password` | <span class="kw kw-runs">runs</span> |  |
 | `-b, --become` | <span class="kw kw-runs">runs</span> |  |
 | `--become-method` | <span class="kw kw-runs">runs</span> |  |
-| `--become-pass-file, --become-password-file` | <span class="kw kw-notyet">not yet</span> |  |
+| `--become-pass-file, --become-password-file` | <span class="kw kw-runs">runs</span> |  |
 | `--become-user` | <span class="kw kw-runs">runs</span> |  |
 | `-C, --check` | <span class="kw kw-runs">runs</span> |  |
 | `-c, --connection` | <span class="kw kw-runs">runs</span> |  |
-| `--conn-pass-file, --connection-password-file` | <span class="kw kw-notyet">not yet</span> |  |
+| `--conn-pass-file, --connection-password-file` | <span class="kw kw-runs">runs</span> |  |
 | `-D, --diff` | <span class="kw kw-runs">runs</span> |  |
 | `-e, --extra-vars` | <span class="kw kw-runs">runs</span> |  |
 | `--flush-cache` | <span class="kw kw-runs">runs</span> |  |
@@ -244,11 +244,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `--list-tasks` | <span class="kw kw-runs">runs</span> |  |
 | `-M, --module-path` | <span class="kw kw-notyet">not yet</span> |  |
 | `--key-file, --private-key` | <span class="kw kw-runs">runs</span> |  |
-| `--scp-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
-| `--sftp-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
+| `--scp-extra-args` | <span class="kw kw-partial">partial</span> | accepted with no effect: files move over the agent link |
+| `--sftp-extra-args` | <span class="kw kw-partial">partial</span> | accepted with no effect: files move over the agent link |
 | `--skip-tags` | <span class="kw kw-runs">runs</span> |  |
-| `--ssh-common-args` | <span class="kw kw-notyet">not yet</span> |  |
-| `--ssh-extra-args` | <span class="kw kw-notyet">not yet</span> |  |
+| `--ssh-common-args` | <span class="kw kw-runs">runs</span> |  |
+| `--ssh-extra-args` | <span class="kw kw-runs">runs</span> |  |
 | `--start-at-task` | <span class="kw kw-runs">runs</span> |  |
 | `--step` | <span class="kw kw-runs">runs</span> |  |
 | `--syntax-check` | <span class="kw kw-runs">runs</span> |  |

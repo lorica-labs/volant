@@ -76,6 +76,9 @@ pub(crate) const CONTEXT_KEY: &str = "volant::context";
 
 /// The global every `~` is compiled to call, see [`route_calls`]. Unwritable in Jinja for the
 /// same reason as `TAINT_KEY`, and `Context` answers nothing for it, so no variable shadows it.
+/// What `route_calls` puts in place of the name in `NAME is vault_encrypted`, before the name.
+pub(crate) const VAULT_NAME: &str = "volant::vault_name:";
+
 const CONCAT_KEY: &str = "volant::concat";
 
 /// The global a call to `query` or `q` is compiled to call, see [`route_calls`]. Not a global of
@@ -538,6 +541,11 @@ impl Templar {
                     // 'x' failed: …`.
                     if bridged::is_plugin_failure(&err.0) {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
+                    } else if err.0.starts_with(filters::UNDECRYPTABLE) {
+                        TemplateError(format!(
+                            "{RESOLVING}'{key}': Error rendering template: {}",
+                            err.0
+                        ))
                     } else {
                         err
                     }
@@ -653,6 +661,9 @@ impl Templar {
         // What `!unsafe` loaded as is text from here on: a sibling that reads it must see the
         // text, not the wrapper, and the name is data so no pass renders it.
         for (k, v) in &mut current {
+            if matches!(v, Value::String(s) if crate::yaml::vault_text(s).is_some()) {
+                crate::vault::note_name(k);
+            }
             if !untrusted.contains(k) && unwrap_unsafe(v) {
                 untrusted.insert(k.clone());
             }
@@ -779,10 +790,16 @@ fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> Environment<'
     env
 }
 
-/// Replaces every `!unsafe` wrapper inside `value` by its text; whether there was one.
+/// Replaces every `!unsafe` wrapper inside `value` by its text, and every `!vault` wrapper that
+/// decrypts by what it holds; whether there was one. A vault wrapper that does not decrypt stays
+/// as it is, and raises when something renders it.
 fn unwrap_unsafe(value: &mut Value) -> bool {
     match value {
-        Value::String(s) => crate::yaml::unsafe_text(s).map(|t| *s = t).is_some(),
+        Value::String(s) => {
+            let text = crate::yaml::unsafe_text(s)
+                .or_else(|| crate::yaml::vault_text(s).and_then(|c| crate::vault::reveal(&c).ok()));
+            text.map(|t| *s = t).is_some()
+        }
         Value::Array(items) => items.iter_mut().fold(false, |a, v| unwrap_unsafe(v) | a),
         Value::Object(map) => map.values_mut().fold(false, |a, v| unwrap_unsafe(v) | a),
         _ => false,
@@ -1007,7 +1024,21 @@ fn concat(
 /// order, and a call keeps its own, so every jump target stays where it was.
 fn route_calls(instructions: &mut Instructions<'_>) {
     let mut idx = 0;
-    while let Some(op) = instructions.get_mut(idx) {
+    loop {
+        let named = match (instructions.get(idx), instructions.get(idx + 1)) {
+            (Some(Instruction::Lookup(name)), Some(Instruction::PerformTest(test, ..)))
+                if bridged::short(test) == "vault_encrypted" =>
+            {
+                Some(format!("{VAULT_NAME}{name}"))
+            }
+            _ => None,
+        };
+        let Some(op) = instructions.get_mut(idx) else {
+            break;
+        };
+        if let Some(named) = named {
+            *op = Instruction::LoadConst(minijinja::Value::from(named));
+        }
         match op {
             Instruction::StringConcat => *op = Instruction::CallFunction(CONCAT_KEY, Some(2)),
             Instruction::CallFunction(name, args) if matches!(*name, "query" | "q") => {
@@ -1891,16 +1922,8 @@ while True:
     #[case::qualified_builtin_stays_native("{{ [1] | ansible.builtin.length }}", Ok(json!(1)), 0)]
     #[case::native_test("{{ 'a' is ansible.builtin.string }}", Ok(json!(true)), 0)]
     #[case::native_lookup("{{ query('vars', 'x') }}", Ok(json!([1])), 0)]
-    #[case::vault_is_never_sent(
-        "{{ 'x' | vault('s') }}",
-        Err("unknown filter: filter vault is unknown (in <expression>:1)"),
-        0
-    )]
-    #[case::unvault_is_never_sent(
-        "{{ lookup('unvault', 'f') }}",
-        Err("invalid operation: lookup plugin (unvault) is not available yet (in <expression>:1)"),
-        0
-    )]
+    #[case::unvault_stays_native("{{ 'x' | unvault('s') }}", Ok(json!("x")), 0)]
+    #[case::vault_test_stays_native("{{ 'x' is vault_encrypted }}", Ok(json!(false)), 0)]
     #[case::undefined_input_still_resolves_the_name(
         "{{ nope | community.general.dict_kv('k') | default({}) }}",
         Ok(json!({})),
@@ -1969,5 +1992,25 @@ while True:
             "{first}"
         );
         assert_eq!(t.render(text, &Map::new()), Err(first));
+    }
+
+    /// A `!vault` value is read when a task uses it and is text from then on; one that cannot be
+    /// read raises only where something renders it.
+    #[test]
+    fn a_vaulted_value_is_text_when_read_and_raises_only_when_used() {
+        let cipher = crate::vault::encrypt(b"{{ x }} and more", b"pw", None).unwrap();
+        let map = vars(json!({"x": "hello", "sv": crate::yaml::vault_data(&cipher)}));
+        let t = templar();
+        crate::vault::install(crate::vault::Secrets::new(vec![b"pw".to_vec()]));
+        let (resolved, untrusted) = t.resolve_vars_tainted(&map);
+        assert_eq!(resolved["sv"], json!("{{ x }} and more"));
+        assert!(untrusted.contains("sv"));
+        crate::vault::install(crate::vault::Secrets::new(vec![b"other".to_vec()]));
+        let (resolved, _) = t.resolve_vars_tainted(&map);
+        let err = t.render("{{ sv }}", &resolved).unwrap_err();
+        assert_eq!(
+            err.0,
+            "Attempt to use undecryptable variable: Decryption failed (no vault secrets were found that could decrypt)."
+        );
     }
 }

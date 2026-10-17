@@ -1293,13 +1293,22 @@ fn load_vars_dir(dir: &Path) -> anyhow::Result<BTreeMap<String, Map<String, Valu
                 {
                     continue;
                 }
-                extend(target, &load_vars_file(&file)?);
+                extend(target, &load_group_file(&file)?);
             }
         } else {
-            extend(target, &load_vars_file(&path)?);
+            extend(target, &load_group_file(&path)?);
         }
     }
     Ok(out)
+}
+
+/// A `group_vars` or `host_vars` file. The reference stops a vaulted one it cannot read with
+/// exit 4 and the bare reason.
+fn load_group_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
+    load_vars_file(path).map_err(|err| match err.downcast_ref::<VaultFile>() {
+        Some(vault) => crate::stats::Refusal::at(4, &vault.reason),
+        None => err,
+    })
 }
 
 fn ignored(file_name: &str) -> bool {
@@ -1315,10 +1324,39 @@ fn strip_vars_extension(file_name: &str) -> &str {
     file_name
 }
 
-/// A YAML or JSON file whose document is a mapping. An empty file is an empty mapping.
+/// A vaulted file that could not be read, with the reference's reason.
+#[derive(Debug)]
+pub struct VaultFile {
+    pub path: PathBuf,
+    pub reason: String,
+}
+
+impl std::fmt::Display for VaultFile {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(
+            f,
+            "Invalid vars_files file '{}': {}",
+            self.path.display(),
+            self.reason
+        )
+    }
+}
+
+impl std::error::Error for VaultFile {}
+
+/// A YAML or JSON file whose document is a mapping. An empty file is an empty mapping. A vaulted
+/// file is decrypted with the run's secrets first.
 pub fn load_vars_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let mut bytes = std::fs::read(path).with_context(|| format!("reading {}", path.display()))?;
+    if crate::vault::is_encrypted(&bytes) {
+        bytes = crate::vault::decrypt(&bytes, &crate::vault::run_secrets()).map_err(|e| {
+            anyhow::Error::new(VaultFile {
+                path: path.to_path_buf(),
+                reason: crate::vault::sentence(&e.0),
+            })
+        })?;
+    }
+    let text = String::from_utf8(bytes).with_context(|| format!("reading {}", path.display()))?;
     let docs = yaml::load(&text, &path.display().to_string())?;
     match docs.first() {
         None => Ok(Map::new()),
@@ -2399,5 +2437,39 @@ h1
         assert_eq!(seen["ansible_host"], "10.0.0.9");
         assert!(store.untrusted_of("n1", &scope(&["n1"])).contains("note"));
         assert!(!store.untrusted_of("n1", &scope(&["n1"])).contains("plain"));
+    }
+
+    /// A vaulted vars file is read with the run's secrets; one it cannot read is named.
+    #[test]
+    fn a_vaulted_vars_file_is_decrypted_or_refused_by_name() {
+        let tmp = tempfile::tempdir().unwrap();
+        let file = tmp.path().join("v.yml");
+        let sealed = crate::vault::encrypt(
+            b"a: '{{ b }}'
+n: 5
+",
+            b"pw",
+            Some("dev"),
+        )
+        .unwrap();
+        std::fs::write(&file, sealed).unwrap();
+        crate::vault::install(crate::vault::Secrets::new(vec![b"pw".to_vec()]));
+        assert_eq!(
+            load_vars_file(&file).unwrap(),
+            json!({"a": "{{ b }}", "n": 5})
+                .as_object()
+                .cloned()
+                .unwrap()
+        );
+        crate::vault::install(crate::vault::Secrets::new(vec![b"nope".to_vec()]));
+        let err = load_vars_file(&file).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            format!(
+                "Invalid vars_files file '{}': Decryption failed (no vault secrets were found that could decrypt).",
+                file.display()
+            )
+        );
+        assert!(err.is::<VaultFile>());
     }
 }

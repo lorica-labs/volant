@@ -1,0 +1,6 @@
+# Vaulted values, vars files, copy and template sources, the filters, the tests and the lookup.
+runs:
+  - args: [-i, inv, --vault-id, dev@pw1, --vault-id, pw1, pb.yml]
+  - args: [-i, inv, --vault-password-file, pw1, trust.yml]
+  - args: [-i, inv, --vault-password-file, pw1, incl.yml]
+needs: ["ansible-core"]

@@ -17,6 +17,7 @@ enum Command {
 }
 
 fn main() {
+    volant::askpass::answer_if_asked();
     let code = match Cli::parse().command {
         Command::Playbook(args) => volant::cli::run(args),
     };

@@ -1239,28 +1239,26 @@ fn apply_meta(
             coordinator.last_failure = None;
         }
         MetaEffect::RefreshInventory => {
-            let path = state
-                .vars
-                .lock()
-                .expect("vars lock")
-                .inventory_file()
-                .map(std::path::Path::to_path_buf);
-            // No inventory file, nothing to read again: the implicit `localhost` is all there is.
-            if let Some(path) = path {
-                // Measured on ansible-core 2.19.12: an inventory that cannot be read any more is
-                // warned about and left empty, and the run carries on without any host in it.
-                let fresh = crate::inventory::Inventory::load(&path).unwrap_or_else(|_| {
-                    let shown = std::path::absolute(&path).unwrap_or_else(|_| path.clone());
-                    warned.push(format!(
-                        "Unable to parse {} as an inventory source",
-                        shown.display()
-                    ));
-                    warned.push(
-                        "No inventory was parsed, only implicit localhost is available".to_string(),
-                    );
-                    crate::inventory::Inventory::empty()
-                });
-                state
+            let reload = state.vars.lock().expect("vars lock").reload();
+            if let Some((sources, config)) = reload {
+                // Every source is read again, scripts and plugins run anew. What a source says
+                // while it is read is warned about; an inventory that cannot be read any more is
+                // left empty, and the run carries on without any host in it. The fact cache is
+                // not read again.
+                let loaded = crate::inventory::load_sources(&sources, &config);
+                for note in loaded.notes {
+                    if let crate::inventory::Note::Warning(text) = note {
+                        warned.push(text);
+                    }
+                }
+                let fresh = match loaded.error {
+                    Some(fatal) => {
+                        warned.push(fatal.message);
+                        crate::inventory::Inventory::empty()
+                    }
+                    None => loaded.inventory,
+                };
+                let fresh = state
                     .vars
                     .lock()
                     .expect("vars lock")

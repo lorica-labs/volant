@@ -768,6 +768,7 @@ async fn run_all(
     let extra_for_check = extra.clone();
     let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra)?;
     store.set_forks(forks);
+    store.set_reload(sources.clone(), config.inventory_plugins.clone());
     if let Some(cache) = &cache {
         let names: Vec<String> = inventory
             .resolve("all")

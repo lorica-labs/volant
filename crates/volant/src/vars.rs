@@ -9,7 +9,7 @@ use std::sync::Arc;
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
-use crate::inventory::{Inventory, Source, is_localhost};
+use crate::inventory::{Inventory, PluginConfig, Source, is_localhost};
 use crate::stats::CustomStats;
 use crate::template::{Templar, Vars};
 use crate::yaml;
@@ -223,10 +223,23 @@ pub struct VarStore {
     /// The inventory as `add_host`, `group_by` and a refresh left it: the one the plays behind
     /// the current one resolve their hosts against.
     dynamic: Inventory,
+    /// What `add_host` and `group_by` did, in order, which a refresh applies again to the
+    /// sources it reads anew.
+    added: Vec<Added>,
+    /// The sources and plugin settings a refresh reads again.
+    reload: Option<(Vec<Source>, PluginConfig)>,
     /// Whether `dynamic` moved since the command line last took it.
     inventory_changed: bool,
     /// What `set_stats` collected, printed after the recap when the run asks for it.
     custom_stats: CustomStats,
+}
+
+/// One change a play made to the inventory.
+#[derive(Debug)]
+enum Added {
+    Host(String, BTreeMap<String, Value>),
+    Member(String, String),
+    Child(String, String),
 }
 
 /// Whether any string in `value`, at any depth, is a template.
@@ -575,6 +588,8 @@ impl VarStore {
             shared: None,
             templated_facts: false,
             dynamic: inventory.clone(),
+            added: Vec::new(),
+            reload: None,
             inventory_changed: false,
             custom_stats: CustomStats::default(),
         })
@@ -593,26 +608,40 @@ impl VarStore {
             .chain([&self.extra])
     }
 
-    /// The inventory file this run reads, which `meta: refresh_inventory` reads again.
-    pub fn inventory_file(&self) -> Option<&Path> {
-        self.inventory_file.as_deref()
+    /// Keeps the sources `meta: refresh_inventory` reads again.
+    pub fn set_reload(&mut self, sources: Vec<Source>, config: PluginConfig) {
+        self.reload = Some((sources, config));
+    }
+
+    /// The sources and plugin settings a refresh reads again, when there are some.
+    pub fn reload(&self) -> Option<(Vec<Source>, PluginConfig)> {
+        self.reload.clone()
     }
 
     /// Replaces what the store knows of the inventory with `inventory`'s groups, hosts and
-    /// variables, as `meta: refresh_inventory` does mid-play. The facts hosts gathered and the
-    /// facts the playbook set stay where they are: the reference's refresh re-reads its sources
-    /// and touches neither.
-    pub fn refresh_inventory(&mut self, inventory: &Inventory) {
+    /// variables, as `meta: refresh_inventory` does mid-play, and puts back the hosts and groups
+    /// `add_host` and `group_by` made. The facts hosts gathered and the facts the playbook set
+    /// stay where they are: the reference's refresh re-reads its sources and touches neither.
+    /// Returns the inventory the store now holds.
+    pub fn refresh_inventory(&mut self, inventory: &Inventory) -> Inventory {
+        self.dynamic = inventory.clone();
+        for change in &self.added {
+            match change {
+                Added::Host(name, vars) => self.dynamic.add_host(name, vars.clone()),
+                Added::Member(host, group) => self.dynamic.add_member(host, group),
+                Added::Child(parent, child) => self.dynamic.add_child(parent, child),
+            }
+        }
         (
             self.groups,
             self.inventory_vars,
             self.host_line_vars,
             self.group_names,
-        ) = inventory_maps(inventory);
-        self.dynamic = inventory.clone();
+        ) = inventory_maps(&self.dynamic);
         self.inventory_changed = false;
         self.forget_hostvars();
         self.shared = None;
+        self.dynamic.clone()
     }
 
     /// `add_host`: the host joins the inventory with `vars` on its line and the groups named,
@@ -623,14 +652,16 @@ impl VarStore {
         // playbook did not write (a fact, a registered result): it is data, kept as an untrusted
         // fact of the host and never rendered again. The rest sits on the host's inventory line.
         let (data, line): (Vec<_>, Vec<_>) = vars.iter().partition(|(_, v)| holds_template(v));
-        self.dynamic.add_host(
-            name,
-            line.into_iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        );
+        let line: BTreeMap<String, Value> = line
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        self.dynamic.add_host(name, line.clone());
+        self.added.push(Added::Host(name.to_string(), line));
         for group in groups.iter().filter(|g| *g != "all") {
             self.dynamic.add_member(name, group);
+            self.added
+                .push(Added::Member(name.to_string(), group.clone()));
         }
         self.inventory_moved();
         for (key, value) in data {
@@ -643,8 +674,12 @@ impl VarStore {
         if group != "all" {
             for parent in parents.iter().filter(|p| *p != "all") {
                 self.dynamic.add_child(parent, group);
+                self.added
+                    .push(Added::Child(parent.clone(), group.to_string()));
             }
             self.dynamic.add_member(host, group);
+            self.added
+                .push(Added::Member(host.to_string(), group.to_string()));
         }
         self.inventory_moved();
     }
@@ -2488,6 +2523,31 @@ h2
         );
         assert_eq!(store.shared_values(&at)["groups"]["g"], json!(["h1", "h2"]));
         assert!(store.hostvars_shared("h1").contains_key("h2"));
+    }
+
+    /// A refresh reads the sources anew but keeps the hosts and groups `add_host` made.
+    #[test]
+    fn a_refresh_keeps_the_added_hosts() {
+        let tmp = scratch();
+        let inv = Inventory::parse_ini(
+            "[g]
+h1
+",
+        )
+        .unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        store.add_host("dyn", &["g_dyn".to_string()], &Map::new());
+        let fresh = Inventory::parse_ini(
+            "[g]
+h2
+",
+        )
+        .unwrap();
+        let kept = store.refresh_inventory(&fresh);
+        let groups = kept.groups();
+        assert_eq!(groups["g"], ["h2"]);
+        assert_eq!(groups["g_dyn"], ["dyn"]);
+        assert!(store.take_inventory_changes().is_none());
     }
 
     /// A host and a group added mid-run show in `groups` and `hostvars` at once, an existing

@@ -364,6 +364,110 @@ fn ctrl_c_at_a_pause_prompt_ends_the_run() {
     run.kill();
 }
 
+/// `--start-at-task` leaves out the tasks in front of the first match (`*` and `?` match any text);
+/// a name nothing matches prints an empty recap, then the error, and the exit code stays 0.
+#[rstest]
+#[case::exact("controller/step.yml", "second task", &["second task", "third task", "tail task"])]
+#[case::glob("controller/step.yml", "tai*", &["tail task"])]
+#[case::first("controller/step.yml", "first task", &["first task", "second task", "third task", "tail task"])]
+#[case::none("controller/step.yml", "nomatch", &[])]
+#[case::second_play("controller/step-two-plays.yml", "beta*", &["Gathering Facts", "beta one", "beta two"])]
+fn start_at_task_begins_at_the_first_match(
+    #[case] book: &str,
+    #[case] name: &str,
+    #[case] ran: &[&str],
+) {
+    // A play that gathers facts needs the controller's ansible-core; without it the row has
+    // nothing to say.
+    let python = python::reference_python().map(|p| p.display().to_string());
+    if ran.contains(&"Gathering Facts") && python.is_none() {
+        return;
+    }
+    let envs: Vec<(&str, &str)> = python
+        .iter()
+        .map(|p| ("VOLANT_PYTHON", p.as_str()))
+        .collect();
+    let out = volant_within_env(
+        &["playbook", "--start-at-task", name, &fixture(book)],
+        PROBE_DEADLINE,
+        &envs,
+    );
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let banners: Vec<&str> = text
+        .lines()
+        .filter_map(|l| l.strip_prefix("TASK ["))
+        .map(|l| l.split(']').next().unwrap())
+        .collect();
+    assert_eq!(banners, ran, "{text}");
+    assert!(text.contains("PLAY [localhost]"), "{text}");
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(
+        stderr.contains(&format!(
+            "[ERROR]: No matching task \"{name}\" found. Note: --start-at-task can only follow static includes."
+        )),
+        ran.is_empty(),
+        "{stderr}"
+    );
+}
+
+/// `--step` without a terminal refuses at once, with the exit code of the reference's crash.
+#[test]
+fn step_without_a_terminal_stops_with_250() {
+    let out = volant_within(
+        &["playbook", "--step", &fixture("controller/step.yml")],
+        PROBE_DEADLINE,
+    );
+    assert_eq!(out.status.code(), Some(250));
+    assert!(String::from_utf8_lossy(&out.stderr).contains("--step asks on the terminal"));
+    assert!(out.stdout.is_empty());
+}
+
+/// `--step` asks per task: `n` skips it silently, `y` runs it, `c` runs it and stops the questions.
+#[cfg(target_os = "linux")]
+#[test]
+fn step_asks_before_each_task_until_continue() {
+    let mut run = Pty::start("--step", "controller/step.yml");
+    let prompt = |task: &str| format!("Perform task: TASK: {task} (N)o/(y)es/(c)ontinue: ");
+    run.wait_for(&prompt("first task"));
+    run.send(
+        b"n
+",
+    );
+    run.wait_for(&prompt("second task"));
+    run.send(
+        b"y
+",
+    );
+    run.wait_for(&prompt("third task"));
+    run.send(
+        b"c
+",
+    );
+    let text = run.finish();
+    assert!(text.contains("EXIT=0"), "{text}");
+    assert!(!text.contains(&prompt("tail task")), "{text}");
+    assert!(!text.contains("TASK [first task]"), "{text}");
+    for shown in ["second task", "third task", "tail task"] {
+        assert!(text.contains(&format!("TASK [{shown}]")), "{text}");
+    }
+    assert!(text.contains("ok=3 "), "{text}");
+}
+
+/// `volant playbook --version` names Volant and the ansible-core release it matches.
+#[test]
+fn version_names_the_matching_ansible_core() {
+    let out = volant_within(&["playbook", "--version"], PROBE_DEADLINE);
+    let text = String::from_utf8_lossy(&out.stdout).to_string();
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let release = include_str!("golden/ANSIBLE_VERSION").trim();
+    assert!(
+        text.starts_with("volant ")
+            && text.contains(&format!("(ansible-core {release} compatible)")),
+        "{text}"
+    );
+}
+
 /// `retries` is rendered per item, on the agent path, the controller-side one and an action
 /// plugin's.
 #[test]

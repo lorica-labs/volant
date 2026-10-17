@@ -26,12 +26,18 @@ use crate::vars::VarStore;
 use crate::{agent, collection, facts_read, playbook, preflight, python};
 
 #[derive(Parser, Debug)]
+#[command(disable_version_flag = true)]
 pub struct PlaybookArgs {
     /// Playbook files, run in order.
-    #[arg(required = true, value_name = "PLAYBOOK")]
+    #[arg(required_unless_present = "version", value_name = "PLAYBOOK")]
     pub playbooks: Vec<PathBuf>,
     /// Inventory file. Without it only the implicit localhost exists.
-    #[arg(short = 'i', long = "inventory", value_name = "PATH")]
+    #[arg(
+        short = 'i',
+        long = "inventory",
+        alias = "inventory-file",
+        value_name = "PATH"
+    )]
     pub inventory: Option<PathBuf>,
     /// Extra variables: `key=value` pairs, inline JSON or YAML, or `@file`. Repeatable.
     #[arg(short = 'e', long = "extra-vars", value_name = "VARS")]
@@ -70,7 +76,11 @@ pub struct PlaybookArgs {
     #[arg(short = 'c', long = "connection", value_name = "CONNECTION")]
     pub connection: Option<String>,
     /// Private key file for ssh authentication.
-    #[arg(long = "private-key", value_name = "PRIVATE_KEY_FILE")]
+    #[arg(
+        long = "private-key",
+        alias = "key-file",
+        value_name = "PRIVATE_KEY_FILE"
+    )]
     pub private_key: Option<PathBuf>,
     /// Seconds to wait for a connection.
     #[arg(short = 'T', long = "timeout", value_name = "TIMEOUT")]
@@ -91,6 +101,25 @@ pub struct PlaybookArgs {
     #[arg(short = 'K', long = "ask-become-pass")]
     pub ask_become_pass: bool,
 
+    /// Ask for the vault password on the terminal.
+    #[arg(
+        short = 'J',
+        long = "ask-vault-pass",
+        visible_alias = "ask-vault-password"
+    )]
+    pub ask_vault_pass: bool,
+    /// File, or executable printing the password, for the vault. Repeatable.
+    #[arg(
+        long = "vault-password-file",
+        alias = "vault-pass-file",
+        value_name = "VAULT_PASSWORD_FILE"
+    )]
+    pub vault_password_file: Vec<PathBuf>,
+    /// Vault identity, `label@source` where the source is a file, an executable or `prompt`.
+    /// Repeatable.
+    #[arg(long = "vault-id", value_name = "VAULT_IDS")]
+    pub vault_id: Vec<String>,
+
     /// Run handlers even if a task fails.
     #[arg(long = "force-handlers")]
     pub force_handlers: bool,
@@ -110,10 +139,33 @@ pub struct PlaybookArgs {
     /// collector, `auto` picks the native one only when the plays provably read nothing else.
     #[arg(long = "facts", value_enum, default_value_t = Facts::Auto)]
     pub facts: Facts,
+
+    /// Start the run at the first task with this name; `*` and `?` match any text.
+    #[arg(long = "start-at-task", value_name = "START_AT_TASK")]
+    pub start_at_task: Option<String>,
+    /// Ask before each task whether to run it. Needs a terminal.
+    #[arg(long = "step")]
+    pub step: bool,
+    /// Accepted for compatibility: there is no fact cache plugin yet, so nothing is cleared.
+    #[arg(long = "flush-cache")]
+    pub flush_cache: bool,
+    /// Print the version and the ansible-core release it matches, and stop.
+    #[arg(long = "version")]
+    pub version: bool,
 }
 
 /// Runs the playbooks and returns the process exit code.
 pub fn run(args: PlaybookArgs) -> i32 {
+    if args.version {
+        println!(
+            "volant {} (ansible-core {} compatible)",
+            crate::VERSION,
+            crate::vars::ansible_version()["full"]
+                .as_str()
+                .unwrap_or_default()
+        );
+        return 0;
+    }
     // Before anything opens a descriptor: every host's link takes three of them.
     crate::transport::raise_open_file_limit();
     let choice = if args.no_color {
@@ -160,6 +212,21 @@ async fn run_all(
     profile: &Arc<Profile>,
 ) -> anyhow::Result<i32> {
     let config = Config::load()?;
+    let secrets = match crate::vault::load(&crate::vault::Request {
+        ask: args.ask_vault_pass,
+        password_files: args.vault_password_file.clone(),
+        ids: args.vault_id.clone(),
+        config_file: config.vault_password_file.clone(),
+        config_ids: config.vault_identity_list.clone(),
+    }) {
+        Ok(secrets) => secrets,
+        Err(err) => {
+            eprintln!("[WARNING]: {}", err.warning);
+            eprintln!("[ERROR]: {}", err.message);
+            return Ok(1);
+        }
+    };
+    crate::vault::install(secrets);
     let show_custom_stats = config.show_custom_stats;
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
     // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
@@ -263,6 +330,29 @@ async fn run_all(
         }
         print!("{}", listing::render(&entries, mode));
         return Ok(0);
+    }
+    // `--start-at-task`: the first play that holds the task starts there, the plays in front of it
+    // run nothing, and the plays behind it run whole. Static statements only, as the reference.
+    let mut start_found = args.start_at_task.is_none();
+    if let Some(pattern) = &args.start_at_task {
+        for compiled in compiled.iter_mut().flatten() {
+            if start_found {
+                break;
+            }
+            compiled.start_at = Some(match compile::find_task(compiled, pattern) {
+                Some(at) => {
+                    start_found = true;
+                    at
+                }
+                None => compiled.steps.len(),
+            });
+        }
+    }
+    // Asking needs somebody to answer. Refused before any host is touched, with the code the
+    // reference's crash on a closed input has.
+    if args.step && !std::io::IsTerminal::is_terminal(&std::io::stdin()) {
+        eprintln!("[ERROR]: --step asks on the terminal, and standard input is not one");
+        return Ok(250);
     }
     // The second half of the pre-flight: what a role or an imported file brought in is refused
     // by its own name too, and before the first connection like everything else.
@@ -463,6 +553,7 @@ async fn run_all(
         abort,
         reboots: Arc::default(),
         profile: Arc::clone(profile),
+        step: args.step.then(Arc::default),
     };
 
     let playbook_dir = playbook::base_dir(&args.playbooks[0]);
@@ -640,6 +731,11 @@ async fn run_all(
     }
     if stopped {
         recap(out, &stats, &state, show_custom_stats);
+    }
+    if let Some(pattern) = args.start_at_task.as_ref().filter(|_| !start_found) {
+        eprintln!(
+            "[ERROR]: No matching task \"{pattern}\" found. Note: --start-at-task can only follow static includes."
+        );
     }
     // `exit_code` reads the whole run, whatever the recaps showed along the way.
     Ok(exit_code(&stats))

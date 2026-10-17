@@ -374,7 +374,9 @@ pub(super) async fn run_batch(
     let plan = Arc::new(PlayPlan {
         plan: plan_rx,
         force_handlers: play.force_handlers.unwrap_or(options.force_handlers),
-        lockstep: max_fail.is_some(),
+        // Under `--step` the hosts meet in front of every task, so the question is asked once
+        // and the banner of the task before it has been shown.
+        lockstep: max_fail.is_some() || options.step.is_some(),
         strategy: Strategy::named(play.strategy.as_deref()),
         throttles: Mutex::default(),
         queue: if play.strategy.as_deref() == Some("host_pinned") {
@@ -389,6 +391,7 @@ pub(super) async fn run_batch(
         r#become: play.r#become,
         become_user: play.become_user.clone(),
         python: state.python.clone(),
+        step: options.step.clone().map(debugger::Stepper::new),
     });
 
     let (tx, mut rx) = mpsc::channel::<Event>(64);

@@ -687,9 +687,8 @@ fn ssh_runs_a_python_module_and_changes_the_disk() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `--check` changes nothing on the host, through every path a task takes there: natives handed
-/// back to Python, the agent's own commands, a written action plugin and a handler. A task with
-/// `check_mode: false` still runs.
+/// `--check` changes nothing on the host through natives, agent commands, action plugins and
+/// handlers, while a task with `check_mode: false` still runs.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_check_mode_leaves_the_host_as_it_was() {

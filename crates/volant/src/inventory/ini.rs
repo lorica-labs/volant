@@ -204,7 +204,7 @@ fn declare(inv: &mut Inventory, group: &str, pending: &mut Vec<Pending>) {
 
 /// `Group.set_priority(int(value))`: a value `int()` cannot take as a type is ignored, one it
 /// cannot read as a number fails the file.
-fn priority(value: &Value) -> Result<Option<i64>, String> {
+pub(super) fn priority(value: &Value) -> Result<Option<i64>, String> {
     #[expect(clippy::cast_possible_truncation, reason = "Python's int() truncates")]
     Ok(match value {
         Value::Bool(b) => Some(i64::from(*b)),

@@ -6,6 +6,7 @@
 mod host_list;
 mod ini;
 pub mod ranges;
+mod script;
 mod sources;
 
 use std::collections::{BTreeMap, HashMap, HashSet, VecDeque};
@@ -27,10 +28,7 @@ const PLUGINS: &[&dyn InventoryPlugin] = &[
         name: "advanced_host_list",
         verify: |s| s.text().contains(',') && !s.path().exists(),
     },
-    &sources::Pending {
-        name: "script",
-        verify: sources::executable,
-    },
+    &script::Script,
     &sources::Pending {
         name: "auto",
         verify: |s| sources::file_with_extension(s, &[Some("yml"), Some("yaml")]),
@@ -144,7 +142,7 @@ impl Inventory {
                 .into_iter()
                 .filter_map(|n| match n {
                     Note::Warning(text) => Some(text),
-                    Note::Verbose(..) => None,
+                    Note::Verbose(..) | Note::Deprecation(_) => None,
                 })
                 .collect();
             anyhow::bail!(reasons.join(

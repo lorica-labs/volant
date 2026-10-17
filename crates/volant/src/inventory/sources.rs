@@ -155,6 +155,11 @@ impl ParseCx<'_> {
     pub fn warn(&self, text: String) {
         self.notes.borrow_mut().push(Note::Warning(text));
     }
+
+    /// A `[DEPRECATION WARNING]:` block.
+    pub fn deprecate(&self, text: String) {
+        self.notes.borrow_mut().push(Note::Deprecation(text));
+    }
 }
 
 /// One inventory plugin: whether it takes a source, and reading it into the inventory. What it
@@ -171,6 +176,8 @@ pub trait InventoryPlugin: Sync {
 pub enum Note {
     Verbose(u8, String),
     Warning(String),
+    /// A `[DEPRECATION WARNING]:` block, its `Origin:` line included.
+    Deprecation(String),
 }
 
 /// The end of reading every source: the run stops with `code` after printing `[ERROR]: message`.

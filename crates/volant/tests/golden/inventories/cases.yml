@@ -20,3 +20,13 @@ late_children: {sources: [late_children.ini]}
 undefined_child: {sources: [undefined_child.ini]}
 undefined_vars: {sources: [undefined_vars.ini]}
 priority: {sources: [priority.ini]}
+script_meta: {sources: [script_meta.sh]}
+script_nometa: {sources: [script_nometa.sh]}
+script_empty: {sources: [script_empty.sh]}
+script_fail: {sources: [script_fail.sh]}
+script_badjson: {sources: [script_badjson.sh]}
+script_list: {sources: [script_list.sh]}
+script_nohv: {sources: [script_nohv.sh]}
+script_noexec: {sources: [script_noexec.sh]}
+script_then_ini: {sources: [script_meta.sh, one.ini]}
+script_failed_then_ini: {sources: [script_fail.sh, one.ini]}

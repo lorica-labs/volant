@@ -580,18 +580,21 @@ fn inventory_sources_match_the_reference() {
         let mut stderr = String::new();
         let mut seen = std::collections::HashSet::new();
         for note in &loaded.notes {
-            if let Note::Warning(text) = note
-                && seen.insert(text.clone())
-            {
-                stderr.push_str(
-                    &[
-                        "[WARNING]: ",
-                        text,
-                        "
-",
-                    ]
-                    .concat(),
-                );
+            let (label, text) = match note {
+                Note::Warning(text) => ("[WARNING]: ", text),
+                Note::Deprecation(text) => {
+                    if !stderr.contains("Deprecation warnings can be") {
+                        stderr.push_str(
+                            "[WARNING]: Deprecation warnings can be disabled by setting \
+                             `deprecation_warnings=False` in ansible.cfg.\n",
+                        );
+                    }
+                    ("[DEPRECATION WARNING]: ", text)
+                }
+                Note::Verbose(..) => continue,
+            };
+            if seen.insert(text.clone()) {
+                stderr.push_str(&[label, text, "\n"].concat());
             }
         }
         if let Some(fatal) = &loaded.error {

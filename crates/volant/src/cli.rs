@@ -398,6 +398,7 @@ async fn run_all(
         match note {
             Note::Verbose(level, text) => out.verbose(*level, text),
             Note::Warning(text) => out.warning(text, false),
+            Note::Deprecation(text) => playbook::print_deprecation(text),
         }
     }
     if let Some(fatal) = loaded.error {

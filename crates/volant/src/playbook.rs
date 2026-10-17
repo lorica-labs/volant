@@ -645,20 +645,26 @@ fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Yaml<'a>)> {
     }
 }
 
-/// The deprecation the reference prints, on stderr, for a mapping given as an action.
-fn warn_action_mapping(node: &Yaml) {
+/// A `[DEPRECATION WARNING]:` block on stderr, after the line that says how to silence them,
+/// printed once per run.
+pub(crate) fn print_deprecation(text: &str) {
     static HEADER: std::sync::Once = std::sync::Once::new();
     HEADER.call_once(|| {
         eprintln!(
             "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
         );
     });
+    eprintln!("[DEPRECATION WARNING]: {text}\n");
+}
+
+/// The deprecation the reference prints, on stderr, for a mapping given as an action.
+fn warn_action_mapping(node: &Yaml) {
     let origin = value_origin(node)
         .map(|origin| format!("{}\n\n", crate::render::source_context(&origin)))
         .unwrap_or_default();
-    eprintln!(
-        "[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n{origin}Use a string value for `action`.\n"
-    );
+    print_deprecation(&format!(
+        "Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n{origin}Use a string value for `action`."
+    ));
 }
 
 /// A keyword whose value has to be a boolean, refused in the reference's own words when it is

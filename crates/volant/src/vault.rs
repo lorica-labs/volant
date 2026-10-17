@@ -5,7 +5,7 @@
 
 use std::fmt;
 use std::path::{Component, Path, PathBuf};
-use std::sync::OnceLock;
+use std::sync::{Arc, RwLock};
 
 use aes::Aes256;
 use ctr::Ctr128BE;
@@ -58,18 +58,21 @@ impl fmt::Debug for Secrets {
     }
 }
 
-static RUN_SECRETS: OnceLock<Secrets> = OnceLock::new();
+static RUN_SECRETS: RwLock<Option<Arc<Secrets>>> = RwLock::new(None);
 
-/// Makes the secrets of this run readable by the templating and file loading, once. A second
-/// call is ignored: a run has one set of secrets.
+/// Makes the secrets of this run readable by the templating and file loading. A later call
+/// replaces the earlier set.
 pub fn install(secrets: Secrets) {
-    let _ = RUN_SECRETS.set(secrets);
+    *RUN_SECRETS.write().expect("secrets lock") = Some(Arc::new(secrets));
 }
 
 /// The secrets of this run; empty when none were given.
-pub fn run_secrets() -> &'static Secrets {
-    static NONE: Secrets = Secrets(Vec::new());
-    RUN_SECRETS.get().unwrap_or(&NONE)
+pub fn run_secrets() -> Arc<Secrets> {
+    RUN_SECRETS
+        .read()
+        .expect("secrets lock")
+        .clone()
+        .unwrap_or_default()
 }
 
 /// Whether `data` starts like vault data.
@@ -92,6 +95,17 @@ fn unhex(text: &[u8]) -> Result<Vec<u8>, VaultError> {
             }
         })
         .collect()
+}
+
+/// CR and LF removed at both ends, as the reference strips a script's output.
+fn strip_crlf(bytes: &[u8]) -> &[u8] {
+    let is_eol = |b: &u8| *b == b'\r' || *b == b'\n';
+    let start = bytes.iter().position(|b| !is_eol(b)).unwrap_or(bytes.len());
+    let end = bytes
+        .iter()
+        .rposition(|b| !is_eol(b))
+        .map_or(start, |i| i + 1);
+    &bytes[start..end]
 }
 
 fn hex(bytes: &[u8]) -> String {
@@ -157,12 +171,9 @@ fn parts(body: &[u8]) -> Result<Parts, VaultError> {
 fn keys(secret: &[u8], salt: &[u8]) -> ([u8; 32], [u8; 32], [u8; 16]) {
     let mut derived = [0u8; 80];
     pbkdf2::pbkdf2_hmac::<Sha256>(secret, salt, ITERATIONS, &mut derived);
-    let mut key = [0u8; 32];
-    let mut mac = [0u8; 32];
-    let mut iv = [0u8; 16];
-    key.copy_from_slice(&derived[..32]);
-    mac.copy_from_slice(&derived[32..64]);
-    iv.copy_from_slice(&derived[64..]);
+    let key: [u8; 32] = derived[..32].try_into().expect("80 bytes");
+    let mac: [u8; 32] = derived[32..64].try_into().expect("80 bytes");
+    let iv: [u8; 16] = derived[64..].try_into().expect("80 bytes");
     (key, mac, iv)
 }
 
@@ -217,10 +228,13 @@ pub fn decrypt(data: &[u8], secrets: &Secrets) -> Result<Vec<u8>, VaultError> {
 /// Encrypts `plain` with a fresh random salt. `id` other than `default` gives a 1.2 header.
 pub fn encrypt(plain: &[u8], secret: &[u8], id: Option<&str>) -> Result<String, VaultError> {
     use std::io::Read as _;
-    let mut salt = [0u8; 32];
+    let mut random = Vec::with_capacity(32);
     std::fs::File::open("/dev/urandom")
-        .and_then(|mut f| f.read_exact(&mut salt))
+        .and_then(|f| f.take(32).read_to_end(&mut random))
         .map_err(|e| VaultError(format!("could not get a random salt: {e}")))?;
+    let salt: [u8; 32] = random
+        .try_into()
+        .map_err(|_| VaultError("could not get a random salt: short read".into()))?;
     Ok(encrypt_with_salt(plain, secret, id, &salt))
 }
 
@@ -362,16 +376,11 @@ fn file_secret(label: &str, path: &Path) -> Result<Vec<u8>, LoadError> {
                 path.display()
             )));
         }
-        let end = out
-            .stdout
-            .iter()
-            .rposition(|b| *b != b'\r' && *b != b'\n')
-            .map_or(0, |i| i + 1);
-        (out.stdout[..end].to_vec(), "script")
+        (strip_crlf(&out.stdout).to_vec(), "script")
     } else {
-        let bytes = std::fs::read(&path).map_err(|e| {
+        let bytes = std::fs::read(&path).map_err(|_| {
             loading(format!(
-                "Could not read vault password file {}: {e}",
+                "Could not read vault password file '{}'.",
                 path.display()
             ))
         })?;
@@ -386,6 +395,11 @@ fn file_secret(label: &str, path: &Path) -> Result<Vec<u8>, LoadError> {
     Ok(secret)
 }
 
+/// What was typed, surrounding whitespace removed; `None` when nothing is left.
+fn typed_secret(typed: &[u8]) -> Option<Vec<u8>> {
+    Some(typed.trim_ascii().to_vec()).filter(|s| !s.is_empty())
+}
+
 fn prompt_secret(label: &str) -> Result<Vec<u8>, LoadError> {
     let text = if label == "default" {
         "Vault password: ".to_string()
@@ -397,7 +411,9 @@ fn prompt_secret(label: &str) -> Result<Vec<u8>, LoadError> {
         message,
     };
     match crate::prompt::hidden_line(&text) {
-        Ok(Some(typed)) => Ok(typed),
+        Ok(Some(typed)) => {
+            typed_secret(&typed).ok_or_else(|| fail("Invalid vault password was provided".into()))
+        }
         Ok(None) => Err(fail(format!("EOFError (ctrl-d) on prompt for ({label})"))),
         Err(e) => Err(fail(e.to_string())),
     }
@@ -552,6 +568,31 @@ mod tests {
         assert_eq!(spec("a@b").1, Source::File("b".into()));
     }
 
+    #[rstest]
+    #[case::plain(b"pw1", Some(&b"pw1"[..]))]
+    #[case::spaced(b"  pw1 	", Some(&b"pw1"[..]))]
+    #[case::empty(b"", None)]
+    #[case::blank(b" 	 ", None)]
+    fn a_typed_password_is_stripped_and_not_empty(
+        #[case] typed: &[u8],
+        #[case] want: Option<&[u8]>,
+    ) {
+        assert_eq!(typed_secret(typed).as_deref(), want);
+    }
+
+    #[test]
+    fn a_later_install_replaces_the_secrets() {
+        install(Secrets::new(vec![b"a".to_vec()]));
+        install(Secrets::new(vec![b"b".to_vec()]));
+        assert_eq!(run_secrets().first(), Some(&b"b"[..]));
+    }
+
+    #[test]
+    fn script_output_loses_cr_and_lf_at_both_ends() {
+        assert_eq!(strip_crlf(b"\r\n pw \r\n"), b" pw ");
+        assert_eq!(strip_crlf(b"\n\r"), b"");
+    }
+
     #[cfg(unix)]
     mod files {
         use super::*;
@@ -584,6 +625,20 @@ mod tests {
             let path = write(dir.path(), "pw", body, mode);
             let got = load(&request(&path, "dev")).unwrap();
             assert_eq!(got.first(), Some(want));
+        }
+
+        #[test]
+        fn an_unreadable_file_is_named_in_quotes() {
+            let dir = tempfile::tempdir().unwrap();
+            let path = write(dir.path(), "pw", b"x", 0o000);
+            if std::fs::read(&path).is_ok() {
+                return; // running as root: nothing is unreadable
+            }
+            let err = load(&request(&path, "d")).unwrap_err();
+            assert_eq!(
+                err.message,
+                format!("Could not read vault password file '{}'.", path.display())
+            );
         }
 
         #[test]

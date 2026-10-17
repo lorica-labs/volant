@@ -160,7 +160,8 @@ pub(crate) fn waits_for_connection(module: &str) -> bool {
 /// facts are known, so a plugin can only ever pick among these.
 pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
     match kind {
-        Kind::Copy | Kind::Template => &["stat", "file", "copy"],
+        // `slurp` reads the old content of `dest` for a diff.
+        Kind::Copy | Kind::Template => &["stat", "file", "copy", "slurp"],
         Kind::Dnf => &["setup", "dnf", "dnf5"],
         Kind::Fetch => &["stat", "slurp"],
         Kind::Package => &["setup", "apt", "dnf", "dnf5"],

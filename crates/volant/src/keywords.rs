@@ -84,10 +84,6 @@ const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. I
     on statements, and on `raw` and `async_status`, which the reference refuses too. \
     `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are.";
 
-/// One sentence for the three `diff` rows.
-const DIFF_MISSING: &str =
-    "modules are told to report their differences, which are not printed yet";
-
 /// One sentence for the `debugger` rows. The reference's prompt also evaluates Python.
 const DEBUGGER_MISSING: &str = "the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input";
 
@@ -143,7 +139,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("delay", Runs),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
-    partial_kw("diff", DIFF_MISSING),
+    kw("diff", Runs),
     kw("environment", Runs),
     kw("failed_when", Runs),
     kw("ignore_errors", Runs),
@@ -237,7 +233,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("collections", Runs),
     kw("connection", Runs),
     partial_kw("debugger", DEBUGGER_MISSING),
-    partial_kw("diff", DIFF_MISSING),
+    kw("diff", Runs),
     kw("environment", Runs),
     kw("fact_path", Runs),
     kw("force_handlers", Runs),
@@ -312,7 +308,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     partial_kw("debugger", DEBUGGER_MISSING),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
-    partial_kw("diff", DIFF_MISSING),
+    kw("diff", Runs),
     kw("environment", Runs),
     kw("ignore_errors", Runs),
     kw("ignore_unreachable", Runs),

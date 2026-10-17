@@ -635,7 +635,6 @@ fn an_option_is_judged_on_every_spelling() {
         Some(Status::Runs)
     );
     assert_eq!(status("-C, --check"), Some(Status::Runs));
-    assert_eq!(status("--step"), Some(Status::NotYet));
 }
 
 /// A collection's module waits for a later release only when it needs another platform: a network

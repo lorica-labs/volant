@@ -1,0 +1,7 @@
+# -M and --module-path, repeated and as a colon list, search a directory for modules before any other; the first one given wins, and without them the module is not found.
+runs:
+  - args: [-M, lib, -i, inv.ini, p.yml]
+  - args: [--module-path, lib2:lib, -i, inv.ini, p.yml]
+  - args: [-M, lib, -M, lib2, -i, inv.ini, p.yml]
+  - args: [-i, inv.ini, p.yml]
+needs: [ansible-core]

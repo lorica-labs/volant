@@ -298,6 +298,11 @@ fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
     // A command's timings, which differ between two runs of the reference itself.
     let timed = regex::Regex::new(r#""(start|end|delta)": "[^"]*""#).expect("the pattern compiles");
     let stdout = timed.replace_all(stdout, r#""$1": "<time>""#);
+    // `-vv` opens with a block of the machine's paths in the reference and with Volant's own
+    // version line here: the generator writes the same placeholder for the block.
+    let version = regex::Regex::new(r"(?m)^volant .* \(ansible-core [0-9.]+ compatible\)\n")
+        .expect("the pattern compiles");
+    let stdout = version.replace_all(&stdout, "<golden-version>\n");
     // A job's id, `j<random>.<pid>`, and the process its limit killed: drawn anew by every run.
     let jid = regex::Regex::new(r"\bj[0-9]+\.[0-9]+\b").expect("the pattern compiles");
     let stdout = jid.replace_all(&stdout, "<jid>");

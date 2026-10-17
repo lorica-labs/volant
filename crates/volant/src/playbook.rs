@@ -52,6 +52,8 @@ pub struct Play {
     /// and everything a play reads from disk - its `vars_files`, its `group_vars/`, its roles -
     /// is looked for beside the file it came from.
     pub dir: PathBuf,
+    /// Where the play was written, which `task path:` names for the `Gathering Facts` task.
+    pub origin: Option<Origin>,
     /// `become`, unset when the play says nothing: a task and the host variables both get to
     /// speak before the connection defaults do.
     pub r#become: Option<bool>,
@@ -1090,6 +1092,7 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     };
     let (r#become, become_user) = escalation(yaml, "")?;
     Ok(Play {
+        origin: task_origin(map),
         name,
         hosts,
         host_patterns,

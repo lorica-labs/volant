@@ -1,0 +1,2 @@
+# At -vvv the inventory plugins the reference tries first are named too.
+args: [-vvv, -i, inv.ini, p.yml]

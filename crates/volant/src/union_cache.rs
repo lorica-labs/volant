@@ -197,6 +197,12 @@ pub fn key(
         std::env::var_os("HOME").as_deref().map(Path::new),
     );
     files.extend(plugin_files(plugin_dirs, SystemTime::now())?);
+    // The `-M` directories hold modules directly, not under a `library/`.
+    let mut walked = BTreeSet::new();
+    for dir in crate::python::module_path() {
+        files.push((dir.clone(), Vec::new()));
+        files_under(&dir, &mut walked, &mut files);
+    }
     let cwd = std::env::current_dir().unwrap_or_default();
     let controller = std::env::current_exe()
         .and_then(|exe| Source::now(&exe))

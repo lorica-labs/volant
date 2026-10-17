@@ -1,0 +1,6 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - mymod:
+      register: r
+    - debug: var=r.hello

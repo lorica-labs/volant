@@ -492,15 +492,17 @@ def resolve_one(name):
     }
 
 
-def plugin_dirs(dirs):
+def plugin_dirs(dirs, module_path=()):
     """Adds each playbook's and each role's directory as ansible-playbook adds it, with
     `add_all_plugin_dirs`: its `library/`, `module_utils/` and other plugin directories are
     searched before the configured paths, in the order given, so a `library/stat.py` beside the
-    playbook is the `stat` a task gets."""
-    from ansible.plugins.loader import add_all_plugin_dirs
+    playbook is the `stat` a task gets. The `-M` directories come first, as the CLI adds them."""
+    from ansible.plugins.loader import add_all_plugin_dirs, module_loader
     from ansible.utils.collection_loader import AnsibleCollectionConfig
 
     loaders()
+    for directory in module_path:
+        module_loader.add_directory(directory)
     for directory in dirs:
         add_all_plugin_dirs(directory)
     # A `collections/` directory beside a playbook is searched for collections, as
@@ -1080,7 +1082,7 @@ def main():
             continue
         try:
             if "plugin_dirs" in request:
-                answer = plugin_dirs(request["plugin_dirs"])
+                answer = plugin_dirs(request["plugin_dirs"], request.get("module_path", ()))
             elif "resolve" in request:
                 answer = resolve(request["resolve"])
             else:

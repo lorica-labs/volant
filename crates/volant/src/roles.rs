@@ -264,7 +264,7 @@ pub(crate) fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool, Vec<Str
     let mut allow_duplicates = false;
     let mut collections = Vec::new();
     for file in files {
-        let text = std::fs::read_to_string(&file)
+        let text = crate::vault::read_to_string(&file)
             .with_context(|| format!("reading {}", file.display()))?;
         let source = file.display().to_string();
         let docs = crate::yaml::load(&text, &source)?;

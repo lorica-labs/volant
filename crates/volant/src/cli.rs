@@ -431,8 +431,14 @@ async fn run_all(
     // `--check` and `--diff` are each play's default: its own keyword wins, and every block,
     // role, task and handler under it inherits whichever applies, as in the reference.
     for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
-        play.check_mode = play.check_mode.or(args.check.then_some(true));
-        play.diff = play.diff.or(args.diff.then_some(true));
+        play.check_mode = play
+            .check_mode
+            .take()
+            .or(args.check.then_some(playbook::Flag::Fixed(true)));
+        play.diff = play
+            .diff
+            .take()
+            .or(args.diff.then_some(playbook::Flag::Fixed(true)));
     }
     let mode = Listing {
         tasks: args.list_tasks,

@@ -82,8 +82,8 @@ pub struct Play {
     /// neither: the reference takes them on a block and on a task and nowhere else.
     pub no_log: Option<bool>,
     pub environment: Vec<Value>,
-    pub check_mode: Option<bool>,
-    pub diff: Option<bool>,
+    pub check_mode: Option<Flag>,
+    pub diff: Option<Flag>,
     pub run_once: Option<bool>,
     /// The play's `module_defaults` and `collections`, folded into every task the same way. A
     /// role is the exception for `collections`: it does not inherit the play's.
@@ -313,8 +313,8 @@ pub struct PlayTask {
     pub collections: Option<Vec<String>>,
     /// `check_mode` and `diff`, inherited from the block, the role and the play, whose own
     /// default is the command line's `--check` and `--diff`.
-    pub check_mode: Option<bool>,
-    pub diff: Option<bool>,
+    pub check_mode: Option<Flag>,
+    pub diff: Option<Flag>,
     /// `run_once`: one host of the batch runs the task and every other host reads what it
     /// produced. Three-state for the same reason `ignore_errors` is - a block saying `true` and
     /// a task saying `false` inside it have to be told apart from a task that says nothing.
@@ -674,7 +674,7 @@ fn warn_action_mapping(node: &Yaml) {
 /// All three are refused here, at load. That is one step earlier than the reference refuses
 /// `ignore_errors` and `become`, and the divergence is deliberate: no task has run yet, so
 /// there is nothing half-applied to explain. A template is the one exception, for
-/// `ignore_errors`: see [`flag`].
+/// `ignore_errors`, `check_mode` and `diff`: see [`flag`].
 fn boolean(yaml: &Yaml, key: &str) -> anyhow::Result<Option<bool>> {
     match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
@@ -695,7 +695,7 @@ pub enum Flag {
     Template(String),
 }
 
-/// `ignore_errors`, which may be a template. Measured on ansible-core 2.19.12:
+/// `ignore_errors`, `check_mode` and `diff`, which may be templates. Measured on ansible-core 2.19.12:
 /// `ignore_errors: "{{ ansible_check_mode }}"`, which `geerlingguy.ntp` and `geerlingguy.docker`
 /// write, is rendered when the task runs, so it is kept as written here and rendered by
 /// `prepare`. Anything else that is not a boolean is still refused by [`boolean`].
@@ -908,7 +908,7 @@ fn read(path: &Path, depth: usize) -> anyhow::Result<Playbook> {
     // Exit 1 for a file that is not there, measured, and not the 4 a file that is there and
     // makes no sense gets. It carries its own code so the blanket [`load`] wraps the parse in
     // cannot take it.
-    let text = std::fs::read_to_string(path).map_err(|err| {
+    let text = crate::vault::read_to_string(path).map_err(|err| {
         crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
     })?;
     parse_at(&text, &path.display().to_string(), &base_dir(path), depth)
@@ -1120,8 +1120,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         environment: environment(yaml, "")?,
         module_defaults: module_defaults(yaml, "")?,
         collections: collections(yaml, "")?,
-        check_mode: boolean(yaml, "check_mode")?,
-        diff: boolean(yaml, "diff")?,
+        check_mode: flag(yaml, "check_mode")?,
+        diff: flag(yaml, "diff")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
         ignore_errors: flag(yaml, "ignore_errors")?,
@@ -1324,8 +1324,8 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             environment: environment(yaml, &context)?,
             module_defaults: module_defaults(yaml, &context)?,
             collections: collections(yaml, &context)?,
-            check_mode: boolean(yaml, "check_mode")?,
-            diff: boolean(yaml, "diff")?,
+            check_mode: flag(yaml, "check_mode")?,
+            diff: flag(yaml, "diff")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -1384,8 +1384,8 @@ impl std::fmt::Display for NotATaskList {
 impl std::error::Error for NotATaskList {}
 
 fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text = crate::vault::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
     let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
     let _origins = OriginScope::enter(&source, origins);
@@ -1400,8 +1400,8 @@ fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
 
 /// The handler list of one file, for a role's `handlers/main.yml`.
 pub(crate) fn parse_handlers_file(path: &Path) -> anyhow::Result<Vec<HandlerTask>> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text = crate::vault::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
     let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
     let _origins = OriginScope::enter(&source, origins);
@@ -1502,8 +1502,8 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             environment: environment(yaml, &context)?,
             module_defaults: module_defaults(yaml, &context)?,
             collections: collections(yaml, &context)?,
-            check_mode: boolean(yaml, "check_mode")?,
-            diff: boolean(yaml, "diff")?,
+            check_mode: flag(yaml, "check_mode")?,
+            diff: flag(yaml, "diff")?,
             run_once: boolean(yaml, "run_once")?,
             any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -1795,8 +1795,8 @@ fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
         environment: environment(yaml, &context)?,
         module_defaults: module_defaults(yaml, &context)?,
         collections: collections(yaml, &context)?,
-        check_mode: boolean(yaml, "check_mode")?,
-        diff: boolean(yaml, "diff")?,
+        check_mode: flag(yaml, "check_mode")?,
+        diff: flag(yaml, "diff")?,
         run_once: boolean(yaml, "run_once")?,
         any_errors_fatal: boolean(yaml, "any_errors_fatal")?,
         ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
@@ -2262,10 +2262,6 @@ mod tests {
     )]
     #[case::not_a_list("hosts: all\n", &[])]
     #[case::empty("", &[])]
-    #[case::vault(
-        "- hosts: all\n  tasks:\n    - name: Secret\n      command:\n        cmd: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          3132\n",
-        &["vault", "Secret"]
-    )]
     #[case::unbalanced_quote("- hosts: all\n  tasks:\n    - ping: \"a='open\"\n", &[])]
     #[case::when_scalar(
         "- hosts: all\n  tasks:\n    - command: \"true\"\n      when: 3\n",
@@ -2381,18 +2377,6 @@ mod tests {
         for needle in needles {
             assert!(got.contains(needle), "{needle:?} not in {got}");
         }
-    }
-
-    /// Keywords the reference has and this release cannot run are parked for the pre-flight.
-    #[rstest]
-    #[case::with_unvault("with_unvault")]
-    fn a_keyword_is_parked_for_the_preflight(#[case] kw: &str) {
-        let pb = parse(
-            &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
-            "x.yml",
-        )
-        .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
-        assert_eq!(first(&pb).unsupported, [kw]);
     }
 
     /// Every `loop_control` sub-key is read into its field, and a malformed one is refused by name.
@@ -2692,23 +2676,10 @@ mod tests {
         assert!(empty.body.is_empty());
     }
 
-    /// Shapes the loader keeps for the pre-flight: a construct with no module, a `set_fact` key
+    /// Shapes the loader keeps for the pre-flight: a `set_fact` key
     /// typed by YAML, and a `meta` action whatever it names.
     #[test]
     fn what_the_loader_keeps_for_the_preflight() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      with_unvault: x\n",
-            "x.yml",
-        )
-        .unwrap();
-        let t = first(&pb);
-        assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
-        assert_eq!(t.unsupported, ["with_unvault"]);
-        assert_eq!(
-            t.tags,
-            ["t"],
-            "a construct with no module still keeps its tags"
-        );
         let pb = parse(
             "- hosts: all\n  tasks:\n    - set_fact: {1: a, 1.5: b, 2.0: f, true: c, ~: d, k: e}\n",
             "x.yml",

@@ -531,6 +531,10 @@ pub(super) struct Item {
     /// The task's `ignore_errors` as rendered for this item, when it was written as a template
     /// and the item was not skipped. The readers fall back to the task's keyword without it.
     pub(super) ignore_errors: Option<bool>,
+    /// The task's `check_mode` and `diff` as rendered for this item: a keyword written as a
+    /// template is rendered per item, and an item a `when` left out renders neither.
+    pub(super) check_mode: Option<bool>,
+    pub(super) diff: Option<bool>,
     /// A `set_fact`'s keys as rendered, once: see `run::set_fact_names`. Each entry is the key as
     /// written, the name it rendered to, and whether that name holds a managed host's value.
     pub(super) set_fact_names: std::sync::OnceLock<Result<Vec<FactName>, TaskResult>>,
@@ -924,6 +928,20 @@ pub(super) fn prepare(
             (Some(Flag::Template(raw)), None) => Some(ignore_errors_for(raw, &vars, templar)?),
             _ => None,
         };
+        let check_mode = flag_for(
+            "check_mode",
+            task.check_mode.as_ref(),
+            &vars,
+            templar,
+            skipped.is_some(),
+        )?;
+        let diff = flag_for(
+            "diff",
+            task.diff.as_ref(),
+            &vars,
+            templar,
+            skipped.is_some(),
+        )?;
         // A skipped item runs nothing, so a layer it could not render is not its problem: the
         // reference does not evaluate `environment` for a task a `when` left out.
         let environment = if skipped.is_some() {
@@ -947,6 +965,8 @@ pub(super) fn prepare(
             environment,
             skipped,
             ignore_errors,
+            check_mode,
+            diff,
             set_fact_names: std::sync::OnceLock::new(),
             notify,
         });
@@ -1204,11 +1224,34 @@ fn insert_search_path(vars: &mut HostVars, origin: &Origin, playbook_dir: &Path)
 /// renders it when the task runs, and a value that is not a boolean fails the task with the
 /// sentence the loader refuses a literal with.
 fn ignore_errors_for(raw: &str, vars: &HostVars, templar: &Templar) -> Result<bool, TemplateError> {
-    let keyword = |detail: String| {
-        TemplateError(format!(
-            "Error processing keyword 'ignore_errors': {detail}"
-        ))
-    };
+    boolean_keyword("ignore_errors", raw, vars, templar)
+}
+
+/// A task's `check_mode` or `diff` for one item: a literal as written, a template rendered
+/// against the item's variables, and nothing for an item a `when` left out.
+fn flag_for(
+    key: &str,
+    flag: Option<&Flag>,
+    vars: &HostVars,
+    templar: &Templar,
+    skipped: bool,
+) -> Result<Option<bool>, TemplateError> {
+    match flag {
+        Some(Flag::Fixed(b)) => Ok(Some(*b)),
+        Some(Flag::Template(raw)) if !skipped => boolean_keyword(key, raw, vars, templar).map(Some),
+        _ => Ok(None),
+    }
+}
+
+/// A boolean keyword written as a template, rendered and read as ansible-core reads it.
+fn boolean_keyword(
+    key: &str,
+    raw: &str,
+    vars: &HostVars,
+    templar: &Templar,
+) -> Result<bool, TemplateError> {
+    let keyword =
+        |detail: String| TemplateError(format!("Error processing keyword '{key}': {detail}"));
     let rendered = templar.render(raw, vars).map_err(|e| keyword(e.0))?;
     strict_boolean(&rendered).ok_or_else(|| {
         keyword(format!(

@@ -1,0 +1,6 @@
+# What the modules and action plugins answer in plain and --check runs: result keys, changed,
+# skipped and msg, and what the host holds at the end. The diff modes come with the diff printing.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, --check, play.yml]
+needs: [ansible-core]

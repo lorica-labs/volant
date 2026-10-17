@@ -133,8 +133,12 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
     let Some(found) = searched.iter().find(|p| p.exists()) else {
         return Err(not_found(&src, &searched));
     };
-    let bytes = std::fs::read(found)
+    let mut bytes = std::fs::read(found)
         .map_err(|err| format!("could not read src={}: {err}", found.display()))?;
+    if crate::vault::is_encrypted(&bytes) {
+        bytes = crate::vault::decrypt(&bytes, &crate::vault::run_secrets())
+            .map_err(|err| format!("could not read src={}: {err}", found.display()))?;
+    }
     let text = String::from_utf8(bytes)
         .map_err(|_| format!("could not read src={} as utf-8", found.display()))?;
 

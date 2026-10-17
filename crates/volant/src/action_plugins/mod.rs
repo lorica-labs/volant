@@ -309,31 +309,25 @@ pub(crate) fn start(kind: Kind, ctx: Context<'_>) -> Box<dyn Plugin + '_> {
         Kind::Unarchive => unarchive::unwritten(&ctx),
         _ => false,
     };
-    if unwritten && !ctx.args_untrusted.contains("src") {
-        let name = if kind == Kind::Copy {
-            "copy"
-        } else {
-            "unarchive"
-        };
+    let named = match kind {
+        Kind::Copy => Some("copy"),
+        Kind::Fetch => Some("fetch"),
+        Kind::Reboot => Some("reboot"),
+        Kind::Template => Some("template"),
+        Kind::Unarchive => Some("unarchive"),
+        Kind::Dnf | Kind::Package | Kind::Service | Kind::Bridged(_) => None,
+    };
+    // Under check mode the written plugins that put something on the host or the controller give
+    // way to ansible-core's own, which computes the check result itself; so do `copy` and
+    // `template` under `--diff`, which builds the diff. `package`, `service` and `dnf` only pick
+    // the module, which is told about the modes itself. A `src` named by a host value is never
+    // followed by the bridged plugin, so outside check mode the written plugin's refusal stands.
+    let diffing = ctx.diff && matches!(kind, Kind::Copy | Kind::Template);
+    let trusted = !ctx.args_untrusted.contains("src");
+    if let Some(name) = named
+        && (ctx.check_mode || ((unwritten || diffing) && trusted))
+    {
         return bridged::start(name, modules_for(kind), ctx);
-    }
-    // The written plugins that put something on the host or the controller have no check mode
-    // yet, and running them for real is the one answer check mode must never give. `package`,
-    // `service` and `dnf` only pick the module, which is told about check mode itself.
-    if ctx.check_mode {
-        let name = match kind {
-            Kind::Copy => Some("copy"),
-            Kind::Fetch => Some("fetch"),
-            Kind::Reboot => Some("reboot"),
-            Kind::Template => Some("template"),
-            Kind::Unarchive => Some("unarchive"),
-            Kind::Dnf | Kind::Package | Kind::Service | Kind::Bridged(_) => None,
-        };
-        if let Some(name) = name {
-            return copy::failing(format!(
-                "the action plugin '{name}' is not supported yet in check mode"
-            ));
-        }
     }
     match kind {
         Kind::Copy => copy::start(ctx),

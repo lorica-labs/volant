@@ -15,6 +15,9 @@ use volant_protocol::encoding::{b64_decode, b64_encode, sha1_hex};
 use super::truthy;
 use super::{add_filter, add_test, add_text_filter};
 
+/// How the reference opens the failure of a vaulted value it cannot read.
+pub(super) const UNDECRYPTABLE: &str = "Attempt to use undecryptable variable: ";
+
 pub fn register(
     env: &mut Environment<'static>,
     base_dir: PathBuf,
@@ -28,6 +31,75 @@ pub fn register(
             sink.taint();
         }
         text
+    });
+    // What a `!vault` value loads as: its ciphertext, read when the value is rendered. A value
+    // nothing renders is never read, so one that cannot be decrypted raises nothing until used.
+    env.add_filter("volant_vault", |state: &State, ciphertext: String| {
+        let plain = crate::vault::reveal(&ciphertext).map_err(|reason| {
+            super::bridged::raise(format!(
+                "{UNDECRYPTABLE}{}",
+                crate::vault::sentence(&reason)
+            ))
+        })?;
+        super::lookups::taint(state);
+        Ok::<_, Error>(plain)
+    });
+    add_filter(
+        env,
+        "vault",
+        |data: String, secret: String, kwargs: Kwargs| {
+            let id: Option<String> = kwargs.get("vault_id")?;
+            let id = id.unwrap_or_else(|| "filter_default".into());
+            // The salt and the wrapped object are read here, so they are refused rather than
+            // dropped.
+            if kwargs
+                .get::<Option<Value>>("salt")?
+                .is_some_and(|v| !v.is_none())
+            {
+                return Err(invalid("the salt argument of vault is not supported yet"));
+            }
+            if truthy_value(kwargs.get::<Option<Value>>("wrap_object")?) {
+                return Err(invalid(
+                    "the wrap_object argument of vault is not supported yet",
+                ));
+            }
+            kwargs.assert_all_used()?;
+            crate::vault::encrypt(data.as_bytes(), secret.as_bytes(), Some(&id))
+                .map_err(|_| invalid("Unable to encrypt."))
+        },
+    );
+    add_filter(
+        env,
+        "unvault",
+        |vault: String, secret: String, kwargs: Kwargs| {
+            let _: Option<String> = kwargs.get("vault_id")?;
+            kwargs.assert_all_used()?;
+            if !crate::vault::is_encrypted(vault.as_bytes()) {
+                return Ok(vault);
+            }
+            let secrets = crate::vault::Secrets::new(vec![secret.into_bytes()]);
+            crate::vault::decrypt(vault.as_bytes(), &secrets)
+                .map_err(|_| invalid("Unable to decrypt."))
+                .map(|plain| String::from_utf8_lossy(&plain).into_owned())
+        },
+    );
+    // `NAME is vault_encrypted` is rewritten to carry the name (see `route_calls`): the
+    // reference tells a vaulted variable by a tag this engine does not carry.
+    add_test(env, "vault_encrypted", |value: Value| {
+        value
+            .as_str()
+            .and_then(|s| s.strip_prefix(super::VAULT_NAME))
+            .is_some_and(crate::vault::is_name)
+    });
+    add_test(env, "vaulted_file", |path: String| {
+        std::fs::File::open(&path)
+            .and_then(|mut f| {
+                use std::io::Read as _;
+                let mut head = Vec::new();
+                f.by_ref().take(14).read_to_end(&mut head)?;
+                Ok(crate::vault::is_encrypted(&head))
+            })
+            .map_err(|_| invalid(format!("Cannot test if the file '{path}' is a vault.")))
     });
     // minijinja's own filters and tests, registered again so that an undefined input stays
     // undefined through them as well (see `add_filter`), and so that they answer under
@@ -235,6 +307,10 @@ fn data(v: &Value) -> Result<serde_json::Value, Error> {
 
 fn from_json_value(v: serde_json::Value) -> Value {
     Value::from_serialize(&v)
+}
+
+fn truthy_value(value: Option<Value>) -> bool {
+    value.is_some_and(|v| v.is_true())
 }
 
 fn invalid(msg: impl Into<String>) -> Error {

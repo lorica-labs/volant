@@ -715,10 +715,6 @@ fn ssh_check_mode_leaves_the_host_as_it_was() {
     );
     let text = both(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
-    assert!(
-        text.contains("is not supported yet in check mode"),
-        "copy is refused rather than run: {text}"
-    );
     for name in ["file", "line", "command", "shell", "raw", "copy", "handled"] {
         assert!(!dir.join(name).exists(), "{name} changed the host: {text}");
     }

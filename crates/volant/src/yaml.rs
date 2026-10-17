@@ -357,20 +357,7 @@ pub fn bool_from_str(text: &str) -> Option<bool> {
 pub(crate) fn unsafe_data(value: Value) -> Value {
     match value {
         Value::String(s) if s.contains("{{") || s.contains("{%") => {
-            let mut lit = String::from("{{ \"");
-            for c in s.chars() {
-                match c {
-                    '\\' => lit.push_str(r"\\"),
-                    '"' => lit.push_str(r#"\""#),
-                    '\n' => lit.push_str(r"\n"),
-                    '\r' => lit.push_str(r"\r"),
-                    '\t' => lit.push_str(r"\t"),
-                    c if c.is_control() => _ = write!(lit, "\\u{:04x}", c as u32),
-                    c => lit.push(c),
-                }
-            }
-            lit.push_str("\" | volant_unsafe }}");
-            Value::String(lit)
+            Value::String(wrap(&s, "volant_unsafe"))
         }
         Value::Array(items) => Value::Array(items.into_iter().map(unsafe_data).collect()),
         Value::Object(map) => {
@@ -380,12 +367,48 @@ pub(crate) fn unsafe_data(value: Value) -> Value {
     }
 }
 
+/// `text` as the one-expression template `{{ "<text>" | <filter> }}`.
+fn wrap(text: &str, filter: &str) -> String {
+    let mut lit = String::from("{{ \"");
+    for c in text.chars() {
+        match c {
+            '\\' => lit.push_str(r"\\"),
+            '"' => lit.push_str(r#"\""#),
+            '\n' => lit.push_str(r"\n"),
+            '\r' => lit.push_str(r"\r"),
+            '\t' => lit.push_str(r"\t"),
+            c if c.is_control() => _ = write!(lit, "\\u{:04x}", c as u32),
+            c => lit.push(c),
+        }
+    }
+    lit.push_str("\" | ");
+    lit.push_str(filter);
+    lit.push_str(" }}");
+    lit
+}
+
 /// The text `unsafe_data` wrapped, when `s` is exactly such a wrapper and nothing else. Read
 /// back by hand, never through the templater: `s` may be any string of a variable map.
 pub(crate) fn unsafe_text(s: &str) -> Option<String> {
+    unwrapped(s, "volant_unsafe")
+}
+
+/// What a `!vault` value loads as: its ciphertext in a wrapper that decrypts when the value is
+/// rendered, so a value nothing reads is never decrypted. The result is data, as `!unsafe` is:
+/// measured on ansible-core 2.19.12, `{{ x }}` inside a decrypted value is not rendered.
+pub(crate) fn vault_data(ciphertext: &str) -> String {
+    wrap(ciphertext, "volant_vault")
+}
+
+/// The ciphertext `vault_data` wrapped, read back by hand like [`unsafe_text`].
+pub(crate) fn vault_text(s: &str) -> Option<String> {
+    unwrapped(s, "volant_vault")
+}
+
+fn unwrapped(s: &str, filter: &str) -> Option<String> {
     let body = s
         .strip_prefix("{{ \"")?
-        .strip_suffix("\" | volant_unsafe }}")?;
+        .strip_suffix(format!("\" | {filter} }}}}").as_str())?;
     let mut out = String::new();
     let mut chars = body.chars();
     while let Some(c) = chars.next() {
@@ -409,9 +432,8 @@ pub(crate) fn unsafe_text(s: &str) -> Option<String> {
     Some(out)
 }
 
-/// Converts a node to JSON. A vault tag is refused with a message naming it: decryption arrives
-/// with a later release, and silently dropping it would change what a playbook does. `!unsafe`
-/// is loaded as data, see `unsafe_data`.
+/// Converts a node to JSON. `!vault` and `!unsafe` load as data, see `vault_data` and
+/// `unsafe_data`.
 pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
     Ok(match node {
         Yaml::Value(Scalar::Null) => Value::Null,
@@ -433,9 +455,10 @@ pub fn to_json(node: &Yaml) -> anyhow::Result<Value> {
             }
             Value::Object(out)
         }
-        Yaml::Tagged(tag, _) if tag.handle == "!" && tag.suffix == "vault" => {
-            bail!("vault-encrypted values (!vault) are not supported yet")
-        }
+        Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "vault" => match &**inner {
+            Yaml::Value(Scalar::String(s)) => Value::String(vault_data(s)),
+            _ => bail!("!vault takes a string"),
+        },
         Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => {
             unsafe_data(to_json(inner)?)
         }
@@ -580,14 +603,19 @@ a: 3
     }
 
     #[test]
-    fn vault_is_refused_and_unsafe_text_loads_as_data() {
+    fn vault_and_unsafe_text_load_as_data() {
         let docs = load(
             "secret: !vault |\n  $ANSIBLE_VAULT;1.1;AES256\n  3132\n",
             "t.yml",
         )
         .unwrap();
-        let err = to_json(&docs[0]).unwrap_err();
-        assert!(format!("{err:#}").contains("vault"), "{err:#}");
+        let loaded = to_json(&docs[0]).unwrap();
+        let wrapped = loaded["secret"].as_str().unwrap();
+        assert_eq!(
+            vault_text(wrapped).as_deref(),
+            Some("$ANSIBLE_VAULT;1.1;AES256\n3132\n")
+        );
+        assert_eq!(unsafe_text(wrapped), None);
         let docs = load(
             "raw: !unsafe 'a \"{{ x }}\" \\ b'\nl: [!unsafe '{{ y }}', 3, plain]\nn: !unsafe [{k: '{{ z }}'}, 1]\n",
             "t.yml",

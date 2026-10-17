@@ -2192,39 +2192,6 @@ hidden
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// Nothing comes out before a pre-flight refusal: no banner, no task header, no recap.
-#[test]
-fn a_preflight_refusal_lets_nothing_out_before_it() {
-    let dir = probe_dir("preflight");
-    let probes = [
-        (
-            "with_unvault",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      command: echo hi\n      with_unvault: [x]\n",
-        ),
-        (
-            "with_unvault",
-            "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n          with_unvault: [x]\n",
-        ),
-    ];
-    for (kw, body) in probes {
-        let (code, text) = run_probe(&dir, kw, body, &[], None);
-        assert_eq!(code, 4, "{kw}: {text}");
-        assert!(
-            text.contains(&format!("keyword '{kw}' is not supported yet")),
-            "{kw} must name itself: {text}"
-        );
-        assert!(
-            !text.contains("PLAY ["),
-            "{kw}: nothing runs before a pre-flight refusal: {text}"
-        );
-        assert!(
-            !text.contains("PLAY RECAP"),
-            "{kw}: a refusal before the first connection has nothing to recap: {text}"
-        );
-    }
-    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
-}
-
 /// An escalation the host refuses hands its fork back before the driver carries on.
 #[test]
 fn a_refused_escalation_hands_its_fork_back_before_waiting() {
@@ -3322,6 +3289,14 @@ ok: [localhost] => (item=one) => {
         "task",
         "with_template",
         "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: done\n      with_template: [\"{{ playbook_dir }}/task-with_template.yml\"]\n      loop_control: {label: one}\n",
+        &[],
+        0,
+        "(item=one)",
+    ),
+    runs(
+        "task",
+        "with_unvault",
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: Probe task\n      debug:\n        msg: \"{{ item }}\"\n      with_unvault: [\"{{ playbook_dir }}/task-with_unvault.yml\"]\n      loop_control: {label: one}\n",
         &[],
         0,
         "(item=one)",
@@ -4586,61 +4561,6 @@ fn an_include_statement_refuses_an_argument_it_cannot_honour() {
         assert!(text.contains(message), "{text}");
         assert!(!text.contains("PLAY ["), "nothing runs before it: {text}");
     }
-}
-
-/// A keyword this release refuses, written inside a file a dynamic `include_tasks` pulls in, stops
-/// the statement instead of being read and dropped.
-#[test]
-fn a_keyword_this_release_refuses_is_refused_inside_an_included_file() {
-    let (kind, keyword, sentence) = (
-        "with-unvault",
-        "with_unvault: [x]",
-        "keyword 'with_unvault' is not supported yet",
-    );
-    let dir = probe_dir(&format!("spliced-{kind}"));
-    let marker = dir.join("marker");
-    std::fs::write(dir.join("inv.ini"), "h1 ansible_connection=local\n").expect("an inventory");
-    std::fs::write(
-        dir.join("play.yml"),
-        "- hosts: h1\n  gather_facts: false\n  tasks:\n    - name: Bring in a file\n      include_tasks: inc.yml\n",
-    )
-    .expect("the play");
-    std::fs::write(
-        dir.join("inc.yml"),
-        format!(
-            "- name: Runs for real\n  command: touch {}\n  {keyword}\n",
-            marker.display()
-        ),
-    )
-    .expect("the included file");
-    let out = volant_within(
-        &[
-            "playbook",
-            "-i",
-            dir.join("inv.ini").to_str().expect("a path"),
-            dir.join("play.yml").to_str().expect("a path"),
-        ],
-        PROBE_DEADLINE,
-    );
-    let text = format!(
-        "{}{}",
-        String::from_utf8_lossy(&out.stdout),
-        String::from_utf8_lossy(&out.stderr)
-    );
-    assert!(!marker.exists(), "{kind}: the task ran anyway:\n{text}");
-    assert_eq!(out.status.code(), Some(2), "{kind}: {text}");
-    assert!(
-        text.contains(&format!("task 'Runs for real': {sentence}")),
-        "{kind}: {text}"
-    );
-    assert!(
-        !text.contains("TASK [Runs for real]"),
-        "{kind}: nothing behind the statement ran: {text}"
-    );
-    assert!(
-        text.contains("failed=1"),
-        "{kind}: the statement failed for the host that asked: {text}"
-    );
 }
 
 /// `include_tasks` takes `file`, `_raw_params` and `apply`, and `apply` itself is refused: this

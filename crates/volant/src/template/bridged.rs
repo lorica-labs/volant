@@ -14,19 +14,12 @@ use serde_json::Map;
 
 use crate::bridge::{Bridge, BridgeError, PluginKind};
 
-/// Names never sent to the helper, with why. Vault secrets come in a later release;
-/// `inventory_hostnames` and `varnames` read the run's inventory and variables, which the helper
+/// Names never sent to the helper, with why. `inventory_hostnames` and `varnames` read the run's inventory and variables, which the helper
 /// does not have.
 const NOT_SENT: &[(PluginKind, &str, &str)] = &[
-    (PluginKind::Filter, "vault", VAULT),
-    (PluginKind::Filter, "unvault", VAULT),
-    (PluginKind::Test, "vault_encrypted", VAULT),
-    (PluginKind::Test, "vaulted_file", VAULT),
-    (PluginKind::Lookup, "unvault", VAULT),
     (PluginKind::Lookup, "inventory_hostnames", RUN_DATA),
     (PluginKind::Lookup, "varnames", RUN_DATA),
 ];
-const VAULT: &str = "vault secrets are not supported yet";
 const RUN_DATA: &str =
     "reads the run's inventory and variables, which the Python helper does not have";
 
@@ -284,7 +277,7 @@ impl fmt::Display for Said {
 
 impl std::error::Error for Said {}
 
-fn raise(text: String) -> Error {
+pub(super) fn raise(text: String) -> Error {
     Error::new(ErrorKind::InvalidOperation, text.clone()).with_source(Said(text))
 }
 

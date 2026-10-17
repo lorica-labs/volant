@@ -923,7 +923,7 @@ class ActionModule(ActionBase):
     "Command { cmd: \"/bin/sh -c 'echo hi && sleep 0'\", stdin: None, sudoable: false }",
     "PutFile { local: \"/local/in\", remote: \"/tmp/ansible-tmp-1/in\", mode: None }",
     "FetchFile { remote: \"/tmp/ansible-tmp-1/in\", local: \"/local/out\" }",
-    "Module { name: \"ansible.builtin.ping\", args: Object {\"data\": String(\"x\")}, files: [] }",
+    "Module { name: \"ansible.builtin.ping\", args: Object {\"data\": String(\"x\"), \"_ansible_module_name\": String(\"ansible.builtin.ping\")}, files: [] }",
     "HostVar { host: \"other\" }",
     "Tmp(Remove { path: \"/tmp/ansible-tmp-1\" })",
 ], Ok(serde_json::json!({"rc": 0, "stdout": "hi\n", "module": {"ping": "x"}, "other": 7, "args": {"k": "{{ a }}"}})))]

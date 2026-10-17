@@ -380,7 +380,7 @@ fn host_vars(inv: &Inventory, host: &str) -> Map<String, Value> {
 
 /// Sets a composed variable. The strings of it that no other variable of the host holds were
 /// computed, and are marked: a run treats the variable as data, `--list` wraps those strings.
-// ponytail: a computed string equal to an original one (`os | lower` on a lowercase value) stays
+// A computed string equal to an original one (`os | lower` on a lowercase value) stays
 // plain here and is wrapped in the reference; tracking the tags would need a tagged value type.
 fn set_var(inv: &mut Inventory, host: &str, name: &str, value: Value, vars: &Map<String, Value>) {
     let mut originals = HashSet::new();
@@ -470,7 +470,7 @@ fn is_blank(value: &Value) -> bool {
 
 /// A template failure as the reference words it in a plugin's message: the reason alone. An
 /// undefined read names the first name of the expression the host has no value for.
-// ponytail: the engine does not say which name was undefined; the first one not in `vars` is
+// The engine does not say which name was undefined; the first one not in `vars` is
 // right for a plain expression, and a nested attribute keeps the engine's wording.
 fn reason(error: &str, expr: &str, vars: &Map<String, Value>) -> String {
     let reason = error

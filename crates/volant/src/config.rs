@@ -31,6 +31,10 @@ pub struct Config {
     /// flags in place.
     pub become_exe: Option<String>,
     pub become_flags: Option<String>,
+    /// `vault_password_file` and `vault_identity_list`: where the vault secrets come from besides
+    /// the command line.
+    pub vault_password_file: Option<PathBuf>,
+    pub vault_identity_list: Vec<String>,
     /// Whether a host that failed still runs the handlers it notified. Measured on ansible-core
     /// 2.19.12: `[defaults] force_handlers = True` and `--force-handlers` give the same run, down
     /// to the recap.
@@ -92,6 +96,8 @@ impl Default for Config {
             become_method: DEFAULT_BECOME_METHOD.to_string(),
             become_exe: None,
             become_flags: None,
+            vault_password_file: None,
+            vault_identity_list: Vec::new(),
             force_handlers: false,
             show_custom_stats: false,
             roles_path: default_roles_path(),
@@ -145,6 +151,17 @@ fn home() -> Option<PathBuf> {
         .or_else(|| std::env::var_os("USERPROFILE"))
         .filter(|value| !value.is_empty())
         .map(PathBuf::from)
+}
+
+/// `path` with a leading `~` or `~/` replaced by the home directory, anchored on `base` when it
+/// is still relative.
+fn expand_home(path: &str, base: &Path) -> PathBuf {
+    match (path.strip_prefix('~'), home()) {
+        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
+            home.join(rest.trim_start_matches('/'))
+        }
+        _ => base.join(path),
+    }
 }
 
 /// A colon-separated list of directories, as every Ansible path setting is written. Relative
@@ -295,6 +312,14 @@ impl Config {
         }
         // The environment replaces the file's list rather than adding to it, the way every
         // other list setting here does; the command line is what adds to whichever won.
+        if let Ok(path) = std::env::var("ANSIBLE_VAULT_PASSWORD_FILE")
+            && !path.is_empty()
+        {
+            config.vault_password_file = Some(PathBuf::from(path));
+        }
+        if let Ok(list) = std::env::var("ANSIBLE_VAULT_IDENTITY_LIST") {
+            config.vault_identity_list = tag_list(&list);
+        }
         if let Ok(list) = std::env::var("ANSIBLE_RUN_TAGS") {
             config.tags_run = tag_list(&list);
         }
@@ -501,6 +526,13 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
                     config.remote_user = Some(user.to_string());
                 }
             }
+            "vault_password_file" => {
+                let path = value.trim();
+                if !path.is_empty() {
+                    config.vault_password_file = Some(expand_home(path, base));
+                }
+            }
+            "vault_identity_list" => config.vault_identity_list = tag_list(value),
             "private_key_file" => {
                 let path = value.trim();
                 if !path.is_empty() {
@@ -651,6 +683,46 @@ native_modules = maybe
         unsafe { std::env::remove_var("VOLANT_NATIVE_MODULES") };
         assert!(Config::load().unwrap().native_modules);
         unsafe {
+            match saved_config {
+                Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
+                None => std::env::remove_var("ANSIBLE_CONFIG"),
+            }
+        }
+    }
+
+    #[test]
+    fn the_vault_settings_come_from_the_file_and_the_environment() {
+        let c = cfg(
+            "[defaults]
+vault_password_file = pw
+vault_identity_list = a@x, b@prompt
+",
+            "/etc/x",
+        );
+        assert_eq!(c.vault_password_file, Some(PathBuf::from("/etc/x/pw")));
+        assert_eq!(c.vault_identity_list, ["a@x", "b@prompt"]);
+        if let Some(home) = home() {
+            let c = cfg(
+                "[defaults]
+vault_password_file = ~/.vault_pass
+",
+                "/etc/x",
+            );
+            assert_eq!(c.vault_password_file, Some(home.join(".vault_pass")));
+        }
+
+        let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
+        unsafe {
+            std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+            std::env::set_var("ANSIBLE_VAULT_PASSWORD_FILE", "/v/pw");
+            std::env::set_var("ANSIBLE_VAULT_IDENTITY_LIST", "x@pw1, y@prompt");
+        }
+        let c = Config::load().unwrap();
+        assert_eq!(c.vault_password_file, Some(PathBuf::from("/v/pw")));
+        assert_eq!(c.vault_identity_list, ["x@pw1", "y@prompt"]);
+        unsafe {
+            std::env::remove_var("ANSIBLE_VAULT_PASSWORD_FILE");
+            std::env::remove_var("ANSIBLE_VAULT_IDENTITY_LIST");
             match saved_config {
                 Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
                 None => std::env::remove_var("ANSIBLE_CONFIG"),

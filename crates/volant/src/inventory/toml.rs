@@ -28,6 +28,7 @@ impl InventoryPlugin for Toml {
         let failed = |message: String| PluginError {
             message,
             origin: None,
+            cause: None,
             unsupported: false,
         };
         let bytes = std::fs::read(source.path()).map_err(|e| {

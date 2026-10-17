@@ -37,6 +37,7 @@ impl InventoryPlugin for Ini {
         let failed = |message: String| PluginError {
             message: format!("Failed to parse inventory: {message}"),
             origin: Some(source.text().to_string()),
+            cause: None,
             unsupported: false,
         };
         let bytes = std::fs::read(source.path()).map_err(|e| failed(e.to_string()))?;

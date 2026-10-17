@@ -34,6 +34,9 @@ pub struct Play {
     /// prints them on the play's own line.
     pub tags: Vec<String>,
     pub gather_facts: bool,
+    /// Whether the play wrote `gather_facts` at all: `gathering = explicit` gathers only for a
+    /// play that did.
+    pub gather_written: bool,
     pub vars: Map<String, Value>,
     pub vars_files: Vec<String>,
     pub tasks: Vec<TaskOrBlock>,
@@ -645,20 +648,26 @@ fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Yaml<'a>)> {
     }
 }
 
-/// The deprecation the reference prints, on stderr, for a mapping given as an action.
-fn warn_action_mapping(node: &Yaml) {
+/// A `[DEPRECATION WARNING]:` block on stderr, after the line that says how to silence them,
+/// printed once per run.
+pub(crate) fn print_deprecation(text: &str) {
     static HEADER: std::sync::Once = std::sync::Once::new();
     HEADER.call_once(|| {
         eprintln!(
             "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
         );
     });
+    eprintln!("[DEPRECATION WARNING]: {text}\n");
+}
+
+/// The deprecation the reference prints, on stderr, for a mapping given as an action.
+fn warn_action_mapping(node: &Yaml) {
     let origin = value_origin(node)
         .map(|origin| format!("{}\n\n", crate::render::source_context(&origin)))
         .unwrap_or_default();
-    eprintln!(
-        "[DEPRECATION WARNING]: Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n{origin}Use a string value for `action`.\n"
-    );
+    print_deprecation(&format!(
+        "Using a mapping for `action` is deprecated. This feature will be removed from ansible-core version 2.23.\n{origin}Use a string value for `action`."
+    ));
 }
 
 /// A keyword whose value has to be a boolean, refused in the reference's own words when it is
@@ -1045,7 +1054,8 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         .and_then(Yaml::as_str)
         .unwrap_or(&hosts)
         .to_string();
-    let gather_facts = boolean(yaml, "gather_facts")?.unwrap_or(true);
+    let gather_written = boolean(yaml, "gather_facts")?;
+    let gather_facts = gather_written.unwrap_or(true);
     let vars = match field(yaml, "vars") {
         None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
         Some(v) => match to_json(v).context("'vars'")? {
@@ -1098,6 +1108,7 @@ fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         host_patterns,
         tags: tags(yaml, "")?,
         gather_facts,
+        gather_written: gather_written.is_some(),
         vars,
         vars_files,
         tasks,

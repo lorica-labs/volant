@@ -6,6 +6,7 @@
 mod host_list;
 mod ini;
 pub mod ranges;
+mod script;
 mod sources;
 mod toml;
 mod yaml;
@@ -26,10 +27,7 @@ pub use sources::{
 const PLUGINS: &[&dyn InventoryPlugin] = &[
     &host_list::HostList { advanced: false },
     &host_list::HostList { advanced: true },
-    &sources::Pending {
-        name: "script",
-        verify: sources::executable,
-    },
+    &script::Script,
     &sources::Pending {
         name: "auto",
         verify: |s| sources::file_with_extension(s, &[Some("yml"), Some("yaml")]),
@@ -135,7 +133,7 @@ impl Inventory {
                 .into_iter()
                 .filter_map(|n| match n {
                     Note::Warning(text) => Some(text),
-                    Note::Verbose(..) => None,
+                    Note::Verbose(..) | Note::Deprecation(_) => None,
                 })
                 .collect();
             anyhow::bail!(reasons.join(

@@ -1,0 +1,4 @@
+# --flush-cache: the entries of the inventory hosts are not read for the run.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, --flush-cache, play.yml]

@@ -1,0 +1,6 @@
+# refresh_inventory reads every -i source again: an edited file and the host list beside it
+# are merged anew, set_fact facts stay, a new host joins the next play. --limit still narrows
+# ansible_play_hosts_all.
+runs:
+  - {args: [-i, inv.ini, -i, "hl1,", play.yml]}
+  - {args: [-i, inv.ini, -i, "hl1,", -l, h1, play.yml]}

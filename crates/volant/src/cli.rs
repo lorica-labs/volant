@@ -184,7 +184,7 @@ pub struct PlaybookArgs {
     /// Ask before each task whether to run it. Needs a terminal.
     #[arg(long = "step")]
     pub step: bool,
-    /// Accepted for compatibility: there is no fact cache plugin yet, so nothing is cleared.
+    /// Remove the fact cache entries of the inventory hosts before the run.
     #[arg(long = "flush-cache")]
     pub flush_cache: bool,
     /// Print the version and the ansible-core release it matches, and stop.
@@ -336,7 +336,10 @@ pub fn run(args: PlaybookArgs) -> i32 {
     let code = match runtime.block_on(run_all(&args, &mut out, &profile)) {
         Ok(code) => code,
         Err(err) => {
-            eprintln!("ERROR! {err:#}");
+            match err.downcast_ref::<Refusal>() {
+                Some(r) if r.plain => eprintln!("[ERROR]: {}", r.message),
+                _ => eprintln!("ERROR! {err:#}"),
+            }
             error_code(&err)
         }
     };
@@ -398,6 +401,7 @@ async fn run_all(
         match note {
             Note::Verbose(level, text) => out.verbose(*level, text),
             Note::Warning(text) => out.warning(text, false),
+            Note::Deprecation(text) => playbook::print_deprecation(text),
         }
     }
     if let Some(fatal) = loaded.error {
@@ -419,6 +423,11 @@ async fn run_all(
     } else {
         Vec::new()
     };
+    // The cache directory is made when the plugin loads, before any playbook is read.
+    let (cache, cache_warnings) = crate::fact_cache::FactCache::open(&config);
+    for warning in &cache_warnings {
+        out.warning(warning, false);
+    }
     let compiling = std::time::Instant::now();
     let mut playbooks = args
         .playbooks
@@ -436,6 +445,10 @@ async fn run_all(
             .diff
             .take()
             .or(args.diff.then_some(playbook::Flag::Fixed(true)));
+        // `gathering = explicit` gathers for the plays that ask and for no other.
+        if config.gathering == "explicit" && !play.gather_written {
+            play.gather_facts = false;
+        }
     }
     let mode = Listing {
         tasks: args.list_tasks,
@@ -756,6 +769,36 @@ async fn run_all(
     let extra_for_check = extra.clone();
     let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra)?;
     store.set_forks(forks);
+    store.set_reload(
+        sources.clone(),
+        config.inventory_plugins.clone(),
+        limit.clone(),
+    );
+    if let Some(cache) = &cache {
+        let names: Vec<String> = inventory
+            .resolve("all")
+            .hosts
+            .into_iter()
+            .map(|h| h.name)
+            .collect();
+        if args.flush_cache {
+            cache
+                .flush(names.iter().map(String::as_str))
+                .map_err(|e| anyhow::anyhow!("Unable to flush the fact cache: {e}"))?;
+        }
+        for name in &names {
+            match cache.read(name) {
+                Ok(Some(facts)) => store.load_cached(name, facts),
+                Ok(None) => {}
+                // Reported once the play's banner is out, as the reference does.
+                Err(failure) => {
+                    store.fail_cache(failure);
+                    break;
+                }
+            }
+        }
+    }
+    store.set_fact_cache(cache, config.gathering == "smart");
     // Where `setup` gets its facts, decided once for the whole run from everything its plays can
     // read. The run's native policy goes on whatever union came back, built or kept from an
     // earlier run: a union nobody armed keeps `Natives::default()`, which is natives off.
@@ -877,6 +920,7 @@ async fn run_all(
                     play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,
                 )
                 .await?;
+                state.vars.lock().expect("vars lock").end_play();
                 // `meta: refresh_inventory` read the file again: the plays behind this one
                 // resolve their hosts against what it found.
                 if let Some(fresh) = state.refreshed.take() {

@@ -2,14 +2,14 @@
 //! Variable sources and their precedence, from inventory groups up to extra vars, plus the
 //! magic variables Ansible defines for every host.
 
-use std::collections::{BTreeMap, BTreeSet};
+use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
-use crate::inventory::{Inventory, Source, is_localhost};
+use crate::inventory::{Inventory, PluginConfig, Source, is_localhost};
 use crate::stats::CustomStats;
 use crate::template::{Templar, Vars};
 use crate::yaml;
@@ -166,6 +166,16 @@ pub struct VarStore {
     gathered: BTreeMap<String, Arc<Map<String, Value>>>,
     /// Restricted fact names already warned about: the reference says each once per run.
     warned_restricted: BTreeSet<String>,
+    /// What the fact cache holds per host: the gathered facts as the modules returned them, and
+    /// the `set_fact` ones that said `cacheable`, tagged as the file holds them. A host with an
+    /// entry is a host `gathering = smart` does not gather again.
+    persisted: BTreeMap<String, Map<String, Value>>,
+    /// The `jsonfile` cache the entries are written to, when the run has one.
+    fact_cache: Option<crate::fact_cache::FactCache>,
+    /// `gathering = smart`.
+    smart: bool,
+    /// A cache file that could not be read, reported when the first play starts.
+    cache_failure: Option<crate::fact_cache::CacheFailure>,
     /// Of the `set_fact` layer's facts, the names that came from a managed host rather than
     /// from the playbook.
     untrusted: BTreeMap<String, BTreeSet<String>>,
@@ -213,10 +223,28 @@ pub struct VarStore {
     /// The inventory as `add_host`, `group_by` and a refresh left it: the one the plays behind
     /// the current one resolve their hosts against.
     dynamic: Inventory,
+    /// What `add_host` and `group_by` did, in order, which a refresh applies again to the
+    /// sources it reads anew.
+    added: Vec<Added>,
+    /// The hosts the play's pattern found after a refresh, which `ansible_play_hosts_all` shows
+    /// in place of the play's starting list until the play ends.
+    play_hosts_all: Option<Vec<String>>,
+    /// The hosts `--limit` narrows the run to, which a refresh applies to the play's hosts too.
+    limit: Option<HashSet<String>>,
+    /// The sources and plugin settings a refresh reads again.
+    reload: Option<(Vec<Source>, PluginConfig)>,
     /// Whether `dynamic` moved since the command line last took it.
     inventory_changed: bool,
     /// What `set_stats` collected, printed after the recap when the run asks for it.
     custom_stats: CustomStats,
+}
+
+/// One change a play made to the inventory.
+#[derive(Debug)]
+enum Added {
+    Host(String, BTreeMap<String, Value>),
+    Member(String, String),
+    Child(String, String),
 }
 
 /// Whether any string in `value`, at any depth, is a template.
@@ -542,6 +570,10 @@ impl VarStore {
             facts: BTreeMap::new(),
             gathered: BTreeMap::new(),
             warned_restricted: BTreeSet::new(),
+            persisted: BTreeMap::new(),
+            fact_cache: None,
+            smart: false,
+            cache_failure: None,
             untrusted: BTreeMap::new(),
             extra,
             forks: crate::config::DEFAULT_FORKS,
@@ -561,6 +593,10 @@ impl VarStore {
             shared: None,
             templated_facts: false,
             dynamic: inventory.clone(),
+            added: Vec::new(),
+            reload: None,
+            limit: None,
+            play_hosts_all: None,
             inventory_changed: false,
             custom_stats: CustomStats::default(),
         })
@@ -579,26 +615,63 @@ impl VarStore {
             .chain([&self.extra])
     }
 
-    /// The inventory file this run reads, which `meta: refresh_inventory` reads again.
-    pub fn inventory_file(&self) -> Option<&Path> {
-        self.inventory_file.as_deref()
+    /// Keeps the sources `meta: refresh_inventory` reads again.
+    pub fn set_reload(
+        &mut self,
+        sources: Vec<Source>,
+        config: PluginConfig,
+        limit: Option<HashSet<String>>,
+    ) {
+        self.reload = Some((sources, config));
+        self.limit = limit;
+    }
+
+    /// After a refresh, `ansible_play_hosts_all` lists `hosts`: new hosts show at once, removed
+    /// ones are gone, and none of them changes who runs the rest of the play.
+    pub fn set_play_hosts_all(&mut self, mut hosts: Vec<String>) {
+        if let Some(limit) = &self.limit {
+            hosts.retain(|h| limit.contains(h));
+        }
+        self.play_hosts_all = Some(hosts);
+        self.shared = None;
+    }
+
+    /// The play is over: `ansible_play_hosts_all` is the next play's own list again.
+    pub fn end_play(&mut self) {
+        if self.play_hosts_all.take().is_some() {
+            self.shared = None;
+        }
+    }
+
+    /// The sources and plugin settings a refresh reads again, when there are some.
+    pub fn reload(&self) -> Option<(Vec<Source>, PluginConfig)> {
+        self.reload.clone()
     }
 
     /// Replaces what the store knows of the inventory with `inventory`'s groups, hosts and
-    /// variables, as `meta: refresh_inventory` does mid-play. The facts hosts gathered and the
-    /// facts the playbook set stay where they are: the reference's refresh re-reads its sources
-    /// and touches neither.
-    pub fn refresh_inventory(&mut self, inventory: &Inventory) {
+    /// variables, as `meta: refresh_inventory` does mid-play, and puts back the hosts and groups
+    /// `add_host` and `group_by` made. The facts hosts gathered and the facts the playbook set
+    /// stay where they are: the reference's refresh re-reads its sources and touches neither.
+    /// Returns the inventory the store now holds.
+    pub fn refresh_inventory(&mut self, inventory: &Inventory) -> Inventory {
+        self.dynamic = inventory.clone();
+        for change in &self.added {
+            match change {
+                Added::Host(name, vars) => self.dynamic.add_host(name, vars.clone()),
+                Added::Member(host, group) => self.dynamic.add_member(host, group),
+                Added::Child(parent, child) => self.dynamic.add_child(parent, child),
+            }
+        }
         (
             self.groups,
             self.inventory_vars,
             self.host_line_vars,
             self.group_names,
-        ) = inventory_maps(inventory);
-        self.dynamic = inventory.clone();
+        ) = inventory_maps(&self.dynamic);
         self.inventory_changed = false;
         self.forget_hostvars();
         self.shared = None;
+        self.dynamic.clone()
     }
 
     /// `add_host`: the host joins the inventory with `vars` on its line and the groups named,
@@ -609,14 +682,16 @@ impl VarStore {
         // playbook did not write (a fact, a registered result): it is data, kept as an untrusted
         // fact of the host and never rendered again. The rest sits on the host's inventory line.
         let (data, line): (Vec<_>, Vec<_>) = vars.iter().partition(|(_, v)| holds_template(v));
-        self.dynamic.add_host(
-            name,
-            line.into_iter()
-                .map(|(k, v)| (k.clone(), v.clone()))
-                .collect(),
-        );
+        let line: BTreeMap<String, Value> = line
+            .into_iter()
+            .map(|(k, v)| (k.clone(), v.clone()))
+            .collect();
+        self.dynamic.add_host(name, line.clone());
+        self.added.push(Added::Host(name.to_string(), line));
         for group in groups.iter().filter(|g| *g != "all") {
             self.dynamic.add_member(name, group);
+            self.added
+                .push(Added::Member(name.to_string(), group.clone()));
         }
         self.inventory_moved();
         for (key, value) in data {
@@ -629,8 +704,12 @@ impl VarStore {
         if group != "all" {
             for parent in parents.iter().filter(|p| *p != "all") {
                 self.dynamic.add_child(parent, group);
+                self.added
+                    .push(Added::Child(parent.clone(), group.to_string()));
             }
             self.dynamic.add_member(host, group);
+            self.added
+                .push(Added::Member(host.to_string(), group.to_string()));
         }
         self.inventory_moved();
     }
@@ -781,6 +860,81 @@ impl VarStore {
     /// caller's `Removed restricted key from module data` warning. The namespaced copy keeps
     /// them, as the reference's does: nothing reads a connection setting from there.
     pub fn gather_facts(&mut self, host: &str, facts: &Map<String, Value>) -> Vec<String> {
+        let removed = self.merge_gathered(host, facts);
+        if !self.caching() {
+            return removed;
+        }
+        self.persisted
+            .entry(host.to_string())
+            .or_default()
+            .extend(facts.iter().map(|(k, v)| (k.clone(), v.clone())));
+        self.write_cache(host);
+        removed
+    }
+
+    /// Sets the fact cache the run writes to and whether `gathering` is `smart`.
+    pub fn set_fact_cache(&mut self, cache: Option<crate::fact_cache::FactCache>, smart: bool) {
+        self.fact_cache = cache;
+        self.smart = smart;
+    }
+
+    pub fn fail_cache(&mut self, failure: crate::fact_cache::CacheFailure) {
+        self.cache_failure = Some(failure);
+    }
+
+    pub fn take_cache_failure(&mut self) -> Option<crate::fact_cache::CacheFailure> {
+        self.cache_failure.take()
+    }
+
+    pub fn fact_cache(&self) -> Option<&crate::fact_cache::FactCache> {
+        self.fact_cache.as_ref()
+    }
+
+    /// Takes what the cache held for `host` as that host's gathered facts, without writing it
+    /// back.
+    pub fn load_cached(&mut self, host: &str, facts: Map<String, Value>) {
+        self.merge_gathered(host, &facts);
+        self.persisted.insert(host.to_string(), facts);
+    }
+
+    /// Whether anything reads `persisted` back: a `jsonfile` cache, or `gathering = smart`.
+    fn caching(&self) -> bool {
+        self.fact_cache.is_some() || self.smart
+    }
+
+    /// Whether `gathering = smart` has no need to gather `host`: the cache holds facts a gather
+    /// left, which the reference marks with `_ansible_facts_gathered`.
+    pub fn skips_gathering(&self, host: &str) -> bool {
+        self.smart
+            && self
+                .persisted
+                .get(host)
+                .and_then(|facts| facts.get("_ansible_facts_gathered"))
+                .and_then(Value::as_bool)
+                .unwrap_or(false)
+    }
+
+    /// Adds a `set_fact` that said `cacheable: true` to `host`'s cache entry.
+    /// The file is written by [`VarStore::write_cache`], once per task.
+    pub fn cache_fact(&mut self, host: &str, key: &str, value: &Value) {
+        if !self.caching() {
+            return;
+        }
+        self.persisted
+            .entry(host.to_string())
+            .or_default()
+            .insert(key.to_string(), crate::fact_cache::tag(value));
+    }
+
+    pub fn write_cache(&self, host: &str) {
+        if let (Some(cache), Some(entry)) = (&self.fact_cache, self.persisted.get(host))
+            && let Err(err) = cache.write(host, entry)
+        {
+            eprintln!("[WARNING]: Unable to write the fact cache entry of {host}: {err}");
+        }
+    }
+
+    fn merge_gathered(&mut self, host: &str, facts: &Map<String, Value>) -> Vec<String> {
         // Before the write, so the store holds the only reference it can: a task still holding
         // the gathered map keeps its snapshot, and this write goes to a copy.
         self.host_facts.remove(host);
@@ -1180,7 +1334,12 @@ impl VarStore {
         // `add_host` runs inside a `serial` play; here it stays the play's own list.
         map.insert(
             "ansible_play_hosts_all".to_string(),
-            serde_json::to_value(&scope.all_play_hosts).unwrap_or_default(),
+            serde_json::to_value(
+                self.play_hosts_all
+                    .as_ref()
+                    .unwrap_or(&scope.all_play_hosts),
+            )
+            .unwrap_or_default(),
         );
         map.insert("ansible_play_batch".to_string(), batch.clone());
         map.insert("play_hosts".to_string(), batch);
@@ -2399,6 +2558,31 @@ h2
         );
         assert_eq!(store.shared_values(&at)["groups"]["g"], json!(["h1", "h2"]));
         assert!(store.hostvars_shared("h1").contains_key("h2"));
+    }
+
+    /// A refresh reads the sources anew but keeps the hosts and groups `add_host` made.
+    #[test]
+    fn a_refresh_keeps_the_added_hosts() {
+        let tmp = scratch();
+        let inv = Inventory::parse_ini(
+            "[g]
+h1
+",
+        )
+        .unwrap();
+        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        store.add_host("dyn", &["g_dyn".to_string()], &Map::new());
+        let fresh = Inventory::parse_ini(
+            "[g]
+h2
+",
+        )
+        .unwrap();
+        let kept = store.refresh_inventory(&fresh);
+        let groups = kept.groups();
+        assert_eq!(groups["g"], ["h2"]);
+        assert_eq!(groups["g_dyn"], ["dyn"]);
+        assert!(store.take_inventory_changes().is_none());
     }
 
     /// A host and a group added mid-run show in `groups` and `hostvars` at once, an existing

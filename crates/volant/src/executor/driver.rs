@@ -2592,7 +2592,22 @@ pub(super) async fn drive_host(
                     // the trust each of them earned. Under `delegate_facts` they are the
                     // delegate's, as on the controller-side path; the registered result stays
                     // with the host the task was written for.
-                    record_facts(&mut vars, fact_hosts, &results)
+                    let removed = record_facts(&mut vars, fact_hosts, &results);
+                    // What the reference's `gather_facts` action adds, and what `gathering =
+                    // smart` looks for in the cache.
+                    if task.name == "Gathering Facts"
+                        && task.module == "ansible.legacy.setup"
+                        && !results.iter().any(|(_, r)| r.failed())
+                    {
+                        let mark = Map::from_iter([(
+                            "_ansible_facts_gathered".to_string(),
+                            Value::Bool(true),
+                        )]);
+                        for host in fact_hosts {
+                            vars.gather_facts(host, &mark);
+                        }
+                    }
+                    removed
                 };
                 // A name, never a value, so there is nothing in it for `no_log` to hide.
                 for key in removed {

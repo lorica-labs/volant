@@ -201,6 +201,9 @@ fn aggregated(held: &Value, new: &Value) -> Option<Value> {
 pub struct Refusal {
     pub code: i32,
     pub message: String,
+    /// Printed as `[ERROR]: message`, the reference's line for an error raised while the run
+    /// goes, instead of `ERROR! message`.
+    pub plain: bool,
 }
 
 impl Refusal {
@@ -211,6 +214,16 @@ impl Refusal {
         anyhow::Error::new(Refusal {
             code,
             message: format!("{err}"),
+            plain: false,
+        })
+    }
+
+    /// An error that stops the run at `code` and is printed as `[ERROR]: message`.
+    pub fn plain(code: i32, message: String) -> anyhow::Error {
+        anyhow::Error::new(Refusal {
+            code,
+            message,
+            plain: true,
         })
     }
 

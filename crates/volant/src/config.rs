@@ -82,6 +82,16 @@ pub struct Config {
     /// `[volant] ssh_control_master`, or `VOLANT_SSH_CONTROL_MASTER`: whether the `ssh` runs
     /// of one inventory host share one connection. On by default.
     pub ssh_control_master: bool,
+    /// `fact_caching` (`ANSIBLE_CACHE_PLUGIN`): `memory`, the default, or `jsonfile`.
+    pub fact_caching: String,
+    /// `fact_caching_connection`: the directory `jsonfile` keeps its files in.
+    pub fact_caching_connection: Option<PathBuf>,
+    /// `fact_caching_timeout`, in seconds; `0` never expires, as in the reference.
+    pub fact_caching_timeout: i64,
+    /// `fact_caching_prefix`: put in front of every file name.
+    pub fact_caching_prefix: String,
+    /// `gathering`: `implicit`, `explicit` or `smart`.
+    pub gathering: String,
 }
 
 impl Default for Config {
@@ -111,6 +121,11 @@ impl Default for Config {
             batching: false,
             native_modules: true,
             ssh_control_master: true,
+            fact_caching: "memory".to_string(),
+            fact_caching_connection: None,
+            fact_caching_timeout: 86400,
+            fact_caching_prefix: String::new(),
+            gathering: "implicit".to_string(),
         }
     }
 }
@@ -288,6 +303,26 @@ impl Config {
         {
             config.show_custom_stats = on;
         }
+        let cwd = std::env::current_dir().unwrap_or_default();
+        if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN") {
+            config.fact_caching = cache_plugin(&value, "env: ANSIBLE_CACHE_PLUGIN")?;
+        }
+        if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN_CONNECTION") {
+            config.fact_caching_connection = Some(expand_home(value.trim(), &cwd));
+        }
+        if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN_TIMEOUT") {
+            config.fact_caching_timeout = integer(
+                "CACHE_PLUGIN_TIMEOUT",
+                "env: ANSIBLE_CACHE_PLUGIN_TIMEOUT",
+                &value,
+            )?;
+        }
+        if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN_PREFIX") {
+            config.fact_caching_prefix = value;
+        }
+        if let Ok(value) = std::env::var("ANSIBLE_GATHERING") {
+            config.gathering = gathering(&value, "env: ANSIBLE_GATHERING")?;
+        }
         if let Ok(value) = std::env::var("VOLANT_BATCHING")
             && let Some(on) = switch(&value)
         {
@@ -399,6 +434,37 @@ fn integer(name: &str, origin: &str, value: &str) -> anyhow::Result<i64> {
             ),
         )
     })
+}
+
+/// The fact cache plugin a setting names. Only the two the engine has are accepted: any other is
+/// refused by name rather than run with no cache.
+fn cache_plugin(value: &str, origin: &str) -> anyhow::Result<String> {
+    match value.trim() {
+        "" => Ok("memory".to_string()),
+        name @ ("memory" | "jsonfile" | "ansible.builtin.memory" | "ansible.builtin.jsonfile") => {
+            Ok(name.trim_start_matches("ansible.builtin.").to_string())
+        }
+        other => Err(crate::stats::Refusal::at(
+            4,
+            format!(
+                "fact cache plugin '{other}' (from '{origin}') is not supported yet; use 'memory' or 'jsonfile'"
+            ),
+        )),
+    }
+}
+
+/// The `gathering` policy: one of the three words the reference knows, refused otherwise.
+fn gathering(value: &str, origin: &str) -> anyhow::Result<String> {
+    match value.trim() {
+        "" => Ok("implicit".to_string()),
+        word @ ("implicit" | "explicit" | "smart") => Ok(word.to_string()),
+        other => Err(crate::stats::Refusal::at(
+            5,
+            format!(
+                "Config 'DEFAULT_GATHERING' from '{origin}' has an invalid value: Invalid value provided for 'gathering': '{other}'; expected one of implicit, explicit, smart"
+            ),
+        )),
+    }
 }
 
 /// A negative `forks` is clamped to zero, where the single startup check refuses it with the
@@ -617,6 +683,15 @@ fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
             // A zero reaches the caller as zero, where the single startup check refuses it.
             // A value that is no number at all is the reference's own exit 5 instead.
             "forks" => config.forks = forks(integer("DEFAULT_FORKS", origin, value)?),
+            "fact_caching" => config.fact_caching = cache_plugin(value, origin)?,
+            "fact_caching_connection" => {
+                config.fact_caching_connection = Some(expand_home(value.trim(), base));
+            }
+            "fact_caching_timeout" => {
+                config.fact_caching_timeout = integer("CACHE_PLUGIN_TIMEOUT", origin, value)?;
+            }
+            "fact_caching_prefix" => config.fact_caching_prefix = value.trim().to_string(),
+            "gathering" => config.gathering = gathering(value, origin)?,
             "roles_path" => {
                 let list = path_list(value, base);
                 if !list.is_empty() {

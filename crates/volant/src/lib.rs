@@ -10,6 +10,7 @@ pub(crate) mod collection;
 pub(crate) mod compile;
 pub mod config;
 pub(crate) mod executor;
+pub(crate) mod fact_cache;
 pub(crate) mod facts_read;
 pub mod inventory;
 pub mod keywords;

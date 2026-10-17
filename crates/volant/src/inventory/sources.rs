@@ -124,6 +124,9 @@ impl Default for PluginConfig {
 pub struct PluginError {
     pub message: String,
     pub origin: Option<String>,
+    /// What this error was raised from: its message and its `Origin:`, a second block of the
+    /// reference's chain.
+    pub cause: Option<(String, String)>,
     /// A plugin this release does not have yet: refused by name when no other plugin reads the
     /// source, rather than reported as a source that could not be parsed.
     pub unsupported: bool,
@@ -134,6 +137,7 @@ impl PluginError {
         Self {
             message: format!("the {plugin} inventory plugin is not supported yet"),
             origin: None,
+            cause: None,
             unsupported: true,
         }
     }
@@ -174,6 +178,11 @@ impl<'a> ParseCx<'a> {
     pub fn warn(&self, text: String) {
         self.notes.borrow_mut().push(Note::Warning(text));
     }
+
+    /// A `[DEPRECATION WARNING]:` block.
+    pub fn deprecate(&self, text: String) {
+        self.notes.borrow_mut().push(Note::Deprecation(text));
+    }
 }
 
 /// One inventory plugin: whether it takes a source, and reading it into the inventory. What it
@@ -190,6 +199,8 @@ pub trait InventoryPlugin: Sync {
 pub enum Note {
     Verbose(u8, String),
     Warning(String),
+    /// A `[DEPRECATION WARNING]:` block, its `Origin:` line included.
+    Deprecation(String),
 }
 
 /// The end of reading every source: the run stops with `code` after printing `[ERROR]: message`.
@@ -378,10 +389,17 @@ impl Chain<'_, '_> {
                 )
             });
             let message = err.message;
+            let (first, more) = match err.cause {
+                Some((cause, cause_origin)) => (
+                    format!("{}: {cause}", message.trim_end_matches('.')),
+                    format!("\n<<< caused by >>>\n\n{cause}\nOrigin: {cause_origin}\n"),
+                ),
+                None => (message.clone(), String::new()),
+            };
             self.cx.warn(format!(
-                "Failed to parse inventory with '{plugin}' plugin: {message}\n\nFailed to parse \
+                "Failed to parse inventory with '{plugin}' plugin: {first}\n\nFailed to parse \
                  inventory with '{plugin}' plugin.\n\n<<< caused by >>>\n\n{message}\nOrigin: \
-                 {origin}\n"
+                 {origin}\n{more}"
             ));
         }
         if self.cx.config.any_unparsed_is_failed {

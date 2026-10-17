@@ -35,6 +35,22 @@ advanced_host_list_only: {sources: ["web[1:3],"], env: {ANSIBLE_INVENTORY_ENABLE
 yaml_empty_sections: {sources: [empty_sections.yml]}
 toml_empty: {sources: [empty.toml]}
 toml_plugin: {sources: [plugin.toml]}
-yaml_empty_sections: {sources: [empty_sections.yml]}
-toml_empty: {sources: [empty.toml]}
-toml_plugin: {sources: [plugin.toml]}
+script_meta: {sources: [script_meta.sh]}
+script_nometa: {sources: [script_nometa.sh]}
+script_empty: {sources: [script_empty.sh]}
+script_fail: {sources: [script_fail.sh]}
+script_badjson: {sources: [script_badjson.sh]}
+script_list: {sources: [script_list.sh]}
+script_nohv: {sources: [script_nohv.sh]}
+script_noexec: {sources: [script_noexec.sh]}
+script_then_ini: {sources: [script_meta.sh, one.ini]}
+script_failed_then_ini: {sources: [script_fail.sh, one.ini]}
+script_order: {sources: [script_order.sh]}
+script_meta_int: {sources: [script_meta_int.sh]}
+script_hostvars_late: {sources: [script_hostvars_late.sh]}
+script_hostvars_late_then_ini: {sources: [script_hostvars_late.sh, one.ini]}
+script_hosts_str: {sources: [script_hosts_str.sh]}
+script_vars_list: {sources: [script_vars_list.sh]}
+script_malformed: {sources: [script_malformed.sh]}
+script_host_empty: {sources: [script_host_empty.sh]}
+script_host_bad: {sources: [script_host_bad.sh]}

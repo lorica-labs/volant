@@ -261,6 +261,22 @@ pub async fn run_play(
     let max_fail = max_fail_percentage(play, &state.templar, &play_vars)?;
     check_gather_keywords(play, &state.templar, &play_vars)?;
     let all: Vec<String> = hosts.iter().map(|h| h.name.clone()).collect();
+    // `gathering = smart`: the hosts the cache already answers for leave the `Gathering Facts`
+    // step to the others, and a step nobody runs shows nothing at all.
+    let masked = {
+        let store = state.vars.lock().expect("vars lock");
+        let wanting: Vec<String> = all
+            .iter()
+            .filter(|h| !store.skips_gathering(h))
+            .cloned()
+            .collect();
+        (compiled.gathers && wanting.len() < all.len()).then(|| {
+            let mut copy = compiled.clone();
+            copy.steps[0].hosts = Some(wanting.into());
+            copy
+        })
+    };
+    let compiled = masked.as_ref().unwrap_or(compiled);
     let playbook_dir = state
         .vars
         .lock()
@@ -313,6 +329,15 @@ pub async fn run_play(
         // number or does not render at all stops the run before the banner, with nothing on
         // stdout.
         out.play(&play.name);
+        // A cache file the run could not read stops it here, after the banner: warning, error,
+        // exit 1, no recap.
+        let failure = state.vars.lock().expect("vars lock").take_cache_failure();
+        if let Some(failure) = failure {
+            if let Some(warning) = &failure.warning {
+                out.warning(warning, false);
+            }
+            return Err(crate::stats::Refusal::plain(1, failure.error));
+        }
         // The ones of the batch that went unreachable in an earlier play: out of this one, and
         // the only hosts a `clear_host_errors` brings back at its first step.
         let dormant: Vec<String> = whole

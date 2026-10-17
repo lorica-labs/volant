@@ -465,6 +465,7 @@ async fn run_all(
     // The filters, tests and lookups only ansible-core has run in the helper the union was
     // built with, or in one started on the first of them.
     let bridge = Bridge::new(reach.plugin_dirs.clone());
+    out.set_diffs(Arc::clone(&bridge));
     if let Some(helper) = helper {
         bridge.adopt(helper);
     }

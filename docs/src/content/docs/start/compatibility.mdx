@@ -50,7 +50,7 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | Connections | `ssh` with keys or an ssh-agent, `local` | SSH passwords, Windows, network devices |
 | Escalation | `become` through `sudo` or `su`, with or without a password | `doas` and other methods |
 | Templating | Jinja2 with the common Ansible filters, tests and lookups | `!vault`, `!unsafe`, some filters such as `hash` or `password_hash`, filters and lookups from collections |
-| Run modes | normal runs, `--check`, `--diff`, `--start-at-task`, `--step`, the four listing commands | printed diffs |
+| Run modes | normal runs, `--check`, `--diff`, `--start-at-task`, `--step`, the four listing commands | none left |
 
 ## Common blockers and what to do
 
@@ -60,7 +60,7 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | A collection module its collection runs through an action plugin, such as `ansible.posix.synchronize` | Volant runs a collection's modules, not its action plugins. | Keep the play under `ansible-playbook` for now. |
 | A collection that is not installed | Volant never installs one. It asks the controller's ansible-core what is installed, before the first connection. | Run the `ansible-galaxy collection install` command the error names. See [Modules from collections](/internals/python/#modules-from-collections). |
 | `with_dict` and the other `with_*` forms | Only `with_items`, `with_first_found` and `with_fileglob` have a loop. | Rewrite with `loop` and a filter, such as `loop: "{{ users \| dict2items }}"`. |
-| `copy`, `template`, `fetch`, `unarchive` or `reboot` under `--check` or `check_mode: true` | Volant runs these action plugins itself, and they have no check mode yet. The task fails instead of changing the host. | Run against a test host, or set `ignore_errors: true` on the task during a check run. |
+| `apt`, `user`, `group` or `file` under `--check` or `--diff` on a host with no Python | These modules answer through Python on the host when the run asks for a check or a diff. | Install Python on the host, or run the play without `--check` and `--diff`. |
 | An inventory in YAML | Only INI inventories are read. | Convert it to INI, or keep it under Ansible for now. |
 | `gather_subset` | Not supported yet. | Remove it: the play gets every fact. |
 

@@ -1,0 +1,59 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    T: "{{ playbook_dir }}/t"
+  tasks:
+    - name: Set up
+      shell: |
+        mkdir -p {{ T }}
+        printf 'old\n' > {{ T }}/f
+        chmod 0644 {{ T }}/f
+        printf 'old\n' > {{ T }}/f2
+        printf 'old\n' > {{ T }}/c1
+        printf 'a\nb=1\nc\n' > {{ T }}/l1
+        printf 'a\nb=1\n' > {{ T }}/l2
+        printf 'a\nb\n' > {{ T }}/l3
+        printf 'same\n' > {{ T }}/same
+      check_mode: false
+
+    - name: file directory
+      file: {path: "{{ T }}/d", state: directory}
+
+    - name: file mode
+      file: {path: "{{ T }}/f", mode: "0600"}
+
+    - name: file absent
+      file: {path: "{{ T }}/f2", state: absent}
+
+    - name: file unchanged
+      file: {path: "{{ T }}", state: directory}
+
+    - name: copy content new
+      copy: {content: "hello\n", dest: "{{ T }}/c0"}
+
+    - name: copy content differs
+      copy: {content: "hello\n", dest: "{{ T }}/c1"}
+
+    - name: copy content same
+      copy: {content: "same\n", dest: "{{ T }}/same"}
+
+    - name: copy without diff
+      copy: {content: "quiet\n", dest: "{{ T }}/q"}
+      diff: false
+
+    - name: copy in a loop
+      copy: {content: "{{ item }}{{ '\n' }}", dest: "{{ T }}/loop-{{ item }}"}
+      loop: [x, y]
+
+    - name: lineinfile add
+      lineinfile: {path: "{{ T }}/l1", line: d, insertafter: EOF}
+
+    - name: lineinfile replace
+      lineinfile: {path: "{{ T }}/l2", regexp: '^b=', line: b=2}
+
+    - name: lineinfile absent
+      lineinfile: {path: "{{ T }}/l3", line: b, state: absent}
+
+    - name: lineinfile without diff
+      lineinfile: {path: "{{ T }}/l1", line: e}
+      diff: false

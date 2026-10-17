@@ -530,6 +530,16 @@ def actions(names):
     return {name: resolve_action(name) is not None for name in names}
 
 
+def diff_text(diffs):
+    """The text `ansible-playbook` prints for a result's `diff`: ansible-core's own
+    `CallbackBase._get_diff`, uncoloured (the controller paints it)."""
+    from ansible.plugins.callback import CallbackBase
+    from ansible.utils import color
+
+    color.ANSIBLE_COLOR = False
+    return CallbackBase()._get_diff(diffs)
+
+
 def action_groups(groups):
     """The modules each `module_defaults` group holds, as `FieldAttributeBase._resolve_group`
     resolves them: the group is declared in its collection's `action_groups`, its members are
@@ -642,6 +652,8 @@ def call(request):
 
     loaders()
     kind, name = request["kind"], request["name"]
+    if kind == "diff":
+        return {"value": diff_text(request["args"][0])}
     if kind == "action_groups":
         return {"value": action_groups(request["args"])}
     if kind == "actions":

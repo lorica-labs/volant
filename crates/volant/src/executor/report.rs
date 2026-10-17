@@ -5,8 +5,8 @@ use serde_json::Value;
 use tokio::sync::mpsc;
 use volant_protocol::TaskResult;
 
-use crate::playbook::PlayTask;
-use crate::render::{Dump, ERROR_KEY, ErrorBlock};
+use crate::playbook::{Flag, PlayTask};
+use crate::render::{DIFF_KEY, Dump, ERROR_KEY, ErrorBlock};
 
 use super::coordinator::Event;
 use super::run::{RetryLine, classify, empty_loop_result, loops, registered_value};
@@ -97,6 +97,11 @@ pub(super) async fn report_task(
         shown.0.remove(ERROR_KEY);
         if is_loop && let Some(element) = element {
             item_keys(task, &mut shown.0, element);
+        }
+        // A templated `diff` was rendered per item for the module, which only reports a diff
+        // when it is on, so a result that carries one stands for an asked-for diff.
+        if !matches!(task.diff, None | Some(Flag::Fixed(false))) {
+            shown.0.insert(DIFF_KEY.into(), Value::Bool(true));
         }
         let _ = tx
             .send(Event::Result {

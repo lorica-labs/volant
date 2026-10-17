@@ -5896,7 +5896,9 @@ fn a_raw_argument_on_a_core_module_fails_only_that_task() {
     };
     let answer = format!(
         r#"{{"zip_b64":"UEsDBA==","modules":{{{}}}}}"#,
-        ["ping", "copy", "stat", "file"].map(entry).join(",")
+        ["ping", "copy", "stat", "file", "slurp"]
+            .map(entry)
+            .join(",")
     );
     let python = fake_python_answering(&dir, &[answer.as_bytes()]);
     std::fs::write(dir.join("inv.ini"), "probe ansible_connection=local\n").expect("an inventory");

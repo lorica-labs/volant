@@ -331,7 +331,13 @@ pub struct Renderer {
     warned: std::collections::HashSet<String>,
     /// Every `[ERROR]:` block written so far, which is never written twice either.
     errored: std::collections::HashSet<String>,
+    /// Where a result's `diff` becomes text: ansible-core's `_get_diff`, behind the run's helper.
+    diffs: Option<std::sync::Arc<crate::bridge::Bridge>>,
 }
+
+/// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
+/// `_volant_` prefix keeps it off every line and out of every registered value.
+pub const DIFF_KEY: &str = "_volant_diff";
 
 const HOST_COLUMN: usize = 26;
 
@@ -370,6 +376,7 @@ impl Renderer {
             verbosity,
             warned: std::collections::HashSet::new(),
             errored: std::collections::HashSet::new(),
+            diffs: None,
         }
     }
 
@@ -382,6 +389,51 @@ impl Renderer {
             verbosity,
             warned: std::collections::HashSet::new(),
             errored: std::collections::HashSet::new(),
+            diffs: None,
+        }
+    }
+
+    /// Serves the diffs of the results this renderer prints.
+    pub fn set_diffs(&mut self, bridge: std::sync::Arc<crate::bridge::Bridge>) {
+        self.diffs = Some(bridge);
+    }
+
+    /// The block `v2_on_file_diff` prints in front of a changed result's line, when the task
+    /// asked for diffs and the result carries one: the helper is asked only then.
+    fn print_diff(&mut self, outcome: Outcome, result: &TaskResult, censored: bool) {
+        let asked = result.0.get(DIFF_KEY) == Some(&serde_json::Value::Bool(true));
+        let diff = result.0.get("diff").filter(|d| match d {
+            serde_json::Value::Null | serde_json::Value::Bool(false) => false,
+            serde_json::Value::String(s) => !s.is_empty(),
+            serde_json::Value::Array(a) => !a.is_empty(),
+            serde_json::Value::Object(o) => !o.is_empty(),
+            _ => true,
+        });
+        let (true, Some(diff), Some(bridge), true) = (
+            asked && !censored && matches!(outcome, Outcome::Ok | Outcome::Changed),
+            diff,
+            self.diffs.clone(),
+            result.changed(),
+        ) else {
+            return;
+        };
+        match bridge.diff_text(diff) {
+            Ok(text) if text.is_empty() => {}
+            Ok(text) => {
+                let painted: String = text
+                    .split_inclusive('\n')
+                    .map(|line| match line.as_bytes().first() {
+                        Some(b'+') => self.paint(OK, line),
+                        Some(b'-') => self.paint(FAILED, line),
+                        Some(b'@') if line.starts_with("@@") => self.paint(SKIPPED, line),
+                        _ => line.to_string(),
+                    })
+                    .collect();
+                // Measured: the block ends with one blank line, which `_get_diff` already put there.
+                let end = if painted.ends_with('\n') { "" } else { "\n" };
+                let _ = write!(self.out, "{painted}{end}");
+            }
+            Err(err) => self.warning(&format!("the diff could not be rendered: {err}"), false),
         }
     }
 
@@ -564,6 +616,7 @@ impl Renderer {
         } else {
             label
         };
+        self.print_diff(outcome, result, censored);
         let verbose = verbose_always(result, censored);
         let mut body = if censored {
             censored_body(result)
@@ -579,14 +632,15 @@ impl Renderer {
         if !censored {
             body.remove("failed");
             body.remove("skipped");
-            if self.verbosity < 3
-                && matches!(
+            if self.verbosity < 3 {
+                // The reference's `_dump_results` keeps the diff off the line; it prints it apart.
+                body.remove("diff");
+                if matches!(
                     outcome,
                     Outcome::Failed | Outcome::Rescued | Outcome::Ignored
-                )
-            {
-                body.remove("invocation");
-                body.remove("diff");
+                ) {
+                    body.remove("invocation");
+                }
             }
         }
         // Registered and never shown: the reference's callback pops it off every line, measured.
@@ -1195,5 +1249,27 @@ CUSTOM STATS: {}
         );
         assert_eq!(text, want);
         assert_eq!(capture(|r| r.custom_stats(&CustomStats::default())), "");
+    }
+
+    /// A result that prints no diff never starts the helper.
+    #[rstest]
+    #[case::no_diff(json!({"changed": true, "_volant_diff": true}))]
+    #[case::empty_list(json!({"changed": true, "diff": [], "_volant_diff": true}))]
+    #[case::unchanged(json!({"changed": false, "diff": {"before": {}, "after": {}}, "_volant_diff": true}))]
+    #[case::not_asked(json!({"changed": true, "diff": {"before": "a", "after": "b"}}))]
+    fn no_diff_starts_no_helper(#[case] result: serde_json::Value) {
+        let starts = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let counter = Arc::clone(&starts);
+        let bridge = crate::bridge::Bridge::with_start(Box::new(move || {
+            counter.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            anyhow::bail!("no helper in a unit test")
+        }));
+        let shown = capture(|r| {
+            r.set_diffs(bridge);
+            let result = TaskResult(result.as_object().unwrap().clone());
+            r.result("h", Outcome::Changed, &result, None, Dump::No, false, None);
+        });
+        assert_eq!(starts.load(std::sync::atomic::Ordering::SeqCst), 0);
+        assert!(shown.starts_with("changed: [h]"), "{shown}");
     }
 }

@@ -11,9 +11,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 38 | 3 | 0 | 0 |
-| keyword (block) | 28 | 3 | 0 | 0 |
-| keyword (task) | 62 | 4 | 0 | 0 |
+| keyword (play) | 39 | 2 | 0 | 0 |
+| keyword (block) | 29 | 2 | 0 | 0 |
+| keyword (task) | 63 | 3 | 0 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 34 | 3 | 1 | 0 |
@@ -51,7 +51,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
-| `diff` | <span class="kw kw-partial">partial</span> | modules are told to report their differences, which are not printed yet |
+| `diff` | <span class="kw kw-runs">runs</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `fact_path` | <span class="kw kw-runs">runs</span> |  |
 | `force_handlers` | <span class="kw kw-runs">runs</span> |  |
@@ -101,7 +101,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
-| `diff` | <span class="kw kw-partial">partial</span> | modules are told to report their differences, which are not printed yet |
+| `diff` | <span class="kw kw-runs">runs</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_unreachable` | <span class="kw kw-runs">runs</span> |  |
@@ -140,7 +140,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `delay` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
-| `diff` | <span class="kw kw-partial">partial</span> | modules are told to report their differences, which are not printed yet |
+| `diff` | <span class="kw kw-runs">runs</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `failed_when` | <span class="kw kw-runs">runs</span> |  |
 | `ignore_errors` | <span class="kw kw-runs">runs</span> |  |

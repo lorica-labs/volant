@@ -134,11 +134,11 @@ These options read the playbooks and stop. They never connect to a host and neve
 </Option>
 
 <Option name="-C, --check" default="false">
-  Report what each task would change without changing it. A task's own `check_mode` keyword wins over this option, so a task with `check_mode: false` still runs for real. `copy`, `template`, `fetch`, `unarchive` and `reboot` fail under check mode for now instead of running.
+  Report what each task would change without changing it. A task's own `check_mode` keyword wins over this option, so a task with `check_mode: false` still runs for real. A host with no Python cannot answer `apt`, `user`, `group` or `file` under `--check` or `--diff`: those modules need it, and the task fails.
 </Option>
 
 <Option name="-D, --diff" default="false">
-  Ask modules for the changes they make to files. A task's own `diff` keyword wins over this option. The differences are not printed yet.
+  Print the changes modules make to files, the way `ansible-playbook` does. A task's own `diff` keyword wins over this option, so `diff: false` keeps a task's changes off the screen. A host with no Python cannot answer `apt`, `user`, `group` or `file` under `--diff`: those modules need it, and the task fails.
 </Option>
 
 <Option name="-v" id="verbose">

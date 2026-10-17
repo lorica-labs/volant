@@ -51,7 +51,9 @@ pub fn expand(line: &str) -> Result<Vec<String>, String> {
             return Err("host range must have begin <= end".to_string());
         }
         if step == 0 {
-            return Err("slice step cannot be zero".to_string());
+            // Python's slice refuses a zero step with a ValueError, which sends the reference to
+            // its numeric branch, where the letter is no number.
+            return Err(py_int(beg).expect_err("a letter is no number"));
         }
         // A negative step over a rising slice gives nothing, as in Python.
         usize::try_from(step).map_or_else(
@@ -107,7 +109,7 @@ fn zero_fill(n: i64, width: usize) -> String {
 }
 
 /// Python's `int(text)`: blanks around, a sign, `_` only between digits.
-fn py_int(text: &str) -> Result<i64, String> {
+pub(super) fn py_int(text: &str) -> Result<i64, String> {
     let t = text.trim();
     let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
     let valid = !digits.is_empty()
@@ -213,6 +215,7 @@ mod tests {
     )]
     #[case::backwards("h[c:a]", "host range must have begin <= end")]
     #[case::not_a_number("h[1:x]", "invalid literal for int() with base 10: 'x'")]
+    #[case::zero_letter_step("h[a:c:0]", "invalid literal for int() with base 10: 'a'")]
     fn a_bad_range_is_refused_with_the_reference_s_text(#[case] pattern: &str, #[case] want: &str) {
         assert_eq!(expand(pattern).unwrap_err(), want);
     }

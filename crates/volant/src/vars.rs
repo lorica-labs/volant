@@ -478,7 +478,8 @@ fn inventory_maps(
                 .into_iter()
                 .collect(),
         );
-        group_names.insert(host.clone(), inventory.group_names_of(host));
+        // In layering order; the `group_names` magic variable sorts its own copy.
+        group_names.insert(host.clone(), inventory.layered_groups_of(host));
     }
     (groups, inventory_vars, host_line_vars, group_names)
 }
@@ -1200,7 +1201,8 @@ impl VarStore {
     fn magic(&self, host: &str) -> Map<String, Value> {
         let mut vars = Map::new();
         let short = short_name(host);
-        let group_names = self.group_names.get(host).cloned().unwrap_or_default();
+        let mut group_names = self.group_names.get(host).cloned().unwrap_or_default();
+        group_names.sort();
         vars.insert(
             "inventory_hostname".to_string(),
             Value::String(host.to_string()),

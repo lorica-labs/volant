@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `host_list` inventory plugin: `-i 'a,b:2222,[::1]:22,'`.
 
+use std::collections::BTreeMap;
+
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source, ranges};
 
 pub(super) struct HostList;
@@ -34,8 +36,7 @@ impl InventoryPlugin for HostList {
                 );
                 (item.to_string(), None)
             });
-            if !into.has_host(&host) {
-                into.add_source_host(&host, port, None);
+            if into.add_source_host(&host, port, BTreeMap::new(), None) {
                 into.add_member(&host, "ungrouped");
             }
         }

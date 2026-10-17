@@ -59,6 +59,9 @@ impl Inventory {
 fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<(), InventoryError> {
     let mut group = "ungrouped".to_string();
     let mut state = "hosts".to_string();
+    // The reference's `pending_declarations`: a group named by a `:vars` header or a
+    // `:children` line before it is declared, in the order it was first named.
+    let mut pending: Vec<Pending> = Vec::new();
     for (idx, raw) in text.lines().enumerate() {
         let err = |message: String| InventoryError {
             line: idx + 1,
@@ -76,7 +79,20 @@ fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<()
                     "Section [{group}:{state}] has unknown type: {state}"
                 )));
             }
-            inv.group_mut(&group);
+            if !declared(inv, &group) {
+                if state == "vars" && !pending.iter().any(|p| p.name == group) {
+                    pending.push(Pending {
+                        name: group.clone(),
+                        line: idx + 1,
+                        vars: true,
+                        parents: Vec::new(),
+                    });
+                }
+                inv.group_mut(&group);
+            }
+            if state != "vars" {
+                declare(inv, &group, &mut pending);
+            }
             continue;
         }
         if line.starts_with('[') && line.ends_with(']') {
@@ -97,8 +113,7 @@ fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<()
                     if name.is_empty() {
                         return Err(err("Invalid empty host name provided: ".to_string()));
                     }
-                    inv.add_source_host(&name, port, file);
-                    inv.add_host(&name, vars.clone());
+                    inv.add_source_host(&name, port, vars.clone(), file);
                     inv.add_member(&name, &group);
                 }
             }
@@ -106,19 +121,97 @@ fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<()
                 let (key, value) = line
                     .split_once('=')
                     .ok_or_else(|| err(format!("Expected key=value, got: {line}")))?;
-                inv.group_mut(&group)
-                    .vars
-                    .insert(key.trim().to_string(), literal(value.trim()));
+                let (key, value) = (key.trim(), literal(value.trim()));
+                if key == "ansible_group_priority" {
+                    if let Some(priority) = priority(&value).map_err(err)? {
+                        inv.group_mut(&group).priority = Some(priority);
+                    }
+                } else {
+                    inv.group_mut(&group).vars.insert(key.to_string(), value);
+                }
             }
             _ => {
                 let child = GROUP_NAME
                     .captures(line)
                     .ok_or_else(|| err(format!("Expected group name, got: {line}")))?;
-                inv.add_child(&group, &child[1]);
+                let child = &child[1];
+                if declared(inv, child) {
+                    inv.add_child(&group, child);
+                } else if let Some(p) = pending.iter_mut().find(|p| p.name == child) {
+                    p.parents.push(group.clone());
+                } else {
+                    pending.push(Pending {
+                        name: child.to_string(),
+                        line: idx + 1,
+                        vars: false,
+                        parents: vec![group.clone()],
+                    });
+                }
             }
         }
     }
-    Ok(())
+    match pending.first() {
+        None => Ok(()),
+        Some(p) => Err(InventoryError {
+            line: p.line,
+            message: if p.vars {
+                format!(
+                    "Section [{0}:vars] not valid for undefined group '{0}'.",
+                    p.name
+                )
+            } else {
+                format!(
+                    "Section [{}:children] includes undefined group '{}'.",
+                    p.parents.last().map_or("", String::as_str),
+                    p.name
+                )
+            },
+        }),
+    }
+}
+
+/// Whether the inventory has `group`: `all` and `ungrouped` are there from the start.
+fn declared(inv: &Inventory, group: &str) -> bool {
+    matches!(group, "all" | "ungrouped") || inv.group(group).is_some()
+}
+
+struct Pending {
+    name: String,
+    line: usize,
+    /// Named by a `:vars` header, rather than by a `:children` line.
+    vars: bool,
+    parents: Vec<String>,
+}
+
+/// A group's declaration settles what naming it before asked for: the parents a `:children`
+/// line gave it get it now, and so do theirs in turn (`_add_pending_children`).
+fn declare(inv: &mut Inventory, group: &str, pending: &mut Vec<Pending>) {
+    let Some(pos) = pending.iter().position(|p| p.name == group) else {
+        return;
+    };
+    if pending[pos].vars {
+        pending.remove(pos);
+        return;
+    }
+    let parents = pending.remove(pos).parents;
+    for parent in parents {
+        inv.add_child(&parent, group);
+        if pending.iter().any(|p| p.name == parent && !p.vars) {
+            declare(inv, &parent, pending);
+        }
+    }
+}
+
+/// `Group.set_priority(int(value))`: a value `int()` cannot take as a type is ignored, one it
+/// cannot read as a number fails the file.
+fn priority(value: &Value) -> Result<Option<i64>, String> {
+    #[expect(clippy::cast_possible_truncation, reason = "Python's int() truncates")]
+    Ok(match value {
+        Value::Bool(b) => Some(i64::from(*b)),
+        Value::Number(n) => n.as_i64().or_else(|| n.as_f64().map(|f| f.trunc() as i64)),
+        Value::String(s) => Some(ranges::py_int(s)?),
+        _ => None,
+    })
 }
 
 /// A host line's first word: the names it stands for and the port they share.
@@ -144,12 +237,24 @@ fn expand_hostpattern(pattern: &str) -> Result<(Vec<String>, Option<i64>), Strin
 /// The words of a host line, split as `shlex.split(line, comments=True)` splits them: a word
 /// that starts with `#` ends the line.
 fn shlex_words(line: &str) -> Result<Vec<String>, String> {
-    let mut words = shlex::split(line)
-        .ok_or_else(|| format!("Error parsing host definition '{line}': No closing quotation"))?;
-    if let Some(comment) = words.iter().position(|w| w.starts_with('#')) {
-        words.truncate(comment);
+    shlex::split(uncommented(line))
+        .ok_or_else(|| format!("Error parsing host definition '{line}': No closing quotation"))
+}
+
+/// The line up to its first `#` outside quotes, mid-word included, as POSIX `shlex` reads it.
+fn uncommented(line: &str) -> &str {
+    let (mut quote, mut escaped) = (None, false);
+    for (i, c) in line.char_indices() {
+        match (quote, c) {
+            _ if escaped => escaped = false,
+            (Some('\''), '\'') | (Some('"'), '"') => quote = None,
+            (Some('"') | None, '\\') => escaped = true,
+            (None, '\'' | '"') => quote = Some(c),
+            (None, '#') => return &line[..i],
+            _ => {}
+        }
     }
-    Ok(words)
+    line
 }
 
 fn key_values(words: &[String]) -> Result<BTreeMap<String, Value>, String> {

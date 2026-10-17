@@ -6,5 +6,9 @@
   {
     "code": 0,
     "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h3] => {\n    \"msg\": \"src=inv1_web hv=- line=- all=pb child=inv1 groups=['web']\"\n}\nok: [h1] => {\n    \"msg\": \"src=pb_db hv=inv1_h1 line=inv1 all=pb child=inv1 groups=['db', 'web']\"\n}\nok: [web01] => {\n    \"msg\": \"src=inv1_web hv=pb_web01 line=- all=pb child=inv1 groups=['web']\"\n}\nok: [web02] => {\n    \"msg\": \"src=inv1_web hv=- line=- all=pb child=inv1 groups=['web']\"\n}\nok: [h2] => {\n    \"msg\": \"src=pb_db hv=- line=- all=pb child=- groups=['db']\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh3                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nweb01                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nweb02                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"x=child y=a z=parent groups=['a', 'b', 'child', 'parent']\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
   }
 ]

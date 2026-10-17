@@ -1,0 +1,5 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "x={{ x }} y={{ y }} z={{ z }} groups={{ group_names }}"

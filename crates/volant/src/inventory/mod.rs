@@ -90,6 +90,9 @@ struct Group {
     hosts: Vec<String>,
     children: Vec<String>,
     vars: BTreeMap<String, Value>,
+    /// `ansible_group_priority`, which the reference keeps out of the group's variables. A
+    /// group without one ranks at 1.
+    priority: Option<i64>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -157,42 +160,55 @@ impl Inventory {
         self.origins.get(host).map(PathBuf::as_path)
     }
 
-    fn has_host(&self, name: &str) -> bool {
-        self.hosts.iter().any(|h| h.name == name)
-    }
-
     /// A host a source names, created the way the reference's `InventoryData.add_host` creates
-    /// one: only when it is new, with the port its pattern gave and the file it came from.
-    fn add_source_host(&mut self, name: &str, port: Option<i64>, file: Option<&Path>) {
-        if self.has_host(name) {
-            return;
+    /// one, with the port its pattern gave and the file it came from, then given `vars`. Whether
+    /// it is new.
+    fn add_source_host(
+        &mut self,
+        name: &str,
+        port: Option<i64>,
+        vars: BTreeMap<String, Value>,
+        file: Option<&Path>,
+    ) -> bool {
+        if let Some(host) = self.hosts.iter_mut().find(|h| h.name == name) {
+            host.vars.extend(vars);
+            return false;
         }
-        let mut vars = BTreeMap::new();
+        let mut all = BTreeMap::new();
         if let Some(port) = port.filter(|p| *p != 0) {
-            vars.insert("ansible_port".to_string(), Value::from(port));
+            all.insert("ansible_port".to_string(), Value::from(port));
         }
-        self.add_host(name, vars);
+        all.extend(vars);
+        self.hosts.push(Host {
+            name: name.to_string(),
+            vars: all,
+        });
         if let Some(file) = file {
             self.origins.insert(name.to_string(), file.to_path_buf());
         }
+        true
     }
 
     /// The reference's `reconcile_inventory` for `ungrouped`, once every source is read: a host
     /// some other group holds leaves it, a host no group holds joins it.
     fn reconcile(&mut self) {
-        let names: Vec<String> = self.hosts.iter().map(|h| h.name.clone()).collect();
-        for name in names {
-            let elsewhere = self
-                .groups
-                .iter()
-                .any(|g| g.name != "all" && g.name != "ungrouped" && g.hosts.contains(&name));
-            if elsewhere {
-                if let Some(ungrouped) = self.groups.iter_mut().find(|g| g.name == "ungrouped") {
-                    ungrouped.hosts.retain(|h| *h != name);
-                }
-            } else {
-                self.add_member(&name, "ungrouped");
-            }
+        let grouped: HashSet<String> = self
+            .groups
+            .iter()
+            .filter(|g| g.name != "all" && g.name != "ungrouped")
+            .flat_map(|g| g.hosts.iter().cloned())
+            .collect();
+        let alone: Vec<String> = self
+            .hosts
+            .iter()
+            .map(|h| h.name.clone())
+            .filter(|h| !grouped.contains(h))
+            .collect();
+        if let Some(ungrouped) = self.groups.iter_mut().find(|g| g.name == "ungrouped") {
+            ungrouped.hosts.retain(|h| !grouped.contains(h));
+        }
+        for name in alone {
+            self.add_member(&name, "ungrouped");
         }
     }
 
@@ -539,15 +555,8 @@ impl Inventory {
             .find(|h| h.name == name)
             .cloned()
             .unwrap_or_default();
-        let depth = self.group_depths();
-        let mut groups: Vec<&Group> = self
-            .groups
-            .iter()
-            .filter(|g| self.group_hosts(g).iter().any(|h| h == name))
-            .collect();
-        groups.sort_by_key(|g| (depth.get(&g.name).copied().unwrap_or(1), g.name.clone()));
         let mut vars = BTreeMap::new();
-        for g in groups {
+        for g in self.sorted_groups_of(name) {
             vars.extend(g.vars.clone());
         }
         vars.extend(host.vars);
@@ -555,6 +564,35 @@ impl Inventory {
             name: host.name,
             vars,
         }
+    }
+
+    /// The groups holding `host`, `all` included, in the order the reference layers their
+    /// variables (`sort_groups`): shallower first, then lower `ansible_group_priority`, then by
+    /// name, so the last one wins.
+    fn sorted_groups_of(&self, host: &str) -> Vec<&Group> {
+        let depth = self.group_depths();
+        let mut groups: Vec<&Group> = self
+            .groups
+            .iter()
+            .filter(|g| self.group_hosts(g).iter().any(|h| h == host))
+            .collect();
+        groups.sort_by_key(|g| {
+            (
+                depth.get(&g.name).copied().unwrap_or(1),
+                g.priority.unwrap_or(1),
+                g.name.clone(),
+            )
+        });
+        groups
+    }
+
+    /// The groups holding `host` but `all`, in the order their `group_vars` files are layered.
+    pub fn layered_groups_of(&self, host: &str) -> Vec<String> {
+        self.sorted_groups_of(host)
+            .into_iter()
+            .filter(|g| g.name != "all")
+            .map(|g| g.name.clone())
+            .collect()
     }
 
     /// Distance from the top: `all` sits at depth 0 and is not an implicit parent of anything,

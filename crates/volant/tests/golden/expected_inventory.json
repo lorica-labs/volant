@@ -461,6 +461,46 @@
       ],
       "stderr": ""
     },
+    "late_children": {
+      "env": {},
+      "hosts": [
+        "h1",
+        "h2"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "a": {
+          "hosts": [
+            "h1"
+          ]
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web"
+          ]
+        },
+        "b": {
+          "hosts": [
+            "h2"
+          ]
+        },
+        "web": {
+          "children": [
+            "a",
+            "b"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "late_children.ini"
+      ],
+      "stderr": ""
+    },
     "missing": {
       "env": {},
       "hosts": [],
@@ -555,6 +595,57 @@
         "one.ini"
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n"
+    },
+    "priority": {
+      "env": {},
+      "hosts": [
+        "h1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "c": 1,
+              "x": "child",
+              "y": "a"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "a": {
+          "hosts": [
+            "h1"
+          ]
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "parent",
+            "a",
+            "b"
+          ]
+        },
+        "b": {
+          "hosts": [
+            "h1"
+          ]
+        },
+        "child": {
+          "hosts": [
+            "h1"
+          ]
+        },
+        "parent": {
+          "children": [
+            "child"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "priority.ini"
+      ],
+      "stderr": ""
     },
     "ranges": {
       "env": {},
@@ -757,6 +848,46 @@
         "one.ini"
       ],
       "stderr": ""
+    },
+    "undefined_child": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "undefined_child.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Section [web:children] includes undefined group 'zz'.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Section [web:children] includes undefined group 'zz'.\nOrigin: <golden-tmp>/undefined_child.ini\n\n[WARNING]: Unable to parse <golden-tmp>/undefined_child.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "undefined_vars": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "rc": 0,
+      "sources": [
+        "undefined_vars.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Section [x:vars] not valid for undefined group 'x'.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Section [x:vars] not valid for undefined group 'x'.\nOrigin: <golden-tmp>/undefined_vars.ini\n\n[WARNING]: Unable to parse <golden-tmp>/undefined_vars.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "unparsed_failed": {
       "env": {

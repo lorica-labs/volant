@@ -785,7 +785,7 @@ pub(crate) fn python_repr(value: &Value) -> String {
 
 /// Python's `repr` of a string: single quotes unless the text holds one and no double quote,
 /// the chosen quote and the backslash escaped, control characters as `\n`, `\t`, `\r` or `\xNN`.
-// ponytail: other characters Python finds unprintable (` `, format characters) go through
+// Other characters Python finds unprintable (` `, format characters) go through
 // as they are; escape them by Unicode category if a label ever needs it.
 fn python_str_repr(s: &str) -> String {
     use std::fmt::Write as _;

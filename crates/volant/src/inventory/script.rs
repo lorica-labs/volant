@@ -310,7 +310,7 @@ fn exit_code(status: std::process::ExitStatus) -> i32 {
 
 /// `json.JSONDecodeError`'s text for what `serde_json` refused: its wording for the kinds of
 /// mistake a script makes, with the position Python counts.
-// ponytail: serde's and Python's parsers stop at the same character for the common mistakes
+// Serde's and Python's parsers stop at the same character for the common mistakes
 // only; an exotic one keeps serde's own wording until a measured case shows another.
 fn python_json_error(text: &[u8], err: &serde_json::Error) -> String {
     let full = err.to_string();

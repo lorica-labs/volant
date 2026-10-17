@@ -656,8 +656,14 @@ fn load_play_vars_files(
                 // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
                 // does not parse stops the reference with the same code a broken playbook
                 // gets.
-                let file =
-                    load_vars_file(&path).map_err(|err| crate::stats::Refusal::or(4, err))?;
+                // A vaulted file the run cannot read is exit 1 in the reference.
+                let file = load_vars_file(&path).map_err(|err| {
+                    if err.is::<crate::vars::VaultFile>() {
+                        crate::stats::Refusal::at(1, err)
+                    } else {
+                        crate::stats::Refusal::or(4, err)
+                    }
+                })?;
                 loaded.insert(path, file.clone());
                 file
             });

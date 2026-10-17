@@ -1,0 +1,56 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    sv: !vault |
+              $ANSIBLE_VAULT;1.1;AES256
+              36326233346434333961343765343263646537323663633739386266356633393831386331303838
+              3335383431333632666236303434343163396137346438310a623532393339636665323639356130
+              33626264636235636234623735303136663737646665376466623963616130643934656336336163
+              6635616164303164350a383834646461376635656435613433343830306334613662656630373436
+              6335
+    svd: !vault |
+              $ANSIBLE_VAULT;1.2;AES256;dev
+              31326434346566653630313438313434633165316166646131646562626138623733393361666564
+              3039376261333662633334326136316361636339306266360a646131633831316361343239376636
+              62396265386666313335616664613963313034376364306662613838333336326635376239303362
+              6434383238313639610a643130376363363130376562656365373539633739616564363232363131
+              6135
+    enc_str: "{{ 'filt_in' | vault('pw1') }}"
+  vars_files: [vf.yml]
+  tasks:
+    - debug: {var: sv}
+    - debug: {var: svd}
+    - debug: {var: vf_var}
+    - include_vars: inc.yml
+    - debug: {var: inc_var}
+    - debug: {var: gv_var}
+    - debug: {var: hv_var}
+    - name: copy decrypt default
+      copy: {src: csrc.txt, dest: out_copy.txt}
+      register: r1
+    - command: cat out_copy.txt
+      register: c1
+    - debug: {msg: "{{ c1.stdout }}"}
+    - name: copy decrypt false
+      copy: {src: csrc.txt, dest: out_copy_raw.txt, decrypt: false}
+    - command: head -c 20 out_copy_raw.txt
+      register: c2
+    - debug: {msg: "{{ c2.stdout }}"}
+    - template: {src: t.j2, dest: out_tpl.txt}
+    - command: cat out_tpl.txt
+      register: c3
+    - debug: {msg: "{{ c3.stdout }}"}
+    - debug: {msg: "vault filter: {{ enc_str | truncate(40) }} | unvault: {{ enc_str | unvault('pw1') }}"}
+    - debug: {msg: "vault_encrypted sv={{ sv is vault_encrypted }} plain={{ 'abc' is vault_encrypted }}"}
+    - debug: {msg: "vaulted_file enc={{ 'ltxt.txt' is vaulted_file }} plain={{ 'pl.txt' is vaulted_file }}"}
+    - debug: {msg: "{{ lookup('unvault', 'ltxt.txt') }}"}
+    - debug: {msg: "{{ item }}"}
+      with_unvault: [ltxt.txt]
+    - name: nolog
+      debug: {var: sv}
+      no_log: true
+    - name: sv in command
+      command: echo {{ sv }}
+      register: c4
+    - name: sv in command nolog false
+      command: echo {{ sv }}

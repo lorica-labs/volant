@@ -1,0 +1,22 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"msg\": \"unused\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 1,
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stdout": ""
+  },
+  {
+    "code": 2,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [include_vars] ************************************************************\n[ERROR]: Task failed: Action failed: Unknown error.\nOrigin: <golden-tmp>/pi.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - include_vars: f.yml\n        ^ column 7\n\nfatal: [localhost]: FAILED! => {\"ansible_facts\": {}, \"ansible_included_var_files\": [], \"changed\": false, \"message\": \"Decryption failed (no vault secrets were found that could decrypt).\", \"msg\": \"Task failed: Action failed: Unknown error.\"}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

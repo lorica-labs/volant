@@ -906,7 +906,7 @@ fn read(path: &Path, depth: usize) -> anyhow::Result<Playbook> {
     // Exit 1 for a file that is not there, measured, and not the 4 a file that is there and
     // makes no sense gets. It carries its own code so the blanket [`load`] wraps the parse in
     // cannot take it.
-    let text = std::fs::read_to_string(path).map_err(|err| {
+    let text = crate::vault::read_to_string(path).map_err(|err| {
         crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
     })?;
     parse_at(&text, &path.display().to_string(), &base_dir(path), depth)
@@ -1381,8 +1381,8 @@ impl std::fmt::Display for NotATaskList {
 impl std::error::Error for NotATaskList {}
 
 fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text = crate::vault::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
     let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
     let _origins = OriginScope::enter(&source, origins);
@@ -1397,8 +1397,8 @@ fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
 
 /// The handler list of one file, for a role's `handlers/main.yml`.
 pub(crate) fn parse_handlers_file(path: &Path) -> anyhow::Result<Vec<HandlerTask>> {
-    let text =
-        std::fs::read_to_string(path).with_context(|| format!("reading {}", path.display()))?;
+    let text = crate::vault::read_to_string(path)
+        .with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
     let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
     let _origins = OriginScope::enter(&source, origins);
@@ -2259,10 +2259,6 @@ mod tests {
     )]
     #[case::not_a_list("hosts: all\n", &[])]
     #[case::empty("", &[])]
-    #[case::vault(
-        "- hosts: all\n  tasks:\n    - name: Secret\n      command:\n        cmd: !vault |\n          $ANSIBLE_VAULT;1.1;AES256\n          3132\n",
-        &["vault", "Secret"]
-    )]
     #[case::unbalanced_quote("- hosts: all\n  tasks:\n    - ping: \"a='open\"\n", &[])]
     #[case::when_scalar(
         "- hosts: all\n  tasks:\n    - command: \"true\"\n      when: 3\n",
@@ -2378,18 +2374,6 @@ mod tests {
         for needle in needles {
             assert!(got.contains(needle), "{needle:?} not in {got}");
         }
-    }
-
-    /// Keywords the reference has and this release cannot run are parked for the pre-flight.
-    #[rstest]
-    #[case::with_unvault("with_unvault")]
-    fn a_keyword_is_parked_for_the_preflight(#[case] kw: &str) {
-        let pb = parse(
-            &format!("- hosts: all\n  tasks:\n    - command: echo hi\n      {kw}: x\n"),
-            "x.yml",
-        )
-        .unwrap_or_else(|e| panic!("{kw}: {e:#}"));
-        assert_eq!(first(&pb).unsupported, [kw]);
     }
 
     /// Every `loop_control` sub-key is read into its field, and a malformed one is refused by name.
@@ -2689,23 +2673,10 @@ mod tests {
         assert!(empty.body.is_empty());
     }
 
-    /// Shapes the loader keeps for the pre-flight: a construct with no module, a `set_fact` key
+    /// Shapes the loader keeps for the pre-flight: a `set_fact` key
     /// typed by YAML, and a `meta` action whatever it names.
     #[test]
     fn what_the_loader_keeps_for_the_preflight() {
-        let pb = parse(
-            "- hosts: all\n  tasks:\n    - name: Grouped\n      tags: t\n      with_unvault: x\n",
-            "x.yml",
-        )
-        .unwrap();
-        let t = first(&pb);
-        assert_eq!((t.name.as_str(), t.module.as_str()), ("Grouped", ""));
-        assert_eq!(t.unsupported, ["with_unvault"]);
-        assert_eq!(
-            t.tags,
-            ["t"],
-            "a construct with no module still keeps its tags"
-        );
         let pb = parse(
             "- hosts: all\n  tasks:\n    - set_fact: {1: a, 1.5: b, 2.0: f, true: c, ~: d, k: e}\n",
             "x.yml",

@@ -21,7 +21,7 @@
 
 use std::fmt::Write as _;
 
-use Support::{Partial, Preflight, Runs};
+use Support::{Partial, Runs};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Support {
@@ -197,7 +197,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("with_subelements", Runs),
     kw("with_template", Runs),
     kw("with_together", Runs),
-    kw("with_unvault", Preflight),
+    kw("with_unvault", Runs),
     kw("with_url", Runs),
     kw("with_varnames", Runs),
     kw("with_vars", Runs),

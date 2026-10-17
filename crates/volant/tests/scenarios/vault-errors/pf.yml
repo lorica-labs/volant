@@ -1,0 +1,5 @@
+- hosts: localhost
+  gather_facts: false
+  vars_files: [f.yml]
+  tasks:
+    - debug: {var: a}

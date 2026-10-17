@@ -13,16 +13,16 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|---|---|
 | keyword (play) | 37 | 4 | 0 | 0 |
 | keyword (block) | 27 | 4 | 0 | 0 |
-| keyword (task) | 60 | 5 | 1 | 0 |
+| keyword (task) | 61 | 5 | 0 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 34 | 3 | 1 | 0 |
-| YAML tag | 1 | 0 | 1 | 0 |
+| YAML tag | 2 | 0 | 0 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
-| filter | 120 | 0 | 2 | 0 |
-| test | 80 | 0 | 2 | 0 |
-| lookup | 24 | 0 | 1 | 0 |
+| filter | 122 | 0 | 0 | 0 |
+| test | 82 | 0 | 0 | 0 |
+| lookup | 25 | 0 | 0 | 0 |
 | become | 2 | 0 | 0 | 1 |
 | strategy | 1 | 3 | 0 | 0 |
 | inventory | 1 | 0 | 8 | 0 |
@@ -185,7 +185,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `with_subelements` | <span class="kw kw-runs">runs</span> |  |
 | `with_template` | <span class="kw kw-runs">runs</span> |  |
 | `with_together` | <span class="kw kw-runs">runs</span> |  |
-| `with_unvault` | <span class="kw kw-notyet">not yet</span> |  |
+| `with_unvault` | <span class="kw kw-runs">runs</span> |  |
 | `with_url` | <span class="kw kw-runs">runs</span> |  |
 | `with_varnames` | <span class="kw kw-runs">runs</span> |  |
 | `with_vars` | <span class="kw kw-runs">runs</span> |  |
@@ -265,7 +265,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `!unsafe` | <span class="kw kw-runs">runs</span> |  |
-| `!vault` | <span class="kw kw-notyet">not yet</span> |  |
+| `!vault` | <span class="kw kw-runs">runs</span> |  |
 
 ## module
 
@@ -487,13 +487,13 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `type_debug` | <span class="kw kw-runs">runs</span> |  |
 | `union` | <span class="kw kw-runs">runs</span> |  |
 | `unique` | <span class="kw kw-runs">runs</span> |  |
-| `unvault` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
+| `unvault` | <span class="kw kw-runs">runs</span> |  |
 | `upper` | <span class="kw kw-runs">runs</span> |  |
 | `urldecode` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `urlencode` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `urlize` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `urlsplit` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `vault` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
+| `vault` | <span class="kw kw-runs">runs</span> |  |
 | `win_basename` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `win_dirname` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `win_splitdrive` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
@@ -585,8 +585,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `uri` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `url` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `urn` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `vault_encrypted` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
-| `vaulted_file` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
+| `vault_encrypted` | <span class="kw kw-runs">runs</span> |  |
+| `vaulted_file` | <span class="kw kw-runs">runs</span> |  |
 | `version` | <span class="kw kw-runs">runs</span> |  |
 | `version_compare` | <span class="kw kw-runs">runs</span> |  |
 
@@ -615,7 +615,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `subelements` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `template` | <span class="kw kw-runs">runs</span> |  |
 | `together` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `unvault` | <span class="kw kw-notyet">not yet</span> | vault secrets are not supported yet |
+| `unvault` | <span class="kw kw-runs">runs</span> |  |
 | `url` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `varnames` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |

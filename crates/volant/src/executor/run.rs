@@ -95,7 +95,26 @@ fn run_include_vars(item: &Item, step: &Step, store: &Mutex<VarStore>) -> TaskRe
     };
     let loaded = match load_vars_file(path) {
         Ok(map) => map,
-        Err(err) => return TaskResult::failed_with(format!("Task failed: {err:#}")),
+        // Measured: the reason travels as `message`, and `msg` is the sentence of a task that
+        // died, with the facts and the file list empty.
+        Err(err) => {
+            if let Some(vault) = err.downcast_ref::<crate::vars::VaultFile>() {
+                return TaskResult(
+                    json!({
+                        "ansible_facts": {},
+                        "ansible_included_var_files": [],
+                        "changed": false,
+                        "failed": true,
+                        "message": vault.reason,
+                        "msg": "Task failed: Action failed: Unknown error.",
+                    })
+                    .as_object()
+                    .cloned()
+                    .unwrap_or_default(),
+                );
+            }
+            return TaskResult::failed_with(format!("Task failed: {err:#}"));
+        }
     };
     let facts = match item.args.get("name").and_then(Value::as_str) {
         Some(under) => {

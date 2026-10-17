@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: alpha one
+      debug: {msg: a}
+- hosts: localhost
+  tasks:
+    - name: beta one
+      debug: {msg: b}
+    - name: beta two
+      debug: {msg: c}

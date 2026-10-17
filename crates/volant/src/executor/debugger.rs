@@ -105,7 +105,12 @@ pub(super) async fn read_line(stop: &mut watch::Receiver<bool>) -> Option<String
 pub(super) struct Stepper {
     /// Set by `c`: no task is asked about from then on, in this play and the ones behind it.
     carry_on: Arc<AtomicBool>,
-    answers: tokio::sync::Mutex<HashMap<usize, bool>>,
+    /// Keyed by the step's index and its task, because a splice can put another task on an
+    /// index a host has already been asked about.
+    answers: tokio::sync::Mutex<HashMap<(usize, String), bool>>,
+    /// Set once the input ended or the run stopped: nobody is asked again, and the hosts that
+    /// come after the first get the same `None` without a prompt of their own.
+    closed: AtomicBool,
 }
 
 impl Stepper {
@@ -113,15 +118,17 @@ impl Stepper {
         Stepper {
             carry_on,
             answers: tokio::sync::Mutex::default(),
+            closed: AtomicBool::new(false),
         }
     }
 
-    /// Whether the task at `index`, shown as `label`, runs. Anything but `y`, `yes`, `c` and
+    /// Whether the task at `index` named `task`, shown as `label`, runs. Anything but `y`, `yes`, `c` and
     /// `continue` skips it, as the reference does. `None` when the input ended or the run was
     /// stopped.
     pub(super) async fn runs(
         &self,
         index: usize,
+        task: &str,
         label: &str,
         stop: &mut watch::Receiver<bool>,
     ) -> Option<bool> {
@@ -129,7 +136,11 @@ impl Stepper {
             return Some(true);
         }
         let mut answers = self.answers.lock().await;
-        if let Some(known) = answers.get(&index) {
+        if self.closed.load(Ordering::SeqCst) {
+            return None;
+        }
+        let key = (index, task.to_string());
+        if let Some(known) = answers.get(&key) {
             return Some(*known);
         }
         // `c` may have been answered while this host waited for the lock.
@@ -138,13 +149,16 @@ impl Stepper {
         }
         print!("Perform task: TASK: {label} (N)o/(y)es/(c)ontinue: ");
         let _ = std::io::Write::flush(&mut std::io::stdout());
-        let line = read_line(stop).await?;
+        let Some(line) = read_line(stop).await else {
+            self.closed.store(true, Ordering::SeqCst);
+            return None;
+        };
         let answer = line.trim().to_lowercase();
         if answer == "c" || answer == "continue" {
             self.carry_on.store(true, Ordering::SeqCst);
         }
         let runs = matches!(answer.as_str(), "y" | "yes" | "c" | "continue");
-        answers.insert(index, runs);
+        answers.insert(key, runs);
         Some(runs)
     }
 }

@@ -367,19 +367,30 @@ fn ctrl_c_at_a_pause_prompt_ends_the_run() {
 /// `--start-at-task` leaves out the tasks in front of the first match (`*` and `?` match any text);
 /// a name nothing matches prints an empty recap, then the error, and the exit code stays 0.
 #[rstest]
-#[case::exact("second task", &["second task", "third task", "tail task"])]
-#[case::glob("tai*", &["tail task"])]
-#[case::first("first task", &["first task", "second task", "third task", "tail task"])]
-#[case::none("nomatch", &[])]
-fn start_at_task_begins_at_the_first_match(#[case] name: &str, #[case] ran: &[&str]) {
-    let out = volant_within(
-        &[
-            "playbook",
-            "--start-at-task",
-            name,
-            &fixture("controller/step.yml"),
-        ],
+#[case::exact("controller/step.yml", "second task", &["second task", "third task", "tail task"])]
+#[case::glob("controller/step.yml", "tai*", &["tail task"])]
+#[case::first("controller/step.yml", "first task", &["first task", "second task", "third task", "tail task"])]
+#[case::none("controller/step.yml", "nomatch", &[])]
+#[case::second_play("controller/step-two-plays.yml", "beta*", &["Gathering Facts", "beta one", "beta two"])]
+fn start_at_task_begins_at_the_first_match(
+    #[case] book: &str,
+    #[case] name: &str,
+    #[case] ran: &[&str],
+) {
+    // A play that gathers facts needs the controller's ansible-core; without it the row has
+    // nothing to say.
+    let python = python::reference_python().map(|p| p.display().to_string());
+    if ran.contains(&"Gathering Facts") && python.is_none() {
+        return;
+    }
+    let envs: Vec<(&str, &str)> = python
+        .iter()
+        .map(|p| ("VOLANT_PYTHON", p.as_str()))
+        .collect();
+    let out = volant_within_env(
+        &["playbook", "--start-at-task", name, &fixture(book)],
         PROBE_DEADLINE,
+        &envs,
     );
     let text = String::from_utf8_lossy(&out.stdout).to_string();
     assert_eq!(out.status.code(), Some(0), "{text}");

@@ -839,7 +839,15 @@ pub(super) async fn drive_host(
                         None => shown,
                     }
                 };
-                let Some(runs) = stepper.runs(pos, &label, &mut driver.stop).await else {
+                let Some(runs) = stepper
+                    .runs(
+                        pos,
+                        &format!("{}|{:?}", task.name, step.role),
+                        &label,
+                        &mut driver.stop,
+                    )
+                    .await
+                else {
                     if !driver.stopped() {
                         options
                             .abort

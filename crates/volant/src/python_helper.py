@@ -496,13 +496,18 @@ def plugin_dirs(dirs, module_path=()):
     """Adds each playbook's and each role's directory as ansible-playbook adds it, with
     `add_all_plugin_dirs`: its `library/`, `module_utils/` and other plugin directories are
     searched before the configured paths, in the order given, so a `library/stat.py` beside the
-    playbook is the `stat` a task gets. The `-M` directories come first, as the CLI adds them."""
+    playbook is the `stat` a task gets. The `-M` directories lead the configured paths."""
     from ansible.plugins.loader import add_all_plugin_dirs, module_loader
     from ansible.utils.collection_loader import AnsibleCollectionConfig
 
     loaders()
-    for directory in module_path:
-        module_loader.add_directory(directory)
+    if module_path:
+        # `-M` is the front of the configured module path, which every playbook's and role's
+        # `library/` still precedes: measured on 2.19.12, a `library/mymod.py` beside the
+        # playbook wins over `-M`.
+        configured = [p for p in (module_loader.config or []) if p not in module_path]
+        module_loader.config = list(module_path) + configured
+        module_loader._clear_caches()
     for directory in dirs:
         add_all_plugin_dirs(directory)
     # A `collections/` directory beside a playbook is searched for collections, as

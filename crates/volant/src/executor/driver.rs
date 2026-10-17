@@ -1549,10 +1549,10 @@ pub(super) async fn drive_host(
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // Whether a body shows at verbosity 0 is each result's own: see
                     // `VERBOSE_ALWAYS`. The task only says how a `debug`'s is cleaned.
-                    let dump = if short_name(&task.module) == "debug" {
-                        Dump::Debug
-                    } else {
-                        Dump::No
+                    let dump = match short_name(&task.module) {
+                        "debug" => Dump::Debug,
+                        "setup" | "gather_facts" => Dump::Setup,
+                        _ => Dump::No,
                     };
                     if let Some(result) = report_task(
                         &tx,

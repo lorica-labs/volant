@@ -533,8 +533,8 @@ impl Reach {
 
 static MODULE_PATH: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
 
-/// Sets the directories of `-M`/`--module-path`, which hold modules directly and are searched
-/// before any playbook's or role's `library/`, in the order given.
+/// Sets the directories of `-M`/`--module-path`, which hold modules directly and lead the
+/// configured module path, so a playbook's or role's `library/` is still searched before them.
 pub fn set_module_path(dirs: Vec<std::path::PathBuf>) {
     *MODULE_PATH
         .lock()

@@ -17,6 +17,9 @@ pub enum Dump {
     No,
     /// A `debug`'s: cleaned the way the reference's callback cleans one (`_clean_results`).
     Debug,
+    /// A `setup`'s or `gather_facts`': an `ok` or `changed` line carries no body at any
+    /// verbosity (`_clean_results` empties it), measured at `-vv`.
+    Setup,
 }
 
 /// The key a `debug` or a non-`quiet` `assert` puts on its own result, as the reference's action
@@ -681,7 +684,9 @@ impl Renderer {
         // body as `{"censored": ...}` with no `changed` - but shows nothing at verbosity 0:
         // measured, `ok: [h1]` alone there and the censored body from `-v` on.
         let show = verbose || self.verbosity > 0;
-        let tail = if show {
+        let tail = if show
+            && !(dump == Dump::Setup && matches!(outcome, Outcome::Ok | Outcome::Changed))
+        {
             format!(" => {json}")
         } else {
             String::new()

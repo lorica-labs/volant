@@ -1,3 +1,4 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
 #!/usr/bin/python
 from ansible.module_utils.basic import AnsibleModule
 

@@ -206,15 +206,19 @@ fn version_line() -> String {
 /// The lines the reference prints before it reads an inventory: the version at `-vv`, the
 /// configuration file at `-v`, and at `-vvvv` the plugin set-up.
 fn announce(out: &mut Renderer) {
-    out.plain(2, &version_line());
-    let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
-    out.verbose(
-        1,
-        &match crate::config::locate() {
-            Some(path) => format!("Using {} as config file", absolute(path).display()),
-            None => "No config file found; using defaults".to_string(),
-        },
-    );
+    if out.verbose_at(2) {
+        out.plain(2, &version_line());
+    }
+    if out.verbose_at(1) {
+        let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
+        out.verbose(
+            1,
+            &match crate::config::locate() {
+                Some(path) => format!("Using {} as config file", absolute(path).display()),
+                None => "No config file found; using defaults".to_string(),
+            },
+        );
+    }
     out.verbose(4, "setting up inventory plugins");
 }
 
@@ -222,7 +226,12 @@ fn announce(out: &mut Renderer) {
 /// `-vvv`, and the two callbacks it sets aside at `-vv`. A `.yml` or `.json` file is the
 /// `yaml` plugin's, which this release does not read.
 fn announce_inventory(out: &mut Renderer, path: &Path) {
-    if !path.is_file() {
+    // A `.yml` or `.json` file is the `yaml` plugin's, which this release does not read: no
+    // line is better than a wrong plugin name.
+    let yaml = path
+        .extension()
+        .is_some_and(|e| ["yaml", "yml", "json"].iter().any(|y| e == *y));
+    if !path.is_file() || yaml || !out.verbose_at(3) {
         return;
     }
     let shown = std::path::absolute(path)

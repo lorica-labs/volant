@@ -89,7 +89,11 @@ pub(super) fn start(
         .or_else(|| now.checked_add(NO_DEADLINE))
         .unwrap_or(now);
     let mut task = Map::new();
-    task.insert("args".into(), Value::Object(ctx.args.clone()));
+    // The terminal is the controller's to give: a plugin forwarding these arguments to `raw` or
+    // `command` must not carry a task's own request for one.
+    let mut forwarded = ctx.args.clone();
+    forwarded.remove("_volant_tty");
+    task.insert("args".into(), Value::Object(forwarded));
     if let Some(environment) = ctx.environment.filter(|e| !e.is_empty()) {
         task.insert("environment".into(), json!(environment));
     }
@@ -275,13 +279,22 @@ impl Bridged {
             // The command goes over the task's link, which is the escalated one when the task
             // escalates. A `sudoable=False` command (the plugin's housekeeping) also goes over
             // it: there is no unescalated link inside the plugin loop.
-            Ask::Command { cmd, stdin, .. } => {
+            Ask::Command {
+                cmd,
+                stdin,
+                sudoable,
+            } => {
                 if stdin.is_some() {
                     return Err(Reply::Error(
                         "Connection.exec_command with input is not supported yet".into(),
                     ));
                 }
-                Ok((Sub::run("raw", raw(cmd)), Pending::Command))
+                let mut args = raw(cmd);
+                // With no stdin and `sudoable`, the reference sends the command through `ssh -tt`.
+                if sudoable {
+                    args.insert("_volant_tty".into(), Value::Bool(true));
+                }
+                Ok((Sub::run("raw", args), Pending::Command))
             }
             Ask::PutFile {
                 local,
@@ -603,8 +616,13 @@ mod tests {
     }
 
     /// A command the plugin marks as not to escalate still runs, over the task link (the escalated one under `become`).
-    #[test]
-    fn a_command_that_must_not_escalate_runs_over_the_task_link() {
+    #[rstest::rstest]
+    #[case::sudoable(true, Some(true))]
+    #[case::housekeeping(false, None)]
+    fn a_command_that_must_not_escalate_runs_over_the_task_link(
+        #[case] sudoable: bool,
+        #[case] terminal: Option<bool>,
+    ) {
         let (_, asks) = channel();
         let (replies, _) = channel();
         let mut plugin = Bridged {
@@ -625,11 +643,16 @@ mod tests {
         let ask = Ask::Command {
             cmd: "true".into(),
             stdin: None,
-            sudoable: false,
+            sudoable,
         };
         let Ok((Step::Run(sub), Pending::Command)) = plugin.step_for(ask) else {
             panic!("the command should become a sub-task");
         };
         assert_eq!(sub.module, "raw");
+        // Only a command the reference sends through `ssh -tt` asks for a terminal.
+        assert_eq!(
+            sub.args.get("_volant_tty").and_then(Value::as_bool),
+            terminal
+        );
     }
 }

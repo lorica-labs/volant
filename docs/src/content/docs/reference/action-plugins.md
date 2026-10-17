@@ -138,7 +138,6 @@ Three behaviours differ from the reference on purpose:
 
 - `wrap_async` is emulated. The module runs to its end when the plugin asks for it, and `async_status` then answers that the job finished. Parallel jobs run one after the other. A job's `async:` limit is judged after the module ran, as `Timeout exceeded`; the module is not interrupted.
 - A command a plugin sends with `sudoable=False` runs on the task's own link, so under `become` it runs escalated.
-- `script` over `ssh` runs without a terminal. The reference gives the script one, which merges its stderr into stdout with a carriage return and closes the shared connection on a stderr write. The agent has no terminal to give a command, so those two details differ.
 
 ### Known gaps
 

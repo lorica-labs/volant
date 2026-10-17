@@ -182,6 +182,43 @@ pub(crate) fn execute(
         ));
     }
 
+    // The controller asks for a terminal when ssh would have given one: the text it carries is the
+    // line ssh prints when the session ends, which the command's stderr ends with.
+    let tty = match args.get("_volant_tty") {
+        None | Some(Value::Bool(false)) => None,
+        Some(Value::Bool(true)) => Some(String::new()),
+        Some(Value::String(close)) => Some(close.clone()),
+        Some(_) => {
+            return Run::Done(TaskResult::failed_with(
+                "_volant_tty must be a boolean or the text ssh prints when the session closes",
+            ));
+        }
+    };
+    if tty.is_some() && stdin_data.is_some() {
+        return Run::Done(TaskResult::failed_with(
+            "a command run with a terminal takes no stdin",
+        ));
+    }
+    #[cfg(not(unix))]
+    if tty.is_some() {
+        return Run::Done(TaskResult::failed_with(
+            "running a command under a terminal is not supported on this platform",
+        ));
+    }
+    #[cfg(unix)]
+    let pty = if tty.is_some() {
+        match open_pty() {
+            Ok(pty) => Some(pty),
+            Err(err) => {
+                return Run::Done(TaskResult::failed_with(format!(
+                    "could not open a terminal for the command: {err}"
+                )));
+            }
+        }
+    } else {
+        None
+    };
+
     let start = clock::now();
     let started = Instant::now();
     let mut command = Command::new(&argv[0]);
@@ -194,6 +231,25 @@ pub(crate) fn execute(
         })
         .stdout(Stdio::piped())
         .stderr(Stdio::piped());
+    // Everything the command writes goes through the terminal, which merges the two streams and
+    // turns each newline into CR LF, as the terminal ssh -tt allocates does.
+    #[cfg(unix)]
+    let master = pty.map(|(master, [stdin, stdout, stderr])| {
+        use std::os::unix::process::CommandExt;
+        command.stdin(stdin).stdout(stdout).stderr(stderr);
+        // SAFETY: only async-signal-safe calls between fork and exec. The command leads a session
+        // of its own, which makes the slave its controlling terminal; the session leader's id is
+        // also its group's, so `kill_group` still reaches everything it started.
+        unsafe {
+            command.pre_exec(|| {
+                if libc::setsid() < 0 || libc::ioctl(0, libc::TIOCSCTTY as _, 0) < 0 {
+                    return Err(std::io::Error::last_os_error());
+                }
+                Ok(())
+            });
+        }
+        master
+    });
     if let Some(dir) = chdir {
         command.current_dir(dir);
     }
@@ -202,11 +258,15 @@ pub(crate) fn execute(
     // already behind us - the escalated agent is the process this one is forked from.
     command.envs(&ctx.environment);
     #[cfg(unix)]
-    {
+    if master.is_none() {
         use std::os::unix::process::CommandExt;
         command.process_group(0);
     }
-    let mut child = match command.spawn() {
+    let spawned = command.spawn();
+    // The slave end the command was given must not stay open here: the master reads end-of-file
+    // only once every copy of it is closed.
+    drop(command);
+    let mut child = match spawned {
         Ok(child) => child,
         #[cfg(unix)]
         Err(err) => return Run::Done(exec_failure(&argv, &err)),
@@ -225,6 +285,12 @@ pub(crate) fn execute(
     // that output yet, both sides block once a pipe buffer fills up. Writing stdin from
     // its own thread, waited on below under the same deadline as the readers, keeps that
     // write off the thread that has to reach the cancellation check further down.
+    #[cfg(unix)]
+    let stdout = match master {
+        Some(master) => drain(Some(master)),
+        None => drain(child.stdout.take()),
+    };
+    #[cfg(not(unix))]
     let stdout = drain(child.stdout.take());
     let stderr = drain(child.stderr.take());
     // A channel rather than a `JoinHandle`, for the same reason as the readers: a descendant that
@@ -340,6 +406,10 @@ pub(crate) fn execute(
         stdout.truncate(stdout.trim_end_matches(['\r', '\n']).len());
         stderr.truncate(stderr.trim_end_matches(['\r', '\n']).len());
     }
+    if let Some(close) = tty.filter(|close| !close.is_empty()) {
+        stderr.push_str(&close);
+        stderr.push_str("\r\n");
+    }
 
     let mut result = Map::new();
     result.insert("cmd".into(), display);
@@ -414,6 +484,42 @@ pub(crate) fn kill_group(pgid: u32) {
     {
         let _ = pgid;
     }
+}
+
+/// A pseudo-terminal: the master end the output is read from, and the slave end the command runs
+/// on. Neither is inherited by what the command starts.
+#[cfg(unix)]
+fn open_pty() -> std::io::Result<(std::fs::File, [Stdio; 3])> {
+    use std::os::fd::{FromRawFd, OwnedFd};
+    let (mut master, mut slave) = (0, 0);
+    // SAFETY: both descriptors are written by the call; the name, terminal settings and window
+    // size are optional and left to their defaults, which turn a newline into CR LF on output.
+    let opened = unsafe {
+        libc::openpty(
+            &mut master,
+            &mut slave,
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+            std::ptr::null_mut(),
+        )
+    };
+    if opened != 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    // SAFETY: `openpty` returned these two descriptors and nothing else owns them.
+    let (master, slave) = unsafe { (OwnedFd::from_raw_fd(master), OwnedFd::from_raw_fd(slave)) };
+    for fd in [&master, &slave] {
+        use std::os::fd::AsRawFd;
+        // SAFETY: the descriptor is open for as long as the borrow.
+        if unsafe { libc::fcntl(fd.as_raw_fd(), libc::F_SETFD, libc::FD_CLOEXEC) } != 0 {
+            return Err(std::io::Error::last_os_error());
+        }
+    }
+    let again = || slave.try_clone().map(Stdio::from);
+    Ok((
+        std::fs::File::from(master),
+        [again()?, again()?, Stdio::from(slave)],
+    ))
 }
 
 /// Ansible reports a signal death as the negative signal number, like Python's `Popen`.
@@ -1051,6 +1157,74 @@ mod tests {
             "grandchild survived: {}",
             String::from_utf8_lossy(&survivors.stdout)
         );
+    }
+
+    /// A command run under a terminal: both streams arrive as stdout with CR LF line ends,
+    /// stderr holds only the close line when one is asked for, and the return code is the command's.
+    #[rstest]
+    #[case::merged("echo out; echo err >&2; exit 3", json!(true), "out\r\nerr\r\n", "", 3)]
+    #[case::close_line("printf 'a\nb'", json!("Shared connection to h closed."), "a\r\nb", "Shared connection to h closed.\r\n", 0)]
+    #[case::a_terminal_is_stdin("test -t 0 && test -t 1 && test -t 2", json!(true), "", "", 0)]
+    #[case::off("echo out", json!(false), "out\n", "", 0)]
+    fn a_command_with_a_terminal_reports_in_the_reference_shape(
+        #[case] line: &str,
+        #[case] tty: Value,
+        #[case] stdout: &str,
+        #[case] stderr: &str,
+        #[case] rc: i64,
+    ) {
+        let Run::Done(r) = execute(
+            &args(json!({"_raw_params": line, "_volant_tty": tty, "strip_empty_ends": false})),
+            true,
+            &Context::default(),
+            &|| false,
+        ) else {
+            panic!("cancelled")
+        };
+        assert_eq!(r.0["stdout"], stdout);
+        assert_eq!(r.0["stderr"], stderr);
+        assert_eq!(r.0["rc"], rc);
+    }
+
+    #[rstest]
+    #[case::not_a_boolean(json!({"_raw_params": "true", "_volant_tty": 3}), "_volant_tty must be")]
+    #[case::stdin(json!({"_raw_params": "cat", "_volant_tty": true, "stdin": "x"}), "takes no stdin")]
+    fn a_terminal_that_cannot_be_given_is_refused(#[case] given: Value, #[case] why: &str) {
+        let Run::Done(r) = execute(&args(given), true, &Context::default(), &|| false) else {
+            panic!("cancelled")
+        };
+        assert!(r.failed());
+        assert!(
+            r.0["msg"].as_str().unwrap().contains(why),
+            "{:?}",
+            r.0["msg"]
+        );
+    }
+
+    #[test]
+    fn cancellation_kills_the_group_of_a_command_with_a_terminal() {
+        let marker = format!("31.{}", std::process::id());
+        // Without `pgrep` the survivor check below would pass over nothing.
+        Command::new("pgrep")
+            .arg("--version")
+            .output()
+            .expect("this test needs pgrep to look for survivors");
+        let alive = |marker: &str| {
+            Command::new("pgrep")
+                .args(["-f", marker])
+                .output()
+                .is_ok_and(|o| !o.stdout.is_empty())
+        };
+        let deadline = Instant::now() + Duration::from_secs(5);
+        let run = execute(
+            &args(json!({"_raw_params": format!("sleep {marker} & wait"), "_volant_tty": true})),
+            true,
+            &Context::default(),
+            &|| alive(&marker) || Instant::now() > deadline,
+        );
+        assert!(matches!(run, Run::Cancelled));
+        thread::sleep(Duration::from_millis(200));
+        assert!(!alive(&marker), "the command's child outlived the cancel");
     }
 
     /// The cancellation predicate consumes what it reports: in the agent it is a `try_recv` on the

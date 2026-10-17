@@ -27,6 +27,10 @@ fn run_raw(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() -> boo
     inner.insert("argv".into(), json!([executable, "-c", line]));
     // Ansible's `raw` returns the output untouched, where `command` trims trailing newlines.
     inner.insert("strip_empty_ends".into(), json!(false));
+    // Run under a terminal when the controller says the connection would have given one.
+    if let Some(tty) = args.get("_volant_tty") {
+        inner.insert("_volant_tty".into(), tty.clone());
+    }
     if line.is_empty() {
         return Run::Done(TaskResult::failed_with("no command given"));
     }

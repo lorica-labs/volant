@@ -663,6 +663,9 @@ pub fn documentation_table() -> String {
         out.push_str(&notes);
     }
     out.push_str(
+        "\nOver `ssh`, `raw` runs its command on a terminal, as ansible-core does with `ssh -tt`. The command's stderr is merged into stdout, every line ends in a carriage return and a newline, and stderr holds the line `ssh` prints when the session closes: `Shared connection to <host> closed.`, or `Connection to <host> closed.` when the connection is not shared. Set `ansible_ssh_use_tty` to false to run without a terminal. A local connection has none.\n",
+    );
+    out.push_str(
         "\n## On the controller\n\nThe controller runs these itself, so they need no connection to the host.\n\n| Module | Free-form | What it does |\n|---|---|---|\n",
     );
     rows(LOCAL_MODULES, false, &mut out);

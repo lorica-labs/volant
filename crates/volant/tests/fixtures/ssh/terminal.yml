@@ -1,0 +1,25 @@
+- name: raw and script run on a terminal over ssh
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: A raw command
+      raw: echo out; echo err >&2; exit 3
+      register: r
+      failed_when: false
+    - name: Show it
+      debug:
+        var: r
+    - name: A script
+      script: terminal.sh arg1
+      register: s
+    - name: Show that one
+      debug:
+        var: s
+    - name: A raw command without a terminal
+      raw: echo out; echo err >&2
+      register: n
+      vars:
+        ansible_ssh_use_tty: false
+    - name: Show the last one
+      debug:
+        var: n

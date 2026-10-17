@@ -2630,6 +2630,12 @@ pub(super) fn protocol_task(
     python: Option<(&ModulePayload, &str)>,
 ) -> Task {
     let mut args = item.args.clone();
+    // The terminal is the controller's to give, never a task's to ask for. `raw` is the one
+    // playbook module the reference runs through `ssh -tt`: it sends no stdin.
+    args.remove(TTY_KEY);
+    if short_name(&task.module) == "raw" {
+        args.insert(TTY_KEY.into(), Value::Bool(true));
+    }
     // What the reference's `async_status` action plugin adds, whatever the task wrote there.
     if short_name(&task.module) == "async_status" {
         args.insert("_async_dir".into(), Value::String(async_dir(&item.vars)));
@@ -2901,6 +2907,10 @@ pub(super) trait AgentChannel {
     fn stderr_note(&self) -> String {
         String::new()
     }
+    /// The line a command given a terminal ends its stderr with; see `SshTarget::tty_close`.
+    async fn tty_close(&mut self) -> Option<String> {
+        None
+    }
     /// Gives the link up after a question went unanswered: its answer may still arrive, and the
     /// next task would read it as its own. The link is dead afterwards.
     fn abandon(&mut self) {}
@@ -3013,6 +3023,10 @@ impl AgentChannel for AgentLink {
 
     fn stderr_note(&self) -> String {
         AgentLink::stderr_note(self)
+    }
+
+    async fn tty_close(&mut self) -> Option<String> {
+        AgentLink::tty_close(self).await
     }
 
     fn abandon(&mut self) {
@@ -3421,11 +3435,19 @@ async fn send_batch<C: AgentChannel>(
     link: &mut C,
     host: &str,
     id: u64,
-    tasks: Vec<Task>,
+    mut tasks: Vec<Task>,
     stop: &mut watch::Receiver<bool>,
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
+    // Asked for only when a task wants a terminal: working the line out can cost an `ssh -G`.
+    let wants = |t: &Task| t.args.get(TTY_KEY) == Some(&Value::Bool(true));
+    let close = if tasks.iter().any(wants) {
+        link.tty_close().await
+    } else {
+        None
+    };
+    give_terminals(&mut tasks, close);
     let mut received: Vec<Option<TaskResult>> = vec![None; tasks.len()];
     if tasks.is_empty() {
         return (received, Ok(BatchOutcome::Completed));
@@ -3504,6 +3526,26 @@ async fn send_batch<C: AgentChannel>(
         ledger.wire_micros += crate::profile::micros(started).saturating_sub(agent);
     }
     (received, ended)
+}
+
+/// The argument that asks the agent to run a command on a terminal. Internal: the controller sets
+/// it, a playbook cannot, and the agent never reports it.
+const TTY_KEY: &str = "_volant_tty";
+
+/// Settles which tasks of a batch run on a terminal. A task marks itself with `true` when the
+/// reference would run it through `ssh -tt`; the marker becomes the line that ends its stderr when
+/// this link gives commands a terminal, and is dropped on any other link. Any other value is not
+/// the controller's, and is dropped.
+fn give_terminals(tasks: &mut [Task], close: Option<String>) {
+    for task in tasks {
+        if let Some(marked) = task.args.remove(TTY_KEY)
+            && marked == Value::Bool(true)
+            && let Some(close) = &close
+        {
+            task.args
+                .insert(TTY_KEY.into(), Value::String(close.clone()));
+        }
+    }
 }
 
 /// The key the Python helper sets on a result it built from `AnsibleActionSkip`.
@@ -5142,6 +5184,8 @@ mod tests {
         busy: Option<Box<Busy>>,
         /// Whether the link was given up on.
         abandoned: bool,
+        /// How many times the closing line of a terminal was asked for.
+        close_asked: usize,
     }
 
     /// Batches run the way `volant-agent`'s runner runs them: one at a time, each `RunBatch` it
@@ -5199,6 +5243,7 @@ mod tests {
                 transfer_takes: Duration::ZERO,
                 busy: None,
                 abandoned: false,
+                close_asked: 0,
             }
         }
 
@@ -5211,6 +5256,11 @@ mod tests {
     }
 
     impl AgentChannel for FakeAgent {
+        async fn tty_close(&mut self) -> Option<String> {
+            self.close_asked += 1;
+            Some("Connection to h closed.".to_string())
+        }
+
         fn memory(&mut self) -> &mut BlobMemory {
             &mut self.memory
         }
@@ -5558,6 +5608,54 @@ mod tests {
                 Some("/opt/py".to_string())
             );
         }
+    }
+
+    /// The closing line is worked out only for a batch with a task that wants a terminal.
+    #[tokio::test]
+    async fn the_closing_line_is_asked_for_only_by_a_task_that_wants_one() {
+        let (_stop_tx, mut stop) = watch::channel(false);
+        let mut stop_broken = false;
+        let mut logs = Vec::new();
+        for (module, asked) in [("command", 0), ("raw", 1)] {
+            let mut agent = FakeAgent::answering(vec![FromAgent::BatchDone {
+                batch: 1,
+                outcome: BatchOutcome::Completed,
+            }]);
+            let tasks = vec![protocol_task(&task(module), &bare_item(), None)];
+            let (_, ended) = send_batch(
+                &mut agent,
+                "h",
+                1,
+                tasks,
+                &mut stop,
+                &mut stop_broken,
+                &mut logs,
+            )
+            .await;
+            assert!(matches!(ended, Ok(BatchOutcome::Completed)));
+            assert_eq!(agent.close_asked, asked, "{module}");
+        }
+    }
+
+    /// Only the controller asks for a terminal, and a link that gives none drops the marker.
+    #[rstest::rstest]
+    #[case::raw_over_ssh("raw", None, Some("Shared connection to h closed."), Some(json!("Shared connection to h closed.")))]
+    #[case::raw_over_local("raw", None, None, None)]
+    #[case::raw_asking_for_its_own("ansible.builtin.raw", Some(json!("x")), None, None)]
+    #[case::command_asking("command", Some(json!(true)), Some("Connection to h closed."), None)]
+    fn a_terminal_is_given_by_the_controller_alone(
+        #[case] module: &str,
+        #[case] written: Option<Value>,
+        #[case] close: Option<&str>,
+        #[case] sent: Option<Value>,
+    ) {
+        let mut item = bare_item();
+        if let Some(written) = written {
+            item.args.insert(TTY_KEY.into(), written);
+        }
+        let mut tasks = vec![protocol_task(&task(module), &item, None)];
+        give_terminals(&mut tasks, close.map(str::to_string));
+        assert_eq!(tasks[0].args.get(TTY_KEY).cloned(), sent);
     }
 
     /// A batch the agent reports cancelled when this side never asked is an error, not a stop.

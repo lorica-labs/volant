@@ -177,6 +177,11 @@ pub struct AgentLink {
     stderr_file: Option<String>,
     /// Whether this is [`AgentLink::dead`]'s stand-in for a host that never answered.
     stand_in: bool,
+    /// The line `ssh -tt` ends a command's stderr with, for a link over ssh that gives commands a
+    /// terminal; `None` for any other.
+    tty_target: Option<crate::transport::SshTarget>,
+    /// The line, once asked for: `Some(None)` is an answer of no line.
+    tty_line: Option<Option<String>>,
 }
 
 /// A blob as it goes on the wire in the frame after its `put_blob`.
@@ -345,7 +350,27 @@ impl AgentLink {
             tty: false,
             stderr_file: None,
             stand_in: false,
+            tty_target: None,
+            tty_line: None,
         })
+    }
+
+    pub(crate) fn set_tty_target(&mut self, target: Option<crate::transport::SshTarget>) {
+        self.tty_target = target;
+        self.tty_line = None;
+    }
+
+    /// The line a command given a terminal ends its stderr with, worked out the first time a
+    /// command needs it so a play with no such command pays nothing for it.
+    pub async fn tty_close(&mut self) -> Option<String> {
+        if self.tty_line.is_none() {
+            let line = match &self.tty_target {
+                Some(target) => target.tty_close().await,
+                None => None,
+            };
+            self.tty_line = Some(line);
+        }
+        self.tty_line.clone().flatten()
     }
 
     /// A link whose agent is already gone: the first batch asked over it fails as a lost

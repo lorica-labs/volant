@@ -167,6 +167,13 @@ pub struct SshTarget {
     /// probe, the upload, the link and the escalated link then pay one key exchange between
     /// them instead of one each. Boxed so the two variants of a `Transport` stay close in size.
     pub control_path: Option<Box<Path>>,
+    /// `ansible_ssh_use_tty`: whether a command sent with no stdin runs on a terminal, as the
+    /// reference's `ssh -tt` gives it. On unless the host turns it off.
+    pub use_tty: bool,
+    /// What the `ssh -G` that [`SshTarget::resolved`] ran said: the `hostname` it printed and
+    /// whether the operator's configuration already shares the connection. `None` when no dump
+    /// was taken, which the closing line of a terminal then asks for on first use.
+    pub dumped: Option<Box<(Option<String>, bool)>>,
 }
 
 /// Why a link could not be opened. `Unreachable` is Ansible's `UNREACHABLE`; `Become` is a
@@ -308,6 +315,18 @@ impl Transport {
                     None => defaults.remote_tmp.clone(),
                 },
                 control_path: None,
+                dumped: None,
+                use_tty: host_setting(vars, "ansible_ssh_use_tty").is_none_or(
+                    |value| match value {
+                        Value::Bool(on) => *on,
+                        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
+                        // The reference reads a word it does not know as false.
+                        Value::String(text) => {
+                            crate::yaml::bool_from_str(text.trim()).unwrap_or(false)
+                        }
+                        other => crate::template::truthy(other),
+                    },
+                ),
             })),
             // ansible-core's own plugins this release does not drive, and a collection's, are
             // refused; any other name is no plugin at all, which the reference fails the task for.
@@ -1223,6 +1242,31 @@ fn config_sets_control(dump: &str) -> bool {
     })
 }
 
+/// The machine an `ssh -G` dump says the connection goes to.
+fn dump_hostname(dump: &str) -> Option<String> {
+    dump.lines()
+        .find_map(|line| line.strip_prefix("hostname "))
+        .map(str::to_string)
+}
+
+/// What `ssh -G` prints for this target: its configuration as `ssh` resolves it, without
+/// connecting. `None` when `ssh -G` cannot run or fails.
+async fn ssh_dump(bare: &SshTarget) -> Option<String> {
+    let mut argv = bare.ssh_argv(":");
+    argv.insert(1, "-G".into());
+    match Command::new(&argv[0])
+        .args(&argv[1..])
+        .stdin(Stdio::null())
+        .stderr(Stdio::null())
+        .kill_on_drop(true)
+        .output()
+        .await
+    {
+        Ok(out) if out.status.success() => Some(String::from_utf8_lossy(&out.stdout).into_owned()),
+        _ => None,
+    }
+}
+
 impl SshTarget {
     /// The `ssh` command line for one remote command. Options first, then the host, then `--`.
     pub fn ssh_argv(&self, remote_command: &str) -> Vec<String> {
@@ -1361,7 +1405,45 @@ impl SshTarget {
         agents: &AgentSource,
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
-        self.resolved().await.open(agents, escalation).await
+        let resolved = self.resolved().await;
+        let mut link = resolved.open(agents, escalation).await?;
+        link.set_tty_target(resolved.use_tty.then_some(resolved));
+        Ok(link)
+    }
+
+    /// The line `ssh -tt` prints when a command's session ends, which is the end of that command's
+    /// stderr: `Shared connection to <HostName> closed.` when the session rides a shared
+    /// connection, `Connection to <HostName> closed.` when it does not. `<HostName>` is the
+    /// machine `ssh -G` says the connection goes to, and the address written for the host when
+    /// `ssh -G` cannot run. `None` when the host turns terminals off. Called on the target
+    /// [`SshTarget::resolved`] returned, and only when a command is about to need the line.
+    pub(crate) async fn tty_close(&self) -> Option<String> {
+        if !self.use_tty {
+            return None;
+        }
+        let (host, config_shared) = if let Some(seen) = &self.dumped {
+            (**seen).clone()
+        } else {
+            let bare = SshTarget {
+                control_path: None,
+                ..self.clone()
+            };
+            let dump = ssh_dump(&bare).await;
+            (
+                dump.as_deref().and_then(dump_hostname),
+                dump.as_deref().is_some_and(config_sets_control),
+            )
+        };
+        let host = host.unwrap_or_else(|| self.address.clone());
+        let shared = self.control_path.is_some() || config_shared;
+        Some(format!(
+            "{} to {host} closed.",
+            if shared {
+                "Shared connection"
+            } else {
+                "Connection"
+            }
+        ))
     }
 
     /// The target a link really runs, as `ssh -G` resolves it from the operator's configuration
@@ -1381,21 +1463,12 @@ impl SshTarget {
         let Some(path) = &self.control_path else {
             return bare;
         };
-        let mut argv = bare.ssh_argv(":");
-        argv.insert(1, "-G".into());
-        let dump = match Command::new(&argv[0])
-            .args(&argv[1..])
-            .stdin(Stdio::null())
-            .stderr(Stdio::null())
-            .kill_on_drop(true)
-            .output()
-            .await
-        {
-            Ok(out) if out.status.success() => String::from_utf8_lossy(&out.stdout).into_owned(),
-            _ => return bare,
-        };
-        if config_sets_control(&dump) {
+        let Some(dump) = ssh_dump(&bare).await else {
             return bare;
+        };
+        let dumped = Some(Box::new((dump_hostname(&dump), config_sets_control(&dump))));
+        if config_sets_control(&dump) {
+            return SshTarget { dumped, ..bare };
         }
         let mut hasher = blake3::Hasher::new();
         hasher.update(path.as_os_str().as_encoded_bytes());
@@ -1408,6 +1481,7 @@ impl SshTarget {
         let name = &hasher.finalize().to_hex()[..16];
         SshTarget {
             control_path: Some(path.with_file_name(name).into_boxed_path()),
+            dumped,
             ..bare
         }
     }

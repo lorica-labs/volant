@@ -26,6 +26,8 @@ These arguments exist in Ansible and are not supported yet: a playbook that uses
 
 - `shell`: `expand_argument_vars`
 
+Over `ssh`, `raw` runs its command on a terminal, as ansible-core does with `ssh -tt`. The command's stderr is merged into stdout, every line ends in a carriage return and a newline, and stderr holds the line `ssh` prints when the session closes: `Shared connection to <host> closed.`, or `Connection to <host> closed.` when the connection is not shared. Set `ansible_ssh_use_tty` to false to run without a terminal. A local connection has none.
+
 ## On the controller
 
 The controller runs these itself, so they need no connection to the host.

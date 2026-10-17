@@ -31,6 +31,7 @@ Volant reads these per host, from the inventory or from any other variable sourc
 | `ansible_ssh_private_key_file` | `ssh -i` |
 | `ansible_ssh_common_args` | Extra `ssh` arguments, split the way a shell would split them |
 | `ansible_ssh_extra_args` | The same, added after the common ones |
+| `ansible_ssh_use_tty` | Run `raw` and `script` commands on a terminal, as `ssh -tt` does. On unless set to false |
 | `ansible_remote_tmp` | Directory that holds the agent cache on that host |
 | `ansible_become` | Escalate or not, overriding the `become` keyword |
 | `ansible_become_user` | Target user for escalation |

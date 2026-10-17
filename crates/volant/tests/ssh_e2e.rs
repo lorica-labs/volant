@@ -856,6 +856,41 @@ fn ssh_a_bridged_plugin_puts_its_file_and_runs_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// Over ssh, `raw` and the command `script` runs go through a terminal: stderr merged into
+/// stdout with CR LF, and the session's closing line on stderr. Only its form is asserted.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_raw_and_script_run_on_a_terminal() {
+    let dir = tmp("terminal");
+    let inv = inventory(&dir, &[("box", "")]);
+    let out = volant_within(
+        &["playbook", "-i", &inv, &fixture("ssh/terminal.yml")],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    // `debug` prints each result as JSON, so a carriage return reads `\r` here.
+    let shown: Vec<&str> = text.split("ok: [box] => {").skip(1).collect();
+    assert_eq!(shown.len(), 3, "{text}");
+    let closes = |part: &str, what: &str| -> bool {
+        let rest = part.split(r#""stderr": ""#).nth(1).unwrap_or_default();
+        let line = rest.split('"').next().unwrap_or_default();
+        line.starts_with(what) && line.ends_with(r" closed.\r\n")
+    };
+    let (raw, script, plain) = (shown[0], shown[1], shown[2]);
+    assert!(raw.contains(r#""stdout": "out\r\nerr\r\n""#), "{raw}");
+    assert!(raw.contains(r#""rc": 3"#), "{raw}");
+    assert!(closes(raw, "Shared connection to "), "{raw}");
+    assert!(
+        script.contains(r#""stdout": "hi arg1\r\noops\r\n""#),
+        "{script}"
+    );
+    assert!(closes(script, "Shared connection to "), "{script}");
+    assert!(plain.contains(r#""stdout": "out\n""#), "{plain}");
+    assert!(plain.contains(r#""stderr": "err\n""#), "{plain}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The unit `ssh/actions.yml` asks to be started. Present and running wherever systemd is the
 /// init system, which the CI runner and the development machine both are, so the task changes
 /// nothing on either.

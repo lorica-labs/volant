@@ -1316,6 +1316,10 @@ impl SshTarget {
             "-o".into(),
             format!("ConnectTimeout={}", self.connect_timeout.as_secs()),
         ]);
+        if crate::askpass::installed() {
+            // One wrong answer is the end of it, as in the reference, not three tries.
+            argv.extend(["-o".into(), "NumberOfPasswordPrompts=1".into()]);
+        }
         if let Some(path) = &self.control_path {
             argv.extend([
                 "-o".into(),

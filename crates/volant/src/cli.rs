@@ -530,29 +530,18 @@ async fn run_all(
             }
         }
     }
-    let become_password = if args.ask_become_pass {
-        Some(ask_become_password()?)
-    } else if let Some(path) = &args.become_password_file {
-        match password_from_file(path) {
-            Ok(password) => Some(password),
-            Err(message) => {
-                eprintln!("[ERROR]: {message}");
-                return Ok(1);
-            }
-        }
-    } else {
-        None
-    };
-    // Held to the end of the run: the file the `ssh` calls ask for the password is removed
-    // when it drops.
-    let _connection_password = match connection_password(args) {
-        Ok(Some(password)) => Some(crate::askpass::install(&password)?),
-        Ok(None) => None,
+    let (connection_password, become_password) = match ask_passwords(args) {
+        Ok(passwords) => passwords,
         Err(message) => {
             eprintln!("[ERROR]: {message}");
             return Ok(1);
         }
     };
+    // Held to the end of the run: the file the `ssh` calls ask for the password is removed
+    // when it drops.
+    let _connection_password = connection_password
+        .map(|password| crate::askpass::install(&password))
+        .transpose()?;
     let defaults = ConnectionDefaults {
         remote_user: args.user.clone().or(config.remote_user),
         connection: args.connection.clone(),
@@ -921,51 +910,104 @@ fn shuffle<T>(items: &mut [T]) {
     }
 }
 
-/// The first line of a password file, line ending removed, spaces kept. The wording is the
-/// reference's.
+/// A password file as ansible-core's `get_password_from_file` reads it: `-` is standard
+/// input, an executable file is a script whose output is the password, anything else is read
+/// and stripped of surrounding whitespace. The wording is the reference's.
 fn password_from_file(path: &Path) -> Result<String, String> {
-    let bytes = match std::fs::read(path) {
-        Ok(bytes) => bytes,
-        Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+    use std::io::Read as _;
+    let shown = path.display();
+    let secret = if path == Path::new("-") {
+        let mut bytes = Vec::new();
+        std::io::stdin()
+            .read_to_end(&mut bytes)
+            .map_err(|e| format!("Could not read password file '-': {e}"))?;
+        bytes
+    } else if !path.exists() {
+        return Err(format!("The password file {shown} was not found"));
+    } else if is_executable(path) {
+        let out = std::process::Command::new(path)
+            .stdin(std::process::Stdio::null())
+            .output()
+            .map_err(|e| {
+                format!(
+                    "Problem occurred when trying to run the password script {shown} ({e}). If this is not a script, remove the executable bit from the file."
+                )
+            })?;
+        if !out.status.success() {
             return Err(format!(
-                "The password file {} was not found",
-                path.display()
+                "The password script {shown} returned an error (rc={}): {}",
+                out.status.code().unwrap_or(-1),
+                String::from_utf8_lossy(&out.stderr)
             ));
         }
-        Err(e) => {
-            return Err(format!(
-                "The password file {} could not be read: {e}",
-                path.display()
-            ));
-        }
+        out.stdout
+    } else {
+        std::fs::read(path)
+            .map_err(|_| format!("Could not read password file '{shown}'."))?
+            .trim_ascii()
+            .to_vec()
     };
-    let text = String::from_utf8(bytes)
-        .map_err(|_| format!("The password file {} is not UTF-8", path.display()))?;
-    let line = text.lines().next().unwrap_or_default();
-    if line.is_empty() {
-        return Err(format!(
-            "Empty password was provided from file ({})",
-            path.display()
-        ));
+    let end = secret
+        .iter()
+        .rposition(|b| !matches!(b, 13 | 10)) // CR, LF
+        .map_or(0, |i| i + 1);
+    let secret = &secret[..end];
+    if secret.is_empty() {
+        return Err(format!("Empty password was provided from file ({shown})"));
     }
-    Ok(line.to_string())
+    String::from_utf8(secret.to_vec())
+        .map_err(|_| format!("The password file {shown} is not UTF-8"))
 }
 
-/// The connection password `-k` or `--connection-password-file` asks for. Without a terminal
-/// `-k` reads the end of the input as an empty password, which is what the reference does.
-fn connection_password(args: &PlaybookArgs) -> Result<Option<String>, String> {
-    if args.ask_pass {
-        let typed = crate::prompt::hidden_line("SSH password: ")
-            .map_err(|e| format!("{e:#}"))?
-            .unwrap_or_default();
-        return String::from_utf8(typed)
+#[cfg(unix)]
+fn is_executable(path: &Path) -> bool {
+    use std::os::unix::fs::PermissionsExt as _;
+    path.metadata()
+        .is_ok_and(|m| m.is_file() && m.permissions().mode() & 0o111 != 0)
+}
+
+#[cfg(not(unix))]
+fn is_executable(_path: &Path) -> bool {
+    false
+}
+
+/// The connection and the escalation password, asked in the reference's order. A prompt that
+/// meets the end of the input ends the asking, and the run goes on with what it has, as
+/// `ask_passwords` does when `getpass` raises `EOFError`. An empty escalation answer after `-k`
+/// is the connection password.
+fn ask_passwords(args: &PlaybookArgs) -> Result<(Option<String>, Option<String>), String> {
+    let ask = |prompt: &str| -> Result<Option<String>, String> {
+        let Some(typed) = crate::prompt::hidden_line(prompt).map_err(|e| format!("{e:#}"))? else {
+            return Ok(None);
+        };
+        // `from_utf8` rather than `from_utf8_lossy`: a password quietly rewritten with
+        // replacement characters would be refused by the host, and the run would blame the
+        // operator.
+        String::from_utf8(typed)
             .map(Some)
-            .map_err(|_| "the connection password is not UTF-8".to_string());
+            .map_err(|_| "the password is not UTF-8".to_string())
+    };
+    let mut connection = None;
+    let mut become_prompt = "BECOME password: ";
+    if args.ask_pass {
+        connection = ask("SSH password: ")?;
+        if connection.is_none() {
+            return Ok((None, None));
+        }
+        become_prompt = "BECOME password[defaults to SSH password]: ";
+    } else if let Some(path) = &args.connection_password_file {
+        connection = Some(password_from_file(path)?);
     }
-    args.connection_password_file
-        .as_deref()
-        .map(password_from_file)
-        .transpose()
+    let mut escalation = None;
+    if args.ask_become_pass {
+        escalation = ask(become_prompt)?;
+        if args.ask_pass && escalation.as_deref() == Some("") {
+            escalation.clone_from(&connection);
+        }
+    } else if let Some(path) = &args.become_password_file {
+        escalation = Some(password_from_file(path)?);
+    }
+    Ok((connection, escalation))
 }
 
 /// The words of `--ssh-common-args` or `--ssh-extra-args`; an unbalanced quote is refused
@@ -979,16 +1021,6 @@ fn ssh_words(flag: &str, text: Option<&str>) -> anyhow::Result<Vec<String>> {
             "{flag} has unbalanced quotes and cannot be turned into ssh options: {text}"
         )
     })
-}
-
-/// Reads the escalation password from the terminal, with the prompt on stderr.
-fn ask_become_password() -> anyhow::Result<String> {
-    let Some(typed) = crate::prompt::hidden_line("BECOME password: ")? else {
-        anyhow::bail!("no become password was given");
-    };
-    // `from_utf8` rather than `from_utf8_lossy`: a password quietly rewritten with replacement
-    // characters would be sent to `sudo` and refused, and the run would blame the operator.
-    String::from_utf8(typed).map_err(|_| anyhow::anyhow!("the become password is not UTF-8"))
 }
 
 /// Ctrl-C and SIGTERM both request a clean stop: running batches are cancelled, the recap is
@@ -1164,8 +1196,8 @@ mod tests {
         );
     }
 
-    /// A password file gives its first line, spaces kept; a missing or empty one is refused
-    /// in the reference's words.
+    /// A password file gives its whole text, surrounding whitespace removed; a missing or
+    /// empty one is refused in the reference's words.
     #[rstest::rstest]
     #[case::newline(
         Some(
@@ -1175,21 +1207,32 @@ mod tests {
         Ok("sekret")
     )]
     #[case::no_newline(Some("sekret"), Ok("sekret"))]
-    #[case::spaces(
+    #[case::inner_space(
         Some(
             "sek ret 
 
 "
         ),
-        Ok("sek ret ")
+        Ok("sek ret")
     )]
-    #[case::first_line_only(
+    #[case::leading_newline(
+        Some(
+            "
+sekret
+"
+        ),
+        Ok("sekret")
+    )]
+    #[case::several_lines(
         Some(
             "one
 two
 "
         ),
-        Ok("one")
+        Ok(
+            "one
+two"
+        )
     )]
     #[case::crlf(
         Some(
@@ -1207,8 +1250,15 @@ two
         ),
         Err("Empty password was provided from file (<path>)")
     )]
+    #[case::spaces_only(
+        Some(
+            "  
+"
+        ),
+        Err("Empty password was provided from file (<path>)")
+    )]
     #[case::missing(None, Err("The password file <path> was not found"))]
-    fn a_password_file_gives_its_first_line(
+    fn a_password_file_gives_its_text(
         #[case] content: Option<&str>,
         #[case] want: Result<&str, &str>,
     ) {
@@ -1222,6 +1272,52 @@ two
             .map(str::to_string)
             .map_err(|m| m.replace("<path>", &path.display().to_string()));
         assert_eq!(got, want);
+    }
+
+    /// A directory exists and cannot be read; an executable file gives its output, or its
+    /// failure.
+    #[cfg(unix)]
+    #[test]
+    fn a_directory_and_a_script_as_password_files() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let dir = tempfile::tempdir().unwrap();
+        assert_eq!(
+            password_from_file(dir.path()),
+            Err(format!(
+                "Could not read password file '{}'.",
+                dir.path().display()
+            ))
+        );
+        let script = |name: &str, body: &str| {
+            let path = dir.path().join(name);
+            std::fs::write(&path, body).unwrap();
+            std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+            path
+        };
+        assert_eq!(
+            password_from_file(&script(
+                "ok",
+                "#!/bin/sh
+printf 'a b \n'
+"
+            )),
+            Ok("a b ".to_string())
+        );
+        let failing = script(
+            "bad",
+            "#!/bin/sh
+echo nope >&2
+exit 3
+",
+        );
+        assert_eq!(
+            password_from_file(&failing),
+            Err(format!(
+                "The password script {} returned an error (rc=3): nope
+",
+                failing.display()
+            ))
+        );
     }
 
     /// The prompt and the file for one password are exclusive, and `ssh` arguments with an

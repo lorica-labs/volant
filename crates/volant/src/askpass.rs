@@ -47,10 +47,12 @@ pub fn environment() -> Vec<(&'static str, OsString)> {
     ]
 }
 
-/// What `ssh` is told when it asks `prompt`: the password for a password prompt, nothing for
-/// any other question, so a host-key confirmation is never answered with a password.
+/// What `ssh` is told when it asks `prompt`: the password for a prompt that ends in
+/// `password:`, nothing for any other question. A host-key confirmation or a key passphrase
+/// may name a file or a host with "password" in it and must never get the password.
 fn reply(file: &Path, prompt: &str) -> Option<Vec<u8>> {
-    if !prompt.to_ascii_lowercase().contains("password") {
+    let lower = prompt.trim().to_ascii_lowercase();
+    if lower.contains("passphrase") || lower.contains("yes/no") || !lower.ends_with("password:") {
         return None;
     }
     let mut text = std::fs::read(file).ok()?;
@@ -83,6 +85,18 @@ mod tests {
     #[case::keyboard_interactive("Password: ", Some("sek ret \n"))]
     #[case::host_key("Are you sure you want to continue connecting (yes/no)? ", None)]
     #[case::passphrase("Enter passphrase for key '/k': ", None)]
+    #[case::passphrase_of_a_password_key("Enter passphrase for key '/x/password.pem': ", None)]
+    #[case::host_key_of_a_password_host(
+        "The authenticity of host 'password-db' can't be established. Are you sure you want to continue connecting (yes/no)? ",
+        None
+    )]
+    #[case::user_password(
+        "(user@host) Password: ",
+        Some(
+            "sek ret 
+"
+        )
+    )]
     fn the_askpass_answers_password_prompts_only(#[case] prompt: &str, #[case] want: Option<&str>) {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("pw");

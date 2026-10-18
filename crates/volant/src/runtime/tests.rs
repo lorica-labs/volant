@@ -326,3 +326,34 @@ fn a_collections_argument_is_a_file_only_when_it_is_a_yaml_file(
         files.iter().map(PathBuf::from).collect::<Vec<_>>()
     );
 }
+
+/// The controller's interpreter: the helper's when it has started, else the first candidate that
+/// exists, else nothing.
+#[test]
+fn the_controller_python_is_the_helper_s_or_the_first_candidate_that_exists() {
+    let tmp = scratch();
+    let real = tmp.path().join("python3");
+    fs::write(&real, "").unwrap();
+    let real = real.display().to_string();
+    let missing = tmp.path().join("missing").display().to_string();
+    let list = |paths: &[&str]| -> Vec<resolve::Candidate> {
+        paths
+            .iter()
+            .map(|python| resolve::Candidate {
+                python: (*python).to_owned(),
+                origin: Origin::Path,
+            })
+            .collect()
+    };
+    assert_eq!(
+        resolve::pick(None, &list(&[&missing, &real])),
+        Some(real.clone())
+    );
+    assert_eq!(
+        resolve::pick(Some(&real), &list(&[&missing])),
+        Some(real.clone()),
+        "the helper's interpreter wins over the candidates"
+    );
+    assert_eq!(resolve::pick(None, &list(&[&missing])), None);
+    assert_eq!(resolve::pick(None, &[]), None);
+}

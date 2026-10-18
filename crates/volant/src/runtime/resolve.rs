@@ -9,9 +9,9 @@
 //!    `system`, and never for a run that only gathers facts).
 
 use std::fmt;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
-use std::sync::OnceLock;
+use std::sync::{Mutex, OnceLock};
 
 use super::install::{self, Installed};
 use super::manifest::Manifest;
@@ -125,6 +125,65 @@ pub(crate) fn current(explicit: Option<&str>, virtual_env: Option<&str>) -> Vec<
         .flatten()
         .map(|done| done.python);
     candidates(mode, explicit, virtual_env, managed)
+}
+
+/// The interpreter the helper was started under, once it has been.
+static HELPER_PYTHON: Mutex<Option<String>> = Mutex::new(None);
+
+/// Records the interpreter the Python helper runs under, which is what the reference's own
+/// interpreter is for the run.
+pub(crate) fn note_helper_python(python: &str) {
+    if let Ok(mut held) = HELPER_PYTHON.lock() {
+        *held = Some(python.to_owned());
+    }
+}
+
+/// `python` as a file that exists: a path as it is, a bare name looked up on `PATH`.
+fn locate(python: &str) -> Option<String> {
+    if python.contains('/') {
+        return Path::new(python).is_file().then(|| python.to_owned());
+    }
+    std::env::split_paths(&std::env::var_os("PATH")?)
+        .map(|dir| dir.join(python))
+        .find(|path| path.is_file())
+        .map(|path| path.display().to_string())
+}
+
+/// The interpreter ansible-core would report as its own (`sys.executable`): the one the helper
+/// runs under when it has started, else the first candidate that exists. Nothing is installed
+/// and no interpreter is run to find out; `None` when no candidate exists.
+pub(super) fn pick(helper: Option<&str>, list: &[Candidate]) -> Option<String> {
+    helper
+        .map(|python| locate(python).unwrap_or_else(|| python.to_owned()))
+        .or_else(|| list.iter().find_map(|candidate| locate(&candidate.python)))
+}
+
+#[cfg(not(test))]
+pub(crate) fn controller_python() -> Option<String> {
+    let helper = HELPER_PYTHON.lock().ok().and_then(|held| held.clone());
+    let explicit = std::env::var("VOLANT_PYTHON").ok();
+    let virtual_env = std::env::var("VIRTUAL_ENV").ok();
+    pick(
+        helper.as_deref(),
+        &current(explicit.as_deref(), virtual_env.as_deref()),
+    )
+}
+
+#[cfg(test)]
+thread_local! {
+    static TEST_PYTHON: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// In a test the answer is whatever the test set on its own thread, `None` otherwise, so the
+/// machine running the tests never shows through.
+#[cfg(test)]
+pub(crate) fn controller_python() -> Option<String> {
+    TEST_PYTHON.with_borrow(Clone::clone)
+}
+
+#[cfg(test)]
+pub(crate) fn set_test_python(python: Option<&str>) {
+    TEST_PYTHON.with_borrow_mut(|held| *held = python.map(str::to_owned));
 }
 
 /// Whether `python` imports ansible-core. The probe is the import itself rather than a version

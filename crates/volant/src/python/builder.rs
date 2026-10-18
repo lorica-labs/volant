@@ -62,6 +62,7 @@ impl PythonBuilder {
         start_from(explicit.as_deref(), virtual_env.as_deref(), install)
     }
     pub(crate) fn under(python: &str) -> anyhow::Result<PythonBuilder> {
+        resolve::note_helper_python(python);
         PythonBuilder::under_with(python, &[])
     }
 

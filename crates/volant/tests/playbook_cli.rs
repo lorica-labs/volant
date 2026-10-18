@@ -5534,6 +5534,61 @@ fn a_python_module_in_a_dynamically_included_file_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The implicit `localhost` runs Python modules under the controller's interpreter and names it
+/// in `hostvars`, as the reference does, with no discovery warning.
+#[test]
+fn the_implicit_localhost_runs_under_the_controller_python() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("implicit-localhost-python");
+    std::fs::write(
+        dir.join("inv.ini"),
+        "h1 ansible_connection=local
+",
+    )
+    .expect("an inventory");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - stat: path=/
+    - debug:
+        msg: \"{{ hostvars['localhost'].ansible_python_interpreter }}\"
+",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "the run failed:
+{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("\"msg\": \"{python}\"")),
+        "hostvars does not name the controller's Python:
+{stdout}"
+    );
+    assert!(
+        !stdout.contains("discovered Python interpreter") && !stderr.contains("discovered Python"),
+        "the interpreter was discovered:
+{stdout}{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A module that answers `<name> says <word>`, as a `library/` holds one.
 fn library_module(dir: &Path, name: &str, field: &str) {
     std::fs::create_dir_all(dir).expect("a library directory");

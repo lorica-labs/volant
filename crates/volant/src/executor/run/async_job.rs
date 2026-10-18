@@ -2,7 +2,7 @@
 
 use std::time::Duration;
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::sync::watch;
 use volant_protocol::{BatchOutcome, Task, TaskResult};
 
@@ -39,6 +39,9 @@ pub(super) fn async_refusal(task: &PlayTask) -> Option<TaskResult> {
         task.module
     ));
     refused.0.insert("changed".into(), Value::Bool(false));
+    refused
+        .0
+        .insert("exception".into(), json!("(traceback unavailable)"));
     Some(refused)
 }
 

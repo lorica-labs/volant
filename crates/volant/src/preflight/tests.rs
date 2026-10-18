@@ -74,10 +74,6 @@ fn task_play(body: &str) -> String {
 
 /// Everything the pre-flight refuses is refused at exit 4, naming what it refuses.
 #[rstest]
-#[case::async_on_a_controller_module(task_play("      debug: msg=hi\n      async: 5\n"), &["task 'T': keyword 'async' is not supported yet on 'debug'"])]
-#[case::async_on_an_action_plugin(task_play("      copy: src=a dest=b\n      async: 5\n"), &["keyword 'async' is not supported yet on 'copy'"])]
-#[case::async_on_raw(task_play("      raw: echo hi\n      async: 5\n"), &["keyword 'async' is not supported yet on 'raw'"])]
-#[case::async_on_an_include(task_play("      include_tasks: inc.yml\n      async: 5\n"), &["keyword 'async' is not supported yet on 'include_tasks'"])]
 #[case::until_on_include_tasks(task_play("      include_tasks: inc.yml\n      until: false\n"), &["keyword 'until' is not supported yet on 'include_tasks'"])]
 #[case::retries_on_include_tasks(task_play("      include_tasks: inc.yml\n      retries: 2\n"), &["keyword 'retries' is not supported yet on 'include_tasks'"])]
 #[case::delay_on_include_tasks(task_play("      include_tasks: inc.yml\n      delay: 1\n"), &["keyword 'delay' is not supported yet on 'include_tasks'"])]

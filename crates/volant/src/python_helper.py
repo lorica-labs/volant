@@ -19,6 +19,7 @@ import collections.abc
 import datetime
 import importlib.util
 import io
+import itertools
 import json
 import os
 import re
@@ -813,6 +814,9 @@ def ask(ident, op, **fields):
 
 
 SHIM = {}
+# The results of the jobs `wrap_async` started, by (request id, job id), until polled.
+JOBS = {}
+JOB_IDS = itertools.count(1)
 
 
 def shim():
@@ -913,17 +917,58 @@ def shim():
         # and `task_vars` shape the module's upload and interpreter, which the controller owns.
         name = self._task.action if module_name is None else module_name
         args = plain(self._task.args if module_args is None else module_args)
+        ident = self._connection._ident
+        if name.rsplit(".", 1)[-1] == "async_status" and not wrap_async:
+            return poll(ident, args)
         # What `_update_module_args` adds: the name the module's own messages call it by.
         args = dict(args, _ansible_module_name=name)
         if ignore_unknown_opts:
             # The module drops what it does not declare, as it does for the reference.
             args["_ansible_ignore_unknown_opts"] = True
+        started = time.monotonic()
         result = answered(self._connection._ask("module", name=name, args=args, files=[]))
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
-        # Under `wrap_async` the controller starts the module as a job and answers with the job's
-        # first status, which the plugin hands back for the task's poll to follow.
+        if wrap_async and int(self._task.async_val or 0):
+            # The task's own `async`: the controller started the module as a job of the host's
+            # agent and answered with its first status, which the plugin hands back as it is.
+            return result
+        if wrap_async:
+            # A job the plugin itself starts and polls (`gather_facts`). The module runs to its end before the job is handed back, so parallel
+            # jobs run one after the other, and the async limit is judged afterwards: a module
+            # that ran past it is replaced by async_wrapper's timeout result.
+            limit = int(self._task.async_val or 0)
+            if limit and time.monotonic() - started > limit:
+                result = {"msg": "Timeout exceeded", "failed": True}
+            jid = "j%s.%d" % (ident, next(JOB_IDS))
+            JOBS[(ident, jid)] = result
+            return {
+                "started": 1,
+                "finished": 0,
+                "ansible_job_id": jid,
+                "results_file": "/volant-async/%s" % jid,
+                "_ansible_suppress_tmpdir_delete": True,
+            }
         return result
+
+    def poll(ident, args):
+        jid = args.get("jid")
+        mode = args.get("mode", "status")
+        if mode not in ("status", "cleanup"):
+            raise Unsupported("async_status mode %s is not supported yet" % mode)
+        result = JOBS.get((ident, jid))
+        if result is None:
+            return {
+                "failed": True,
+                "msg": "could not find job",
+                "ansible_job_id": jid,
+                "started": 1,
+                "finished": 1,
+            }
+        if mode == "cleanup":
+            del JOBS[(ident, jid)]
+            return {"ansible_job_id": jid, "erased": "/volant-async/%s" % jid}
+        return dict(result, started=1, finished=1, ansible_job_id=jid)
 
     def make_tmp_path(self, remote_user=None):
         path = answered(self._connection._ask("tmp", action="make", remote_user=remote_user))
@@ -1060,6 +1105,8 @@ def run_action(ident, request):
                 result.setdefault("changed", False)
         finally:
             action.cleanup()
+            for key in [key for key in JOBS if key[0] == ident]:
+                del JOBS[key]
     except Exception as failure:
         # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a
         # connection failure is unreachable, `AnsibleActionSkip` skipped, `AnsibleActionFail`

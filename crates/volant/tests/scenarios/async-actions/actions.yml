@@ -64,6 +64,8 @@
       poll: 0
       register: far
 
+    - pause: seconds=2
+
     - name: read back from the host, not the delegate
       async_status:
         jid: "{{ far.ansible_job_id }}"

@@ -1,5 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::*;
+use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
+
+use tokio::sync::watch;
+
+use super::{Coordinator, Progress};
+use crate::compile::{Step, StepKind};
 use crate::playbook::PlayTask;
 
 /// A coordinator over one list of hosts, which the batch and the play share.

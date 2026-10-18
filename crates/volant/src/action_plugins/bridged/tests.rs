@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use super::helpers::{command_reply, plain_path};
 use super::*;
 
 /// A command's reply carries its return code and both streams, and one with none is an error.

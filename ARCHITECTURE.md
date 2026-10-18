@@ -46,7 +46,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `cli/` | The `playbook` command: `args` holds its arguments, `announce` the version line and option dumps, `run` the run itself, `hosts` the limit, tags and ordering, `passwords` the password files and prompts. |
 | `config.rs` | The `ansible.cfg` settings this release reads. |
-| `inventory.rs` | INI inventories and host patterns. |
+| `inventory/` | Inventories from every source plugin, with the group graph in `graph.rs` and host patterns, globs and subscripts in `patterns.rs`. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
 | `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
@@ -66,7 +66,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `mod.rs` | The run's settings, the connections kept between plays, and the entry point the command line calls. |
 | `coordinator.rs` | The serialized view of a batch's progress, and everything that reaches the terminal. |
-| `driver.rs` | One host's run through a play, from its first step to the moment it leaves. |
+| `driver/` | One host's run through a play, from its first step to the moment it leaves. `mod.rs` holds `drive_host`, `boundaries.rs` the scan that decides where the hosts meet, `waits.rs` the waits on the other hosts, `unreachable.rs` the `ignore_unreachable` steps, `timings.rs` the profile records of a link. |
 | `prepare.rs` | Rendering one task for one host: variables, escalation, environment and loop items. |
 | `run.rs` | Running one task and judging its result, on the controller or on the agent. |
 | `report.rs` | Turning one task's results into the events the coordinator shows. |

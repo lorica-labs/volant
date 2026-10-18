@@ -1,11 +1,65 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use super::argspec::{raw_params_refusal, validate_argument_spec};
+use super::batch::{run_agent_batch, send_batch};
+use super::blob::{
+    blob_preflight, ensure_blob, files_staged, payloads_confirmed, put_file, put_file_within,
+    stage_files,
+};
+#[cfg(unix)]
+use super::channel::Relinker;
+use super::channel::{AgentChannel, Relink, with_connect_timeout};
+use super::controller::pause;
+use super::interpreter::{
+    chosen_interpreter, python_for, requested_interpreter, running_host_vars, step_tasks, sub_task,
+    unreachable_ending,
+};
+#[cfg(unix)]
+use super::judge::condition_vars;
+use super::judge::{apply_conditions, break_after, finish, settle_failure};
+#[cfg(unix)]
+use super::links::{check_kept, connect, reuse_or_connect};
+#[cfg(unix)]
+use super::local::set_fact_names;
+use super::local::{run_local, set_fact_data};
+use super::output::{TTY_KEY, add_output_lines, classify, give_terminals};
+use super::plugin::{
+    PluginStart, protocol_task, run_plugin_attempts, run_plugin_item, wait_or_stop,
+};
+#[cfg(unix)]
+use super::record::record_local_facts;
+use super::record::{fact_targets, record_facts, record_inventory_results, record_registered};
+use super::register::{failed_task_value, registered_value, take_warnings, warning_text};
+use super::retry::{
+    Attempt, PYTIME_OUT_OF_RANGE, conditional_error, judge_attempt, retry_plan, until_holds,
+};
 use super::test_support::*;
-use super::*;
+#[cfg(unix)]
+use crate::agent::AgentSource;
+use crate::agent::BlobMemory;
+use crate::compile::Step;
 use crate::compile::StepKind;
+use crate::executor::prepare::Item;
+#[cfg(unix)]
+use crate::executor::{LinkKey, Reboots, RunOptions};
+use crate::playbook::PlayTask;
+use crate::preflight::PROMPT_REFUSED;
+use crate::python::ModulePayload;
+use crate::stats::Outcome;
+use crate::template::Templar;
 use crate::testing::{hvars, scratch, task, templar, vars};
+use crate::transport::{ConnectionDefaults, Transport};
+use crate::vars::{HostVars, VarStore};
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
+#[cfg(unix)]
+use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::Mutex;
+use std::time::Duration;
+use tokio::sync::watch;
+use volant_protocol::{BatchOutcome, FromAgent, StagedFile, Task, TaskResult, ToAgent};
 
 /// Every row of `LOCAL_MODULES` has an arm in `run_local` behind it.
 #[tokio::test]

@@ -12,9 +12,9 @@ use crate::natives::group::{
 };
 use crate::natives::runtime::{Clock, Stop, py_strip};
 use home::create_home;
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 use home::setting;
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 use request::hostname;
 use request::{Request, SPEC, request};
 

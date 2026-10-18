@@ -1,6 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::collections::BTreeSet;
+
+use serde_json::Map;
+
+use super::decide::native_gather_allowed;
 use super::*;
+use crate::compile::Compiled;
+use crate::playbook::Play;
+use crate::python::{Facts, Reach};
 use crate::testing::scratch;
+use crate::vars::VarStore;
 
 /// A scratch tree for one test, removed when it goes out of scope.
 struct Tree(tempfile::TempDir);

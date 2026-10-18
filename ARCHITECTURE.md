@@ -78,7 +78,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `runner.rs` | Running a batch of tasks, with fail-fast and cancellation. |
 | `modules/` | The native modules. |
-| `python/` | The warm Python server and its supervisor. |
+| `python/` | The warm Python server and its supervisor: the server process, the pool that keeps one per interpreter and payload, and the frames it speaks. |
 | `natives/lineinfile/` | The native `lineinfile`: the request, the edit in memory, the `regexp` translation and the write. |
 | `natives/runtime/` | What the natives that run programs share: the task's clock, the reasons an answer stops, the root a collector reads under, program runs, and Python's string rules. |
 | `natives/setup/` | The native `setup`: one file per collector, plus the request, the collection run and the `fnmatch` filter. |

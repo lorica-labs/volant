@@ -19,6 +19,13 @@ pub fn run_within(command: &mut Command, deadline: Duration, stdin: Option<&[u8]
         command.stdin(Stdio::piped());
     }
     let what = command.get_program().to_string_lossy().into_owned();
+    // What a deadline panic names: the arguments carry the playbook, so a run among many says
+    // which one hung.
+    let arguments = command
+        .get_args()
+        .map(|a| a.to_string_lossy().into_owned())
+        .collect::<Vec<_>>()
+        .join(" ");
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -51,7 +58,7 @@ pub fn run_within(command: &mut Command, deadline: Duration, stdin: Option<&[u8]
             .expect("the waiting thread answers")
             .expect("the child's output");
         panic!(
-            "{what} did not finish within {deadline:?}:\n{}",
+            "{what} {arguments} did not finish within {deadline:?}:\n{}",
             String::from_utf8_lossy(&out.stdout)
         );
     };

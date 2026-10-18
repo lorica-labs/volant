@@ -21,6 +21,8 @@ pub(crate) struct Manifest {
     /// The ansible-core version every platform installs.
     pub(crate) ansible_core: String,
     platforms: BTreeMap<String, Platform>,
+    /// The SHA-256 of the manifest's text.
+    digest: String,
 }
 
 /// What one triple downloads.
@@ -69,6 +71,18 @@ impl Manifest {
     /// that is not a SHA-256.
     pub(crate) fn parse(text: &str) -> Result<Self, String> {
         read(text).map_err(|e| format!("the runtime manifest is invalid: {e}"))
+    }
+
+    /// The name of the runtime installed from this manifest: `cpython-<version>-ansible-core-`
+    /// `<version>-` and the first 8 hex digits of the manifest's SHA-256, so any change to the
+    /// pins names another runtime.
+    pub(crate) fn id(&self) -> String {
+        format!(
+            "cpython-{}-ansible-core-{}-{}",
+            self.python,
+            self.ansible_core,
+            &self.digest[..8]
+        )
     }
 
     /// What `triple` downloads, or a refusal naming it when nothing is pinned for it.
@@ -120,6 +134,7 @@ fn read(text: &str) -> Result<Manifest, String> {
         python_release: string(root, "", "python-release")?,
         ansible_core,
         platforms,
+        digest: format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(text)),
     })
 }
 

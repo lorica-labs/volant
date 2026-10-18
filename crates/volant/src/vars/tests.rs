@@ -1078,9 +1078,8 @@ n: 5
     assert!(err.is::<VaultFile>());
 }
 
-/// The implicit `localhost` carries the controller's interpreter at the layer of its implicit
-/// connection: `host_vars`, play vars and `-e` beat it, an inventory that names the host does
-/// not get it, and with nothing resolved it is unset.
+/// The implicit `localhost` gets the controller's interpreter, at the layer of its implicit
+/// connection; a named host or nothing resolved leaves it unset.
 #[rstest::rstest]
 #[case::implicit(Some("/ctl/python3"), "", &[], false, Some("/ctl/python3"))]
 #[case::nothing_resolves(None, "", &[], false, None)]

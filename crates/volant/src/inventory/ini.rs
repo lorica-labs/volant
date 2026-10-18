@@ -57,6 +57,7 @@ impl Inventory {
 
 /// Reads INI text into `inv`, the way ansible-core 2.19.12's `ini` plugin reads a file: what was
 /// added before an error stays, as the reference's does.
+#[expect(clippy::too_many_lines)]
 fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<(), InventoryError> {
     let mut group = "ungrouped".to_string();
     let mut state = "hosts".to_string();

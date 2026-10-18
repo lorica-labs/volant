@@ -241,6 +241,7 @@ fn succeeds(probe: &str) -> bool {
 /// run, by its index entry, and a native case on the path the index names.
 #[cfg(target_os = "linux")]
 #[test]
+#[expect(clippy::too_many_lines)]
 fn every_module_case_matches_the_reference() {
     let Some(python) = python::reference_python() else {
         return;
@@ -558,6 +559,7 @@ if __name__ == "__main__":
 /// red on the path alone under one that does not.
 #[cfg(target_os = "linux")]
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_native_answer_is_held_to_the_path_its_index_names() {
     let Some(python) = python::reference_python() else {
         return;

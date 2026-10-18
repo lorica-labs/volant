@@ -810,6 +810,7 @@ esac
 
         /// A host is answered, a tool without init scripts lists nothing, sysv and the edges are read like the reference.
         #[test]
+        #[expect(clippy::too_many_lines)]
         fn a_listing_is_read_as_the_reference_reads_it() {
             {
                 let host = Host::new();

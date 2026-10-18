@@ -75,6 +75,7 @@ pub(super) type Probe = (&'static str, &'static str, Option<String>);
 /// A hand-back reason names the argument and why the native leaves it, never the value.
 #[test]
 #[cfg(target_os = "linux")]
+#[expect(clippy::too_many_lines)]
 fn a_hand_back_reason_never_quotes_an_argument_value() {
     use serde_json::json;
 

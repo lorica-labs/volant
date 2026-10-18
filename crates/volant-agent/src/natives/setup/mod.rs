@@ -467,6 +467,7 @@ fn gather_subset(value: Option<&Value>) -> Result<(Vec<String>, BTreeSet<&'stati
 ///
 /// The distribution's `ID` first: it decides whether the host is inside the subset at all for
 /// one file read, where the interpreter and `lsb_release` cost tens of milliseconds.
+#[expect(clippy::too_many_lines)]
 fn collect(
     request: &Request,
     root: &Root,
@@ -1259,6 +1260,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// A host with every source gets exactly the listed keys and the reference's invocation.
     #[test]
     #[cfg(target_os = "linux")]
+    #[expect(clippy::too_many_lines)]
     fn a_host_with_every_source_is_answered_in_full() {
         {
             let fake = debian_root("keys");
@@ -1409,6 +1411,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
 
     /// Only a subset is answered; arguments, locale, time zone or another distribution hand back.
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn the_native_answers_a_subset_and_hands_back_the_rest() {
         {
             let runs = |value: Value| {
@@ -1629,6 +1632,7 @@ BUG_REPORT_URL="https://bugs.debian.org/"
     /// A hung command, `lsb_release` or `ip` ends at the timeout, the cancel or a failed probe.
     #[test]
     #[cfg(target_os = "linux")]
+    #[expect(clippy::too_many_lines)]
     fn a_hung_command_ends_at_the_timeout_the_cancel_or_a_failed_probe() {
         {
             let fake = debian_root("hung");

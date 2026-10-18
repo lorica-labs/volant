@@ -249,6 +249,7 @@ struct Request {
 }
 
 /// Decides, reading only. `Err` is the reason the task goes to the Python module.
+#[expect(clippy::too_many_lines)]
 fn plan(
     args: &Map<String, Value>,
     root: &Root,
@@ -1120,6 +1121,7 @@ Architecture: amd64
 
     /// Everything the fast path does not answer is handed back before any change.
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn everything_else_goes_back_to_the_module_before_any_change() {
         {
             let host = Host::new("outside");

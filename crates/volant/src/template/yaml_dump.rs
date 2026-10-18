@@ -177,6 +177,7 @@ struct Analysis {
     allow_single_quoted: bool,
 }
 
+#[expect(clippy::too_many_lines)]
 fn analyze(s: &[char]) -> Analysis {
     if s.is_empty() {
         return Analysis {

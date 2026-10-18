@@ -41,12 +41,12 @@ check: fmt lint test
 
 # Before opening a pull request: formatting, clippy, the tests and typos. The rest of `lint`
 # (the doc build, cargo deny, cargo machete, actionlint, zizmor) runs in CI on every pull request.
-check-local: fmt clippy test
+check-local: fmt clippy ratchet test
     typos
 
 # The same as `check-local`, with the tests of the modules the branch changes instead of every test.
 # CI runs every test.
-check-touched: fmt clippy test-touched
+check-touched: fmt clippy ratchet test-touched
     typos
 
 # One line per test, `<binary-id> <name>`, with the module path up to the last `tests::` removed.
@@ -101,7 +101,37 @@ fmt:
 clippy:
     cargo clippy --workspace --all-targets --all-features -- -D warnings
 
-lint: clippy
+# Source files may not grow past 500 lines, and the ones already past it may not grow at all:
+# `file-budget.txt` holds `<path> <lines>`. `just ratchet write` lowers the numbers after a split
+# and refuses to raise one. Test files are not counted.
+ratchet mode="check":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    now=$(find crates/*/src -name '*.rs' ! -name tests.rs ! -name test_support.rs -exec wc -l {} + \
+        | awk '$2 != "total" && $1 > 500 { print $2, $1 }' | LC_ALL=C sort)
+    over=$(printf '%s\n' "$now" | awk '
+        NR == FNR { budget[$1] = $2; next }
+        $1 in budget { if ($2 > budget[$1]) printf "%s grew from %d to %d lines\n", $1, budget[$1], $2; next }
+        { printf "%s has %d lines and is not in file-budget.txt (the limit is 500)\n", $1, $2 }
+    ' file-budget.txt -)
+    case "{{mode}}" in
+        check | write) ;;
+        *) echo "ratchet takes no argument or 'write', not '{{mode}}'" >&2; exit 2 ;;
+    esac
+    if [ -n "$over" ]; then
+        echo "$over" >&2
+        if [ "{{mode}}" = write ]; then
+            echo "file-budget.txt not written: a number would go up" >&2
+        else
+            echo "split the file instead of growing it, then run 'just ratchet write'" >&2
+        fi
+        exit 1
+    fi
+    if [ "{{mode}}" = write ]; then
+        printf '%s\n' "$now" > file-budget.txt
+    fi
+
+lint: clippy ratchet
     RUSTDOCFLAGS="-D warnings" cargo doc --workspace --no-deps --document-private-items
     cargo deny check
     cargo machete

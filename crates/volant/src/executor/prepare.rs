@@ -141,6 +141,7 @@ fn remove_omit(value: &mut Value) {
 /// `ansible_become=false` ran as the invoking user), and between the keywords the task beats
 /// the play. `ansible_become_user` follows the same order. The connection defaults, which carry
 /// `ansible.cfg`, its environment variables and the command line, speak last.
+#[expect(clippy::too_many_lines)]
 fn become_for(
     task: &PlayTask,
     play: &PlayPlan,
@@ -704,6 +705,7 @@ fn check_gather_subset(raw: Option<&Value>, rendered: Option<&Value>) -> Result<
     clippy::too_many_arguments,
     reason = "the driver's whole context, plus the warnings the render raises on its way"
 )]
+#[expect(clippy::too_many_lines)]
 pub(super) fn prepare(
     step: &Step,
     host: &str,

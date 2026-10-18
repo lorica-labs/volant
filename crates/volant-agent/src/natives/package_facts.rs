@@ -987,6 +987,7 @@ mod imp {
         /// The reason guard's cases (`natives::tests`): apt sources and a `PATH` whose every
         /// field the native hands back on holds a secret-looking value.
         #[cfg(target_os = "linux")]
+        #[expect(clippy::too_many_lines)]
         pub(in crate::natives) fn secret_probes() -> Vec<crate::natives::tests::Probe> {
             let example = "/etc/apt/sources.list.d/example.list";
             let line = "deb [signed-by=/usr/share/keyrings/example.gpg] \
@@ -1507,6 +1508,7 @@ Description: time zone and daylight-saving time data
 
         /// A host is answered as python-apt answers it: records, `enabled`, apt before apk, dpkg version order.
         #[test]
+        #[expect(clippy::too_many_lines)]
         fn a_host_is_answered_as_the_reference_answers_it() {
             {
                 let tree = Tree::new(HOST);
@@ -1624,6 +1626,7 @@ Description: time zone and daylight-saving time data
 
         /// A half-configured package, a host outside the subset and any other record or source hand back.
         #[test]
+        #[expect(clippy::too_many_lines)]
         fn what_the_native_does_not_read_hands_back() {
             {
                 for state in [

@@ -114,6 +114,7 @@ pub fn supported(name: &str) -> bool {
 
 /// `lookup('env'|'file'|'vars'|'pipe'|'template', term...)`: the plugin's own list, one result
 /// per term. `first_found` reads all its terms as one search.
+#[expect(clippy::too_many_lines)]
 fn lookup(
     state: &State,
     name: &str,

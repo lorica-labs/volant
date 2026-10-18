@@ -275,6 +275,7 @@ fn only_ansible_core_s_own_module_is_core() {
 /// Every shape a collection's name can take on the controller, each answered on its own, and
 /// only the buildable ones reaching the union.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
     let python = match find_python(
         std::env::var("VOLANT_PYTHON").ok().as_deref(),
@@ -419,6 +420,7 @@ fn skip_or_fail(why: &str) {
 /// The controller's own ansible-core answers what its collections hold, and a collection's
 /// module lands in the union under its full name.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn the_controller_resolves_what_its_collections_hold() {
     let Some(mut helper) = helper_or_skip() else {
         return;

@@ -544,6 +544,7 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
 /// Every case of `inventories/cases.yml` read as `ansible-inventory --list` read it: the exit
 /// code, the warnings and errors, the dump, and the host order `--list-hosts all` printed.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn inventory_sources_match_the_reference() {
     use volant::inventory::{Note, PluginConfig, Source, load_sources};
     fn copy_tree(from: &Path, to: &Path) {

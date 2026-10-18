@@ -1151,6 +1151,7 @@ fn gather_args(play: &Play) -> Map<String, Value> {
 /// precedence against a host variable was measured in an earlier release and lives in the
 /// executor, which reads them from the play. A block is a task keyword, so its `become` does
 /// come down here.
+#[expect(clippy::too_many_lines)]
 pub(crate) fn compile(
     play: &Play,
     search: &RoleSearch,

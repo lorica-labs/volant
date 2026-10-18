@@ -432,6 +432,7 @@ esac
     /// Routes, broadcast, a missing route, dropped reads, a hung `ip` and busybox follow the reference.
     #[test]
     #[cfg(target_os = "linux")]
+    #[expect(clippy::too_many_lines)]
     fn the_network_facts_follow_the_reference_on_linux() {
         {
             let fake = FakeRoot::new("network");

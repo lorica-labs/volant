@@ -245,6 +245,7 @@ fn defaults() -> volant::transport::ConnectionDefaults {
     }
 }
 
+#[expect(clippy::too_many_lines)]
 fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
     let r = reference();
     let t = volant::template::Templar::new(probe_dir.to_path_buf());

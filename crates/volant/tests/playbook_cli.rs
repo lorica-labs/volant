@@ -2474,6 +2474,7 @@ fn a_no_log_failure_s_error_block_never_shows_the_secret(
 /// Every line of a `no_log` task is censored at verbosity 0, `-v` and `-vvv`, and the registered
 /// value is not (ansible-core 2.19.12).
 #[test]
+#[expect(clippy::too_many_lines)]
 fn no_log_censors_every_line_and_leaves_the_registered_value_alone() {
     const CENSORED: &str = "the output has been hidden due to the fact that 'no_log: true' was specified for this result";
     let inventory = fixture("inventory.ini");
@@ -4150,6 +4151,7 @@ fn is_become_user_probe(probe: &RunsProbe) -> bool {
 }
 
 #[test]
+#[expect(clippy::too_many_lines)]
 fn every_runs_keyword_changes_something_observable() {
     let dir = probe_dir("runs");
     let sudo_dir = fake_sudo("runs-become-user", FAKE_SUDO_FOR_BECOME_USER);

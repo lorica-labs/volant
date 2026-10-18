@@ -252,6 +252,7 @@ fn each_environment_gets_a_server_started_with_it() {
 /// A package outside the payload, served by another finder or setting itself up as it loads, is
 /// imported by each child and stays cold.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_package_outside_the_payload_is_imported_by_each_child_whoever_serves_it() {
     {
         let blob = runpy_blob(&[

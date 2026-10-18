@@ -75,6 +75,7 @@ fn last<'a>(pairs: &'a [(String, String)], key: &str) -> Option<&'a str> {
         .map(|(_, v)| v.as_str())
 }
 
+#[expect(clippy::too_many_lines)]
 pub fn collect(host: &Host, lsb_release: &LsbRelease) -> Result<Map<String, Value>, String> {
     let root = host.root;
     for variable in ["UNIXCONFDIR", "UNIXUSRLIBDIR"] {

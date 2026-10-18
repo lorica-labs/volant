@@ -332,6 +332,7 @@ impl Round {
     clippy::too_many_arguments,
     reason = "the batch's whole context: the coordinator loop, its drivers and the step list it walks"
 )]
+#[expect(clippy::too_many_lines)]
 pub(super) async fn run_batch(
     play: &Play,
     compiled: &Compiled,

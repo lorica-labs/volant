@@ -228,6 +228,7 @@ fn request<'a>(params: &'a Map<String, Value>, clock: Clock) -> Result<Request<'
 }
 
 /// `main` for a request inside the subset.
+#[expect(clippy::too_many_lines)]
 fn copy(request: &Request, clock: Clock) -> Result<Map<String, Value>, Stop> {
     let src = request.src;
     if !(fs::symlink_metadata(src).is_ok_and(|meta| meta.is_file()) && access(src, libc::R_OK)) {

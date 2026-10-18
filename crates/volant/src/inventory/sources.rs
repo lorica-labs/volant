@@ -367,6 +367,7 @@ struct Chain<'a, 'c> {
 impl Chain<'_, '_> {
     /// `parse_source`: a directory's entries in sorted order, anything else offered to each
     /// plugin until one reads it. Whether something was read.
+    #[expect(clippy::too_many_lines)]
     fn source(&self, source: &Source, into: &mut Inventory) -> Result<bool, Fatal> {
         let mut parsed = false;
         let mut failures = Vec::new();

@@ -1809,6 +1809,7 @@ impl SshTarget {
     /// no caller can go on to run a missing, stale, foreign or wrong-architecture agent.
     /// `probed` is that first probe already run, which is what the escalation check runs to
     /// settle the `sudo` form.
+    #[expect(clippy::too_many_lines)]
     async fn bootstrap(
         &self,
         agents: &AgentSource,

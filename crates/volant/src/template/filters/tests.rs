@@ -71,6 +71,7 @@ fn text(text: &str) -> String {
 /// Each line is one the reference printed (ansible-core 2.19.12): the text filters, `comment`, the set
 /// filters, `flatten`, `from_yaml`, `quote`, `regex_escape`, `default(none)` and the back references.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn the_filters_print_what_the_reference_printed() {
     {
         assert_eq!(
@@ -302,6 +303,7 @@ fn ipwrap_brackets_ipv6_and_nothing_else() {
 /// One expression per name the k3s-ansible roles call, as the reference answered, and the
 /// `ansible.builtin` alias of a filter and a test.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn every_name_k3s_ansible_calls_answers_under_its_alias_too() {
     {
         use serde_json::json;

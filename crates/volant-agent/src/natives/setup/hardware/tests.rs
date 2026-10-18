@@ -37,6 +37,7 @@ fn cpuinfo(name: &str, blocks: &[String]) -> Map<String, Value> {
 
 /// Processors, quirks, dropped reads and memory follow the reference's rules.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn processors_memory_and_quirks_follow_the_reference() {
     {
         let target: Vec<String> = (0..4).map(|n| block(n, 0, 4, n, 4)).collect();

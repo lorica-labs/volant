@@ -241,6 +241,7 @@ impl Run {
         Ok(())
     }
 
+    #[expect(clippy::too_many_lines)]
     fn keyed_group(
         &self,
         inv: &mut Inventory,

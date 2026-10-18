@@ -354,6 +354,7 @@ fn a_failure_is_named_and_fails_like_the_module() {
 
 /// What the native leaves to the module is handed back first; after a reload the module's branches are followed.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn what_is_left_to_the_module_is_handed_back_and_followed_after_a_reload() {
     {
         for refused in [

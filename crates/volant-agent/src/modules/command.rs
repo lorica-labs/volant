@@ -28,6 +28,7 @@ fn run_command(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() ->
 }
 
 /// Runs one command. `uses_shell` selects `shell` semantics (`sh -c`) over `command`.
+#[expect(clippy::too_many_lines)]
 pub(crate) fn execute(
     args: &Map<String, Value>,
     uses_shell: bool,

@@ -1687,6 +1687,7 @@ mod unit {
     /// A literal, argument, container, concatenation or arithmetic holding an undefined value is an
     /// undefined read, never `null` or an empty string.
     #[test]
+    #[expect(clippy::too_many_lines)]
     fn a_value_holding_an_undefined_one_is_an_undefined_read_in_every_shape() {
         {
             let t = templar();

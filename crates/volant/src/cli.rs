@@ -360,6 +360,7 @@ pub fn run(args: PlaybookArgs) -> i32 {
     code
 }
 
+#[expect(clippy::too_many_lines)]
 async fn run_all(
     args: &PlaybookArgs,
     out: &mut Renderer,

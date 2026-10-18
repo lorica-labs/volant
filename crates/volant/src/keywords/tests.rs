@@ -27,6 +27,7 @@ fn the_tables_are_sorted_and_free_of_duplicates() {
 /// The keyword tables are ansible-core 2.19.12's own `fattributes` lists, less two internal
 /// spellings and plus the keys it resolves first.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn the_tables_are_the_reference_s_own_attribute_lists() {
     let task_fattributes = [
         "action",

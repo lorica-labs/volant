@@ -235,6 +235,7 @@ pub struct PlayEnd {
     clippy::too_many_arguments,
     reason = "the play's whole context: eight values with no natural grouping until the controller is split"
 )]
+#[expect(clippy::too_many_lines)]
 pub async fn run_play(
     play: &Play,
     compiled: &Compiled,

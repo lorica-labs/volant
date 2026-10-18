@@ -274,6 +274,7 @@ async fn a_that_naming_a_list_is_that_list() {
 
 /// A set_fact renders its keys and checks the names; a key that renders anew keeps its value data.
 #[tokio::test]
+#[expect(clippy::too_many_lines)]
 async fn a_set_fact_renders_its_keys_checks_the_names_and_keeps_values_data() {
     {
         let host = || {
@@ -1530,6 +1531,7 @@ async fn a_host_cannot_forge_the_controller_s_internal_keys() {
 
 /// An agent result keeps its error summary, its timings, how it ran and the lines of its output.
 #[tokio::test]
+#[expect(clippy::too_many_lines)]
 async fn a_batch_result_is_mapped_the_way_the_reference_reports_it() {
     {
         let summary = json!({
@@ -2006,6 +2008,7 @@ fn msg(result: &TaskResult) -> &str {
 
 /// The order the package manager is picked in, and the reference's sentences when it cannot be.
 #[tokio::test]
+#[expect(clippy::too_many_lines)]
 async fn the_package_manager_is_picked_in_the_reference_s_order_and_words() {
     use crate::action_plugins::Kind;
     let mut stop = watch::channel(false).1;
@@ -2120,6 +2123,7 @@ async fn the_package_manager_is_picked_in_the_reference_s_order_and_words() {
 
 /// A dnf task asks setup then runs its backend, or fails in the reference's words without dnf.
 #[tokio::test]
+#[expect(clippy::too_many_lines)]
 async fn a_dnf_task_runs_the_backend_it_names_or_fails_in_the_reference_s_words() {
     {
         use crate::action_plugins::Kind;
@@ -2367,6 +2371,7 @@ async fn a_dnf_task_runs_the_backend_it_names_or_fails_in_the_reference_s_words(
 
 /// A service task, a lost link, a failed module and the files a sub-task stages.
 #[tokio::test]
+#[expect(clippy::too_many_lines)]
 async fn a_plugin_item_ends_the_way_its_module_and_link_do() {
     {
         use crate::action_plugins::Kind;
@@ -3437,6 +3442,7 @@ async fn a_delay_at_the_edge_of_the_clock_never_panics() {
 
 /// A plugin's retries follow the same rules, its transfer runs on the item's time, until reads its last result.
 #[tokio::test]
+#[expect(clippy::too_many_lines)]
 async fn a_plugin_s_retries_run_on_the_item_s_time_and_until_reads_the_last_result() {
     {
         let blob = hello_blob();
@@ -3920,6 +3926,7 @@ fn gathered_facts_are_untrusted_and_land_under_both_names() {
 
 /// A failed task keeps no facts, a fact cannot move the next connection, a template in a fact never renders.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_gathered_fact_is_data_and_moves_nothing_it_should_not() {
     {
         let scope = crate::vars::Scope::default();

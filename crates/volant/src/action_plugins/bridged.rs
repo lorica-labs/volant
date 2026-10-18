@@ -68,6 +68,7 @@ pub(super) struct Bridged {
 }
 
 /// ansible-core's plugin `name`, which may run `modules` and no other module.
+#[expect(clippy::too_many_lines)]
 pub(super) fn start(
     name: &'static str,
     modules: &'static [&'static str],
@@ -294,6 +295,7 @@ fn failure_or(result: &TaskResult, ok: Value) -> Reply {
 
 impl Bridged {
     /// The step an ask becomes, or the reply it gets without one.
+    #[expect(clippy::too_many_lines)]
     fn step_for(&mut self, ask: Ask) -> Result<(Step, Pending), Reply> {
         match ask {
             Ask::Module { name, args, files } => {

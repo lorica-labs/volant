@@ -326,6 +326,7 @@ fn invalid_variable_name(name: &Value) -> Option<String> {
 }
 
 /// Every controller-side module but `pause`, none of which waits.
+#[expect(clippy::too_many_lines)]
 fn local_result(
     task: &PlayTask,
     item: &Item,
@@ -2123,6 +2124,7 @@ fn unreachable_ending(result: TaskResult) -> Result<TaskResult, Result<BatchOutc
     clippy::too_many_arguments,
     reason = "the item, the plugin driving it, and the link and run state each sub-task goes over"
 )]
+#[expect(clippy::too_many_lines)]
 pub(super) async fn run_plugin_item<C: AgentChannel, R: Relink<C>>(
     link: &mut C,
     relink: &mut R,
@@ -2751,6 +2753,7 @@ pub(super) enum Polled {
     clippy::too_many_arguments,
     reason = "the job, the link its looks go over, and the queue its lines go on"
 )]
+#[expect(clippy::too_many_lines)]
 pub(super) async fn poll_job<C: AgentChannel>(
     link: &mut C,
     host: &str,

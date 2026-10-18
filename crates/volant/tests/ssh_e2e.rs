@@ -1982,6 +1982,7 @@ fn check_no_python_run(
 /// takes its index's path; natives off, every case takes `python`. Both runs must exit 0 and run
 /// their cleanup.
 #[cfg(target_os = "linux")]
+#[expect(clippy::too_many_lines)]
 fn compare_native_runs(tag: &str) -> Vec<String> {
     use compare::{
         NativeProfile, check_native_path, compare_native, failed_tasks, keep_live, native_result,

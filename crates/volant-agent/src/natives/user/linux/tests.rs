@@ -13,6 +13,7 @@ fn ask(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value
 
 /// `useradd`, `usermod` and `userdel` take the module's arguments in its order, only where needed.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn useradd_usermod_and_userdel_follow_the_module() {
     {
         let fakes = Fakes::new("useradd", &["useradd"], 0);
@@ -186,6 +187,7 @@ fn useradd_usermod_and_userdel_follow_the_module() {
 
 /// A failing `useradd` is the module's failure; what the native cannot do hands back before any command.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_failure_or_a_case_outside_the_subset_is_the_module_s() {
     {
         let fakes = Fakes::new("useradd-fails", &["useradd"], 9);

@@ -1015,6 +1015,7 @@ fn imported_playbook(entry: &Yaml) -> anyhow::Result<Option<String>> {
     }
 }
 
+#[expect(clippy::too_many_lines)]
 fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let map = yaml
         .as_mapping()
@@ -1529,6 +1530,7 @@ fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
 /// One task. `handler` says whether the mapping is a handler, which is the one shape that may
 /// carry `listen`: read here so the key is not mistaken for a module, and read from its own table
 /// so the row can be flipped like any other.
+#[expect(clippy::too_many_lines)]
 fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask> {
     let map = yaml
         .as_mapping()

@@ -308,6 +308,7 @@ impl Reply {
 
 /// The module's result, or the reason to hand the task back. `etc` is `/etc` on a host, where
 /// the module looks for init scripts.
+#[expect(clippy::too_many_lines)]
 fn answer(
     args: &Map<String, Value>,
     context: &Context,

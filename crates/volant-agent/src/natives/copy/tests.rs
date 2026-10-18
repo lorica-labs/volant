@@ -273,6 +273,7 @@ fn copy_answers_every_recorded_case_like_the_reference() {
 
 /// The branches the golden play does not reach, each against what the reference's module answered.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn copy_matches_the_reference_on_every_other_branch() {
     let scratch = scratch("copy-branches");
     let t = scratch.0.clone();
@@ -433,6 +434,7 @@ fn copy_matches_the_reference_on_every_other_branch() {
 
 /// Every case outside the subset hands back with every file as it was, the staged source included.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn copy_hands_back_before_changing_anything() {
     let scratch = scratch("copy-back");
     let t = scratch.0.clone();

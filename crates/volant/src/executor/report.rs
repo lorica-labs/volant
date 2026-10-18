@@ -36,6 +36,7 @@ use super::run::{RetryLine, classify, empty_loop_result, loops, registered_value
     clippy::too_many_arguments,
     reason = "four lists parallel to results: labels, ignored, retries and names; folding them into a struct hides which is parallel to what"
 )]
+#[expect(clippy::too_many_lines)]
 pub(super) async fn report_task(
     tx: &mpsc::Sender<Event>,
     host: &str,

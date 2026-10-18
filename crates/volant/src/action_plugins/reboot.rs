@@ -176,6 +176,7 @@ impl<'a> Reboot<'a> {
 }
 
 impl Plugin for Reboot<'_> {
+    #[expect(clippy::too_many_lines)]
     fn next(&mut self, last: Option<TaskResult>) -> Step {
         match std::mem::replace(&mut self.state, State::Start) {
             State::Start => {

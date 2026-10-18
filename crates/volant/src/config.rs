@@ -203,6 +203,7 @@ impl Config {
     /// `ansible.cfg` at mode 000 changes nothing there and the playbook exits 0. The one
     /// divergence kept is the warning: a configuration file the operator wrote and the process
     /// cannot open is worth a line, and a warning changes no exit code.
+    #[expect(clippy::too_many_lines)]
     pub fn load() -> anyhow::Result<Config> {
         let mut config = match locate() {
             Some(path) => match std::fs::read_to_string(&path) {
@@ -525,6 +526,7 @@ fn timeout_secs(n: i64, origin: &str) -> anyhow::Result<u64> {
 
 /// Reads `[defaults]` and `[privilege_escalation]`. Relative paths are relative to the
 /// configuration file; `origin` names the file in a refusal, as the reference names it.
+#[expect(clippy::too_many_lines)]
 fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Config> {
     let mut config = Config::default();
     let mut section = String::new();

@@ -28,13 +28,14 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
         with:
-          tool: cargo-deny,cargo-machete,typos,taplo,zizmor
+          tool: cargo-deny,cargo-machete,typos,taplo,zizmor,just
       - run: cargo fmt --all --check
       - run: taplo fmt --check
       - run: cargo clippy --workspace --all-targets --all-features
       - run: cargo doc --workspace --no-deps --document-private-items
       - run: cargo deny check
       - run: cargo machete
+      - run: just ratchet
       - run: typos
       - uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # 1.7.12
       - run: zizmor .github/workflows

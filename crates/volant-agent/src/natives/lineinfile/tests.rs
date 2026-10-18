@@ -161,6 +161,7 @@ fn lineinfile_answers_every_recorded_case_like_the_reference() {
 
 /// The branches the golden play does not reach, each against what the reference's module answered.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn lineinfile_matches_the_reference_on_every_other_branch() {
     type Case = (
         &'static str,

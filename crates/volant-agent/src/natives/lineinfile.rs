@@ -275,6 +275,7 @@ fn request<'a>(params: &'a Map<String, Value>, clock: Clock) -> Result<Request<'
 }
 
 /// `main`, then `present` or `absent`, for a request inside the subset.
+#[expect(clippy::too_many_lines)]
 fn edit(request: &Request, context: &Context, clock: Clock) -> Result<Map<String, Value>, Stop> {
     let path = request.path;
     if fs::metadata(path).is_ok_and(|meta| meta.is_dir()) {
@@ -422,6 +423,7 @@ fn tick(lineno: usize, clock: Clock) -> Result<(), Halt> {
 }
 
 /// `present`: the new lines, whether they changed, and the message.
+#[expect(clippy::too_many_lines)]
 fn present(
     request: &Request,
     lines: &mut Vec<Vec<u8>>,
@@ -807,6 +809,7 @@ enum Last {
 /// no counterpart for (lookaround, `(?P=name)`, `\Z`, back references, inline flags,
 /// possessive repeats), and what Python refuses (a repeat of nothing or of a repeat, an
 /// unknown escape), is an `Err`, and the task goes to the Python module.
+#[expect(clippy::too_many_lines)]
 fn translate(pattern: &str) -> Result<String, String> {
     let bytes = pattern.as_bytes();
     let mut out = String::new();

@@ -42,6 +42,7 @@ fn after(path: &str) -> Value {
 
 /// Every recorded `file` case the native answers, each on the state the golden play left before it.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn file_answers_every_recorded_case_like_the_reference() {
     if unsafe { libc::geteuid() } == 0 {
         eprintln!("skipped as root: file-chown-denied needs a chown to be refused");

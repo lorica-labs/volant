@@ -16,6 +16,7 @@ use volant_protocol::{
 /// The agent answers for a payload it does not hold, keeps one whose bytes match its name, and
 /// refuses one whose bytes do not - each with a `BlobState` the controller can wait on.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn the_agent_answers_for_a_blob_and_refuses_one_whose_bytes_do_not_match() {
     let dir = std::env::temp_dir().join(format!("volant-agent-blobs-{}", std::process::id()));
     fs::create_dir_all(&dir).unwrap();

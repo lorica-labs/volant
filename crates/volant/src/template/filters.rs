@@ -18,6 +18,7 @@ use super::{add_filter, add_test, add_text_filter};
 /// How the reference opens the failure of a vaulted value it cannot read.
 pub(super) const UNDECRYPTABLE: &str = "Attempt to use undecryptable variable: ";
 
+#[expect(clippy::too_many_lines)]
 pub fn register(
     env: &mut Environment<'static>,
     base_dir: PathBuf,

@@ -50,6 +50,7 @@ pub(super) struct IncludeGroup {
     clippy::too_many_arguments,
     reason = "the driver's whole context, needed to resolve one include"
 )]
+#[expect(clippy::too_many_lines)]
 pub(super) fn resolve_include(
     compiled: &Compiled,
     step: &Step,

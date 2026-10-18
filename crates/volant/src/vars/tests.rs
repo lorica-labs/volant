@@ -175,6 +175,7 @@ fn every_host_setting_is_stripped_from_gathered_facts() {
 /// Gathered facts rank under the play and over the inventory; a role's defaults, vars and
 /// parameters sit where the reference puts them.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
     {
         let inv = Inventory::parse_ini("h1 ansible_inv=from-inventory\n").unwrap();
@@ -565,6 +566,7 @@ fn the_layered_view_reads_like_the_merged_one() {
 /// A host leaving the play or writing a fact rebuilds only its own entries; a host's facts are
 /// shared and carry nothing of the inventory.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
     {
         let inventory = Inventory::parse_ini("h1\nh2\nh3\n").unwrap();
@@ -681,6 +683,7 @@ fn a_write_or_a_leaving_host_rebuilds_only_its_own_entries() {
 
 /// Every layer keeps its trust through the layered view: gathered and untrusted names stay text.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn every_layer_keeps_its_trust_through_the_layered_view() {
     let inventory = Inventory::parse_ini("h1 i=\"{{ 1 + 1 }}\"\n").unwrap();
     let payload = json!("{{ 1 + 1 }}");

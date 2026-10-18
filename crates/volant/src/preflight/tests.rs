@@ -214,6 +214,7 @@ fn the_modules_this_release_runs_are_admitted(
 /// A collection's module passes both passes and is collected for the controller to resolve; a
 /// stray word fails the task when it runs; the controller's answers are refused in its words.
 #[test]
+#[expect(clippy::too_many_lines)]
 fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
     let text = "- hosts: all\n  gather_facts: false\n  tasks:\n    - name: Forward\n      ansible.posix.sysctl: name=net.ipv4.ip_forward value=1\n    - debug: msg=x\n  handlers:\n    - name: Reload\n      community.general.ufw: state=reloaded\n";
     let pb = parse(text, "x.yml").unwrap();

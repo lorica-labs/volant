@@ -457,6 +457,7 @@ fn template_crosses(step: &Step, crossing: &BTreeSet<String>, playbook_dir: &Pat
     clippy::too_many_arguments,
     reason = "the driver's whole context; drive_host has a single call site, spawned once per host by the loop above"
 )]
+#[expect(clippy::too_many_lines)]
 pub(super) async fn drive_host(
     host: Host,
     plan: Arc<PlayPlan>,

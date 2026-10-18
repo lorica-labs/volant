@@ -96,6 +96,7 @@ fn py_round_div(a: i64, b: i64) -> Option<i64> {
 }
 
 /// `get_cpu_facts`: `None` where it raises.
+#[expect(clippy::too_many_lines)]
 fn cpu(root: &Root, architecture: &str, nproc: Option<usize>) -> Option<Map<String, Value>> {
     let mut facts = Map::new();
     let xen = root.exists("/proc/xen")

@@ -163,7 +163,7 @@ jobs:
           agent=target/x86_64-unknown-linux-musl/release/volant-agent
           cp "$agent" "$agents/volant-agent"
           cp "$agent" "$agents/volant-agent-x86_64-unknown-linux-musl"
-          # The aarch64 agent is not built here; the playbook below only targets this machine.
+          # The build embeds an agent for each arch; this copy under the aarch64 name is a placeholder that never runs, since the playbook below only targets this machine.
           cp "$agent" "$agents/volant-agent-aarch64-unknown-linux-musl"
           VOLANT_EMBED_AGENTS_DIR="$agents" cargo build -p volant --release --target x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/volant dist/
@@ -183,7 +183,7 @@ jobs:
     env:
       # The container has no Python, so the copy and template tasks run under the interpreter
       # the first run installs. The lookup is evaluated when a task runs, after the install.
-      HOST_PYTHON: "ansible_python_interpreter={{ lookup('pipe', 'ls -d $HOME/.local/share/volant/runtime/*/python/bin/python3') }}"
+      HOST_PYTHON: "ansible_python_interpreter={{ lookup('pipe', 'ls -d $HOME/.local/share/volant/runtime/*/python/bin/python3 | head -n1') }}"
     steps:
       - name: Install curl, the only tool the download needs
         run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates

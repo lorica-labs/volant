@@ -21,7 +21,7 @@ A run that only gathers facts never installs anything. You can also install the 
 volant runtime install
 ```
 
-On a clean machine with a normal connection the install took 8 seconds. Later runs find it with two file checks.
+On a clean machine with a normal connection the install took about 8 seconds. Later runs find it with two file checks.
 
 ## Which interpreter a run uses
 
@@ -40,7 +40,7 @@ Volant fetches a standalone CPython build and the ansible-core wheels with `curl
 
 - Each download is checked against its pinned hash before anything in it runs. On a mismatch Volant deletes the download and stops with both hashes.
 - `pip` installs only the pinned wheels, with `--require-hashes` and no index.
-- The install happens in a temporary directory next to the final one and is moved into place after a check that `import ansible` works. A failed or interrupted install leaves nothing behind.
+- The install happens in a temporary directory next to the final one and is moved into place after a check that `import ansible` works. A failed install removes its temporary directory. An interrupted one can leave a `.<id>.partial-*` directory, which the next install deletes.
 - A lock file keeps two Volant processes from installing at once. The second waits and then finds the runtime installed.
 - Every child process runs with `PYTHONNOUSERSITE=1` and without `PYTHONPATH`, so packages in your home directory or your environment cannot reach it.
 

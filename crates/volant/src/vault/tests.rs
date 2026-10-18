@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use super::format::{WIDTH, encrypt_with_salt, envelope, parts, strip_crlf};
+use super::load::{Source, spec, typed_secret};
 use super::*;
 use rstest::rstest;
 
@@ -134,6 +136,7 @@ fn script_output_loses_cr_and_lf_at_both_ends() {
 mod files {
     use super::*;
     use std::os::unix::fs::PermissionsExt as _;
+    use std::path::PathBuf;
 
     fn write(dir: &Path, name: &str, body: &[u8], mode: u32) -> PathBuf {
         let path = dir.join(name);

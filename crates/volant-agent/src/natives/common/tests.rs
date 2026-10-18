@@ -1,5 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::io;
+#[cfg(target_os = "linux")]
+use std::{fs, os::unix::fs::MetadataExt};
+
 use serde_json::json;
 
 #[cfg(target_os = "linux")]

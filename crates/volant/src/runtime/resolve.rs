@@ -8,8 +8,9 @@
 //! 5. when none of them has ansible-core, Volant's runtime installed there and then (not under
 //!    `system`, and never for a run that only gathers facts).
 
+use std::collections::BTreeMap;
 use std::fmt;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Stdio};
 use std::sync::{Mutex, OnceLock};
 
@@ -127,21 +128,23 @@ pub(crate) fn current(explicit: Option<&str>, virtual_env: Option<&str>) -> Vec<
     candidates(mode, explicit, virtual_env, managed)
 }
 
-/// The interpreter the helper was started under, once it has been.
-static HELPER_PYTHON: Mutex<Option<String>> = Mutex::new(None);
+/// The interpreter the controller reports as its own, fixed for the process by the first thing
+/// that needs it: the helper starting, or [`controller_python`].
+static CONTROLLER_PYTHON: OnceLock<Option<String>> = OnceLock::new();
 
-/// Records the interpreter the Python helper runs under, which is what the reference's own
-/// interpreter is for the run.
+/// Records the interpreter the Python helper runs under. Only the first one counts: a value
+/// already read stays what every host and task saw.
 pub(crate) fn note_helper_python(python: &str) {
-    if let Ok(mut held) = HELPER_PYTHON.lock() {
-        *held = Some(python.to_owned());
-    }
+    _ = CONTROLLER_PYTHON.set(Some(python.to_owned()));
 }
 
 /// `python` as a file that exists: a path as it is, a bare name looked up on `PATH`.
+#[cfg(any(unix, not(test)))]
 fn locate(python: &str) -> Option<String> {
     if python.contains('/') {
-        return Path::new(python).is_file().then(|| python.to_owned());
+        return std::path::Path::new(python)
+            .is_file()
+            .then(|| python.to_owned());
     }
     std::env::split_paths(&std::env::var_os("PATH")?)
         .map(|dir| dir.join(python))
@@ -149,34 +152,41 @@ fn locate(python: &str) -> Option<String> {
         .map(|path| path.display().to_string())
 }
 
-/// The interpreter ansible-core would report as its own (`sys.executable`): the one the helper
-/// runs under when it has started, else the first candidate that exists. Nothing is installed
-/// and no interpreter is run to find out; `None` when no candidate exists.
-pub(super) fn pick(helper: Option<&str>, list: &[Candidate]) -> Option<String> {
-    helper
-        .map(|python| locate(python).unwrap_or_else(|| python.to_owned()))
-        .or_else(|| list.iter().find_map(|candidate| locate(&candidate.python)))
+/// The interpreter the helper runs or will run under, chosen as `find_python` chooses: the first
+/// candidate with ansible-core; else, when the mode allows an install, the interpreter the
+/// install will leave; else none.
+#[cfg(any(unix, not(test)))]
+pub(super) fn pick(
+    list: &[Candidate],
+    install_to: impl FnOnce() -> Option<String>,
+) -> Option<String> {
+    list.iter()
+        .find(|candidate| has_ansible(&candidate.python))
+        .map(|candidate| locate(&candidate.python).unwrap_or_else(|| candidate.python.clone()))
+        .or_else(install_to)
 }
 
+/// What the implicit localhost's `ansible_python_interpreter` is: the interpreter the helper
+/// runs or will run under, the reference's `sys.executable`. Resolved once per process, on first
+/// need; nothing is installed.
 #[cfg(not(test))]
 pub(crate) fn controller_python() -> Option<String> {
-    let helper = HELPER_PYTHON.lock().ok().and_then(|held| held.clone());
-    let explicit = std::env::var("VOLANT_PYTHON").ok();
-    let virtual_env = std::env::var("VIRTUAL_ENV").ok();
-    pick(
-        helper.as_deref(),
-        &current(explicit.as_deref(), virtual_env.as_deref()),
-    )
-    .or_else(|| {
-        // Nothing exists yet, and the first task that needs Python installs Volant's runtime
-        // before its module is sent: name the interpreter that install will leave, without
-        // installing anything here.
-        if !may_install(mode(), explicit.as_deref()) {
-            return None;
-        }
-        let dir = runtimes_dir().ok()?.join(pinned().ok()?.id());
-        Some(install::interpreter(&dir).display().to_string())
-    })
+    CONTROLLER_PYTHON
+        .get_or_init(|| {
+            let explicit = std::env::var("VOLANT_PYTHON").ok();
+            let virtual_env = std::env::var("VIRTUAL_ENV").ok();
+            pick(
+                &current(explicit.as_deref(), virtual_env.as_deref()),
+                || {
+                    if !may_install(mode(), explicit.as_deref()) {
+                        return None;
+                    }
+                    let dir = runtimes_dir().ok()?.join(pinned().ok()?.id());
+                    Some(install::interpreter(&dir).display().to_string())
+                },
+            )
+        })
+        .clone()
 }
 
 #[cfg(test)]
@@ -199,13 +209,27 @@ pub(crate) fn set_test_python(python: Option<&str>) {
 /// Whether `python` imports ansible-core. The probe is the import itself rather than a version
 /// string: an interpreter that cannot import `ansible` cannot build a payload, whatever it reports.
 pub(crate) fn has_ansible(python: &str) -> bool {
-    Command::new(python)
+    // Once per path and process: the helper's choice and the controller's interpreter variable
+    // read the same answer, and no interpreter is started twice.
+    static PROBED: Mutex<BTreeMap<String, bool>> = Mutex::new(BTreeMap::new());
+    if let Some(known) = PROBED
+        .lock()
+        .ok()
+        .and_then(|seen| seen.get(python).copied())
+    {
+        return known;
+    }
+    let has = Command::new(python)
         .args(["-c", "import ansible"])
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .status()
-        .is_ok_and(|status| status.success())
+        .is_ok_and(|status| status.success());
+    if let Ok(mut seen) = PROBED.lock() {
+        seen.insert(python.to_owned(), has);
+    }
+    has
 }
 
 /// What `volant runtime status` says about the resolution: the mode, the interpreter the next

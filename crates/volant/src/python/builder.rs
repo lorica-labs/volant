@@ -62,13 +62,13 @@ impl PythonBuilder {
         start_from(explicit.as_deref(), virtual_env.as_deref(), install)
     }
     pub(crate) fn under(python: &str) -> anyhow::Result<PythonBuilder> {
-        resolve::note_helper_python(python);
         PythonBuilder::under_with(python, &[])
     }
 
     /// [`PythonBuilder::under`] with variables set for the helper alone, which is how a test
     /// points ansible-core at a collection it wrote without touching this process's environment.
     pub(super) fn under_with(python: &str, env: &[(&str, &str)]) -> anyhow::Result<PythonBuilder> {
+        resolve::note_helper_python(python);
         let from_runtime = crate::runtime::collections::helper_env();
         let mut env = env.to_vec();
         if let Some(paths) = from_runtime.as_deref()

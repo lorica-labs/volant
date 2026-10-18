@@ -16,7 +16,6 @@ crates/volant/src/executor/prepare.rs 1433
 crates/volant/src/executor/run.rs 4140
 crates/volant/src/inventory/constructed.rs 506
 crates/volant/src/inventory/mod.rs 952
-crates/volant/src/render.rs 997
 crates/volant/src/template/filters.rs 1182
 crates/volant/src/template/mod.rs 1005
 crates/volant/src/template/yaml_dump.rs 669

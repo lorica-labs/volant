@@ -58,7 +58,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `transport/`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. `transport` holds the connection settings, the `ssh` command lines and shared connections, the agent bootstrap, and `escalation/` for `sudo` and `su`. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
 | `python/`, `python_helper.py` | The Python helper that builds module payloads: `types` holds the facts and payload shapes, `reach` what a run can reach, `union_build` builds the union, `builder` talks to the helper, `action_helper` runs action plugins. |
-| `render.rs`, `stats.rs` | Console output, the recap, and exit codes. |
+| `render/`, `stats.rs` | Console output, the recap, and exit codes. `render/` keeps the renderer in `mod.rs`, one task's result line in `result.rs`, the error blocks in `error.rs` and Ansible's JSON text in `recap_json.rs`. |
 
 ### Executor, `crates/volant/src/executor/`
 

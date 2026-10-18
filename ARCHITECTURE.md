@@ -57,7 +57,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `listing.rs` | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`. |
 | `transport.rs`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
-| `python.rs`, `python_helper.py` | The Python helper that builds module payloads. |
+| `python/`, `python_helper.py` | The Python helper that builds module payloads: `types` holds the facts and payload shapes, `reach` what a run can reach, `union_build` builds the union, `builder` talks to the helper, `action_helper` runs action plugins. |
 | `render.rs`, `stats.rs` | Console output, the recap, and exit codes. |
 
 ### Executor, `crates/volant/src/executor/`

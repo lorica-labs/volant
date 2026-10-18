@@ -173,7 +173,7 @@ fn later(category: &str, name: &str) -> Option<&'static str> {
 
 fn keyword_status(k: &keywords::Keyword) -> (Status, String) {
     match k.support {
-        Support::Runs => (Status::Runs, String::new()),
+        Support::Runs => (Status::Runs, k.note.unwrap_or_default().to_string()),
         Support::Partial => (Status::Partial, k.missing.unwrap_or_default().to_string()),
         Support::Preflight => (Status::NotYet, String::new()),
     }
@@ -422,10 +422,9 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
                     Status::Partial,
                     "refused with `max_fail_percentage`, and with fewer forks than hosts when the play has handlers, dynamic includes, `run_once`, `pause` or `any_errors_fatal`".to_string(),
                 ),
-                ("strategy", "debug", Status::Runs) => (
-                    Status::Partial,
-                    "the prompt answers every command except `r` (redo)".to_string(),
-                ),
+                ("strategy", "debug", Status::Runs) => {
+                    (Status::Runs, keywords::DEBUGGER_NOTE.to_string())
+                }
                 _ => (s, note),
             };
             rows.push(row(category, &n, s, &note));

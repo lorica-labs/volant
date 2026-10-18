@@ -11,9 +11,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 40 | 1 | 0 | 0 |
-| keyword (block) | 30 | 1 | 0 | 0 |
-| keyword (task) | 64 | 2 | 0 | 0 |
+| keyword (play) | 41 | 0 | 0 | 0 |
+| keyword (block) | 31 | 0 | 0 | 0 |
+| keyword (task) | 65 | 1 | 0 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 35 | 3 | 0 | 0 |
@@ -24,7 +24,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | test | 82 | 0 | 0 | 0 |
 | lookup | 25 | 0 | 0 | 0 |
 | become | 2 | 0 | 0 | 1 |
-| strategy | 1 | 3 | 0 | 0 |
+| strategy | 2 | 2 | 0 | 0 |
 | inventory | 9 | 0 | 0 | 0 |
 | shell | 1 | 0 | 0 | 2 |
 | vars | 1 | 0 | 0 | 0 |
@@ -51,7 +51,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
+| `debugger` | <span class="kw kw-runs">runs</span> | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs |
 | `diff` | <span class="kw kw-runs">runs</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `fact_path` | <span class="kw kw-runs">runs</span> |  |
@@ -99,7 +99,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
+| `debugger` | <span class="kw kw-runs">runs</span> | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
 | `diff` | <span class="kw kw-runs">runs</span> |  |
@@ -137,7 +137,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
+| `debugger` | <span class="kw kw-runs">runs</span> | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs |
 | `delay` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
@@ -658,7 +658,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `debug` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo) |
+| `debug` | <span class="kw kw-runs">runs</span> | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs |
 | `free` | <span class="kw kw-partial">partial</span> | refused with `max_fail_percentage` |
 | `host_pinned` | <span class="kw kw-partial">partial</span> | refused with `max_fail_percentage`, and with fewer forks than hosts when the play has handlers, dynamic includes, `run_once`, `pause` or `any_errors_fatal` |
 | `linear` | <span class="kw kw-runs">runs</span> |  |

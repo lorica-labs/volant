@@ -29,7 +29,7 @@ mod publish;
 mod types;
 
 use display::{header, header_for, report_result, switch_header};
-use events::{debug_ask, debugging, show_now, shows_a_line, unreachable_ask};
+use events::{Held, NO_REDO, debug_ask, debugging, show_now, shows_a_line, unreachable_ask};
 use meta::{MetaContext, apply_meta};
 use publish::{Coordinator, keep_links, take_links, task_name};
 pub(in crate::executor) use publish::{escalated_links, render_name};
@@ -247,6 +247,89 @@ pub(super) async fn run_batch(
     // began at. The host leaves the play on arrival; its block and line print where the host
     // stands in the step's order, like a result, instead of in front of the hosts before it.
     let mut unreached: HashMap<(String, usize), Unreached> = HashMap::new();
+    // The results a driver holds at the debugger prompt, by host and step, until the operator
+    // answers. See `Event::Debug`.
+    let mut held: HashMap<(String, usize), Held> = HashMap::new();
+    // What a failed result changes in the batch: the host leaves the live set, and a `run_once`
+    // or `any_errors_fatal` step tells the others. Done on arrival, or once the operator answers
+    // for a result held at the prompt.
+    macro_rules! book {
+        ($key:expr, $lost:expr, $sank:expr) => {{
+            let (key, lost, sank): ((String, usize), bool, bool) = ($key, $lost, $sank);
+            // A `run_once` task that failed, whether or not a `rescue` caught it for the host
+            // that ran it: measured on ansible-core 2.19.12, the rescue keeps that one host in
+            // the play (`rescued=1`, exit 2) and the others still leave. `Ignored` is not a
+            // failure and is left out, so a `run_once` under `ignore_errors` carries the whole
+            // batch past it.
+            let announced = sank
+                && plan
+                    .steps()
+                    .steps
+                    .get(key.1)
+                    .is_some_and(|s| s.task.bypasses_host_loop());
+            if announced {
+                coordinator.run_once.insert(key.1, true);
+            }
+            // A failed result is the host leaving the play, and it arrives before that task's
+            // `TaskDone`. Taking it out of the live set here, rather than waiting for its
+            // `Finished`, is what lets the next task read the shrunken host list without racing
+            // the driver that is shutting down.
+            if lost {
+                round.failed(&mut state.failed_hosts, &key.0);
+                coordinator.failed_here.insert(key.0.clone());
+                coordinator.last_failure = coordinator.last_failure.max(Some(key.1));
+            }
+            // A failure `any_errors_fatal` covers, rescued or not: the verdict is published with
+            // the failing host's change of state, before any other host can see the step
+            // finished.
+            let fatal = sank
+                && plan
+                    .steps()
+                    .steps
+                    .get(key.1)
+                    .is_some_and(|s| s.task.fails_all());
+            if fatal {
+                coordinator.fatal.insert(key.1);
+            }
+            if lost || announced || fatal {
+                coordinator.publish(&state.failed_hosts, &plan.steps().steps);
+            }
+        }};
+    }
+    // The prompt behind a held result, and the operator's answer sent to its driver. A result
+    // the operator runs again is not counted and changes nothing; any other answer counts it.
+    // True for `r`.
+    macro_rules! answer {
+        ($held:expr, $host:expr, $at:expr) => {{
+            let held: Held = $held;
+            // Only a held result whose counted result is in reaches here.
+            if let Some((outcome, changed, result)) = held.counted {
+                let answer = debugging(
+                    (debugger::Kind::of(outcome), result),
+                    $host,
+                    $at,
+                    None,
+                    &plan,
+                    &progress_tx,
+                    state,
+                    &names,
+                    out,
+                    options,
+                )
+                .await;
+                let redo = matches!(answer, debugger::Answer::Redo(_));
+                if !redo {
+                    stats.record($host, outcome, changed);
+                    book!(($host.to_string(), $at), held.lost, held.sank);
+                }
+                let _ = held.reply.send(answer);
+                redo
+            } else {
+                let _ = held.reply.send(debugger::Answer::Continue);
+                false
+            }
+        }};
+    }
     // The prompt an unreachable host opens when its step's `debugger` says so.
     macro_rules! prompt_unreachable {
         ($host:expr, $at:expr) => {
@@ -254,6 +337,7 @@ pub(super) async fn run_batch(
                 unreachable_ask(),
                 $host,
                 $at,
+                Some(NO_REDO.unreachable),
                 &plan,
                 &progress_tx,
                 state,
@@ -278,7 +362,8 @@ pub(super) async fn run_batch(
                     state.failed_hosts.extend(play_hosts.iter().cloned());
                 }
                 let key = (host.clone(), index);
-                if done.contains(&key) {
+                let answering = held.get(&key).is_some_and(Held::ready);
+                if done.contains(&key) || answering {
                     // The header goes in front of the first event that shows something, not in
                     // front of the first host that finished: a step every host stepped over
                     // has no header at all, and a `meta`, which shows no result line, prints
@@ -302,6 +387,7 @@ pub(super) async fn run_batch(
                                 kind,
                                 host,
                                 index,
+                                Some(NO_REDO.task),
                                 &plan,
                                 &progress_tx,
                                 state,
@@ -311,6 +397,14 @@ pub(super) async fn run_batch(
                             )
                             .await;
                         }
+                    }
+                    // `r`: the host runs the step again, and its new results are shown here,
+                    // under the same banner, before the next host's.
+                    if answering
+                        && let Some(waiting) = held.remove(&key)
+                        && answer!(waiting, host, index)
+                    {
+                        continue;
                     }
                     break;
                 }
@@ -348,44 +442,12 @@ pub(super) async fn run_batch(
                         } else {
                             unreachable!()
                         };
-                        // A `run_once` task that failed, whether or not a `rescue` caught it
-                        // for the host that ran it: measured on ansible-core 2.19.12, the
-                        // rescue keeps that one host in the play (`rescued=1`, exit 2) and the
-                        // others still leave. `Ignored` is not a failure and is left out, so a
-                        // `run_once` under `ignore_errors` carries the whole batch past it.
-                        let announced = sank
-                            && plan
-                                .steps()
-                                .steps
-                                .get(key.1)
-                                .is_some_and(|s| s.task.bypasses_host_loop());
-                        if announced {
-                            coordinator.run_once.insert(key.1, true);
-                        }
-                        // A failed result is the host leaving the play, and it arrives before
-                        // that task's `TaskDone`. Taking it out of the live set here, rather
-                        // than waiting for its `Finished`, is what lets the next task read the
-                        // shrunken host list without racing the driver that is shutting down.
-                        if lost {
-                            round.failed(&mut state.failed_hosts, &key.0);
-                            coordinator.failed_here.insert(key.0.clone());
-                            coordinator.last_failure = coordinator.last_failure.max(Some(key.1));
-                        }
-                        // A failure `any_errors_fatal` covers, rescued or not: the verdict is
-                        // published with the failing host's change of state, before any other
-                        // host can see the step finished.
-                        let fatal = sank
-                            && plan
-                                .steps()
-                                .steps
-                                .get(key.1)
-                                .is_some_and(|s| s.task.fails_all());
-                        if fatal {
-                            coordinator.fatal.insert(key.1);
-                        }
-                        if lost || announced || fatal {
-                            coordinator.publish(&state.failed_hosts, &plan.steps().steps);
-                        }
+                        let event = if let Some(waiting) = held.get_mut(&key) {
+                            waiting.hold(event, lost, sank)
+                        } else {
+                            book!(key.clone(), lost, sank);
+                            event
+                        };
                         if free {
                             let asks = debug_ask(&event, &plan);
                             show_now(
@@ -403,6 +465,7 @@ pub(super) async fn run_batch(
                                     kind,
                                     &key.0,
                                     key.1,
+                                    Some(NO_REDO.task),
                                     &plan,
                                     &progress_tx,
                                     state,
@@ -411,6 +474,11 @@ pub(super) async fn run_batch(
                                     options,
                                 )
                                 .await;
+                            }
+                            if held.get(&key).is_some_and(Held::ready)
+                                && let Some(waiting) = held.remove(&key)
+                            {
+                                answer!(waiting, &key.0, key.1);
                             }
                         } else {
                             pending.entry(key).or_default().push(event);
@@ -456,6 +524,9 @@ pub(super) async fn run_batch(
                         groups,
                     }) => {
                         includes.entry(index).or_default().push((host, groups));
+                    }
+                    Some(Event::Debug { host, index, reply }) => {
+                        held.insert((host, index), Held::new(reply));
                     }
                     Some(Event::Named { host, index, name }) => {
                         names.insert((host, index), name);
@@ -800,6 +871,10 @@ pub(super) async fn run_batch(
                 for message in warned {
                     out.warning(&message, false);
                 }
+            }
+            // Nobody is left to show the result to: the host goes on with it.
+            Event::Debug { reply, .. } => {
+                let _ = reply.send(debugger::Answer::Continue);
             }
             Event::Named { host, index, name } => {
                 names.insert((host, index), name);

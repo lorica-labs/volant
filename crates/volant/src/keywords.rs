@@ -44,6 +44,9 @@ pub struct Keyword {
     /// What a [`Support::Partial`] row does not do, in the words the generated page prints.
     /// `None` on every other row.
     pub missing: Option<&'static str>,
+    /// What the generated page says beside a [`Support::Runs`] row whose reach has a limit
+    /// worth knowing. `None` on every other row.
+    pub note: Option<&'static str>,
     /// Whether a task carrying this keyword is a synchronisation point: the hosts of the batch
     /// meet in front of it before any of them runs it.
     ///
@@ -62,6 +65,7 @@ const fn kw(name: &'static str, support: Support) -> Keyword {
         name,
         support,
         missing: None,
+        note: None,
         barrier: false,
     }
 }
@@ -73,6 +77,7 @@ const fn partial_kw(name: &'static str, missing: &'static str) -> Keyword {
         name,
         support: Partial,
         missing: Some(missing),
+        note: None,
         barrier: false,
     }
 }
@@ -84,8 +89,19 @@ const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. I
     on statements, and on `raw` and `async_status`, which the reference refuses too. \
     `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are.";
 
-/// One sentence for the `debugger` rows.
-const DEBUGGER_MISSING: &str = "the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python";
+/// A keyword this release honours, with the one limit the generated page prints next to it.
+const fn noted_kw(name: &'static str, note: &'static str) -> Keyword {
+    Keyword {
+        name,
+        support: Runs,
+        missing: None,
+        note: Some(note),
+        barrier: false,
+    }
+}
+
+/// The limit of the `debugger` rows.
+pub const DEBUGGER_NOTE: &str = "`p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs";
 
 /// A keyword whose presence on a task makes that task a synchronisation point.
 const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
@@ -93,6 +109,7 @@ const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
         name,
         support,
         missing: None,
+        note: None,
         barrier: true,
     }
 }
@@ -132,7 +149,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
-    partial_kw("debugger", DEBUGGER_MISSING),
+    noted_kw("debugger", DEBUGGER_NOTE),
     kw("delay", Runs),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
@@ -229,7 +246,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
-    partial_kw("debugger", DEBUGGER_MISSING),
+    noted_kw("debugger", DEBUGGER_NOTE),
     kw("diff", Runs),
     kw("environment", Runs),
     kw("fact_path", Runs),
@@ -302,7 +319,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
-    partial_kw("debugger", DEBUGGER_MISSING),
+    noted_kw("debugger", DEBUGGER_NOTE),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
     kw("diff", Runs),
@@ -363,6 +380,21 @@ fn status(table: &[Keyword], name: &str) -> &'static str {
         Some(k) if k.support == Partial => r#"<span class="kw kw-partial">partial</span>"#,
         Some(_) => r#"<span class="kw kw-notyet">not yet</span>"#,
         None => r#"<span class="kw kw-no">not accepted</span>"#,
+    }
+}
+
+/// The rows that run with a limit, and the limit.
+fn limits(out: &mut String) {
+    let mut noted: Vec<(&str, &str)> = [TASK_KEYWORDS, PLAY_KEYWORDS, BLOCK_KEYWORDS]
+        .iter()
+        .flat_map(|table| table.iter())
+        .filter_map(|k| k.note.map(|n| (k.name, n)))
+        .collect();
+    noted.sort_unstable();
+    noted.dedup();
+    out.push_str("\n## Limits of what runs\n\n| Keyword | Limit |\n|---|---|\n");
+    for (name, note) in noted {
+        let _ = writeln!(out, "| `{name}` | {note} |");
     }
 }
 
@@ -440,6 +472,7 @@ pub fn documentation() -> String {
     for (name, missing) in partial {
         let _ = writeln!(out, "| `{name}` | {missing} |");
     }
+    limits(&mut out);
 
     out.push_str(
         "\n## Handlers\n\nA handler accepts every task keyword above, plus one of its own.\n\n\

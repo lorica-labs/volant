@@ -14,7 +14,6 @@ fn failure(message: String) -> PluginError {
         message,
         origin: None,
         cause: None,
-        unsupported: false,
     }
 }
 

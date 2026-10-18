@@ -15,7 +15,7 @@ mod source;
 #[cfg(test)]
 pub use blobs::forget_frames;
 pub use blobs::{BlobFrame, BlobMemory, frame, keep_frame};
-pub use source::{AgentFile, AgentSource};
+pub use source::AgentSource;
 
 /// How long a bare `drop` waits for the agent to notice end of stream and clean up its task
 /// before giving up and letting `kill_on_drop` kill the agent outright. This blocks whatever

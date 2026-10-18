@@ -456,72 +456,89 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
     );
     let empty_config =
         Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/golden/reference/ansible.cfg");
-    for (i, (args, want)) in runs.iter().zip(expected).enumerate() {
-        let copy =
-            std::env::temp_dir().join(format!("volant-scenario-{}-{name}-{i}", std::process::id()));
-        let _ = std::fs::remove_dir_all(&copy);
-        copy_dir(dir, &copy);
-        let own = copy.join("ansible.cfg");
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
-        command
-            .arg("playbook")
-            .args(args)
-            .args(["--forks", &spec.forks.to_string()])
-            .current_dir(&copy)
-            .env_remove("COLUMNS");
-        // Except where the controller's collections are installed: the helper runs a
-        // collection's filter from there, as the reference did when it was recorded.
-        for (var, _) in std::env::vars() {
-            if (var.starts_with("ANSIBLE_") || var.starts_with("VOLANT_"))
-                && var != "ANSIBLE_COLLECTIONS_PATH"
-            {
-                command.env_remove(var);
+    // Each run has its own copy of the scenario, but a run may also touch the machine (a path
+    // outside the copy, `sudo`), so only the scenarios named here, which stay inside their copy,
+    // go side by side; the others run one after the other. A failed assertion in one run is raised
+    // when the scope joins it.
+    const SIDE_BY_SIDE: [&str; 1] = ["vault-playbooks"];
+    let side_by_side = SIDE_BY_SIDE.contains(&name.as_str());
+    std::thread::scope(|scope| {
+        for (i, (args, want)) in runs.iter().zip(expected).enumerate() {
+            let (name, spec, python, unordered, empty_config) =
+                (&name, &spec, &python, &unordered, &empty_config);
+            let one = move || {
+                let copy = std::env::temp_dir()
+                    .join(format!("volant-scenario-{}-{name}-{i}", std::process::id()));
+                let _ = std::fs::remove_dir_all(&copy);
+                copy_dir(dir, &copy);
+                let own = copy.join("ansible.cfg");
+                let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
+                command
+                    .arg("playbook")
+                    .args(args)
+                    .args(["--forks", &spec.forks.to_string()])
+                    .current_dir(&copy)
+                    .env_remove("COLUMNS");
+                // Except where the controller's collections are installed: the helper runs a
+                // collection's filter from there, as the reference did when it was recorded.
+                for (var, _) in std::env::vars() {
+                    if (var.starts_with("ANSIBLE_") || var.starts_with("VOLANT_"))
+                        && var != "ANSIBLE_COLLECTIONS_PATH"
+                    {
+                        command.env_remove(var);
+                    }
+                }
+                command
+                    .env(
+                        "ANSIBLE_CONFIG",
+                        if own.exists() {
+                            own
+                        } else {
+                            empty_config.clone()
+                        },
+                    )
+                    .env("ANSIBLE_NOCOLOR", "1")
+                    .env("NO_COLOR", "1")
+                    .envs(spec.env.iter().map(|(k, v)| (k, v)));
+                if let Some(python) = &python {
+                    command.env("VOLANT_PYTHON", python);
+                }
+                let out = process::run_within(&mut command, DEADLINE, None);
+                // macOS resolves its temporary directory under `/private`: mask both spellings.
+                let canonical = copy.canonicalize().unwrap_or_else(|_| copy.clone());
+                let _ = std::fs::remove_dir_all(&copy);
+                // The generator reads the reference's stdout in Python's text mode, where `\r\n` and a
+                // lone `\r` both read as `\n` (a `pause` prompt ends in `\r`): read this one the same way.
+                let got = String::from_utf8_lossy(&out.stdout)
+                    .replace(&canonical.display().to_string(), "<golden-tmp>")
+                    .replace(&copy.display().to_string(), "<golden-tmp>")
+                    .replace("\r\n", "\n")
+                    .replace('\r', "\n");
+                let shown = format!(
+                    "{name}: {}\n--- stderr\n{}",
+                    args.join(" "),
+                    String::from_utf8_lossy(&out.stderr)
+                );
+                let code = want["code"].as_i64().and_then(|c| i32::try_from(c).ok());
+                let wanted = want["stdout"].as_str().expect("a recorded stdout");
+                assert_eq!(
+                    out.status.code(),
+                    code,
+                    "exit code of {shown}--- stdout\n{got}"
+                );
+                assert_eq!(
+                    normalise(&got, unordered),
+                    normalise(wanted, unordered),
+                    "stdout of {shown}"
+                );
+            };
+            if side_by_side {
+                scope.spawn(one);
+            } else {
+                one();
             }
         }
-        command
-            .env(
-                "ANSIBLE_CONFIG",
-                if own.exists() {
-                    own
-                } else {
-                    empty_config.clone()
-                },
-            )
-            .env("ANSIBLE_NOCOLOR", "1")
-            .env("NO_COLOR", "1")
-            .envs(spec.env.iter().map(|(k, v)| (k, v)));
-        if let Some(python) = &python {
-            command.env("VOLANT_PYTHON", python);
-        }
-        let out = process::run_within(&mut command, DEADLINE, None);
-        // macOS resolves its temporary directory under `/private`: mask both spellings.
-        let canonical = copy.canonicalize().unwrap_or_else(|_| copy.clone());
-        let _ = std::fs::remove_dir_all(&copy);
-        // The generator reads the reference's stdout in Python's text mode, where `\r\n` and a
-        // lone `\r` both read as `\n` (a `pause` prompt ends in `\r`): read this one the same way.
-        let got = String::from_utf8_lossy(&out.stdout)
-            .replace(&canonical.display().to_string(), "<golden-tmp>")
-            .replace(&copy.display().to_string(), "<golden-tmp>")
-            .replace("\r\n", "\n")
-            .replace('\r', "\n");
-        let shown = format!(
-            "{name}: {}\n--- stderr\n{}",
-            args.join(" "),
-            String::from_utf8_lossy(&out.stderr)
-        );
-        let code = want["code"].as_i64().and_then(|c| i32::try_from(c).ok());
-        let wanted = want["stdout"].as_str().expect("a recorded stdout");
-        assert_eq!(
-            out.status.code(),
-            code,
-            "exit code of {shown}--- stdout\n{got}"
-        );
-        assert_eq!(
-            normalise(&got, &unordered),
-            normalise(wanted, &unordered),
-            "stdout of {shown}"
-        );
-    }
+    });
 }
 
 /// Every case of `inventories/cases.yml` read as `ansible-inventory --list` read it: the exit

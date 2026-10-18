@@ -236,9 +236,54 @@ pub struct Bridge {
     start: Start,
     state: Mutex<(State, u64)>,
     actions: Mutex<Actions>,
+    /// The plugin directories of a bridge made by [`Bridge::late`].
+    dirs: Arc<Mutex<Vec<PathBuf>>>,
+}
+
+impl fmt::Debug for Bridge {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.write_str("Bridge")
+    }
 }
 
 impl Bridge {
+    /// [`Bridge::new`] for a bridge the inventory uses before the playbooks, and so their plugin
+    /// directories, are known: [`Bridge::set_plugin_dirs`] gives them later.
+    pub fn late() -> Arc<Bridge> {
+        let dirs = Arc::new(Mutex::new(Vec::<PathBuf>::new()));
+        let seen = Arc::clone(&dirs);
+        Arc::new(Bridge {
+            start: Box::new(move || {
+                let mut builder = PythonBuilder::start()?;
+                let dirs = seen
+                    .lock()
+                    .unwrap_or_else(std::sync::PoisonError::into_inner)
+                    .clone();
+                builder.add_plugin_dirs(&dirs)?;
+                Ok(builder)
+            }),
+            state: Mutex::new((State::Idle, 0)),
+            actions: Mutex::new(Actions::default()),
+            dirs,
+        })
+    }
+
+    /// The plugin directories of a [`Bridge::late`] bridge: used by the helper it starts, or added
+    /// to the one already running.
+    ///
+    /// # Errors
+    /// Why the running helper refused the directories.
+    pub fn set_plugin_dirs(&self, dirs: Vec<PathBuf>) -> anyhow::Result<()> {
+        self.dirs
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+            .clone_from(&dirs);
+        if let State::Running(helper) = &mut self.lock().0 {
+            helper.add_plugin_dirs(&dirs)?;
+        }
+        Ok(())
+    }
+
     /// Starts nothing: the helper starts under the first call.
     pub fn new(plugin_dirs: Vec<PathBuf>) -> Arc<Bridge> {
         Bridge::with_start(Box::new(move || {
@@ -263,6 +308,7 @@ impl Bridge {
             start,
             state: Mutex::new((State::Idle, 0)),
             actions: Mutex::new(Actions::default()),
+            dirs: Arc::default(),
         })
     }
 
@@ -380,6 +426,19 @@ impl Bridge {
                 "the Python helper answered the diff in a shape it should not".into(),
             )),
         }
+    }
+
+    /// A collection inventory plugin run on `path` by ansible-core: the groups, hosts and
+    /// variables it made, the warnings it said, or the `error` it ended with.
+    ///
+    /// # Errors
+    /// [`BridgeError`] when the helper cannot start or breaks the protocol.
+    pub fn inventory(&self, plugin: &str, path: &str) -> Result<Value, BridgeError> {
+        self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "inventory", "name": plugin, "args": [path], "kwargs": {}}),
+        )
     }
 
     fn defaults_request(

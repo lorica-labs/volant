@@ -51,7 +51,14 @@ impl InventoryPlugin for Auto {
         };
         match parse_builtin(name, source, into, cx) {
             Some(result) => result,
-            // A plugin from a collection is the helper's to find; until that exists it is unknown.
+            // A plugin of a collection runs in ansible-core, in the helper that starts only now.
+            None if name.contains('.') => {
+                let answer = cx
+                    .helper()
+                    .inventory(name, path)
+                    .map_err(|e| failed(e.to_string()))?;
+                super::collection::read(&answer, source, into, cx)
+            }
             None => Err(failed(format!(
                 "inventory config '{path}' specifies unknown plugin '{name}'"
             ))),

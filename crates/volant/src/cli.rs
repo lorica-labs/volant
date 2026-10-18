@@ -13,7 +13,7 @@ use crate::bridge::Bridge;
 use crate::compile::{self, Compiled, TagSelection};
 use crate::config::Config;
 use crate::executor::{self, Abort, RunOptions, RunState};
-use crate::inventory::{Host, Inventory, Note, Source, load_sources};
+use crate::inventory::{Host, Inventory, Note, Source, load_sources_with};
 use crate::listing::{self, Listing};
 use crate::profile::{Phase, Profile, micros};
 use crate::python::{Facts, Natives};
@@ -396,7 +396,9 @@ async fn run_all(
         return Ok(2);
     }
     let sources = inventory_sources(args, &config);
-    let loaded = load_sources(&sources, &config.inventory_plugins);
+    // One helper for the run: the inventory's collection plugins, its refreshes, and the filters.
+    let bridge = Bridge::late();
+    let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {
         match note {
             Note::Verbose(level, text) => out.verbose(*level, text),
@@ -618,7 +620,9 @@ async fn run_all(
     }
     // The filters, tests and lookups only ansible-core has run in the helper the union was
     // built with, or in one started on the first of them.
-    let bridge = Bridge::new(reach.plugin_dirs.clone());
+    bridge
+        .set_plugin_dirs(reach.plugin_dirs.clone())
+        .map_err(|e| Refusal::or(4, e))?;
     out.set_diffs(Arc::clone(&bridge));
     if let Some(helper) = helper {
         bridge.adopt(helper);
@@ -772,6 +776,7 @@ async fn run_all(
     store.set_reload(
         sources.clone(),
         config.inventory_plugins.clone(),
+        Arc::clone(&bridge),
         limit.clone(),
     );
     if let Some(cache) = &cache {

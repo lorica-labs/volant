@@ -651,6 +651,77 @@ def plain(value):
     raise RuntimeError("a value of type %s cannot be returned" % type(value).__name__)
 
 
+def marked(value):
+    """`plain`, with each string the plugin did not trust as a template as
+    `{"__ansible_unsafe": text}`, the shape `ansible-inventory --list` prints it in."""
+    from ansible.template import is_trusted_as_template
+
+    if isinstance(value, str):
+        text = plain(value)
+        return text if is_trusted_as_template(value) else {"__ansible_unsafe": text}
+    if isinstance(value, collections.abc.Mapping):
+        return {str.__str__(k) if isinstance(k, str) else str(k): marked(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple, set, frozenset)):
+        return [marked(item) for item in value]
+    return plain(value)
+
+
+def inventory(path):
+    """One collection inventory plugin reading `path`, as the reference's `auto` plugin runs it,
+    inside the same `_InventoryDataWrapper` the inventory manager gives it (so a plugin's trust
+    and origins are the reference's) and with its cache: the groups, children, hosts and host
+    variables it made as plain JSON, and the lines it said. A failure is answered as data, so
+    the warnings said before it are kept."""
+    from ansible._internal._datatag._tags import Origin
+    from ansible.inventory.manager import InventoryManager, _InventoryDataWrapper
+    from ansible.parsing.dataloader import DataLoader
+    from ansible.plugins.loader import inventory_loader
+    from ansible.utils import display as display_module
+    from ansible.vars.manager import VariableManager
+
+    warnings = []
+    verbose = []
+    display = display_module.Display()
+    said, spoke = display._warning, display.v
+    format_message = display_module._display_utils.format_message
+    display._warning = lambda warning: warnings.append(
+        format_message(warning, False).rstrip(chr(10)) + chr(10))
+    display.v = lambda message, *_, **__: verbose.append(str(message))
+    try:
+        loader = DataLoader()
+        manager = InventoryManager(loader, sources=[path], parse=False)
+        manager._inventory.current_source = path
+        auto = inventory_loader.get("auto")
+        origin = Origin(description="<inventory plugin 'auto' with source %r>" % path)
+        wrapper = _InventoryDataWrapper(manager._inventory, target_plugin=auto, origin=origin)
+        auto.parse(wrapper, loader, path, cache=True)
+        data = manager._inventory
+        # What `ansible-inventory --list` does next: the variables of each host, which is where
+        # the reference warns about a variable that has a reserved name.
+        variables = VariableManager(loader=loader, inventory=manager)
+        for host in data.hosts.values():
+            variables.get_vars(host=host, include_hostvars=False)
+        magic = ("inventory_file", "inventory_dir")
+        return {
+            "verbose": verbose,
+            "warnings": warnings,
+            "groups": [
+                {
+                    "name": g.name,
+                    "hosts": [h.name for h in g.hosts],
+                    "children": [c.name for c in g.child_groups],
+                    "vars": marked(g.vars),
+                }
+                for g in data.groups.values()
+            ],
+            "hosts": [{"name": h.name, "vars": marked({k: v for k, v in h.vars.items() if k not in magic})} for h in data.hosts.values()],
+        }
+    except Exception as failure:
+        return {"verbose": verbose, "warnings": warnings, "error": str(failure)}
+    finally:
+        display._warning, display.v = said, spoke
+
+
 def call(request):
     """One filter, test or lookup, run through ansible-core's own Jinja environment so its
     argument handling, error text and `errors`/`wantlist` shaping are the reference's."""
@@ -659,6 +730,8 @@ def call(request):
 
     loaders()
     kind, name = request["kind"], request["name"]
+    if kind == "inventory":
+        return {"value": inventory(request["args"][0])}
     if kind == "diff":
         return {"value": diff_text(request["args"][0])}
     if kind == "action_groups":

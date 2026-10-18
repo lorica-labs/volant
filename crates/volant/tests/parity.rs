@@ -470,6 +470,10 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             };
             push("test", &x, s, note);
         }
+        // A collection's inventory plugin runs in ansible-core's own Python, as the reference.
+        for i in names(c, &["inventory"]) {
+            push("inventory", &i, Status::Runs, "through the Python helper");
+        }
         for l in names(c, &["lookup"]) {
             let (s, note) = if volant::template::lookup_supported(&l) {
                 (Status::Runs, "")
@@ -538,7 +542,7 @@ fn page(rows: &[Row], r: &Value) -> String {
             let _ = writeln!(out, "| `{}` | {} | {} |", x.name, x.status.badge(), x.note);
         }
     }
-    out.push_str("\n## Collections\n\nFor each collection, how many of its rows run, out of the total.\n\n| Collection | Version | modules | filters | tests | lookups | action plugins |\n|---|---|---|---|---|---|---|\n");
+    out.push_str("\n## Collections\n\nFor each collection, how many of its rows run, out of the total, for its modules, filters, tests, lookups, action plugins and inventory plugins.\n\n| Collection | Version | modules | filters | tests | lookups | action plugins | inventory plugins |\n|---|---|---|---|---|---|---|---|\n");
     for (fqcn, c) in r["collections"].as_object().unwrap() {
         let prefix = format!("{fqcn}.");
         let cell = |kind: &str| {
@@ -557,13 +561,14 @@ fn page(rows: &[Row], r: &Value) -> String {
         };
         let _ = writeln!(
             out,
-            "| `{fqcn}` | {} | {} | {} | {} | {} | {} |",
+            "| `{fqcn}` | {} | {} | {} | {} | {} | {} | {} |",
             c["version"].as_str().unwrap(),
             cell("module"),
             cell("filter"),
             cell("test"),
             cell("lookup"),
-            cell("action plugin")
+            cell("action plugin"),
+            cell("inventory")
         );
     }
     out

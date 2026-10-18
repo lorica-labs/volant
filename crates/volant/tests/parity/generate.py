@@ -38,7 +38,7 @@ ANSIBLE_DOC = os.path.join(os.path.dirname(sys.executable), "ansible-doc")
 CORE_DIR = os.path.dirname(ansible.__file__)
 PLUGIN_TYPES = ["module", "filter", "test", "lookup", "become", "connection", "inventory",
                 "strategy", "shell", "vars", "cache", "callback"]
-COLLECTION_TYPES = ["module", "filter", "test", "lookup"]
+COLLECTION_TYPES = ["module", "filter", "test", "lookup", "inventory"]
 
 
 def spellings(cls):

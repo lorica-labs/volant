@@ -2,6 +2,7 @@
 # `ansible-inventory --list` reads them with. Recorded into ../expected_inventory.json.
 # `hosts: unordered` leaves the `--list-hosts` order unrecorded, where the reference's walk of
 # sibling groups is hashed by name and differs from one run to the next.
+# `needs: [ansible-core]` marks a case that runs a collection plugin, which Volant runs in ansible-core.
 ranges: {sources: [ranges.ini]}
 host_list: {sources: ["a:2222,,b,[::1]:22,b:x,"]}
 directory: {sources: [dir]}
@@ -70,7 +71,7 @@ constructed_keyed_10: {sources: [constructed_base.ini, keyed_10.yml]}
 constructed_keyed_11: {sources: [constructed_base.ini, keyed_11.yml]}
 generator: {sources: [generator.yml], hosts: unordered}
 generator_then_constructed: {sources: [generator.yml, constructed.yml], hosts: unordered}
-auto_unknown: {sources: [auto_unknown.yml]}
+auto_unknown: {sources: [auto_unknown.yml], needs: [ansible-core]}
 auto_plugin_int: {sources: [auto_plugin_int.yml]}
 auto_no_plugin: {sources: [auto_no_plugin.yml]}
 yaml_cycle: {sources: [yaml_cycle.yml]}
@@ -83,3 +84,7 @@ yaml_plugin_key: {sources: [yaml_plugin_key.yml]}
 constructed_passthrough: {sources: [constructed_base.ini, constructed_passthrough.yml]}
 constructed_int_key: {sources: [constructed_base.ini, constructed_int_key.yml]}
 constructed_int_key_computed: {sources: [constructed_base.ini, constructed_int_key_computed.yml]}
+nmap: {sources: [nmap.yml], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$PATH"}}
+nmap_then_ini: {sources: [nmap.yml, one.ini], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$PATH"}}
+collection_plugin_fails: {sources: [icinga2.yml], needs: [ansible-core]}
+collection_plugin_fails_then_ini: {sources: [icinga2.yml, one.ini], needs: [ansible-core]}

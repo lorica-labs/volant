@@ -445,7 +445,7 @@ mod tests {
 
     fn read(text: &str, dialect: Dialect) -> (Inventory, Result<(), String>) {
         let config = PluginConfig::default();
-        let cx = ParseCx::new(&config);
+        let cx = ParseCx::new(&config, &|| unreachable!("no helper is started"));
         let mut inv = Inventory::default();
         let result = match dialect {
             Dialect::Yaml => {

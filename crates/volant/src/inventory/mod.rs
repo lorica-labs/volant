@@ -4,6 +4,7 @@
 //! sources merged into one inventory.
 
 mod auto;
+mod collection;
 mod constructed;
 mod generator;
 mod host_list;
@@ -23,6 +24,7 @@ use serde_json::Value;
 
 pub use sources::{
     InventoryPlugin, Loaded, Note, ParseCx, PluginConfig, PluginError, Source, load_sources,
+    load_sources_with,
 };
 
 /// Every inventory plugin this release knows, the ones `enable_plugins` picks from. A plugin it
@@ -221,7 +223,12 @@ impl Inventory {
                 (name, vars)
             })
             .filter(|(_, vars)| !vars.is_empty())
-            .map(|(name, vars)| (name, Value::Object(vars.into_iter().collect())))
+            .map(|(name, vars)| {
+                (
+                    name,
+                    show_unsafe(&Value::Object(vars.into_iter().collect())),
+                )
+            })
             .collect();
         out.insert(
             "_meta".into(),
@@ -721,6 +728,24 @@ fn split_terms(pattern: &str) -> Vec<&str> {
 /// name. Measured against the reference: `hosts: ::1` with no `::1` in the inventory runs
 /// `changed: [::1]` on the controller, like `localhost` and `127.0.0.1`. One copy of the rule,
 /// read both here and by the store that gives such a host its local connection.
+/// A value as `ansible-inventory --list` prints it: text that is data, never rendered, as
+/// `{"__ansible_unsafe": text}`.
+fn show_unsafe(value: &Value) -> Value {
+    match value {
+        Value::String(text) => crate::yaml::unsafe_text(text).map_or_else(
+            || value.clone(),
+            |text| serde_json::json!({ "__ansible_unsafe": text }),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(show_unsafe).collect()),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), show_unsafe(v)))
+                .collect(),
+        ),
+        other => other.clone(),
+    }
+}
+
 pub fn is_localhost(name: &str) -> bool {
     matches!(name, "localhost" | "127.0.0.1" | "::1")
 }

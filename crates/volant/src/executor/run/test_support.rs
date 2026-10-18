@@ -1,11 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The fake agents and the item and result builders the tests of `run` share.
 
-use super::*;
+use super::channel::{AgentChannel, Relink};
+#[cfg(unix)]
+use super::links::KeptLink;
+use crate::agent::BlobMemory;
+use crate::executor::prepare::Item;
+use crate::python::{ModulePayload, Union};
 use crate::testing::vars;
+use crate::vars::HostVars;
+use serde_json::{Map, Value, json};
 use std::collections::BTreeMap;
+use std::collections::BTreeSet;
 #[cfg(unix)]
 use std::sync::Arc;
+use std::time::Duration;
+use tokio::sync::watch;
+use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 pub(super) fn local_item(args: Value) -> Item {
     Item {

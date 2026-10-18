@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use super::regex::python_replacement;
 use super::*;
 use crate::testing::templar;
 

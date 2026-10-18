@@ -1,0 +1,9 @@
+- hosts: g
+  strategy: free
+  gather_facts: false
+  any_errors_fatal: true
+  tasks:
+    - name: a
+      shell: "{{ 'touch m; exit 1' if inventory_hostname == 'h1' else 'i=0; while [ ! -e m ] && [ $i -lt 600 ]; do sleep 0.1; i=$((i+1)); done; sleep ' ~ s }}"
+    - {name: b, command: "true"}
+    - {name: z, debug: {msg: "z {{ inventory_hostname }}"}}

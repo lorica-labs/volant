@@ -1,0 +1,4 @@
+# `any_errors_fatal` under `free` warns, and the hosts that did not fail finish. The forks go out
+# in host order: h1 and h2 start, and h1's failure shows before h2 is done.
+args: [-i, inv.ini, play.yml]
+forks: 2

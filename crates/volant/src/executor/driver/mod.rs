@@ -102,8 +102,11 @@ pub(super) async fn drive_host(
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
     let mut permit: Option<OwnedSemaphorePermit> = None;
-    // `host_pinned`: the fork is taken before the first step and kept to the last, so the worker
-    // that starts a host is the one that finishes it. Every release below is skipped for it.
+    // `free` and `host_pinned`: the first fork is taken before the first step, in the play's host
+    // order, the way the reference starts a worker for each host in turn while forks are free.
+    // Taken as each driver gets there, a later host could start first and hold back an earlier
+    // one's lines. `host_pinned` keeps the fork to the last step, so the worker that starts a
+    // host is the one that finishes it; every release below is skipped for it.
     let mut turn = Turn {
         gate: &plan.turn,
         mine: plan
@@ -111,9 +114,9 @@ pub(super) async fn drive_host(
             .iter()
             .position(|h| h == &name)
             .unwrap_or_default(),
-        passed: !plan.strategy.pinned(),
+        passed: !plan.strategy.free(),
     };
-    if plan.strategy.pinned() {
+    if plan.strategy.free() {
         if driver.wait_turn(turn.mine).await.is_some() {
             permit = driver.acquire(Arc::clone(&forks)).await;
         }

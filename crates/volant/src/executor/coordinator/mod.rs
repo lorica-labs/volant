@@ -100,7 +100,7 @@ pub(super) async fn run_batch(
         lockstep: max_fail.is_some() || options.step.is_some(),
         strategy: Strategy::named(play.strategy.as_deref()),
         throttles: Mutex::default(),
-        queue: if play.strategy.as_deref() == Some("host_pinned") {
+        queue: if Strategy::named(play.strategy.as_deref()).free() {
             play_hosts.clone()
         } else {
             Vec::new()

@@ -44,8 +44,8 @@ pub(in crate::executor) struct PlayPlan {
     /// index names it for as long as the play runs: a splice only moves the steps behind a point
     /// no host has passed, so no gate is made for an index before the list has settled there.
     pub(in crate::executor) throttles: Mutex<HashMap<usize, Arc<Gate>>>,
-    /// `host_pinned`: the hosts of the batch in the order they take a fork, and how many of them
-    /// have had their turn. A host queues for the fork only when the one before it has, so the
+    /// `free` and `host_pinned`: the hosts of the batch in the order they take their first fork,
+    /// and how many of them have had their turn. A host queues for the fork only when the one before it has, so the
     /// forks go out in the batch's order and not in the order the scheduler starts the drivers.
     pub(in crate::executor) queue: Vec<String>,
     pub(in crate::executor) turn: watch::Sender<usize>,

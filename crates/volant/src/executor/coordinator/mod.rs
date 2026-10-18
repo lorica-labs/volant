@@ -275,11 +275,11 @@ pub(super) async fn run_batch(
                 $host, $at)
         };
     }
-    // The prompt an unreachable host opens when its step's `debugger` says so.
-    macro_rules! prompt_unreachable {
-        ($host:expr, $at:expr) => {
+    // The prompt a result no driver holds opens when its step's `debugger` says so.
+    macro_rules! prompt {
+        ($asked:expr, $host:expr, $at:expr) => {
             debugging(
-                unreachable_ask(),
+                $asked,
                 $host,
                 $at,
                 false,
@@ -365,7 +365,7 @@ pub(super) async fn run_batch(
                     if let Some(blame) = unreached.remove(&key) {
                         step_header!(host);
                         blame.show(host, out);
-                        prompt_unreachable!(host, key.1);
+                        prompt!(unreachable_ask(), host, key.1);
                     }
                     break;
                 }
@@ -584,7 +584,7 @@ pub(super) async fn run_batch(
                             }
                             blame.show(&host, out);
                             if let Some(at) = at {
-                                prompt_unreachable!(&host, at);
+                                prompt!(unreachable_ask(), &host, at);
                             }
                         } else {
                             step_header!(&host);
@@ -629,6 +629,8 @@ pub(super) async fn run_batch(
                         .position(|h| h == host)
                         .unwrap_or(usize::MAX)
                 });
+                let mut asking: Vec<String> =
+                    arrived.iter().map(|(host, _)| host.clone()).collect();
                 let mut order: Vec<String> = Vec::new();
                 let mut grouped: HashMap<String, (IncludeGroup, Vec<String>)> = HashMap::new();
                 for (host, groups) in arrived {
@@ -672,6 +674,10 @@ pub(super) async fn run_batch(
                         );
                     } else {
                         step_header!(hosts.first().map(String::as_str).unwrap_or_default());
+                    }
+                    // The prompt of each host's include result, in front of the first line.
+                    for host in asking.drain(..) {
+                        prompt!((debugger::Kind::Passed, Map::new()), &host, index);
                     }
                     out.included(&what, &hosts, label.as_deref());
                     // Measured on ansible-core 2.19.12: one `ok` per host per item, so a
@@ -719,7 +725,7 @@ pub(super) async fn run_batch(
     for ((host, at), blame) in missed {
         header_for(at, &plan, &play_hosts, &progress_tx, state, &names, out);
         blame.show(&host, out);
-        prompt_unreachable!(&host, at);
+        prompt!(unreachable_ask(), &host, at);
     }
     // The channel is bounded, so a host still owing a send would block forever if reading
     // stopped here: the coordinator's own `worker.await` below would then wait on a task that
@@ -744,7 +750,7 @@ pub(super) async fn run_batch(
                 };
                 blame.show(&host, out);
                 if let Some(at) = at {
-                    prompt_unreachable!(&host, at);
+                    prompt!(unreachable_ask(), &host, at);
                 }
                 unreachable_left!(&host, at);
             }

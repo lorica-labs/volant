@@ -126,7 +126,7 @@ Each keyword below behaves the same way in every place the grid marks it `partia
 
 | Keyword | Limit |
 |---|---|
-| `debugger` | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs |
+| `debugger` | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs. `task_vars` edited at the prompt reach a redo through `u` only |
 
 ## Handlers
 

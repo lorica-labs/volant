@@ -596,7 +596,7 @@ fn the_debugger_redoes_under_throttle_and_few_forks(#[case] extra: &[&str]) {
 /// unreachable host (line and prompt again), as measured on ansible-core 2.19.12.
 #[rstest]
 #[case::include(&["controller/debugger-redo-include.yml"], "r\nc\n", 0, 2, "\"msg\": \"included once\"", 1)]
-#[case::loop_edited(&["controller/debugger-redo-loop.yml"], "task.args[\"_raw_params\"] = \"true\"\nr\n", 0, 1, "changed: [localhost] => (item=", 3)]
+#[case::loop_edited(&["controller/debugger-redo-loop.yml"], "task.args[\"_raw_params\"] = \"true\"\nr\n", 0, 2, "changed: [localhost] => (item=", 3)]
 #[case::unreachable(&["-i", "controller/debugger-unreachable.ini", "controller/debugger-unreachable.yml"], "r\nc\n", 4, 2, "UNREACHABLE!", 2)]
 fn the_debugger_redoes_every_kind_of_task(
     #[case] files: &[&str],

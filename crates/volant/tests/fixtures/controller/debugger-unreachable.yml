@@ -2,5 +2,5 @@
   gather_facts: false
   tasks:
     - name: reach
-      ping:
+      command: "true"
       debugger: on_unreachable

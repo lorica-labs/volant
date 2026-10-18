@@ -48,12 +48,12 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `config.rs` | The `ansible.cfg` settings this release reads. |
 | `inventory.rs` | INI inventories and host patterns. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
-| `vars.rs` | Variable sources, Ansible's precedence, and the magic variables. |
+| `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |
 | `preflight.rs` | What a run refuses before it touches a host. |
-| `compile.rs`, `roles.rs` | A play flattened into steps, and roles spliced into them. |
+| `compile/`, `roles.rs` | A play flattened into steps (`builder` walks the tree, `model` and `compiled` hold the steps, `nav` finds the next one, `include` grafts dynamic includes), and roles spliced into them. |
 | `listing.rs` | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`. |
 | `transport.rs`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
@@ -78,6 +78,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `runner.rs` | Running a batch of tasks, with fail-fast and cancellation. |
 | `modules/` | The native modules. |
+| `modules/command/` | `command`, `shell` and `raw`: the run, the process and its pipes, the argument expansion and the failure results. |
 | `python/` | The warm Python server and its supervisor. |
 | `natives/common/` | What every native shares with the reference's module machinery: arguments, accounts, modes, file attributes, running programs and backups. |
 | `natives/lineinfile/` | The native `lineinfile`: the request, the edit in memory, the `regexp` translation and the write. |

@@ -16,24 +16,31 @@
 
 use std::collections::BTreeMap;
 use std::ffi::CString;
-use std::fmt::Write as _;
 use std::fs;
-use std::io::{self, Read as _};
+use std::io;
 use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    APPEND, AUTOMATIC, Account, ArgSpec, BackupError, FsError, IMMUTABLE, ModeError, access,
-    add_path_info, backup_local, bool_param, check, check_names, clock, flag, group_account,
-    has_flags, has_xattrs, module_args, native_run, null, owner_account, parent, parse_mode,
-    path_param, realpath, selinux_enabled, set_fs_attributes, str_param, umask,
-    validate_runs_as_python,
+    APPEND, AUTOMATIC, BackupError, FsError, IMMUTABLE, access, add_path_info, backup_local, check,
+    check_names, clock, has_flags, has_xattrs, module_args, native_run, parent, realpath,
+    selinux_enabled, set_fs_attributes, validate_runs_as_python,
 };
 use super::runtime::{Clock, Stop as Halt, run_output};
 use super::{Native, NativeRun};
 use crate::modules::Context;
+
+mod digest;
+mod mount;
+mod request;
+
+#[cfg(all(test, target_os = "linux"))]
+use digest::Md5;
+use digest::{digests, sha1_of};
+use mount::{crosses, mount_id};
+use request::{Request, SPEC, Stop, request};
 
 pub const NATIVE: Native = Native {
     name: "copy",
@@ -41,94 +48,6 @@ pub const NATIVE: Native = Native {
     enabled: true,
     run,
 };
-
-/// `copy`'s own options, then `add_file_common_args`.
-const SPEC: &[ArgSpec] = &[
-    null("src"),
-    null("_original_basename"),
-    null("content"),
-    null("dest"),
-    flag("backup", false),
-    flag("force", true),
-    null("validate"),
-    null("directory_mode"),
-    flag("remote_src", false),
-    null("local_follow"),
-    null("checksum"),
-    flag("follow", false),
-    null("mode"),
-    null("owner"),
-    null("group"),
-    null("seuser"),
-    null("serole"),
-    null("selevel"),
-    null("setype"),
-    ArgSpec {
-        name: "attributes",
-        aliases: &["attr"],
-        default: || Value::Null,
-    },
-    flag("unsafe_writes", false),
-];
-
-/// Options whose every value other than `null` is outside the native. The action plugin never
-/// sends `content`: it stages it as `src`.
-const UNSUPPORTED: &[&str] = &[
-    "content",
-    "directory_mode",
-    "attributes",
-    "seuser",
-    "serole",
-    "selevel",
-    "setype",
-];
-
-/// Why the answer stopped short of a result.
-enum Stop {
-    /// The reference's `fail_json`, with these keys.
-    Fail(Map<String, Value>),
-    /// Outside the subset. Only ever returned before anything on the host changed.
-    Back(String),
-    /// The task's `timeout` ran out, or the controller cancelled it.
-    Clock(Halt),
-}
-
-impl From<String> for Stop {
-    fn from(reason: String) -> Self {
-        Stop::Back(reason)
-    }
-}
-
-impl From<&str> for Stop {
-    fn from(reason: &str) -> Self {
-        Stop::Back(reason.to_string())
-    }
-}
-
-impl From<Halt> for Stop {
-    fn from(halt: Halt) -> Self {
-        match halt {
-            Halt::HandBack(reason) => Stop::Back(reason),
-            other => Stop::Clock(other),
-        }
-    }
-}
-
-/// What the task asks for, read and checked before anything is touched.
-struct Request<'a> {
-    src: &'a str,
-    dest: &'a str,
-    original_basename: Option<&'a str>,
-    backup: bool,
-    force: bool,
-    follow: bool,
-    validate: Option<&'a str>,
-    checksum: Option<&'a str>,
-    owner: Option<Account>,
-    group: Option<Account>,
-    mode: Option<Value>,
-    umask: u32,
-}
 
 fn run(args: &Map<String, Value>, context: &Context, cancelled: &dyn Fn() -> bool) -> NativeRun {
     native_run(answer(args, context, clock(context, cancelled)), context)
@@ -171,60 +90,6 @@ fn answer(
     add_path_info(&mut result, clock)?;
     result.insert("invocation".into(), json!({"module_args": params}));
     Ok(result)
-}
-
-/// The parameters as `AnsibleModule` would validate them. Whatever it would convert, warn about
-/// or refuse goes back to the Python module, which says it in its own words.
-fn request<'a>(params: &'a Map<String, Value>, clock: Clock) -> Result<Request<'a>, Halt> {
-    if let Some(name) = UNSUPPORTED.iter().find(|name| !params[**name].is_null()) {
-        return Err(format!("{name} is set").into());
-    }
-    for name in ["backup", "force", "remote_src", "follow", "unsafe_writes"] {
-        bool_param(params, name)?;
-    }
-    if bool_param(params, "remote_src")? {
-        return Err("remote_src is set".into());
-    }
-    if bool_param(params, "unsafe_writes")? {
-        return Err("unsafe_writes is set".into());
-    }
-    if !matches!(params["local_follow"], Value::Null | Value::Bool(_)) {
-        return Err("local_follow is not a boolean".into());
-    }
-    let text = |name| str_param(params, name);
-    let dest = path_param(params, "dest")?;
-    // `os.path.dirname` folds repeated slashes, which the messages would show.
-    if dest.contains("//") {
-        return Err("dest has repeated slashes".into());
-    }
-    let mode = Some(params["mode"].clone()).filter(|mode| !mode.is_null());
-    if let Some(mode) = &mode {
-        if *mode == "preserve" {
-            return Err("mode is preserve".into());
-        }
-        if let Err(ModeError::Unsupported(why)) = parse_mode(mode, 0, false) {
-            return Err(why.into());
-        }
-    }
-    Ok(Request {
-        src: path_param(params, "src")?,
-        dest,
-        // Read as the reference reads them: an empty one is none at all.
-        original_basename: text("_original_basename")?.filter(|base| !base.is_empty()),
-        backup: bool_param(params, "backup")?,
-        force: bool_param(params, "force")?,
-        follow: bool_param(params, "follow")?,
-        validate: text("validate")?.filter(|validate| !validate.is_empty()),
-        checksum: text("checksum")?.filter(|checksum| !checksum.is_empty()),
-        owner: text("owner")?
-            .map(|owner| owner_account(owner, clock))
-            .transpose()?,
-        group: text("group")?
-            .map(|group| group_account(group, clock))
-            .transpose()?,
-        mode,
-        umask: umask().map_err(|_| "the umask cannot be read")?,
-    })
 }
 
 /// `main` for a request inside the subset.
@@ -413,14 +278,6 @@ fn preflight(request: &Request, dest: &str, exists: bool, link: bool) -> Result<
     }
 }
 
-/// Whether a rename between two places, each given by its device and its mount (`None` where the
-/// kernel does not say), would fail with EXDEV or EBUSY. The two can differ apart: a btrfs
-/// subvolume has a device of its own on its parent's mount, and a bind mount shows its file
-/// system's device on a mount of its own.
-fn crosses(a: (u64, Option<u64>), b: (u64, Option<u64>)) -> bool {
-    a.0 != b.0 || a.1.is_none() || a.1 != b.1
-}
-
 /// The source given the task's mode, then owner and group, then `validate` run on it, as the
 /// reference does before the move. Anything that stops here comes after the backup: a failure,
 /// never a hand-back.
@@ -540,230 +397,6 @@ fn message(msg: String) -> Map<String, Value> {
     let mut map = Map::new();
     map.insert("msg".into(), msg.into());
     map
-}
-
-/// `module.sha1(path)` and `module.md5(path)`, read once.
-///
-/// The deadline and the cancel are looked at every 16 blocks (1 MiB), as the Python module would
-/// be killed at the task's `timeout` in the middle of a large file.
-fn digests(path: &str, clock: Clock) -> Result<(String, String), Stop> {
-    let mut md5 = Md5::new();
-    let sha1 = read_blocks(path, clock, |block| md5.update(block))?;
-    Ok((sha1, md5.hex()))
-}
-
-fn sha1_of(path: &str, clock: Clock) -> Result<String, Stop> {
-    read_blocks(path, clock, |_| {})
-}
-
-/// The SHA-1 of the file at `path`, each block also given to `each`.
-fn read_blocks(path: &str, clock: Clock, mut each: impl FnMut(&[u8])) -> Result<String, Stop> {
-    let mut file = fs::File::open(path).map_err(|err| format!("reading {path}: {err}"))?;
-    let mut sha1 = sha1_smol::Sha1::new();
-    let mut block = vec![0; 64 * 1024];
-    for round in 0_u64.. {
-        if round % 16 == 0 {
-            check(clock)?;
-        }
-        match file.read(&mut block) {
-            Ok(0) => break,
-            Ok(n) => {
-                sha1.update(&block[..n]);
-                each(&block[..n]);
-            }
-            Err(err) => return Err(format!("reading {path}: {err}").into()),
-        }
-    }
-    Ok(sha1.digest().to_string())
-}
-
-/// MD5 (RFC 1321), for `md5sum`: no crate of the workspace has it.
-struct Md5 {
-    state: [u32; 4],
-    block: [u8; 64],
-    filled: usize,
-    len: u64,
-}
-
-/// `floor(abs(sin(i + 1)) * 2^32)`.
-const MD5_K: [u32; 64] = [
-    0xd76a_a478,
-    0xe8c7_b756,
-    0x2420_70db,
-    0xc1bd_ceee,
-    0xf57c_0faf,
-    0x4787_c62a,
-    0xa830_4613,
-    0xfd46_9501,
-    0x6980_98d8,
-    0x8b44_f7af,
-    0xffff_5bb1,
-    0x895c_d7be,
-    0x6b90_1122,
-    0xfd98_7193,
-    0xa679_438e,
-    0x49b4_0821,
-    0xf61e_2562,
-    0xc040_b340,
-    0x265e_5a51,
-    0xe9b6_c7aa,
-    0xd62f_105d,
-    0x0244_1453,
-    0xd8a1_e681,
-    0xe7d3_fbc8,
-    0x21e1_cde6,
-    0xc337_07d6,
-    0xf4d5_0d87,
-    0x455a_14ed,
-    0xa9e3_e905,
-    0xfcef_a3f8,
-    0x676f_02d9,
-    0x8d2a_4c8a,
-    0xfffa_3942,
-    0x8771_f681,
-    0x6d9d_6122,
-    0xfde5_380c,
-    0xa4be_ea44,
-    0x4bde_cfa9,
-    0xf6bb_4b60,
-    0xbebf_bc70,
-    0x289b_7ec6,
-    0xeaa1_27fa,
-    0xd4ef_3085,
-    0x0488_1d05,
-    0xd9d4_d039,
-    0xe6db_99e5,
-    0x1fa2_7cf8,
-    0xc4ac_5665,
-    0xf429_2244,
-    0x432a_ff97,
-    0xab94_23a7,
-    0xfc93_a039,
-    0x655b_59c3,
-    0x8f0c_cc92,
-    0xffef_f47d,
-    0x8584_5dd1,
-    0x6fa8_7e4f,
-    0xfe2c_e6e0,
-    0xa301_4314,
-    0x4e08_11a1,
-    0xf753_7e82,
-    0xbd3a_f235,
-    0x2ad7_d2bb,
-    0xeb86_d391,
-];
-
-/// The left rotations of each round, four per round.
-const MD5_S: [[u32; 4]; 4] = [
-    [7, 12, 17, 22],
-    [5, 9, 14, 20],
-    [4, 11, 16, 23],
-    [6, 10, 15, 21],
-];
-
-impl Md5 {
-    fn new() -> Self {
-        Md5 {
-            state: [0x6745_2301, 0xefcd_ab89, 0x98ba_dcfe, 0x1032_5476],
-            block: [0; 64],
-            filled: 0,
-            len: 0,
-        }
-    }
-
-    fn update(&mut self, mut data: &[u8]) {
-        self.len = self.len.wrapping_add(data.len() as u64);
-        while !data.is_empty() {
-            let take = (64 - self.filled).min(data.len());
-            self.block[self.filled..self.filled + take].copy_from_slice(&data[..take]);
-            self.filled += take;
-            data = &data[take..];
-            if self.filled == 64 {
-                self.compress();
-                self.filled = 0;
-            }
-        }
-    }
-
-    fn compress(&mut self) {
-        let mut m = [0_u32; 16];
-        for (word, bytes) in m.iter_mut().zip(self.block.as_chunks::<4>().0) {
-            *word = u32::from_le_bytes(*bytes);
-        }
-        let [mut a, mut b, mut c, mut d] = self.state;
-        for i in 0..64 {
-            let (f, g) = match i / 16 {
-                0 => ((b & c) | (!b & d), i),
-                1 => ((d & b) | (!d & c), (5 * i + 1) % 16),
-                2 => (b ^ c ^ d, (3 * i + 5) % 16),
-                _ => (c ^ (b | !d), (7 * i) % 16),
-            };
-            let turned = a
-                .wrapping_add(f)
-                .wrapping_add(MD5_K[i])
-                .wrapping_add(m[g])
-                .rotate_left(MD5_S[i / 16][i % 4]);
-            a = d;
-            d = c;
-            c = b;
-            b = b.wrapping_add(turned);
-        }
-        for (word, add) in self.state.iter_mut().zip([a, b, c, d]) {
-            *word = word.wrapping_add(add);
-        }
-    }
-
-    fn hex(mut self) -> String {
-        let bits = self.len.wrapping_mul(8);
-        self.update(&[0x80]);
-        while self.filled != 56 {
-            self.update(&[0]);
-        }
-        self.update(&bits.to_le_bytes());
-        let mut out = String::with_capacity(32);
-        for byte in self.state.iter().flat_map(|word| word.to_le_bytes()) {
-            let _ = write!(out, "{byte:02x}");
-        }
-        out
-    }
-}
-
-/// `STATX_MNT_ID`, which the `libc` crate declares for glibc only.
-#[cfg(target_os = "linux")]
-const STATX_MNT_ID: libc::c_uint = 0x1000;
-
-/// The id of the mount `path` is on (`statx`, Linux 5.8 and later), or `None` when the kernel
-/// does not say.
-#[cfg(target_os = "linux")]
-fn mount_id(path: &str, follow: bool) -> Option<u64> {
-    /// A `struct statx`, as bytes: `stx_mask` first, `stx_mnt_id` at byte 144.
-    #[repr(C, align(8))]
-    struct Statx([u8; 256]);
-    let path = CString::new(path).ok()?;
-    let mut buf = Statx([0; 256]);
-    let flags = if follow { 0 } else { libc::AT_SYMLINK_NOFOLLOW };
-    // SAFETY: `buf` is larger than the `struct statx` the kernel writes.
-    let rc = unsafe {
-        libc::syscall(
-            libc::SYS_statx,
-            libc::AT_FDCWD,
-            path.as_ptr(),
-            flags,
-            STATX_MNT_ID,
-            buf.0.as_mut_ptr(),
-        )
-    };
-    let mask = u32::from_ne_bytes(buf.0[0..4].try_into().ok()?);
-    if rc != 0 || mask & STATX_MNT_ID == 0 {
-        return None;
-    }
-    Some(u64::from_ne_bytes(buf.0[144..152].try_into().ok()?))
-}
-
-/// Elsewhere the native hands every task back before it gets here.
-#[cfg(not(target_os = "linux"))]
-fn mount_id(_: &str, _: bool) -> Option<u64> {
-    None
 }
 
 #[cfg(all(test, target_os = "linux"))]

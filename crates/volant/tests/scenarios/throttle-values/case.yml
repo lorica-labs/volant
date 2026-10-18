@@ -1,0 +1,11 @@
+# `throttle` is rendered and converted when the task runs: strings, templates and `true` are
+# numbers, a word ends the run, a float that is not whole fails the task.
+runs:
+  - args: [-i, inv.ini, numbers.yml]
+  - args: [-i, inv.ini, word.yml]
+  - args: [-i, inv.ini, template-word.yml]
+  - args: [-i, inv.ini, undefined.yml]
+  - args: [-i, inv.ini, float.yml]
+forks: 5
+unordered:
+  - '^ok: \[h\d\]$'

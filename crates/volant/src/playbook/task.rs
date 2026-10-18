@@ -61,7 +61,7 @@ pub(super) fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             tags: tags(yaml, &context)?,
             ignore_errors: flag(yaml, "ignore_errors")?,
             timeout: timeout(yaml, &context)?,
-            throttle: throttle(yaml, &context)?,
+            throttle: throttle(yaml)?,
             debugger: debugger(yaml, &context)?,
             vars: mapping(yaml, "vars", &context)?,
             when: conditions(yaml, "when", &context)?,
@@ -261,7 +261,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     let timeout = timeout(yaml, &context)?;
     let async_val = seconds(yaml, "async", &context)?.unwrap_or(0);
     let poll = seconds(yaml, "poll", &context)?;
-    let throttle = throttle(yaml, &context)?;
+    let throttle = throttle(yaml)?;
     let debugger = debugger(yaml, &context)?;
     let vars = mapping(yaml, "vars", &context)?;
     let when = conditions(yaml, "when", &context)?;

@@ -1,0 +1,30 @@
+- hosts: g
+  gather_facts: false
+  vars:
+    n: 2
+    ns: "3"
+  tasks:
+    - command: "true"
+      changed_when: false
+      throttle: 2
+    - command: "true"
+      changed_when: false
+      throttle: "2"
+    - command: "true"
+      changed_when: false
+      throttle: "{{ n }}"
+    - command: "true"
+      changed_when: false
+      throttle: "{{ ns }}"
+    - command: "true"
+      changed_when: false
+      throttle: 0
+    - command: "true"
+      changed_when: false
+      throttle: -1
+    - command: "true"
+      changed_when: false
+      throttle: 20
+    - command: "true"
+      changed_when: false
+      throttle: true

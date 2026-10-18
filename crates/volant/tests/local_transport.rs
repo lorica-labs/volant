@@ -177,17 +177,37 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
     })
     .await
     .unwrap();
-    tokio::time::sleep(Duration::from_millis(300)).await;
-    drop(link);
-    tokio::time::sleep(Duration::from_secs(1)).await;
-    let survivors = std::process::Command::new("pgrep")
-        .args(["-f", &marker])
-        .output()
-        .unwrap();
+    // The task has started once its `sleep` exists; dropping earlier would stop nothing.
     assert!(
-        survivors.stdout.is_empty(),
+        wait_until(|| marker_is_running(&marker)).await,
+        "the task never started"
+    );
+    drop(link);
+    // The drop returns once the agent has exited, and the agent kills the group before it
+    // does; the poll only absorbs the kernel reaping the killed processes.
+    assert!(
+        wait_until(|| !marker_is_running(&marker)).await,
         "the agent was killed before it could stop its task"
     );
+}
+
+fn marker_is_running(marker: &str) -> bool {
+    let found = std::process::Command::new("pgrep")
+        .args(["-f", marker])
+        .output()
+        .unwrap();
+    !found.stdout.is_empty()
+}
+
+/// Whether `condition` came true within five seconds, polled every 20 ms.
+async fn wait_until(condition: impl Fn() -> bool) -> bool {
+    for _ in 0..250 {
+        if condition() {
+            return true;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    false
 }
 
 /// One task in a batch of its own, and its result.

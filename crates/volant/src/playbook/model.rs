@@ -67,7 +67,7 @@ pub struct Play {
     /// The play's `timeout`, `throttle` and `debugger`: task keywords a play may carry, folded
     /// into every task as the outermost layer like `no_log`.
     pub timeout: Option<u64>,
-    pub throttle: Option<u64>,
+    pub throttle: Option<Throttle>,
     pub debugger: Option<Debugger>,
     /// `serial`, as written: a number, a percentage string, a list of either, or a template over
     /// the play's variables. Kept raw because it is rendered when the play starts, which is where
@@ -120,6 +120,14 @@ pub struct HandlerTask {
     pub listen: Vec<String>,
 }
 
+/// A `throttle` as written, and where its value stands in the file: the reference reads it when
+/// the task runs, so a value that is not a number is an error of that moment.
+#[derive(Debug, Clone, PartialEq)]
+pub struct Throttle {
+    pub value: Value,
+    pub origin: Option<Origin>,
+}
+
 /// One entry of a task list: a task, or a block grouping more of them.
 #[derive(Debug, Clone)]
 pub enum TaskOrBlock {
@@ -170,8 +178,9 @@ pub struct PlayTask {
     /// `poll`: seconds between two looks at the job, 0 for a task that only starts it. Unset is
     /// the reference's default of 15.
     pub poll: Option<u64>,
-    /// `throttle`: the most hosts that run this task at the same time. Zero is no limit.
-    pub throttle: Option<u64>,
+    /// `throttle`: the most hosts that run this task at the same time, as written. It is
+    /// rendered and converted when the task runs, for each host.
+    pub throttle: Option<Throttle>,
     /// `debugger`: when a result of this task opens the debugger prompt.
     pub debugger: Option<Debugger>,
     pub vars: Map<String, Value>,

@@ -74,13 +74,25 @@ pub(in crate::executor) enum Prepared {
     ),
 }
 
+impl Prepared {
+    /// The items of the task, whichever way it goes.
+    pub(in crate::executor) fn items(&self) -> &[Item] {
+        match self {
+            Self::Skipped(items) | Self::Local(items, _) | Self::Remote(items, ..) => items,
+        }
+    }
+}
+
 /// The start of the message a `loop_control` field that fails to render or convert reports.
 pub(super) const KEYWORD_ERROR: &str = "Error processing keyword ";
 
 /// The text a task that dies before it runs reports: the reference's `Task failed: ` prefix,
 /// except on a keyword error, which it states as it is.
 pub(in crate::executor) fn failure_text(err: &TemplateError) -> String {
-    if err.0.starts_with(KEYWORD_ERROR) || err.0.starts_with(NOTIFY_FAILED) {
+    if err.0.starts_with(KEYWORD_ERROR)
+        || err.0.starts_with(NOTIFY_FAILED)
+        || err.0.starts_with("Task failed: ")
+    {
         err.0.clone()
     } else {
         format!("Task failed: {}", err.0)
@@ -185,7 +197,7 @@ pub(super) fn environment_for(
 /// The reference names the variable a keyword template read and found missing, bare. The engine
 /// cannot say which one, so a template that is nothing but `{{ name }}` is worded here and any
 /// other keeps the engine's sentence.
-pub(super) fn undefined_name(template: &str, detail: String) -> String {
+pub(in crate::executor) fn undefined_name(template: &str, detail: String) -> String {
     let inner = template
         .trim()
         .strip_prefix("{{")

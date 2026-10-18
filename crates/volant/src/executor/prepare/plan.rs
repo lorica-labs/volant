@@ -5,9 +5,18 @@ use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
-use tokio::sync::{Semaphore, watch};
+use tokio::sync::{Notify, watch};
 
 use crate::compile::Compiled;
+
+/// The hosts running one step that carries a `throttle`. A host starts when fewer than its own
+/// limit are running, which is how the reference counts: the limit belongs to each host's
+/// rendering of the keyword, not to the step.
+#[derive(Default)]
+pub(in crate::executor) struct Gate {
+    pub(in crate::executor) running: Mutex<usize>,
+    pub(in crate::executor) freed: Notify,
+}
 
 /// Everything a host driver needs about the play, shared read-only.
 pub(in crate::executor) struct PlayPlan {
@@ -30,10 +39,11 @@ pub(in crate::executor) struct PlayPlan {
     pub(in crate::executor) lockstep: bool,
     /// How the hosts of the play move through it relative to one another.
     pub(in crate::executor) strategy: Strategy,
-    /// One gate per step carrying a `throttle`, made by the first host to reach it. A step's
+    /// One gate per step carrying a `throttle`, made by the first host to reach it; each host
+    /// brings its own limit to it, as each does in the reference. A step's
     /// index names it for as long as the play runs: a splice only moves the steps behind a point
     /// no host has passed, so no gate is made for an index before the list has settled there.
-    pub(in crate::executor) throttles: Mutex<HashMap<usize, Arc<Semaphore>>>,
+    pub(in crate::executor) throttles: Mutex<HashMap<usize, Arc<Gate>>>,
     /// `host_pinned`: the hosts of the batch in the order they take a fork, and how many of them
     /// have had their turn. A host queues for the fork only when the one before it has, so the
     /// forks go out in the batch's order and not in the order the scheduler starts the drivers.

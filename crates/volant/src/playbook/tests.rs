@@ -257,10 +257,6 @@ fn hosts_lists_defaults_and_escalation_keywords_are_read() {
     "- hosts: all\n  debugger: bogus\n  tasks:\n    - command: echo hi\n",
     &["'bogus' is not a valid value for debugger. Must be one of never, on_unreachable, on_failed, always, on_skipped"]
 )]
-#[case::throttle_word(
-    "- hosts: all\n  tasks:\n    - command: echo hi\n      throttle: abc\n",
-    &["'throttle' written as a string or a template is not supported yet"]
-)]
 #[case::notify_element(
     "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      notify: [3]\n",
     &["task 't': 'notify' must be a name or a list of names"]

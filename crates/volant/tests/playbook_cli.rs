@@ -1805,26 +1805,27 @@ fn a_waiting_host_is_released_when_the_others_die() {
 /// play's progress rather than by the live set shrinking.
 #[test]
 fn a_waiting_host_is_released_when_the_others_never_report() {
-    let dir = std::env::temp_dir().join(format!("volant-silent-{}", std::process::id()));
-    std::fs::create_dir_all(&dir).unwrap();
-    std::fs::write(
-        dir.join("hosts.ini"),
-        "[web]\nalpha ansible_connection=ssh ansible_host=127.0.0.1 ansible_port=1\nbeta ansible_connection=local\n",
-    )
-    .unwrap();
+    // `alpha` is unreachable at once through an `ssh` that exits 255, so the test measures the
+    // barrier and not how long this machine takes to refuse a connection.
+    let (dir, _) = fake_ssh(
+        "silent",
+        "[web]\nalpha ansible_connection=ssh ansible_host=192.0.2.1\nbeta ansible_connection=local\n",
+    );
     std::fs::write(
         dir.join("silent.yml"),
         "- hosts: web\n  gather_facts: false\n  tasks:\n    - command: \"true\"\n    - debug:\n        msg: \"{{ hostvars['beta'].inventory_hostname }}\"\n",
     )
     .unwrap();
-    let out = volant_within(
+    let out = volant_within_with_path(
         &[
             "playbook",
             "-i",
-            &dir.join("hosts.ini").display().to_string(),
+            &dir.join("inv.ini").display().to_string(),
             &dir.join("silent.yml").display().to_string(),
         ],
         std::time::Duration::from_secs(20),
+        Some(&dir.join("bin")),
+        &[],
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.contains("fatal: [alpha]: UNREACHABLE!"), "{text}");

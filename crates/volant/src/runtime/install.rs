@@ -16,10 +16,10 @@ use super::host_triple;
 use super::manifest::{Manifest, Platform};
 
 /// The file that says what a runtime holds. A directory without it is not a runtime.
-const RECORD: &str = "RUNTIME.json";
+pub(super) const RECORD: &str = "RUNTIME.json";
 
 /// How long a run waits for another one that is installing the same runtime.
-const WAIT: Duration = Duration::from_secs(15 * 60);
+pub(super) const WAIT: Duration = Duration::from_secs(15 * 60);
 
 /// A runtime installed under the runtimes directory.
 #[derive(Debug, PartialEq, Eq)]
@@ -173,7 +173,7 @@ fn install_wheels(python: &Path, platform: &Platform, wheels: &Path) -> Result<(
 }
 
 /// Checks that the runtime imports the pinned ansible-core.
-fn probe(python: &Path, version: &str) -> Result<(), String> {
+pub(super) fn probe(python: &Path, version: &str) -> Result<(), String> {
     let output = python_command(python)
         .args([
             "-I",
@@ -258,18 +258,18 @@ pub(crate) fn remove_all(runtimes: &Path) -> Result<Vec<String>, String> {
     }
 }
 
-fn lock_path(runtimes: &Path, id: &str) -> PathBuf {
+pub(super) fn lock_path(runtimes: &Path, id: &str) -> PathBuf {
     runtimes.join(format!(".{id}.lock"))
 }
 
-fn partial_prefix(id: &str) -> String {
+pub(super) fn partial_prefix(id: &str) -> String {
     format!(".{id}.partial-")
 }
 
 /// Deletes what earlier installs of `id` left when they were killed. Only the lock holder calls
 /// it, so none of them is still in use. One that cannot be deleted stays; it is tried again next
 /// time, and the new install works in a directory of its own.
-fn sweep_partials(runtimes: &Path, id: &str) {
+pub(super) fn sweep_partials(runtimes: &Path, id: &str) {
     let prefix = partial_prefix(id);
     let Ok(entries) = fs::read_dir(runtimes) else {
         return;

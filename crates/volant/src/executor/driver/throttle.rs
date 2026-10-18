@@ -16,7 +16,7 @@ use crate::vars::HostVars;
 use super::Driver;
 
 /// A host's place among the `throttle` hosts of a step, given back when it is dropped.
-pub(super) struct Turn(Arc<Gate>);
+pub(in crate::executor) struct Turn(Arc<Gate>);
 
 impl Turn {
     /// A turn at `gate` when fewer than `limit` hosts are running there.

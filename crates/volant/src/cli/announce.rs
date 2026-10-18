@@ -36,6 +36,25 @@ pub(super) fn announce(out: &mut Renderer) {
         );
     }
     out.verbose(4, "setting up inventory plugins");
+    // The reference's own line, trailing space included: it names the directory its collection
+    // loader found `ansible.builtin` in, and the built-in plugins live in no directory here.
+    out.verbose(4, "Loading collection ansible.builtin from ");
+}
+
+/// The lines before the first playbook: the stdout callback loaded, and the two the reference
+/// sets aside. Its line names the plugin file, which has no counterpart here, so it names the
+/// engine's own callback.
+pub(super) fn announce_callbacks(out: &mut Renderer) {
+    out.verbose(
+        4,
+        "Loading callback plugin default of type stdout, v2.0 from the built-in callback",
+    );
+    for callback in ["minimal", "oneline"] {
+        out.verbose(
+            2,
+            &format!("Skipping callback '{callback}', as we already have a stdout callback."),
+        );
+    }
 }
 
 /// The sources a run reads: every `-i`, else the configuration's, else the reference's
@@ -54,63 +73,126 @@ pub(super) fn inventory_sources(args: &PlaybookArgs, config: &Config) -> Vec<Sou
     vec![Source::default_source()]
 }
 
-/// The options `-vvvv` lists under each playbook's banner. The reference lists every option it
-/// holds a value for; this lists the ones every run has, so a run that sets others shows fewer.
+/// The options `-vvvv` lists under each playbook's banner, in the reference's order. As in the
+/// reference, an option shows when it holds a value: the ones with a default (`connection`,
+/// `become_method`, `tags`, `inventory`, `forks`) always, the rest when the command line gave
+/// them. The transfer arguments show though no transfer of this engine uses `scp` or `sftp`.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one line per option, in the reference's order"
+)]
 pub(super) fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -> Vec<String> {
-    let quoted = |items: Vec<String>| match items.as_slice() {
-        [one] => format!("('{one}',)"),
-        _ => format!(
-            "({})",
-            items
-                .iter()
-                .map(|i| format!("'{i}'"))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
+    // A Python tuple's repr: strings with Python's quoting, a lone item keeping its comma.
+    let tuple = |items: Vec<String>| {
+        let items: Vec<String> = items.iter().map(|i| py_str(i)).collect();
+        match items.as_slice() {
+            [one] => format!("({one},)"),
+            _ => format!("({})", items.join(", ")),
+        }
     };
     let tags: Vec<String> = args
         .tags
         .iter()
         .flat_map(|t| crate::config::tag_list(t))
         .collect();
+    let skip_tags: Vec<String> = args
+        .skip_tags
+        .iter()
+        .flat_map(|t| crate::config::tag_list(t))
+        .collect();
     let inventory: Vec<String> = inventory_sources(args, config)
         .iter()
-        .map(|s| format!("'{}'", s.text()))
+        .map(|s| s.text().to_string())
         .collect();
-    // A Python tuple's repr: a lone item keeps its trailing comma.
-    let inventory = match inventory.as_slice() {
-        [one] => format!("({one},)"),
-        all => format!("({})", all.join(", ")),
-    };
     let playbooks: Vec<String> = args
         .playbooks
         .iter()
         .map(|p| p.display().to_string())
         .collect();
-    vec![
+    let mut lines = vec![
         format!("Positional arguments: {}", playbooks.join(" ")),
         format!("verbosity: {}", args.verbose),
-        format!(
-            "connection: {}",
-            args.connection.as_deref().unwrap_or("ssh")
-        ),
-        format!(
-            "become_method: {}",
+    ];
+    let mut given = |key: &str, value: Option<String>| {
+        if let Some(value) = value {
+            lines.push(format!("{key}: {value}"));
+        }
+    };
+    let key = args
+        .private_key
+        .clone()
+        .or_else(|| config.private_key_file.clone());
+    given(
+        "private_key_file",
+        key.map(|p| std::path::absolute(&p).unwrap_or(p).display().to_string()),
+    );
+    given(
+        "remote_user",
+        args.user.clone().or_else(|| config.remote_user.clone()),
+    );
+    given(
+        "connection",
+        Some(args.connection.as_deref().unwrap_or("ssh").to_string()),
+    );
+    given("timeout", args.timeout.map(|t| t.to_string()));
+    given("ssh_common_args", args.ssh_common_args.clone());
+    given("sftp_extra_args", args.sftp_extra_args.clone());
+    given("scp_extra_args", args.scp_extra_args.clone());
+    given("ssh_extra_args", args.ssh_extra_args.clone());
+    let flag = |on: bool| on.then(|| "True".to_string());
+    given("force_handlers", flag(args.force_handlers));
+    given("become", flag(args.r#become));
+    given(
+        "become_method",
+        Some(
             args.become_method
                 .as_deref()
                 .unwrap_or(&config.become_method)
+                .to_string(),
         ),
-        format!(
-            "tags: {}",
-            quoted(if tags.is_empty() {
-                vec!["all".to_string()]
-            } else {
-                tags
-            })
-        ),
-        format!("inventory: {inventory}"),
-        format!("forks: {forks}"),
-    ]
+    );
+    given("become_user", args.become_user.clone());
+    given(
+        "tags",
+        Some(tuple(if tags.is_empty() {
+            vec!["all".to_string()]
+        } else {
+            tags
+        })),
+    );
+    given(
+        "skip_tags",
+        (!skip_tags.is_empty()).then(|| tuple(skip_tags)),
+    );
+    given("check", flag(args.check));
+    given("diff", flag(args.diff));
+    given("inventory", Some(tuple(inventory)));
+    given("subset", args.limit.clone());
+    given("flush_cache", flag(args.flush_cache));
+    given(
+        "extra_vars",
+        (!args.extra_vars.is_empty()).then(|| tuple(args.extra_vars.clone())),
+    );
+    given(
+        "vault_password_files",
+        (!args.vault_password_file.is_empty()).then(|| {
+            tuple(
+                args.vault_password_file
+                    .iter()
+                    .map(|p| p.display().to_string())
+                    .collect(),
+            )
+        }),
+    );
+    given("forks", Some(forks.to_string()));
+    let modules: Vec<String> = module_path_dirs(args)
+        .iter()
+        .map(|p| p.display().to_string())
+        .collect();
+    given("module_path", (!modules.is_empty()).then(|| tuple(modules)));
+    given("step", flag(args.step));
+    given("start_at_task", args.start_at_task.clone());
+    lines
 }
 
 /// The `-M` directories as the reference reads them: each argument split on `:`, empty parts
@@ -124,4 +206,20 @@ pub(super) fn module_path_dirs(args: &PlaybookArgs) -> Vec<PathBuf> {
         .filter(|part| !part.is_empty())
         .map(|part| std::path::absolute(part).unwrap_or_else(|_| PathBuf::from(part)))
         .collect()
+}
+
+/// A Python `str`'s repr: single quotes unless the text holds one and no double quote.
+fn py_str(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let body = text
+        .replace('\\', r"\\")
+        .replace(quote, &format!("\\{quote}"))
+        .replace('\n', r"\n")
+        .replace('\t', r"\t")
+        .replace('\r', r"\r");
+    format!("{quote}{body}{quote}")
 }

@@ -305,3 +305,24 @@ fn the_runtimes_collections_come_after_the_users(
     );
     assert_eq!(got, expected.iter().map(PathBuf::from).collect::<Vec<_>>());
 }
+
+#[rstest]
+#[case::name("community.general", &["community.general"], &[])]
+#[case::versioned("ns.c:1.2.3", &["ns.c:1.2.3"], &[])]
+#[case::existing_file("req.yml", &[], &["req.yml"])]
+#[case::yaml_extension("req.yaml", &[], &["req.yaml"])]
+#[case::missing_file_is_a_name("gone.yml", &["gone.yml"], &[])]
+#[case::existing_non_yaml("req.txt", &["req.txt"], &[])]
+fn a_collections_argument_is_a_file_only_when_it_is_a_yaml_file(
+    #[case] arg: &str,
+    #[case] names: &[&str],
+    #[case] files: &[&str],
+) {
+    let exists = |path: &Path| path.to_str().is_some_and(|p| p.starts_with("req"));
+    let (got_names, got_files) = collections::split(&[arg.to_owned()], exists);
+    assert_eq!(got_names, names);
+    assert_eq!(
+        got_files,
+        files.iter().map(PathBuf::from).collect::<Vec<_>>()
+    );
+}

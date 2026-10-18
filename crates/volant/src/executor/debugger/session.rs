@@ -37,6 +37,7 @@ const COMMANDS: [(&str, &str); 13] = [
 pub(in crate::executor) enum Next {
     Stay,
     Continue,
+    Redo,
     Quit,
 }
 
@@ -53,6 +54,8 @@ pub(in crate::executor) struct Session {
     pub(in crate::executor) raw_args: Map<String, Value>,
     /// `task.args`: the arguments rendered with `task_vars`.
     pub(in crate::executor) args: Map<String, Value>,
+    /// The arguments the task ran with: `r` hands `args` over when they differ from these.
+    pub(in crate::executor) ran: Map<String, Value>,
     /// `task_vars`.
     pub(in crate::executor) vars: HostVars,
     /// What `result._return_data` holds.
@@ -122,8 +125,7 @@ impl Session {
                 Ok(value) => out.display(&self.pformat(&value)),
                 Err(err) => out.display(&err.line(arg, true)),
             },
-            "r" | "redo" => out
-                .display("*** redo is not supported yet: c continues with this result and q quits"),
+            "r" | "redo" => return Next::Redo,
             "u" | "update_task" => match self.render_args() {
                 Ok(args) => self.args = args,
                 Err(msg) => out.display(&format!("***{msg}")),
@@ -488,6 +490,7 @@ pub(super) fn session_for_tests(host: &str, name: &str) -> Session {
         action: "command".to_string(),
         raw_args: Map::new(),
         args: Map::new(),
+        ran: Map::new(),
         vars: HostVars::default(),
         result: Map::new(),
         templar: Arc::new(Templar::new(std::path::PathBuf::from("."))),

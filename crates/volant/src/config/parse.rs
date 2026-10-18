@@ -161,6 +161,11 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     config.show_custom_stats = on;
                 }
             }
+            "enable_task_debugger" => {
+                if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
+                    config.enable_task_debugger = on;
+                }
+            }
             "remote_tmp" => {
                 let tmp = value.trim();
                 if !tmp.is_empty() {

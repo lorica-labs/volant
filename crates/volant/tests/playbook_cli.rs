@@ -521,6 +521,149 @@ fn the_debugger_quits_on_q_and_on_the_end_of_input(#[case] stdin: &str) {
     assert!(!text.contains("PLAY RECAP"), "{text}");
 }
 
+/// `r` runs the task again with the arguments edited at the prompt, directly or through `u`:
+/// the new result shows, no prompt follows it, and the first failure counts for nothing.
+#[rstest]
+#[case::edited_args("task.args[\"_raw_params\"] = \"true\"\nr\n")]
+#[case::updated_vars("task_vars[\"cmd\"] = \"true\"\nu\nr\n")]
+fn the_debugger_redoes_a_task_with_its_edits(#[case] stdin: &str) {
+    let out = volant_within_full(
+        &["playbook", &fixture("controller/debugger-redo.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some(stdin),
+        &[],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let (_, after) = text
+        .split_once("(debug)> changed: [localhost]")
+        .expect("the redo's result behind the last prompt");
+    assert!(!after.contains("(debug)> "), "{text}");
+    assert!(text.contains("TASK [after]"), "{text}");
+    assert!(text.contains("ok=2    changed=1 "), "{text}");
+    assert!(text.contains("failed=0"), "{text}");
+}
+
+/// A redo that fails again shows the failure and the prompt again.
+#[test]
+fn the_debugger_prompts_again_when_a_redo_fails() {
+    let out = volant_within_full(
+        &["playbook", &fixture("controller/debugger-redo.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some("r\nc\n"),
+        &[],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert_eq!(text.matches("(debug)> ").count(), 2, "{text}");
+    assert_eq!(text.matches("fatal: [localhost]").count(), 2, "{text}");
+    assert!(text.contains("failed=1"), "{text}");
+}
+
+/// `r` on a passed result under `throttle: 1`, with a fork per host and with one: the host at
+/// the prompt gives its turn and fork back, so the other host still reaches its own prompt.
+#[rstest]
+#[case::two_forks(&[])]
+#[case::one_fork(&["-f", "1"])]
+fn the_debugger_redoes_under_throttle_and_few_forks(#[case] extra: &[&str]) {
+    let inventory = fixture("controller/two-hosts.ini");
+    let playbook = fixture("controller/debugger-throttle.yml");
+    let mut args = vec!["playbook", "-i", &inventory];
+    args.extend_from_slice(extra);
+    args.push(&playbook);
+    let out = volant_within_full(
+        &args,
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some("r\nc\nc\n"),
+        &[],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(text.matches("TASK: probe (debug)> ").count(), 3, "{text}");
+    assert_eq!(text.matches("changed=1 ").count(), 2, "{text}");
+}
+
+/// `r` behind an include (same result, asked again), a loop (every item takes the edit) and an
+/// unreachable host (line and prompt again), as measured on ansible-core 2.19.12.
+#[rstest]
+#[case::include(&["controller/debugger-redo-include.yml"], "r\nc\n", 0, 2, "\"msg\": \"included once\"", 1)]
+#[case::loop_edited(&["controller/debugger-redo-loop.yml"], "task.args[\"_raw_params\"] = \"true\"\nr\n", 0, 2, "changed: [localhost] => (item=", 3)]
+#[case::unreachable(&["-i", "controller/debugger-unreachable.ini", "controller/debugger-unreachable.yml"], "r\nc\n", 4, 2, "UNREACHABLE!", 2)]
+fn the_debugger_redoes_every_kind_of_task(
+    #[case] files: &[&str],
+    #[case] stdin: &str,
+    #[case] code: i32,
+    #[case] prompts: usize,
+    #[case] line: &str,
+    #[case] lines: usize,
+) {
+    let mut args = vec!["playbook".to_string()];
+    args.extend(files.iter().map(|f| {
+        if f.starts_with('-') {
+            (*f).to_string()
+        } else {
+            fixture(f)
+        }
+    }));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = volant_within_full(&args, DEFAULT_DEADLINE, None, None, None, Some(stdin), &[]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(code), "{text}");
+    assert_eq!(text.matches("(debug)> ").count(), prompts, "{text}");
+    assert_eq!(text.matches(line).count(), lines, "{text}");
+}
+
+/// A `debugger` value the reference does not know loads, and fails the task when it runs.
+#[test]
+fn an_invalid_debugger_value_fails_the_task_when_it_runs() {
+    let out = volant_within(
+        &["playbook", &fixture("controller/debugger-invalid.yml")],
+        DEFAULT_DEADLINE,
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("TASK [failing]"), "{text}");
+    assert!(
+        text.contains("[ERROR]: Task failed: Error processing keyword 'debugger': 'sometimes' is not a valid value for debugger. Must be one of never, on_unreachable, on_skipped, on_failed, always"),
+        "{text}"
+    );
+    assert!(
+        text.contains("<<< caused by >>>\n\nError processing keyword 'debugger'."),
+        "{text}"
+    );
+    assert!(!text.contains("TASK [after]"), "{text}");
+}
+
+/// `enable_task_debugger` in `ansible.cfg` opens the prompt on a failure without a keyword.
+#[test]
+fn the_debugger_opens_from_ansible_cfg() {
+    let cfg = fixture("controller/debugger.cfg");
+    let out = volant_within_full(
+        &["playbook", &fixture("controller/debugger-default.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some("c\n"),
+        &[("ANSIBLE_CONFIG", &cfg)],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(
+        text.contains("[localhost] TASK: failing (debug)> "),
+        "{text}"
+    );
+}
+
 /// On a terminal the prompt waits for the operator's line.
 #[cfg(target_os = "linux")]
 #[test]

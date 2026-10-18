@@ -37,6 +37,27 @@ pub(crate) fn helper_env() -> Option<String> {
     joined.into_string().ok()
 }
 
+/// The arguments of `--collections` as names and requirements files: an argument ending in
+/// `.yml` or `.yaml` that `is_file` names is a file, anything else is a collection name.
+pub(crate) fn split(
+    args: &[String],
+    is_file: impl Fn(&Path) -> bool,
+) -> (Vec<String>, Vec<PathBuf>) {
+    let (mut names, mut files) = (Vec::new(), Vec::new());
+    for arg in args {
+        let path = Path::new(arg);
+        let yaml = path
+            .extension()
+            .is_some_and(|ext| ext == "yml" || ext == "yaml");
+        if yaml && is_file(path) {
+            files.push(path.to_path_buf());
+        } else {
+            names.push(arg.clone());
+        }
+    }
+    (names, files)
+}
+
 /// What to give galaxy: collection names, or a requirements file.
 pub(crate) enum Source<'a> {
     Names(&'a [String]),

@@ -72,7 +72,7 @@ const SKIPPED: Style = AnsiColor::Cyan.on_default();
 const WARNING: Style = AnsiColor::BrightMagenta.on_default();
 /// The reference's `dark gray`, its `COLOR_DEBUG`.
 const DEBUG: Style = AnsiColor::BrightBlack.on_default();
-const VERBOSE: Style = AnsiColor::Blue.on_default();
+pub(crate) const VERBOSE: Style = AnsiColor::Blue.on_default();
 
 impl Renderer {
     /// Stdout renderer. Colour follows the terminal, `NO_COLOR`, `CLICOLOR_FORCE`, or the caller.

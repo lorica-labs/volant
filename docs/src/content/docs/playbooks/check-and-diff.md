@@ -34,7 +34,7 @@ A diff prints only for a task that changed something. `copy` and `template` prin
 
 - `--step` does not ask before a `meta` or `flush_handlers` step. This has not been compared with the reference.
 - `-vv` does not print the handler notification lines.
-- `-vvvv` prints fewer options and no per-task ssh or plugin-path lines.
+- `-vvvv` lists the options the reference lists, in its order, and the plugin set-up lines. Its ssh lines show the commands this engine runs over `ssh` (the probe, the upload and the link to the agent), not the reference's `sftp` upload, and a local connection or a module file prints no line.
 - A task with a missing key on a skipped result gives a different message from the reference.
 
 The [parity page](/reference/parity/) lists every option and keyword with its status.

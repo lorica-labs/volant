@@ -1,0 +1,6 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: inc
+      include_tasks: debugger-included.yml
+      debugger: always

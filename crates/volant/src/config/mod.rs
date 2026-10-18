@@ -3,6 +3,7 @@
 //! looks for them, with the matching environment variables taking precedence.
 
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use crate::executor::DEFAULT_CONNECT_TIMEOUT;
@@ -55,6 +56,9 @@ pub struct Config {
     /// `[defaults] show_custom_stats` or `ANSIBLE_SHOW_CUSTOM_STATS`: print what `set_stats`
     /// collected after the recap. Off by default, as in the reference.
     pub show_custom_stats: bool,
+    /// `[defaults] enable_task_debugger` or `ANSIBLE_ENABLE_TASK_DEBUGGER`: a failed or
+    /// unreachable task with no `debugger` keyword opens the debugger prompt.
+    pub enable_task_debugger: bool,
     /// Where a role is looked for once the directory beside the playbook has been tried.
     /// Measured on ansible-core 2.19.12: a `roles_path` **replaces** the three default
     /// directories rather than adding to them, and it never displaces `<playbook_dir>/roles`,
@@ -127,6 +131,7 @@ impl Default for Config {
             vault_identity_list: Vec::new(),
             force_handlers: false,
             show_custom_stats: false,
+            enable_task_debugger: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
             tags_run: Vec::new(),
@@ -264,6 +269,12 @@ impl Config {
         {
             config.show_custom_stats = on;
         }
+        if let Ok(flag) = std::env::var("ANSIBLE_ENABLE_TASK_DEBUGGER")
+            && let Some(on) = crate::yaml::bool_from_str(flag.trim())
+        {
+            config.enable_task_debugger = on;
+        }
+        TASK_DEBUGGER.store(config.enable_task_debugger, Ordering::Relaxed);
         let cwd = std::env::current_dir().unwrap_or_default();
         if let Ok(value) = std::env::var("ANSIBLE_CACHE_PLUGIN") {
             config.fact_caching = cache_plugin(&value, "env: ANSIBLE_CACHE_PLUGIN")?;
@@ -365,6 +376,17 @@ impl Config {
         );
         Ok(config)
     }
+}
+
+/// `enable_task_debugger` as the last [`Config::load`] read it. The executor is handed the
+/// options of a run, not its configuration, and this is the one setting the debugger reads.
+/// One value per process: each load overwrites it, so two configurations loaded side by side
+/// share whichever came last, which holds while a process runs one playbook command.
+static TASK_DEBUGGER: AtomicBool = AtomicBool::new(false);
+
+/// Whether `enable_task_debugger` is on; off when no configuration was loaded.
+pub(crate) fn task_debugger() -> bool {
+    TASK_DEBUGGER.load(Ordering::Relaxed)
 }
 
 /// `ANSIBLE_CONFIG`, then `./ansible.cfg`, `~/.ansible.cfg`, `/etc/ansible/ansible.cfg`.

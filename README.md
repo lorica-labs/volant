@@ -45,7 +45,7 @@ On four published Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`
 curl -fsSL https://volant.sh/install.sh | sh
 ```
 
-The script works on Linux and macOS, x86_64 and arm64. It downloads the newest release, checks its checksum, and installs `volant` under `~/.local`, without root. The binary carries the agents it uploads to your hosts, so `cargo binstall volant` gives the same result. The [installation guide](https://volant.sh/start/installation/) covers its options, what the controller and the hosts need, and the other ways to install.
+The script works on Linux and macOS, x86_64 and arm64. It downloads the newest release, checks its checksum, and installs `volant` under `~/.local`, without root. The binary carries the agents it uploads to your hosts, so `cargo binstall volant` gives the same result. Ansible does not have to be installed. When a playbook needs Python, Volant downloads its own Python and ansible-core on first use, checks every file against a pinned hash, and keeps them under `~/.local/share/volant`; see [the managed runtime](https://volant.sh/reference/runtime/). The managed runtime is untested on macOS. The [installation guide](https://volant.sh/start/installation/) covers its options, what the controller and the hosts need, and the other ways to install.
 
 ## A first run
 

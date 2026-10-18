@@ -11,7 +11,7 @@ use crate::yaml::{field, to_json};
 
 use super::keywords::is_free_form;
 use super::model::{HandlerTask, Throttle};
-use super::origin::value_origin;
+use super::origin::{Origin, value_origin};
 use super::task::parse_task;
 /// `tags`, wherever they are written: on a play, on a block, on a role entry or on a task.
 ///
@@ -89,29 +89,30 @@ pub(super) fn throttle(yaml: &Yaml) -> anyhow::Result<Option<Throttle>> {
 }
 
 /// What a `debugger` keyword says, which is when a result opens the debugger prompt.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Debugger {
     Always,
     Never,
     OnFailed,
     OnUnreachable,
     OnSkipped,
+    /// A name the reference does not know, kept with where it was written: like the reference,
+    /// the task it ends up on fails when it runs, and the playbook still loads.
+    Invalid(String, Option<Origin>),
 }
 
-/// `debugger`, wherever it is written, with the reference's own words for a value it does not
-/// know.
+/// `debugger`, wherever it is written. A name the reference does not know is kept for the run
+/// to fail on: measured, the reference loads the playbook and fails the task after its banner.
 pub(super) fn debugger(yaml: &Yaml, context: &str) -> anyhow::Result<Option<Debugger>> {
     match field(yaml, "debugger") {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
-        Some(Yaml::Value(Scalar::String(s))) => Ok(Some(match &**s {
+        Some(node @ Yaml::Value(Scalar::String(s))) => Ok(Some(match &**s {
             "always" => Debugger::Always,
             "never" => Debugger::Never,
             "on_failed" => Debugger::OnFailed,
             "on_unreachable" => Debugger::OnUnreachable,
             "on_skipped" => Debugger::OnSkipped,
-            other => bail!(
-                "{context}Error processing keyword 'debugger': '{other}' is not a valid value for debugger. Must be one of never, on_unreachable, on_skipped, on_failed, always"
-            ),
+            other => Debugger::Invalid(other.to_string(), value_origin(node)),
         })),
         Some(other) => bail!("{context}'debugger' must be a name, found {other:?}"),
     }

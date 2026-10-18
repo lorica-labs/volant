@@ -1,0 +1,3 @@
+# `ansible_search_path` walks the roles it is a dependency of, right after its own directory.
+args: [play.yml]
+needs: ["ansible-core"]

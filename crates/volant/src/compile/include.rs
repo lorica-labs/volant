@@ -100,6 +100,7 @@ pub(crate) fn expand_include(
         search: &base.search,
         file_dir: parent.origin.file_dir.clone(),
         role_dir: parent.origin.role_dir.clone(),
+        parent_roles: parent.origin.parent_roles.clone(),
         depth: 0,
         include_depth: depth,
         selection: &base.selection,

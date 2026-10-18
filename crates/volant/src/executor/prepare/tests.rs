@@ -529,6 +529,7 @@ fn the_role_path_and_search_path_are_the_engine_s_own() {
             Origin {
                 file_dir: role.join("tasks"),
                 role_dir: Some(role.clone()),
+                parent_roles: Vec::new(),
                 depth: 0,
                 inherited: None,
             },
@@ -551,6 +552,7 @@ fn the_role_path_and_search_path_are_the_engine_s_own() {
             Origin {
                 file_dir: play.clone(),
                 role_dir: None,
+                parent_roles: Vec::new(),
                 depth: 0,
                 inherited: None,
             },
@@ -574,6 +576,7 @@ fn the_role_path_and_search_path_are_the_engine_s_own() {
             Origin {
                 file_dir: role.join("tasks"),
                 role_dir: Some(role.clone()),
+                parent_roles: Vec::new(),
                 depth: 0,
                 inherited: None,
             },
@@ -618,6 +621,7 @@ fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
         Origin {
             file_dir: role.join("tasks"),
             role_dir: Some(role.clone()),
+            parent_roles: Vec::new(),
             depth: 0,
             inherited: None,
         },
@@ -1072,6 +1076,7 @@ fn an_include_over_with_first_found_skips_undefined_terms_and_keeps_the_host_s_c
         Origin {
             file_dir: role.join("tasks"),
             role_dir: Some(role.clone()),
+            parent_roles: Vec::new(),
             depth: 0,
             inherited: None,
         },
@@ -1104,6 +1109,7 @@ fn with_first_found_searches_the_directory_its_action_names() {
     let in_role = || Origin {
         file_dir: role.join("tasks"),
         role_dir: Some(role.clone()),
+        parent_roles: Vec::new(),
         depth: 0,
         inherited: None,
     };

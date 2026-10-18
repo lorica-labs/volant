@@ -230,6 +230,11 @@ impl Config {
                 "INVENTORY_ANY_UNPARSED_IS_FAILED",
                 &mut plugins.any_unparsed_is_failed,
             ),
+            (
+                "ANSIBLE_INVENTORY_PLUGIN_SCRIPT_STDERR",
+                "always_show_stderr",
+                &mut plugins.script_stderr,
+            ),
         ] {
             if let Ok(value) = std::env::var(env) {
                 *flag = boolean(setting, &format!("env: {env}"), &value)?;

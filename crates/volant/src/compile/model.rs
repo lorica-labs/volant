@@ -3,7 +3,7 @@
 
 use std::collections::BTreeSet;
 use std::ops::Range;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
@@ -94,6 +94,9 @@ pub(crate) struct Origin {
     /// The root of the role this step was compiled inside, if any. `include_vars` looks in its
     /// `vars/` before anywhere else, measured.
     pub role_dir: Option<PathBuf>,
+    /// The roles that pulled `role_dir` in as a dependency, nearest first: a file search walks
+    /// them right after the role's own directory, measured.
+    pub parent_roles: Vec<PathBuf>,
     /// How many includes deep this step was spliced in. The statement at depth 32 is refused
     /// rather than followed: the reference recurses until Python's stack is gone and reports its
     /// own crash, with no recap and nothing to read.
@@ -111,9 +114,22 @@ impl Default for Origin {
         Origin {
             file_dir: PathBuf::from("."),
             role_dir: None,
+            parent_roles: Vec::new(),
             depth: 0,
             inherited: None,
         }
+    }
+}
+
+impl Origin {
+    /// The directories a task's relative file is looked for in, in the reference's order: the
+    /// role, the roles it is a dependency of, then the directory of the task's file.
+    pub fn search_dirs(&self) -> impl Iterator<Item = &Path> {
+        self.role_dir
+            .as_deref()
+            .into_iter()
+            .chain(self.parent_roles.iter().map(PathBuf::as_path))
+            .chain([self.file_dir.as_path()])
     }
 }
 

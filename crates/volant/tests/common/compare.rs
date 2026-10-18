@@ -52,6 +52,11 @@ pub fn results_by_task(stdout: &str) -> Map<String, Value> {
             .any(|p| line.starts_with(p))
             && let Some((_, json)) = line.split_once(" => ")
         {
+            // A loop line carries `(item=...) => ` before the body; the last item's body stays.
+            let json = match json.strip_prefix("(item=") {
+                Some(rest) => rest.split_once(") => ").map_or(json, |(_, body)| body),
+                None => json,
+            };
             let mut body = json.to_string();
             if body == "{" {
                 for next in lines.by_ref() {

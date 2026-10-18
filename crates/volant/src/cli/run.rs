@@ -124,6 +124,7 @@ async fn run_all(
         match note {
             Note::Verbose(level, text) => out.verbose(*level, text),
             Note::Warning(text) => out.warning(text, false),
+            Note::Error(text) => eprintln!("[ERROR]: {text}"),
             Note::Deprecation(text) => playbook::print_deprecation(text),
         }
     }

@@ -193,6 +193,7 @@ pub(crate) fn compile(
         search,
         file_dir: play.dir.clone(),
         role_dir: None,
+        parent_roles: Vec::new(),
         depth: 0,
         include_depth: 0,
         selection,

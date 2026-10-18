@@ -109,6 +109,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 plugins.any_unparsed_is_failed =
                     boolean("INVENTORY_ANY_UNPARSED_IS_FAILED", origin, value.trim())?;
             }
+            ("inventory_plugin_script", "always_show_stderr") => {
+                plugins.script_stderr = boolean("always_show_stderr", origin, value.trim())?;
+            }
             _ => {}
         }
         if section != "defaults" {

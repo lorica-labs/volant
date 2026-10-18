@@ -30,7 +30,12 @@ impl InventoryPlugin for Script {
         cx: &ParseCx,
     ) -> Result<(), PluginError> {
         let path = source.text();
-        let groups = run(path, &["--list"])?;
+        let (groups, stderr) = run(path, &["--list"])?;
+        // Said once the list is read, before the groups are read.
+        let stderr = stderr.trim_end_matches('\n');
+        if !stderr.trim().is_empty() && cx.config.script_stderr {
+            cx.error(stderr.to_string());
+        }
         let mut hostvars = None;
         let mut hosts: Vec<String> = Vec::new();
         for (name, data) in groups {
@@ -166,13 +171,20 @@ fn with_stderr(path: &str, message: String, stderr: &str) -> PluginError {
 
 /// `run_command`: the script's standard output as text, or the reference's words for why not.
 fn run_command(path: &str, args: &[&str]) -> Result<(String, String), PluginError> {
-    let output = Command::new(path).args(args).output().map_err(|_| {
+    let output = Command::new(path).args(args).output().map_err(|err| {
         let words: Vec<String> = std::iter::once(path)
             .chain(args.iter().copied())
             .map(shell_quote)
             .collect();
+        // Python's `OSError` text for the two causes a script has: no file (or no interpreter
+        // behind its shebang) and no permission; any other cause keeps the bare sentence.
+        let reason = match err.raw_os_error() {
+            Some(2) => format!(": [Errno 2] No such file or directory: {}", py_repr(path)),
+            Some(13) => format!(": [Errno 13] Permission denied: {}", py_repr(path)),
+            _ => ".".to_string(),
+        };
         failure(format!(
-            "Failed to execute inventory script command {}.",
+            "Failed to execute inventory script command {}{reason}",
             py_repr(&words.join(" "))
         ))
     })?;
@@ -199,7 +211,7 @@ fn run_command(path: &str, args: &[&str]) -> Result<(String, String), PluginErro
 }
 
 /// `--list`: a JSON mapping, or the reference's words for why not.
-fn run(path: &str, args: &[&str]) -> Result<Map<String, Value>, PluginError> {
+fn run(path: &str, args: &[&str]) -> Result<(Map<String, Value>, String), PluginError> {
     let (text, stderr) = run_command(path, args)?;
     let decoder = |reason: String| {
         with_stderr(
@@ -235,7 +247,7 @@ fn run(path: &str, args: &[&str]) -> Result<Map<String, Value>, PluginError> {
                     )));
                 }
             }
-            Ok(map)
+            Ok((map, stderr.clone()))
         }
         Ok(other) => Err(decoder(format!(
             "Value is '{}' instead of 'dict'.",

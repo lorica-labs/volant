@@ -91,6 +91,8 @@ pub(super) struct Builder<'a> {
     /// `import_tasks` written inside a role looks, and its `vars/` the first place an
     /// `include_vars` does.
     pub(super) role_dir: Option<PathBuf>,
+    /// The roles whose `meta/main.yml` pulled in the role being compiled, nearest first.
+    pub(super) parent_roles: Vec<PathBuf>,
     /// How many roles and imported files are open above whatever is being compiled now.
     pub(super) depth: usize,
     /// How many includes deep the statement that started this compilation was. Zero for a play;
@@ -117,6 +119,7 @@ impl Builder<'_> {
         Arc::new(Origin {
             file_dir: self.file_dir.clone(),
             role_dir: self.role_dir.clone(),
+            parent_roles: self.parent_roles.clone(),
             depth: self.include_depth,
             inherited: None,
         })
@@ -346,9 +349,13 @@ impl Builder<'_> {
         // A role does not inherit the play's `collections`: it searches its own `meta/main.yml`
         // list, which may be empty, and a block or task inside it may still write another.
         kw.collections = Some(role.collections.clone());
-        for dependency in &role.dependencies {
-            self.role(dependency, &kw, seen, block, section)?;
-        }
+        self.parent_roles.insert(0, path.clone());
+        let dependencies: anyhow::Result<()> = role
+            .dependencies
+            .iter()
+            .try_for_each(|dependency| self.role(dependency, &kw, seen, block, section));
+        self.parent_roles.remove(0);
+        dependencies?;
         let index = self.roles.len();
         self.roles.push(RoleVars {
             name: entry.name.clone(),

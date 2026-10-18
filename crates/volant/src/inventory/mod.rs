@@ -131,7 +131,7 @@ impl Inventory {
                 .into_iter()
                 .filter_map(|n| match n {
                     Note::Warning(text) => Some(text),
-                    Note::Verbose(..) | Note::Deprecation(_) => None,
+                    Note::Verbose(..) | Note::Error(_) | Note::Deprecation(_) => None,
                 })
                 .collect();
             anyhow::bail!(reasons.join(

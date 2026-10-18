@@ -640,6 +640,7 @@ fn inventory_sources_match_the_reference() {
         for note in &loaded.notes {
             let (label, text) = match note {
                 Note::Warning(text) => ("[WARNING]: ", text),
+                Note::Error(text) => ("[ERROR]: ", text),
                 Note::Deprecation(text) => {
                     if !stderr.contains("Deprecation warnings can be") {
                         stderr.push_str(

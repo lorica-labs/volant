@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [inner : ansible.builtin.debug] *******************************************\nok: [localhost] => {\n    \"msg\": [\n        \"<golden-tmp>/roles/inner\",\n        \"<golden-tmp>/roles/outer\",\n        \"<golden-tmp>/roles/inner/tasks\",\n        \"<golden-tmp>\"\n    ]\n}\n\nTASK [outer : ansible.builtin.debug] *******************************************\nok: [localhost] => {\n    \"msg\": [\n        \"<golden-tmp>/roles/outer\",\n        \"<golden-tmp>/roles/outer/tasks\",\n        \"<golden-tmp>\"\n    ]\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

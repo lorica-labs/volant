@@ -7,6 +7,7 @@ fn a_file_is_searched_where_the_reference_searches() {
     let role = Origin {
         file_dir: PathBuf::from("/pb/roles/r/tasks"),
         role_dir: Some(PathBuf::from("/pb/roles/r")),
+        parent_roles: Vec::new(),
         depth: 0,
         inherited: None,
     };

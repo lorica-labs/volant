@@ -103,6 +103,9 @@ pub struct PluginConfig {
     pub unparsed_is_failed: bool,
     /// `any_unparsed_is_failed`: the run fails at the first source no plugin could read.
     pub any_unparsed_is_failed: bool,
+    /// The script plugin's `always_show_stderr`: what a successful script wrote on its standard
+    /// error is shown as an `[ERROR]:` line.
+    pub script_stderr: bool,
 }
 
 impl Default for PluginConfig {
@@ -117,6 +120,7 @@ impl Default for PluginConfig {
             ignore_patterns: Vec::new(),
             unparsed_is_failed: false,
             any_unparsed_is_failed: false,
+            script_stderr: true,
         }
     }
 }
@@ -208,6 +212,11 @@ impl<'a> ParseCx<'a> {
         self.notes.borrow_mut().push(Note::Warning(text));
     }
 
+    /// An `[ERROR]:` line that does not end the run.
+    pub fn error(&self, text: String) {
+        self.notes.borrow_mut().push(Note::Error(text));
+    }
+
     /// A `[DEPRECATION WARNING]:` block.
     pub fn deprecate(&self, text: String) {
         self.notes.borrow_mut().push(Note::Deprecation(text));
@@ -228,6 +237,8 @@ pub trait InventoryPlugin: Sync {
 pub enum Note {
     Verbose(u8, String),
     Warning(String),
+    /// An `[ERROR]:` line the run goes on after.
+    Error(String),
     /// A `[DEPRECATION WARNING]:` block, its `Origin:` line included.
     Deprecation(String),
 }

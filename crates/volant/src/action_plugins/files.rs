@@ -18,6 +18,7 @@ pub(crate) const MAX_FILE_LEN: usize = MAX_FRAME_LEN;
 /// Where the reference looks for a task's local file, in its order.
 ///
 /// Measured on ansible-core 2.19.12 from its "Searched in" list: `<role>/<subdir>/`, `<role>/`,
+/// `<parent role>/<subdir>/`, `<parent role>/` for each role the role is a dependency of,
 /// `<role>/tasks/<subdir>/`, `<role>/tasks/`, `<playbook>/<subdir>/`, `<playbook>/`. The task's
 /// own directory stands where `<role>/tasks/` is, so a task outside a role searches its own
 /// directory and the playbook's, which for a task written in the playbook is the same one twice,
@@ -35,12 +36,7 @@ pub(crate) fn search_paths(
     }
     let under = name.split('/').next() != Some(subdir);
     let mut out = Vec::new();
-    for base in origin
-        .role_dir
-        .iter()
-        .map(PathBuf::as_path)
-        .chain([origin.file_dir.as_path(), playbook_dir])
-    {
+    for base in origin.search_dirs().chain([playbook_dir]) {
         if under {
             out.push(base.join(subdir).join(name));
         }

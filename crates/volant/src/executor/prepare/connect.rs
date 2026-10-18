@@ -123,7 +123,7 @@ pub(super) fn delegate_for(
 /// `role_path` and `ansible_search_path`, which a role's tasks and the `first_found` and
 /// `template` lookups read to find files. Measured on ansible-core 2.19.12, in a role's task:
 /// `role_path` is the role's directory and `ansible_search_path` is `[<role>, <role>/tasks,
-/// <playbook>]`. Outside a role the path is `[<playbook>]` and `role_path` is not defined, so
+/// <playbook>]`, with the roles it is a dependency of right after the role. Outside a role the path is `[<playbook>]` and `role_path` is not defined, so
 /// reading it fails on the undefined name, as in the reference.
 ///
 /// The middle entry is the directory of the file the task was written in, and a directory already
@@ -135,12 +135,7 @@ pub(super) fn delegate_for(
 /// A host fact of the same name does not outlive them, so `untrusted` drops both names too.
 pub(super) fn insert_search_path(vars: &mut HostVars, origin: &Origin, playbook_dir: &Path) {
     let mut search: Vec<&Path> = Vec::new();
-    for dir in origin
-        .role_dir
-        .as_deref()
-        .into_iter()
-        .chain([origin.file_dir.as_path(), playbook_dir])
-    {
+    for dir in origin.search_dirs().chain([playbook_dir]) {
         if !search.contains(&dir) {
             search.push(dir);
         }

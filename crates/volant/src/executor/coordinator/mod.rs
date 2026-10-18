@@ -361,7 +361,7 @@ pub(super) async fn run_batch(
                         // than waiting for its `Finished`, is what lets the next task read the
                         // shrunken host list without racing the driver that is shutting down.
                         if lost {
-                            state.failed_hosts.insert(key.0.clone());
+                            round.failed(&mut state.failed_hosts, &key.0);
                             coordinator.failed_here.insert(key.0.clone());
                             coordinator.last_failure = coordinator.last_failure.max(Some(key.1));
                         }

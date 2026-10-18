@@ -1,5 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::path::Path;
+
+use super::facts::restricted_fact;
+use super::load::extend;
 use super::*;
+use crate::template::Vars;
 use crate::testing::{scratch, write};
 use serde_json::json;
 

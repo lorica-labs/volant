@@ -48,7 +48,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `config.rs` | The `ansible.cfg` settings this release reads. |
 | `inventory/` | Inventories from every source plugin, with the group graph in `graph.rs` and host patterns, globs and subscripts in `patterns.rs`. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
-| `vars.rs` | Variable sources, Ansible's precedence, and the magic variables. |
+| `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `vm.rs` the bytecode rewrite and error conversion. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |
@@ -78,6 +78,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `runner.rs` | Running a batch of tasks, with fail-fast and cancellation. |
 | `modules/` | The native modules. |
+| `modules/command/` | `command`, `shell` and `raw`: the run, the process and its pipes, the argument expansion and the failure results. |
 | `python/` | The warm Python server and its supervisor. |
 | `natives/common/` | What every native shares with the reference's module machinery: arguments, accounts, modes, file attributes, running programs and backups. |
 | `natives/lineinfile/` | The native `lineinfile`: the request, the edit in memory, the `regexp` translation and the write. |

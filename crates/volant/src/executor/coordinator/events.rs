@@ -2,7 +2,9 @@
 //! Which events reach the terminal or the debugger, and writing one the moment it arrives.
 
 use std::collections::HashMap;
+use std::sync::Arc;
 
+use serde_json::{Map, Value};
 use tokio::sync::watch;
 
 use crate::render::Renderer;
@@ -12,7 +14,7 @@ use super::display::{report_result, switch_header};
 use super::publish::task_name;
 use super::types::{Event, Progress};
 use crate::executor::debugger;
-use crate::executor::prepare::{PlayPlan, Strategy};
+use crate::executor::prepare::{PlayPlan, Strategy, host_vars};
 use crate::executor::{RunOptions, RunState};
 /// Whether an event puts a line on the terminal, which is what a step's header goes in front
 /// of. A result nobody shows still speaks when `ignore_errors` swallowed a failure: the
@@ -64,27 +66,54 @@ pub(super) fn show_now(
     report_result(event, stats, out);
 }
 
-/// What an event says to the debugger: the result of a whole task, loop items left out.
-pub(super) fn debug_kind(event: &Event) -> Option<debugger::Kind> {
+/// Whether step `index` opens the prompt behind a result of `kind`.
+pub(super) fn opens_at(plan: &PlayPlan, index: usize, kind: debugger::Kind) -> bool {
+    let by_default = plan.strategy == Strategy::Debug || debugger::enabled_by_environment();
+    plan.steps()
+        .steps
+        .get(index)
+        .is_some_and(|step| debugger::opens(step.task.debugger, by_default, kind))
+}
+
+/// What an event asks of the debugger: the result of a whole task, loop items left out, when
+/// its step opens the prompt for it.
+pub(super) fn debug_ask(
+    event: &Event,
+    plan: &PlayPlan,
+) -> Option<(debugger::Kind, Map<String, Value>)> {
     match event {
         Event::Result {
+            index,
             outcome,
+            result,
             counts: true,
             ..
-        } => Some(debugger::Kind::of(*outcome)),
+        } => {
+            let kind = debugger::Kind::of(*outcome);
+            opens_at(plan, *index, kind).then(|| (kind, result.0.clone()))
+        }
         _ => None,
     }
 }
 
+/// What an unreachable host asks of the debugger: its result reads `unreachable`.
+pub(super) fn unreachable_ask() -> (debugger::Kind, Map<String, Value>) {
+    (
+        debugger::Kind::Unreachable,
+        Map::from_iter([("unreachable".to_string(), Value::Bool(true))]),
+    )
+}
+
 /// Opens the debugger prompt behind a result of step `index` on `host`, when the step's
-/// `debugger` or the play's strategy says to. The coordinator is the one that waits, which is
-/// what the reference does too: nothing else is written while the prompt is open.
+/// `debugger`, the play's strategy or the environment says to. The coordinator is the one that
+/// waits, which is what the reference does too: nothing else is written while the prompt is
+/// open. Nothing is asked once the run is stopping, an earlier prompt's `q` included.
 #[expect(
     clippy::too_many_arguments,
     reason = "what a prompt reads: the step, the batch, the books and the terminal"
 )]
 pub(super) async fn debugging(
-    kind: debugger::Kind,
+    (kind, result): (debugger::Kind, Map<String, Value>),
     host: &str,
     index: usize,
     plan: &PlayPlan,
@@ -94,15 +123,50 @@ pub(super) async fn debugging(
     out: &mut Renderer,
     options: &RunOptions,
 ) {
+    if *options.stop.borrow() || !opens_at(plan, index, kind) {
+        return;
+    }
     let compiled = plan.steps();
     let Some(step) = compiled.steps.get(index) else {
         return;
     };
-    if !debugger::opens(step.task.debugger, plan.strategy == Strategy::Debug, kind) {
-        return;
-    }
     let live = progress_tx.borrow().clone();
     let spoken = names.get(&(host.to_string(), index));
-    let name = task_name(step, host, plan, &live, state, spoken);
-    debugger::ask(host, &name, out, &options.abort, &mut options.stop.clone()).await;
+    let title = task_name(step, host, plan, &live, state, spoken);
+    let playbook_dir = state
+        .vars
+        .lock()
+        .expect("vars lock")
+        .playbook_dir()
+        .to_path_buf();
+    let vars = host_vars(
+        host,
+        plan,
+        &step.task.vars,
+        step.role,
+        step.include_params.as_deref(),
+        &live,
+        &state.templar,
+        &state.vars,
+        &step.origin,
+        &playbook_dir,
+    );
+    let mut session = debugger::Session {
+        host: host.to_string(),
+        title,
+        name: step.task.name.clone(),
+        action: step.task.module.clone(),
+        raw_args: step.task.args.clone(),
+        args: step.task.args.clone(),
+        vars,
+        result,
+        templar: Arc::clone(&state.templar),
+        locals: Map::new(),
+        last: String::new(),
+    };
+    // The task ran with these arguments rendered; one that no longer renders shows as written.
+    if let Ok(args) = session.render_args() {
+        session.args = args;
+    }
+    debugger::ask(&mut session, out, &options.abort, &mut options.stop.clone()).await;
 }

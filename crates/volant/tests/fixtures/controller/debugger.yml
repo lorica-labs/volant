@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    x: 1
+  tasks:
+    - name: failing
+      command: "false"
+      debugger: on_failed
+    - name: after
+      debug: {msg: after}

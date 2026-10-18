@@ -29,7 +29,7 @@ mod publish;
 mod types;
 
 use display::{header, header_for, report_result, switch_header};
-use events::{debug_kind, debugging, show_now, shows_a_line};
+use events::{debug_ask, debugging, show_now, shows_a_line, unreachable_ask};
 use meta::{MetaContext, apply_meta};
 use publish::{Coordinator, keep_links, take_links, task_name};
 pub(in crate::executor) use publish::{escalated_links, render_name};
@@ -278,7 +278,7 @@ pub(super) async fn run_batch(
                             );
                             header_shown = true;
                         }
-                        let asks = debug_kind(&event);
+                        let asks = debug_ask(&event, &plan);
                         report_result(event, stats, out);
                         if let Some(kind) = asks {
                             debugging(
@@ -311,7 +311,7 @@ pub(super) async fn run_batch(
                         }
                         blame.show(host, out);
                         debugging(
-                            debugger::Kind::Unreachable,
+                            unreachable_ask(),
                             host,
                             key.1,
                             &plan,
@@ -381,7 +381,7 @@ pub(super) async fn run_batch(
                             coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                         }
                         if free {
-                            let asks = debug_kind(&event);
+                            let asks = debug_ask(&event, &plan);
                             show_now(
                                 event,
                                 &mut last_banner,
@@ -551,7 +551,7 @@ pub(super) async fn run_batch(
                             blame.show(&host, out);
                             if let Some(at) = at {
                                 debugging(
-                                    debugger::Kind::Unreachable,
+                                    unreachable_ask(),
                                     &host,
                                     at,
                                     &plan,
@@ -723,6 +723,18 @@ pub(super) async fn run_batch(
     for ((host, at), blame) in missed {
         header_for(at, &plan, &play_hosts, &progress_tx, state, &names, out);
         blame.show(&host, out);
+        debugging(
+            unreachable_ask(),
+            &host,
+            at,
+            &plan,
+            &progress_tx,
+            state,
+            &names,
+            out,
+            options,
+        )
+        .await;
     }
     // The channel is bounded, so a host still owing a send would block forever if reading
     // stopped here: the coordinator's own `worker.await` below would then wait on a task that
@@ -749,6 +761,20 @@ pub(super) async fn run_batch(
                     censored,
                 ));
                 out.unreachable(&host, &msg, censored, delegate.as_deref());
+                if let Some(at) = at {
+                    debugging(
+                        unreachable_ask(),
+                        &host,
+                        at,
+                        &plan,
+                        &progress_tx,
+                        state,
+                        &names,
+                        out,
+                        options,
+                    )
+                    .await;
+                }
                 state.failed_hosts.insert(host);
                 if let Some(at) = at
                     && plan

@@ -486,7 +486,20 @@ async fn run_all(
     // Kept for the local-agent check below, which runs before any host has an effective view
     // and would otherwise read `ansible_connection` from the inventory alone.
     let extra_for_check = extra.clone();
-    let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra)?;
+    let mut store = match VarStore::with_sources(&inventory, &sources, &playbook_dir, extra) {
+        Ok(store) => store,
+        Err(err) => {
+            // The reference reads group_vars and host_vars as the first play starts, so a vaulted
+            // file it cannot decrypt stops the run after that play's banner.
+            let refused = err.downcast_ref::<Refusal>();
+            if refused.is_some_and(|r| r.code == 4)
+                && let Some(play) = playbooks.iter().flat_map(|pb| &pb.plays).next()
+            {
+                out.play(&play.name);
+            }
+            return Err(err);
+        }
+    };
     store.set_forks(forks);
     store.set_reload(
         sources.clone(),

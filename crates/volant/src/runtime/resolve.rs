@@ -167,6 +167,16 @@ pub(crate) fn controller_python() -> Option<String> {
         helper.as_deref(),
         &current(explicit.as_deref(), virtual_env.as_deref()),
     )
+    .or_else(|| {
+        // Nothing exists yet, and the first task that needs Python installs Volant's runtime
+        // before its module is sent: name the interpreter that install will leave, without
+        // installing anything here.
+        if !may_install(mode(), explicit.as_deref()) {
+            return None;
+        }
+        let dir = runtimes_dir().ok()?.join(pinned().ok()?.id());
+        Some(install::interpreter(&dir).display().to_string())
+    })
 }
 
 #[cfg(test)]

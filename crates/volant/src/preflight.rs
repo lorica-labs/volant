@@ -307,7 +307,7 @@ fn set_aside(compiled: &crate::compile::Compiled) -> impl Iterator<Item = &PlayT
 /// before the first connection unless it is a module the union can hold.
 ///
 /// Volant never installs a collection. A collection's action plugin is not refused: it runs in the
-/// Python helper (see [`crate::python::note_action_plugins`]). A missing collection is named, with the command that
+/// Python helper (see `python::types::note_action_plugins`). A missing collection is named, with the command that
 /// installs it; a module missing from a collection that is installed is the reference's typo
 /// sentence alone.
 pub(crate) fn check_resolved(

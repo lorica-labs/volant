@@ -4,8 +4,8 @@
 
 use std::collections::HashMap;
 use std::io::{BufRead, IsTerminal};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 
 use tokio::sync::watch;
 
@@ -14,6 +14,12 @@ use crate::render::Renderer;
 use crate::stats::Outcome;
 
 use super::Abort;
+
+mod expr;
+mod session;
+
+use session::Next;
+pub(super) use session::Session;
 
 /// How a result looks to the keyword.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -36,11 +42,13 @@ impl Kind {
     }
 }
 
-/// Whether a result of `kind` opens the prompt under `setting`. `strategy: debug` is
-/// `on_failed` for every task that does not say otherwise.
-pub(super) fn opens(setting: Option<Debugger>, strategy_debug: bool, kind: Kind) -> bool {
-    match setting.or(strategy_debug.then_some(Debugger::OnFailed)) {
-        None | Some(Debugger::Never) => false,
+/// Whether a result of `kind` opens the prompt under `setting`. Without a setting, the
+/// strategy `debug` and `ANSIBLE_ENABLE_TASK_DEBUGGER` open it on a failure and on an
+/// unreachable host, as measured; `never` keeps it shut even then.
+pub(super) fn opens(setting: Option<Debugger>, by_default: bool, kind: Kind) -> bool {
+    match setting {
+        None => by_default && matches!(kind, Kind::Failed | Kind::Unreachable),
+        Some(Debugger::Never) => false,
         Some(Debugger::Always) => true,
         Some(Debugger::OnFailed) => kind == Kind::Failed,
         Some(Debugger::OnUnreachable) => kind == Kind::Unreachable,
@@ -48,30 +56,37 @@ pub(super) fn opens(setting: Option<Debugger>, strategy_debug: bool, kind: Kind)
     }
 }
 
-/// The prompt for `task` on `host`, until the operator continues or quits. `c` goes on with the
-/// task as it ended, `q` and the end of input end the run with code 99.
-///
-/// Only a terminal is read. A run whose stdin is a file or a pipe has nobody to answer, so it is
-/// the end of input at once rather than a read that may never return.
+/// `ANSIBLE_ENABLE_TASK_DEBUGGER`, read as the reference reads a boolean setting.
+// The `enable_task_debugger` key of `ansible.cfg` is not read.
+pub(super) fn enabled_by_environment() -> bool {
+    static ENABLED: OnceLock<bool> = OnceLock::new();
+    *ENABLED.get_or_init(|| {
+        std::env::var("ANSIBLE_ENABLE_TASK_DEBUGGER").is_ok_and(|v| {
+            matches!(
+                v.trim().to_lowercase().as_str(),
+                "y" | "yes" | "on" | "1" | "true" | "t" | "1.0"
+            )
+        })
+    })
+}
+
+/// The prompt for one result, until the operator continues or quits. `c` goes on with the
+/// result as it is, `q` and the end of input end the run with code 99. A pipe is read as a
+/// terminal is, which is what the reference does.
 pub(super) async fn ask(
-    host: &str,
-    task: &str,
+    session: &mut Session,
     out: &mut Renderer,
     abort: &Abort,
     stop: &mut watch::Receiver<bool>,
 ) {
+    let prompt = format!("[{}] TASK: {} (debug)> ", session.host, session.title);
     loop {
-        out.prompt(&format!("[{host}] TASK: {task} (debug)> "));
-        let Some(line) = read_line(stop).await else {
-            return quit(out, abort);
-        };
-        match line.split_whitespace().next() {
-            None => {}
-            Some("c" | "continue") => return,
-            Some("q" | "quit") => return quit(out, abort),
-            Some(other) => out.display(&format!(
-                "*** '{other}' is not supported yet: c continues and q quits"
-            )),
+        out.prompt(&prompt);
+        let line = read_line(stop).await.unwrap_or_else(|| "EOF".to_string());
+        match session.onecmd(line.trim_end_matches(['\r', '\n']), out) {
+            Next::Stay => {}
+            Next::Continue => return,
+            Next::Quit => return quit(out, abort),
         }
     }
 }
@@ -82,21 +97,61 @@ fn quit(out: &mut Renderer, abort: &Abort) {
     out.silence();
 }
 
-/// One line of the terminal, read on a thread of its own so an interruption does not wait for
-/// the operator to press Enter. `None` at the end of input, on a stdin that is not a terminal,
-/// and when the run is stopped.
+/// The one thread that reads standard input, a line at a time and only when asked, so a line
+/// typed for one prompt is never taken by a read nobody waits for any more.
+struct Reader {
+    ask: std::sync::mpsc::Sender<()>,
+    lines: tokio::sync::Mutex<Lines>,
+}
+
+struct Lines {
+    rx: tokio::sync::mpsc::UnboundedReceiver<Option<String>>,
+    /// A line was asked for and has not been taken yet: an interrupted read leaves it to the
+    /// next one.
+    asked: bool,
+}
+
+fn reader() -> &'static Reader {
+    static READER: OnceLock<Reader> = OnceLock::new();
+    READER.get_or_init(|| {
+        let (ask, asked) = std::sync::mpsc::channel::<()>();
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel();
+        std::thread::spawn(move || {
+            // Ends at the end of input: nothing is read after it.
+            while asked.recv().is_ok() {
+                let mut line = String::new();
+                let read = std::io::stdin().lock().read_line(&mut line);
+                let line = read.ok().filter(|n| *n > 0).map(|_| line);
+                let end = line.is_none();
+                if tx.send(line).is_err() || end {
+                    break;
+                }
+            }
+        });
+        Reader {
+            ask,
+            lines: tokio::sync::Mutex::new(Lines { rx, asked: false }),
+        }
+    })
+}
+
+/// One line of standard input, read on the reader thread so an interruption does not wait
+/// for the operator to press Enter. `None` at the end of input and when the run is stopped.
 pub(super) async fn read_line(stop: &mut watch::Receiver<bool>) -> Option<String> {
-    if !std::io::stdin().is_terminal() {
+    if *stop.borrow() {
         return None;
     }
-    let (tx, rx) = tokio::sync::oneshot::channel();
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        let read = std::io::stdin().lock().read_line(&mut line);
-        let _ = tx.send(read.ok().filter(|n| *n > 0).map(|_| line));
-    });
+    let reader = reader();
+    let mut lines = reader.lines.lock().await;
+    if !lines.asked {
+        reader.ask.send(()).ok()?;
+        lines.asked = true;
+    }
     tokio::select! {
-        line = rx => line.ok().flatten(),
+        line = lines.rx.recv() => {
+            lines.asked = false;
+            line.flatten()
+        }
         _ = stop.wait_for(|stopped| *stopped) => None,
     }
 }
@@ -149,7 +204,13 @@ impl Stepper {
         }
         print!("Perform task: TASK: {label} (N)o/(y)es/(c)ontinue: ");
         let _ = std::io::Write::flush(&mut std::io::stdout());
-        let Some(line) = read_line(stop).await else {
+        // Only a terminal answers `--step`: a file or a pipe is the end of input at once.
+        let line = if std::io::stdin().is_terminal() {
+            read_line(stop).await
+        } else {
+            None
+        };
+        let Some(line) = line else {
             self.closed.store(true, Ordering::SeqCst);
             return None;
         };

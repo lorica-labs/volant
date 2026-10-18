@@ -16,7 +16,7 @@ pub(crate) use keywords::{
 };
 pub(crate) use load::{TaskFileRefused, base_dir, parse_handlers_file, parse_tasks_file};
 pub use load::{load, parse};
-pub use model::{Block, HandlerTask, Play, PlayTask, Playbook, TaskOrBlock};
+pub use model::{Block, HandlerTask, Play, PlayTask, Playbook, TaskOrBlock, Throttle};
 pub use origin::Origin;
 pub(crate) use play::parse_role_entries;
 

@@ -84,11 +84,8 @@ const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. I
     on statements, and on `raw` and `async_status`, which the reference refuses too. \
     `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are.";
 
-/// One sentence for the `debugger` rows. The reference's prompt also evaluates Python.
-const DEBUGGER_MISSING: &str = "the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input";
-
-/// One sentence for the `throttle` rows.
-const THROTTLE_MISSING: &str = "a number only; a string or a template is not supported yet";
+/// One sentence for the `debugger` rows.
+const DEBUGGER_MISSING: &str = "the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python";
 
 /// A keyword whose presence on a task makes that task a synchronisation point.
 const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
@@ -158,7 +155,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("retries", Runs),
     barrier_kw("run_once", Runs),
     kw("tags", Runs),
-    partial_kw("throttle", THROTTLE_MISSING),
+    kw("throttle", Runs),
     kw("timeout", Runs),
     kw("until", Runs),
     kw("vars", Runs),
@@ -259,7 +256,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("strategy", Runs),
     kw("tags", Runs),
     kw("tasks", Runs),
-    partial_kw("throttle", THROTTLE_MISSING),
+    kw("throttle", Runs),
     kw("timeout", Runs),
     kw("vars", Runs),
     kw("vars_files", Runs),
@@ -321,7 +318,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("rescue", Runs),
     barrier_kw("run_once", Runs),
     kw("tags", Runs),
-    partial_kw("throttle", THROTTLE_MISSING),
+    kw("throttle", Runs),
     kw("timeout", Runs),
     kw("vars", Runs),
     kw("when", Runs),

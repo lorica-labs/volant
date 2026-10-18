@@ -20,9 +20,11 @@ pub use source::AgentSource;
 /// How long a bare `drop` waits for the agent to notice end of stream and clean up its task
 /// before giving up and letting `kill_on_drop` kill the agent outright. This blocks whatever
 /// thread runs the drop (there is no `.await` in `Drop::drop`), so it has to stay small; the
-/// agent itself polls for cancellation every 20ms, so a plain multiple of that covers the
-/// common case without making a wedged agent stall the caller for long.
-const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(200);
+/// agent itself polls for cancellation every 50ms, and a loaded host can take several polls
+/// before it has killed the task's process group and exited. The wait ends the moment the agent
+/// exits, so the full second is only paid by an agent that is wedged; killing one that was
+/// stopping cleanly would leave its task running on the host.
+const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(1000);
 const DROP_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
 /// A running agent reached through a transport: frames in, frames out.

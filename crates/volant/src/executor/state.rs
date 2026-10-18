@@ -52,6 +52,7 @@ pub struct Abort {
     stop: watch::Sender<bool>,
     reason: Mutex<Option<String>>,
     code: std::sync::atomic::AtomicI32,
+    plain: std::sync::atomic::AtomicBool,
 }
 
 impl Abort {
@@ -60,6 +61,7 @@ impl Abort {
             stop,
             reason: Mutex::new(None),
             code: std::sync::atomic::AtomicI32::new(1),
+            plain: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -75,6 +77,20 @@ impl Abort {
             self.code.store(code, std::sync::atomic::Ordering::SeqCst);
         }
         self.raise(reason);
+    }
+
+    /// [`Abort::raise`] for an error the reference prints as `[ERROR]: reason`, when it is the
+    /// first reason kept.
+    pub fn raise_plain(&self, reason: String) {
+        if self.reason.lock().expect("abort lock").is_none() {
+            self.plain.store(true, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.raise(reason);
+    }
+
+    /// Whether the reason kept is printed as `[ERROR]: reason`.
+    pub fn is_plain(&self) -> bool {
+        self.plain.load(std::sync::atomic::Ordering::SeqCst)
     }
 
     /// Stops the run without a reason: the operator's interruption.

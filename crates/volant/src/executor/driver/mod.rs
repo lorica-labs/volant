@@ -39,6 +39,7 @@ use super::run::{
 use super::{LinkKey, RunOptions};
 
 mod boundaries;
+mod throttle;
 mod timings;
 mod unreachable;
 mod waits;
@@ -317,6 +318,7 @@ pub(super) async fn drive_host(
         // Set when the batch's one task is backed by an action plugin, which is alone in its
         // batch the way a retried task is.
         let mut batch_action: Option<PluginBatch> = None;
+        let mut batch_throttle: Option<u64> = None;
         let mut deferred_error: Option<(usize, TemplateError)> = None;
         // The last step of the batch, when where the host goes after it is not yet decided.
         // See the `Prepared::Remote` arm: a step a rescue would catch cannot say what it steps
@@ -834,6 +836,12 @@ pub(super) async fn drive_host(
                     })
                     .await;
             }
+            let Some((prepared, throttle)) = driver
+                .read_throttle(step, pos, prepared, &templar, &options.abort)
+                .await
+            else {
+                break 'run;
+            };
             match prepared {
                 Err(err) => {
                     deferred_error = Some((pos, err));
@@ -1007,7 +1015,7 @@ pub(super) async fn drive_host(
                     // Held for the task's items and given back before the host waits for anyone:
                     // a verdict it is about to wait for may depend on a host this one is holding
                     // up.
-                    let Some(gate) = driver.throttled(pos, task.throttle).await else {
+                    let Some(gate) = driver.throttled(pos, throttle).await else {
                         break 'run;
                     };
                     // A controller-side module runs here whatever `delegate_to` says - measured
@@ -1312,7 +1320,7 @@ pub(super) async fn drive_host(
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
                     // A task an action plugin backs does the same, one trip per sub-task.
-                    let throttled = task.throttle.is_some_and(|limit| limit > 0);
+                    let throttled = throttle.is_some();
                     if (retried || action.is_some() || task.ignores_unreachable() || throttled)
                         && !batch.is_empty()
                     {
@@ -1324,6 +1332,7 @@ pub(super) async fn drive_host(
                         delegate: delegate.clone(),
                     });
                     batch_escalation = escalation;
+                    batch_throttle = throttle;
                     batch_delegate = delegate_name;
                     batch_transport = Some(transport);
                     batch_retry = retried.then_some(plans);
@@ -1393,21 +1402,12 @@ pub(super) async fn drive_host(
             unreachable_origin = c.steps[batch[0].0].task.origin.clone();
             unreachable_delegate = batch_delegate.clone();
             unreachable_index = Some(batch[0].0);
-            // A throttled task is alone in its batch. The host takes its turn before it takes a
-            // fork, so one waiting for its turn holds none of the forks the others need - unless
-            // `host_pinned` keeps it, which holds the fork whatever it waits for.
-            if c.steps[batch[0].0]
-                .task
-                .throttle
-                .is_some_and(|limit| limit > 0)
-                && !plan.strategy.pinned()
-            {
+            // A throttled task is alone in its batch. Its host takes its turn before a fork, so
+            // one waiting holds none the others need - unless `host_pinned` keeps the fork.
+            if batch_throttle.is_some() && !plan.strategy.pinned() {
                 permit = None;
             }
-            let Some(gate) = driver
-                .throttled(batch[0].0, c.steps[batch[0].0].task.throttle)
-                .await
-            else {
+            let Some(gate) = driver.throttled(batch[0].0, batch_throttle).await else {
                 break 'run;
             };
             if permit.is_none() {
@@ -2321,7 +2321,7 @@ pub(super) async fn drive_host(
             // testing `'Task failed' in result.msg` must still see it. `failed_when` does not get
             // it: there the reference leaves `msg` empty and fills `failed_when_result`.
             let mut result = TaskResult::failed_with(failure_text(&err));
-            if let Some(causes) = finalization_causes(task, &err.0) {
+            if let Some(causes) = throttle::causes(task, &err.0) {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
             } else if let Some(detail) = err.0.strip_prefix("Task failed: ")
                 && detail
@@ -2597,7 +2597,7 @@ fn first_batch_id() -> u64 {
 /// The chain of a task whose arguments a plugin failed to render, as the reference prints it:
 /// `Finalization of task args for '<action>' failed.` at the action's key, then the value it was
 /// resolving at that value.
-fn finalization_causes(task: &PlayTask, message: &str) -> Option<Value> {
+pub(super) fn finalization_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let rest = message.strip_prefix(super::prepare::FINALIZING)?;
     let at = rest.find(&format!(": {}", crate::template::RESOLVING))?;
     let head = format!("{}{}.", super::prepare::FINALIZING, &rest[..at]);

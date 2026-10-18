@@ -247,6 +247,23 @@ pub(super) async fn run_batch(
     // began at. The host leaves the play on arrival; its block and line print where the host
     // stands in the step's order, like a result, instead of in front of the hosts before it.
     let mut unreached: HashMap<(String, usize), Unreached> = HashMap::new();
+    // The prompt an unreachable host opens when its step's `debugger` says so.
+    macro_rules! prompt_unreachable {
+        ($host:expr, $at:expr) => {
+            debugging(
+                unreachable_ask(),
+                $host,
+                $at,
+                &plan,
+                &progress_tx,
+                state,
+                &names,
+                out,
+                options,
+            )
+            .await
+        };
+    }
     // Not `for .. in steps.iter()`: the list grows at a flush point, so its length is read again
     // each time round. The step is cloned rather than borrowed for the same reason - the splice
     // below replaces the value the borrow would point into.
@@ -310,18 +327,7 @@ pub(super) async fn run_batch(
                             header_shown = true;
                         }
                         blame.show(host, out);
-                        debugging(
-                            unreachable_ask(),
-                            host,
-                            key.1,
-                            &plan,
-                            &progress_tx,
-                            state,
-                            &names,
-                            out,
-                            options,
-                        )
-                        .await;
+                        prompt_unreachable!(host, key.1);
                     }
                     break;
                 }
@@ -550,18 +556,7 @@ pub(super) async fn run_batch(
                             );
                             blame.show(&host, out);
                             if let Some(at) = at {
-                                debugging(
-                                    unreachable_ask(),
-                                    &host,
-                                    at,
-                                    &plan,
-                                    &progress_tx,
-                                    state,
-                                    &names,
-                                    out,
-                                    options,
-                                )
-                                .await;
+                                prompt_unreachable!(&host, at);
                             }
                         } else {
                             if !header_shown {
@@ -723,18 +718,7 @@ pub(super) async fn run_batch(
     for ((host, at), blame) in missed {
         header_for(at, &plan, &play_hosts, &progress_tx, state, &names, out);
         blame.show(&host, out);
-        debugging(
-            unreachable_ask(),
-            &host,
-            at,
-            &plan,
-            &progress_tx,
-            state,
-            &names,
-            out,
-            options,
-        )
-        .await;
+        prompt_unreachable!(&host, at);
     }
     // The channel is bounded, so a host still owing a send would block forever if reading
     // stopped here: the coordinator's own `worker.await` below would then wait on a task that
@@ -762,18 +746,7 @@ pub(super) async fn run_batch(
                 ));
                 out.unreachable(&host, &msg, censored, delegate.as_deref());
                 if let Some(at) = at {
-                    debugging(
-                        unreachable_ask(),
-                        &host,
-                        at,
-                        &plan,
-                        &progress_tx,
-                        state,
-                        &names,
-                        out,
-                        options,
-                    )
-                    .await;
+                    prompt_unreachable!(&host, at);
                 }
                 state.failed_hosts.insert(host);
                 if let Some(at) = at

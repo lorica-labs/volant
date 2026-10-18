@@ -460,7 +460,7 @@ fn step_asks_before_each_task_until_continue() {
 fn the_debugger_answers_its_commands_from_a_pipe() {
     let stdin = "p task\n\np host\np task_vars[\"x\"]\ntask_vars[\"y\"] = [1]\nlen(task_vars[\"y\"])\nfoo\nh c\nc\n";
     let out = volant_within_full(
-        &[&fixture("controller/debugger.yml")],
+        &["playbook", &fixture("controller/debugger.yml")],
         DEFAULT_DEADLINE,
         None,
         None,
@@ -480,7 +480,14 @@ fn the_debugger_answers_its_commands_from_a_pipe() {
         "***NameError:NameError(\"name 'foo' is not defined\")",
         "Continue to next result",
     ]
-    .map(|line| format!("{prompt}{line}\n"))
+    // An assignment prints nothing, not even a newline: the next prompt follows on its line.
+    .map(|line| {
+        if line.is_empty() {
+            prompt.to_string()
+        } else {
+            format!("{prompt}{line}\n")
+        }
+    })
     .concat();
     assert!(text.contains(&format!("{expected}{prompt}")), "{text}");
     assert_eq!(out.status.code(), Some(2), "{text}");
@@ -494,7 +501,7 @@ fn the_debugger_answers_its_commands_from_a_pipe() {
 #[case::end_of_input("")]
 fn the_debugger_quits_on_q_and_on_the_end_of_input(#[case] stdin: &str) {
     let out = volant_within_full(
-        &[&fixture("controller/debugger.yml")],
+        &["playbook", &fixture("controller/debugger.yml")],
         DEFAULT_DEADLINE,
         None,
         None,

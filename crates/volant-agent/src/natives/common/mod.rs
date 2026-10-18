@@ -26,7 +26,7 @@ pub use accounts::{Account, Group, group_account, lookup_group, lookup_user, own
 pub use args::{
     ArgSpec, bool_param, check_names, flag, invocation, module_args, null, path_param, str_param,
 };
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 pub use backup::backup_copy;
 pub use backup::{BackupError, backup_local, chown_if_permitted};
 #[cfg(test)]

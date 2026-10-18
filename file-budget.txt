@@ -4,7 +4,6 @@ crates/volant-agent/src/natives/apt.rs 1303
 crates/volant-agent/src/natives/copy.rs 770
 crates/volant-agent/src/natives/file.rs 540
 crates/volant-agent/src/natives/group.rs 628
-crates/volant-agent/src/natives/package_facts.rs 2026
 crates/volant-agent/src/natives/service_facts.rs 1101
 crates/volant-agent/src/natives/setup/network.rs 618
 crates/volant-agent/src/natives/systemd.rs 612

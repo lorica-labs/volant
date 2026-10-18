@@ -183,10 +183,19 @@ pub(crate) fn may_install(mode: Mode, explicit: Option<&str>) -> bool {
     explicit.is_none() && mode != Mode::System
 }
 
-/// Installs Volant's runtime and returns its interpreter.
+/// Installs Volant's runtime and returns its interpreter. A runtime already in place that has
+/// lost its ansible-core (a file deleted by hand, a disk error) is refused rather than handed back.
 pub(crate) fn install_now() -> Result<String, String> {
     let done = install::install(&runtimes_dir()?, pinned()?)?;
-    Ok(done.python.display().to_string())
+    let python = done.python.display().to_string();
+    if !has_ansible(&python) {
+        let id = done.id;
+        return Err(format!(
+            "Volant's runtime {id} is installed but cannot import ansible-core: run \
+             `volant runtime remove {id}`, then `volant runtime install`"
+        ));
+    }
+    Ok(python)
 }
 
 /// What the refusal adds when no candidate has ansible-core: the way to Volant's own runtime

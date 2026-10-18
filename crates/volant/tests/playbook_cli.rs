@@ -685,6 +685,7 @@ fn the_playbook_alias_takes_the_same_arguments() {
     let out = Command::new(alias)
         .args(["-i", &fixture("inventory.ini"), &fixture("site.yml")])
         .env("NO_COLOR", "1")
+        .env("VOLANT_RUNTIME", "system")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));

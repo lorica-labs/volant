@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
+use crate::compile::META_ACTIONS;
 use crate::playbook::parse;
 use crate::stats::error_code;
 use rstest::rstest;

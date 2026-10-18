@@ -52,7 +52,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |
-| `preflight.rs` | What a run refuses before it touches a host. |
+| `preflight/` | What a run refuses before it touches a host: the passes over the playbook and the compiled steps in `mod.rs`, the single-keyword refusals in `refusals.rs`, and what the Python helper answered for a module name in `resolved.rs`. |
 | `compile/`, `roles.rs` | A play flattened into steps (`builder` walks the tree, `model` and `compiled` hold the steps, `nav` finds the next one, `include` grafts dynamic includes), and roles spliced into them. |
 | `listing.rs` | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`. |
 | `transport/`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. `transport` holds the connection settings, the `ssh` command lines and shared connections, the agent bootstrap, and `escalation/` for `sudo` and `su`. |

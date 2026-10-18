@@ -1,8 +1,6 @@
-crates/volant-agent/src/blobs.rs 696
 crates/volant-agent/src/natives/apt.rs 1303
 crates/volant-agent/src/natives/file.rs 540
 crates/volant-agent/src/natives/group.rs 628
-crates/volant-agent/src/natives/service_facts.rs 1101
 crates/volant-agent/src/natives/setup/network.rs 618
 crates/volant-agent/src/natives/user.rs 667
 crates/volant-protocol/src/modules.rs 715

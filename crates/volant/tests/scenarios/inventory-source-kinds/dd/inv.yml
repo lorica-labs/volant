@@ -1,0 +1,28 @@
+all:
+  vars:
+    allvar: fromall
+    shared: all
+  hosts:
+    solo:
+    ungrouped1:
+  children:
+    web:
+      vars: {shared: web, nested: {a: {b: 1}, l: [1,2]}}
+      hosts:
+        web[01:03]:
+          ansible_host: 10.0.0.1
+        "123":
+        "456":
+    db:
+      vars: {shared: db}
+      hosts:
+        db[a:c]:
+        n[1:10:3]:
+        both: ~
+    emptyg:
+    g2:
+      hosts:
+        both:
+          hv: x
+        web01:
+          shared: host

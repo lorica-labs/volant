@@ -69,6 +69,9 @@ constructed_keyed_8: {sources: [constructed_base.ini, keyed_8.yml]}
 constructed_keyed_9: {sources: [constructed_base.ini, keyed_9.yml]}
 constructed_keyed_10: {sources: [constructed_base.ini, keyed_10.yml]}
 constructed_keyed_11: {sources: [constructed_base.ini, keyed_11.yml]}
+constructed_collection_filter: {sources: [constructed_base.ini, constructed_collection_filter.yml], needs: [ansible-core]}
+constructed_keyed_parent: {sources: [constructed_base.ini, keyed_parent.yml]}
+generator_priority: {sources: [generator_priority.yml]}
 generator: {sources: [generator.yml], hosts: unordered}
 generator_then_constructed: {sources: [generator.yml, constructed.yml], hosts: unordered}
 auto_unknown: {sources: [auto_unknown.yml], needs: [ansible-core]}

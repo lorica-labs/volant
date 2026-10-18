@@ -1,0 +1,7 @@
+# A directory source: files read in sorted order, subdirectories in place, backup and retry files
+# skipped, duplicate hosts merged with the later file winning, group_vars and host_vars above all.
+runs:
+  - {args: [-i, d, --limit, common, p.yml]}
+  - {args: [-vvv, -i, d, --limit, common, p.yml]}
+  - {args: [-i, d, --limit, h3, p.yml]}
+  - {args: [-i, d, --limit, h2, p.yml]}

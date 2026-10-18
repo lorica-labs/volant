@@ -1,0 +1,9 @@
+all:
+  children:
+    web:
+      hosts:
+        h2: {yv: y}
+        common: {x: 2, y2: 1}
+      vars: {wv: yaml}
+    dbg:
+      hosts: {h2: }

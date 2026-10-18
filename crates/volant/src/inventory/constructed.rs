@@ -26,7 +26,12 @@ impl InventoryPlugin for Constructed {
         verify_config(source)
     }
 
-    fn parse(&self, source: &Source, into: &mut Inventory, _: &ParseCx) -> Result<(), PluginError> {
+    fn parse(
+        &self,
+        source: &Source,
+        into: &mut Inventory,
+        cx: &ParseCx,
+    ) -> Result<(), PluginError> {
         let config = read_config(source, self.name())?;
         let options = Options::read(&config).map_err(failed)?;
         let path = source.text();
@@ -36,7 +41,7 @@ impl InventoryPlugin for Constructed {
             .map_or_else(PathBuf::new, Path::to_path_buf);
         Run {
             options,
-            templar: Templar::new(base),
+            templar: cx.templar_for(base, &Value::Object(config)),
         }
         .hosts(into)
         .map_err(|f| f.into_error(path))

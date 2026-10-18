@@ -663,6 +663,85 @@
       ],
       "stderr": ""
     },
+    "constructed_collection_filter": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "c_sorted": [
+                {
+                  "__ansible_unsafe": "3"
+                },
+                {
+                  "__ansible_unsafe": "12"
+                }
+              ],
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "c_sorted": [
+                {
+                  "__ansible_unsafe": "3"
+                },
+                {
+                  "__ansible_unsafe": "9"
+                }
+              ],
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "needs": [
+        "ansible-core"
+      ],
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_collection_filter.yml"
+      ],
+      "stderr": ""
+    },
     "constructed_dict": {
       "env": {},
       "hosts": [
@@ -1326,6 +1405,85 @@
       "sources": [
         "constructed_base.ini",
         "keyed_9.yml"
+      ],
+      "stderr": ""
+    },
+    "constructed_keyed_parent": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db",
+            "oses"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "os_Debian": {
+          "hosts": [
+            "w1",
+            "d1"
+          ]
+        },
+        "os_RedHat": {
+          "hosts": [
+            "w2"
+          ]
+        },
+        "oses": {
+          "children": [
+            "os_Debian",
+            "os_RedHat"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "keyed_parent.yml"
       ],
       "stderr": ""
     },
@@ -1994,6 +2152,56 @@
       "rc": 0,
       "sources": [
         "generator.yml"
+      ],
+      "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
+    },
+    "generator_priority": {
+      "env": {},
+      "hosts": [
+        "p-h",
+        "q-h"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "p-h": {
+              "v": "x"
+            },
+            "q-h": {
+              "v": "x"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "p-g",
+            "shared",
+            "q-g"
+          ]
+        },
+        "p-g": {
+          "hosts": [
+            "p-h"
+          ]
+        },
+        "q-g": {
+          "hosts": [
+            "q-h"
+          ]
+        },
+        "shared": {
+          "hosts": [
+            "p-h",
+            "q-h"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "generator_priority.yml"
       ],
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },

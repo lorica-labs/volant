@@ -56,7 +56,10 @@ impl InventoryPlugin for Generator {
             .cloned()
             .unwrap_or(Value::Array(Vec::new()));
         let run = Run {
-            templar: Templar::new(source.path().parent().map(Into::into).unwrap_or_default()),
+            templar: cx.templar_for(
+                source.path().parent().map(Into::into).unwrap_or_default(),
+                &Value::Object(config.clone()),
+            ),
             cx,
             file: source.path(),
         };

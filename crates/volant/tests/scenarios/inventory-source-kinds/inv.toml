@@ -1,0 +1,11 @@
+[all.vars]
+av = "a"
+[web.hosts.w1]
+[web.hosts.w2]
+ansible_port = 2200
+[web.vars]
+x = 1
+[db]
+children = ["sub"]
+[db.hosts.d1]
+[sub.hosts.d2]

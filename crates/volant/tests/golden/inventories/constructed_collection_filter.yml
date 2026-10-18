@@ -1,0 +1,3 @@
+plugin: ansible.builtin.constructed
+compose:
+  c_sorted: "[ver | string, '3'] | community.general.version_sort"

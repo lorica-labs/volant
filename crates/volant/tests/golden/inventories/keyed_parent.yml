@@ -1,0 +1,5 @@
+plugin: constructed
+keyed_groups:
+  - key: os
+    prefix: os
+    parent_group: oses

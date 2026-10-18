@@ -4,12 +4,13 @@
 
 use std::cell::{OnceCell, RefCell};
 use std::path::{Component, Path, PathBuf};
-use std::sync::Arc;
+use std::sync::{Arc, LazyLock};
 
 use regex::Regex;
 
 use super::{Inventory, PLUGINS};
-use crate::bridge::Bridge;
+use crate::bridge::{Bridge, PluginKind};
+use crate::template::{Templar, bridged_name};
 
 /// What a run reads hosts from: a path, made absolute the way the reference's `unfrackpath`
 /// makes it, or a host list when the text holds a comma.
@@ -166,6 +167,37 @@ impl<'a> ParseCx<'a> {
     /// The Python helper that runs collection plugins, started by the first one that needs it.
     pub fn helper(&self) -> &Arc<Bridge> {
         self.helper.get_or_init(self.start)
+    }
+
+    /// A templar for the Jinja text in `config`. It reaches the Python helper only when that text
+    /// names a filter or test the engine lacks: starting the helper is not free, and a config of
+    /// core filters must not start it. Names passed as strings (`map('f')`) are not looked for.
+    pub fn templar_for(&self, base: PathBuf, config: &serde_json::Value) -> Templar {
+        static NAMES: LazyLock<Regex> = LazyLock::new(|| {
+            Regex::new(r"\|\s*([A-Za-z_][\w.]*)|\bis\s+(?:not\s+)?([A-Za-z_][\w.]*)")
+                .expect("static regex")
+        });
+        fn strings<'v>(value: &'v serde_json::Value, out: &mut Vec<&'v str>) {
+            match value {
+                serde_json::Value::String(s) => out.push(s),
+                serde_json::Value::Array(a) => a.iter().for_each(|v| strings(v, out)),
+                serde_json::Value::Object(o) => o.values().for_each(|v| strings(v, out)),
+                _ => {}
+            }
+        }
+        let mut texts = Vec::new();
+        strings(config, &mut texts);
+        let lacking = texts.iter().any(|text| {
+            NAMES.captures_iter(text).any(|c| {
+                let (kind, name) = match (c.get(1), c.get(2)) {
+                    (Some(n), _) => (PluginKind::Filter, n.as_str()),
+                    (_, Some(n)) => (PluginKind::Test, n.as_str()),
+                    _ => return false,
+                };
+                bridged_name(kind, name)
+            })
+        });
+        Templar::with_bridge(base, lacking.then(|| Arc::clone(self.helper())))
     }
 
     /// A line shown from verbosity `level` on.

@@ -1,0 +1,13 @@
+plugin: generator
+hosts:
+  name: "{{ a }}-h"
+  parents:
+    - name: "{{ a }}-g"
+      vars:
+        ansible_group_priority: 5
+        v: x
+    - name: shared
+      vars:
+        v: y
+layers:
+  a: [p, q]

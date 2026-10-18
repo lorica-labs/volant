@@ -1,0 +1,11 @@
+# Which plugin parses a source, as -vvv tells it: an ini file, YAML, a script, TOML, a host list,
+# a constructed config after an ini file, a directory, and a bare host list.
+runs:
+  - {args: [-vvv, -i, base.ini, --limit, w1, p.yml]}
+  - {args: [-vvv, -i, inv.yml, --limit, solo, p.yml]}
+  - {args: [-vvv, -i, meta.py, --limit, h1, p.yml]}
+  - {args: [-vvv, -i, inv.toml, --limit, w1, p.yml]}
+  - {args: [-vvv, -i, "a,b,", --limit, a, p.yml]}
+  - {args: [-vvv, -i, base.ini, -i, c1.yml, --limit, w1, p.yml]}
+  - {args: [-vvv, -i, dd, --limit, h1, p.yml]}
+  - {args: [-i, "zz,", p.yml]}

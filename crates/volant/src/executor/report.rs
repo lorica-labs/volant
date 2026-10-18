@@ -176,9 +176,7 @@ pub(super) async fn report_task(
             .await;
     }
     if let Some(answer) = answer {
-        if let Some(permit) = hold.permit {
-            *permit = None;
-        }
+        hold.release();
         // A coordinator that went away without answering leaves the result as it is.
         if let Ok(Answer::Redo(edited)) = answer.await {
             return Some(debugger::redo_result(edited));

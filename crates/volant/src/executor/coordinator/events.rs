@@ -1,34 +1,22 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Which events reach the terminal or the debugger, and writing one the moment it arrives.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use tokio::sync::{oneshot, watch};
 
+use crate::playbook::PlayTask;
 use crate::render::Renderer;
 use crate::stats::{Outcome, Stats};
 
 use super::display::{report_result, switch_header};
-use super::publish::task_name;
-use super::types::{Event, Progress};
+use super::publish::{Coordinator, task_name};
+use super::types::{Event, Progress, Round, Unreached};
 use crate::executor::debugger;
 use crate::executor::prepare::{PlayPlan, host_vars};
 use crate::executor::{RunOptions, RunState};
-
-/// Why `r` cannot run a task again, for the prompts no driver waits on.
-pub(super) struct NoRedo {
-    /// A host that could not be reached has no driver left to run anything.
-    pub(super) unreachable: &'static str,
-    /// An include statement reports its results on its own path, which does not wait.
-    pub(super) task: &'static str,
-}
-
-pub(super) const NO_REDO: NoRedo = NoRedo {
-    unreachable: "redo is not supported yet for a host that could not be reached: c continues with this result and q quits",
-    task: "redo is not supported yet on this task: c continues with this result and q quits",
-};
 
 /// A result a driver holds at the debugger prompt, from its `Event::Debug` to the answer.
 pub(super) struct Held {
@@ -40,6 +28,8 @@ pub(super) struct Held {
     /// The counted result, once it arrived: its outcome, its `changed`, and what `result`
     /// reads at the prompt. The recap counts it once the operator keeps it.
     pub(super) counted: Option<(Outcome, bool, Map<String, Value>)>,
+    /// Or the host could not be reached: it leaves the play once the operator keeps that.
+    pub(super) unreached: Option<Unreached>,
 }
 
 impl Held {
@@ -49,12 +39,13 @@ impl Held {
             lost: false,
             sank: false,
             counted: None,
+            unreached: None,
         }
     }
 
     /// Whether the prompt can open: every result of the task is in.
     pub(super) fn ready(&self) -> bool {
-        self.counted.is_some()
+        self.counted.is_some() || self.unreached.is_some()
     }
 
     /// Takes in one result of the held task: what it would change is kept for the answer, and
@@ -75,6 +66,149 @@ impl Held {
         }
         event
     }
+}
+
+/// What a failed result of step `at` on `host` changes in the batch: the host leaves the live
+/// set, and a `run_once` or `any_errors_fatal` step tells the others. Done on arrival, or once
+/// the operator answers for a result held at the prompt.
+pub(super) fn book(
+    plan: &PlayPlan,
+    coordinator: &mut Coordinator<'_>,
+    round: &mut Round,
+    failed_hosts: &mut HashSet<String>,
+    (host, at): (&str, usize),
+    lost: bool,
+    sank: bool,
+) {
+    let step = plan.steps().steps.get(at).map(|s| s.task.clone());
+    // A `run_once` task that failed, whether or not a `rescue` caught it for the host that ran
+    // it: measured on ansible-core 2.19.12, the rescue keeps that one host in the play
+    // (`rescued=1`, exit 2) and the others still leave. `Ignored` is not a failure and is left
+    // out, so a `run_once` under `ignore_errors` carries the whole batch past it.
+    let announced = sank && step.as_ref().is_some_and(PlayTask::bypasses_host_loop);
+    if announced {
+        coordinator.run_once.insert(at, true);
+    }
+    // A failed result is the host leaving the play, and it arrives before that task's
+    // `TaskDone`. Taking it out of the live set here, rather than waiting for its `Finished`, is
+    // what lets the next task read the shrunken host list without racing the driver that is
+    // shutting down.
+    if lost {
+        round.failed(failed_hosts, host);
+        coordinator.failed_here.insert(host.to_string());
+        coordinator.last_failure = coordinator.last_failure.max(Some(at));
+    }
+    // A failure `any_errors_fatal` covers, rescued or not: the verdict is published with the
+    // failing host's change of state, before any other host can see the step finished.
+    let fatal = sank && step.as_ref().is_some_and(PlayTask::fails_all);
+    if fatal {
+        coordinator.fatal.insert(at);
+    }
+    if lost || announced || fatal {
+        coordinator.publish(failed_hosts, &plan.steps().steps);
+    }
+}
+
+/// What a host that could not be reached at step `at` changes in the batch: the recap counts
+/// it, it leaves the play, and an `any_errors_fatal` step takes the others with it.
+pub(super) fn unreachable_left(
+    plan: &PlayPlan,
+    coordinator: &mut Coordinator<'_>,
+    round: &mut Round,
+    stats: &mut Stats,
+    failed_hosts: &mut HashSet<String>,
+    host: &str,
+    at: Option<usize>,
+) {
+    stats.unreachable(host);
+    round.unreachable(host, at, plan);
+    failed_hosts.insert(host.to_string());
+    if let Some(at) = at
+        && plan
+            .steps()
+            .steps
+            .get(at)
+            .is_some_and(|s| s.task.fails_all() && !s.task.ignores_errors())
+    {
+        coordinator.fatal.insert(at);
+    }
+    coordinator.publish(failed_hosts, &plan.steps().steps);
+}
+
+/// The prompt behind a held result of step `at` on `host`, and the operator's answer sent to
+/// its driver. A result the operator runs again is not counted and changes nothing; any other
+/// answer counts it, and a host that could not be reached leaves. True for `r`.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "what a prompt reads and what its answer changes: the batch, the books and the terminal"
+)]
+pub(super) async fn answer(
+    held: Held,
+    (host, at): (&str, usize),
+    plan: &PlayPlan,
+    coordinator: &mut Coordinator<'_>,
+    round: &mut Round,
+    gone: &mut HashSet<String>,
+    progress_tx: &watch::Sender<Progress>,
+    state: &mut RunState,
+    names: &HashMap<(String, usize), String>,
+    stats: &mut Stats,
+    out: &mut Renderer,
+    options: &RunOptions,
+) -> bool {
+    let asked = match (&held.counted, &held.unreached) {
+        (Some((outcome, _, result)), _) => (debugger::Kind::of(*outcome), result.clone()),
+        (None, Some(blame)) => {
+            blame.show(host, out);
+            unreachable_ask()
+        }
+        // Only a held result that is ready reaches here.
+        (None, None) => {
+            let _ = held.reply.send(debugger::Answer::Continue);
+            return false;
+        }
+    };
+    let answer = debugging(
+        asked,
+        host,
+        at,
+        true,
+        plan,
+        progress_tx,
+        state,
+        names,
+        out,
+        options,
+    )
+    .await;
+    let redo = matches!(answer, debugger::Answer::Redo(_));
+    if !redo {
+        if let Some((outcome, changed, _)) = held.counted {
+            stats.record(host, outcome, changed);
+            book(
+                plan,
+                coordinator,
+                round,
+                &mut state.failed_hosts,
+                (host, at),
+                held.lost,
+                held.sank,
+            );
+        } else {
+            unreachable_left(
+                plan,
+                coordinator,
+                round,
+                stats,
+                &mut state.failed_hosts,
+                host,
+                Some(at),
+            );
+            gone.insert(host.to_string());
+        }
+    }
+    let _ = held.reply.send(answer);
+    redo
 }
 /// Whether an event puts a line on the terminal, which is what a step's header goes in front
 /// of. A result nobody shows still speaks when `ignore_errors` swallowed a failure: the
@@ -169,8 +303,9 @@ pub(super) fn unreachable_ask() -> (debugger::Kind, Map<String, Value>) {
 /// `debugger`, the play's strategy or the environment says to. The coordinator is the one that
 /// waits, which is what the reference does too: nothing else is written while the prompt is
 /// open. Nothing is asked once the run is stopping, an earlier prompt's `q` included, and the
-/// answer is then to go on. `no_redo` says why `r` cannot run the task again, for a prompt no
-/// driver waits on.
+/// answer is then to go on. `waits` says a driver waits on the answer and runs the task again
+/// for `r`; behind a result no driver waits on, an include's, `r` opens the prompt again, which
+/// is what the reference shows: the include runs again to the same result and asks again.
 #[expect(
     clippy::too_many_arguments,
     reason = "what a prompt reads: the step, the batch, the books and the terminal"
@@ -179,7 +314,7 @@ pub(super) async fn debugging(
     (kind, result): (debugger::Kind, Map<String, Value>),
     host: &str,
     index: usize,
-    no_redo: Option<&'static str>,
+    waits: bool,
     plan: &PlayPlan,
     progress_tx: &watch::Sender<Progress>,
     state: &RunState,
@@ -223,8 +358,6 @@ pub(super) async fn debugging(
         raw_args: step.task.args.clone(),
         args: step.task.args.clone(),
         ran: Map::new(),
-        loops: step.task.loop_items.is_some(),
-        no_redo,
         vars,
         result,
         templar: Arc::clone(&state.templar),
@@ -236,5 +369,11 @@ pub(super) async fn debugging(
         session.args = args;
     }
     session.ran.clone_from(&session.args);
-    debugger::ask(&mut session, out, &options.abort, &mut options.stop.clone()).await
+    loop {
+        let answer =
+            debugger::ask(&mut session, out, &options.abort, &mut options.stop.clone()).await;
+        if waits || !matches!(answer, debugger::Answer::Redo(_)) {
+            return answer;
+        }
+    }
 }

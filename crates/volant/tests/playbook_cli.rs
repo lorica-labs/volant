@@ -563,6 +563,62 @@ fn the_debugger_prompts_again_when_a_redo_fails() {
     assert!(text.contains("failed=1"), "{text}");
 }
 
+/// `r` on a passed result under `throttle: 1`, with a fork per host and with one: the host at
+/// the prompt gives its turn and fork back, so the other host still reaches its own prompt.
+#[rstest]
+#[case::two_forks(&[])]
+#[case::one_fork(&["-f", "1"])]
+fn the_debugger_redoes_under_throttle_and_few_forks(#[case] extra: &[&str]) {
+    let inventory = fixture("controller/two-hosts.ini");
+    let playbook = fixture("controller/debugger-throttle.yml");
+    let mut args = vec!["playbook", "-i", &inventory];
+    args.extend_from_slice(extra);
+    args.push(&playbook);
+    let out = volant_within_full(
+        &args,
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some("r\nc\nc\n"),
+        &[],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert_eq!(text.matches("TASK: probe (debug)> ").count(), 3, "{text}");
+    assert_eq!(text.matches("changed=1 ").count(), 2, "{text}");
+}
+
+/// `r` behind an include (same result, asked again), a loop (every item takes the edit) and an
+/// unreachable host (line and prompt again), as measured on ansible-core 2.19.12.
+#[rstest]
+#[case::include(&["controller/debugger-redo-include.yml"], "r\nc\n", 0, 2, "\"msg\": \"included once\"", 1)]
+#[case::loop_edited(&["controller/debugger-redo-loop.yml"], "task.args[\"_raw_params\"] = \"true\"\nr\n", 0, 1, "changed: [localhost] => (item=", 3)]
+#[case::unreachable(&["-i", "controller/debugger-unreachable.ini", "controller/debugger-unreachable.yml"], "r\nc\n", 4, 2, "UNREACHABLE!", 2)]
+fn the_debugger_redoes_every_kind_of_task(
+    #[case] files: &[&str],
+    #[case] stdin: &str,
+    #[case] code: i32,
+    #[case] prompts: usize,
+    #[case] line: &str,
+    #[case] lines: usize,
+) {
+    let mut args = vec!["playbook".to_string()];
+    args.extend(files.iter().map(|f| {
+        if f.starts_with('-') {
+            (*f).to_string()
+        } else {
+            fixture(f)
+        }
+    }));
+    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let out = volant_within_full(&args, DEFAULT_DEADLINE, None, None, None, Some(stdin), &[]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(code), "{text}");
+    assert_eq!(text.matches("(debug)> ").count(), prompts, "{text}");
+    assert_eq!(text.matches(line).count(), lines, "{text}");
+}
+
 /// A `debugger` value the reference does not know loads, and fails the task when it runs.
 #[test]
 fn an_invalid_debugger_value_fails_the_task_when_it_runs() {

@@ -17,6 +17,7 @@ use crate::stats::Outcome;
 use crate::template::TemplateError;
 
 use super::Abort;
+use super::driver::ThrottleTurn;
 use super::prepare::{PlayPlan, Prepared, Strategy};
 
 mod expr;
@@ -52,7 +53,33 @@ pub(super) enum Answer {
     Continue,
     Quit,
     /// Run the task again, with the arguments the prompt edited when it edited them.
-    Redo(Option<Map<String, Value>>),
+    Redo(Option<Edits>),
+}
+
+/// What the operator changed in `task.args` at the prompt before `r`. Only the changed keys
+/// replace a key's value: a loop's items keep their own rendering of the others, and the
+/// reference hands every item the edited arguments too, measured on ansible-core 2.19.12.
+#[derive(Debug, Clone, PartialEq, Default)]
+pub(super) struct Edits {
+    set: Map<String, Value>,
+    removed: Vec<String>,
+}
+
+impl Edits {
+    /// The edits that turn `ran` into `args`, none when they are the same.
+    pub(super) fn between(ran: &Map<String, Value>, args: &Map<String, Value>) -> Option<Edits> {
+        let set: Map<String, Value> = args
+            .iter()
+            .filter(|(key, value)| ran.get(*key) != Some(value))
+            .map(|(key, value)| (key.clone(), value.clone()))
+            .collect();
+        let removed: Vec<String> = ran
+            .keys()
+            .filter(|key| !args.contains_key(*key))
+            .cloned()
+            .collect();
+        (!set.is_empty() || !removed.is_empty()).then_some(Edits { set, removed })
+    }
 }
 
 /// Whether a result of `kind` opens the prompt under `setting`. Without a setting, the
@@ -117,12 +144,15 @@ pub(super) fn causes(task: &PlayTask, message: &str) -> Option<Value> {
 }
 
 /// What `report_task` needs to hold a result at the prompt: whether the play opens it without a
-/// keyword, and the fork permit the host gives back while the operator answers, so the hosts the
-/// coordinator shows first can still run. No permit under `host_pinned`, whose hosts keep their
-/// fork to the end and whose lines are shown as they come, so nobody waits behind the prompt.
+/// keyword, the fork permit the host gives back while the operator answers, so the hosts the
+/// coordinator shows first can still run, and the step's `throttle` turn, given back for the
+/// same reason: turns go in order, and the host the coordinator shows first may be waiting for
+/// this one. No permit under `host_pinned`, whose hosts keep their fork to the end and whose
+/// lines are shown as they come, so nobody waits behind the prompt for a fork.
 pub(super) struct Hold<'a> {
     pub(super) by_default: bool,
     pub(super) permit: Option<&'a mut Option<OwnedSemaphorePermit>>,
+    pub(super) turn: Option<&'a mut Option<ThrottleTurn>>,
 }
 
 impl<'a> Hold<'a> {
@@ -130,6 +160,25 @@ impl<'a> Hold<'a> {
         Hold {
             by_default: by_default(plan.strategy),
             permit: (!plan.strategy.pinned()).then_some(permit),
+            turn: None,
+        }
+    }
+
+    /// The same hold, for a task that holds a `throttle` turn while it reports.
+    pub(super) fn with_turn(self, turn: &'a mut Option<ThrottleTurn>) -> Self {
+        Hold {
+            turn: Some(turn),
+            ..self
+        }
+    }
+
+    /// Gives the fork and the turn back, before the host waits for the operator.
+    pub(super) fn release(self) {
+        if let Some(permit) = self.permit {
+            *permit = None;
+        }
+        if let Some(turn) = self.turn {
+            *turn = None;
         }
     }
 }
@@ -138,38 +187,53 @@ impl<'a> Hold<'a> {
 /// shown or registered: the driver reads it before the result goes anywhere.
 const REDO_KEY: &str = "_volant_redo";
 
-/// What `report_task` answers for `r`: a result the driver reads as a redo, with the edited
-/// arguments if there are any.
-pub(super) fn redo_result(args: Option<Map<String, Value>>) -> TaskResult {
-    TaskResult(Map::from_iter([(
-        REDO_KEY.to_string(),
-        args.map_or(Value::Null, Value::Object),
-    )]))
+/// What `report_task` answers for `r`: a result the driver reads as a redo, with the edits if
+/// there are any.
+pub(super) fn redo_result(edits: Option<Edits>) -> TaskResult {
+    let edits = edits.map_or(
+        Value::Null,
+        |e| serde_json::json!({"set": e.set, "removed": e.removed}),
+    );
+    TaskResult(Map::from_iter([(REDO_KEY.to_string(), edits)]))
 }
 
-/// Whether `result` is a redo, and with which edited arguments.
-pub(super) fn redo_of(result: &TaskResult) -> Option<Option<Map<String, Value>>> {
-    match result.0.get(REDO_KEY)? {
-        Value::Object(args) => Some(Some(args.clone())),
-        _ => Some(None),
-    }
+/// Whether `result` is a redo, and with which edits.
+pub(super) fn redo_of(result: &TaskResult) -> Option<Option<Edits>> {
+    let edits = result.0.get(REDO_KEY)?;
+    let set = edits.get("set").and_then(Value::as_object).cloned();
+    let removed = edits
+        .get("removed")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten();
+    let removed = removed
+        .filter_map(Value::as_str)
+        .map(str::to_string)
+        .collect();
+    Some(set.map(|set| Edits { set, removed }))
 }
 
-/// `prepared` with the arguments the prompt edited before `r`, when it is the step they were
-/// edited at. They were rendered at the prompt and are not rendered again, and each one counts
-/// as a managed host's, since the operator may have copied one there from `task_vars`.
+/// `prepared` with the edits the prompt made before `r`, when it is the step they were made at;
+/// whatever step is prepared next, they are spent. An edited value was rendered at the prompt
+/// and is not rendered again, and counts as a managed host's, since the operator may have
+/// copied it there from `task_vars`.
 pub(super) fn with_edited(
     mut prepared: Result<Prepared, TemplateError>,
     pos: usize,
-    edited: &mut Option<(usize, Map<String, Value>)>,
+    edited: &mut Option<(usize, Edits)>,
 ) -> Result<Prepared, TemplateError> {
-    let Some((_, args)) = edited.take_if(|(at, _)| *at == pos) else {
+    let Some((_, edits)) = edited.take().filter(|(at, _)| *at == pos) else {
         return prepared;
     };
     if let Ok(Prepared::Local(items, _) | Prepared::Remote(items, ..)) = &mut prepared {
         for item in items {
-            item.args_untrusted = args.keys().cloned().collect();
-            item.args.clone_from(&args);
+            for key in &edits.removed {
+                item.args.remove(key);
+            }
+            for (key, value) in &edits.set {
+                item.args.insert(key.clone(), value.clone());
+                item.args_untrusted.insert(key.clone());
+            }
         }
     }
     prepared
@@ -191,10 +255,7 @@ pub(super) async fn ask(
         match session.onecmd(line.trim_end_matches(['\r', '\n']), out) {
             Next::Stay => {}
             Next::Continue => return Answer::Continue,
-            Next::Redo => {
-                let edited = (session.args != session.ran).then(|| session.args.clone());
-                return Answer::Redo(edited);
-            }
+            Next::Redo => return Answer::Redo(Edits::between(&session.ran, &session.args)),
             Next::Quit => {
                 quit(out, abort);
                 return Answer::Quit;

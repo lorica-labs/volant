@@ -56,6 +56,33 @@ jobs:
       # Includes `reference.rs`: the template, inventory and scenario goldens, which need no host.
       - run: cargo nextest run --workspace --no-tests=fail
 
+  # A refactor or perf pull request changes no behaviour: no golden or snapshot moves, and the
+  # list of tests is the one the merge base has, so a test is neither dropped nor renamed.
+  refactor-guard:
+    if: github.event_name == 'pull_request' && (startsWith(github.event.pull_request.title, 'refactor') || startsWith(github.event.pull_request.title, 'perf'))
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: nextest,just
+      - name: No golden or snapshot changed
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: git diff --exit-code "origin/${BASE_REF}...HEAD" -- crates/volant/tests/golden ':(glob)**/*.snap'
+      - name: Same tests as the merge base
+        env:
+          BASE_REF: ${{ github.base_ref }}
+        run: |
+          just test-names > "$RUNNER_TEMP/head.txt"
+          git worktree add "$RUNNER_TEMP/base" "$(git merge-base "origin/${BASE_REF}" HEAD)"
+          (cd "$RUNNER_TEMP/base" && just test-names) > "$RUNNER_TEMP/base.txt"
+          diff "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
+
   coverage:
     runs-on: ubuntu-latest
     steps:

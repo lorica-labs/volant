@@ -44,6 +44,56 @@ check: fmt lint test
 check-local: fmt clippy test
     typos
 
+# The same as `check-local`, with the tests of the modules the branch changes instead of every test.
+# CI runs every test.
+check-touched: fmt clippy test-touched
+    typos
+
+# One line per test, `<binary-id> <name>`, with the module path up to the last `tests::` removed.
+# A refactor that only moves code leaves this list unchanged.
+test-names:
+    cargo nextest list --workspace --message-format oneline | sed -E 's/^([^ ]+) (.*::)?tests::/\1 /' | LC_ALL=C sort
+
+# The tests of the modules changed against `base` (and in the working tree), as nextest filtersets.
+# Over `just remote`, `base` is always origin/main.
+test-touched base="origin/main":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    # Over `just remote` there is no .git: the changed files travel in .volant-changed instead.
+    changed() {
+        if git rev-parse --git-dir > /dev/null 2>&1; then
+            git diff --name-only "{{base}}...HEAD" -- crates
+            git diff --name-only HEAD -- crates
+            git ls-files --others --exclude-standard -- crates
+        else
+            cat .volant-changed
+        fi
+    }
+    terms=$(changed | tr -d '\r' | sort -u | awk -F/ '
+        function module(p) {
+            sub(/\/(mod|tests|test_support)\.rs$/, "", p); sub(/\.rs$/, "", p); gsub(/\//, "::", p); return p
+        }
+        $1 != "crates" || NF < 3 { next }
+        {
+            c = $2
+            rest = substr($0, length("crates/" c "/") + 1)
+            if (rest ~ /^src\/(lib|main|build)\.rs$/ || rest ~ /^src\/bin\// || rest == "Cargo.toml" || (rest ~ /^src\// && rest !~ /\.rs$/)) {
+                print "package(" c ")"
+            } else if (rest ~ /^src\/.*\.rs$/) {
+                print "(package(" c ") & test(/^" module(substr(rest, 5)) "::/))"
+            } else if (rest ~ /^tests\/[^\/]+\.rs$/) {
+                name = substr(rest, 7); sub(/\.rs$/, "", name)
+                print "(package(" c ") & binary(" name "))"
+            } else if (rest ~ /^tests\//) {
+                print "(package(" c ") & kind(test))"
+            }
+        }' | sort -u | paste -sd'|' - | sed 's/|/ | /g')
+    if [ -z "$terms" ]; then
+        echo "nothing to test"
+        exit 0
+    fi
+    cargo nextest run --workspace --no-tests=warn -E "$terms"
+
 fmt:
     cargo fmt --all --check
     taplo fmt --check
@@ -148,11 +198,13 @@ ci-local:
 # describe` is written here, on the side that still has `.git`, from this same commit the tar is
 # about to carry over, and travels as one more file in that same tar stream (added to the file list
 # by hand, since it is gitignored and `--exclude-standard` would otherwise leave it behind). The list
-# itself travels as `.volant-files`, which the deletion pass reads.
+# itself travels as `.volant-files`, which the deletion pass reads. `.volant-changed` lists the
+# crate files the branch changes against origin/main, for `test-touched` over there.
 remote +recipe:
     git describe --always --dirty > .volant-describe
-    git ls-files -z --cached --others --exclude-standard > .volant-files; printf '.volant-describe\0.volant-files\0' >> .volant-files
-    set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; prune='cd "$1" && find . -path ./target -prune -o -type f -print0 | sed -z "s|^\./||" | LC_ALL=C sort -z | LC_ALL=C comm -z -23 - <(LC_ALL=C sort -z .volant-files) | grep -zv -e "^\.volant-describe\$" -e "^\.volant-files\$" | xargs -0 -r rm -f --; find . -mindepth 1 -type d -empty -not -path ./target -not -path "./target/*" -delete'; tar -C . --null --files-from=.volant-files -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir' && bash -c '$prune' _ '$dir'"
+    { git diff --name-only origin/main...HEAD -- crates; git diff --name-only HEAD -- crates; git ls-files --others --exclude-standard -- crates; } > .volant-changed
+    git ls-files -z --cached --others --exclude-standard > .volant-files; printf '.volant-describe\0.volant-changed\0.volant-files\0' >> .volant-files
+    set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; prune='cd "$1" && find . -path ./target -prune -o -type f -print0 | sed -z "s|^\./||" | LC_ALL=C sort -z | LC_ALL=C comm -z -23 - <(LC_ALL=C sort -z .volant-files) | grep -zv -e "^\.volant-describe\$" -e "^\.volant-changed\$" -e "^\.volant-files\$" | xargs -0 -r rm -f --; find . -mindepth 1 -type d -empty -not -path ./target -not -path "./target/*" -delete'; tar -C . --null --files-from=.volant-files -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir' && bash -c '$prune' _ '$dir'"
     dir="${VOLANT_REMOTE_DIR:-volant}"; ssh "$VOLANT_DEV_HOST" ". ~/.profile && cd '$dir' && just {{recipe}}"
 
 # Build the agent as a static musl binary, the only form that can be uploaded to another host

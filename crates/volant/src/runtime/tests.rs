@@ -289,3 +289,19 @@ fn installing_follows_the_mode(
         "{hint}"
     );
 }
+
+#[rstest]
+#[case::appended(&["/u/one", "/u/two"], Some("/rt/collections"), &["/u/one", "/u/two", "/rt/collections"])]
+#[case::kept_in_place(&["/rt/collections", "/u/one"], Some("/rt/collections"), &["/rt/collections", "/u/one"])]
+#[case::no_runtime(&["/u/one"], None, &["/u/one"])]
+fn the_runtimes_collections_come_after_the_users(
+    #[case] user: &[&str],
+    #[case] runtime: Option<&str>,
+    #[case] expected: &[&str],
+) {
+    let got = collections::after(
+        user.iter().map(PathBuf::from).collect(),
+        runtime.map(PathBuf::from),
+    );
+    assert_eq!(got, expected.iter().map(PathBuf::from).collect::<Vec<_>>());
+}

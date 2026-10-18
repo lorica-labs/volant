@@ -77,7 +77,7 @@ pub(crate) fn refusal_of(module: &str, answer: &crate::python::Resolved) -> Opti
         Resolved::Missing {
             collection: Some(collection),
         } => Some(format!(
-            "{} The collection '{collection}' is not installed on the controller: install it with ansible-galaxy collection install {collection}",
+            "{} The collection '{collection}' is not installed on the controller: install it with volant runtime install --collections {collection}",
             unresolved_tail(module)
         )),
     }

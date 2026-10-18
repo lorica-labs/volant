@@ -375,7 +375,8 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
     );
     assert!(
         text.starts_with("task 'Moved': couldn't resolve module/action 'volanttest.coll.moved'")
-            && text.ends_with("install it with ansible-galaxy collection install absentns.absent"),
+            && text
+                .ends_with("install it with volant runtime install --collections absentns.absent"),
         "{text}"
     );
     // Named by a task, each is refused by its own sentence.
@@ -390,7 +391,7 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
         ),
         (
             "volanttest.coll.moved",
-            "ansible-galaxy collection install absentns.absent",
+            "volant runtime install --collections absentns.absent",
         ),
     ] {
         let named = [("T".to_string(), module.to_string())];

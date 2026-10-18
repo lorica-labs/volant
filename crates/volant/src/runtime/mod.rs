@@ -3,6 +3,7 @@
 //! platform they are chosen for, their download, checked against the pinned hash before use, and
 //! the runtimes installed from them.
 
+pub(crate) mod collections;
 pub(crate) mod fetch;
 pub(crate) mod install;
 pub(crate) mod manifest;

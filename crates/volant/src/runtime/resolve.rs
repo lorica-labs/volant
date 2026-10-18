@@ -165,7 +165,7 @@ pub(crate) fn describe() -> Vec<String> {
 }
 
 /// The pinned manifest, read once per process.
-fn pinned() -> Result<&'static Manifest, String> {
+pub(crate) fn pinned() -> Result<&'static Manifest, String> {
     static PINNED: OnceLock<Result<Manifest, String>> = OnceLock::new();
     PINNED
         .get_or_init(Manifest::pinned)

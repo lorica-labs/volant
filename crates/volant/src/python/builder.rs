@@ -68,7 +68,16 @@ impl PythonBuilder {
     /// [`PythonBuilder::under`] with variables set for the helper alone, which is how a test
     /// points ansible-core at a collection it wrote without touching this process's environment.
     pub(super) fn under_with(python: &str, env: &[(&str, &str)]) -> anyhow::Result<PythonBuilder> {
-        PythonBuilder::spawn(python, &["-c", HELPER], env)
+        let from_runtime = crate::runtime::collections::helper_env();
+        let mut env = env.to_vec();
+        if let Some(paths) = from_runtime.as_deref()
+            && !env
+                .iter()
+                .any(|(name, _)| *name == "ANSIBLE_COLLECTIONS_PATH")
+        {
+            env.push(("ANSIBLE_COLLECTIONS_PATH", paths));
+        }
+        PythonBuilder::spawn(python, &["-c", HELPER], &env)
     }
 
     pub(crate) fn spawn(

@@ -3,6 +3,7 @@
 
 use clap::Subcommand;
 
+use crate::runtime::collections;
 use crate::runtime::install::{self, installed};
 use crate::runtime::manifest::Manifest;
 use crate::runtime::{runtimes_dir, status};
@@ -10,7 +11,14 @@ use crate::runtime::{runtimes_dir, status};
 #[derive(Subcommand, Debug)]
 pub enum RuntimeCommand {
     /// Download and install Volant's Python and ansible-core, checked against pinned hashes.
-    Install,
+    Install {
+        /// Also install these collections into the runtime, as `namespace.name[:version]`.
+        #[arg(long, num_args = 1.., value_name = "NAME")]
+        collections: Vec<String>,
+        /// Also install the collections a requirements file lists.
+        #[arg(long, value_name = "FILE")]
+        collections_file: Option<std::path::PathBuf>,
+    },
     /// Show the managed runtime and whether it is installed.
     Status,
     /// Print the managed runtime's Python interpreter.
@@ -41,9 +49,18 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
     let runtimes = runtimes_dir()?;
     let manifest = Manifest::pinned()?;
     match command {
-        RuntimeCommand::Install => {
+        RuntimeCommand::Install {
+            collections,
+            collections_file,
+        } => {
             let done = install::install(&runtimes, &manifest)?;
             println!("{} is installed in {}", done.id, done.dir.display());
+            if !collections.is_empty() {
+                collections::install(&done, &collections::Source::Names(&collections))?;
+            }
+            if let Some(file) = &collections_file {
+                collections::install(&done, &collections::Source::File(file))?;
+            }
         }
         RuntimeCommand::Status => {
             let config = crate::config::Config::load().unwrap_or_else(|e| {

@@ -358,6 +358,11 @@ impl Config {
         if let Ok(list) = std::env::var("ANSIBLE_SKIP_TAGS") {
             config.tags_skip = tag_list(&list);
         }
+        // After the user's own entries, so their collections shadow the ones Volant fetched.
+        config.collections_path = crate::runtime::collections::after(
+            config.collections_path,
+            crate::runtime::collections::active_dir(),
+        );
         Ok(config)
     }
 }

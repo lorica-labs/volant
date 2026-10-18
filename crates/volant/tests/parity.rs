@@ -424,7 +424,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
                 ),
                 ("strategy", "debug", Status::Runs) => (
                     Status::Partial,
-                    "the prompt takes `c` and `q` only".to_string(),
+                    "the prompt answers every command except `r` (redo)".to_string(),
                 ),
                 _ => (s, note),
             };

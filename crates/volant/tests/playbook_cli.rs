@@ -457,6 +457,83 @@ fn step_asks_before_each_task_until_continue() {
     assert!(text.contains("ok=3 "), "{text}");
 }
 
+/// The debugger prompt reads a pipe line by line: `p`, an empty line repeating it, a bare
+/// expression, a name that is not there, `h`, then `c` keeps the failure.
+#[test]
+fn the_debugger_answers_its_commands_from_a_pipe() {
+    let stdin = "p task\n\np host\np task_vars[\"x\"]\ntask_vars[\"y\"] = [1]\nlen(task_vars[\"y\"])\nfoo\nh c\nc\n";
+    let out = volant_within_full(
+        &["playbook", &fixture("controller/debugger.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some(stdin),
+        &[],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    let prompt = "[localhost] TASK: failing (debug)> ";
+    let expected = [
+        "TASK: failing",
+        "TASK: failing",
+        "localhost",
+        "1",
+        "",
+        "1",
+        "***NameError:NameError(\"name 'foo' is not defined\")",
+        "Continue to next result",
+    ]
+    // An assignment prints nothing, not even a newline: the next prompt follows on its line.
+    .map(|line| {
+        if line.is_empty() {
+            prompt.to_string()
+        } else {
+            format!("{prompt}{line}\n")
+        }
+    })
+    .concat();
+    assert!(text.contains(&format!("{expected}{prompt}")), "{text}");
+    assert_eq!(out.status.code(), Some(2), "{text}");
+    assert!(text.contains("failed=1"), "{text}");
+    assert!(!text.contains("TASK [after]"), "{text}");
+}
+
+/// `q`, and the end of a pipe, end the run with 99 and no recap.
+#[rstest]
+#[case::quit("q\n")]
+#[case::end_of_input("")]
+fn the_debugger_quits_on_q_and_on_the_end_of_input(#[case] stdin: &str) {
+    let out = volant_within_full(
+        &["playbook", &fixture("controller/debugger.yml")],
+        DEFAULT_DEADLINE,
+        None,
+        None,
+        None,
+        Some(stdin),
+        &[],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(99), "{text}");
+    assert!(
+        text.contains("[localhost] TASK: failing (debug)> User interrupted execution"),
+        "{text}"
+    );
+    assert!(!text.contains("PLAY RECAP"), "{text}");
+}
+
+/// On a terminal the prompt waits for the operator's line.
+#[cfg(target_os = "linux")]
+#[test]
+fn the_debugger_prompts_on_a_terminal() {
+    let mut run = Pty::start("", "controller/debugger.yml");
+    run.wait_for("[localhost] TASK: failing (debug)> ");
+    run.send(b"p task.name\n");
+    run.wait_for("'failing'");
+    run.send(b"c\n");
+    let text = run.finish();
+    assert!(text.contains("EXIT=2"), "{text}");
+}
+
 /// `volant playbook --version` names Volant and the ansible-core release it matches.
 #[test]
 fn version_names_the_matching_ansible_core() {

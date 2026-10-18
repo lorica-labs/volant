@@ -110,7 +110,7 @@ pub(super) fn debugger(yaml: &Yaml, context: &str) -> anyhow::Result<Option<Debu
             "on_unreachable" => Debugger::OnUnreachable,
             "on_skipped" => Debugger::OnSkipped,
             other => bail!(
-                "{context}Error processing keyword 'debugger': '{other}' is not a valid value for debugger. Must be one of never, on_unreachable, on_failed, always, on_skipped"
+                "{context}Error processing keyword 'debugger': '{other}' is not a valid value for debugger. Must be one of never, on_unreachable, on_skipped, on_failed, always"
             ),
         })),
         Some(other) => bail!("{context}'debugger' must be a name, found {other:?}"),

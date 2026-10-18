@@ -51,7 +51,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
+| `debugger` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
 | `diff` | <span class="kw kw-runs">runs</span> |  |
 | `environment` | <span class="kw kw-runs">runs</span> |  |
 | `fact_path` | <span class="kw kw-runs">runs</span> |  |
@@ -99,7 +99,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
+| `debugger` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
 | `diff` | <span class="kw kw-runs">runs</span> |  |
@@ -137,7 +137,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `check_mode` | <span class="kw kw-runs">runs</span> |  |
 | `collections` | <span class="kw kw-runs">runs</span> |  |
 | `connection` | <span class="kw kw-runs">runs</span> |  |
-| `debugger` | <span class="kw kw-partial">partial</span> | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
+| `debugger` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
 | `delay` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_facts` | <span class="kw kw-runs">runs</span> |  |
 | `delegate_to` | <span class="kw kw-runs">runs</span> |  |
@@ -658,7 +658,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `debug` | <span class="kw kw-partial">partial</span> | the prompt takes `c` and `q` only |
+| `debug` | <span class="kw kw-partial">partial</span> | the prompt answers every command except `r` (redo) |
 | `free` | <span class="kw kw-partial">partial</span> | refused with `max_fail_percentage` |
 | `host_pinned` | <span class="kw kw-partial">partial</span> | refused with `max_fail_percentage`, and with fewer forks than hosts when the play has handlers, dynamic includes, `run_once`, `pause` or `any_errors_fatal` |
 | `linear` | <span class="kw kw-runs">runs</span> |  |

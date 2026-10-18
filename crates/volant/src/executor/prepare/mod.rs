@@ -24,9 +24,9 @@ mod vars;
 
 pub(in crate::executor) use escalation::retry_name;
 pub(in crate::executor) use item::{
-    FINALIZING, Item, NOTIFY_FAILED, Prepared, failure_text, pause_of,
+    FINALIZING, Item, NOTIFY_FAILED, Prepared, failure_text, pause_of, undefined_name,
 };
-pub(in crate::executor) use plan::{PlayPlan, Strategy};
+pub(in crate::executor) use plan::{Gate, PlayPlan, Strategy};
 pub(in crate::executor) use vars::host_vars;
 
 use connect::{connect_for, delegate_for};

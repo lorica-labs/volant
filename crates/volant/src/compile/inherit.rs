@@ -36,7 +36,7 @@ pub(super) fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
         .clone()
         .or_else(|| outer.ignore_errors.clone());
     task.timeout = inner.timeout.or(outer.timeout);
-    task.throttle = inner.throttle.or(outer.throttle);
+    task.throttle = inner.throttle.clone().or_else(|| outer.throttle.clone());
     task.debugger = inner.debugger.or(outer.debugger);
     // All three-state for the same reason `ignore_errors` is: a play or a block that says one
     // thing and a task that says the other have to be told apart from a task that says nothing.

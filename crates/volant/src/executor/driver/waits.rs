@@ -239,27 +239,6 @@ impl Driver<'_> {
         }
     }
 
-    /// The permit that keeps step `at` to its `throttle` hosts at a time; `Some(None)` for a step
-    /// with none, and `None` when the run is interrupted while the host waits for its turn.
-    pub(super) async fn throttled(
-        &mut self,
-        at: usize,
-        limit: Option<u64>,
-    ) -> Option<Option<OwnedSemaphorePermit>> {
-        let Some(limit) = limit.filter(|limit| *limit > 0) else {
-            return Some(None);
-        };
-        let gate =
-            {
-                let mut gates = self.plan.throttles.lock().expect("throttle lock");
-                let permits = usize::try_from(limit).unwrap_or(usize::MAX);
-                Arc::clone(gates.entry(at).or_insert_with(|| {
-                    Arc::new(Semaphore::new(permits.min(Semaphore::MAX_PERMITS)))
-                }))
-            };
-        self.acquire(gate).await.map(Some)
-    }
-
     /// The step this host moves to after finishing `pos`, past the sections it has no reason to
     /// enter. A host draining an `always` section after a failure finishes that section instead,
     /// and `cleanup` - the index that section ends at - moves with it to the next one.

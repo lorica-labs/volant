@@ -11,9 +11,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Category | runs | partial | not yet | later |
 |---|---|---|---|---|
-| keyword (play) | 39 | 2 | 0 | 0 |
-| keyword (block) | 29 | 2 | 0 | 0 |
-| keyword (task) | 63 | 3 | 0 | 0 |
+| keyword (play) | 40 | 1 | 0 | 0 |
+| keyword (block) | 30 | 1 | 0 | 0 |
+| keyword (task) | 64 | 2 | 0 | 0 |
 | keyword (loop_control) | 7 | 0 | 0 | 0 |
 | meta action | 10 | 0 | 0 | 0 |
 | ansible-playbook option | 35 | 3 | 0 | 0 |
@@ -78,7 +78,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `strategy` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
 | `tasks` | <span class="kw kw-runs">runs</span> |  |
-| `throttle` | <span class="kw kw-partial">partial</span> | a number only; a string or a template is not supported yet |
+| `throttle` | <span class="kw kw-runs">runs</span> |  |
 | `timeout` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
 | `vars_files` | <span class="kw kw-runs">runs</span> |  |
@@ -115,7 +115,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `rescue` | <span class="kw kw-runs">runs</span> |  |
 | `run_once` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
-| `throttle` | <span class="kw kw-partial">partial</span> | a number only; a string or a template is not supported yet |
+| `throttle` | <span class="kw kw-runs">runs</span> |  |
 | `timeout` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |
 | `when` | <span class="kw kw-runs">runs</span> |  |
@@ -160,7 +160,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `retries` | <span class="kw kw-runs">runs</span> |  |
 | `run_once` | <span class="kw kw-runs">runs</span> |  |
 | `tags` | <span class="kw kw-runs">runs</span> |  |
-| `throttle` | <span class="kw kw-partial">partial</span> | a number only; a string or a template is not supported yet |
+| `throttle` | <span class="kw kw-runs">runs</span> |  |
 | `timeout` | <span class="kw kw-runs">runs</span> |  |
 | `until` | <span class="kw kw-runs">runs</span> |  |
 | `vars` | <span class="kw kw-runs">runs</span> |  |

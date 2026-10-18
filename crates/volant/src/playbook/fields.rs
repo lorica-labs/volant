@@ -10,7 +10,8 @@ use crate::keywords::BLOCK_SECTIONS;
 use crate::yaml::{field, to_json};
 
 use super::keywords::is_free_form;
-use super::model::HandlerTask;
+use super::model::{HandlerTask, Throttle};
+use super::origin::value_origin;
 use super::task::parse_task;
 /// `tags`, wherever they are written: on a play, on a block, on a role entry or on a task.
 ///
@@ -75,16 +76,15 @@ pub(super) fn seconds(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<O
     }
 }
 
-/// `throttle`, wherever it is written. A negative number is no limit, as it is in the reference.
-pub(super) fn throttle(yaml: &Yaml, context: &str) -> anyhow::Result<Option<u64>> {
+/// `throttle`, wherever it is written, kept as written: the reference renders and converts it
+/// when the task runs, so a word, a template or a float is no error of the file.
+pub(super) fn throttle(yaml: &Yaml) -> anyhow::Result<Option<Throttle>> {
     match field(yaml, "throttle") {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
-        Some(Yaml::Value(Scalar::Integer(i))) => Ok(Some((*i).max(0) as u64)),
-        // Rendered by the reference when the task runs; this release reads a number only.
-        Some(Yaml::Value(Scalar::String(_))) => {
-            bail!("{context}'throttle' written as a string or a template is not supported yet")
-        }
-        Some(other) => bail!("{context}'throttle' must be an integer, found {other:?}"),
+        Some(node) => Ok(Some(Throttle {
+            value: to_json(node)?,
+            origin: value_origin(node),
+        })),
     }
 }
 

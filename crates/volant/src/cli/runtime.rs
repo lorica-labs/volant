@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `runtime` command: install, show and remove the Python runtime Volant manages.
 
+use std::path::Path;
+
 use clap::Subcommand;
 
 use crate::runtime::collections;
@@ -13,12 +15,10 @@ use crate::runtime::{runtimes_dir, status};
 pub enum RuntimeCommand {
     /// Download and install Volant's Python and ansible-core, checked against pinned hashes.
     Install {
-        /// Also install these collections into the runtime, as `namespace.name[:version]`.
-        #[arg(long, num_args = 1.., value_name = "NAME")]
+        /// Also install collections into the runtime: names (`namespace.name[:version]`) or a
+        /// requirements file ending in .yml or .yaml.
+        #[arg(long, num_args = 1.., value_name = "NAME_OR_FILE")]
         collections: Vec<String>,
-        /// Also install the collections a requirements file lists.
-        #[arg(long, value_name = "FILE")]
-        collections_file: Option<std::path::PathBuf>,
         /// Install from a file `volant runtime pack` made, with no download.
         #[arg(long, value_name = "FILE")]
         from: Option<std::path::PathBuf>,
@@ -58,20 +58,17 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
     let runtimes = runtimes_dir()?;
     let manifest = Manifest::pinned()?;
     match command {
-        RuntimeCommand::Install {
-            collections,
-            collections_file,
-            from,
-        } => {
+        RuntimeCommand::Install { collections, from } => {
             let done = match &from {
                 Some(file) => pack::install_from(&runtimes, &manifest, file)?,
                 None => install::install(&runtimes, &manifest)?,
             };
             println!("{} is installed in {}", done.id, done.dir.display());
-            if !collections.is_empty() {
-                collections::install(&done, &collections::Source::Names(&collections))?;
+            let (names, files) = collections::split(&collections, Path::is_file);
+            if !names.is_empty() {
+                collections::install(&done, &collections::Source::Names(&names))?;
             }
-            if let Some(file) = &collections_file {
+            for file in &files {
                 collections::install(&done, &collections::Source::File(file))?;
             }
         }

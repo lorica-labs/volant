@@ -1,0 +1,2 @@
+# A vaulted group_vars file that the given password cannot open stops the run before any task.
+args: [-i, inv, --vault-password-file, pw2, play.yml]

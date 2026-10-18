@@ -23,7 +23,7 @@ fn a_result_opens_the_prompt_as_the_keyword_says(
     #[case] kind: Kind,
     #[case] opens_it: bool,
 ) {
-    assert_eq!(opens(setting, by_default, kind), opens_it);
+    assert_eq!(opens(setting.as_ref(), by_default, kind), opens_it);
 }
 
 #[derive(Clone, Default)]
@@ -93,6 +93,8 @@ const HELP: &str = "\nDocumented commands (type help <topic>):\n\
 #[case::help("h", HELP, Next::Stay)]
 #[case::continue_short("c", "", Next::Continue)]
 #[case::continue_long("continue", "", Next::Continue)]
+#[case::redo_short("r", "", Next::Redo)]
+#[case::redo_long("redo", "", Next::Redo)]
 #[case::quit("q", "", Next::Quit)]
 #[case::end_of_input("EOF", "", Next::Quit)]
 fn a_line_at_the_prompt_answers_as_the_reference_does(

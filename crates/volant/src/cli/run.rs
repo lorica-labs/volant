@@ -7,7 +7,9 @@ use std::sync::{Arc, Mutex};
 use anstream::ColorChoice;
 use tokio::sync::watch;
 
-use super::announce::{announce, inventory_sources, module_path_dirs, options_dump, version_line};
+use super::announce::{
+    announce, announce_callbacks, inventory_sources, module_path_dirs, options_dump, version_line,
+};
 use super::args::PlaybookArgs;
 use super::hosts::{play_hosts, resolve_limit, tag_selection};
 use super::passwords::{ask_passwords, ssh_words};
@@ -41,6 +43,7 @@ pub fn run(args: PlaybookArgs) -> i32 {
         ColorChoice::Auto
     };
     let mut out = Renderer::new(choice, args.verbose);
+    crate::transport::trace::configure(args.verbose, choice);
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
         Err(err) => {
@@ -131,12 +134,7 @@ async fn run_all(
         return Ok(fatal.code);
     }
     let mut inventory = loaded.inventory;
-    for callback in ["minimal", "oneline"] {
-        out.verbose(
-            2,
-            &format!("Skipping callback '{callback}', as we already have a stdout callback."),
-        );
-    }
+    announce_callbacks(out);
     let dump = if out.verbose_at(4) {
         options_dump(args, &config, forks)
     } else {

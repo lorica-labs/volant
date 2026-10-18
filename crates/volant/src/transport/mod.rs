@@ -11,6 +11,7 @@ mod escalation;
 mod session;
 mod shell;
 mod ssh;
+pub mod trace;
 
 pub use bootstrap::{space_needed_kib, triple_for};
 pub use control::{control_dir, raise_open_file_limit};

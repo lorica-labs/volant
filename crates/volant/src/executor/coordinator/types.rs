@@ -158,6 +158,15 @@ pub(in crate::executor) enum Event {
         index: usize,
         groups: Vec<IncludeGroup>,
     },
+    /// The results of task `index` on `host` that follow open the debugger prompt, and the host
+    /// waits for the operator's answer on `reply` before it sends that task's `TaskDone`. Sent
+    /// first, so the coordinator holds back what those results would change until the answer:
+    /// a result the operator asks to run again counts for nothing.
+    Debug {
+        host: String,
+        index: usize,
+        reply: tokio::sync::oneshot::Sender<crate::executor::debugger::Answer>,
+    },
     /// Every result of task `index` on `host` has been sent.
     TaskDone { host: String, index: usize },
     /// The templated name of step `index`, rendered by `host`'s driver when it reached the step:

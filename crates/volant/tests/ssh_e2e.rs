@@ -156,6 +156,55 @@ fn ssh_playbook_runs_and_the_agent_is_cached() {
 
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_vvvv_shows_the_commands_it_runs_and_the_transfer_arguments_stay_inert() {
+    let dir = tmp("vvvv");
+    let inv = inventory(&dir, &[("box", "")]);
+    let out = volant(&[
+        "playbook",
+        "-vvvv",
+        "--ssh-extra-args=-o ServerAliveInterval=7",
+        "--sftp-extra-args=-o A=8",
+        "--scp-extra-args=-o A=7",
+        "-i",
+        &inv,
+        &fixture("ssh/e2e.yml"),
+    ]);
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    let lines: Vec<&str> = text.lines().collect();
+    let has = |part: &str| lines.iter().any(|l| l.contains(part));
+    assert!(has("ESTABLISH SSH CONNECTION FOR USER:"), "{text}");
+    assert!(has("sftp_extra_args: -o A=8"), "{text}");
+    assert!(has("scp_extra_args: -o A=7"), "{text}");
+    // The probe, the upload (with compression, the payload on stdin) and the link.
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("SSH: EXEC ssh") && l.contains("uname -m")),
+        "{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("SSH: EXEC ssh -C") && l.contains("head -c")),
+        "{text}"
+    );
+    assert!(
+        lines
+            .iter()
+            .any(|l| l.contains("SSH: EXEC ssh") && l.contains("exec ")),
+        "{text}"
+    );
+    assert!(lines.iter().any(|l| l.contains("> (0, b'")), "{text}");
+    for exec in lines.iter().filter(|l| l.contains("SSH: EXEC")) {
+        assert!(exec.contains("ServerAliveInterval=7"), "{exec}");
+        assert!(!exec.contains("A=8") && !exec.contains("A=7"), "{exec}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_an_outdated_cached_agent_is_replaced() {
     // The second script prints exactly this controller's version: a cached file is reused only
     // when it is the binary the controller would upload, so a build reporting the same version

@@ -44,6 +44,9 @@ pub struct Keyword {
     /// What a [`Support::Partial`] row does not do, in the words the generated page prints.
     /// `None` on every other row.
     pub missing: Option<&'static str>,
+    /// What the generated page says beside a [`Support::Runs`] row whose reach has a limit
+    /// worth knowing. `None` on every other row.
+    pub note: Option<&'static str>,
     /// Whether a task carrying this keyword is a synchronisation point: the hosts of the batch
     /// meet in front of it before any of them runs it.
     ///
@@ -62,6 +65,7 @@ const fn kw(name: &'static str, support: Support) -> Keyword {
         name,
         support,
         missing: None,
+        note: None,
         barrier: false,
     }
 }
@@ -73,6 +77,7 @@ const fn partial_kw(name: &'static str, missing: &'static str) -> Keyword {
         name,
         support: Partial,
         missing: Some(missing),
+        note: None,
         barrier: false,
     }
 }
@@ -84,8 +89,19 @@ const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. I
     on statements, and on `raw` and `async_status`, which the reference refuses too. \
     `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are.";
 
-/// One sentence for the `debugger` rows.
-const DEBUGGER_MISSING: &str = "the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python";
+/// A keyword this release honours, with the one limit the generated page prints next to it.
+const fn noted_kw(name: &'static str, note: &'static str) -> Keyword {
+    Keyword {
+        name,
+        support: Runs,
+        missing: None,
+        note: Some(note),
+        barrier: false,
+    }
+}
+
+/// The limit of the `debugger` rows.
+pub const DEBUGGER_NOTE: &str = "`p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs. `task_vars` edited at the prompt reach a redo through `u` only";
 
 /// A keyword whose presence on a task makes that task a synchronisation point.
 const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
@@ -93,6 +109,7 @@ const fn barrier_kw(name: &'static str, support: Support) -> Keyword {
         name,
         support,
         missing: None,
+        note: None,
         barrier: true,
     }
 }
@@ -132,7 +149,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
-    partial_kw("debugger", DEBUGGER_MISSING),
+    noted_kw("debugger", DEBUGGER_NOTE),
     kw("delay", Runs),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
@@ -229,7 +246,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
     kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
-    partial_kw("debugger", DEBUGGER_MISSING),
+    noted_kw("debugger", DEBUGGER_NOTE),
     kw("diff", Runs),
     kw("environment", Runs),
     kw("fact_path", Runs),
@@ -302,7 +319,7 @@ pub const BLOCK_KEYWORDS: &[Keyword] = &[
     kw("check_mode", Runs),
     kw("collections", Runs),
     kw("connection", Runs),
-    partial_kw("debugger", DEBUGGER_MISSING),
+    noted_kw("debugger", DEBUGGER_NOTE),
     kw("delegate_facts", Runs),
     kw("delegate_to", Runs),
     kw("diff", Runs),
@@ -355,118 +372,8 @@ pub fn handler_keyword(name: &str) -> Option<&'static Keyword> {
     HANDLER_KEYWORDS.iter().find(|k| k.name == name)
 }
 
-/// What one table says about `name`, as the published page spells it, with the class the site
-/// draws it by.
-fn status(table: &[Keyword], name: &str) -> &'static str {
-    match table.iter().find(|k| k.name == name) {
-        Some(k) if k.support == Runs => r#"<span class="kw kw-runs">runs</span>"#,
-        Some(k) if k.support == Partial => r#"<span class="kw kw-partial">partial</span>"#,
-        Some(_) => r#"<span class="kw kw-notyet">not yet</span>"#,
-        None => r#"<span class="kw kw-no">not accepted</span>"#,
-    }
-}
-
-/// The page published in the documentation, generated from the tables above so it cannot say
-/// something the loader and the pre-flight do not do. The legend and the main grid are HTML, so the
-/// site can draw each status as a shape and filter the grid; everything reads without scripts.
-///
-/// The status is per place a keyword can be written rather than per keyword, because the two
-/// differ: `ignore_errors` runs on a block and on a task and is not supported on a play, and a
-/// single column would have to pick one of the two and be wrong about the other.
-pub fn documentation() -> String {
-    let mut out = String::from(
-        "---\ntitle: Keywords\ndescription: Every play, block and task keyword ansible-core 2.19 \
-         knows, and what Volant does with each one.\n---\n\n<!-- Generated from \
-         crates/volant/src/keywords.rs by `just docs-keywords`. Do not edit by hand. -->\n\n\
-         Volant loads a playbook against the whole ansible-core 2.19 grammar, so it parses here \
-         as it parses under Ansible. What this release does not support yet is named before the \
-         run starts, never accepted and then ignored. Each keyword has a status for each place it \
-         can be written.\n\n\
-         <ul class=\"kw-legend not-content\">\n\
-         <li><span class=\"kw kw-runs\">runs</span><span>Volant honors it, or names the one value \
-         it does not support yet.</span></li>\n\
-         <li><span class=\"kw kw-partial\">partial</span><span>Accepted and honored, but not \
-         everything Ansible does with it. The gap is listed below the grid.</span></li>\n\
-         <li><span class=\"kw kw-notyet\">not yet</span><span>Not supported yet. The playbook \
-         loads, and the run stops before anything connects. In a file a dynamic include names, \
-         the statement fails when a host reaches it instead.</span></li>\n\
-         <li><span class=\"kw kw-no\">not accepted</span><span>Cannot be written there. Ansible \
-         rejects it too, when it reads the playbook.</span></li>\n\
-         </ul>\n\n\
-         A keyword inside a file that only a dynamic `include_tasks` or `include_role` names is \
-         checked when a host reaches that statement: if it is not supported yet, the statement \
-         fails for that host, a `rescue` around it can catch the failure, and nothing in the file \
-         runs. See [Includes and imports](/playbooks/includes/).\n\n\
-         This page is generated from the tables the loader and the pre-flight read, so it always \
-         describes the release it ships with.\n\n\
-         ## All keywords\n\n\
-         <div class=\"kw-grid-wrap not-content\">\n<table class=\"kw-grid\">\n<thead><tr>\
-         <th>Keyword</th><th>Play</th><th>Block</th><th>Task</th></tr></thead>\n<tbody>\n",
-    );
-    let mut names: Vec<&str> = [TASK_KEYWORDS, PLAY_KEYWORDS, BLOCK_KEYWORDS]
-        .iter()
-        .flat_map(|table| table.iter())
-        .map(|k| k.name)
-        .collect();
-    names.sort_unstable();
-    names.dedup();
-    for name in names {
-        let _ = writeln!(
-            out,
-            "<tr><td><code>{name}</code></td><td>{}</td><td>{}</td><td>{}</td></tr>",
-            status(PLAY_KEYWORDS, name),
-            status(BLOCK_KEYWORDS, name),
-            status(TASK_KEYWORDS, name)
-        );
-    }
-    out.push_str("</tbody>\n</table>\n</div>\n");
-    let mut partial: Vec<(&str, &str)> = [
-        TASK_KEYWORDS,
-        PLAY_KEYWORDS,
-        LOOP_CONTROL_KEYWORDS,
-        BLOCK_KEYWORDS,
-        HANDLER_KEYWORDS,
-    ]
-    .iter()
-    .flat_map(|table| table.iter())
-    .filter_map(|k| k.missing.map(|m| (k.name, m)))
-    .collect();
-    partial.sort_unstable();
-    partial.dedup();
-    out.push_str(
-        "\n## What partial leaves out\n\nEach keyword below behaves the same way in every place \
-         the grid marks it `partial`.\n\n| Keyword | What is missing |\n|---|---|\n",
-    );
-    for (name, missing) in partial {
-        let _ = writeln!(out, "| `{name}` | {missing} |");
-    }
-
-    out.push_str(
-        "\n## Handlers\n\nA handler accepts every task keyword above, plus one of its own.\n\n\
-         | Keyword | Status |\n|---|---|\n",
-    );
-    for k in HANDLER_KEYWORDS {
-        let _ = writeln!(
-            out,
-            "| `{}` | {} |",
-            k.name,
-            status(HANDLER_KEYWORDS, k.name)
-        );
-    }
-    out.push_str(
-        "\n## Under loop_control\n\nA sub-key ansible-core does not know is rejected when the \
-         playbook loads.\n\n| Sub-key | Status |\n|---|---|\n",
-    );
-    for k in LOOP_CONTROL_KEYWORDS {
-        let _ = writeln!(
-            out,
-            "| `{}` | {} |",
-            k.name,
-            status(LOOP_CONTROL_KEYWORDS, k.name)
-        );
-    }
-    out
-}
+mod page;
+pub use page::documentation;
 
 #[cfg(test)]
 mod tests;

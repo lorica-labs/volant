@@ -2,13 +2,14 @@
 //! Turning one task's results into the events the coordinator shows.
 
 use serde_json::Value;
-use tokio::sync::mpsc;
+use tokio::sync::{mpsc, oneshot};
 use volant_protocol::TaskResult;
 
 use crate::playbook::{Flag, PlayTask};
 use crate::render::{DIFF_KEY, Dump, ERROR_KEY, ErrorBlock};
 
 use super::coordinator::Event;
+use super::debugger::{self, Answer, Hold, Kind};
 use super::run::{RetryLine, classify, empty_loop_result, loops, registered_value};
 
 /// Sends the result lines of one task and its `TaskDone`. Returns the result a rescue would be
@@ -32,6 +33,10 @@ use super::run::{RetryLine, classify, empty_loop_result, loops, registered_value
 /// `names` is parallel to `results` as well: each item's task name, already templated. The
 /// `FAILED - RETRYING` line shows it rather than the raw `task.name` - measured, a templated name
 /// like `probe {{ n }}` renders there the way it does everywhere else.
+///
+/// A result that opens the debugger prompt is held there: the host waits for the operator's
+/// answer before the task's `TaskDone`, without its fork, and `r` comes back as the result
+/// [`debugger::redo_of`] reads, with no `TaskDone` sent, for the driver to run the step again.
 #[expect(
     clippy::too_many_arguments,
     reason = "four lists parallel to results: labels, ignored, retries and names; folding them into a struct hides which is parallel to what"
@@ -50,6 +55,7 @@ pub(super) async fn report_task(
     dump: Dump,
     rescuable: bool,
     delegate: Option<&str>,
+    hold: Hold<'_>,
 ) -> Option<TaskResult> {
     let is_loop = loops(task, results.first().map(|(element, _)| element));
     let censored = task.censors();
@@ -61,8 +67,33 @@ pub(super) async fn report_task(
             .unwrap_or_else(|| task.ignores_errors())
     };
     // Whether a failed item stands: one that its own `ignore_errors` did not cover.
-    let mut failure_stands = false;
-    let mut any_failed = false;
+    let failure_stands = results
+        .iter()
+        .enumerate()
+        .any(|(i, (_, r))| r.failed() && !ignores(i));
+    let any_failed = results.iter().any(|(_, r)| r.failed());
+    let aggregate = is_loop.then(|| aggregate(task, results, dump, any_failed, censored));
+    // The result the debugger judges: the task's own, or the loop's aggregate.
+    let judged = match &aggregate {
+        Some((aggregate, _)) => Some(classify(aggregate, !failure_stands, rescuable)),
+        None => results
+            .first()
+            .map(|(_, r)| classify(r, ignores(0), rescuable)),
+    };
+    let answer = match judged {
+        Some(outcome) if debugger::opens_for(task, hold.by_default, Kind::of(outcome)) => {
+            let (reply, answer) = oneshot::channel();
+            let _ = tx
+                .send(Event::Debug {
+                    host: host.to_string(),
+                    index,
+                    reply,
+                })
+                .await;
+            Some(answer)
+        }
+        _ => None,
+    };
     let mut first_failure: Option<TaskResult> = None;
     for (i, (element, r)) in results.iter().enumerate() {
         for (left, attempt) in retries.get(i).into_iter().flatten() {
@@ -78,11 +109,9 @@ pub(super) async fn report_task(
                 .await;
         }
         let outcome = classify(r, ignores(i), rescuable);
-        failure_stands |= r.failed() && !ignores(i);
         if r.failed() && first_failure.is_none() {
             first_failure = Some(r.clone());
         }
-        any_failed |= r.failed();
         let label = labels.get(i).cloned().flatten();
         let error = r.failed().then(|| {
             let mut block = ErrorBlock::of(r, task.origin.as_ref(), censored);
@@ -121,33 +150,7 @@ pub(super) async fn report_task(
             .await;
     }
     let mut failure = first_failure.map(|r| without_error(&r));
-    if is_loop {
-        // A loop over an empty list has no item lines to carry it, so the aggregate is the whole
-        // display: one `skipping` line for the task.
-        let (aggregate, show) = if results.is_empty() {
-            (empty_loop_result(), true)
-        } else {
-            let aggregate = match registered_value(task, results) {
-                Value::Object(mut m) => {
-                    m.remove("results");
-                    TaskResult(m)
-                }
-                _ => TaskResult::default(),
-            };
-            // The reference prints no aggregate line for a loop that had items, except when
-            // every one of them was skipped: `v2_runner_on_skipped` fires once for the task
-            // itself, after the item lines, whenever the aggregate it hands over comes back
-            // skipped - measured, `geerlingguy.git : Build git.` with a false `when` prints its
-            // two item lines and then `skipping: [host]`. An ok, changed or failed loop still
-            // shows nothing here: the item lines (and `...ignoring`) carry the message alone.
-            //
-            // A failed `debug` loop is the exception, measured: `_clean_results` strips a `debug`
-            // result with a `msg` down to that `msg`, `results` included, so the callback no
-            // longer sees a loop and prints `fatal: [h]: FAILED! => {"msg": "One or more items
-            // failed"}` after the items. A `no_log` one has no `msg` left to keep, and no line.
-            let show = aggregate.skipped() || (dump == Dump::Debug && any_failed && !censored);
-            (aggregate, show)
-        };
+    if let Some((aggregate, show)) = aggregate {
         let outcome = classify(&aggregate, !failure_stands, rescuable);
         // Measured on ansible-core 2.19.12: a rescue reading `ansible_failed_result.results`
         // after a loop whose second item failed sees all three items. The aggregate is the
@@ -172,6 +175,13 @@ pub(super) async fn report_task(
             })
             .await;
     }
+    if let Some(answer) = answer {
+        hold.release();
+        // A coordinator that went away without answering leaves the result as it is.
+        if let Ok(Answer::Redo(edited)) = answer.await {
+            return Some(debugger::redo_result(edited));
+        }
+    }
     let _ = tx
         .send(Event::TaskDone {
             host: host.to_string(),
@@ -183,6 +193,41 @@ pub(super) async fn report_task(
     } else {
         None
     }
+}
+
+/// A loop's aggregate result and whether it shows a line of its own. A loop over an empty list
+/// has no item lines to carry it, so the aggregate is the whole display: one `skipping` line for
+/// the task.
+fn aggregate(
+    task: &PlayTask,
+    results: &[(Option<Value>, TaskResult)],
+    dump: Dump,
+    any_failed: bool,
+    censored: bool,
+) -> (TaskResult, bool) {
+    if results.is_empty() {
+        return (empty_loop_result(), true);
+    }
+    let aggregate = match registered_value(task, results) {
+        Value::Object(mut m) => {
+            m.remove("results");
+            TaskResult(m)
+        }
+        _ => TaskResult::default(),
+    };
+    // The reference prints no aggregate line for a loop that had items, except when
+    // every one of them was skipped: `v2_runner_on_skipped` fires once for the task
+    // itself, after the item lines, whenever the aggregate it hands over comes back
+    // skipped - measured, `geerlingguy.git : Build git.` with a false `when` prints its
+    // two item lines and then `skipping: [host]`. An ok, changed or failed loop still
+    // shows nothing here: the item lines (and `...ignoring`) carry the message alone.
+    //
+    // A failed `debug` loop is the exception, measured: `_clean_results` strips a `debug`
+    // result with a `msg` down to that `msg`, `results` included, so the callback no
+    // longer sees a loop and prints `fatal: [h]: FAILED! => {"msg": "One or more items
+    // failed"}` after the items. A `no_log` one has no `msg` left to keep, and no line.
+    let show = aggregate.skipped() || (dump == Dump::Debug && any_failed && !censored);
+    (aggregate, show)
 }
 
 /// `r` as it is registered or handed to a rescue: without the error block's message the executor

@@ -1,3 +1,4 @@
 # A retried debug or assert prints `Result was:` on its retry line, a quiet one does not,
 # and an error block printed once is not printed again for another host.
+# No modes: the retry lines are the same in every mode.
 args: [-i, inv.ini, retries.yml]

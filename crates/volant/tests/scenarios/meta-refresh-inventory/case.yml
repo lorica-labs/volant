@@ -1,4 +1,5 @@
 # refresh_inventory reads the inventory file again: groups change at once, a new host joins the next play.
+# No modes: the meta effects are the same in every mode.
 runs:
   - args: [-i, inv.ini, play.yml]
   - args: [-i, inv.ini, when.yml]

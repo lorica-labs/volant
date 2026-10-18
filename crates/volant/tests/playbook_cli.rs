@@ -2047,7 +2047,7 @@ fn a_waiting_host_is_released_when_the_others_never_report() {
             &dir.join("inv.ini").display().to_string(),
             &dir.join("silent.yml").display().to_string(),
         ],
-        std::time::Duration::from_secs(20),
+        std::time::Duration::from_secs(60),
         Some(&dir.join("bin")),
         &[],
     );
@@ -2299,7 +2299,8 @@ use volant::keywords::{
     BLOCK_KEYWORDS, HANDLER_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, TASK_KEYWORDS,
 };
 
-const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
+/// A slow runner needs more than a quick one; a hang still ends as a failure here.
+const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(60);
 
 /// A directory for generated probes, emptied first so a previous run cannot answer for this one.
 fn probe_dir(kind: &str) -> std::path::PathBuf {

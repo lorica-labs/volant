@@ -1,7 +1,7 @@
 - hosts: h1
   gather_facts: false
   vars:
-    out: /tmp/volant-shim-gaps
+    out: /tmp/volant-shim-gaps-{{ playbook_dir | basename }}
   tasks:
     - file: {path: "{{ out }}", state: absent}
       diff: false

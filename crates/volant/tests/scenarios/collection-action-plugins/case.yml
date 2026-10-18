@@ -1,4 +1,5 @@
 # A collection's action plugins run as ansible-core's own: update_fact works on the controller,
 # and shutdown refuses a local connection by itself.
+# No modes: a collection plugin runs the same way in every mode, and the module scenarios record the modes.
 args: [-i, inv.ini, play.yml]
 needs: [ansible-core]

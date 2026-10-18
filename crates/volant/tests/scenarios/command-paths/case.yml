@@ -1,2 +1,3 @@
 # `chdir`, `creates` and `removes` expand ~ and $VAR; `expand_argument_vars` is read on command only.
+# No modes: `command` is not run under --check, so the modes add no case of path expansion.
 args: [-i, inv.ini, play.yml]

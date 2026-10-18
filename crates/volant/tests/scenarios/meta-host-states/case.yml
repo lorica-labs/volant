@@ -1,4 +1,5 @@
 # A host that ended, failed, went unreachable or was forgiven leaves the same recap and exit code as the reference, whatever else the play says.
+# No modes: the meta effects are the same in every mode.
 runs:
   - args: [-i, inv.ini, aef-ended.yml]
   - args: [-i, inv.ini, mfp-ended.yml]

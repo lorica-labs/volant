@@ -1,3 +1,4 @@
 # A remote module's facts under delegate_facts land on the delegate.
+# No modes: who runs a task is decided before --check and --diff apply.
 args: [-i, inv.ini, delegate-facts-remote.yml]
 needs: ["ansible-core"]

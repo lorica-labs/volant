@@ -1,4 +1,5 @@
 # end_play ends the play for every host, once its condition holds on the first one.
+# No modes: the meta effects are the same in every mode.
 runs:
   - args: [-i, inv.ini, when.yml]
   - args: [-i, inv.ini, always.yml]

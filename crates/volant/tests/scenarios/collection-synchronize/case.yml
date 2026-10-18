@@ -1,3 +1,4 @@
 # synchronize runs its own module through the controller's rsync; a second run changes nothing.
+# No modes: a collection plugin runs the same way in every mode, and the module scenarios record the modes.
 args: [-i, inv.ini, play.yml]
 needs: [ansible-core]

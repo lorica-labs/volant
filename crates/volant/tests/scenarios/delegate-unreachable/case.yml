@@ -1,2 +1,3 @@
 # An unreachable delegate is the delegating host's failure.
+# No modes: who runs a task is decided before --check and --diff apply.
 args: [-i, inv.ini, delegate-unreachable.yml]

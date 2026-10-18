@@ -1,4 +1,5 @@
 # clear_host_errors forgives failures for the exit code and brings unreachable hosts back for a round of their own.
+# No modes: the meta effects are the same in every mode.
 runs:
   - args: [-i, inv.ini, failed.yml]
   - args: [-i, inv.ini, failed-next.yml]

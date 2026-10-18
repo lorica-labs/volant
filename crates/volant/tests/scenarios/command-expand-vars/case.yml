@@ -1,2 +1,3 @@
 # A command expands $VAR, ${VAR} and ~ in the words it runs, from the task environment; a shell does not.
+# No modes: `command` is not run under --check, so the modes add no case of expansion.
 args: [-i, inv.ini, expand.yml]

@@ -1,2 +1,3 @@
 # with_pipe runs a command.
+# No modes: the loop source runs the same way in every mode.
 args: [play.yml]

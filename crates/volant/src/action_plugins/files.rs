@@ -74,11 +74,27 @@ pub(crate) fn refuse_host_named(untrusted: &BTreeSet<String>, arg: &str) -> Resu
     Ok(())
 }
 
+#[cfg(test)]
+thread_local! {
+    /// The frame limit the tests of this thread run with, so a test of the refusal does not build
+    /// a payload of the real size.
+    pub(crate) static FRAME_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_FILE_LEN) };
+}
+
+/// The most one frame carries: [`MAX_FILE_LEN`], or the test thread's own limit.
+fn frame_limit() -> usize {
+    #[cfg(test)]
+    return FRAME_LIMIT.get();
+    #[cfg(not(test))]
+    MAX_FILE_LEN
+}
+
 /// Refuses `len` bytes that could not fit in one frame, naming both sizes.
 pub(crate) fn fits(name: &str, len: usize) -> Result<(), String> {
-    if len > MAX_FILE_LEN {
+    let limit = frame_limit();
+    if len > limit {
         return Err(format!(
-            "{name} is {len} bytes; one frame carries at most {MAX_FILE_LEN}"
+            "{name} is {len} bytes; one frame carries at most {limit}"
         ));
     }
     Ok(())

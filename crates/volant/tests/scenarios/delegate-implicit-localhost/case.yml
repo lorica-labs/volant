@@ -1,2 +1,3 @@
 # The implicit localhost is a valid delegate, and a skip shows no arrow.
+# No modes: who runs a task is decided before --check and --diff apply.
 args: [-i, inv.ini, delegate-localhost.yml]

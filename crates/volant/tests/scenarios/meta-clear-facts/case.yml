@@ -1,4 +1,5 @@
 # clear_facts forgets what setup gathered for every host and keeps what set_fact wrote.
+# No modes: the meta effects are the same in every mode.
 runs:
   - args: [-i, inv.ini, play.yml]
   - args: [-i, inv.ini, when.yml]

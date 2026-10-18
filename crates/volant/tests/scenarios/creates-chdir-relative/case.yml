@@ -1,2 +1,3 @@
 # A relative creates is resolved against chdir.
+# No modes: `command` is not run under --check, so the modes add no case of `creates`.
 args: [-i, inv.ini, -e, "workdir={{ playbook_dir }}/work", creates-chdir.yml]

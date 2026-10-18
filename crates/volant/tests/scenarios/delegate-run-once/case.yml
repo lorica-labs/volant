@@ -1,2 +1,3 @@
 # run_once and delegate_to: the runner, the arrow and the facts.
+# No modes: who runs a task is decided before --check and --diff apply.
 args: [-i, inv.ini, delegate.yml]

@@ -372,6 +372,13 @@ fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
         .expect("the pattern compiles")
         .replace_all(&stdout, "<golden-ansible-tmp>")
         .into_owned();
+    // `bridge-shim-gaps` writes under a directory named after the run's copy of the scenario, so
+    // two runs on one machine never share it: the recording holds the bare name.
+    let stdout =
+        regex::Regex::new(r"/tmp/volant-shim-gaps-volant-scenario-[0-9]+-bridge-shim-gaps-[0-9]+")
+            .expect("the pattern compiles")
+            .replace_all(&stdout, "/tmp/volant-shim-gaps")
+            .into_owned();
     if unordered.is_empty() {
         return stdout;
     }

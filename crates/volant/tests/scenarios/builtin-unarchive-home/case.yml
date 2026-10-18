@@ -1,3 +1,4 @@
 # `unarchive` with a `~` in `src` and in `dest`, and the refusal of a `$HOME` in `dest`.
+# No modes: the run is about how `~` and `$HOME` are read, which --check and --diff do not change.
 args: [-i, inv.ini, play.yml]
 needs: ["ansible-core"]

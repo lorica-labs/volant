@@ -6,7 +6,6 @@ use volant_protocol::TaskResult;
 use volant_protocol::encoding::b64_decode;
 
 use super::*;
-use crate::action_plugins::files::MAX_FILE_LEN;
 use crate::action_plugins::{Step, Sub};
 use crate::testing::{scratch, write};
 
@@ -335,7 +334,8 @@ fn what_cannot_be_rendered_is_refused_before_the_host_is_asked() {
 /// host.
 #[test]
 fn a_render_bigger_than_a_frame_is_refused() {
-    let len = MAX_FILE_LEN + 1;
+    crate::action_plugins::files::FRAME_LIMIT.set(1024);
+    let len = 1025;
     let dir = with_template("big.j2", &"x".repeat(len));
     let mut plugin = start_plain(&dir, json!({"src": "big.j2", "dest": "/x"}));
     plugin.next(None);
@@ -346,8 +346,7 @@ fn a_render_bigger_than_a_frame_is_refused() {
     assert_eq!(
         result.0["msg"],
         json!(format!(
-            "big.j2 is {len} bytes; one frame carries at most {}",
-            MAX_FILE_LEN
+            "big.j2 is {len} bytes; one frame carries at most 1024"
         ))
     );
 }

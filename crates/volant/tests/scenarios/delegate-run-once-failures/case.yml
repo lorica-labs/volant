@@ -1,4 +1,5 @@
 # A failing run_once task, a rescued one, and a failed host as a delegate.
+# No modes: who runs a task is decided before --check and --diff apply.
 runs:
   - args: [-i, inv.ini, run-once-fails.yml]
   - args: [-i, inv.ini, run-once-rescued.yml]

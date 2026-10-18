@@ -4,7 +4,8 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, Stop, splitlines};
+use super::Host;
+use crate::natives::runtime::{Stop, splitlines};
 
 pub fn collect(host: &Host) -> Result<Map<String, Value>, Stop> {
     let mut enforced = Value::from("N/A");
@@ -35,7 +36,7 @@ fn parse(out: &str) -> (&'static str, Vec<String>) {
         if !line.starts_with("Current:") {
             continue;
         }
-        if super::py_strip(line.split(':').nth(1).unwrap_or_default()) == "=ep" {
+        if crate::natives::runtime::py_strip(line.split(':').nth(1).unwrap_or_default()) == "=ep" {
             enforced = "False";
         } else {
             enforced = "True";
@@ -44,7 +45,7 @@ fn parse(out: &str) -> (&'static str, Vec<String>) {
                 .nth(1)
                 .unwrap_or_default()
                 .split(',')
-                .map(|cap| super::py_strip(cap).to_string())
+                .map(|cap| crate::natives::runtime::py_strip(cap).to_string())
                 .collect();
         }
     }

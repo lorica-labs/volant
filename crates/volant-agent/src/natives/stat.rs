@@ -15,10 +15,10 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    ArgSpec, Clock, Stop, access, bin_path, bool_param, check, check_names, clock, invocation,
-    lookup_group, lookup_user, module_args, native_run, path_param, realpath, run_program,
-    str_param, strerror,
+    ArgSpec, access, bin_path, bool_param, check, check_names, clock, invocation, lookup_group,
+    lookup_user, module_args, native_run, path_param, realpath, str_param, strerror,
 };
+use super::runtime::{Clock, Stop, run as run_program};
 use super::{Native, NativeRun};
 use crate::modules::Context;
 

@@ -46,6 +46,8 @@ mod group;
 #[cfg(unix)]
 mod lineinfile;
 mod package_facts;
+#[cfg(unix)]
+pub mod runtime;
 mod service_facts;
 #[cfg(unix)]
 pub mod setup;

@@ -53,7 +53,7 @@ mod imp {
     use crate::modules::Context;
     use crate::modules::command::CANCEL_POLL;
     use crate::natives::NativeRun;
-    use crate::natives::setup::{Clock, Root, Stop, py_split, py_strip, splitlines};
+    use crate::natives::runtime::{Clock, Root, Stop, py_split, py_strip, splitlines};
 
     /// The states `SystemctlScanService` reads anywhere on a line but the last word.
     const BAD_STATES: [&str; 3] = ["not-found", "masked", "failed"];
@@ -258,7 +258,7 @@ mod imp {
         program: &Path,
         args: &[&str],
     ) -> Result<(i32, String), Stop> {
-        let (rc, stdout) = crate::natives::setup::run(env, clock, program, args)?
+        let (rc, stdout) = crate::natives::runtime::run(env, clock, program, args)?
             .ok_or_else(|| format!("{} could not be started", program.display()))?;
         if stdout.contains('\u{fffd}') {
             return Err(
@@ -600,7 +600,7 @@ mod imp {
         use serde_json::json;
 
         use super::*;
-        use crate::natives::setup::unbounded;
+        use crate::natives::runtime::unbounded;
 
         /// The reason guard's cases (`natives::tests`): `systemctl` lines the native hands back
         /// on, each naming a secret-looking unit, and a `PATH` holding one.

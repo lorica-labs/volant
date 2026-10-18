@@ -3,7 +3,8 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, py_split, py_strip, splitlines};
+use super::Host;
+use crate::natives::runtime::{py_split, py_strip, splitlines};
 
 pub fn collect(host: &Host) -> Map<String, Value> {
     let content = host.root.content("/etc/resolv.conf").unwrap_or_default();

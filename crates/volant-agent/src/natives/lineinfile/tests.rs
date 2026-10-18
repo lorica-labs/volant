@@ -518,7 +518,7 @@ fn a_backup_keeps_its_own_content_and_overwrites_nothing() {
         write(&path, "a=1\n", 0o644);
         write(&taken, "older backup\n", 0o644);
         assert!(matches!(
-            backup_copy(&path, &taken, super::super::setup::unbounded()),
+            backup_copy(&path, &taken, super::super::runtime::unbounded()),
             Err(BackupError::Exists(_))
         ));
         assert_eq!(fs::read_to_string(&taken).unwrap(), "older backup\n");

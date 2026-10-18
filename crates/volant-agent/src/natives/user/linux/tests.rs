@@ -5,7 +5,7 @@ use serde_json::json;
 use super::*;
 use crate::natives::common::golden::fake_getent;
 use crate::natives::group::tests::{Fakes, args, scratch_name};
-use crate::natives::setup::unbounded;
+use crate::natives::runtime::unbounded;
 
 fn ask(args: &Map<String, Value>, context: &Context) -> Result<Map<String, Value>, Stop> {
     answer(args, context, unbounded(), NSSWITCH)

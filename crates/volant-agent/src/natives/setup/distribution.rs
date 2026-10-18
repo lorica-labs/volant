@@ -10,7 +10,8 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, LsbRelease, Root, py_strip, splitlines};
+use super::{Host, LsbRelease};
+use crate::natives::runtime::{Root, py_strip, splitlines};
 
 /// Release files the reference reads before `/etc/os-release` as Debian's, each of which names
 /// another distribution when it exists.
@@ -310,7 +311,9 @@ fn debian_version(host: &Host) -> Result<String, String> {
         Ok(bytes) if bytes.is_ascii() => {
             let text = String::from_utf8(bytes).unwrap_or_default();
             let first = text.split_inclusive('\n').next().unwrap_or_default();
-            Ok(first.trim_end_matches(super::py_space).to_string())
+            Ok(first
+                .trim_end_matches(crate::natives::runtime::py_space)
+                .to_string())
         }
         Ok(_) => Err("/etc/debian_version is not ASCII".into()),
         Err(err) if err.kind() == std::io::ErrorKind::NotFound => Ok(String::new()),

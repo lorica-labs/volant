@@ -14,12 +14,11 @@ use std::os::unix::fs::MetadataExt;
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    Account, ArgSpec, Clock, FsError, ModeError, Stop as Halt, add_path_info, bool_param,
-    check_names, clock, failure, flag, group_account, module_args, native_run, null, os_error,
-    owner_account, parse_mode, path_param, realpath, selinux_enabled, set_fs_attributes, str_param,
+    Account, ArgSpec, FsError, ModeError, add_path_info, bool_param, check_names, clock, failure,
+    flag, group_account, module_args, native_run, null, os_error, owner_account, parse_mode,
+    path_param, realpath, selinux_enabled, set_fs_attributes, str_param,
 };
-#[cfg(target_os = "linux")]
-use super::common::{access, check};
+use super::runtime::{Clock, Stop as Halt};
 use super::{Native, NativeRun};
 use crate::modules::Context;
 
@@ -338,7 +337,7 @@ fn removable(_: &str, _: Clock) -> Result<(), Halt> {
 #[cfg(target_os = "linux")]
 fn walk(dir: &str, meta: &Statx, top: &Statx, euid: u32, clock: Clock) -> Result<(), Halt> {
     let back = |why: String| Err(Halt::HandBack(why));
-    if !access(dir, libc::R_OK | libc::W_OK | libc::X_OK) {
+    if !super::common::access(dir, libc::R_OK | libc::W_OK | libc::X_OK) {
         return back(format!("{dir} cannot be emptied"));
     }
     if meta.protected() {
@@ -347,7 +346,7 @@ fn walk(dir: &str, meta: &Statx, top: &Statx, euid: u32, clock: Clock) -> Result
     let sticky = u32::from(meta.stx_mode) & 0o1000 != 0 && euid != 0 && meta.stx_uid != euid;
     let entries = fs::read_dir(dir).map_err(|err| Halt::HandBack(err.to_string()))?;
     for entry in entries {
-        check(clock)?;
+        super::common::check(clock)?;
         let entry = entry.map_err(|err| Halt::HandBack(err.to_string()))?;
         let path = entry.path();
         let path = path

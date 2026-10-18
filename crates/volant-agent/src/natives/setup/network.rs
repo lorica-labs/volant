@@ -17,7 +17,7 @@ use std::sync::mpsc;
 
 use serde_json::{Map, Value};
 
-use super::{Clock, Root, Stop, bin_path, py_int, py_split, run, splitlines, wait_polling_cancel};
+use crate::natives::runtime::{self, Clock, Root, Stop, bin_path, py_int, py_split, run};
 
 /// The addresses the reference asks the kernel to route.
 const PROBE_V4: &str = "8.8.8.8";
@@ -115,7 +115,7 @@ fn run_together(
         }
         drop(sender);
         loop {
-            match wait_polling_cancel(&receiver, clock, &halt) {
+            match runtime::wait_polling_cancel(&receiver, clock, &halt) {
                 Ok(Some((at, Ok(ran)))) => results[at] = ran,
                 Ok(Some((_, Err(error)))) => {
                     stop.get_or_insert(error);
@@ -153,7 +153,7 @@ fn device_names(root: &Root) -> Vec<String> {
 /// line, when that line starts with the address asked about.
 fn default_route(out: &str, probe: &str) -> Map<String, Value> {
     let mut found = Map::new();
-    let words: Vec<&str> = splitlines(out)
+    let words: Vec<&str> = runtime::splitlines(out)
         .first()
         .map(|line| py_split(line).collect())
         .unwrap_or_default();
@@ -258,7 +258,7 @@ impl State {
     /// `parse_ip_output`, `None` where it raises. A secondary address changes only the
     /// per-interface dicts, which the native leaves out, so both outputs parse alike here.
     fn parse(&mut self, device: &Device, output: &str) -> Option<()> {
-        for line in splitlines(output) {
+        for line in runtime::splitlines(output) {
             if line.is_empty() {
                 continue;
             }
@@ -351,8 +351,8 @@ pub mod tests {
     use serde_json::json;
 
     use super::super::tests::FakeRoot;
-    use super::super::unbounded;
     use super::*;
+    use crate::natives::runtime::unbounded;
 
     /// An `ip` at `/usr/sbin/ip` answering the reference's commands with what a guest with one
     /// ethernet interface, a secondary address and IPv6 printed (addresses from the

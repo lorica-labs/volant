@@ -8,7 +8,7 @@
 
 use serde_json::{Map, Value};
 
-use super::{Root, py_int, py_split, py_strip};
+use crate::natives::runtime::{Root, py_int, py_split, py_strip};
 
 /// The facts, or none where the reference's collector raises.
 pub fn collect(root: &Root, architecture: &str) -> Map<String, Value> {

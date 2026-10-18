@@ -21,10 +21,10 @@ use serde_json::{Map, Value};
 use crate::modules::Context;
 use crate::natives::Native;
 use crate::natives::common::{
-    ArgSpec, Clock, Stop, bool_param, check_names, clean_args, clock, invocation, native_run,
-    popen_error, shlex_quote, str_param,
+    ArgSpec, bool_param, check_names, clean_args, clock, invocation, native_run, popen_error,
+    shlex_quote, str_param,
 };
-use crate::natives::setup::{self, Root, py_space, py_strip};
+use crate::natives::runtime::{self, Clock, Root, Stop, py_space, py_strip};
 
 pub const NATIVE: Native = Native {
     name: "systemd",
@@ -229,7 +229,7 @@ impl Host<'_> {
         program: &Path,
         args: &[&str],
     ) -> Result<(i32, String, String), Exit> {
-        match setup::run_output(&self.env, self.clock, program, args)? {
+        match runtime::run_output(&self.env, self.clock, program, args)? {
             Ok(ran) => Ok(ran),
             Err(_) if !reply.touched => {
                 Err(format!("{} could not be started", program.display()).into())
@@ -258,7 +258,7 @@ impl Host<'_> {
             return Ok(root.ino() != init.ino() || root.dev() != init.dev());
         }
         let mut fs_root_ino = 2;
-        if let Some(stat) = setup::bin_path(&Root::real(), &self.path, "stat") {
+        if let Some(stat) = runtime::bin_path(&Root::real(), &self.path, "stat") {
             let (_, out, _) = self.run(reply, &stat, &["-f", "--format=%T", "/"])?;
             if out.contains("btrfs") {
                 fs_root_ino = 256;
@@ -332,7 +332,7 @@ fn answer(
         return Err("systemd runs offline here, or the host is a chroot".into());
     }
     let path = BTreeMap::from([("PATH".to_string(), var("PATH").unwrap_or_default())]);
-    let systemctl = setup::bin_path(&Root::real(), &path, "systemctl")
+    let systemctl = runtime::bin_path(&Root::real(), &path, "systemctl")
         .ok_or("the module finds no systemctl")?;
     // The module splits `"<systemctl> <verb> '<unit>'"` with `shlex`: a path `shlex.quote` leaves
     // alone reads back as itself.

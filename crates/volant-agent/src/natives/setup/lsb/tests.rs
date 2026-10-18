@@ -8,7 +8,7 @@ use super::*;
 fn lsb(fake: &FakeRoot) -> Result<Value, String> {
     let (root, probe) = (fake.root(), probe());
     let host = fake.host(&root, &probe);
-    let run = LsbRelease::run(host.root, &host.env, super::super::unbounded()).unwrap();
+    let run = LsbRelease::run(host.root, &host.env, crate::natives::runtime::unbounded()).unwrap();
     collect(&host, &run).map(|facts| facts["lsb"].clone())
 }
 

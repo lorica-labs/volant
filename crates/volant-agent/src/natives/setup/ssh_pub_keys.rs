@@ -4,7 +4,8 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, py_split};
+use super::Host;
+use crate::natives::runtime::py_split;
 
 pub fn collect(host: &Host) -> Result<Map<String, Value>, String> {
     let mut facts = Map::new();

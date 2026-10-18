@@ -19,7 +19,7 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value};
 
-pub use super::setup::{Clock, Stop, run as run_program};
+use super::runtime::{Clock, Stop, run as run_program};
 
 /// `Stop::TimedOut` once the task's deadline has passed, `Stop::Cancelled` once the controller
 /// has cancelled it: for a loop of the native's own that can run long.
@@ -1196,7 +1196,7 @@ pub mod golden {
 
     fn mask(map: &mut Map<String, Value>, scratch: &Scratch) {
         let (uid, gid) = unsafe { (libc::geteuid(), libc::getegid()) };
-        let clock = super::super::setup::unbounded();
+        let clock = super::super::runtime::unbounded();
         let user = super::lookup_user(&uid.to_string(), clock)
             .unwrap()
             .unwrap()

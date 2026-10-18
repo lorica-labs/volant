@@ -44,10 +44,10 @@ mod linux {
     use super::NativeRun;
     use crate::modules::Context;
     use crate::natives::common::{
-        Account, ArgSpec, Clock, Group, Stop, bool_param, check_names, clock, files_first,
-        group_account, invocation, lookup_group, native_run, str_param,
+        Account, ArgSpec, Group, bool_param, check_names, clock, files_first, group_account,
+        invocation, lookup_group, native_run, str_param,
     };
-    use crate::natives::setup::{self, Root};
+    use crate::natives::runtime::{self, Clock, Root, Stop};
 
     pub fn run(
         args: &Map<String, Value>,
@@ -215,7 +215,7 @@ mod linux {
             .or_else(|| std::env::var("PATH").ok())
             .unwrap_or_default();
         let path = BTreeMap::from([("PATH".to_string(), path)]);
-        setup::bin_path(&Root::real(), &path, name)
+        runtime::bin_path(&Root::real(), &path, name)
             .ok_or_else(|| format!("the module finds no {name}"))
     }
 
@@ -227,7 +227,7 @@ mod linux {
         program: &Path,
         args: &[&str],
     ) -> Result<(i32, String, String), Stop> {
-        setup::run_output(&context.environment, clock, program, args)?
+        runtime::run_output(&context.environment, clock, program, args)?
             .map_err(|_| Stop::HandBack(format!("{} could not be started", program.display())))
     }
 
@@ -382,7 +382,7 @@ mod linux {
 
         use super::*;
         use crate::natives::common::golden::{Scratch, fake_getent};
-        use crate::natives::setup::unbounded;
+        use crate::natives::runtime::unbounded;
 
         /// Fake commands in a directory of their own, first on the context's `PATH`: each writes
         /// its arguments, one per line, to `<name>.argv`, prints `out` and `err`, and exits `rc`.

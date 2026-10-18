@@ -44,14 +44,14 @@ mod linux {
     use super::NativeRun;
     use crate::modules::Context;
     use crate::natives::common::{
-        ArgSpec, Clock, Stop, access, bool_param, check_names, clock, invocation, lookup_user,
-        native_run, path_param, str_param, strerror,
+        ArgSpec, access, bool_param, check_names, clock, invocation, lookup_user, native_run,
+        path_param, str_param, strerror,
     };
     use crate::natives::group::{
         NSSWITCH, bin, entry, failure, host_gate, id_param, outcome, outside_subset, plain_name,
         present, resolve_group, run_command,
     };
-    use crate::natives::setup::py_strip;
+    use crate::natives::runtime::{Clock, Stop, py_strip};
 
     pub fn run(
         args: &Map<String, Value>,

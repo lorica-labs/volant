@@ -16,7 +16,7 @@ fn distribution_with(fake: &FakeRoot, distro: Option<&str>) -> Result<Value, Str
     let mut probe = probe();
     probe.distro = distro.map(str::to_string);
     let host = fake.host(&root, &probe);
-    let lsb = LsbRelease::run(host.root, &host.env, super::super::unbounded()).unwrap();
+    let lsb = LsbRelease::run(host.root, &host.env, crate::natives::runtime::unbounded()).unwrap();
     collect(&host, &lsb).map(Value::Object)
 }
 

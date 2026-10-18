@@ -24,13 +24,13 @@ use regex::bytes::{Regex, RegexBuilder};
 use serde_json::{Map, Value, json};
 
 use super::common::{
-    APPEND, AUTOMATIC, Account, ArgSpec, BackupError, Clock, FsError, IMMUTABLE, ModeError,
-    Stop as Halt, access, add_path_info, backup_local, bool_param, check, check_names,
-    chown_if_permitted, clock, flag, group_account, has_flags, has_xattrs, module_args, native_run,
-    null, os_error, owner_account, parent, parse_mode, path_param, selinux_enabled,
-    set_fs_attributes_diff, str_param, umask, validate_runs_as_python,
+    APPEND, AUTOMATIC, Account, ArgSpec, BackupError, FsError, IMMUTABLE, ModeError, access,
+    add_path_info, backup_local, bool_param, check, check_names, chown_if_permitted, clock, flag,
+    group_account, has_flags, has_xattrs, module_args, native_run, null, os_error, owner_account,
+    parent, parse_mode, path_param, selinux_enabled, set_fs_attributes_diff, str_param, umask,
+    validate_runs_as_python,
 };
-use super::setup::run_output;
+use super::runtime::{Clock, Stop as Halt, run_output};
 use super::{Native, NativeRun};
 use crate::modules::Context;
 

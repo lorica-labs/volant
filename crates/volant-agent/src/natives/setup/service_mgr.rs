@@ -5,7 +5,8 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, py_strip};
+use super::Host;
+use crate::natives::runtime::py_strip;
 
 pub fn collect(host: &Host) -> Result<Map<String, Value>, String> {
     let comm = host

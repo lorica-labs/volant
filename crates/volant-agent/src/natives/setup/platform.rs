@@ -12,7 +12,8 @@ use std::net::IpAddr;
 
 use serde_json::{Map, Value};
 
-use super::{Host, py_split, py_strip};
+use super::Host;
+use crate::natives::runtime::{py_split, py_strip};
 
 /// The fields of `uname(2)`.
 pub struct Uname {
@@ -89,7 +90,7 @@ pub fn collect_with(host: &Host, uname: &Uname) -> Result<Map<String, Value>, St
         .content("/var/lib/dbus/machine-id")
         .or_else(|| host.root.content("/etc/machine-id"));
     if let Some(machine_id) = machine_id {
-        let first = super::splitlines(&machine_id)[0].to_string();
+        let first = crate::natives::runtime::splitlines(&machine_id)[0].to_string();
         facts.insert("machine_id".into(), Value::from(first));
     }
     Ok(facts)

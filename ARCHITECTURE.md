@@ -79,6 +79,8 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `runner.rs` | Running a batch of tasks, with fail-fast and cancellation. |
 | `modules/` | The native modules. |
 | `python/` | The warm Python server and its supervisor. |
+| `natives/runtime/` | What the natives that run programs share: the task's clock, the reasons an answer stops, the root a collector reads under, program runs, and Python's string rules. |
+| `natives/setup/` | The native `setup`: one file per collector, plus the request, the collection run and the `fnmatch` filter. |
 | `blobs.rs` | The cache of module payloads, addressed by hash. |
 | `interpreter.rs` | Finding the host's Python interpreters, in the order Ansible prefers them. |
 

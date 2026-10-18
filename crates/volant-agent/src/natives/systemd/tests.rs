@@ -10,7 +10,7 @@ use volant_protocol::TaskResult;
 use super::*;
 use crate::natives::NativeRun;
 use crate::natives::common::golden::within;
-use crate::natives::setup::unbounded;
+use crate::natives::runtime::unbounded;
 use crate::testing::{args, scratch};
 
 /// `systemctl show cron` on an Ubuntu 24.04 host (systemd 255), with its `InvocationID`

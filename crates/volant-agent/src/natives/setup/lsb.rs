@@ -4,7 +4,8 @@
 
 use serde_json::{Map, Value};
 
-use super::{Host, LsbRelease, py_strip, splitlines};
+use super::{Host, LsbRelease};
+use crate::natives::runtime::{py_strip, splitlines};
 
 const STRIP_QUOTES: &[char] = &['\'', '"', '\\'];
 

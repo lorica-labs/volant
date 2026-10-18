@@ -32,7 +32,7 @@ use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
 use super::common::{ArgSpec, invocation};
-use super::setup::Root;
+use super::runtime::Root;
 use super::{Native, NativeRun};
 use crate::modules::Context;
 

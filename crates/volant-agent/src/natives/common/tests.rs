@@ -3,7 +3,7 @@
 use serde_json::json;
 
 #[cfg(target_os = "linux")]
-use super::super::setup::unbounded;
+use super::super::runtime::unbounded;
 use super::*;
 
 /// `heuristic_log_sanitize` answers as the reference's does (measured on 2.19.12), quirks included.

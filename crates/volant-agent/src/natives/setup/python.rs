@@ -12,7 +12,8 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
-use super::{Clock, Host, Stop};
+use super::Host;
+use crate::natives::runtime::{Clock, Stop};
 
 /// Run as `<interpreter> -c`. Each value is the reference's own: the `python` fact line for line
 /// from `PythonFactCollector`, libselinux loaded as `module_utils.compat.selinux` loads it, the
@@ -208,8 +209,9 @@ pub fn probe(
     environment: &BTreeMap<String, String>,
     clock: Clock,
 ) -> Result<Probe, Stop> {
-    let (code, out) = super::run(environment, clock, Path::new(interpreter), &["-c", PROBE])?
-        .ok_or_else(|| format!("{interpreter} could not be started"))?;
+    let (code, out) =
+        crate::natives::runtime::run(environment, clock, Path::new(interpreter), &["-c", PROBE])?
+            .ok_or_else(|| format!("{interpreter} could not be started"))?;
     if code != 0 {
         return Err(format!("{interpreter} could not describe itself").into());
     }
@@ -271,8 +273,12 @@ pub mod tests {
     fn a_real_interpreter_answers_the_probe_as_the_reference_s_calls_do() {
         let tricky = "a\"b\\c\nd\té 😀 \u{7f}";
         let environment = BTreeMap::from([("VOLANT_PROBE_TEXT".to_string(), tricky.to_string())]);
-        let probe = probe("python3", &environment, super::super::unbounded())
-            .expect("python3 answers the probe");
+        let probe = probe(
+            "python3",
+            &environment,
+            crate::natives::runtime::unbounded(),
+        )
+        .expect("python3 answers the probe");
         assert_eq!(probe.env["VOLANT_PROBE_TEXT"], tricky);
         let reference = std::process::Command::new("python3")
             .args([
@@ -332,9 +338,13 @@ pub mod tests {
                 "PYTHONPATH".to_string(),
                 fake.0.join(dir).display().to_string(),
             )]);
-            probe("python3", &environment, super::super::unbounded())
-                .unwrap()
-                .distro
+            probe(
+                "python3",
+                &environment,
+                crate::natives::runtime::unbounded(),
+            )
+            .unwrap()
+            .distro
         };
         assert_eq!(distro("lib").as_deref(), Some("1.5.0"));
         assert_eq!(distro("single").as_deref(), Some("1.9.0"));
@@ -351,7 +361,7 @@ pub mod tests {
     fn each_probe_sees_what_changed_since_the_last() {
         let fake = FakeRoot::new("probe-fresh");
         fake.mkdir("/site");
-        let clock = super::super::unbounded();
+        let clock = crate::natives::runtime::unbounded();
         let mut environment = BTreeMap::from([
             (
                 "PYTHONPATH".to_string(),

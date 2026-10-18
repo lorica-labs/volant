@@ -55,7 +55,7 @@ mod imp {
     use crate::modules::Context;
     use crate::modules::command::CANCEL_POLL;
     use crate::natives::NativeRun;
-    use crate::natives::setup::{Clock, Root, Stop};
+    use crate::natives::runtime::{Clock, Root, Stop};
 
     const STATUS: &str = "/var/lib/dpkg/status";
     const LISTS: &str = "/var/lib/apt/lists";
@@ -982,7 +982,7 @@ mod imp {
         use serde_json::json;
 
         use super::*;
-        use crate::natives::setup::unbounded;
+        use crate::natives::runtime::unbounded;
 
         /// The reason guard's cases (`natives::tests`): apt sources and a `PATH` whose every
         /// field the native hands back on holds a secret-looking value.

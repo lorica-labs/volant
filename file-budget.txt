@@ -3,12 +3,11 @@ crates/volant-agent/src/modules/command.rs 775
 crates/volant-agent/src/natives/apt.rs 1303
 crates/volant-agent/src/natives/common.rs 1262
 crates/volant-agent/src/natives/copy.rs 770
-crates/volant-agent/src/natives/file.rs 541
+crates/volant-agent/src/natives/file.rs 540
 crates/volant-agent/src/natives/group.rs 628
 crates/volant-agent/src/natives/lineinfile.rs 1054
 crates/volant-agent/src/natives/package_facts.rs 2026
 crates/volant-agent/src/natives/service_facts.rs 1101
-crates/volant-agent/src/natives/setup/mod.rs 1802
 crates/volant-agent/src/natives/setup/network.rs 618
 crates/volant-agent/src/natives/systemd.rs 612
 crates/volant-agent/src/natives/user.rs 667

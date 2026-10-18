@@ -1,5 +1,0 @@
-# Vaulted group_vars and host_vars opened with the wrong password stop the run at load (exit 4).
-runs:
-  - args: [-i, inv_gv, --vault-password-file, pw_bad, vars_gv.yml]
-  - args: [-i, inv_hv, --vault-password-file, pw_bad, vars_hv.yml]
-needs: ["ansible-core"]

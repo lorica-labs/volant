@@ -1,0 +1,4 @@
+# `async` on `package`: the backend module is the job, a polled start waits for it and an
+# unpolled one hands back the job's first status, which `async_status` reads back.
+args: [-i, inv.ini, package.yml]
+needs: ["ansible-core"]

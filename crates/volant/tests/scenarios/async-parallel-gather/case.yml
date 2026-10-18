@@ -1,0 +1,4 @@
+# Parallel fact gathering with a `gather_timeout`: the gathering plugin sets its own async limit
+# on each fact module's job and polls them, with no `async` on the task itself.
+args: [-i, inv.ini, gather.yml]
+needs: ["ansible-core"]

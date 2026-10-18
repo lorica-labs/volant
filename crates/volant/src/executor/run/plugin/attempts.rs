@@ -14,7 +14,7 @@ use crate::template::Templar;
 use crate::vars::HostVars;
 
 use super::item::run_plugin_item;
-use crate::executor::run::async_job::async_dir;
+use crate::executor::run::async_job::{Polled, announce_retry, async_dir, poll_job, polls};
 use crate::executor::run::channel::{AgentChannel, Relink};
 use crate::executor::run::output::TTY_KEY;
 use crate::executor::run::retry::{Attempt, Retry, RetryLine, judge_attempt};
@@ -32,6 +32,9 @@ pub(in crate::executor) struct PluginStart<'a> {
     pub(in crate::executor) templar: &'a Templar,
     pub(in crate::executor) origin: &'a crate::compile::Origin,
     pub(in crate::executor) playbook_dir: &'a std::path::Path,
+    /// Where an `async` task's `ASYNC` and `RETRYING` lines go, and the step they belong to.
+    pub(in crate::executor) tx: &'a tokio::sync::mpsc::Sender<crate::executor::coordinator::Event>,
+    pub(in crate::executor) index: usize,
 }
 
 /// One item of a task an action plugin backs, attempt after attempt under `retries`/`until`.
@@ -94,6 +97,7 @@ pub(in crate::executor) async fn run_plugin_attempts<C: AgentChannel, R: Relink<
                     timeout: task.timeout,
                     check_mode: item.check_mode == Some(true),
                     diff: item.diff == Some(true),
+                    async_val: task.async_val,
                 },
             );
             run_plugin_item(
@@ -113,11 +117,49 @@ pub(in crate::executor) async fn run_plugin_attempts<C: AgentChannel, R: Relink<
             )
             .await?
         };
+        // A job an action plugin started is waited for as any other, before `until` reads it.
+        let raw = if polls(task) {
+            match poll_job(
+                link,
+                host,
+                batch_id,
+                task,
+                item,
+                raw,
+                stop,
+                stop_broken,
+                logs,
+                start.tx,
+                start.index,
+            )
+            .await
+            {
+                Polled::Done(result) => result,
+                Polled::Stopped => return Ok(None),
+                Polled::Ended(ended) => return Err(ended),
+            }
+        } else {
+            raw
+        };
         let Some(retry) = retry else {
             return Ok(Some(raw));
         };
         match judge_attempt(task, item, raw, attempt, retry, start.templar) {
             Attempt::Done(r) => return Ok(Some(r)),
+            // Shown as it happens when a job is waited for: its `ASYNC` lines came out as they
+            // were decided, and the reference prints each attempt's retry line before the next.
+            Attempt::Again(left, failed) if polls(task) => {
+                announce_retry(
+                    start.tx,
+                    host,
+                    start.index,
+                    crate::executor::prepare::retry_name(task, &item.vars, start.templar),
+                    task,
+                    left,
+                    failed,
+                )
+                .await;
+            }
             Attempt::Again(left, failed) => lefts.push((left, failed)),
         }
         if let Some(failed) = retry.sleep_failure() {

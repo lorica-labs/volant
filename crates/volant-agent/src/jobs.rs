@@ -167,14 +167,32 @@ fn spawn_detached(flag: &str, spec: &Spec) -> io::Result<Child> {
     Ok(child)
 }
 
+/// How long the agent waits for the watcher's first line before it gives the job up as not
+/// started. The reference's wrapper waits two and a half seconds for its child; a watcher that
+/// has still said nothing after this long is stuck, and the task must not wait for it.
+const FIRST_LINE_WAIT: Duration = Duration::from_secs(10);
+
 /// The job id the watcher prints once the first status is written, or the reason it printed
-/// instead. The watcher is reaped by a thread of its own, so the agent waits for nothing more.
+/// instead. The watcher is reaped by a thread of its own, so the agent waits for nothing more; one
+/// that says nothing within [`FIRST_LINE_WAIT`] is killed with its group.
 fn first_line(mut child: Child) -> io::Result<String> {
     let stdout = child.stdout.take().expect("stdout was piped");
-    let mut line = String::new();
-    let read = BufReader::new(stdout).read_line(&mut line);
-    std::thread::spawn(move || child.wait());
-    read?;
+    let pid = child.id();
+    let (tx, rx) = mpsc::channel();
+    std::thread::spawn(move || {
+        let mut line = String::new();
+        let read = BufReader::new(stdout).read_line(&mut line).map(|_| line);
+        let _ = tx.send(read);
+        let _ = child.wait();
+    });
+    let Ok(read) = rx.recv_timeout(FIRST_LINE_WAIT) else {
+        kill_group(pid);
+        return Err(io::Error::other(format!(
+            "the watcher gave no job id within {} seconds",
+            FIRST_LINE_WAIT.as_secs()
+        )));
+    };
+    let line = read?;
     let line = line.trim_end();
     match line.strip_prefix("jid ") {
         Some(jid) => Ok(jid.to_string()),

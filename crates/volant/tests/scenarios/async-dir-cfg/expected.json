@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [a job under the configured directory] ************************************\nASYNC OK on h1: jid=j133200110125.2065487\nchanged: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"/tmp/volant_async_cfg_dir\"\n}\n\nTASK [remove the directory] ****************************************************\nchanged: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=2    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

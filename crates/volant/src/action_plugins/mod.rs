@@ -140,6 +140,26 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
     }
 }
 
+/// Whether the reference lets a task named `module` run under `async`. Measured on ansible-core
+/// 2.19.12: `ActionBase.run` refuses it unless the plugin sets `_supports_async`, and only `normal`
+/// (every module with no plugin of its own), `command`, `shell`, `service`, `dnf`, `package` and
+/// `uri` do. A module run on the controller or by the agent's own `raw` and `async_status` has a
+/// plugin that does not. A collection's action plugin runs as its own, which says so itself.
+pub(crate) fn supports_async(module: &str) -> bool {
+    if !builtin_spelling(module) {
+        return true;
+    }
+    if matches!(short_name(module), "raw" | "async_status")
+        || volant_protocol::modules::local(module).is_some()
+    {
+        return false;
+    }
+    matches!(
+        kind(module),
+        None | Some(Kind::Dnf | Kind::Package | Kind::Service | Kind::Bridged("uri"))
+    )
+}
+
 /// Whether the plugin only edits the controller's inventory and statistics: the reference runs it
 /// without a connection, so it goes the way `set_fact` does, whatever state the host is in.
 pub(crate) fn controller_side(module: &str) -> bool {
@@ -299,6 +319,8 @@ pub(crate) struct Context<'a> {
     /// The task's `check_mode` and `diff`, `--check` and `--diff` included.
     pub check_mode: bool,
     pub diff: bool,
+    /// The task's `async` seconds, which the plugin reads off its task as the reference's does.
+    pub async_val: u64,
 }
 
 /// The plugin for `kind`. A written one given a shape it does not take hands the item to

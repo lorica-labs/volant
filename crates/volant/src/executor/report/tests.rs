@@ -28,6 +28,7 @@ async fn two_failed_items(ignored: &[Option<bool>]) -> (bool, Vec<Outcome>) {
         None,
         Hold {
             by_default: false,
+            saved: &[],
             permit: None,
             turn: None,
         },
@@ -73,6 +74,7 @@ async fn all_items_skipped() -> Vec<(Outcome, bool)> {
         None,
         Hold {
             by_default: false,
+            saved: &[],
             permit: None,
             turn: None,
         },
@@ -150,6 +152,7 @@ async fn a_templated_diff_counts_when_the_result_has_one(#[case] body: Value, #[
         None,
         Hold {
             by_default: false,
+            saved: &[],
             permit: None,
             turn: None,
         },

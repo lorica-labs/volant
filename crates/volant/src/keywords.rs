@@ -63,25 +63,6 @@ const fn kw(name: &'static str, support: Support) -> Keyword {
     }
 }
 
-/// A keyword this release answers without doing the whole of what the reference does with it.
-/// `missing` is the sentence the generated page prints next to it.
-const fn partial_kw(name: &'static str, missing: &'static str) -> Keyword {
-    Keyword {
-        name,
-        support: Partial,
-        missing: Some(missing),
-        note: None,
-        barrier: false,
-    }
-}
-
-/// What `async` does not run yet: everything the agent does not start as a module of its own.
-const ASYNC_MISSING: &str = "runs on modules the agent runs, native or Python. It is refused \
-    before the run on the controller's own modules, on the action plugins this release runs on \
-    the controller (`package`, `service` and `dnf` among them, which the reference runs as jobs), \
-    on statements, and on `raw` and `async_status`, which the reference refuses too. \
-    `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are.";
-
 /// A keyword this release honours, with the one limit the generated page prints next to it.
 const fn noted_kw(name: &'static str, note: &'static str) -> Keyword {
     Keyword {
@@ -132,7 +113,7 @@ pub const TASK_KEYWORDS: &[Keyword] = &[
     kw("action", Runs),
     kw("any_errors_fatal", Runs),
     kw("args", Runs),
-    partial_kw("async", ASYNC_MISSING),
+    kw("async", Runs),
     kw("become", Runs),
     kw("become_exe", Runs),
     kw("become_flags", Runs),

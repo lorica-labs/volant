@@ -1,0 +1,5 @@
+# `async` on actions that support it and on actions that do not: the unsupported ones fail the
+# host when the task runs, `async: 0` runs as usual, a delegated command can be read back with
+# `async_status`, and the keys of a polled and an unpolled start, a cleaned job and an unknown one.
+args: [-i, inv.ini, actions.yml]
+needs: ["ansible-core"]

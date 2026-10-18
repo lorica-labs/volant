@@ -76,3 +76,31 @@ fn a_plugin_runs_only_what_the_union_can_hold() {
         }
     }
 }
+
+/// The reference's list of actions that run under `async`, as measured, and the ones it fails.
+#[rstest::rstest]
+#[case::command("command", true)]
+#[case::shell("ansible.builtin.shell", true)]
+#[case::stat("stat", true)]
+#[case::setup("setup", true)]
+#[case::package("package", true)]
+#[case::service("service", true)]
+#[case::dnf("dnf", true)]
+#[case::uri("uri", true)]
+#[case::a_collection_module("ns.coll.thing", true)]
+#[case::copy("copy", false)]
+#[case::template("template", false)]
+#[case::debug("debug", false)]
+#[case::set_fact("set_fact", false)]
+#[case::assert("assert", false)]
+#[case::raw("raw", false)]
+#[case::script("script", false)]
+#[case::fetch("fetch", false)]
+#[case::add_host("add_host", false)]
+#[case::unarchive("unarchive", false)]
+#[case::assemble("assemble", false)]
+#[case::reboot("reboot", false)]
+#[case::async_status("async_status", false)]
+fn async_is_supported_where_the_reference_supports_it(#[case] module: &str, #[case] ok: bool) {
+    assert_eq!(supports_async(module), ok, "{module}");
+}

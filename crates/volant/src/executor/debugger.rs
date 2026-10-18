@@ -153,6 +153,8 @@ pub(super) struct Hold<'a> {
     pub(super) by_default: bool,
     pub(super) permit: Option<&'a mut Option<OwnedSemaphorePermit>>,
     pub(super) turn: Option<&'a mut Option<ThrottleTurn>>,
+    /// The handler names a `-vv` run says it saved a notification for, in front of the task's line.
+    pub(super) saved: &'a [String],
 }
 
 impl<'a> Hold<'a> {
@@ -161,7 +163,13 @@ impl<'a> Hold<'a> {
             by_default: by_default(plan.strategy),
             permit: (!plan.strategy.pinned()).then_some(permit),
             turn: None,
+            saved: &[],
         }
+    }
+
+    pub(super) fn with_saved(mut self, saved: &'a [String]) -> Self {
+        self.saved = saved;
+        self
     }
 
     /// The same hold, for a task that holds a `throttle` turn while it reports.

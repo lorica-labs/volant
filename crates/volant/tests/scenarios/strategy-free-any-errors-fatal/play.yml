@@ -1,9 +1,0 @@
-- hosts: g
-  strategy: free
-  gather_facts: false
-  any_errors_fatal: true
-  tasks:
-    - name: a
-      shell: sleep {{ s }}; {{ "exit 1" if inventory_hostname == "h1" else "true" }}
-    - {name: b, command: "true"}
-    - {name: z, debug: {msg: "z {{ inventory_hostname }}"}}

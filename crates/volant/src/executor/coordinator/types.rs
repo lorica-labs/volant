@@ -141,6 +141,10 @@ pub(in crate::executor) enum Event {
         line: String,
         /// Printed in the reference's debug colour, as the `ASYNC` lines are.
         debug: bool,
+        /// Whether the step's banner goes above it. False for the `NOTIFIED HANDLER` lines of a
+        /// flush, which the reference prints in front of the first handler's banner and under
+        /// no banner of their own.
+        banner: bool,
     },
     /// What `host` asked for at the include step `index`, already read and compiled. Empty when
     /// every item was skipped or failed to resolve, which still has to be said: the coordinator

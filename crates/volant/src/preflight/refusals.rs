@@ -1,11 +1,10 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The refusals of single keywords and shapes: pause, retries, async, arguments and meta.
+//! The refusals of single keywords and shapes: pause, retries, arguments and meta.
 
 use anyhow::bail;
-use volant_protocol::modules::{ArgStatus, import_module, include_module, short_name};
+use volant_protocol::modules::{ArgStatus, short_name};
 
 use super::CODE;
-use crate::action_plugins;
 use crate::compile::{META_ACTIONS, meta_action};
 use crate::playbook::{PlayTask, is_meta};
 use crate::stats::Refusal;
@@ -81,31 +80,6 @@ pub(super) fn refuse_retries(task: &PlayTask) -> anyhow::Result<()> {
             "task '{}': keyword '{kw}' is not supported yet on '{}'",
             task.name,
             task.module
-        );
-    }
-    Ok(())
-}
-
-/// Refuses `async` on a task that starts no module on the host: the controller's own modules,
-/// the action plugins this release runs on the controller, the statements, and the two agent
-/// modules the reference refuses it on (`raw` and `async_status`, whose action plugins say
-/// `does not support async`). What is left is what the agent runs as a job of its own.
-pub(super) fn refuse_async(task: &PlayTask) -> anyhow::Result<()> {
-    if task.async_val == 0 {
-        return Ok(());
-    }
-    let module = &task.module;
-    let refused = volant_protocol::modules::local(module).is_some()
-        || import_module(module).is_some()
-        || include_module(module).is_some()
-        || is_meta(task)
-        || action_plugins::kind(module).is_some()
-        || volant_protocol::modules::native(module)
-            .is_some_and(|spec| matches!(spec.name, "raw" | "async_status"));
-    if refused {
-        bail!(
-            "task '{}': keyword 'async' is not supported yet on '{module}'",
-            task.name
         );
     }
     Ok(())

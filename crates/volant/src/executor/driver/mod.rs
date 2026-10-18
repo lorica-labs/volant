@@ -29,17 +29,20 @@ use super::prepare::{Item, PlayPlan, Prepared, failure_text, pause_of, prepare, 
 use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Polled, Relinker,
-    RetryLine, any_retried, break_after, broke_before, chosen_interpreter, discovers_interpreter,
-    discovery_warning, fact_targets, failed_task_value, finish, judge_attempt, local_timed_out,
-    notified_handlers, pause_lines, poll_job, polls, python_for, raw_params_refusal, record_facts,
-    record_inventory_results, record_local_facts, record_registered, requested_interpreter,
-    retry_plans, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
-    running_host_vars, silent_discovery, stamp_discovery, step_tasks, take_warnings,
+    RetryLine, announce_retry, any_retried, break_after, broke_before, chosen_interpreter,
+    discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
+    judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
+    record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
+    requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
+    run_plugin_attempts, running_host_vars, silent_discovery, stamp_discovery, step_tasks,
+    take_warnings,
 };
 use super::{LinkKey, RunOptions};
+use notified::{announce_notified, saved_lines};
 
 mod boundaries;
 mod messages;
+mod notified;
 mod redo;
 mod throttle;
 mod timings;
@@ -617,6 +620,9 @@ pub(super) async fn drive_host(
                         driver.meta_skipped(pos, "flush_handlers", None).await;
                     }
                 }
+                if verbosity >= 2 && !skipped_flush && !masked_out {
+                    announce_notified(&tx, &name, pos, &c, &notified).await;
+                }
                 driver.task_done(pos).await;
                 // `n` is the length of the list this host is walking, read before the word it
                 // just sent could let the coordinator grow it. See `wait_for_splice`. Under
@@ -1108,7 +1114,7 @@ pub(super) async fn drive_host(
                         let mut mine = Vec::new();
                         let r = if let Some(s) = &item.skipped {
                             s.clone()
-                        } else if let Some(refused) = raw_params_refusal(task) {
+                        } else if let Some(refused) = refusal(task) {
                             refused
                         } else if let Err(failed) = plan {
                             failed.clone()
@@ -1129,6 +1135,7 @@ pub(super) async fn drive_host(
                                                 index: pos,
                                                 line,
                                                 debug: false,
+                                                banner: true,
                                             })
                                             .await;
                                     }
@@ -1199,6 +1206,7 @@ pub(super) async fn drive_host(
                             break 'run;
                         }
                     };
+                    let saved = saved_lines(verbosity, &to_notify, &items);
                     let warnings = take_warnings(&mut results);
                     for message in &warnings {
                         let _ = tx
@@ -1240,7 +1248,7 @@ pub(super) async fn drive_host(
                         dump,
                         rescuable,
                         delegate.as_deref(),
-                        Hold::new(&plan, &mut permit),
+                        Hold::new(&plan, &mut permit).with_saved(&saved),
                     )
                     .await
                     {
@@ -1432,9 +1440,7 @@ pub(super) async fn drive_host(
                         payloads.insert(pos, (module, asked));
                     }
                     // A task refused for its raw parameters fails before it is sent anywhere.
-                    if raw_params_refusal(task).is_none()
-                        && discovers_interpreter(&task.module, target_vars)
-                    {
+                    if refusal(task).is_none() && discovers_interpreter(&task.module, target_vars) {
                         discovering.insert(pos, !silent_discovery(target_vars));
                     }
                     batch.push((pos, items));
@@ -1749,7 +1755,7 @@ pub(super) async fn drive_host(
                     if item.skipped.is_some() {
                         continue;
                     }
-                    if let Some(refused) = raw_params_refusal(&step.task) {
+                    if let Some(refused) = refusal(&step.task) {
                         received[0][ii] = Some(refused);
                         continue;
                     }
@@ -1774,6 +1780,8 @@ pub(super) async fn drive_host(
                         templar: &templar,
                         origin: &step.origin,
                         playbook_dir: &playbook_dir,
+                        tx: &tx,
+                        index: *index,
                     };
                     let ran = run_plugin_attempts(
                         &mut owned,
@@ -1997,6 +2005,19 @@ pub(super) async fn drive_host(
                                 received[0][ii] = Some(r);
                                 continue 'items;
                             }
+                            // As it happens for a job that is waited for: see the plugin path.
+                            Attempt::Again(left, failed) if polls(task) => {
+                                announce_retry(
+                                    &tx,
+                                    &name,
+                                    *index,
+                                    retry_name(task, &item.vars, &templar),
+                                    task,
+                                    left,
+                                    failed,
+                                )
+                                .await;
+                            }
                             Attempt::Again(left, failed) => lefts[ii].push((left, failed)),
                         }
                         if let Some(failed) = retry.sleep_failure() {
@@ -2179,6 +2200,7 @@ pub(super) async fn drive_host(
                         break 'run;
                     }
                 };
+                let saved = saved_lines(verbosity, &to_notify, items);
                 let live = driver.progress.borrow().live_hosts.clone();
                 let targets = fact_targets(task, &name, &live);
                 let fact_hosts = match (task.delegates_facts(), &batch_delegate) {
@@ -2310,7 +2332,9 @@ pub(super) async fn drive_host(
                     dump_of(task),
                     rescuable,
                     batch_delegate.as_deref(),
-                    Hold::new(&plan, &mut permit).with_turn(&mut gate),
+                    Hold::new(&plan, &mut permit)
+                        .with_turn(&mut gate)
+                        .with_saved(&saved),
                 )
                 .await
                 {

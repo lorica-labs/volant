@@ -1,0 +1,16 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: a job under the configured directory
+      command: echo hi
+      async: 10
+      poll: 1
+      register: r
+
+    - debug:
+        msg: "{{ r.results_file | dirname }}"
+
+    - name: remove the directory
+      file:
+        path: /tmp/volant_async_cfg_dir
+        state: absent

@@ -50,6 +50,7 @@ fn start_vars(
         timeout: None,
         check_mode: false,
         diff: false,
+        async_val: 0,
     })
 }
 

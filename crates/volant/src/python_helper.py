@@ -929,10 +929,15 @@ def shim():
         result = answered(self._connection._ask("module", name=name, args=args, files=[]))
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
+        if wrap_async and getattr(self._task, "_volant_own_async", 0):
+            # The task's own `async`: the controller started the module as a job of the host's
+            # agent and answered with its first status, which the plugin hands back as it is.
+            return result
         if wrap_async:
-            # The module runs to its end before the job is handed back, so parallel
-            # jobs run one after the other, and the async limit is judged afterwards: a module
-            # that ran past it is replaced by async_wrapper's timeout result.
+            # A job the plugin itself starts and polls (`gather_facts`). The module runs to its
+            # end before the job is handed back, so parallel jobs run one after the other, and
+            # the async limit is judged afterwards: a module that ran past it is replaced by
+            # async_wrapper's timeout result.
             limit = int(self._task.async_val or 0)
             if limit and time.monotonic() - started > limit:
                 result = {"msg": "Timeout exceeded", "failed": True}
@@ -1076,6 +1081,9 @@ def run_action(ident, request):
         # here since no module_defaults reach the plugin.
         task = Task.load(fields, block=Block(play=Play()), loader=loader)
         task.post_validate(templar=templar._engine)
+        # The task's own `async`, kept apart from `async_val`, which `gather_facts` overwrites
+        # with its timeout before each wrapped call.
+        task._volant_own_async = int(task.async_val or 0)
         if search_path:
             # The role and file directories the controller compiled the task in, which the
             # plugin's `_find_needle` reads off the task as the reference's role-bound task gives.

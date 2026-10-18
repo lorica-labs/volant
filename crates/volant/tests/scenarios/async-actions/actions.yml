@@ -1,0 +1,101 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    ansible_async_dir: "{{ playbook_dir }}/jobs"
+  tasks:
+    - name: copy refuses async
+      copy:
+        content: hi
+        dest: "{{ playbook_dir }}/never"
+      async: 10
+      poll: 0
+      register: c
+      ignore_errors: true
+
+    - debug: var=c
+
+    - name: template refuses async
+      template:
+        src: missing.j2
+        dest: "{{ playbook_dir }}/never"
+      async: 10
+      poll: 1
+      register: t
+      ignore_errors: true
+
+    - debug: var=t
+
+    - name: debug refuses async
+      debug:
+        msg: hi
+      async: 10
+      register: d
+      ignore_errors: true
+
+    - debug: var=d
+
+    - name: async zero runs the task as usual
+      debug:
+        msg: ran
+      async: 0
+
+    - name: a polled start
+      command: echo hi
+      async: 10
+      poll: 1
+      register: polled
+
+    - debug:
+        msg: "{{ polled | list | sort }}"
+
+    - name: an unpolled start
+      command: echo hi
+      async: 10
+      poll: 0
+      register: started
+
+    - debug:
+        msg: "{{ started | list | sort }}"
+
+    - name: a delegated start
+      command: echo hi
+      delegate_to: localhost
+      async: 10
+      poll: 0
+      register: far
+
+    - pause: seconds=2
+
+    - name: read back from the host, not the delegate
+      async_status:
+        jid: "{{ far.ansible_job_id }}"
+      register: back
+      until: back.finished
+      retries: 10
+      delay: 1
+
+    - debug:
+        msg: "{{ back | list | sort }}"
+
+    - name: clean up
+      async_status:
+        jid: "{{ far.ansible_job_id }}"
+        mode: cleanup
+
+    - name: a cleaned job is gone
+      async_status:
+        jid: "{{ far.ansible_job_id }}"
+      register: gone
+      ignore_errors: true
+
+    - debug: var=gone.msg
+
+    - name: an until over a polled job
+      command: echo hi
+      async: 10
+      poll: 1
+      register: again
+      until: again.attempts is defined and again.stdout == "never"
+      retries: 2
+      delay: 1
+      ignore_errors: true

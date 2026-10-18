@@ -166,6 +166,12 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     config.enable_task_debugger = on;
                 }
             }
+            "async_dir" => {
+                let dir = value.trim();
+                if !dir.is_empty() {
+                    config.async_dir = Some(dir.to_string());
+                }
+            }
             "remote_tmp" => {
                 let tmp = value.trim();
                 if !tmp.is_empty() {

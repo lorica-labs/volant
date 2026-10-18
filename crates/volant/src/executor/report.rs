@@ -94,6 +94,24 @@ pub(super) async fn report_task(
         }
         _ => None,
     };
+    // `-vv` only, and the caller passes nothing below it. Measured on ansible-core 2.19.12: a
+    // loop's lines come after its items, a single result's before its line.
+    let say_saved = || async {
+        for name in hold.saved {
+            let _ = tx
+                .send(Event::Display {
+                    host: host.to_string(),
+                    index,
+                    line: format!("Notification for handler {name} has been saved."),
+                    debug: false,
+                    banner: true,
+                })
+                .await;
+        }
+    };
+    if !is_loop {
+        say_saved().await;
+    }
     let mut first_failure: Option<TaskResult> = None;
     for (i, (element, r)) in results.iter().enumerate() {
         for (left, attempt) in retries.get(i).into_iter().flatten() {
@@ -154,6 +172,9 @@ pub(super) async fn report_task(
                 error,
             })
             .await;
+    }
+    if is_loop {
+        say_saved().await;
     }
     let mut failure = first_failure.map(|r| without_error(&r));
     if let Some((aggregate, show)) = aggregate {

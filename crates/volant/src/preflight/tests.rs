@@ -5,20 +5,6 @@ use crate::playbook::parse;
 use crate::stats::error_code;
 use rstest::rstest;
 
-/// `async` on a collection's action plugin is refused once the name is known to be one.
-#[test]
-fn async_on_a_collection_action_plugin_is_refused_after_resolution() {
-    let mut task = crate::testing::task("ns.preflightcoll.shutdown");
-    task.async_val = 5;
-    assert!(refuse_async(&task).is_ok());
-    action_plugins::note_collection_action(&task.module, &task.module, false);
-    let err = refuse_async(&task).unwrap_err().to_string();
-    assert!(
-        err.contains("keyword 'async' is not supported yet on 'ns.preflightcoll.shutdown'"),
-        "{err}"
-    );
-}
-
 /// A `pause` with a prompt and a duration on a terminal is refused before anything connects
 /// when the step is sure to run, and left to the run when something may leave it out.
 #[test]
@@ -88,10 +74,6 @@ fn task_play(body: &str) -> String {
 
 /// Everything the pre-flight refuses is refused at exit 4, naming what it refuses.
 #[rstest]
-#[case::async_on_a_controller_module(task_play("      debug: msg=hi\n      async: 5\n"), &["task 'T': keyword 'async' is not supported yet on 'debug'"])]
-#[case::async_on_an_action_plugin(task_play("      copy: src=a dest=b\n      async: 5\n"), &["keyword 'async' is not supported yet on 'copy'"])]
-#[case::async_on_raw(task_play("      raw: echo hi\n      async: 5\n"), &["keyword 'async' is not supported yet on 'raw'"])]
-#[case::async_on_an_include(task_play("      include_tasks: inc.yml\n      async: 5\n"), &["keyword 'async' is not supported yet on 'include_tasks'"])]
 #[case::until_on_include_tasks(task_play("      include_tasks: inc.yml\n      until: false\n"), &["keyword 'until' is not supported yet on 'include_tasks'"])]
 #[case::retries_on_include_tasks(task_play("      include_tasks: inc.yml\n      retries: 2\n"), &["keyword 'retries' is not supported yet on 'include_tasks'"])]
 #[case::delay_on_include_tasks(task_play("      include_tasks: inc.yml\n      delay: 1\n"), &["keyword 'delay' is not supported yet on 'include_tasks'"])]

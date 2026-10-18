@@ -30,13 +30,13 @@ crates/volant/src/inventory/constructed.rs 506
 crates/volant/src/inventory/mod.rs 952
 crates/volant/src/playbook.rs 2110
 crates/volant/src/preflight.rs 573
-crates/volant/src/python.rs 1370
+crates/volant/src/python.rs 1372
 crates/volant/src/render.rs 997
 crates/volant/src/template/filters.rs 1182
 crates/volant/src/template/lookups.rs 805
 crates/volant/src/template/mod.rs 2126
 crates/volant/src/template/yaml_dump.rs 669
 crates/volant/src/transport.rs 2040
-crates/volant/src/union_cache.rs 748
-crates/volant/src/vars.rs 1620
-crates/volant/src/vault.rs 552
+crates/volant/src/union_cache.rs 749
+crates/volant/src/vars.rs 1617
+crates/volant/src/vault.rs 553

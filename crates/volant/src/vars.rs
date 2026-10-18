@@ -520,6 +520,7 @@ fn short_name(host: &str) -> String {
 
 impl VarStore {
     /// A store over one inventory file, or none.
+    #[cfg(test)]
     pub fn new(
         inventory: &Inventory,
         inventory_path: Option<&Path>,
@@ -886,10 +887,6 @@ impl VarStore {
 
     pub fn take_cache_failure(&mut self) -> Option<crate::fact_cache::CacheFailure> {
         self.cache_failure.take()
-    }
-
-    pub fn fact_cache(&self) -> Option<&crate::fact_cache::FactCache> {
-        self.fact_cache.as_ref()
     }
 
     /// Takes what the cache held for `host` as that host's gathered facts, without writing it

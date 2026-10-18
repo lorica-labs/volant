@@ -439,11 +439,12 @@ fn key_from(
 /// The entry under `key`, or `None` on any doubt: a directory others could write, a manifest that
 /// does not read or is of another format, a source whose size or mtime moved, or a zip whose
 /// hash is not the manifest's.
+#[cfg(test)]
 pub fn load(dir: &Path, key: &CacheKey) -> Option<Entry> {
     open(dir, key).ok().flatten()
 }
 
-/// [`load`], telling a directory or a file that cannot be trusted (`Err`, which the run warns
+/// `load`, telling a directory or a file that cannot be trusted (`Err`, which the run warns
 /// about) from an entry that is merely absent or stale (`Ok(None)`).
 pub fn open(dir: &Path, key: &CacheKey) -> io::Result<Option<Entry>> {
     match check_dir(dir) {

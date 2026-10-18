@@ -8,7 +8,7 @@ pub mod bridge;
 pub mod cli;
 pub(crate) mod collection;
 pub(crate) mod compile;
-pub mod config;
+pub(crate) mod config;
 pub(crate) mod executor;
 pub(crate) mod fact_cache;
 pub(crate) mod facts_read;
@@ -17,20 +17,20 @@ pub mod keywords;
 pub(crate) mod listing;
 pub mod playbook;
 pub mod preflight;
-pub mod profile;
+pub(crate) mod profile;
 pub(crate) mod prompt;
-pub mod python;
+pub(crate) mod python;
 pub(crate) mod render;
 pub(crate) mod roles;
-pub mod splitter;
+pub(crate) mod splitter;
 pub(crate) mod stats;
 pub mod template;
 #[cfg(test)]
 pub(crate) mod testing;
 pub mod transport;
-pub mod union_cache;
-pub mod vars;
-pub mod vault;
+pub(crate) mod union_cache;
+pub(crate) mod vars;
+pub(crate) mod vault;
 pub mod yaml;
 
 /// Version string shown by `--version`: semver, git sha and build date.

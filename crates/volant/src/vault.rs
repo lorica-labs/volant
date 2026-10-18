@@ -48,6 +48,7 @@ impl Secrets {
     }
 
     /// The first secret, the one the `vault` filter and `encrypt` use when none is named.
+    #[cfg(test)]
     pub fn first(&self) -> Option<&[u8]> {
         self.0.first().map(Vec::as_slice)
     }

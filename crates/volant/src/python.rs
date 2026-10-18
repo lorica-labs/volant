@@ -79,7 +79,7 @@ impl Natives {
     /// `setup` is recognised by the name it was built under, which is the name the agent looks a
     /// native up by: a collection's module redirected to `ansible.builtin.setup` is ansible-core's
     /// `setup` whatever the task called it.
-    pub fn force_python(&self, facts: &ModuleFacts) -> bool {
+    pub fn force_python(self, facts: &ModuleFacts) -> bool {
         if !self.enabled || !facts.core {
             return true;
         }
@@ -215,7 +215,7 @@ pub enum Resolved {
 /// it.
 ///
 /// A collection's module is in the set as well: the controller's ansible-core resolves it before
-/// the first connection ([`union_for`]), and builds it into the union like a builtin when it is
+/// the first connection (`union_for`), and builds it into the union like a builtin when it is
 /// a module it can build.
 pub fn is_python_module(module: &str) -> bool {
     use volant_protocol::modules::{
@@ -273,7 +273,7 @@ pub fn modules_to_build<'a>(
 /// under `tasks/` and `handlers/` of each role the plays use or an include names, and of its
 /// `meta/main.yml` dependencies, and every file an include or an
 /// import names by a literal path, followed down. A name that is not a module this release builds
-/// is dropped by [`modules_to_build`]. A collection's module goes in, and [`union_for`] leaves it
+/// is dropped by [`modules_to_build`]. A collection's module goes in, and `union_for` leaves it
 /// out again if the controller's ansible-core cannot build it: a file for another platform naming
 /// a collection nobody installed costs nothing, and the include refuses it by name if a host ever
 /// reaches it.
@@ -655,6 +655,7 @@ fn yaml_files(dir: &std::path::Path) -> anyhow::Result<Vec<std::path::PathBuf>> 
 /// `plugin_dirs` is every playbook's directory, then every role's, in the order ansible-playbook
 /// adds them to its loaders: their `library/` and `module_utils/` are searched before anything
 /// configured, and the helper is told about them before it resolves or builds anything.
+#[cfg(test)]
 pub fn union_for(
     modules: &std::collections::BTreeSet<String>,
     named: &[(String, String)],
@@ -673,7 +674,7 @@ pub fn union_for(
     union_from(start, modules, named, place.as_ref(), warn)
 }
 
-/// [`union_for`] that also hands back the helper it built, still running, when it built one.
+/// `union_for` that also hands back the helper it built, still running, when it built one.
 ///
 /// The run keeps it for the filters, tests and lookups ansible-core alone can answer
 /// ([`crate::bridge::Bridge::adopt`]) instead of paying for a second ansible-core start.
@@ -706,8 +707,9 @@ fn collection_names(modules: &std::collections::BTreeSet<String>) -> Vec<String>
         .collect()
 }
 
-/// [`union_for`] with the helper's start and the cache's place handed in, so what happens when
+/// `union_for` with the helper's start and the cache's place handed in, so what happens when
 /// there is no helper, or a cache entry, is testable without touching the process environment.
+#[cfg(test)]
 fn union_from(
     start: impl FnOnce() -> anyhow::Result<PythonBuilder>,
     modules: &std::collections::BTreeSet<String>,
@@ -718,7 +720,7 @@ fn union_from(
     union_keeping(start, modules, named, cache, warn, &mut None)
 }
 
-/// [`union_from`] leaving the helper it started in `keep` instead of dropping it.
+/// `union_from` leaving the helper it started in `keep` instead of dropping it.
 fn union_keeping(
     start: impl FnOnce() -> anyhow::Result<PythonBuilder>,
     modules: &std::collections::BTreeSet<String>,

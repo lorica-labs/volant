@@ -1,7 +1,25 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::*;
-use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
+use std::collections::{BTreeMap, BTreeSet, HashMap};
 use std::path::{Path, PathBuf};
+use std::sync::{Arc, Mutex};
+
+use serde_json::{Map, Value, json};
+use tokio::sync::watch;
+
+use super::connect::connect_for;
+use super::escalation::{become_for, remove_omit};
+use super::item::{Item, Prepared};
+use super::loops::flatten_once;
+use super::vars::host_vars;
+use super::{PlayPlan, Strategy, display, prepare};
+use crate::action_plugins::Kind;
+use crate::compile::{Compiled, IncludeParams, Origin, Step};
+use crate::executor::coordinator::Progress;
+use crate::playbook::{Flag, PlayTask};
+use crate::template::{Templar, TemplateError};
+use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
+use crate::transport::{BecomeMethod, ConnectionDefaults, Escalation};
+use crate::vars::{HostVars, VarStore, omit_token};
 
 /// The connection keywords may be templates over a host's facts, and what they render to
 /// reaches `ssh` as one argument each: a value shaped like an option or a line is refused.

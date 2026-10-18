@@ -67,7 +67,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `mod.rs` | The run's settings, the connections kept between plays, and the entry point the command line calls. |
 | `coordinator.rs` | The serialized view of a batch's progress, and everything that reaches the terminal. |
 | `driver.rs` | One host's run through a play, from its first step to the moment it leaves. |
-| `prepare.rs` | Rendering one task for one host: variables, escalation, environment and loop items. |
+| `prepare/` | Rendering one task for one host: variables, escalation, environment and loop items. `mod.rs` holds `prepare`, `plan.rs` the play's shared settings, `escalation.rs` the `become` keywords, `vars.rs` a host's variables, `item.rs` the prepared task and its keywords, `loops.rs` the loop items, `connect.rs` connection and delegation. |
 | `run.rs` | Running one task and judging its result, on the controller or on the agent. |
 | `report.rs` | Turning one task's results into the events the coordinator shows. |
 | `include.rs` | Resolving a dynamic `include_tasks` or `include_role` for one host. |

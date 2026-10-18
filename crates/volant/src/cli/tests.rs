@@ -1,7 +1,18 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::*;
+use super::announce::module_path_dirs;
+use super::args::PlaybookArgs;
+use super::hosts::{order_hosts, shuffle};
+use super::passwords::{password_from_file, ssh_words};
+use super::run::armed;
+#[cfg(unix)]
+use super::run::run;
+use crate::config::Config;
+use crate::inventory::Host;
+use crate::python::{self, Facts, Natives};
+use crate::stats::error_code;
 #[cfg(unix)]
 use crate::testing::scratch;
+use clap::Parser;
 
 /// `--facts` takes one of its three words and nothing else, `auto` when it is not given, and
 /// `--profile` is a plain flag.

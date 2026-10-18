@@ -20,9 +20,22 @@ const SU_TALK_LIMIT: usize = 4096;
 /// `su`'s password prompts, the reference's `SU_PROMPT_LOCALIZATIONS` of ansible-core 2.19.12,
 /// matched as su.py matches them: any of them, then optional spaces, then an ASCII or a
 /// full-width colon, in any case.
-fn su_prompt() -> &'static regex::Regex {
+///
+/// `prompt_l10n` replaces the list when it is not empty, as `check_password_prompt` does.
+fn su_prompt(prompt_l10n: &[String]) -> std::borrow::Cow<'static, regex::Regex> {
+    if !prompt_l10n.is_empty() {
+        let alternatives = prompt_l10n
+            .iter()
+            .map(|p| regex::escape(p))
+            .collect::<Vec<_>>()
+            .join("|");
+        return std::borrow::Cow::Owned(
+            regex::Regex::new(&format!(r"(?i)(?:{alternatives})\s*[:：]"))
+                .expect("escaped prompts are a valid pattern"),
+        );
+    }
     static PROMPT: std::sync::OnceLock<regex::Regex> = std::sync::OnceLock::new();
-    PROMPT.get_or_init(|| {
+    std::borrow::Cow::Borrowed(PROMPT.get_or_init(|| {
         const PROMPTS: [&str; 32] = [
             "Password",
             "암호",
@@ -60,7 +73,7 @@ fn su_prompt() -> &'static regex::Regex {
         let alternatives = PROMPTS.map(regex::escape).join("|");
         regex::Regex::new(&format!(r"(?i)(?:{alternatives})\s*[:：]"))
             .expect("the prompt pattern is fixed")
-    })
+    }))
 }
 
 /// The remote command that runs `command` behind `su`, as the reference builds it: `become_exe`
@@ -113,6 +126,7 @@ pub(in crate::transport) async fn su_exchange<R, W>(
     out: &mut R,
     input: &mut W,
     password: Option<&str>,
+    prompt_l10n: &[String],
     success: &str,
     timeout: Duration,
 ) -> Result<Option<String>, ConnectError>
@@ -120,6 +134,7 @@ where
     R: tokio::io::AsyncRead + Unpin,
     W: tokio::io::AsyncWrite + Unpin,
 {
+    let prompt = su_prompt(prompt_l10n);
     let mut said: Vec<u8> = Vec::new();
     let mut line: Vec<u8> = Vec::new();
     let mut answered = false;
@@ -168,7 +183,7 @@ where
         let Some(password) = password.filter(|_| matches!(byte, b':' | 0x9A)) else {
             continue;
         };
-        if !su_prompt().is_match(&String::from_utf8_lossy(&line)) {
+        if !prompt.is_match(&String::from_utf8_lossy(&line)) {
             continue;
         }
         if answered {

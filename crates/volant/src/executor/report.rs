@@ -129,8 +129,14 @@ pub(super) async fn report_task(
             item_keys(task, &mut shown.0, element);
         }
         // A templated `diff` was rendered per item for the module, which only reports a diff
-        // when it is on, so a result that carries one stands for an asked-for diff.
-        if !matches!(task.diff, None | Some(Flag::Fixed(false))) {
+        // when it is on, so a result that carries one stands for an asked-for diff; one that
+        // rendered false carries none and is not counted as asked.
+        let asked = match task.diff {
+            None | Some(Flag::Fixed(false)) => false,
+            Some(Flag::Fixed(true)) => true,
+            Some(Flag::Template(_)) => r.0.contains_key("diff"),
+        };
+        if asked {
             shown.0.insert(DIFF_KEY.into(), Value::Bool(true));
         }
         let _ = tx

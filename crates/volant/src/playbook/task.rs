@@ -6,9 +6,7 @@ use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
 use volant_protocol::modules::{import_module, include_module, is_known, short_name};
 
-use crate::keywords::{
-    Support, block_keyword, handler_keyword, loop_control_keyword, task_keyword,
-};
+use crate::keywords::{block_keyword, handler_keyword, loop_control_keyword, task_keyword};
 use crate::yaml::{field, to_json};
 
 use super::fields::{
@@ -35,20 +33,16 @@ pub(super) fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
         .and_then(Yaml::as_str)
         .unwrap_or("block")
         .to_string();
-    let mut unsupported = Vec::new();
     for (key, _) in map {
         let key = key
             .as_str()
             .ok_or_else(|| anyhow!("block '{name}': keys must be strings"))?;
-        match block_keyword(key) {
-            // The reference's own words, measured: a module key next to `block:` reads as an
-            // attribute the block does not have, `'debug' is not a valid attribute for a Block`.
-            None => bail!("'{key}' is not a valid attribute for a Block"),
-            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
-            Some(_) => {}
+        // The reference's own words, measured: a module key next to `block:` reads as an
+        // attribute the block does not have, `'debug' is not a valid attribute for a Block`.
+        if block_keyword(key).is_none() {
+            bail!("'{key}' is not a valid attribute for a Block");
         }
     }
-    unsupported.sort_unstable();
     let context = format!("block '{name}': ");
     let (r#become, become_user) = escalation(yaml, &context)?;
     let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
@@ -80,7 +74,6 @@ pub(super) fn parse_block(yaml: &Yaml) -> anyhow::Result<Block> {
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
             delegate_facts,
             delegate_to,
-            unsupported,
             ..PlayTask::empty()
         },
     })
@@ -101,19 +94,14 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     let mut module: Option<(String, &Yaml)> = None;
     // `action:` or `local_action:`, the spellings that name the module in their value.
     let mut statement: Option<(&'static str, &Yaml)> = None;
-    let mut unsupported = Vec::new();
     for (key, value) in map {
         let key = key
             .as_str()
             .ok_or_else(|| anyhow!("task '{label}': keys must be strings"))?;
-        if handler && let Some(k) = handler_keyword(key) {
-            if k.support == Support::Preflight {
-                unsupported.push(k.name);
-            }
+        if handler && handler_keyword(key).is_some() {
             continue;
         }
         match task_keyword(key) {
-            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
             Some(k) if matches!(k.name, "action" | "local_action") => {
                 if statement.is_some() {
                     bail!("action and local_action are mutually exclusive");
@@ -134,8 +122,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     }
     // `loop_control` is a mapping, so it has a grammar of its own. The reference refuses a
     // sub-key it does not know at load - measured, exit 4, `'nosuch' is not a valid attribute
-    // for a LoopControl` - and one it knows and this release cannot honour would be parked for
-    // the pre-flight like any other keyword.
+    // for a LoopControl`.
     let mut loop_var = "item".to_string();
     let mut loop_label = None;
     let mut index_var = None;
@@ -154,10 +141,6 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
             let Some(k) = loop_control_keyword(key) else {
                 bail!("'{key}' is not a valid attribute for a LoopControl");
             };
-            if k.support == Support::Preflight {
-                unsupported.push(k.name);
-                continue;
-            }
             let name = || {
                 value.as_str().map(str::to_string).ok_or_else(|| {
                     anyhow!("task '{label}': 'loop_control.{}' must be a name", k.name)
@@ -184,7 +167,6 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
             }
         }
     }
-    unsupported.sort_unstable();
     // The statement's value is the action: a string is `module args`, a mapping names the module
     // under `module:` and holds its arguments beside it. It is read after the whole mapping so a
     // conflict is reported the same whichever key came first.
@@ -203,22 +185,8 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         }
         None => module,
     };
-    // A task whose only content this release cannot execute has no module to find - `block:`
-    // is the spelling - so it is loaded empty and refused whole by
-    // the pre-flight, instead of being blamed for a module it was never asked to name.
-    let (module, value) = match module {
-        Some(found) => found,
-        None if !unsupported.is_empty() => {
-            return Ok(PlayTask {
-                name: label.clone(),
-                named: name.is_some(),
-                module: String::new(),
-                tags: tags(yaml, &format!("task '{label}': "))?,
-                unsupported,
-                ..PlayTask::empty()
-            });
-        }
-        None => bail!("task '{label}': no module given"),
+    let Some((module, value)) = module else {
+        bail!("task '{label}': no module given");
     };
     // Arguments are read only for a module this release can run. The reference resolves the
     // action before it looks at what was handed to it, so a name it cannot resolve is refused
@@ -273,12 +241,10 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         Some(_) => bail!("task '{label}': 'register' must be a variable name"),
     };
     // Every loop keyword this release runs: `loop`, `with_items`, and each `with_<lookup>` whose
-    // row says it runs. The others were parked above for the pre-flight.
+    // row says it runs.
     let mut loops = map.iter().filter_map(|(key, value)| {
         let key = key.as_str()?;
-        let runs = key == "loop"
-            || (key.starts_with("with_")
-                && task_keyword(key).is_some_and(|k| k.support != Support::Preflight));
+        let runs = key == "loop" || (key.starts_with("with_") && task_keyword(key).is_some());
         runs.then_some((key, value))
     });
     let (loop_items, with_items, loop_with) = match (loops.next(), loops.next()) {
@@ -374,7 +340,6 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
         delegate_facts,
         delegate_to,
-        unsupported,
         origin: task_origin(map),
         value_origins,
     })

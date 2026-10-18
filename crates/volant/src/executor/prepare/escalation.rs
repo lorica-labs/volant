@@ -78,8 +78,22 @@ pub(super) fn become_for(
         .ok_or_else(|| TemplateError(format!("{source} '{method}' is not supported yet")))?;
     // `become_exe` and `become_flags` in the same order, each a template or not, then split into
     // the words the escalation program is given.
-    let program = |var: &str, keyword: &Option<String>, default: &Option<String>| {
-        let raw = match host_setting(vars, var).and_then(Value::as_str) {
+    // The variables a setting is read from, in the reference's order: `ansible_become_*`, then
+    // the method's own `ansible_sudo_*` or `ansible_su_*`.
+    let own = match method {
+        BecomeMethod::Sudo => "sudo",
+        BecomeMethod::Su => "su",
+    };
+    let named = |suffix: &str| {
+        [
+            format!("ansible_become_{suffix}"),
+            format!("ansible_{own}_{suffix}"),
+        ]
+    };
+    let first = |names: &[String]| names.iter().find_map(|n| host_setting(vars, n));
+    let program = |suffix: &str, keyword: &Option<String>, default: &Option<String>| {
+        let var = format!("ansible_become_{suffix}");
+        let raw = match first(&named(suffix)).and_then(Value::as_str) {
             Some(text) => text.to_string(),
             None => match keyword.as_ref().or(default.as_ref()) {
                 Some(text) => text.clone(),
@@ -104,18 +118,9 @@ pub(super) fn become_for(
             ))
         })
     };
-    let exe = program(
-        "ansible_become_exe",
-        &task.connect.become_exe,
-        &defaults.become_exe,
-    )?
-    .unwrap_or_default();
-    let flags = program(
-        "ansible_become_flags",
-        &task.connect.become_flags,
-        &defaults.become_flags,
-    )?;
-    let user = match host_setting(vars, "ansible_become_user").and_then(Value::as_str) {
+    let exe = program("exe", &task.connect.become_exe, &defaults.become_exe)?.unwrap_or_default();
+    let flags = program("flags", &task.connect.become_flags, &defaults.become_flags)?;
+    let user = match first(&named("user")).and_then(Value::as_str) {
         Some(user) => user.to_string(),
         None => task
             .become_user
@@ -156,15 +161,33 @@ pub(super) fn become_for(
     };
     let password = host_setting(vars, "ansible_become_password")
         .or_else(|| host_setting(vars, "ansible_become_pass"))
+        .or_else(|| host_setting(vars, &format!("ansible_{own}_pass")))
         .and_then(Value::as_str)
         .map(str::to_string)
         .or_else(|| defaults.become_password.clone());
+    // Only `su` reads `prompt_l10n`; it replaces the built-in prompts.
+    let prompt_l10n = match (method, host_setting(vars, "ansible_su_prompt_l10n")) {
+        (BecomeMethod::Su, Some(Value::Array(list))) => list
+            .iter()
+            .map(|p| p.as_str().map(str::to_string))
+            .collect::<Option<Vec<_>>>()
+            .ok_or_else(|| {
+                TemplateError("'ansible_su_prompt_l10n' must be a list of strings".into())
+            })?,
+        (BecomeMethod::Su, Some(_)) => {
+            return Err(TemplateError(
+                "'ansible_su_prompt_l10n' must be a list of strings".into(),
+            ));
+        }
+        _ => Vec::new(),
+    };
     Ok(Some(Escalation {
         method,
         user,
         password,
         exe,
         flags,
+        prompt_l10n,
     }))
 }
 

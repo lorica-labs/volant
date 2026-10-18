@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: gather in parallel
+      ansible.builtin.gather_facts:
+        parallel: true
+        gather_timeout: 20
+      register: gathered
+
+    - debug:
+        msg: "{{ ansible_facts.keys() | select('equalto', 'distribution') | list }}"

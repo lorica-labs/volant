@@ -1,0 +1,4 @@
+# A vaulted unarchive archive and a vaulted script are decrypted on the controller, as the
+# reference reads them with decrypt on.
+args: [-i, inv, --vault-password-file, pw_ok, play.yml]
+needs: ["ansible-core"]

@@ -103,11 +103,6 @@ pub struct Play {
     /// `vars_prompt`, entry by entry as written, every key already known to the reference's
     /// list. Templated and asked when the play starts, see `prompt`.
     pub vars_prompt: Vec<Map<String, Value>>,
-    /// Keywords the reference accepts and this release does not execute yet, sorted. The
-    /// loader keeps the play rather than refusing it, so a playbook parses and lists the same
-    /// way it does in the reference; the pre-flight then refuses the run before the first
-    /// connection. Nothing may quietly drop a keyword between the two.
-    pub unsupported: Vec<&'static str>,
 }
 
 /// One handler as the playbook wrote it: a task, plus the names it answers to besides its own.
@@ -259,13 +254,6 @@ pub struct PlayTask {
     /// it was written for. Kept as written because it is a template rendered per task.
     pub delegate_facts: Option<bool>,
     pub delegate_to: Option<String>,
-    /// Keywords the reference accepts and this release does not execute yet, sorted. A task
-    /// carrying one is loaded whole and refused by the pre-flight, never run without it.
-    ///
-    /// Sorted rather than left in mapping order so the refusal names the same keyword whatever
-    /// order the YAML happened to yield: a task carrying two of them would otherwise blame
-    /// whichever came first in the file.
-    pub unsupported: Vec<&'static str>,
     /// Where the task was written, for the `Origin:` of a failure's error block.
     pub origin: Option<Origin>,
     /// Where some of its values were written - `until`, `retries`, `delay` and a `debug`'s `var` -
@@ -337,7 +325,6 @@ impl PlayTask {
             ignore_unreachable: None,
             delegate_facts: None,
             delegate_to: None,
-            unsupported: Vec::new(),
             origin: None,
             value_origins: std::collections::BTreeMap::new(),
         }

@@ -241,8 +241,15 @@ impl SshTarget {
         };
         let password = escalation.password.as_deref();
         let timeout = self.escalation_timeout();
-        if let Some(said) =
-            su_exchange(&mut stdout, &mut stdin, password, &success, timeout).await?
+        if let Some(said) = su_exchange(
+            &mut stdout,
+            &mut stdin,
+            password,
+            &escalation.prompt_l10n,
+            &success,
+            timeout,
+        )
+        .await?
         {
             let code = child.wait().await.ok().and_then(|status| status.code());
             return Err(su_ended(code, &said, "", password));
@@ -328,8 +335,15 @@ impl SshTarget {
         });
         let password = escalation.password.as_deref();
         let timeout = self.escalation_timeout();
-        if let Some(said) =
-            su_exchange(&mut stdout, &mut stdin, password, &success, timeout).await?
+        if let Some(said) = su_exchange(
+            &mut stdout,
+            &mut stdin,
+            password,
+            &escalation.prompt_l10n,
+            &success,
+            timeout,
+        )
+        .await?
         {
             let code = child.wait().await.ok().and_then(|status| status.code());
             let stderr = stderr.await.unwrap_or_default();

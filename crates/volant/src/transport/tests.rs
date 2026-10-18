@@ -44,6 +44,7 @@ fn escalation(password: Option<&str>) -> Escalation {
         password: password.map(str::to_string),
         exe: Vec::new(),
         flags: None,
+        prompt_l10n: Vec::new(),
     }
 }
 
@@ -145,6 +146,7 @@ fn become_exe_and_become_flags_shape_the_sudo_words(#[case] form: SudoForm, #[ca
     let e = Escalation {
         exe: vec!["/usr/bin/sudo".into()],
         flags: Some(vec!["-H".into(), "-S".into(), "-n".into()]),
+        prompt_l10n: Vec::new(),
         ..escalation(Some("pw"))
     };
     assert_eq!(sudo_prefix(Some((&e, form))), want);
@@ -177,6 +179,7 @@ fn the_su_command_is_the_references_with_a_raw_terminal() {
     let e = Escalation {
         exe: vec!["/bin/su".into()],
         flags: Some(vec!["-".into()]),
+        prompt_l10n: Vec::new(),
         ..e
     };
     assert!(
@@ -248,6 +251,33 @@ async fn fake_su(mode: FakeSu, io: tokio::io::DuplexStream, pw: &str) {
     }
 }
 
+/// `prompt_l10n` replaces the built-in prompts: its own wording is answered, and the built-in
+/// one no longer is.
+#[rstest]
+#[case::its_own(&["Mot de passe"], true)]
+#[case::built_in_dropped(&["Clave"], false)]
+#[tokio::test]
+async fn su_prompt_l10n_replaces_the_built_in_prompts(
+    #[case] l10n: &[&str],
+    #[case] answered: bool,
+) {
+    let (mut ours, theirs) = tokio::io::duplex(1024);
+    let su = tokio::spawn(fake_su(FakeSu::Localised, theirs, "pw"));
+    let (mut read, mut write) = tokio::io::split(&mut ours);
+    let l10n: Vec<String> = l10n.iter().map(ToString::to_string).collect();
+    let got = su_exchange(
+        &mut read,
+        &mut write,
+        Some("pw"),
+        &l10n,
+        BECOME_SUCCESS,
+        Duration::from_millis(300),
+    )
+    .await;
+    assert_eq!(got.is_ok(), answered, "{got:?}");
+    su.abort();
+}
+
 /// A prompt is answered once, the command's first byte is left on the stream, and every way
 /// `su` can say no comes back as the reference words it, without the password in it.
 #[rstest]
@@ -282,6 +312,7 @@ async fn su_is_talked_through_as_the_reference_does(
         &mut read,
         &mut write,
         password,
+        &[],
         BECOME_SUCCESS,
         Duration::from_millis(300),
     )

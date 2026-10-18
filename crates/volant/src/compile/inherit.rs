@@ -110,15 +110,5 @@ pub(super) fn merge(outer: &PlayTask, inner: &PlayTask) -> PlayTask {
     let mut vars = outer.vars.clone();
     vars.extend(inner.vars.clone());
     task.vars = vars;
-    // A keyword this release cannot execute has to be refused wherever it was written, and once
-    // a role's tasks come from another file the only place the pre-flight still sees them is
-    // here. Carrying the outer keyword down means a `tags:` on a role entry, or a `notify:` on a
-    // block inside a role, is refused by its own name rather than inherited and ignored.
-    for kw in &outer.unsupported {
-        if !task.unsupported.contains(kw) {
-            task.unsupported.push(kw);
-        }
-    }
-    task.unsupported.sort_unstable();
     task
 }

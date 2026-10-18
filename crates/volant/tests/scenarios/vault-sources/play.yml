@@ -1,0 +1,12 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - file: {path: "{{ playbook_dir }}/out", state: directory}
+    - unarchive: {src: arch.tgz, dest: "{{ playbook_dir }}/out"}
+    - command: cat out/inner.txt
+      register: got
+      changed_when: false
+    - debug: {var: got.stdout}
+    - script: vscript.sh
+      register: ran
+    - debug: {var: ran.stdout}

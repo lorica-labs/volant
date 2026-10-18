@@ -50,12 +50,12 @@ pub(super) fn absolute(path: &Path) -> PathBuf {
     out
 }
 
+/// The reference's `is_executable`: any execute bit in the mode, whoever the caller is.
 #[cfg(unix)]
 fn is_executable(path: &Path) -> bool {
-    use std::os::unix::ffi::OsStrExt as _;
-    std::ffi::CString::new(path.as_os_str().as_bytes())
-        // SAFETY: `access` reads a NUL-terminated path and nothing else.
-        .is_ok_and(|c| unsafe { libc::access(c.as_ptr(), libc::X_OK) } == 0)
+    use std::os::unix::fs::PermissionsExt as _;
+    path.metadata()
+        .is_ok_and(|m| m.permissions().mode() & 0o111 != 0)
 }
 
 /// Controllers run on Unix; elsewhere every password file is read as text.

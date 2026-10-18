@@ -175,7 +175,6 @@ fn keyword_status(k: &keywords::Keyword) -> (Status, String) {
     match k.support {
         Support::Runs => (Status::Runs, k.note.unwrap_or_default().to_string()),
         Support::Partial => (Status::Partial, k.missing.unwrap_or_default().to_string()),
-        Support::Preflight => (Status::NotYet, String::new()),
     }
 }
 

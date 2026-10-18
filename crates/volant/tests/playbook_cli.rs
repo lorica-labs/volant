@@ -2296,7 +2296,7 @@ fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
 // below carry it.
 
 use volant::keywords::{
-    BLOCK_KEYWORDS, HANDLER_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support, TASK_KEYWORDS,
+    BLOCK_KEYWORDS, HANDLER_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, TASK_KEYWORDS,
 };
 
 const PROBE_DEADLINE: std::time::Duration = std::time::Duration::from_secs(20);
@@ -4324,12 +4324,7 @@ fn every_answered_keyword_has_a_proof_and_every_proof_has_a_row() {
         ("handler", HANDLER_KEYWORDS),
     ]
     .into_iter()
-    .flat_map(|(table, keywords)| {
-        keywords
-            .iter()
-            .filter(|k| k.support != Support::Preflight)
-            .map(move |k| (table, k.name))
-    })
+    .flat_map(|(table, keywords)| keywords.iter().map(move |k| (table, k.name)))
     .collect();
     let mut proved: Vec<(&str, &str)> = RUNS_PROBES.iter().map(|p| (p.table, p.kw)).collect();
     declared.sort_unstable();

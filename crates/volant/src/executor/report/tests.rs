@@ -123,3 +123,41 @@ async fn a_failure_is_ignored_item_by_item() {
         "no verdict falls back to the task's keyword, unset here"
     );
 }
+
+/// A templated `diff` counts as asked only when the result carries a diff: one that rendered
+/// false leaves the module without one.
+#[rstest::rstest]
+#[case::templated_with_diff(json!({"changed": true, "diff": {"before": "a"}}), true)]
+#[case::templated_without_diff(json!({"changed": true}), false)]
+#[tokio::test]
+async fn a_templated_diff_counts_when_the_result_has_one(#[case] body: Value, #[case] asked: bool) {
+    let mut t = task("copy");
+    t.diff = Some(Flag::Template("{{ want }}".into()));
+    let results = vec![(None, TaskResult(body.as_object().unwrap().clone()))];
+    let (tx, mut rx) = mpsc::channel(16);
+    report_task(
+        &tx,
+        "h1",
+        0,
+        &t,
+        &results,
+        &[None],
+        &[],
+        &[],
+        &[],
+        Dump::No,
+        false,
+        None,
+        Hold {
+            by_default: false,
+            permit: None,
+            turn: None,
+        },
+    )
+    .await;
+    drop(tx);
+    let Some(Event::Result { result, .. }) = rx.recv().await else {
+        panic!("no result event");
+    };
+    assert_eq!(result.0.contains_key(DIFF_KEY), asked);
+}

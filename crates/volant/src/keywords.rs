@@ -2,12 +2,8 @@
 //! Every play and task keyword ansible-core 2.19 knows, with what this release does about it.
 //!
 //! The loader accepts everything listed here and refuses anything else, the way the reference
-//! does; the pre-flight then refuses, before the first connection, everything marked
-//! [`Support::Preflight`]. Splitting the one old rule ("a keyword we do not implement is
-//! refused by name") in two only stays safe while both halves are true, so a keyword is
-//! `Runs` here **only when something in this release honours it today**. A keyword marked
-//! `Runs` before its executor exists would be accepted by the loader, waved through by the
-//! pre-flight and then ignored, which is the failure this split exists to prevent. Whoever
+//! does. A keyword is `Runs` here **only when something in this release honours it today**: one
+//! marked `Runs` before its executor exists would be accepted by the loader and then ignored. Whoever
 //! implements a keyword flips its row in the same change, and the table's own tests then prove
 //! the new behaviour in both directions. A keyword this release answers without doing the whole
 //! of what the reference does with it is [`Support::Partial`], and carries the sentence the
@@ -32,9 +28,6 @@ pub enum Support {
     /// generated page says what is missing, because "runs" here would let an operator plan
     /// around a behaviour this release does not have.
     Partial,
-    /// Loaded and kept, so a playbook parses as it does in the reference, then refused by the
-    /// pre-flight before the first connection rather than ignored during the run.
-    Preflight,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -266,7 +259,7 @@ pub const PLAY_KEYWORDS: &[Keyword] = &[
 /// A keyword whose value is a mapping needs a table of its own, or the split between loading
 /// and refusing reopens one level down: a sub-key read by nobody would be accepted, waved past
 /// the pre-flight and dropped, so the run would report success having ignored what the operator
-/// wrote. A sub-key this release could not honour would be parked here as `Preflight`.
+/// wrote. A sub-key this release could not honour is refused where it is read.
 pub const LOOP_CONTROL_KEYWORDS: &[Keyword] = &[
     kw("break_when", Runs),
     kw("extended", Runs),

@@ -270,6 +270,9 @@ pub async fn run_play(
             }
         }
         if let Some(reason) = options.abort.reason() {
+            if options.abort.is_plain() {
+                return Err(crate::stats::Refusal::plain(options.abort.code(), reason));
+            }
             return Err(crate::stats::Refusal::at(options.abort.code(), reason));
         }
         // The run ends where the reference ends it: a batch that had hosts to run and lost every

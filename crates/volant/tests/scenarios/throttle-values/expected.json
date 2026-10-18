@@ -1,0 +1,22 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [g] ***********************************************************************\n\nTASK [command] *****************************************************************\nok: [h1]\nok: [h2]\nok: [h3]\nok: [h4]\nok: [h5]\n\nTASK [command] *****************************************************************\nok: [h2]\nok: [h1]\nok: [h4]\nok: [h3]\nok: [h5]\n\nTASK [command] *****************************************************************\nok: [h2]\nok: [h1]\nok: [h3]\nok: [h4]\nok: [h5]\n\nTASK [command] *****************************************************************\nok: [h1]\nok: [h2]\nok: [h3]\nok: [h4]\nok: [h5]\n\nTASK [command] *****************************************************************\nok: [h3]\nok: [h5]\nok: [h4]\nok: [h1]\nok: [h2]\n\nTASK [command] *****************************************************************\nok: [h4]\nok: [h3]\nok: [h5]\nok: [h1]\nok: [h2]\n\nTASK [command] *****************************************************************\nok: [h5]\nok: [h2]\nok: [h3]\nok: [h1]\nok: [h4]\n\nTASK [command] *****************************************************************\nok: [h1]\nok: [h2]\nok: [h3]\nok: [h4]\nok: [h5]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=8    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=8    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh3                         : ok=8    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh4                         : ok=8    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh5                         : ok=8    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 1,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [probe] *******************************************************************\n"
+  },
+  {
+    "code": 1,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [probe] *******************************************************************\n"
+  },
+  {
+    "code": 1,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [probe] *******************************************************************\n"
+  },
+  {
+    "code": 2,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [probe] *******************************************************************\n[ERROR]: Task failed: Error processing keyword 'throttle': The value 1.5 could not be converted to 'int'.\n\nTask failed.\nOrigin: <golden-tmp>/float.yml:6:7\n\n4     n: 2\n5   tasks:\n6     - name: probe\n        ^ column 7\n\n<<< caused by >>>\n\nError processing keyword 'throttle'.\nOrigin: <golden-tmp>/float.yml:8:17\n\n6     - name: probe\n7       debug: msg=hi\n8       throttle: 1.5\n                  ^ column 17\n\n<<< caused by >>>\n\nThe value 1.5 could not be converted to 'int'.\nOrigin: <golden-tmp>/float.yml:8:17\n\n6     - name: probe\n7       debug: msg=hi\n8       throttle: 1.5\n                  ^ column 17\n\nfatal: [h1]: FAILED! => {\"msg\": \"Task failed: Error processing keyword 'throttle': The value 1.5 could not be converted to 'int'.\"}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

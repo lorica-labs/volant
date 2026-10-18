@@ -1,0 +1,10 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    n: 2
+  tasks:
+    - name: probe
+      debug: msg=hi
+      throttle: 1.5
+    - name: after
+      debug: msg=after

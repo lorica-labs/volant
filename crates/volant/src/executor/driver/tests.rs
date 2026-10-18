@@ -467,3 +467,61 @@ fn a_splice_keeps_the_marks_on_their_steps() {
     c.crosses.clear();
     assert_eq!(boundaries(&c), [true; 5]);
 }
+
+/// What `throttle` converts to, and how it fails, as the reference measured them.
+#[rstest]
+#[case::int(json!(2), Ok(Some(2)))]
+#[case::string(json!("2"), Ok(Some(2)))]
+#[case::template(json!("{{ n }}"), Ok(Some(2)))]
+#[case::template_string(json!("{{ ns }}"), Ok(Some(3)))]
+#[case::zero(json!(0), Ok(None))]
+#[case::negative(json!(-1), Ok(None))]
+#[case::yes(json!(true), Ok(Some(1)))]
+#[case::no(json!(false), Ok(None))]
+#[case::whole_float(json!(2.0), Ok(Some(2)))]
+#[case::word(json!("abc"), Err("Failed to convert the throttle value to an integer: invalid literal for int() with base 10: 'abc'"))]
+#[case::empty(json!(""), Err("Failed to convert the throttle value to an integer: invalid literal for int() with base 10: ''"))]
+#[case::suffix(json!("{{ n }}x"), Err("Failed to convert the throttle value to an integer: invalid literal for int() with base 10: '2x'"))]
+#[case::undefined(json!("{{ undefined_v }}"), Err("Failed to convert the throttle value to an integer: 'undefined_v' is undefined"))]
+#[case::float(json!(1.5), Err("Task failed: Error processing keyword 'throttle': The value 1.5 could not be converted to 'int'."))]
+fn throttle_is_converted_as_the_reference_converts_it(
+    #[case] value: Value,
+    #[case] expected: Result<Option<u64>, &str>,
+) {
+    use super::throttle::{Unconverted, throttle_of};
+    let asked = crate::playbook::Throttle {
+        value,
+        origin: None,
+    };
+    let vars = crate::testing::hvars(json!({"n": 2, "ns": "3"}));
+    let got = match throttle_of(&asked, &vars, &crate::testing::templar()) {
+        Ok(limit) => Ok(limit),
+        Err(Unconverted::Fails(e)) => Err(e.0),
+        Err(Unconverted::Aborts(why)) => Err(why),
+    };
+    assert_eq!(got, expected.map_err(str::to_string));
+}
+
+/// A gate lets a host in only while fewer than its own limit are running, and hands the turn
+/// on when one is dropped.
+#[tokio::test]
+async fn a_gate_holds_hosts_to_the_limit_and_gives_turns_back() {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let gate = Arc::new(crate::executor::prepare::Gate::default());
+    let (now, most) = (Arc::new(AtomicUsize::new(0)), Arc::new(AtomicUsize::new(0)));
+    let mut hosts = Vec::new();
+    for _ in 0..6 {
+        let (gate, now, most) = (Arc::clone(&gate), Arc::clone(&now), Arc::clone(&most));
+        hosts.push(tokio::spawn(async move {
+            let turn = super::throttle::wait_for_turn(&gate, 2).await;
+            most.fetch_max(now.fetch_add(1, Ordering::SeqCst) + 1, Ordering::SeqCst);
+            tokio::task::yield_now().await;
+            now.fetch_sub(1, Ordering::SeqCst);
+            drop(turn);
+        }));
+    }
+    for host in hosts {
+        host.await.expect("host");
+    }
+    assert_eq!(most.load(Ordering::SeqCst), 2);
+}

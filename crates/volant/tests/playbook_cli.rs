@@ -1817,14 +1817,16 @@ fn a_waiting_host_is_released_when_the_others_never_report() {
         "- hosts: web\n  gather_facts: false\n  tasks:\n    - command: \"true\"\n    - debug:\n        msg: \"{{ hostvars['beta'].inventory_hostname }}\"\n",
     )
     .unwrap();
-    let out = volant_within(
+    let out = volant_within_with_path(
         &[
             "playbook",
             "-i",
-            &dir.join("hosts.ini").display().to_string(),
+            &dir.join("inv.ini").display().to_string(),
             &dir.join("silent.yml").display().to_string(),
         ],
         std::time::Duration::from_secs(20),
+        Some(&dir.join("bin")),
+        &[],
     );
     let text = String::from_utf8(out.stdout).unwrap();
     assert!(text.contains("fatal: [alpha]: UNREACHABLE!"), "{text}");

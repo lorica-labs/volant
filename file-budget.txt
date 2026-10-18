@@ -1,11 +1,8 @@
 crates/volant-agent/src/blobs.rs 696
-crates/volant-agent/src/modules/command.rs 775
 crates/volant-agent/src/natives/apt.rs 1303
-crates/volant-agent/src/natives/common.rs 1262
 crates/volant-agent/src/natives/copy.rs 770
 crates/volant-agent/src/natives/file.rs 540
 crates/volant-agent/src/natives/group.rs 628
-crates/volant-agent/src/natives/package_facts.rs 2026
 crates/volant-agent/src/natives/service_facts.rs 1101
 crates/volant-agent/src/natives/setup/network.rs 618
 crates/volant-agent/src/natives/systemd.rs 612
@@ -16,7 +13,6 @@ crates/volant/src/action_plugins/bridged.rs 569
 crates/volant/src/agent.rs 636
 crates/volant/src/bridge.rs 710
 crates/volant/src/cli.rs 1272
-crates/volant/src/compile.rs 1937
 crates/volant/src/config.rs 716
 crates/volant/src/executor/coordinator.rs 1848
 crates/volant/src/executor/driver.rs 3540
@@ -26,7 +22,6 @@ crates/volant/src/executor/run.rs 4140
 crates/volant/src/facts_read.rs 1077
 crates/volant/src/inventory/constructed.rs 506
 crates/volant/src/inventory/mod.rs 952
-crates/volant/src/playbook.rs 2110
 crates/volant/src/preflight.rs 573
 crates/volant/src/python.rs 1372
 crates/volant/src/render.rs 997
@@ -35,5 +30,4 @@ crates/volant/src/template/lookups.rs 805
 crates/volant/src/template/yaml_dump.rs 669
 crates/volant/src/transport.rs 2040
 crates/volant/src/union_cache.rs 749
-crates/volant/src/vars.rs 1617
 crates/volant/src/vault.rs 553

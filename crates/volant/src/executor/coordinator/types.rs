@@ -282,9 +282,10 @@ pub(super) struct Round {
     pub(super) dark: HashSet<String>,
     /// Where each of them picks the play up if it is.
     pub(super) resume: HashMap<String, usize>,
-    /// Hosts whose `Unreachable` has been read and whose `Finished` has not. The `Finished` of
-    /// such a host must not put it back among the failed: a `clear_host_errors` may have run in
-    /// between, and the host's connections take a moment to close before it speaks.
+    /// Hosts whose failure (an `Unreachable`, or a failed result that ends their play) has been
+    /// filed and whose `Finished` has not been read. The `Finished` of such a host must not put
+    /// it back among the failed: a `clear_host_errors` may have run in between, and the host's
+    /// connections take a moment to close before it speaks.
     pub(super) finishing: HashSet<String>,
     /// Hosts that were unreachable before this play and are brought back as well.
     pub(super) dormant: Vec<String>,
@@ -299,6 +300,13 @@ impl Round {
             self.resume
                 .insert(host.to_string(), crate::compile::after(&plan.steps(), at));
         }
+    }
+
+    /// Files a host whose failed result ends its play among the failed hosts, so that its
+    /// `Finished` does not file it again.
+    pub(super) fn failed(&mut self, failed_hosts: &mut HashSet<String>, host: &str) {
+        failed_hosts.insert(host.to_string());
+        self.finishing.insert(host.to_string());
     }
 
     /// Whether a host that finished failed is to be filed among the failed hosts by this event.

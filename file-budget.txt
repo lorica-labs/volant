@@ -1,4 +1,3 @@
-crates/volant-agent/src/blobs.rs 696
 crates/volant-agent/src/modules/command.rs 775
 crates/volant-agent/src/natives/apt.rs 1303
 crates/volant-agent/src/natives/copy.rs 770

@@ -121,7 +121,7 @@ Each keyword below behaves the same way in every place the grid marks it `partia
 | Keyword | What is missing |
 |---|---|
 | `async` | runs on modules the agent runs, native or Python. It is refused before the run on the controller's own modules, on the action plugins this release runs on the controller (`package`, `service` and `dnf` among them, which the reference runs as jobs), on statements, and on `raw` and `async_status`, which the reference refuses too. `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are. |
-| `debugger` | the prompt takes `c` (continue) and `q` (quit) only; `p`, `r`, `u` and the rest are not supported yet, and a standard input that is not a terminal is the end of input |
+| `debugger` | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
 
 ## Handlers
 

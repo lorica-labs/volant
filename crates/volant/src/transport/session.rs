@@ -30,6 +30,7 @@ impl SshTarget {
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
         let resolved = self.resolved().await;
+        super::trace::established(&resolved);
         let mut link = resolved.open(agents, escalation).await?;
         link.set_tty_target(resolved.use_tty.then_some(resolved));
         Ok(link)
@@ -173,8 +174,10 @@ impl SshTarget {
                 escalated_command(escalated, &format!("exec {agent}"))
             ),
         };
+        let argv = self.ssh_argv(&remote);
+        super::trace::exec(self, &argv);
         let child = Command::new(SSH_PROGRAM)
-            .args(&self.ssh_argv(&remote)[1..])
+            .args(&argv[1..])
             .envs(crate::askpass::environment())
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
@@ -283,6 +286,7 @@ impl SshTarget {
             ["-o".to_string(), "LogLevel=ERROR".into()],
         );
         argv.splice(1..1, ["-tt".to_string(), "-e".into(), "none".into()]);
+        super::trace::exec(self, &argv);
         Command::new(&argv[0])
             .args(&argv[1..])
             .envs(crate::askpass::environment())

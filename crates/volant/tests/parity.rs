@@ -304,29 +304,16 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         } else {
             (Status::Partial, format!("only {}", known.join(", ")))
         };
-        // Parsed, and without effect: Volant moves files over its agent link, never `scp`
-        // or `sftp`.
-        let (s, note) = if s == Status::Runs
-            && flags
-                .iter()
-                .any(|f| matches!(*f, "--scp-extra-args" | "--sftp-extra-args"))
+        // Shown in the `-vvvv` options; files move over the agent link, so no transfer of this
+        // engine takes them.
+        let note = if flags
+            .iter()
+            .any(|f| matches!(*f, "--scp-extra-args" | "--sftp-extra-args"))
         {
-            (
-                Status::Partial,
-                "accepted with no effect: files move over the agent link".to_string(),
-            )
+            "shown in the -vvvv options; files move over the agent link, so no transfer uses it"
+                .to_string()
         } else {
-            (s, note)
-        };
-        // `-vvvv` prints the options a run holds and the lines of ansible-core's own transport
-        // and plugin files; Volant lists fewer options and has no such lines.
-        let (s, note) = if s == Status::Runs && flags.contains(&"--verbose") {
-            (
-                Status::Partial,
-                "-vvvv lists fewer options and prints no ssh or plugin-path lines".to_string(),
-            )
-        } else {
-            (s, note)
+            note
         };
         rows.push(row("ansible-playbook option", &flags.join(", "), s, &note));
     }

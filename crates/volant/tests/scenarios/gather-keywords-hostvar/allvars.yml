@@ -1,0 +1,5 @@
+- hosts: h1
+  gather_facts: false
+  gather_subset: "{{ allsub }}"
+  tasks:
+    - debug: msg=unreached

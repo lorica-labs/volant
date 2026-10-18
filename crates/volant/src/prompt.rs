@@ -266,8 +266,9 @@ fn hash(
     }
 }
 
-/// Reads one line from the terminal with the echo off, the prompt on stderr so that a redirected
-/// stdout still carries only the run's own output. `None` when nothing was read.
+/// Reads one line from the terminal with the echo off, the prompt written to the terminal as
+/// `getpass` does (stderr where there is none) so that a redirected stdout still carries only the
+/// run's own output, and the line break after the answer with it. `None` when nothing was read.
 ///
 /// The echo is turned off by the shell that reads the line rather than from here, and that
 /// shell arms its `trap` before touching the terminal: a Ctrl-C, a Ctrl-\ or a `SIGTERM` while
@@ -283,8 +284,12 @@ pub(crate) fn hidden_line(prompt: &str) -> anyhow::Result<Option<Vec<u8>>> {
     use std::process::Stdio;
     const READ_LINE: &str = "trap 'stty echo 2>/dev/null' EXIT INT QUIT TERM HUP\n\
          stty -echo 2>/dev/null\n\
-         printf %s \"$1\" >&2\n\
-         IFS= read -r password || exit 1\n\
+         if ( : >/dev/tty ) 2>/dev/null; then t=/dev/tty; else t=/dev/stderr; fi\n\
+         printf %s \"$1\" >\"$t\"\n\
+         IFS= read -r password\n\
+         status=$?\n\
+         printf '\\n' >\"$t\"\n\
+         [ $status = 0 ] || exit 1\n\
          printf %s \"$password\"\n";
     // The shell prints the prompt itself, once the echo is off: a person (or a test) answering
     // as soon as it shows would otherwise see the answer typed back.
@@ -298,7 +303,6 @@ pub(crate) fn hidden_line(prompt: &str) -> anyhow::Result<Option<Vec<u8>>> {
         .stderr(Stdio::inherit())
         .output()
         .map_err(|e| anyhow!("reading a hidden line: {e}"))?;
-    eprintln!();
     Ok(out.status.success().then_some(out.stdout))
 }
 

@@ -1,0 +1,7 @@
+# A gather keyword that names an inventory or group variable stops the run before the banner:
+# the play's keywords see play vars and vars_files, not host variables. Exit 4.
+runs:
+  - args: [-i, inv.ini, subset.yml]
+  - args: [-i, inv.ini, timeout.yml]
+  - args: [-i, inv.ini, allvars.yml]
+needs: ["ansible-core"]

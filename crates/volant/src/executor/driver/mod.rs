@@ -490,7 +490,10 @@ pub(super) async fn drive_host(
             // nothing, not even in the recap.
             let mut declined = false;
             if let Some(stepper) = plan.step.as_ref()
-                && matches!(step.kind, StepKind::Task | StepKind::Include(_))
+                && matches!(
+                    step.kind,
+                    StepKind::Task | StepKind::Include(_) | StepKind::Handler(_)
+                )
                 && !masked_out
                 && !handlers_only
             {
@@ -509,7 +512,7 @@ pub(super) async fn drive_host(
                     .runs(
                         pos,
                         &format!("{}|{:?}", task.name, step.role),
-                        &label,
+                        &debugger::step_label(&step.kind, &label),
                         &mut driver.stop,
                     )
                     .await

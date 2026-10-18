@@ -337,6 +337,16 @@ pub(super) async fn read_line(stop: &mut watch::Receiver<bool>) -> Option<String
     }
 }
 
+/// What `--step` names a step: a handler is `HANDLER: name`, any other task `TASK: name`.
+pub(super) fn step_label(kind: &crate::compile::StepKind, shown: &str) -> String {
+    let word = if matches!(kind, crate::compile::StepKind::Handler(_)) {
+        "HANDLER"
+    } else {
+        "TASK"
+    };
+    format!("{word}: {shown}")
+}
+
 /// `--step`: the answer to "Perform task", asked once per task whichever host reaches it first.
 pub(super) struct Stepper {
     /// Set by `c`: no task is asked about from then on, in this play and the ones behind it.
@@ -383,7 +393,7 @@ impl Stepper {
         if self.carry_on.load(Ordering::SeqCst) {
             return Some(true);
         }
-        print!("Perform task: TASK: {label} (N)o/(y)es/(c)ontinue: ");
+        print!("Perform task: {label} (N)o/(y)es/(c)ontinue: ");
         let _ = std::io::Write::flush(&mut std::io::stdout());
         // Only a terminal answers `--step`: a file or a pipe is the end of input at once.
         let line = if std::io::stdin().is_terminal() {

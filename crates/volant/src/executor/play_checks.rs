@@ -53,6 +53,34 @@ pub(super) fn check_gather_keywords(
     templar: &Templar,
     vars: &Map<String, Value>,
 ) -> anyhow::Result<()> {
+    // With `vars_files`, a variable not defined yet may come from them: the check runs again
+    // once they are read, see `recheck_gather_keywords`.
+    check_gather(play, templar, vars, !play.vars_files.is_empty())
+}
+
+/// The same check, strict: the play's vars and the first host's `vars_files` are everything the
+/// reference's keyword sees, so a variable still undefined is refused, as there.
+fn recheck_gather_keywords(
+    play: &Play,
+    state: &RunState,
+    files: &[Map<String, Value>],
+) -> anyhow::Result<()> {
+    if play.gather_subset.is_none() && play.gather_timeout.is_none() {
+        return Ok(());
+    }
+    let mut vars = state.vars.lock().expect("vars lock").play_scope(&play.vars);
+    for file in files {
+        vars.extend(file.clone());
+    }
+    check_gather(play, &state.templar, &vars, false)
+}
+
+fn check_gather(
+    play: &Play,
+    templar: &Templar,
+    vars: &Map<String, Value>,
+    lenient: bool,
+) -> anyhow::Result<()> {
     let refuse = |key: &str, why: String| {
         crate::stats::Refusal::at(4, format!("Error processing keyword '{key}': {why}"))
     };
@@ -60,7 +88,7 @@ pub(super) fn check_gather_keywords(
         let rendered = match templar.render_value(raw, vars) {
             Ok(rendered) => rendered,
             // A variable only a host has (a `vars_files` entry, say) is that host's to render.
-            Err(err) if err.0.contains("undefined") => Value::Null,
+            Err(err) if lenient && err.0.contains("undefined") => Value::Null,
             Err(err) => return Err(refuse("gather_subset", err.0)),
         };
         let items = match &rendered {
@@ -81,7 +109,7 @@ pub(super) fn check_gather_keywords(
     if let Some(raw) = &play.gather_timeout {
         let rendered = match templar.render_value(raw, vars) {
             Ok(rendered) => rendered,
-            Err(err) if err.0.contains("undefined") => Value::from(0),
+            Err(err) if lenient && err.0.contains("undefined") => Value::from(0),
             Err(err) => return Err(refuse("gather_timeout", err.0)),
         };
         let whole = match &rendered {
@@ -249,6 +277,9 @@ pub(super) fn load_play_vars_files(
                 loaded.insert(path, file.clone());
                 file
             });
+        }
+        if per_host.is_empty() {
+            recheck_gather_keywords(play, state, &files)?;
         }
         per_host.insert(host.name.clone(), files);
     }

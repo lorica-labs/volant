@@ -1,10 +1,7 @@
-crates/volant-agent/src/blobs.rs 696
 crates/volant-agent/src/natives/file.rs 540
 crates/volant-agent/src/natives/group.rs 628
-crates/volant-agent/src/natives/service_facts.rs 1101
 crates/volant-agent/src/natives/setup/network.rs 618
 crates/volant-agent/src/natives/user.rs 667
-crates/volant-agent/src/python/mod.rs 817
 crates/volant-protocol/src/modules.rs 715
 crates/volant/src/action_plugins/bridged.rs 569
 crates/volant/src/agent.rs 636
@@ -21,7 +18,6 @@ crates/volant/src/inventory/mod.rs 952
 crates/volant/src/preflight.rs 573
 crates/volant/src/render.rs 997
 crates/volant/src/template/filters.rs 1182
-crates/volant/src/template/lookups.rs 805
 crates/volant/src/template/mod.rs 1005
 crates/volant/src/template/yaml_dump.rs 669
 crates/volant/src/union_cache.rs 749

@@ -38,9 +38,11 @@ use super::run::{
     take_warnings,
 };
 use super::{LinkKey, RunOptions};
+use notified::{announce_notified, saved_lines};
 
 mod boundaries;
 mod messages;
+mod notified;
 mod redo;
 mod throttle;
 mod timings;
@@ -618,6 +620,9 @@ pub(super) async fn drive_host(
                         driver.meta_skipped(pos, "flush_handlers", None).await;
                     }
                 }
+                if verbosity >= 2 && !skipped_flush && !masked_out {
+                    announce_notified(&tx, &name, pos, &c, &notified).await;
+                }
                 driver.task_done(pos).await;
                 // `n` is the length of the list this host is walking, read before the word it
                 // just sent could let the coordinator grow it. See `wait_for_splice`. Under
@@ -1130,6 +1135,7 @@ pub(super) async fn drive_host(
                                                 index: pos,
                                                 line,
                                                 debug: false,
+                                                banner: true,
                                             })
                                             .await;
                                     }
@@ -1200,6 +1206,7 @@ pub(super) async fn drive_host(
                             break 'run;
                         }
                     };
+                    let saved = saved_lines(verbosity, &to_notify, &items);
                     let warnings = take_warnings(&mut results);
                     for message in &warnings {
                         let _ = tx
@@ -1241,7 +1248,7 @@ pub(super) async fn drive_host(
                         dump,
                         rescuable,
                         delegate.as_deref(),
-                        Hold::new(&plan, &mut permit),
+                        Hold::new(&plan, &mut permit).with_saved(&saved),
                     )
                     .await
                     {
@@ -2193,6 +2200,7 @@ pub(super) async fn drive_host(
                         break 'run;
                     }
                 };
+                let saved = saved_lines(verbosity, &to_notify, items);
                 let live = driver.progress.borrow().live_hosts.clone();
                 let targets = fact_targets(task, &name, &live);
                 let fact_hosts = match (task.delegates_facts(), &batch_delegate) {
@@ -2324,7 +2332,9 @@ pub(super) async fn drive_host(
                     dump_of(task),
                     rescuable,
                     batch_delegate.as_deref(),
-                    Hold::new(&plan, &mut permit).with_turn(&mut gate),
+                    Hold::new(&plan, &mut permit)
+                        .with_turn(&mut gate)
+                        .with_saved(&saved),
                 )
                 .await
                 {

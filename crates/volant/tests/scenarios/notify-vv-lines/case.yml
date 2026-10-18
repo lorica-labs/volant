@@ -1,0 +1,2 @@
+# `-vv` says each saved notification before the result, after a loop's items, and the pending handlers of each host at a flush.
+args: [-vv, -i, inv.ini, play.yml]

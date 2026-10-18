@@ -218,10 +218,8 @@ pub(super) fn shows_a_line(event: &Event) -> bool {
         Event::Result { show, outcome, .. } => *show || *outcome == Outcome::Ignored,
         // A retry line is the first thing a retried task prints, and the reference shows the
         // task's banner above it: a task whose every attempt is still to come has no result yet.
-        Event::Banner { .. }
-        | Event::Retrying { .. }
-        | Event::Display { .. }
-        | Event::UnreachableIgnored { .. } => true,
+        Event::Banner { .. } | Event::Retrying { .. } | Event::UnreachableIgnored { .. } => true,
+        Event::Display { banner, .. } => *banner,
         // `Event::Warning` falls here with the rest: a warning goes to stderr, beside the
         // display rather than in it, so it never conjures the banner of a step that shows
         // nothing on stdout.

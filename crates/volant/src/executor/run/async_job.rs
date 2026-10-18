@@ -112,6 +112,7 @@ pub(in crate::executor) async fn poll_job<C: AgentChannel>(
             index,
             line,
             debug: true,
+            banner: true,
         })
     };
     let Some(jid) = started

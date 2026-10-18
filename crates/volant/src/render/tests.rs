@@ -1,8 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use super::error::annotated_lines;
 use super::*;
+use crate::stats::Outcome;
 use rstest::rstest;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
+use volant_protocol::TaskResult;
 
 struct Shared(Arc<Mutex<Vec<u8>>>);
 impl Write for Shared {

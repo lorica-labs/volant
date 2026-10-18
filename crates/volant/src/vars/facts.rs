@@ -71,9 +71,9 @@ const RESTRICTED_FACTS: [&str; 39] = [
 /// own module files, which that user can already change.
 ///
 /// `ansible_package_use` is here for the scan's sake rather than for a privilege: `package` reads
-/// it through [`host_setting`] like every other name that picks what runs, so the scan guarding
-/// this list stays total. A host that set it could only pick another backend of a closed list,
-/// which its own `pkg_mgr` fact already does.
+/// it through [`host_setting`](super::host_setting) like every other name that picks what runs,
+/// so the scan guarding this list stays total. A host that set it could only pick another backend
+/// of a closed list, which its own `pkg_mgr` fact already does.
 ///
 /// `ansible_async_dir` is where a job writes its status file and the directory `async_status`
 /// removes one from in `cleanup`: a host that named it for itself would choose where the agent,

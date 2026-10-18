@@ -26,7 +26,6 @@ crates/volant/src/executor/run.rs 4140
 crates/volant/src/facts_read.rs 1077
 crates/volant/src/inventory/constructed.rs 506
 crates/volant/src/inventory/mod.rs 952
-crates/volant/src/playbook.rs 2110
 crates/volant/src/preflight.rs 573
 crates/volant/src/python.rs 1372
 crates/volant/src/render.rs 997

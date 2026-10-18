@@ -77,9 +77,10 @@ pub(crate) struct Candidate {
 
 static MODE: OnceLock<Mode> = OnceLock::new();
 
-/// Sets the mode for the rest of the process; the run does it once its configuration is read.
-pub(crate) fn set_mode(mode: Mode) {
-    _ = MODE.set(mode);
+/// Sets the mode for the rest of the process from the configuration a run has just read.
+pub(crate) fn configured(config: crate::config::Config) -> crate::config::Config {
+    _ = MODE.set(config.runtime);
+    config
 }
 
 /// The mode the run set. Before that, or in a process that never reads a configuration (the

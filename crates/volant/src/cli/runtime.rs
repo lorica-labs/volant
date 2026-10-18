@@ -46,8 +46,9 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
             println!("{} is installed in {}", done.id, done.dir.display());
         }
         RuntimeCommand::Status => {
-            let config = crate::config::Config::load().map_err(|e| format!("{e:#}"))?;
-            crate::runtime::resolve::set_mode(config.runtime);
+            crate::runtime::resolve::configured(
+                crate::config::Config::load().map_err(|e| format!("{e:#}"))?,
+            );
             print!("{}", status(&runtimes, &manifest));
         }
         RuntimeCommand::Path => {

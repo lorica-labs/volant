@@ -87,6 +87,8 @@ pub struct Escalation {
     pub exe: Vec<String>,
     /// `become_flags`, split into shell words; `None` keeps the method's own default.
     pub flags: Option<Vec<String>>,
+    /// `su`'s `prompt_l10n`: the password prompts it matches instead of the built-in list.
+    pub prompt_l10n: Vec<String>,
 }
 
 /// How a link escalates, less the user and the password: two links to one user through
@@ -121,6 +123,7 @@ impl std::fmt::Debug for Escalation {
             .field("password", &redacted(self.password.as_ref()))
             .field("exe", &self.exe)
             .field("flags", &self.flags)
+            .field("prompt_l10n", &self.prompt_l10n)
             .finish()
     }
 }

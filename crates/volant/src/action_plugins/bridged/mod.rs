@@ -125,14 +125,15 @@ pub(super) fn start(
     task_vars.extend(vars.map.iter().map(|(k, v)| (k.clone(), v.clone())));
     // Each other host's variables are asked for when a plugin reads them.
     task_vars.remove("hostvars");
-    // Where the plugin looks for a `src`: the role's root, then the directory of the task's file,
-    // as `Task.get_search_path` answers for a task that is in a role.
+    // Where the plugin looks for a `src`: the role's root, the directory of the task's file, then
+    // the playbook's directory, as `Task.get_search_path` answers for a task that is in a role.
+    // The parent roles of a dependency chain are not walked.
     let search: Vec<String> = ctx
         .origin
         .role_dir
         .iter()
         .map(std::path::PathBuf::as_path)
-        .chain([ctx.origin.file_dir.as_path()])
+        .chain([ctx.origin.file_dir.as_path(), ctx.playbook_dir])
         .map(|p| p.display().to_string())
         .collect();
     task_vars.insert("_volant_search_path".into(), json!(search));

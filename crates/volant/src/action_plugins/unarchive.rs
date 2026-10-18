@@ -118,6 +118,7 @@ impl Unarchive {
     /// The source read locally and staged, or `remote_src` handed the task's `src` as it is.
     fn source_and_send(&mut self) -> Step {
         let mut args = self.args.clone();
+        let decrypt = flag(&args, "decrypt", true);
         args.remove("decrypt");
         if self.remote_src {
             self.state = State::Module;
@@ -153,10 +154,22 @@ impl Unarchive {
         if let Err(msg) = fits(&basename, usize::try_from(len).unwrap_or(usize::MAX)) {
             return Step::Done(TaskResult::failed_with(msg));
         }
-        let bytes = match std::fs::read(found) {
+        let mut bytes = match std::fs::read(found) {
             Ok(bytes) => bytes,
             Err(err) => return Step::Done(TaskResult::failed_with(unreadable(err))),
         };
+        // A vaulted archive is sent as plain bytes unless `decrypt: false` asks for it as is.
+        if decrypt && crate::vault::is_encrypted(&bytes) {
+            match crate::vault::decrypt(&bytes, &crate::vault::run_secrets()) {
+                Ok(plain) => bytes = plain,
+                Err(err) => {
+                    return Step::Done(TaskResult::failed_with(format!(
+                        "could not read src={}: {err}",
+                        found.display()
+                    )));
+                }
+            }
+        }
         let blob = match blob_of(&basename, &bytes) {
             Ok(blob) => blob,
             Err(msg) => return Step::Done(TaskResult::failed_with(msg)),

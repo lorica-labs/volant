@@ -78,10 +78,23 @@ const RESTRICTED_FACTS: [&str; 39] = [
 /// `ansible_async_dir` is where a job writes its status file and the directory `async_status`
 /// removes one from in `cleanup`: a host that named it for itself would choose where the agent,
 /// escalated or not, writes and deletes.
-const ENGINE_RESTRICTED_FACTS: [&str; 3] = [
+///
+/// `ansible_sudo_*`, `ansible_su_*` and `ansible_su_prompt_l10n` are the escalation settings of
+/// one method, read like their `ansible_become_*` twins: a host must not name its own `exe`,
+/// `user` or password.
+const ENGINE_RESTRICTED_FACTS: [&str; 12] = [
     "ansible_remote_tmp",
     "ansible_package_use",
     "ansible_async_dir",
+    "ansible_sudo_exe",
+    "ansible_sudo_flags",
+    "ansible_sudo_user",
+    "ansible_sudo_pass",
+    "ansible_su_exe",
+    "ansible_su_flags",
+    "ansible_su_user",
+    "ansible_su_pass",
+    "ansible_su_prompt_l10n",
 ];
 
 /// Whether ansible-core's `clean_facts()` removes a fact of this name before it becomes a

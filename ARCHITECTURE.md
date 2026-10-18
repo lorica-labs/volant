@@ -44,7 +44,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 
 | Path | What it holds |
 |---|---|
-| `cli.rs` | The `playbook` command and its arguments. |
+| `cli/` | The `playbook` command: `args` holds its arguments, `announce` the version line and option dumps, `run` the run itself, `hosts` the limit, tags and ordering, `passwords` the password files and prompts. |
 | `config.rs` | The `ansible.cfg` settings this release reads. |
 | `inventory.rs` | INI inventories and host patterns. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |

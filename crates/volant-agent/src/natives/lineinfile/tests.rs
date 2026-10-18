@@ -1,13 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 
+use std::fs;
+use std::os::unix::fs::{MetadataExt, PermissionsExt};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Duration;
 
 use serde_json::{Value, json};
 
-use super::super::common::backup_copy;
 use super::super::common::golden::{Scratch, differences, within};
+use super::super::common::{BackupError, IMMUTABLE, backup_copy};
 use super::*;
 
 const GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/../volant/tests/golden/module");

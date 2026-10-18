@@ -424,7 +424,7 @@ impl PlayTask {
 /// `remote_user`, `port`, `connection` and the escalation program's keywords `become_method`,
 /// `become_exe` and `become_flags`, wherever they are written, as written: each may be a
 /// template, rendered when the task runs, except `become_method`, which names one of
-/// [`BECOME_METHODS`]. A task's own value wins over its block's and its play's, and a host
+/// [`super::BECOME_METHODS`]. A task's own value wins over its block's and its play's, and a host
 /// variable wins over all of them; see `Transport::for_task` and `become_for`.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Connect {

@@ -11,7 +11,6 @@ crates/volant-agent/src/python/mod.rs 817
 crates/volant-protocol/src/modules.rs 715
 crates/volant/src/action_plugins/bridged.rs 569
 crates/volant/src/agent.rs 636
-crates/volant/src/bridge.rs 710
 crates/volant/src/cli.rs 1272
 crates/volant/src/config.rs 716
 crates/volant/src/executor/coordinator.rs 1848

@@ -7,22 +7,47 @@ use volant_protocol::TaskResult;
 use super::super::Context;
 use crate::bridge::Reply;
 
-/// A vaulted controller `src` of `copy` or `template`, decrypted with the run's secrets into a
-/// private directory under its own file name, and the path to hand the plugin. `copy` with
-/// `decrypt: false` keeps the ciphertext. Secrets never reach the helper.
+/// A vaulted controller `src` of `copy` or `template`, or the script `script` names, decrypted with the run's secrets into a
+/// private directory under its own file name, and the argument to hand the plugin in place of
+/// the one the task wrote: its key and value. `copy` with `decrypt: false` keeps the ciphertext.
+/// Secrets never reach the helper.
 pub(super) fn decrypted_src(
     name: &str,
     ctx: &Context<'_>,
-) -> Result<Option<(tempfile::TempDir, String)>, String> {
+) -> Result<Option<(tempfile::TempDir, &'static str, String)>, String> {
     let args = ctx.args;
-    let Some(src) = args.get("src").and_then(Value::as_str) else {
+    // `script` takes its file as the first word of the free-form line.
+    let (key, text) = if name == "script" {
+        (
+            "_raw_params",
+            args.get("_raw_params").and_then(Value::as_str),
+        )
+    } else {
+        ("src", args.get("src").and_then(Value::as_str))
+    };
+    let Some(text) = text else {
         return Ok(None);
     };
+    let (src, rest) = if name == "script" {
+        let Some(words) = shlex::split(text).filter(|w| !w.is_empty()) else {
+            return Ok(None);
+        };
+        // The line's text after the first word, as written, for the arguments to keep.
+        let rest = text
+            .trim_start()
+            .split_once(char::is_whitespace)
+            .map_or("", |(_, r)| r);
+        (words[0].clone(), rest.to_string())
+    } else {
+        (text.to_string(), String::new())
+    };
+    let src = src.as_str();
     let kept = args.get("decrypt").and_then(Value::as_bool) == Some(false)
         || args.get("remote_src").and_then(Value::as_bool) == Some(true);
     let folder = match name {
         "copy" if !kept => "files",
         "template" => "templates",
+        "script" => "files",
         _ => return Ok(None),
     };
     let searched = super::super::files::search_paths(ctx.origin, ctx.playbook_dir, folder, src);
@@ -40,7 +65,14 @@ pub(super) fn decrypted_src(
     let dir = tempfile::tempdir().map_err(|e| unreadable(&e))?;
     let path = dir.path().join(found.file_name().unwrap_or_default());
     write_private(&path, &plain).map_err(|e| unreadable(&e))?;
-    Ok(Some((dir, path.display().to_string())))
+    let value = if name == "script" {
+        let shown = path.display().to_string();
+        let quoted = shlex::try_quote(&shown).map_err(|e| unreadable(&e))?;
+        format!("{quoted} {rest}").trim_end().to_string()
+    } else {
+        path.display().to_string()
+    };
+    Ok(Some((dir, key, value)))
 }
 
 pub(super) fn write_private(path: &std::path::Path, bytes: &[u8]) -> std::io::Result<()> {

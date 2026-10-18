@@ -102,8 +102,8 @@ pub(super) fn start(
     let mut forwarded = ctx.args.clone();
     forwarded.remove("_volant_tty");
     let vault_src = match decrypted_src(name, &ctx) {
-        Ok(Some((dir, path))) => {
-            forwarded.insert("src".into(), Value::String(path));
+        Ok(Some((dir, key, value))) => {
+            forwarded.insert(key.into(), Value::String(value));
             Some(dir)
         }
         Ok(None) => None,

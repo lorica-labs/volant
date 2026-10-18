@@ -59,9 +59,6 @@ pub fn check(playbook: &Playbook) -> anyhow::Result<()> {
 }
 
 fn check_play(play: &Play) -> anyhow::Result<()> {
-    if let Some(kw) = play.unsupported.first() {
-        bail!("play keyword '{kw}' is not supported yet");
-    }
     if let Some(strategy) = &play.strategy
         && !STRATEGIES.contains(&strategy.as_str())
     {
@@ -74,11 +71,6 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
         && play.max_fail_percentage.is_some()
     {
         bail!("strategy '{strategy}' with 'max_fail_percentage' is not supported yet");
-    }
-    for entry in &play.roles {
-        if let Some(kw) = entry.keywords.unsupported.first() {
-            bail!("role '{}': keyword '{kw}' is not supported yet", entry.name);
-        }
     }
     // A handler is a task the play wrote, so the first pass refuses what it carries too. Only
     // the `notify` names wait for the second pass, because resolving one needs the whole
@@ -174,12 +166,6 @@ fn check_items(items: &[TaskOrBlock]) -> anyhow::Result<()> {
         match item {
             TaskOrBlock::Task(task) => check_task(task)?,
             TaskOrBlock::Block(block) => {
-                if let Some(kw) = block.keywords.unsupported.first() {
-                    bail!(
-                        "block '{}': keyword '{kw}' is not supported yet",
-                        block.keywords.name
-                    );
-                }
                 check_items(&block.body)?;
                 check_items(&block.rescue)?;
                 check_items(&block.always)?;
@@ -192,9 +178,6 @@ fn check_items(items: &[TaskOrBlock]) -> anyhow::Result<()> {
 /// One task, checked on its own so the compiler can call it per step once roles put tasks
 /// somewhere other than a play's own list.
 pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
-    if let Some(kw) = task.unsupported.first() {
-        bail!("task '{}': keyword '{kw}' is not supported yet", task.name);
-    }
     refuse_async(task)?;
     if is_meta(task) {
         return check_meta(task);

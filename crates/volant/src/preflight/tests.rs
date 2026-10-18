@@ -373,87 +373,9 @@ fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
     );
 }
 
-/// One probe playbook per `Preflight` row of the keyword tables, built from the row's own
-/// name. The value is never read - a parked keyword is kept, not parsed - so one
-/// placeholder serves every row, and a keyword that starts being read will say so by
-/// failing to load.
-fn preflight_probes() -> Vec<(&'static str, String)> {
-    use crate::keywords::{
-        BLOCK_KEYWORDS, HANDLER_KEYWORDS, LOOP_CONTROL_KEYWORDS, PLAY_KEYWORDS, Support,
-        TASK_KEYWORDS,
-    };
-    let task = |kw: &str| {
-        format!(
-            "- hosts: all\n  tasks:\n    - name: Probe task\n      command: echo hi\n      {kw}: probe\n"
-        )
-    };
-    let parked = |table: &'static [crate::keywords::Keyword]| {
-        table
-            .iter()
-            .filter(|k| k.support == Support::Preflight)
-            .map(|k| k.name)
-    };
-    let mut probes: Vec<(&'static str, String)> =
-        parked(TASK_KEYWORDS).map(|kw| (kw, task(kw))).collect();
-    probes.extend(parked(BLOCK_KEYWORDS).map(|kw| {
-        // A parked section keyword takes a task list; every other value is kept and never
-        // parsed, so the one placeholder serves the rest.
-        let value = if crate::keywords::BLOCK_SECTIONS.contains(&kw) {
-            ":\n        - name: Deep\n          command: echo hi"
-        } else {
-            ": probe"
-        };
-        (
-            kw,
-            format!(
-                "- hosts: all\n  tasks:\n    - block:\n        - name: Probe task\n          command: echo hi\n      {kw}{value}\n"
-            ),
-        )
-    }));
-    probes.extend(parked(PLAY_KEYWORDS).map(|kw| {
-        (
-            kw,
-            format!(
-                "- hosts: all\n  {kw}: probe\n  tasks:\n    - name: Probe task\n      command: echo hi\n"
-            ),
-        )
-    }));
-    probes.extend(parked(LOOP_CONTROL_KEYWORDS).map(|kw| {
-        (
-            kw,
-            format!(
-                "- hosts: all\n  tasks:\n    - name: Probe task\n      debug:\n        msg: probe\n      loop: [alpha]\n      loop_control:\n        {kw}: probe\n"
-            ),
-        )
-    }));
-    probes.extend(parked(HANDLER_KEYWORDS).map(|kw| {
-        (
-            kw,
-            format!(
-                "- hosts: all\n  handlers:\n    - name: Probe task\n      command: echo hi\n      {kw}: probe\n  tasks:\n    - command: echo hi\n"
-            ),
-        )
-    }));
-    probes
-}
-
-/// Every keyword the tables mark `Preflight` stops the run, naming itself, and every `meta`
-/// action the reference has is accepted.
+/// Every `meta` action the reference has is accepted, and an unknown one stops the run.
 #[test]
-fn every_table_row_is_refused_by_its_own_name() {
-    let probes = preflight_probes();
-    assert_eq!(
-        probes.len(),
-        0,
-        "the tables carry the whole grammar; this count is the record"
-    );
-    for (kw, body) in &probes {
-        let text = refusal(body);
-        assert!(
-            text.contains(&format!("keyword '{kw}' is not supported yet")),
-            "{kw} must name itself: {text}"
-        );
-    }
+fn meta_actions_are_accepted_and_unknown_ones_refused() {
     let play =
         |action: &str| format!("- hosts: all\n  tasks:\n    - name: M\n      meta: {action}\n");
     for action in META_ACTIONS {

@@ -7,7 +7,7 @@ use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
 
-use crate::keywords::{Support, block_keyword, play_keyword};
+use crate::keywords::{block_keyword, play_keyword};
 use crate::roles::{RoleEntry, RoleFrom};
 use crate::yaml::{field, to_json};
 
@@ -23,19 +23,14 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let map = yaml
         .as_mapping()
         .ok_or_else(|| anyhow!("a play must be a mapping"))?;
-    let mut unsupported = Vec::new();
     for (key, _) in map {
         let key = key.as_str().unwrap_or_default();
         // The reference's own words, measured: an attribute it does not have refuses the load
-        // with exit 4, and one it has but this release cannot execute is kept for the
-        // pre-flight instead of being refused here.
-        match play_keyword(key) {
-            None => bail!("'{key}' is not a valid attribute for a Play"),
-            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
-            Some(_) => {}
+        // with exit 4.
+        if play_keyword(key).is_none() {
+            bail!("'{key}' is not a valid attribute for a Play");
         }
     }
-    unsupported.sort_unstable();
     let host_patterns = match field(yaml, "hosts") {
         Some(Yaml::Value(Scalar::String(s))) => vec![s.to_string()],
         // Every entry, or none: `filter_map` here dropped a non-string entry and ran the play
@@ -149,7 +144,6 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         gather_timeout: raw_keyword(yaml, "gather_timeout")?,
         fact_path: raw_keyword(yaml, "fact_path")?,
         vars_prompt: vars_prompt(yaml)?,
-        unsupported,
     })
 }
 
@@ -282,7 +276,6 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
     };
     let mut from = RoleFrom::default();
     let mut params = Map::new();
-    let mut unsupported = Vec::new();
     for (key, value) in map {
         let key = key
             .as_str()
@@ -306,15 +299,10 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
         }
         // A role entry takes the keywords a block takes, which is the list the reference checks
         // one against; anything else is a parameter for the role itself.
-        match block_keyword(key) {
-            Some(k) if k.support == Support::Preflight => unsupported.push(k.name),
-            Some(_) => {}
-            None => {
-                params.insert(key.to_string(), to_json(value)?);
-            }
+        if block_keyword(key).is_none() {
+            params.insert(key.to_string(), to_json(value)?);
         }
     }
-    unsupported.sort_unstable();
     let context = format!("role '{name}': ");
     let (r#become, become_user) = escalation(yaml, &context)?;
     let (delegate_facts, delegate_to) = delegation(yaml, &context)?;
@@ -346,7 +334,6 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             ignore_unreachable: boolean(yaml, "ignore_unreachable")?,
             delegate_facts,
             delegate_to,
-            unsupported,
             ..PlayTask::empty()
         },
     })

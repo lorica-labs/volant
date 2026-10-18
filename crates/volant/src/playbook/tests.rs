@@ -309,7 +309,6 @@ fn loop_control_sub_keys_are_read() {
         (t.loop_var.as_str(), t.loop_label.as_deref()),
         ("thing", Some("shown"))
     );
-    assert!(t.unsupported.is_empty());
     let pb = parse(
         &task(
             "index_var: i
@@ -332,7 +331,6 @@ fn loop_control_sub_keys_are_read() {
     );
     assert_eq!(t.loop_pause, Some(serde_json::json!(0.5)));
     assert_eq!(t.break_when, ["a", "b"]);
-    assert!(t.unsupported.is_empty());
     for bad in ["index_var: [i]", "break_when: {a: b}"] {
         assert!(parse(&task(bad), "x.yml").is_err(), "{bad}");
     }
@@ -398,7 +396,6 @@ fn an_action_statement_names_the_module_in_its_value(
         (task.module.as_str(), task.delegate_to.as_deref()),
         (module, delegate)
     );
-    assert!(task.unsupported.is_empty());
     let mut got: Vec<(&str, &str)> = task
         .args
         .iter()

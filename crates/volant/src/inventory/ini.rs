@@ -38,7 +38,6 @@ impl InventoryPlugin for Ini {
             message: format!("Failed to parse inventory: {message}"),
             origin: Some(source.text().to_string()),
             cause: None,
-            unsupported: false,
         };
         let bytes = std::fs::read(source.path()).map_err(|e| failed(e.to_string()))?;
         let text = String::from_utf8(bytes).map_err(|e| failed(e.to_string()))?;
@@ -46,6 +45,7 @@ impl InventoryPlugin for Ini {
     }
 }
 
+#[cfg(test)]
 impl Inventory {
     /// An inventory read from INI text alone.
     pub fn parse_ini(text: &str) -> Result<Self, InventoryError> {

@@ -15,7 +15,7 @@ description: What each meta action does, which host's condition counts, and how 
 | `end_play` | The play ends for every host, with whatever batches are left. | The first host's. |
 | `clear_facts` | Forgets the facts modules gathered, on every host of the batch. Facts from `set_fact` stay. | The first host's. |
 | `clear_host_errors` | Forgives the failures and the unreachable hosts of the batch. See below. | The first host's. |
-| `refresh_inventory` | Reads the inventory file again. See below. | Ignored, with a warning. |
+| `refresh_inventory` | Reads every inventory source again. See below. | Ignored, with a warning. |
 | `reset_connection` | Closes the host's connection, and the shared `ssh` connection with it. The next task opens both again. | Ignored, with a warning. |
 
 "The first host" is the first host of the batch that is still in the play, in inventory order. The actions that read its `when` run once and print one banner. The others run for each host and print one banner per host that is still in the play.
@@ -36,6 +36,6 @@ A host that ends with `end_host`, `end_batch` or `end_play` has not failed, and 
 
 ## Refreshing the inventory
 
-`refresh_inventory` reads the inventory file you gave with `-i` again. `groups` and `hostvars` change at once. A host the file gained joins from the next play, and a host it lost leaves the play where it stands, without failing. If the file cannot be read any more, the inventory is empty from then on, as in Ansible: every host leaves, and the next plays match nothing.
+`refresh_inventory` reads every inventory source again, in the order of `-i`. `groups` and `hostvars` change at once. A host the sources gained joins from the next play, and a host they lost leaves the play where it stands, without failing. Hosts and groups made by `add_host` and `group_by` stay. If the sources cannot be read any more, the inventory is empty from then on, as in Ansible: every host leaves, and the next plays match nothing.
 
-Only an inventory file is read again. Facts and `set_fact` values stay as they were.
+Facts and `set_fact` values stay as they were. See [Inventories](/hosts/inventories/).

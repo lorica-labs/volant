@@ -39,6 +39,10 @@ The native collector also hands the task back to the Python module on a host it 
 
 Facts are the host's own words, so they arrive untrusted: a template inside a fact stays text and is never rendered. See [Trusted and untrusted values](/variables/trust/).
 
+## Keeping facts between runs
+
+With `fact_caching = jsonfile` facts persist from one run to the next, see [The fact cache](/hosts/fact-cache/).
+
 ## Not there yet
 
 - `gather_subset` and `gather_timeout` are not supported yet. Remove them and the play gathers the full set of facts.

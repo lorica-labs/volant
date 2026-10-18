@@ -930,7 +930,7 @@ def shim():
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
         if wrap_async:
-            # ponytail: the module runs to its end before the job is handed back, so parallel
+            # The module runs to its end before the job is handed back, so parallel
             # jobs run one after the other, and the async limit is judged afterwards: a module
             # that ran past it is replaced by async_wrapper's timeout result.
             limit = int(self._task.async_val or 0)

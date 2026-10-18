@@ -118,6 +118,7 @@ export default defineConfig({
           collapsed: true,
           items: [
             { label: 'Inventories and patterns', slug: 'hosts/inventories' },
+            { label: 'The fact cache', slug: 'hosts/fact-cache' },
             { label: 'Connections and the agent', slug: 'hosts/connections' },
             { label: 'Privilege escalation', slug: 'hosts/become' },
             { label: 'Cross-host batching', slug: 'hosts/batching' },

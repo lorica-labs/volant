@@ -211,7 +211,7 @@ enum State {
 
 /// The helpers that run action plugins, apart from the one that runs filters, tests and lookups:
 /// an action that renders a template through that one never waits behind itself.
-// ponytail: one helper per action running at once, so as many as the run's forks; cap the pool
+// One helper per action running at once, so as many as the run's forks; cap the pool
 // if their memory shows up.
 #[derive(Default)]
 struct Actions {

@@ -221,7 +221,7 @@ pub fn concat_message(left: &str, right: &str) -> String {
 
 /// Python's `textwrap.shorten(text, width)`: whitespace collapsed, then as many words as fit with
 /// ` [...]` behind them when the whole does not.
-// ponytail: words split on whitespace only, where `TextWrapper` also breaks after a hyphen;
+// Words split on whitespace only, where `TextWrapper` also breaks after a hyphen;
 // split those too if a quoted value with hyphens ever needs it.
 pub fn shorten(text: &str, width: usize) -> String {
     const PLACEHOLDER: &str = " [...]";

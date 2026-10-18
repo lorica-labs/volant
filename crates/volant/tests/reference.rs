@@ -147,7 +147,13 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
     let docs = yaml::load(cases_text, "cases.yml").expect("cases.yml parses");
     let cases = docs[0].as_vec().expect("cases.yml is a list of cases");
     let mut failures = Vec::new();
-    for (case, entry) in cases.iter().zip(expected()) {
+    let recorded = expected();
+    assert_eq!(
+        cases.len(),
+        recorded.len(),
+        "cases.yml and expected.json hold a different number of cases"
+    );
+    for (case, entry) in cases.iter().zip(recorded) {
         let Some(vars) = yaml::field(case, "vars") else {
             continue;
         };

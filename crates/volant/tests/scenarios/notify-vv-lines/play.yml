@@ -1,0 +1,11 @@
+- hosts: g
+  gather_facts: false
+  tasks:
+    - {name: first, debug: {msg: one}, changed_when: true, notify: topic}
+    - {name: second, debug: {msg: two}, changed_when: "inventory_hostname == 'a'", notify: [late]}
+    - {name: looped, debug: {msg: "{{ item }}"}, changed_when: true, notify: early, loop: [1, 2]}
+  handlers:
+    - {name: early, debug: {msg: early}}
+    - {name: late, debug: {msg: late}}
+    - {name: one, listen: topic, debug: {msg: one}}
+    - {name: two, listen: topic, debug: {msg: two}}

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use super::paths::home;
 use super::*;
 
 /// Every sample here is expected to parse; `forks` and `timeout` are the only keys that

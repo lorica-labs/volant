@@ -22,7 +22,6 @@ crates/volant/src/inventory/mod.rs 952
 crates/volant/src/preflight.rs 573
 crates/volant/src/render.rs 997
 crates/volant/src/template/filters.rs 1182
-crates/volant/src/template/lookups.rs 805
 crates/volant/src/template/mod.rs 1005
 crates/volant/src/union_cache.rs 749
 crates/volant/src/vault.rs 553

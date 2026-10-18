@@ -65,11 +65,13 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 
 | File | What it holds |
 |---|---|
-| `mod.rs` | The run's settings, the connections kept between plays, and the entry point the command line calls. |
+| `mod.rs` | The run's settings and `run_play`, the entry point the command line calls. |
+| `state.rs` | What a run carries from play to play: the abort, the reboots counted, the connections kept and the failed hosts. |
+| `play_checks.rs` | What a play is checked for before it runs: `host_pinned`, `max_fail_percentage`, the gather keywords and `vars_files`. |
 | `coordinator.rs` | The serialized view of a batch's progress, and everything that reaches the terminal. |
 | `driver/` | One host's run through a play, from its first step to the moment it leaves. `mod.rs` holds `drive_host`, `boundaries.rs` the scan that decides where the hosts meet, `waits.rs` the waits on the other hosts, `unreachable.rs` the `ignore_unreachable` steps, `timings.rs` the profile records of a link. |
 | `prepare.rs` | Rendering one task for one host: variables, escalation, environment and loop items. |
-| `run.rs` | Running one task and judging its result, on the controller or on the agent. |
+| `run/` | Running one task and judging its result, on the controller or on the agent: `local` and `controller` run the controller-side modules, `argspec` checks arguments, `judge`, `register` and `retry` decide the outcome, `interpreter` picks the Python, `plugin` runs action plugins, `async_job` polls async jobs, `channel`, `blob`, `batch` and `output` talk to the agent, `record` and `links` keep facts and connections. |
 | `report.rs` | Turning one task's results into the events the coordinator shows. |
 | `include.rs` | Resolving a dynamic `include_tasks` or `include_role` for one host. |
 
@@ -89,6 +91,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `natives/setup/` | The native `setup`: one file per collector, plus the request, the collection run and the `fnmatch` filter. |
 | `natives/systemd/` | The native `systemd`: the answer, the request and its options, the `systemctl` host, and the reading of `systemctl show` and init scripts. |
 | `natives/file/` | The native `file`: the answer and the states it ensures, and the check before a tree is removed. |
+| `natives/group/` | The native `group`, and what `user` shares with it: the host gate, the commands, the account files and the result keys. |
 | `natives/package_facts/` | The native `package_facts` for apt: the run and its arguments, dpkg's status, the configured sources, and the scan of the lists. |
 | `blobs/` | The cache of module payloads, addressed by hash: reading the controller's messages, the staged files of a connection, and the filesystem checks. |
 | `interpreter.rs` | Finding the host's Python interpreters, in the order Ansible prefers them. |

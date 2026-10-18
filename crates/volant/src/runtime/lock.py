@@ -9,6 +9,7 @@ sha256 without installing anything.
 
 import hashlib
 import json
+import os
 import platform
 import subprocess
 import sys
@@ -54,14 +55,16 @@ def own_triple():
 
 def resolve(python, tags):
     platform_args = [arg for tag in tags for arg in ("--platform", tag)]
+    # No user configuration may reach the pins: a mirror or extra index would change the URLs.
+    env = {key: value for key, value in os.environ.items() if not key.startswith("PIP_")}
     with tempfile.TemporaryDirectory() as target:
         report = subprocess.run(
-            [python, "-I", "-m", "pip", "install", "--quiet", "--dry-run", "--ignore-installed",
+            [python, "-I", "-m", "pip", "--isolated", "install", "--quiet", "--dry-run", "--ignore-installed",
              "--disable-pip-version-check", "--no-input", "--report", "-", "--target", target,
              "--only-binary", ":all:", "--python-version", PYTHON.rsplit(".", 1)[0],
              "--implementation", "cp", "--abi", "cp" + "".join(PYTHON.split(".")[:2]),
              "--abi", "abi3", "--abi", "none", *platform_args, f"ansible-core=={ANSIBLE_CORE}"],
-            check=True, capture_output=True, text=True,
+            check=True, capture_output=True, text=True, env=env,
         ).stdout
     wheels = []
     for item in json.loads(report)["install"]:

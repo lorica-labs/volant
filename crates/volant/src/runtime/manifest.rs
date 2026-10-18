@@ -39,6 +39,19 @@ pub(crate) struct Artifact {
     pub(crate) sha256: String,
 }
 
+impl Artifact {
+    /// The file name the URL ends with, which pip needs to read a wheel's tags. Refused when it
+    /// is empty or could name another directory once joined to a local path.
+    pub(crate) fn filename(&self) -> Result<&str, String> {
+        let name = self.url.rsplit('/').next().unwrap_or_default();
+        if name.is_empty() || name == "." || name.contains("..") || name.contains(['\\', '?', '#'])
+        {
+            return Err(format!("{} does not end with a file name", self.url));
+        }
+        Ok(name)
+    }
+}
+
 #[derive(Debug)]
 pub(crate) struct Wheel {
     pub(crate) name: String,
@@ -140,5 +153,7 @@ fn artifact(parent: &Table, at: &str) -> Result<Artifact, String> {
             "{at}sha256 is not 64 lowercase hex digits: {sha256}"
         ));
     }
-    Ok(Artifact { url, sha256 })
+    let artifact = Artifact { url, sha256 };
+    artifact.filename().map_err(|e| format!("{at}url: {e}"))?;
+    Ok(artifact)
 }

@@ -96,6 +96,9 @@ sha256 = "WHEEL_HASH"
 #[case::no_python(("[platform.", "[other."), "python is missing or not a table")]
 #[case::no_wheel(("[[platform.x86_64-unknown-linux-gnu.wheel]]", "[[other]]"), "wheel is missing")]
 #[case::plain_http(("https://example.invalid/python", "http://example.invalid/python"), "python.url is not an https URL")]
+#[case::no_filename(("ansible_core.whl", ""), "wheel[0].url: https://example.invalid/ does not end with a file name")]
+#[case::dot_dot_filename(("ansible_core.whl", ".."), "does not end with a file name")]
+#[case::query_filename(("python.tar.gz", "python.tar.gz?x=1"), "does not end with a file name")]
 #[case::short_hash(("PYTHON_HASH", "abc"), "python.sha256 is not 64 lowercase hex digits")]
 #[case::upper_hash(("WHEEL_HASH", "BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB"), "wheel[0].sha256 is not 64 lowercase")]
 #[case::no_ansible_core(("name = \"ansible-core\"", "name = \"jinja2\""), "has no ansible-core 2.19.12")]
@@ -112,6 +115,11 @@ fn a_broken_manifest_is_refused(#[case] edit: (&str, &str), #[case] expected: &s
 #[test]
 fn a_triple_with_no_build_is_refused() {
     let manifest = Manifest::parse(&manifest(("", ""))).unwrap();
+    let wheel = &manifest
+        .platform("x86_64-unknown-linux-gnu")
+        .unwrap()
+        .wheels[0];
+    assert_eq!(wheel.file.filename().unwrap(), "ansible_core.whl");
     let e = manifest.platform("aarch64-apple-darwin").unwrap_err();
     assert!(
         e.contains("aarch64-apple-darwin") && e.contains(INSTEAD),
@@ -188,10 +196,20 @@ fn a_failed_download_leaves_nothing() {
 }
 
 #[rstest]
-#[case::install_only("python/bin/python3", true)]
-#[case::other_layout("bin/python3", false)]
-fn extract_finds_the_interpreter(#[case] member: &str, #[case] usable: bool) {
+#[case::install_only("python/bin/python3", false, None)]
+#[case::other_layout("bin/python3", false, Some("holds no python/bin/python3"))]
+#[case::stale_interpreter("bin/python3", true, Some("is not empty"))]
+fn extract_finds_the_interpreter(
+    #[case] member: &str,
+    #[case] stale: bool,
+    #[case] refusal: Option<&str>,
+) {
     let dir = scratch();
+    let runtime = dir.path().join("runtime");
+    if stale {
+        fs::create_dir_all(runtime.join("python/bin")).unwrap();
+        fs::write(runtime.join("python/bin/python3"), "").unwrap();
+    }
     let source = dir.path().join("source");
     fs::create_dir_all(source.join(member).parent().unwrap()).unwrap();
     fs::write(source.join(member), "#!/bin/sh\n").unwrap();
@@ -206,13 +224,12 @@ fn extract_finds_the_interpreter(#[case] member: &str, #[case] usable: bool) {
         .unwrap();
     assert!(packed.success());
 
-    let result = extract(&tarball, &dir.path().join("runtime"));
-    if usable {
-        assert_eq!(
-            result.unwrap(),
-            dir.path().join("runtime/python/bin/python3")
-        );
-    } else {
-        assert!(result.unwrap_err().contains("holds no python/bin/python3"));
+    let result = extract(&tarball, &runtime);
+    match refusal {
+        None => assert_eq!(result.unwrap(), runtime.join("python/bin/python3")),
+        Some(refusal) => {
+            let e = result.unwrap_err();
+            assert!(e.contains(refusal), "{e}");
+        }
     }
 }

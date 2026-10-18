@@ -30,10 +30,21 @@ pub(super) fn fetch_with(
     let dir = dest
         .parent()
         .ok_or_else(|| format!("{} names no directory to download into", dest.display()))?;
+    fs::create_dir_all(dir).map_err(|e| {
+        format!(
+            "cannot create {}: {e}; check the free disk space and the permissions",
+            dir.display()
+        )
+    })?;
     let part = tempfile::Builder::new()
         .prefix(".download-")
         .tempfile_in(dir)
-        .map_err(|e| format!("cannot create a file in {}: {e}", dir.display()))?;
+        .map_err(|e| {
+            format!(
+                "cannot create a file in {}: {e}; check the free disk space",
+                dir.display()
+            )
+        })?;
     download(url, part.path())?;
     let actual = sha256_of(part.path())
         .map_err(|e| format!("cannot read back the download of {url}: {e}"))?;
@@ -74,7 +85,8 @@ fn download(url: &str, out: &Path) -> Result<(), String> {
         Err(e) if e.kind() == io::ErrorKind::NotFound => {}
         Err(e) => return Err(format!("cannot run curl: {e}")),
     }
-    // Busybox's wget takes only these options. The hash, not the transport, vouches for the bytes.
+    // Busybox's wget takes only these options, so it cannot keep redirects on https: the hash
+    // check after the download is what vouches for the bytes.
     let mut wget = Command::new("wget");
     wget.args(["-q", "-T", "30", "-O"]).arg(out).arg(url);
     match run(wget) {
@@ -104,6 +116,9 @@ fn judge(program: &str, url: &str, output: &Output) -> Result<(), String> {
         ("curl", Some(5 | 6 | 7 | 28 | 35)) | ("wget", Some(4)) => {
             ": check the network connection and the proxy settings (https_proxy), then try again"
         }
+        ("curl", Some(22 | 60)) | ("wget", Some(5 | 8)) => {
+            ": check the URL, the proxy and the CA certificate settings, then try again"
+        }
         ("curl", Some(23)) | ("wget", Some(3)) => ": check the free disk space, then try again",
         _ => "",
     };
@@ -117,8 +132,17 @@ fn judge(program: &str, url: &str, output: &Output) -> Result<(), String> {
 
 /// Unpacks a python-build-standalone `install_only` archive into `dir` and returns the
 /// interpreter it holds, `dir/python/bin/python3`. Only call it on an archive `fetch` checked.
+/// `dir` must be absent or empty, so nothing left from an earlier run can pass for the archive's.
 pub(crate) fn extract(tarball: &Path, dir: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(dir).map_err(|e| format!("cannot create {}: {e}", dir.display()))?;
+    let mut entries =
+        fs::read_dir(dir).map_err(|e| format!("cannot read {}: {e}", dir.display()))?;
+    if entries.next().is_some() {
+        return Err(format!(
+            "{} is not empty, and Volant unpacks its Python only into an empty directory",
+            dir.display()
+        ));
+    }
     let mut tar = Command::new("tar");
     tar.arg("-xzf").arg(tarball).arg("-C").arg(dir);
     let output = match run(tar) {

@@ -58,7 +58,7 @@ check-touched: fmt clippy ratchet test-touched
 # One line per test, `<binary-id> <name>`, with the module path up to the last `tests::` removed.
 # A refactor that only moves code leaves this list unchanged.
 test-names:
-    cargo nextest list --workspace --message-format oneline | sed -E 's/^([^ ]+) (.*::)?tests::/\1 /' | LC_ALL=C sort
+    cargo nextest list --workspace --message-format oneline --color never | sed -E 's/^([^ ]+) (.*::)?tests::/\1 /' | LC_ALL=C sort
 
 # The tests of the modules changed against `base` (and in the working tree), as nextest filtersets.
 # Over `just remote`, `base` is always origin/main.

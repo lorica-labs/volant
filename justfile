@@ -42,6 +42,12 @@ parity-reference:
     [ -d "$dir/ansible_collections" ] || uv pip install --python "$py" --target "$dir" --no-deps "ansible==$pin"
     "$py" crates/volant/tests/parity/generate.py "$dir"
 
+# Regenerate the managed runtime's manifest (crates/volant/src/runtime/manifest.toml): the pinned
+# python-build-standalone builds and, for each platform, the hash-pinned ansible-core wheels.
+# Needs Python 3.12+ and network access.
+runtime-lock:
+    python3 -I crates/volant/src/runtime/lock.py
+
 # Everything CI runs, in the same order
 check: fmt lint test
 

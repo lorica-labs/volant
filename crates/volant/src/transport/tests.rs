@@ -1,8 +1,29 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::*;
-use crate::testing::{defaults, scratch};
+use std::path::Path;
+use std::time::Duration;
+
 use rstest::rstest;
-use serde_json::json;
+use serde_json::{Map, Value, json};
+use tokio::io::{AsyncReadExt, AsyncWriteExt};
+
+#[cfg(unix)]
+use super::bootstrap::is_this_agent;
+use super::bootstrap::{
+    Captured, EXIT_AGENT_MISSING, EXIT_AGENT_UNRUNNABLE, EXIT_SSH_FAILURE, EXIT_UNAME_FAILED,
+    bootstrap_probe_ran,
+};
+use super::control::{CONTROL_PATH_MAX, asks_for_debug};
+#[cfg(unix)]
+use super::control::{STOP_MASTER_TIMEOUT, control_dir_in};
+use super::escalation::{
+    SudoForm, agent_version_ran, become_success, escalated_command, escalation_outcome,
+    interactive, local_argv, preamble, settle_form, su_command, su_ended, su_exchange, sudo_prefix,
+    unreachable_message,
+};
+use super::shell::shell_word;
+use super::*;
+use crate::inventory::Host;
+use crate::testing::{defaults, scratch};
 
 fn host(vars: Value) -> Host {
     Host {
@@ -851,7 +872,21 @@ fn the_small_remote_rules_hold() {
 /// Every `ansible_*` name this file reads is on the connections page, and the page lists no other.
 #[test]
 fn the_published_host_variables_are_the_ones_this_module_reads() {
-    let source = include_str!("../transport.rs");
+    let source = [
+        include_str!("bootstrap.rs"),
+        include_str!("choose.rs"),
+        include_str!("control.rs"),
+        include_str!("defaults.rs"),
+        include_str!("escalation/mod.rs"),
+        include_str!("escalation/probe.rs"),
+        include_str!("escalation/su.rs"),
+        include_str!("escalation/sudo.rs"),
+        include_str!("session.rs"),
+        include_str!("shell.rs"),
+        include_str!("ssh.rs"),
+        include_str!("mod.rs"),
+    ]
+    .concat();
     let mut read: Vec<&str> = source
         .split("\"ansible_")
         .skip(1)

@@ -49,7 +49,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `inventory.rs` | INI inventories and host patterns. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
 | `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
-| `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `vm.rs` the bytecode rewrite and error conversion. |
+| `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |
 | `preflight.rs` | What a run refuses before it touches a host. |
@@ -79,8 +79,9 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `runner.rs` | Running a batch of tasks, with fail-fast and cancellation. |
 | `modules/` | The native modules. |
 | `modules/command/` | `command`, `shell` and `raw`: the run, the process and its pipes, the argument expansion and the failure results. |
-| `python/` | The warm Python server and its supervisor. |
+| `python/` | The warm Python server and its supervisor: the server process, the pool that keeps one per interpreter and payload, and the frames it speaks. |
 | `natives/common/` | What every native shares with the reference's module machinery: arguments, accounts, modes, file attributes, running programs and backups. |
+| `natives/service_facts/` | The native `service_facts` for systemd hosts: the run, the SysV listing and the systemd units. |
 | `natives/lineinfile/` | The native `lineinfile`: the request, the edit in memory, the `regexp` translation and the write. |
 | `natives/copy/` | The native `copy`: the request, the source and destination sums with the MD5 it carries, the mount check, and the move. |
 | `natives/runtime/` | What the natives that run programs share: the task's clock, the reasons an answer stops, the root a collector reads under, program runs, and Python's string rules. |
@@ -88,7 +89,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `natives/systemd/` | The native `systemd`: the answer, the request and its options, the `systemctl` host, and the reading of `systemctl show` and init scripts. |
 | `natives/group/` | The native `group`, and what `user` shares with it: the host gate, the commands, the account files and the result keys. |
 | `natives/package_facts/` | The native `package_facts` for apt: the run and its arguments, dpkg's status, the configured sources, and the scan of the lists. |
-| `blobs.rs` | The cache of module payloads, addressed by hash. |
+| `blobs/` | The cache of module payloads, addressed by hash: reading the controller's messages, the staged files of a connection, and the filesystem checks. |
 | `interpreter.rs` | Finding the host's Python interpreters, in the order Ansible prefers them. |
 
 ### Protocol, `crates/volant-protocol/src/`

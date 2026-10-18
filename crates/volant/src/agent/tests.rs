@@ -2,7 +2,13 @@
 use super::*;
 use crate::testing::scratch;
 use std::os::unix::fs::PermissionsExt;
-use std::path::Path;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+
+use volant_protocol::BlobEncoding;
+
+use super::blobs::DEFLATED;
+use super::source::beside_executable;
 
 const EMBEDDED: &[(&str, &[u8])] = &[("volant-agent", b"embedded")];
 

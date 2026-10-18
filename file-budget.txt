@@ -1,11 +1,8 @@
 crates/volant-agent/src/natives/apt.rs 1303
-crates/volant-agent/src/natives/setup/network.rs 618
 crates/volant-agent/src/natives/user.rs 667
 crates/volant/src/action_plugins/bridged.rs 569
-crates/volant/src/agent.rs 636
 crates/volant/src/cli/run.rs 741
 crates/volant/src/executor/coordinator.rs 1848
 crates/volant/src/executor/driver/mod.rs 2626
 crates/volant/src/executor/prepare.rs 1433
 crates/volant/src/preflight.rs 573
-crates/volant/src/template/filters.rs 1182

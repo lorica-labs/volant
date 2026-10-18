@@ -1,5 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+use std::collections::{BTreeMap, BTreeSet};
+use std::ffi::OsString;
+use std::fs;
+use std::path::{Path, PathBuf};
+use std::time::{Duration, SystemTime};
+
+use serde_json::{Map, Value};
+
+use super::key::{configs, expanded, key_from, plugin_files};
+use super::sweep::sweep;
 use super::*;
+use crate::agent::BlobFrame;
 use crate::python::ModuleFacts;
 use crate::testing::scratch;
 

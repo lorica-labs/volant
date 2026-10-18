@@ -10,32 +10,36 @@ mod coordinator;
 mod debugger;
 mod driver;
 mod include;
+mod play_checks;
 mod prepare;
 mod report;
 mod run;
+mod state;
 
 pub(crate) use run::{RAISED_SKIP, drop_internal_keys};
 
-use std::collections::{HashMap, HashSet};
-use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::collections::HashMap;
+use std::path::PathBuf;
+use std::sync::Arc;
 use std::time::Duration;
 
-use serde_json::{Map, Value};
+use serde_json::Value;
 use tokio::sync::watch;
 
-use crate::agent::{AgentLink, AgentSource};
-use crate::compile::{Compiled, StepKind};
-use crate::inventory::{Host, Inventory};
+use crate::agent::AgentSource;
+use crate::compile::Compiled;
+use crate::inventory::Host;
 use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::stats::Stats;
-use crate::template::{Templar, Vars};
-use crate::transport::{ConnectionDefaults, Transport};
-use crate::vars::{Scope, VarStore, load_vars_file};
+use crate::transport::ConnectionDefaults;
 
 use coordinator::run_batch;
 pub(crate) use driver::{expressions, strings, task_strings};
+pub(crate) use play_checks::as_bool_value;
+pub use play_checks::refuse_unsafe_pinning;
+use play_checks::{check_gather_keywords, load_play_vars_files, max_fail_percentage};
+pub use state::{Abort, LinkKey, PlayEnd, Reboots, RunState};
 
 /// Ansible's default `timeout`: seconds to establish a connection.
 pub const DEFAULT_CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
@@ -73,156 +77,6 @@ pub struct RunOptions {
     /// `--step`: present when each task is asked about, and set once the operator answers `c`,
     /// which ends the questions for the rest of the run.
     pub step: Option<Arc<std::sync::atomic::AtomicBool>>,
-}
-
-/// How many times a task of this run has sent each host away, by the name its links are filed
-/// under. A driver's kept link to a host belongs to that driver alone, so the one that reboots
-/// the host can drop only its own; every other driver reads this before reusing a link, and
-/// checks again one it checked before the count moved.
-#[derive(Debug, Default)]
-pub struct Reboots(Mutex<HashMap<String, u64>>);
-
-impl Reboots {
-    pub(crate) fn of(&self, host: &str) -> u64 {
-        self.0
-            .lock()
-            .expect("reboots lock")
-            .get(host)
-            .copied()
-            .unwrap_or(0)
-    }
-
-    pub(crate) fn bump(&self, host: &str) {
-        *self
-            .0
-            .lock()
-            .expect("reboots lock")
-            .entry(host.to_string())
-            .or_default() += 1;
-    }
-}
-
-/// Ends the whole run from inside a play, the way a pre-flight refusal ends it before one: exit
-/// 1, the reason on its own, no recap, and nothing `ignore_errors` or a `rescue` can catch.
-/// Raising flips `stop`, so every driver stops as it does on an interruption; `run_play` then
-/// returns the reason as its error.
-///
-/// Measured by reading only: ansible-core 2.19.12's strategy raises `AnsibleError` from
-/// `_process_pending_results` for a handler it cannot find, with `ERROR_ON_MISSING_HANDLER` on
-/// by default, which leaves the play loop and the run.
-#[derive(Debug)]
-pub struct Abort {
-    stop: watch::Sender<bool>,
-    reason: Mutex<Option<String>>,
-    code: std::sync::atomic::AtomicI32,
-}
-
-impl Abort {
-    pub fn new(stop: watch::Sender<bool>) -> Self {
-        Self {
-            stop,
-            reason: Mutex::new(None),
-            code: std::sync::atomic::AtomicI32::new(1),
-        }
-    }
-
-    /// The exit code of the reason kept: 1 unless [`Abort::raise_with`] gave another.
-    pub fn code(&self) -> i32 {
-        self.code.load(std::sync::atomic::Ordering::SeqCst)
-    }
-
-    /// [`Abort::raise`] ending the run with `code`, when it is the first reason kept.
-    pub fn raise_with(&self, code: i32, reason: String) {
-        let first = self.reason.lock().expect("abort lock").is_none();
-        if first {
-            self.code.store(code, std::sync::atomic::Ordering::SeqCst);
-        }
-        self.raise(reason);
-    }
-
-    /// Stops the run without a reason: the operator's interruption.
-    pub fn interrupt(&self) {
-        self.stop.send_replace(true);
-    }
-
-    /// Stops the run and keeps `reason`, unless another host already gave one.
-    ///
-    /// An interruption that came first stays one: the run then ends as interrupted, with its own
-    /// code, and a reason raised after it is dropped.
-    pub fn raise(&self, reason: String) {
-        let mut kept = self.reason.lock().expect("abort lock");
-        if kept.is_none() && *self.stop.borrow() {
-            return;
-        }
-        kept.get_or_insert(reason);
-        self.stop.send_replace(true);
-    }
-
-    fn reason(&self) -> Option<String> {
-        self.reason.lock().expect("abort lock").clone()
-    }
-}
-
-/// Which agent a kept connection belongs to. The escalated user is part of the identity
-/// because two connections to one host under two users are two different agents, and so is the
-/// transport: connection settings are ordinary variables, so two tasks of one host can resolve
-/// different addresses, ports, users or keys, and a link reused across that difference would
-/// send a task to the wrong machine.
-#[derive(Debug, Clone, PartialEq, Eq, Hash)]
-pub struct LinkKey {
-    pub host: String,
-    pub become_user: Option<String>,
-    /// The program, method and flags of an escalated link; see `EscalationProgram`.
-    pub become_program: Option<crate::transport::EscalationProgram>,
-    pub transport: Transport,
-}
-
-/// What outlives a play: the templar, the variable store hosts write into, the hosts that
-/// are out of the run, and the agents still connected.
-pub struct RunState {
-    pub templar: Arc<Templar>,
-    pub vars: Arc<Mutex<VarStore>>,
-    pub failed_hosts: HashSet<String>,
-    /// The hosts of `failed_hosts` that went unreachable and stayed so at the end of a batch.
-    /// Measured on ansible-core 2.19.12: such a host is out of every play after, and
-    /// `meta: clear_host_errors` brings it back for the play it runs in and no further, while a
-    /// host that failed is back in the plays after the one that cleared it.
-    pub unreachable_hosts: HashSet<String>,
-    /// The inventory a `meta: refresh_inventory` read again, for the plays behind the one that
-    /// asked: the command line takes it before the next play's hosts are resolved.
-    pub refreshed: Option<Inventory>,
-    pub verbosity: u8,
-    /// Agents kept alive between plays, the way Ansible keeps its ssh connections open. Only
-    /// the connecting user's own link per host is kept; see `keep_links`.
-    pub links: HashMap<LinkKey, AgentLink>,
-    /// The module payloads this run sends, built once before the first connection from every
-    /// Python module the compiled plays name. `None` for a run of native tasks alone, which is
-    /// why a controller without ansible-core still runs those.
-    pub python: Option<Arc<crate::python::Union>>,
-}
-
-impl RunState {
-    /// Closes every kept connection, concurrently: each `shutdown` waits up to a couple of
-    /// seconds for its own agent, and a run of N hosts closing them one at a time would pay
-    /// N times that before the recap ever shows. Draining the map makes a second call a no-op,
-    /// so the recap paths can each ask for it without closing one agent twice.
-    pub async fn shutdown_links(&mut self) {
-        let mut closing = tokio::task::JoinSet::new();
-        for (_, link) in self.links.drain() {
-            closing.spawn(link.shutdown());
-        }
-        while closing.join_next().await.is_some() {}
-    }
-}
-
-/// How a play ended, for the run that contains it.
-pub struct PlayEnd {
-    /// Every live host of a batch failed, so the run is over: no further batch of this play, no
-    /// further play, and the recap prints where it stands. Measured on ansible-core 2.19.12,
-    /// three shapes of the same rule - two hosts failing in a one-batch play, one host failing
-    /// in a `serial: 1` batch, and a whole batch going unreachable - and the run stops at all
-    /// three, at exit 2 for the failures and 4 for the unreachable batch.
-    pub stop_run: bool,
 }
 
 /// Runs one play, batch by batch.
@@ -430,273 +284,6 @@ pub async fn run_play(
         }
     }
     Ok(PlayEnd { stop_run: false })
-}
-
-/// What `host_pinned` cannot do yet, said before the first play starts. A host kept by its fork
-/// cannot wait at a point the hosts behind it have to reach, so `host_pinned` with fewer forks
-/// than hosts refuses the steps that make hosts meet: handlers, dynamic includes, `run_once`,
-/// `pause` and `any_errors_fatal`. `hosts` is the play's whole list, so a `serial` play is held
-/// to the same bound as one without.
-pub fn refuse_unsafe_pinning(
-    play: &Play,
-    compiled: &Compiled,
-    hosts: usize,
-    forks: usize,
-) -> anyhow::Result<()> {
-    let meets = compiled.steps.iter().any(|s| match s.kind {
-        StepKind::Include(_) => true,
-        StepKind::Flush { explicit } => explicit || !compiled.handlers.is_empty(),
-        _ => s.task.barrier(),
-    });
-    if play.strategy.as_deref() == Some("host_pinned") && forks < hosts && meets {
-        return Err(crate::stats::Refusal::at(
-            4,
-            "strategy 'host_pinned' with fewer forks than hosts is not supported yet for a play with handlers, includes, run_once, pause or any_errors_fatal",
-        ));
-    }
-    Ok(())
-}
-
-/// The play's `max_fail_percentage`, rendered once when the play starts: a batch that loses a
-/// larger share of its hosts than this ends the run. A value that is no number is refused here,
-/// before the play's banner, like a `serial` that does not render.
-fn max_fail_percentage(
-    play: &Play,
-    templar: &Templar,
-    vars: &Map<String, Value>,
-) -> anyhow::Result<Option<f64>> {
-    let Some(raw) = &play.max_fail_percentage else {
-        return Ok(None);
-    };
-    let refuse = |why: String| {
-        crate::stats::Refusal::at(
-            4,
-            format!("Error processing keyword 'max_fail_percentage': {why}"),
-        )
-    };
-    let rendered = templar
-        .render_value(raw, vars)
-        .map_err(|err| refuse(err.0))?;
-    let number = match &rendered {
-        Value::Number(n) => n.as_f64(),
-        Value::String(s) => s.trim().parse::<f64>().ok(),
-        _ => None,
-    };
-    number
-        .filter(|n| n.is_finite())
-        .map(Some)
-        .ok_or_else(|| refuse(format!("The value {rendered} is not a number.")))
-}
-
-/// The play's `gather_subset`, `gather_timeout` and `fact_path`, checked when the play starts,
-/// before its banner: the reference validates a play's keywords then, whether it gathers or not.
-/// The values themselves travel as the gathering step's `setup` arguments, see
-/// `compile::gather_args`.
-fn check_gather_keywords(
-    play: &Play,
-    templar: &Templar,
-    vars: &Map<String, Value>,
-) -> anyhow::Result<()> {
-    let refuse = |key: &str, why: String| {
-        crate::stats::Refusal::at(4, format!("Error processing keyword '{key}': {why}"))
-    };
-    if let Some(raw) = &play.gather_subset {
-        let rendered = match templar.render_value(raw, vars) {
-            Ok(rendered) => rendered,
-            // A variable only a host has (a `vars_files` entry, say) is that host's to render.
-            Err(err) if err.0.contains("undefined") => Value::Null,
-            Err(err) => return Err(refuse("gather_subset", err.0)),
-        };
-        let items = match &rendered {
-            Value::Null => &[][..],
-            Value::Array(items) => items.as_slice(),
-            one => std::slice::from_ref(one),
-        };
-        if let Some(bad) = items.iter().find(|item| !item.is_string()) {
-            return Err(refuse(
-                "gather_subset",
-                format!(
-                    "Keyword 'gather_subset' items must be of type 'str', not '{}'.",
-                    python_type(bad)
-                ),
-            ));
-        }
-    }
-    if let Some(raw) = &play.gather_timeout {
-        let rendered = match templar.render_value(raw, vars) {
-            Ok(rendered) => rendered,
-            Err(err) if err.0.contains("undefined") => Value::from(0),
-            Err(err) => return Err(refuse("gather_timeout", err.0)),
-        };
-        let whole = match &rendered {
-            Value::Number(n) => n.is_i64() || n.is_u64(),
-            Value::String(text) => text.trim().parse::<i64>().is_ok(),
-            _ => false,
-        };
-        if !whole {
-            let shown = rendered
-                .as_str()
-                .map_or_else(|| rendered.to_string(), str::to_string);
-            return Err(refuse(
-                "gather_timeout",
-                format!("The value '{shown}' could not be converted to 'int'."),
-            ));
-        }
-    }
-    if let Some(Value::Array(_) | Value::Object(_)) = &play.fact_path {
-        let kind = play.fact_path.as_ref().map_or("", python_type);
-        return Err(crate::stats::Refusal::at(
-            4,
-            format!(
-                "The field 'fact_path' is supposed to be a string type, however the incoming data structure is a {kind}"
-            ),
-        ));
-    }
-    Ok(())
-}
-
-/// A variable's boolean, whether the inventory typed it as one or spelled it the way Ansible
-/// content spells one (`yes`, `on`, `"true"`).
-pub(crate) fn as_bool_value(value: &Value) -> Option<bool> {
-    match value {
-        Value::Bool(b) => Some(*b),
-        Value::String(s) => crate::yaml::bool_from_str(s.trim()),
-        _ => None,
-    }
-}
-
-/// `vars_files` paths are templates over play vars and the host's own variables, and Ansible
-/// resolves them per host, so two hosts can read two different files. Each rendered path is
-/// read once per call.
-///
-/// Called once per batch, not once per play: measured against ansible-core 2.19.12, a
-/// `vars_files` path templated on `ansible_play_batch` reads a different file for each batch
-/// (`serial/two.yml`'s shape, extended with a `vars_files` entry), so the reference re-renders
-/// and re-reads it per batch rather than once at the play's start. `hosts` is therefore the
-/// batch's own live hosts, and `play_hosts` / `batch_hosts` / `all_play_hosts` are the same three
-/// lists `ansible_play_hosts`, `ansible_play_batch` and `ansible_play_hosts_all` are served from
-/// everywhere else.
-///
-/// An entry that names nothing is not an error: the reference skips a `vars_files` path that
-/// does not exist without a word and runs the play, and warns once for an entry whose template
-/// has no value. Every other template failure stops the run, as it does there. A file that is
-/// there but cannot be read stops the run too.
-#[expect(
-    clippy::too_many_arguments,
-    reason = "three host lists the reference distinguishes; folding them loses which is which"
-)]
-fn load_play_vars_files(
-    play: &Play,
-    hosts: &[Host],
-    play_hosts: &[String],
-    batch_hosts: &[String],
-    all_play_hosts: &[String],
-    playbook_dir: &Path,
-    state: &RunState,
-    out: &mut Renderer,
-) -> anyhow::Result<HashMap<String, Vec<Map<String, Value>>>> {
-    let mut per_host = HashMap::new();
-    if play.vars_files.is_empty() {
-        return Ok(per_host);
-    }
-    let mut loaded: HashMap<PathBuf, Map<String, Value>> = HashMap::new();
-    // One warning per entry, not one per host: two hosts reading the same unresolvable entry
-    // are one complaint.
-    let mut warned: HashSet<&String> = HashSet::new();
-    for host in hosts {
-        let scope = Scope {
-            play_vars: play.vars.clone(),
-            play_hosts: play_hosts.to_vec(),
-            batch_hosts: batch_hosts.to_vec(),
-            all_play_hosts: all_play_hosts.to_vec(),
-            ..Scope::default()
-        };
-        let (layers, untrusted, untrusted_hosts) = {
-            let mut store = state.vars.lock().expect("vars lock");
-            let untrusted = store.untrusted_of(&host.name, &scope);
-            let untrusted_hosts = store.untrusted_hosts();
-            let layers = store.layered_for_host(&host.name, &scope);
-            (layers, untrusted, untrusted_hosts)
-        };
-        let (resolved, untrusted) = state.templar.resolve_vars_tainted(Vars {
-            map: &layers.map,
-            hostvars: None,
-            shared: Some(&layers.shared),
-            facts: Some(&layers.facts),
-            untrusted: Some(&untrusted),
-            untrusted_hosts: Some(&untrusted_hosts),
-        });
-        let vars = Vars {
-            map: &resolved,
-            hostvars: None,
-            shared: Some(&layers.shared),
-            facts: Some(&layers.facts),
-            untrusted: Some(&untrusted),
-            untrusted_hosts: Some(&untrusted_hosts),
-        };
-        let mut files = Vec::new();
-        for raw in &play.vars_files {
-            let rendered = match state.templar.render(raw, vars) {
-                Ok(rendered) => rendered,
-                // Only a variable without a value is recoverable. Every other template failure
-                // stops the run there, and swallowing them all as one undefined variable both
-                // named the wrong cause and let a broken playbook exit 0.
-                Err(err) if err.is_undefined() => {
-                    if warned.insert(raw) {
-                        out.warning(
-                            "skipping vars_files item due to an undefined variable",
-                            false,
-                        );
-                    }
-                    continue;
-                }
-                Err(err) => anyhow::bail!("rendering vars_files entry {raw}: {err}"),
-            };
-            // Exit 4, the reference's own code for a playbook it cannot make sense of, measured
-            // alongside the wording. A template that fails to render stays at 1, also measured:
-            // the reference splits those two the same way.
-            let path = rendered.as_str().ok_or_else(|| {
-                crate::stats::Refusal::at(
-                    4,
-                    format!(
-                        "Invalid `vars_files` value of type '{}'. A `vars_files` value should \
-                         either be a string or list of strings.",
-                        python_type(&rendered)
-                    ),
-                )
-            })?;
-            let path = if Path::new(path).is_absolute() {
-                PathBuf::from(path)
-            } else {
-                playbook_dir.join(path)
-            };
-            // `exists` answers "no" both for a path that is not there and for one it cannot
-            // stat, a parent directory refusing access included. The reference asks the same
-            // question the same way and skips either without a word, so both stay a skip here.
-            if !path.exists() {
-                continue;
-            }
-            files.push(if let Some(file) = loaded.get(&path) {
-                file.clone()
-            } else {
-                // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
-                // does not parse stops the reference with the same code a broken playbook
-                // gets.
-                // A vaulted file the run cannot read is exit 1 in the reference.
-                let file = load_vars_file(&path).map_err(|err| {
-                    if err.is::<crate::vars::VaultFile>() {
-                        crate::stats::Refusal::at(1, err)
-                    } else {
-                        crate::stats::Refusal::or(4, err)
-                    }
-                })?;
-                loaded.insert(path, file.clone());
-                file
-            });
-        }
-        per_host.insert(host.name.clone(), files);
-    }
-    Ok(per_host)
 }
 
 /// The name Python would give a value, so a message about a mistyped playbook key reads the way

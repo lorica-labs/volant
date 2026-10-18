@@ -52,7 +52,9 @@ On first use, the controller writes its agents to `~/.cache/volant/agents/<versi
   <TabItem label="Controller">
     - Linux or macOS.
     - The OpenSSH client on your `PATH`. Volant runs `ssh` itself, so your `~/.ssh/config` applies.
-    - For Python modules and fact gathering, a Python 3 with `ansible-core` installed. Volant uses ansible-core to build module payloads. It picks `VOLANT_PYTHON` first, then the active virtual environment, then `python3` on your `PATH`.
+    - `curl` or `wget`, and `tar`, the first time a playbook needs Python.
+
+    Ansible is not needed. For Python modules and fact gathering, Volant uses a Python 3 with `ansible-core`. When it finds none, it downloads its own, checks every file against a pinned hash and keeps it under `~/.local/share/volant/runtime`. A run that does this prints one line, and the install takes about 8 seconds. If you already have such a Python, Volant uses `VOLANT_PYTHON` first, then its own runtime, then the active virtual environment, then `python3` on your `PATH`. See [The managed runtime](/reference/runtime/). It has not been tested on macOS.
 
     A playbook made only of `command`, `shell`, `raw` and controller-side modules, with `gather_facts: false`, needs no Python at all.
   </TabItem>
@@ -107,6 +109,7 @@ A Homebrew formula is planned. The [roadmap](/project/roadmap/) tracks it.
 Remove the release directory, the links and the controller's agent cache. On each host, the agent cache is one directory per account the run acted as:
 
 ```sh
+volant runtime remove --all
 rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook ~/.cache/volant
 ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-*'
 ```

@@ -23,6 +23,10 @@ A step where notified handlers run. Every play has three, and `meta: flush_handl
 
 One open connection from the controller to an agent. A host has its own link, plus one while it escalates and one per delegate.
 
+### Managed runtime
+
+The Python and ansible-core that Volant installs for itself and uses before any interpreter of the system. See [The managed runtime](/reference/runtime/).
+
 ### Pre-flight
 
 The check that names, before any connection, everything this release does not support yet, and stops the run. See [What is not supported yet](/playbooks/preflight/).

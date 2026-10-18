@@ -8,6 +8,7 @@ import Option from '../../../components/Option.astro';
 ```sh
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
+volant runtime <install|pack|status|path|remove>
 volant --version
 ```
 
@@ -174,7 +175,11 @@ These options read the playbooks and stop. They never connect to a host and neve
 Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 
 <Option name="VOLANT_PYTHON" arg="PATH">
-  The Python interpreter the controller uses to build module payloads. It needs `ansible-core`. When unset, Volant tries the active virtual environment, then `python3` on your `PATH`.
+  The Python interpreter the controller uses to build module payloads. It needs `ansible-core`. When set, Volant uses it alone and installs nothing. When unset, Volant tries the managed runtime, then the active virtual environment, then `python3` on your `PATH`.
+</Option>
+
+<Option name="VOLANT_RUNTIME" arg="auto|managed|system" config="[volant] runtime">
+  Whether Volant may use and install its own Python. See [The managed runtime](/reference/runtime/).
 </Option>
 
 <Option name="VOLANT_AGENT_DIR" arg="DIR">
@@ -195,6 +200,30 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 
 <Option name="VOLANT_PROFILE_JSON" arg="FILE">
   Write the run's profile to this file, one JSON object per line: the native modules each agent reported, then the phases, then one line per task with its module, path, hand-back reason and times in microseconds. It is written whatever became of the run, and a file that cannot be written only prints a warning.
+</Option>
+
+## The runtime command
+
+`volant runtime` manages the Python and ansible-core that Volant installs for itself. [The managed runtime](/reference/runtime/) describes what each step does.
+
+```sh
+volant runtime install [--collections NAME_OR_FILE...] [--from FILE]
+volant runtime pack FILE
+volant runtime status
+volant runtime path
+volant runtime remove [ID | --all]
+```
+
+<Option name="install --collections" arg="NAME_OR_FILE...">
+  Also install collections into the runtime. Each value is a name, with an optional version (`community.general:13.4.0`), or a requirements file ending in `.yml` or `.yaml`.
+</Option>
+
+<Option name="install --from" arg="FILE">
+  Install from a file `volant runtime pack` wrote, with no download. The platform has to match.
+</Option>
+
+<Option name="remove --all">
+  Delete every runtime, not only the current one.
 </Option>
 
 ## Not there yet

@@ -33,7 +33,7 @@ Module results are untrusted and are never rendered as controller templates. See
 
 ## What each side needs
 
-The controller needs Python 3 with `ansible-core`. Volant picks `VOLANT_PYTHON` first, then the active virtual environment, then `python3` on your `PATH`.
+The controller needs Python 3 with `ansible-core`. Volant picks `VOLANT_PYTHON` first, then its [managed runtime](/reference/runtime/), then the active virtual environment, then `python3` on your `PATH`. With none of them, it installs the managed runtime.
 
 The host needs a Python 3 interpreter, but not ansible-core: the blob carries the module and every file it imports. The agent reports the interpreters it finds when it starts.
 

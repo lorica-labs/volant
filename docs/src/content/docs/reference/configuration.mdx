@@ -149,6 +149,10 @@ Ansible ignores this section, so one `ansible.cfg` can carry it and still drive 
   Let the agent answer a task with its native version of the module, when the task's arguments stay within what that version implements. With `false`, every task goes to ansible-core's Python module, and `setup` too, which is how to compare the two paths on a real run. The value is read as ansible-core reads a boolean, and a word it does not know stops the run with exit code 5. See [Native modules](/internals/python/#native-modules).
 </Option>
 
+<Option name="runtime" id="volant-runtime" default="auto" env="VOLANT_RUNTIME">
+  Where the controller's Python comes from. `auto` uses `VOLANT_PYTHON`, then the managed runtime when installed, then the active virtual environment and `python3`, and installs the managed runtime when none of them works. `managed` uses `VOLANT_PYTHON` or the managed runtime only, and installs it when it is missing. `system` never uses or installs the managed runtime. Any other word stops the run with exit code 5. See [The managed runtime](/reference/runtime/).
+</Option>
+
 <Option name="ssh_control_master" id="volant-ssh-control-master" default="true" env="VOLANT_SSH_CONTROL_MASTER">
   Share one OpenSSH connection between all the `ssh` runs of an inventory host. With `false`, each link and probe opens its own connection. See [One connection per host](/hosts/connections/#one-connection-per-host).
 </Option>

@@ -2034,7 +2034,7 @@ fn no_payload(module: &str) -> TaskResult {
 /// wrote. `ignore_errors`, `timeout` and `environment` are the item's.
 ///
 /// A module the union does not hold fails by name, and is never sent as if it were native: every
-/// module a plugin can pick is in the union by construction ([`crate::python::modules_to_build`]),
+/// module a plugin can pick is in the union by construction (`python::reach::modules_to_build`),
 /// so reaching that arm is a controller bug, and `service` is a name the agent would take for a
 /// module it runs itself. The agent's own `command`, `raw` and `shell` are the exception, sent
 /// with no payload as a playbook's would be: `reboot` runs its commands through `raw`.

@@ -104,6 +104,15 @@ pub(super) fn concat(
 /// instruction and a two-argument call take the same two operands off the stack in the same
 /// order, and a call keeps its own, so every jump target stays where it was.
 pub(super) fn route_calls(instructions: &mut Instructions<'_>) {
+    // A macro or a `set` that takes the name `q` or `query` shadows the lookup shorthand.
+    let mut shadowed = Vec::new();
+    let mut at = 0;
+    while let Some(op) = instructions.get(at) {
+        if let Instruction::BuildMacro(name, ..) | Instruction::StoreLocal(name) = op {
+            shadowed.push(name.to_string());
+        }
+        at += 1;
+    }
     let mut idx = 0;
     loop {
         let named = match (instructions.get(idx), instructions.get(idx + 1)) {
@@ -126,7 +135,9 @@ pub(super) fn route_calls(instructions: &mut Instructions<'_>) {
             Instruction::GetAttr(name) => {
                 *op = Instruction::CallFunction(attr_call(name), Some(1));
             }
-            Instruction::CallFunction(name, args) if matches!(*name, "query" | "q") => {
+            Instruction::CallFunction(name, args)
+                if matches!(*name, "query" | "q") && !shadowed.iter().any(|n| n == name) =>
+            {
                 *op = Instruction::CallFunction(QUERY_KEY, *args);
             }
             _ => {}

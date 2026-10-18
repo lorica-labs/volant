@@ -139,7 +139,7 @@ pub fn register(
         add_filter(env, "max", f::max);
         add_filter(env, "sort", f::sort);
         add_filter(env, "list", f::list);
-        add_text_filter(env, "string", f::string);
+        add_text_filter(env, "string", string);
         add_filter(env, "batch", f::batch);
         add_filter(env, "slice", f::slice);
         add_text_filter(env, "sum", f::sum);
@@ -427,3 +427,13 @@ fn ternary(value: Value, true_val: Value, false_val: Value, none_val: Option<Val
 
 #[cfg(test)]
 mod tests;
+
+/// `string`, which prints a `range` as Python does and leaves every other value to MiniJinja.
+fn string(state: &State, value: Value) -> Result<Value, Error> {
+    if value.downcast_object_ref::<super::env::Range>().is_some() {
+        return Ok(Value::from(
+            super::env::container_repr(&value).unwrap_or_default(),
+        ));
+    }
+    minijinja::filters::string(state, &value)
+}

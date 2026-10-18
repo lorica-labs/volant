@@ -44,12 +44,16 @@ pub(super) fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> En
     });
     filters::register(&mut env, base_dir, bridge);
     env.add_function(CONCAT_KEY, concat);
+    env.add_function("range", range);
     env.add_function(ITEM_KEY, chained_item);
     env
 }
 
 /// Python's `repr` of a list or mapping, `None` for any other value.
 pub(super) fn container_repr(value: &minijinja::Value) -> Option<String> {
+    if let Some(range) = value.downcast_object_ref::<Range>() {
+        return Some(range.to_string());
+    }
     if !matches!(
         value.kind(),
         ValueKind::Seq | ValueKind::Map | ValueKind::Iterable
@@ -248,4 +252,74 @@ pub(crate) fn truthy(v: &Value) -> bool {
         Value::Array(a) => !a.is_empty(),
         Value::Object(o) => !o.is_empty(),
     }
+}
+
+/// Python's `range`: it iterates like a list and prints as `range(0, 3)`.
+#[derive(Debug)]
+pub(super) struct Range {
+    start: i64,
+    stop: i64,
+    step: i64,
+}
+
+impl Range {
+    fn len(&self) -> usize {
+        let span = if self.step > 0 {
+            self.stop - self.start
+        } else {
+            self.start - self.stop
+        };
+        if span <= 0 {
+            0
+        } else {
+            usize::try_from((span - 1) / self.step.abs() + 1).unwrap_or(0)
+        }
+    }
+}
+
+impl std::fmt::Display for Range {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        if self.step == 1 {
+            write!(f, "range({}, {})", self.start, self.stop)
+        } else {
+            write!(f, "range({}, {}, {})", self.start, self.stop, self.step)
+        }
+    }
+}
+
+impl minijinja::value::Object for Range {
+    fn repr(self: &Arc<Self>) -> minijinja::value::ObjectRepr {
+        minijinja::value::ObjectRepr::Seq
+    }
+
+    fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
+        let at = i64::try_from(key.as_usize()?).ok()?;
+        (usize::try_from(at).ok()? < self.len())
+            .then(|| minijinja::Value::from(self.start + at * self.step))
+    }
+
+    fn enumerate(self: &Arc<Self>) -> minijinja::value::Enumerator {
+        minijinja::value::Enumerator::Seq(self.len())
+    }
+}
+
+fn range(args: Rest<i64>) -> Result<minijinja::Value, minijinja::Error> {
+    let (start, stop, step) = match args.0[..] {
+        [stop] => (0, stop, 1),
+        [start, stop] => (start, stop, 1),
+        [start, stop, step] => (start, stop, step),
+        _ => {
+            return Err(minijinja::Error::new(
+                ErrorKind::InvalidOperation,
+                "range expected 1 to 3 integer arguments",
+            ));
+        }
+    };
+    if step == 0 {
+        return Err(minijinja::Error::new(
+            ErrorKind::InvalidOperation,
+            "range() arg 3 must not be zero",
+        ));
+    }
+    Ok(minijinja::Value::from_object(Range { start, stop, step }))
 }

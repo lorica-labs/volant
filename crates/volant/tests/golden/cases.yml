@@ -489,3 +489,7 @@
 - {bridge: true, template: "{{ r is reachable }}", vars: {r: {unreachable: true}}}
 - {bridge: true, template: "{{ r is unreachable }}", vars: {r: {unreachable: false}}}
 - {bridge: true, template: "{{ r is timedout }}", vars: {r: {timedout: false}}}
+- template: "{{ range(3) }}|{{ range(1, 6, 2) }}|{{ range(3) | list }}|{{ range(3) | string }}"
+- template: "{% macro q(a) %}m{{ a }}{% endmacro %}{{ q(1) }}"
+- template: "{% macro query(a) %}m{{ a }}{% endmacro %}{{ query(2) }}"
+- template: "{{ lookup('varnames', '[', wantlist=True) }}"

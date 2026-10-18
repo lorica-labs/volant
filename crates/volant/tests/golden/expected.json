@@ -3357,5 +3357,29 @@
       }
     },
     "result": false
+  },
+  {
+    "case": {
+      "template": "{{ range(3) }}|{{ range(1, 6, 2) }}|{{ range(3) | list }}|{{ range(3) | string }}"
+    },
+    "result": "range(0, 3)|range(1, 6, 2)|[0, 1, 2]|range(0, 3)"
+  },
+  {
+    "case": {
+      "template": "{% macro q(a) %}m{{ a }}{% endmacro %}{{ q(1) }}"
+    },
+    "result": "m1"
+  },
+  {
+    "case": {
+      "template": "{% macro query(a) %}m{{ a }}{% endmacro %}{{ query(2) }}"
+    },
+    "result": "m2"
+  },
+  {
+    "case": {
+      "template": "{{ lookup('varnames', '[', wantlist=True) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'varnames' failed: Unable to use \"[\" as a search parameter: unterminated character set at position 0"
   }
 ]

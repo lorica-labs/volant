@@ -88,7 +88,7 @@ pub(super) fn parse_builtin(
     cx.verbose(
         1,
         format!(
-            "Using inventory plugin 'ansible.builtin.{short}' to process inventory source '{path}'"
+            "Using inventory plugin 'ansible_collections.ansible.builtin.plugins.inventory.{short}' to process inventory source '{path}'"
         ),
     );
     Some(plugin.parse(source, into, cx))

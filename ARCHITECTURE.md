@@ -46,7 +46,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `cli/` | The `playbook` command: `args` holds its arguments, `announce` the version line and option dumps, `run` the run itself, `hosts` the limit, tags and ordering, `passwords` the password files and prompts. |
 | `config.rs` | The `ansible.cfg` settings this release reads. |
-| `inventory.rs` | INI inventories and host patterns. |
+| `inventory/` | Inventories from every source plugin, with the group graph in `graph.rs` and host patterns, globs and subscripts in `patterns.rs`. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
 | `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
@@ -58,7 +58,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `transport/`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. `transport` holds the connection settings, the `ssh` command lines and shared connections, the agent bootstrap, and `escalation/` for `sudo` and `su`. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
 | `python/`, `python_helper.py` | The Python helper that builds module payloads: `types` holds the facts and payload shapes, `reach` what a run can reach, `union_build` builds the union, `builder` talks to the helper, `action_helper` runs action plugins. |
-| `render.rs`, `stats.rs` | Console output, the recap, and exit codes. |
+| `render/`, `stats.rs` | Console output, the recap, and exit codes. `render/` keeps the renderer in `mod.rs`, one task's result line in `result.rs`, the error blocks in `error.rs` and Ansible's JSON text in `recap_json.rs`. |
 
 ### Executor, `crates/volant/src/executor/`
 
@@ -66,7 +66,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `mod.rs` | The run's settings, the connections kept between plays, and the entry point the command line calls. |
 | `coordinator.rs` | The serialized view of a batch's progress, and everything that reaches the terminal. |
-| `driver.rs` | One host's run through a play, from its first step to the moment it leaves. |
+| `driver/` | One host's run through a play, from its first step to the moment it leaves. `mod.rs` holds `drive_host`, `boundaries.rs` the scan that decides where the hosts meet, `waits.rs` the waits on the other hosts, `unreachable.rs` the `ignore_unreachable` steps, `timings.rs` the profile records of a link. |
 | `prepare.rs` | Rendering one task for one host: variables, escalation, environment and loop items. |
 | `run.rs` | Running one task and judging its result, on the controller or on the agent. |
 | `report.rs` | Turning one task's results into the events the coordinator shows. |
@@ -87,6 +87,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `natives/runtime/` | What the natives that run programs share: the task's clock, the reasons an answer stops, the root a collector reads under, program runs, and Python's string rules. |
 | `natives/setup/` | The native `setup`: one file per collector, plus the request, the collection run and the `fnmatch` filter. |
 | `natives/systemd/` | The native `systemd`: the answer, the request and its options, the `systemctl` host, and the reading of `systemctl show` and init scripts. |
+| `natives/file/` | The native `file`: the answer and the states it ensures, and the check before a tree is removed. |
 | `natives/setup/network/` | The `network` collector: the commands it runs and the working state it reads their output into. |
 | `natives/package_facts/` | The native `package_facts` for apt: the run and its arguments, dpkg's status, the configured sources, and the scan of the lists. |
 | `blobs/` | The cache of module payloads, addressed by hash: reading the controller's messages, the staged files of a connection, and the filesystem checks. |

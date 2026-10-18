@@ -1,3 +1,0 @@
-# `any_errors_fatal` under `free` warns, and the hosts that did not fail finish.
-args: [-i, inv.ini, play.yml]
-forks: 2

@@ -48,7 +48,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `config.rs` | The `ansible.cfg` settings this release reads. |
 | `inventory.rs` | INI inventories and host patterns. |
 | `playbook.rs`, `yaml.rs` | Loading plays; YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
-| `vars.rs` | Variable sources, Ansible's precedence, and the magic variables. |
+| `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |

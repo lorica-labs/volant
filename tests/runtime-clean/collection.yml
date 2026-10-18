@@ -1,0 +1,7 @@
+# Needs community.general: run `volant runtime install --collections community.general` first.
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Use a collection filter
+      ansible.builtin.assert:
+        that: "('1h' | community.general.to_seconds) == 3600"

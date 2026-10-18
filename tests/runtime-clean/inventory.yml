@@ -1,0 +1,4 @@
+all:
+  hosts:
+    h1:
+      ansible_connection: local

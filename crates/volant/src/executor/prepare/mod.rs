@@ -121,6 +121,8 @@ pub(super) fn prepare(
     };
     let list_value = (options.extended && options.allitems)
         .then(|| Value::Array(list.iter().map(|v| (*v).clone()).collect()));
+    let mut notify_failures = 0;
+    let mut first_notify_error: Option<TemplateError> = None;
     for (index, element) in elements.iter().cloned().enumerate() {
         let mut vars = base.clone();
         if let Some(el) = &element {
@@ -286,10 +288,23 @@ pub(super) fn prepare(
         };
         // As `environment`: a keyword the reference renders before the module runs, so an
         // undefined name fails the task even when nothing changes, and a skipped item renders none.
-        let notify = if skipped.is_some() {
-            Vec::new()
+        // In a loop a `notify` that fails to render fails that item only, and the other items
+        // run: measured, `failed: [h] (item=2)` between two `changed` items.
+        let (notify, skipped) = if skipped.is_some() {
+            (Vec::new(), skipped)
         } else {
-            notify_for(task, &vars, templar)?
+            match notify_for(task, &vars, templar) {
+                Ok(names) => (names, None),
+                Err(err) if task.loop_items.is_some() => {
+                    notify_failures += 1;
+                    first_notify_error.get_or_insert_with(|| err.clone());
+                    (
+                        Vec::new(),
+                        Some(TaskResult::failed_with(failure_text(&err))),
+                    )
+                }
+                Err(err) => return Err(err),
+            }
         };
         items.push(Item {
             element,
@@ -305,6 +320,10 @@ pub(super) fn prepare(
             set_fact_names: std::sync::OnceLock::new(),
             notify,
         });
+    }
+    // Every item failing to render its `notify` is the task's own failure.
+    if let Some(err) = first_notify_error.filter(|_| notify_failures == items.len()) {
+        return Err(err);
     }
     if items.iter().all(|i| i.skipped.is_some()) {
         return Ok(Prepared::Skipped(items));

@@ -1171,3 +1171,21 @@ fn a_found_path_that_looks_like_a_template_is_refused_and_never_rendered() {
         assert!(!marker.exists(), "{looping}: the name's command ran");
     }
 }
+
+/// A `notify` that fails to render on one loop item fails that item and leaves the others; when
+/// every item fails, or the task has no loop, the task itself fails.
+#[test]
+fn a_notify_that_fails_to_render_fails_its_item_only() {
+    let store = store_at(Path::new("."));
+    let mut step = step_of(task("command"), Origin::default());
+    step.task.notify = vec!["{{ nosuch if item == 2 else 'h' }}".into()];
+    step.task.loop_items = Some(json!([1, 2, 3]));
+    let items = prepared(&step, &store).expect("the loop is prepared");
+    let failed: Vec<bool> = items.iter().map(|i| i.skipped.is_some()).collect();
+    assert_eq!(failed, [false, true, false]);
+    assert_eq!(items[0].notify, ["h"]);
+    step.task.loop_items = Some(json!([2]));
+    assert!(prepared(&step, &store).is_err());
+    step.task.loop_items = None;
+    assert!(prepared(&step, &store).is_err());
+}

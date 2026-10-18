@@ -84,6 +84,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `python/` | The warm Python server and its supervisor: the server process, the pool that keeps one per interpreter and payload, and the frames it speaks. |
 | `natives/common/` | What every native shares with the reference's module machinery: arguments, accounts, modes, file attributes, running programs and backups. |
 | `natives/service_facts/` | The native `service_facts` for systemd hosts: the run, the SysV listing and the systemd units. |
+| `natives/apt/` | The native `apt` fast path: the argument spec, the request, the plan against dpkg's status and the cache stamp, and the host files it reads. |
 | `natives/lineinfile/` | The native `lineinfile`: the request, the edit in memory, the `regexp` translation and the write. |
 | `natives/copy/` | The native `copy`: the request, the source and destination sums with the MD5 it carries, the mount check, and the move. |
 | `natives/runtime/` | What the natives that run programs share: the task's clock, the reasons an answer stops, the root a collector reads under, program runs, and Python's string rules. |

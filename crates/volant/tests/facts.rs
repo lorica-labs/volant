@@ -124,6 +124,8 @@ fn volant_within(args: &[&str], envs: &[(&str, &Path)], deadline: Duration) -> O
     process::run_within(
         Command::new(env!("CARGO_BIN_EXE_volant"))
             .args(args)
+            // The suite never installs Volant's runtime: the controller's Python is the machine's.
+            .env("VOLANT_RUNTIME", "system")
             .envs(envs.iter().copied())
             .env("NO_COLOR", "1")
             .env("ANSIBLE_HOST_KEY_CHECKING", "False"),

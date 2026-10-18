@@ -83,6 +83,7 @@ async fn run_all(
     profile: &Arc<Profile>,
 ) -> anyhow::Result<i32> {
     let config = Config::load()?;
+    crate::runtime::resolve::set_mode(config.runtime);
     announce(out);
     python::set_module_path(module_path_dirs(args));
     let secrets = match crate::vault::load(&crate::vault::Request {

@@ -45,7 +45,11 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
             let done = install::install(&runtimes, &manifest)?;
             println!("{} is installed in {}", done.id, done.dir.display());
         }
-        RuntimeCommand::Status => print!("{}", status(&runtimes, &manifest)),
+        RuntimeCommand::Status => {
+            let config = crate::config::Config::load().map_err(|e| format!("{e:#}"))?;
+            crate::runtime::resolve::set_mode(config.runtime);
+            print!("{}", status(&runtimes, &manifest));
+        }
         RuntimeCommand::Path => {
             let done = installed(&runtimes, &manifest.id()).ok_or(
                 "Volant's Python runtime is not installed: run `volant runtime install` first",

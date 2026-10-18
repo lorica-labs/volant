@@ -80,6 +80,8 @@ fn run_recorded_play(
         .args(["-i", &dir.join("hosts.ini").display().to_string()])
         .args(flags)
         .arg(dir.join(playbook))
+        // The suite never installs Volant's runtime: the controller's Python is the machine's.
+        .env("VOLANT_RUNTIME", "system")
         .env("NO_COLOR", "1")
         .env_remove("COLUMNS")
         // The local agent inherits this run's environment and caches the payload under this

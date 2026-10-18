@@ -6,6 +6,9 @@
 pub(crate) mod fetch;
 pub(crate) mod install;
 pub(crate) mod manifest;
+pub(crate) mod resolve;
+
+pub use resolve::Mode;
 
 use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
@@ -41,7 +44,8 @@ pub(crate) fn runtimes_dir() -> Result<PathBuf, String> {
 /// it is installed, the platform it is for, and the other runtimes left installed.
 pub(crate) fn status(runtimes: &Path, manifest: &manifest::Manifest) -> String {
     let id = manifest.id();
-    let mut lines = vec![format!("managed runtime: {id}")];
+    let mut lines = resolve::describe();
+    lines.push(format!("managed runtime: {id}"));
     lines.push(match install::installed(runtimes, &id) {
         Some(done) => format!("  installed: {}", done.python.display()),
         None => format!(

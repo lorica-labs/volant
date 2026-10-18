@@ -233,3 +233,59 @@ fn extract_finds_the_interpreter(
         }
     }
 }
+
+use super::resolve::{Mode, Origin, candidates, hint, may_install};
+
+/// The resolution order: `VOLANT_PYTHON` alone, then Volant's runtime when installed (not under
+/// `system`), then the virtualenv and `python3` (not under `managed`).
+#[rstest]
+#[case::explicit_wins_in_every_mode(Mode::Managed, Some("/opt/py"), true, &[("/opt/py", Origin::Explicit)])]
+#[case::auto_runtime_first(Mode::Auto, None, true, &[("/rt/python3", Origin::Managed), ("/venv/bin/python", Origin::VirtualEnv), ("python3", Origin::Path)])]
+#[case::auto_without_runtime(Mode::Auto, None, false, &[("/venv/bin/python", Origin::VirtualEnv), ("python3", Origin::Path)])]
+#[case::managed_only_runtime(Mode::Managed, None, true, &[("/rt/python3", Origin::Managed)])]
+#[case::managed_without_runtime(Mode::Managed, None, false, &[])]
+#[case::system_ignores_runtime(Mode::System, None, true, &[("/venv/bin/python", Origin::VirtualEnv), ("python3", Origin::Path)])]
+fn the_candidates_follow_the_mode(
+    #[case] mode: Mode,
+    #[case] explicit: Option<&str>,
+    #[case] runtime: bool,
+    #[case] expected: &[(&str, Origin)],
+) {
+    let managed = runtime.then(|| PathBuf::from("/rt/python3"));
+    let got: Vec<(String, Origin)> = candidates(mode, explicit, Some("/venv"), managed)
+        .into_iter()
+        .map(|candidate| (candidate.python, candidate.origin))
+        .collect();
+    let expected: Vec<(String, Origin)> = expected
+        .iter()
+        .map(|(python, origin)| ((*python).to_owned(), *origin))
+        .collect();
+    assert_eq!(got, expected);
+}
+
+/// Only `auto` and `managed` install, never over `VOLANT_PYTHON`; the refusal names the way out
+/// the mode leaves.
+#[rstest]
+#[case::auto(Mode::Auto, false, true, ", or run `volant runtime install`")]
+#[case::managed(Mode::Managed, false, true, ", or run `volant runtime install`")]
+#[case::system(
+    Mode::System,
+    false,
+    false,
+    "used when `[volant] runtime` is not `system`"
+)]
+#[case::explicit(Mode::Auto, true, false, "")]
+fn installing_follows_the_mode(
+    #[case] mode: Mode,
+    #[case] explicit: bool,
+    #[case] installs: bool,
+    #[case] says: &str,
+) {
+    let explicit = explicit.then_some("/opt/py");
+    assert_eq!(may_install(mode, explicit), installs);
+    let hint = hint(mode, explicit.is_some());
+    assert!(
+        hint.contains(says) && hint.is_empty() == says.is_empty(),
+        "{hint}"
+    );
+}

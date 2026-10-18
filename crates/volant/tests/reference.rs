@@ -484,7 +484,9 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
                     .args(args)
                     .args(["--forks", &spec.forks.to_string()])
                     .current_dir(&copy)
-                    .env_remove("COLUMNS");
+                    .env_remove("COLUMNS")
+                    // The suite never installs Volant's runtime: the controller's Python is the machine's.
+                    .env("VOLANT_RUNTIME", "system");
                 // Except where the controller's collections are installed: the helper runs a
                 // collection's filter from there, as the reference did when it was recorded.
                 for (var, _) in std::env::vars() {

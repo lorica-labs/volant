@@ -38,7 +38,7 @@ pub fn union_for(
     }
     let place = crate::union_cache::Place::here(modules, &collection_names(modules), plugin_dirs);
     let start = || {
-        let mut builder = PythonBuilder::start()?;
+        let mut builder = PythonBuilder::start_installing(!gathering_only(modules))?;
         builder.add_plugin_dirs(plugin_dirs)?;
         Ok(builder)
     };
@@ -60,7 +60,7 @@ pub fn union_and_helper(
     }
     let place = crate::union_cache::Place::here(modules, &collection_names(modules), plugin_dirs);
     let start = || {
-        let mut builder = PythonBuilder::start()?;
+        let mut builder = PythonBuilder::start_installing(!gathering_only(modules))?;
         builder.add_plugin_dirs(plugin_dirs)?;
         Ok(builder)
     };
@@ -214,6 +214,12 @@ fn union_keeping(
         warn(unusable(place, &err));
     }
     Ok(Some(entry.union))
+}
+
+/// Whether gathering facts is all the run asks of ansible-core: such a run never installs
+/// Volant's runtime, since `gather_facts: false` is a way out that downloads nothing.
+pub(super) fn gathering_only(modules: &std::collections::BTreeSet<String>) -> bool {
+    modules.len() == 1 && modules.contains("setup")
 }
 
 /// The sentence a run that gathers facts and nothing else gets on top of [`super::builder::refusal_for`].

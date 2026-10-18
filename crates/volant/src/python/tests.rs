@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::builder::{exchange, find_python, refusal_for, resolve_exchange, start_from};
 use super::reach::modules_to_build;
-use super::union_build::{no_builder, union_from};
+use super::union_build::{gathering_only, no_builder, union_from};
 use super::*;
 use crate::testing::scratch;
 use rstest::rstest;
@@ -206,6 +206,7 @@ fn dropping_the_builder_leaves_no_ansible_local_directory() {
     let python = match find_python(
         std::env::var("VOLANT_PYTHON").ok().as_deref(),
         std::env::var("VIRTUAL_ENV").ok().as_deref(),
+        false,
     ) {
         Ok(python) => python,
         Err(why) => return skip_or_fail(&format!("{why:#}")),
@@ -230,6 +231,7 @@ fn only_ansible_core_s_own_module_is_core() {
     let python = match find_python(
         std::env::var("VOLANT_PYTHON").ok().as_deref(),
         std::env::var("VIRTUAL_ENV").ok().as_deref(),
+        false,
     ) {
         Ok(python) => python,
         Err(why) => return skip_or_fail(&format!("{why:#}")),
@@ -287,6 +289,7 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
     let python = match find_python(
         std::env::var("VOLANT_PYTHON").ok().as_deref(),
         std::env::var("VIRTUAL_ENV").ok().as_deref(),
+        false,
     ) {
         Ok(python) => python,
         Err(why) => return skip_or_fail(&format!("{why:#}")),
@@ -585,7 +588,7 @@ fn an_explicit_interpreter_stands_alone_and_a_bare_one_is_probed() {
             candidates(Some("/nowhere/python"), Some("/venv")),
             vec!["/nowhere/python".to_string()]
         );
-        let err = start_from(Some("/nowhere/python"), None)
+        let err = start_from(Some("/nowhere/python"), None, true)
             .map(|_| ())
             .expect_err("an interpreter that does not exist cannot build a payload")
             .to_string();
@@ -593,7 +596,7 @@ fn an_explicit_interpreter_stands_alone_and_a_bare_one_is_probed() {
         assert!(err.contains("VOLANT_PYTHON"), "{err}");
     }
     {
-        let err = start_from(Some("/nowhere/python"), Some("/venv"))
+        let err = start_from(Some("/nowhere/python"), Some("/venv"), true)
             .map(|_| ())
             .expect_err("no candidate here has ansible-core")
             .to_string();
@@ -1218,4 +1221,13 @@ fn framed(payload: &[u8]) -> Cursor<Vec<u8>> {
     let mut buf = Vec::new();
     write_frame(&mut buf, payload).unwrap();
     Cursor::new(buf)
+}
+
+/// A run that only gathers facts never installs Volant's runtime; any other module may.
+#[test]
+fn only_a_facts_only_run_never_installs() {
+    let set = |names: &[&str]| names.iter().map(ToString::to_string).collect();
+    assert!(gathering_only(&set(&["setup"])));
+    assert!(!gathering_only(&set(&["setup", "lineinfile"])));
+    assert!(!gathering_only(&set(&["lineinfile"])));
 }

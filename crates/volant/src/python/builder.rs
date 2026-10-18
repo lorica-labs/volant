@@ -10,22 +10,18 @@ use volant_protocol::frame::{read_frame, write_frame};
 
 use super::reach::module_path;
 use super::types::{HELPER, ModuleFacts, Natives, Resolved, Union, payload_key};
+use crate::runtime::resolve;
 
-/// The interpreters to try, in the order they are tried.
+/// The interpreters to try, in the order they are tried: [`crate::runtime::resolve`]'s order.
 ///
 /// An explicit `VOLANT_PYTHON` is the only candidate when it is set: falling back from it to
 /// `python3` would answer a path that does not exist, or has no ansible-core, by quietly
 /// running something else.
 pub(crate) fn candidates(explicit: Option<&str>, virtual_env: Option<&str>) -> Vec<String> {
-    if let Some(python) = explicit {
-        return vec![python.to_string()];
-    }
-    let mut out = Vec::new();
-    if let Some(env) = virtual_env {
-        out.push(format!("{env}/bin/python"));
-    }
-    out.push("python3".to_string());
-    out
+    resolve::current(explicit, virtual_env)
+        .into_iter()
+        .map(|candidate| candidate.python)
+        .collect()
 }
 
 /// The sentence the pre-flight prints when no candidate has ansible-core, naming what was
@@ -55,9 +51,15 @@ impl PythonBuilder {
     /// import itself rather than a version string: an interpreter that cannot import `ansible`
     /// cannot build a payload, whatever it reports.
     pub fn start() -> anyhow::Result<PythonBuilder> {
+        PythonBuilder::start_installing(true)
+    }
+
+    /// [`PythonBuilder::start`], installing Volant's runtime when no interpreter has
+    /// ansible-core only if `install` and the run's `[volant] runtime` allow it.
+    pub(crate) fn start_installing(install: bool) -> anyhow::Result<PythonBuilder> {
         let explicit = std::env::var("VOLANT_PYTHON").ok();
         let virtual_env = std::env::var("VIRTUAL_ENV").ok();
-        start_from(explicit.as_deref(), virtual_env.as_deref())
+        start_from(explicit.as_deref(), virtual_env.as_deref(), install)
     }
     pub(crate) fn under(python: &str) -> anyhow::Result<PythonBuilder> {
         PythonBuilder::under_with(python, &[])
@@ -182,29 +184,38 @@ impl Drop for PythonBuilder {
 pub(super) fn start_from(
     explicit: Option<&str>,
     virtual_env: Option<&str>,
+    install: bool,
 ) -> anyhow::Result<PythonBuilder> {
-    PythonBuilder::under(&find_python(explicit, virtual_env)?)
+    PythonBuilder::under(&find_python(explicit, virtual_env, install)?)
 }
 
-/// The first candidate interpreter that has ansible-core, or the refusal naming what was tried.
+/// The first candidate interpreter that has ansible-core; else, when `install` and the mode allow
+/// it, Volant's runtime installed now; else the refusal naming what was tried.
 pub(super) fn find_python(
     explicit: Option<&str>,
     virtual_env: Option<&str>,
+    install: bool,
 ) -> anyhow::Result<String> {
     let tried = candidates(explicit, virtual_env);
-    let found = tried.iter().find(|python| {
-        Command::new(python)
-            .args(["-c", "import ansible"])
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .status()
-            .is_ok_and(|status| status.success())
-    });
-    let Some(python) = found else {
-        bail!(refusal_for(&tried.join(", ")));
-    };
-    Ok(python.clone())
+    let found = tried.iter().find(|python| resolve::has_ansible(python));
+    if let Some(python) = found {
+        return Ok(python.clone());
+    }
+    let mode = resolve::mode();
+    if install && resolve::may_install(mode, explicit) {
+        return resolve::install_now().map_err(anyhow::Error::msg);
+    }
+    if tried.is_empty() {
+        bail!(
+            "Volant's Python runtime is not installed and `[volant] runtime` is `managed`: run \
+             `volant runtime install`"
+        );
+    }
+    bail!(
+        "{}{}",
+        refusal_for(&tried.join(", ")),
+        resolve::hint(mode, explicit.is_some())
+    )
 }
 
 /// One request and its answer, over anything that reads and writes.

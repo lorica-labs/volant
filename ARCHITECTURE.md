@@ -58,7 +58,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `transport.rs`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
 | `python.rs`, `python_helper.py` | The Python helper that builds module payloads. |
-| `render.rs`, `stats.rs` | Console output, the recap, and exit codes. |
+| `render/`, `stats.rs` | Console output, the recap, and exit codes. `render/` keeps the renderer in `mod.rs`, one task's result line in `result.rs`, the error blocks in `error.rs` and Ansible's JSON text in `recap_json.rs`. |
 
 ### Executor, `crates/volant/src/executor/`
 

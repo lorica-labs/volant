@@ -380,6 +380,8 @@ impl Config {
 
 /// `enable_task_debugger` as the last [`Config::load`] read it. The executor is handed the
 /// options of a run, not its configuration, and this is the one setting the debugger reads.
+/// One value per process: each load overwrites it, so two configurations loaded side by side
+/// share whichever came last, which holds while a process runs one playbook command.
 static TASK_DEBUGGER: AtomicBool = AtomicBool::new(false);
 
 /// Whether `enable_task_debugger` is on; off when no configuration was loaded.

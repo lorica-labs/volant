@@ -35,8 +35,14 @@ impl Driver<'_> {
     }
 
     /// The line of a `meta` whose condition did not hold, with the words the reference gives it
-    /// at `-v`. It is no result the recap counts: measured, a skipped `meta` adds nothing.
-    pub(super) async fn meta_skipped(&self, index: usize, action: &str, role: Option<&str>) {
+    /// at `-v`, or the censored line under `no_log`. It is no result the recap counts: measured, a skipped `meta` adds nothing.
+    pub(super) async fn meta_skipped(
+        &self,
+        index: usize,
+        action: &str,
+        role: Option<&str>,
+        censored: bool,
+    ) {
         let host = self.name;
         let held = format!("{action} conditional evaluated to False");
         let (msg, why) = match action {
@@ -85,7 +91,7 @@ impl Driver<'_> {
                 dump: Dump::No,
                 show: true,
                 counts: false,
-                censored: false,
+                censored,
                 delegate: None,
                 error: None,
             })

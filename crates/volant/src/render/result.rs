@@ -15,11 +15,14 @@ use crate::stats::Outcome;
 use super::recap_json::{ansible_json, ansible_json_indented};
 
 /// What the reference's callback shows of a `no_log` result: [`CENSORED`] and the keys its
-/// `_PRESERVE` keeps (`attempts`, `changed`, `retries`), `changed` always present here.
+/// `_PRESERVE` keeps (`attempts`, `changed`, `retries`), `changed` present unless a skipped result had none.
 pub(super) fn censored_body(result: &TaskResult) -> serde_json::Map<String, serde_json::Value> {
     let mut body = serde_json::Map::new();
     body.insert("censored".into(), serde_json::json!(CENSORED));
-    body.insert("changed".into(), serde_json::json!(result.changed()));
+    // A skipped `meta` carries no `changed` and the reference shows none for it.
+    if result.0.contains_key("changed") || !result.skipped() {
+        body.insert("changed".into(), serde_json::json!(result.changed()));
+    }
     for key in ["attempts", "retries"] {
         if let Some(value) = result.0.get(key) {
             body.insert(key.into(), value.clone());

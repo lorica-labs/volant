@@ -623,7 +623,9 @@ pub(super) async fn drive_host(
                     }
                     driver.banner(pos).await;
                     if skipped_flush {
-                        driver.meta_skipped(pos, "flush_handlers", None).await;
+                        driver
+                            .meta_skipped(pos, "flush_handlers", None, task.censors())
+                            .await;
                     }
                 }
                 if verbosity >= 2 && !skipped_flush && !masked_out {
@@ -949,7 +951,7 @@ pub(super) async fn drive_host(
                     let mut leaves = false;
                     let mut jump = false;
                     if !held {
-                        driver.meta_skipped(pos, action, role).await;
+                        driver.meta_skipped(pos, action, role, task.censors()).await;
                     } else {
                         match action {
                             "end_host" => {

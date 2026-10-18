@@ -1,0 +1,6 @@
+[
+  {
+    "code": 0,
+    "stdout": "Using <golden-tmp>/ansible.cfg as config file\n\nPLAY [h1] **********************************************************************\n\nTASK [meta] ********************************************************************\nskipping: [h1] => {\"censored\": \"the output has been hidden due to the fact that 'no_log: true' was specified for this result\"}\n\nTASK [meta] ********************************************************************\nskipping: [h1] => {\"msg\": \"clear_facts\", \"skip_reason\": \"clear_facts conditional evaluated to False, not clearing facts and fact cache for h1\"}\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"done\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - meta: clear_facts
+      no_log: true
+      when: false
+    - meta: clear_facts
+      when: false
+    - debug: msg=done

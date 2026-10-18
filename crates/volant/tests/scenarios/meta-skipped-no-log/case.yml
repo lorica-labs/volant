@@ -1,0 +1,4 @@
+# A skipped `meta` under `no_log` shows the censored line at -v, without a `changed` key.
+runs:
+  - args: [-i, inv.ini, -v, skip.yml]
+needs: ["ansible-core"]

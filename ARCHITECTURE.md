@@ -44,20 +44,21 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 
 | Path | What it holds |
 |---|---|
-| `cli.rs` | The `playbook` command and its arguments. |
+| `cli/` | The `playbook` command: `args` holds its arguments, `announce` the version line and option dumps, `run` the run itself, `hosts` the limit, tags and ordering, `passwords` the password files and prompts. |
 | `config.rs` | The `ansible.cfg` settings this release reads. |
 | `inventory.rs` | INI inventories and host patterns. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
 | `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
+| `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `filters/` the filters, one file each for JSON and YAML, regular expressions, collections and text, with `register` in `mod.rs`. `vm.rs` the bytecode rewrite and error conversion. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |
 | `preflight.rs` | What a run refuses before it touches a host. |
 | `compile/`, `roles.rs` | A play flattened into steps (`builder` walks the tree, `model` and `compiled` hold the steps, `nav` finds the next one, `include` grafts dynamic includes), and roles spliced into them. |
 | `listing.rs` | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`. |
-| `transport.rs`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. |
+| `transport/`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. `transport` holds the connection settings, the `ssh` command lines and shared connections, the agent bootstrap, and `escalation/` for `sudo` and `su`. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
-| `python.rs`, `python_helper.py` | The Python helper that builds module payloads. |
+| `python/`, `python_helper.py` | The Python helper that builds module payloads: `types` holds the facts and payload shapes, `reach` what a run can reach, `union_build` builds the union, `builder` talks to the helper, `action_helper` runs action plugins. |
 | `render.rs`, `stats.rs` | Console output, the recap, and exit codes. |
 
 ### Executor, `crates/volant/src/executor/`
@@ -82,8 +83,10 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `python/` | The warm Python server and its supervisor. |
 | `natives/common/` | What every native shares with the reference's module machinery: arguments, accounts, modes, file attributes, running programs and backups. |
 | `natives/lineinfile/` | The native `lineinfile`: the request, the edit in memory, the `regexp` translation and the write. |
+| `natives/copy/` | The native `copy`: the request, the source and destination sums with the MD5 it carries, the mount check, and the move. |
 | `natives/runtime/` | What the natives that run programs share: the task's clock, the reasons an answer stops, the root a collector reads under, program runs, and Python's string rules. |
 | `natives/setup/` | The native `setup`: one file per collector, plus the request, the collection run and the `fnmatch` filter. |
+| `natives/systemd/` | The native `systemd`: the answer, the request and its options, the `systemctl` host, and the reading of `systemctl show` and init scripts. |
 | `natives/package_facts/` | The native `package_facts` for apt: the run and its arguments, dpkg's status, the configured sources, and the scan of the lists. |
 | `blobs.rs` | The cache of module payloads, addressed by hash. |
 | `interpreter.rs` | Finding the host's Python interpreters, in the order Ansible prefers them. |

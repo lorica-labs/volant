@@ -175,9 +175,8 @@ fn a_gap_in_a_hosts_reports_holds_the_barrier_where_it_is() {
     );
 }
 
-/// A host whose failed result was filed, then forgiven by `clear_host_errors` before its
-/// `Finished` arrives, stays forgiven: its `Finished` does not file it again. The same holds
-/// for an unreachable host. A failure no result announced is still filed by `Finished`.
+/// A failed host forgiven by `clear_host_errors` before its `Finished` stays forgiven; a
+/// failure no result announced is still filed by `Finished`.
 #[test]
 fn a_finished_host_is_not_filed_again_after_its_failure_was() {
     let mut round = super::types::Round::default();

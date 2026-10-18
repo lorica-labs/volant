@@ -68,7 +68,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `coordinator.rs` | The serialized view of a batch's progress, and everything that reaches the terminal. |
 | `driver.rs` | One host's run through a play, from its first step to the moment it leaves. |
 | `prepare.rs` | Rendering one task for one host: variables, escalation, environment and loop items. |
-| `run.rs` | Running one task and judging its result, on the controller or on the agent. |
+| `run/` | Running one task and judging its result, on the controller or on the agent: `local` and `controller` run the controller-side modules, `argspec` checks arguments, `judge`, `register` and `retry` decide the outcome, `interpreter` picks the Python, `plugin` runs action plugins, `async_job` polls async jobs, `channel`, `blob`, `batch` and `output` talk to the agent, `record` and `links` keep facts and connections. |
 | `report.rs` | Turning one task's results into the events the coordinator shows. |
 | `include.rs` | Resolving a dynamic `include_tasks` or `include_role` for one host. |
 

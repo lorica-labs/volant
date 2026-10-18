@@ -394,3 +394,48 @@ fn the_inventory_section_feeds_the_plugin_chain() {
     let bad = parse("[inventory]\nunparsed_is_failed = maybe\n", &base, "x.cfg");
     assert!(bad.is_err(), "a bad boolean is refused");
 }
+
+/// `[volant] runtime` takes its three words, `auto` when absent, and refuses any other.
+#[rstest::rstest]
+#[case::absent("[defaults]\nforks = 3\n", Ok(crate::runtime::Mode::Auto))]
+#[case::auto("[volant]\nruntime = auto\n", Ok(crate::runtime::Mode::Auto))]
+#[case::managed("[volant]\nruntime = managed\n", Ok(crate::runtime::Mode::Managed))]
+#[case::system("[volant]\nruntime = system\n", Ok(crate::runtime::Mode::System))]
+#[case::other(
+    "[volant]\nruntime = venv\n",
+    Err("from 'ansible.cfg' has an invalid value: 'venv'; expected one of auto, managed, system")
+)]
+fn the_volant_section_picks_the_runtime(
+    #[case] text: &str,
+    #[case] expected: Result<crate::runtime::Mode, &str>,
+) {
+    match (parse(text, Path::new("."), "ansible.cfg"), expected) {
+        (Ok(config), Ok(mode)) => assert_eq!(config.runtime, mode),
+        (Err(err), Err(says)) => {
+            assert_eq!(crate::stats::error_code(&err), 5, "{err:#}");
+            assert!(format!("{err:#}").contains(says), "{err:#}");
+        }
+        (got, expected) => panic!("got {:?}, expected {expected:?}", got.map(|c| c.runtime)),
+    }
+}
+
+/// `VOLANT_RUNTIME` wins over the file and is refused the same way.
+#[test]
+fn volant_runtime_in_the_environment_sets_the_mode() {
+    unsafe {
+        std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+        std::env::set_var("VOLANT_RUNTIME", "managed");
+    }
+    assert_eq!(
+        Config::load().unwrap().runtime,
+        crate::runtime::Mode::Managed
+    );
+    unsafe { std::env::set_var("VOLANT_RUNTIME", "maybe") };
+    let err = Config::load().unwrap_err();
+    assert!(
+        format!("{err:#}").contains("from 'env: VOLANT_RUNTIME'"),
+        "{err:#}"
+    );
+    unsafe { std::env::remove_var("VOLANT_RUNTIME") };
+    assert_eq!(Config::load().unwrap().runtime, crate::runtime::Mode::Auto);
+}

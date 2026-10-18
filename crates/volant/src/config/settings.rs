@@ -56,6 +56,19 @@ pub(super) fn gathering(value: &str, origin: &str) -> anyhow::Result<String> {
     }
 }
 
+/// `[volant] runtime`: one of its three words, refused otherwise.
+pub(super) fn runtime_mode(value: &str, origin: &str) -> anyhow::Result<crate::runtime::Mode> {
+    crate::runtime::Mode::parse(value.trim()).ok_or_else(|| {
+        crate::stats::Refusal::at(
+            5,
+            format!(
+                "Config 'VOLANT_RUNTIME' from '{origin}' has an invalid value: '{}'; expected one of auto, managed, system",
+                value.trim()
+            ),
+        )
+    })
+}
+
 /// A negative `forks` is clamped to zero, where the single startup check refuses it with the
 /// reference's own words and the same exit 2 a literal zero gets: measured, `forks = -1` exits
 /// 2 with `The number of processes (--forks) must be >= 1`.

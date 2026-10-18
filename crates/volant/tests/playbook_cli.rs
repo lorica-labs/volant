@@ -93,7 +93,10 @@ fn volant_within_full(
         // to have active, so a run reads the same here and on CI. A test that wants a particular
         // interpreter names it through `envs`, which is applied below and wins.
         .env_remove("VIRTUAL_ENV")
-        .env_remove("VOLANT_PYTHON");
+        .env_remove("VOLANT_PYTHON")
+        // Nor does a run install Volant's runtime behind the test's back; a test that wants one
+        // says so through `envs`.
+        .env("VOLANT_RUNTIME", "system");
     for (name, value) in envs {
         command.env(name, value);
     }
@@ -682,6 +685,7 @@ fn the_playbook_alias_takes_the_same_arguments() {
     let out = Command::new(alias)
         .args(["-i", &fixture("inventory.ini"), &fixture("site.yml")])
         .env("NO_COLOR", "1")
+        .env("VOLANT_RUNTIME", "system")
         .output()
         .unwrap();
     assert_eq!(out.status.code(), Some(0));
@@ -2251,6 +2255,7 @@ hidden
         .arg(&file)
         .env("NO_COLOR", "1")
         .env_remove("VOLANT_PYTHON")
+        .env("VOLANT_RUNTIME", "system")
         .stdin(std::process::Stdio::from(slave));
     let out = process::run_within(&mut command, DEFAULT_DEADLINE, None);
     drop(master);
@@ -6303,4 +6308,42 @@ fn the_jsonfile_cache_keeps_cacheable_facts_between_runs() {
     assert_eq!(code, Some(1), "{err}");
     assert!(err.contains("was corrupt") && !file.exists(), "{err}");
     std::fs::remove_dir_all(&dir).unwrap();
+}
+
+/// Under `VOLANT_RUNTIME=system`, a controller with no ansible-core keeps the refusal it always
+/// had, with the way to Volant's own runtime added, and installs nothing.
+#[test]
+fn the_system_runtime_keeps_the_refusal_and_installs_nothing() {
+    let dir = tempfile::tempdir().unwrap();
+    let book = dir.path().join("play.yml");
+    std::fs::write(
+        &book,
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - lineinfile: {path: /nonexistent, line: x}\n",
+    )
+    .unwrap();
+    let data = dir.path().join("data");
+    let out = volant_within_full(
+        &["playbook", &book.display().to_string()],
+        DEFAULT_DEADLINE,
+        None,
+        // No `python3` on `PATH`, whatever the machine has.
+        Some(dir.path()),
+        None,
+        None,
+        &[
+            ("VOLANT_RUNTIME", "system"),
+            ("XDG_DATA_HOME", &data.display().to_string()),
+        ],
+    );
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(4), "{stderr}");
+    assert!(
+        stderr.contains(
+            "no Python interpreter with ansible-core: tried python3. Install ansible-core for one \
+             of them, or set VOLANT_PYTHON to an interpreter that has it. Volant can also install \
+             its own with `volant runtime install`"
+        ),
+        "{stderr}"
+    );
+    assert!(!data.exists(), "a runtime was installed");
 }

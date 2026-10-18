@@ -314,7 +314,7 @@ fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
             collection: Some("ns.coll".into())
         }),
         Err(format!(
-            "{typo} The collection 'ns.coll' is not installed on the controller: install it with ansible-galaxy collection install ns.coll"
+            "{typo} The collection 'ns.coll' is not installed on the controller: install it with volant runtime install --collections ns.coll"
         ))
     );
 

@@ -314,10 +314,13 @@ ssh-test: agent-musl
     # needs ansible-core to run `copy`. The path check runs against `volant_echo`, a native only
     # an agent built with `test-natives` has, kept apart from the agent every other test runs.
     # Every scenario too: one that `needs` ansible-core skips in the `test` job and runs here.
+    # And the tests that return early without VOLANT_PYTHON (`reference_python()` and `helper_or_skip`),
+    # named one by one: selecting the whole `playbook_cli` binary would run its other tests twice.
+    # A new test that needs ansible-core has to be added to this list, or it skips in every job.
     cargo build -p volant-agent --features test-natives
     mkdir -p target/test-natives
     cp target/debug/volant-agent target/test-natives/volant-agent
-    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | test(/^a_scenario_matches_the_reference::/) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver) | test(=every_runs_keyword_changes_something_observable)'
+    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | test(/^a_scenario_matches_the_reference::/) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver) | test(=every_runs_keyword_changes_something_observable) | test(=retries_are_rendered_per_item) | test(=a_lookup_reads_the_controller_after_the_tasks_in_front_of_it) | test(=a_task_behind_a_fact_writing_module_renders_the_new_facts) | test(=a_module_in_the_playbook_s_library_or_a_role_s_runs) | test(=a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union) | test(=a_warning_repeated_by_two_items_prints_once) | test(=library_directories_join_the_search_in_the_reference_s_order) | test(=a_library_module_answers_its_short_name_and_never_ansible_builtin) | test(=a_task_an_action_plugin_backs_leaves_the_link_for_the_next_task) | test(=python::tests::dropping_the_builder_leaves_no_ansible_local_directory) | test(=python::tests::only_ansible_core_s_own_module_is_core) | test(=python::tests::the_helper_names_the_files_a_union_came_from)'
     just facts-compare
 
 # Gather facts twice on one host, through the native setup and through the Python one, and

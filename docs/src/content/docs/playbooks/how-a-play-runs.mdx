@@ -58,7 +58,7 @@ sequenceDiagram
 
 `strategy: free` lets every host walk the play at its own pace. A banner is printed whenever the task changes from the one the last line belonged to, so the output follows the hosts, not the task list. Hosts still meet where a step is shared by its keywords (`run_once`, `pause`, `any_errors_fatal`) and at handlers and dynamic includes.
 
-`strategy: host_pinned` is `free` with a host held by one fork from its first task to its last, so `-f 1` runs the hosts one after the other. With fewer forks than hosts it refuses a play that has handlers, dynamic includes, `run_once`, `pause` or `any_errors_fatal`, because a host holding a fork cannot wait for one that has not started. `free` and `host_pinned` also refuse `max_fail_percentage`.
+`strategy: host_pinned` is `free` with a host held by one fork from its first task to its last, so `-f 1` runs the hosts one after the other. Under both strategies, as in ansible-core, `max_fail_percentage`, `any_errors_fatal` and `run_once` are ignored with a warning, and a `pause` or `add_host` task stops the run with an error.
 
 `strategy: debug` is `linear` with the debugger prompt after a failed task. So is the `debugger` keyword, on a play, a block or a task: `always`, `never`, `on_failed`, `on_unreachable` or `on_skipped`. The prompt takes `c` (continue) and `q` (quit) from a terminal. When standard input is not a terminal there is nobody to answer, so the prompt reads the end of input and the run ends with exit code 99, as it does in ansible-core.
 

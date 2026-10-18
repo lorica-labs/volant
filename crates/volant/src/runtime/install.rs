@@ -54,7 +54,7 @@ pub(crate) fn list(runtimes: &Path) -> Vec<String> {
     ids
 }
 
-fn interpreter(dir: &Path) -> PathBuf {
+pub(super) fn interpreter(dir: &Path) -> PathBuf {
     dir.join("python").join("bin").join("python3")
 }
 

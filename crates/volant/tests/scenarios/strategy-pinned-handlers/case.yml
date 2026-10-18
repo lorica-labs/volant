@@ -1,0 +1,2 @@
+# Handlers under `host_pinned` with fewer forks than hosts: each host runs its own after its tasks.
+args: [-i, inv.ini, play.yml]

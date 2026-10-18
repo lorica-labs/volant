@@ -1,0 +1,8 @@
+- hosts: g
+  strategy: host_pinned
+  gather_facts: false
+  tasks:
+    - {name: a, shell: "sleep {{ s }}", notify: hnd}
+    - {name: b, command: "true"}
+  handlers:
+    - {name: hnd, debug: {msg: "handler {{ inventory_hostname }}"}}

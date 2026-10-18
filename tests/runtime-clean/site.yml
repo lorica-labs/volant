@@ -1,6 +1,7 @@
 # Needs Volant's Python helper (the hash filter is bridged to ansible-core) and the copy and
-# template action plugins. Everything runs on the controller itself, which has no Python.
-- hosts: h1
+# template action plugins. Everything runs on the implicit localhost, which takes the
+# controller's interpreter, the runtime the first run installs.
+- hosts: localhost
   gather_facts: false
   vars:
     out: "{{ lookup('env', 'RUNTIME_CLEAN_OUT') | default('/tmp', true) }}"

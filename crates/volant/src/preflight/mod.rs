@@ -64,14 +64,6 @@ fn check_play(play: &Play) -> anyhow::Result<()> {
     {
         bail!("strategy '{strategy}' is not supported yet");
     }
-    // `max_fail_percentage` decides after each step whether the batch goes on, which hosts that
-    // do not wait for each other have no step to decide at.
-    if let Some(strategy) = play.strategy.as_deref()
-        && matches!(strategy, "free" | "host_pinned")
-        && play.max_fail_percentage.is_some()
-    {
-        bail!("strategy '{strategy}' with 'max_fail_percentage' is not supported yet");
-    }
     // A handler is a task the play wrote, so the first pass refuses what it carries too. Only
     // the `notify` names wait for the second pass, because resolving one needs the whole
     // compiled play - a role read from disk contributes handlers this list has never seen.

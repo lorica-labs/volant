@@ -620,9 +620,8 @@ pub(super) async fn run_batch(
                 // appearance decides the order, walked in the play's host order and then in each
                 // host's item order, which is the order the reference prints them in.
                 let mut arrived = includes.remove(&index).unwrap_or_default();
-                // `usize::MAX` rather than `None` for a host the batch does not hold: `None`
-                // sorts in front of every rank, so a name that is not in `play_hosts` would
-                // take the first `included:` line instead of the last.
+                // `usize::MAX` rather than `None` for a host the batch does not hold, which
+                // would otherwise sort in front of every rank and take the first line.
                 arrived.sort_by_key(|(host, _)| {
                     play_hosts
                         .iter()
@@ -679,7 +678,10 @@ pub(super) async fn run_batch(
                     for host in asking.drain(..) {
                         prompt!((debugger::Kind::Passed, Map::new()), &host, index);
                     }
-                    out.included(&what, &hosts, label.as_deref());
+                    // Under `free` each host's include is a result of its own, with its line.
+                    for those in hosts.chunks(if free { 1 } else { hosts.len().max(1) }) {
+                        out.included(&what, those, label.as_deref());
+                    }
                     // Measured on ansible-core 2.19.12: one `ok` per host per item, so a
                     // two-item loop over two hosts counts four. The statement's own aggregate
                     // counts nothing, which is what keeps `h1 ok=10` at ten.

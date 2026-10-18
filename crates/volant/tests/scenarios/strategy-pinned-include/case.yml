@@ -1,0 +1,2 @@
+# `include_tasks` under `host_pinned` with fewer forks than hosts: one `included:` line per host.
+args: [-i, inv.ini, play.yml]

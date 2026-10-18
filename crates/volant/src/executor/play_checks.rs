@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! What a play is checked for before it runs: pinning, `max_fail_percentage`, the gather keywords and its `vars_files`.
+//! What a play is checked for before it runs: `max_fail_percentage`, the gather keywords and its `vars_files`.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -7,37 +7,11 @@ use std::path::{Path, PathBuf};
 use serde_json::{Map, Value};
 
 use super::{RunState, python_type};
-use crate::compile::{Compiled, StepKind};
 use crate::inventory::Host;
 use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::template::{Templar, Vars};
 use crate::vars::{Scope, load_vars_file};
-
-/// What `host_pinned` cannot do yet, said before the first play starts. A host kept by its fork
-/// cannot wait at a point the hosts behind it have to reach, so `host_pinned` with fewer forks
-/// than hosts refuses the steps that make hosts meet: handlers, dynamic includes, `run_once`,
-/// `pause` and `any_errors_fatal`. `hosts` is the play's whole list, so a `serial` play is held
-/// to the same bound as one without.
-pub fn refuse_unsafe_pinning(
-    play: &Play,
-    compiled: &Compiled,
-    hosts: usize,
-    forks: usize,
-) -> anyhow::Result<()> {
-    let meets = compiled.steps.iter().any(|s| match s.kind {
-        StepKind::Include(_) => true,
-        StepKind::Flush { explicit } => explicit || !compiled.handlers.is_empty(),
-        _ => s.task.barrier(),
-    });
-    if play.strategy.as_deref() == Some("host_pinned") && forks < hosts && meets {
-        return Err(crate::stats::Refusal::at(
-            4,
-            "strategy 'host_pinned' with fewer forks than hosts is not supported yet for a play with handlers, includes, run_once, pause or any_errors_fatal",
-        ));
-    }
-    Ok(())
-}
 
 /// The play's `max_fail_percentage`, rendered once when the play starts: a batch that loses a
 /// larger share of its hosts than this ends the run. A value that is no number is refused here,

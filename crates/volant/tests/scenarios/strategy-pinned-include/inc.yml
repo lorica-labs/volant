@@ -1,0 +1,2 @@
+- debug: {msg: "inc1 {{ inventory_hostname }}"}
+- debug: {msg: "inc2 {{ inventory_hostname }}"}

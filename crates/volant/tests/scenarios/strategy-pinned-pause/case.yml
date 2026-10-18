@@ -1,0 +1,3 @@
+# `pause` under `host_pinned` ends the run at the first host that reaches it: exit 1, no recap.
+args: [-i, inv.ini, play.yml]
+forks: 2

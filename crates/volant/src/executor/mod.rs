@@ -9,6 +9,7 @@
 mod coordinator;
 mod debugger;
 mod driver;
+mod free;
 mod include;
 mod play_checks;
 mod prepare;
@@ -37,7 +38,6 @@ use crate::transport::ConnectionDefaults;
 use coordinator::run_batch;
 pub(crate) use driver::{expressions, strings, task_strings};
 pub(crate) use play_checks::as_bool_value;
-pub use play_checks::refuse_unsafe_pinning;
 use play_checks::{check_gather_keywords, load_play_vars_files, max_fail_percentage};
 pub use state::{Abort, LinkKey, PlayEnd, Reboots, RunState};
 
@@ -132,6 +132,14 @@ pub async fn run_play(
         })
     };
     let compiled = masked.as_ref().unwrap_or(compiled);
+    let strategy = prepare::Strategy::named(play.strategy.as_deref());
+    let mut loose = Vec::new();
+    let loosened = strategy.free().then(|| {
+        let mut copy = compiled.clone();
+        loose = free::loosen(&mut copy);
+        copy
+    });
+    let compiled = loosened.as_ref().unwrap_or(compiled);
     let playbook_dir = state
         .vars
         .lock()
@@ -200,59 +208,44 @@ pub async fn run_play(
             .filter(|h| state.unreachable_hosts.contains(*h))
             .cloned()
             .collect();
-        let limit = max_fail.map(|limit| (limit, batch_size));
-        let mut end = run_batch(
-            play,
-            compiled,
-            &live,
-            &whole,
-            &dormant,
-            &all,
-            &vars_files,
-            limit,
-            None,
-            agents,
-            options,
-            state,
-            out,
-            stats,
-        )
-        .await?;
-        let mut ended_play = end.end_play;
-        state.unreachable_hosts.extend(end.dark.drain(..));
-        // The hosts a `clear_host_errors` brought back run the steps they missed, alone, once the
-        // others are done: the reference's linear strategy goes back for them when its list of
-        // tasks has run out. Each round can bring back more.
-        while !end.revived.is_empty() && options.abort.reason().is_none() && !*options.stop.borrow()
-        {
-            let again: Vec<Host> = batch
-                .iter()
-                .filter(|h| end.revived.iter().any(|(name, _)| name == &h.name))
-                .cloned()
-                .collect();
-            let starts: HashMap<String, usize> = end.revived.drain(..).collect();
-            let steps = end.steps.take().unwrap_or_else(|| compiled.clone());
-            let again_names: Vec<String> = again.iter().map(|h| h.name.clone()).collect();
-            let files = load_play_vars_files(
+        // Measured: under `free` and `host_pinned` no share of failed hosts ends the batch, and
+        // the reference says so once, ahead of what the steps themselves warn about.
+        if strategy.free() {
+            if max_fail.is_some() {
+                out.warning(free::MAX_FAIL, false);
+            }
+            for warning in &loose {
+                out.warning(warning, false);
+            }
+        }
+        let limit = max_fail
+            .filter(|_| !strategy.free())
+            .map(|limit| (limit, batch_size));
+        // `host_pinned` with fewer forks than hosts: a fork keeps its host to the end of the
+        // play, so the hosts run in waves of `forks`, each a batch of its own under the one
+        // banner. A wave waits for its slowest host before the next one starts, where the
+        // reference hands a freed fork to the next host at once: the same lines, in another
+        // order.
+        let waves: Vec<&[Host]> = if strategy.pinned() {
+            live.chunks(options.forks.max(1)).collect()
+        } else {
+            vec![live.as_slice()]
+        };
+        let mut ended_play = false;
+        for (n, wave) in waves.into_iter().enumerate() {
+            if n > 0 && (ended_play || options.abort.reason().is_some() || *options.stop.borrow()) {
+                break;
+            }
+            let mut end = run_batch(
                 play,
-                &again,
-                &play_hosts,
-                &again_names,
-                &all,
-                &playbook_dir,
-                state,
-                out,
-            )?;
-            end = run_batch(
-                play,
-                &steps,
-                &again,
+                compiled,
+                wave,
                 &whole,
-                &[],
+                if n == 0 { &dormant[..] } else { &[] },
                 &all,
-                &files,
+                &vars_files,
                 limit,
-                Some(&starts),
+                None,
                 agents,
                 options,
                 state,
@@ -262,6 +255,51 @@ pub async fn run_play(
             .await?;
             ended_play |= end.end_play;
             state.unreachable_hosts.extend(end.dark.drain(..));
+            // The hosts a `clear_host_errors` brought back run the steps they missed, alone, once the
+            // others are done: the reference's linear strategy goes back for them when its list of
+            // tasks has run out. Each round can bring back more.
+            while !end.revived.is_empty()
+                && options.abort.reason().is_none()
+                && !*options.stop.borrow()
+            {
+                let again: Vec<Host> = batch
+                    .iter()
+                    .filter(|h| end.revived.iter().any(|(name, _)| name == &h.name))
+                    .cloned()
+                    .collect();
+                let starts: HashMap<String, usize> = end.revived.drain(..).collect();
+                let steps = end.steps.take().unwrap_or_else(|| compiled.clone());
+                let again_names: Vec<String> = again.iter().map(|h| h.name.clone()).collect();
+                let files = load_play_vars_files(
+                    play,
+                    &again,
+                    &play_hosts,
+                    &again_names,
+                    &all,
+                    &playbook_dir,
+                    state,
+                    out,
+                )?;
+                end = run_batch(
+                    play,
+                    &steps,
+                    &again,
+                    &whole,
+                    &[],
+                    &all,
+                    &files,
+                    limit,
+                    Some(&starts),
+                    agents,
+                    options,
+                    state,
+                    out,
+                    stats,
+                )
+                .await?;
+                ended_play |= end.end_play;
+                state.unreachable_hosts.extend(end.dark.drain(..));
+            }
         }
         // What stays unreachable goes back among the failed, forgiven for a while or not.
         for host in &whole {

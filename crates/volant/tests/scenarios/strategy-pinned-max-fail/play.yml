@@ -1,0 +1,13 @@
+- hosts: g
+  strategy: host_pinned
+  gather_facts: false
+  max_fail_percentage: 30
+  tasks:
+    - name: t1
+      shell: sleep {{ s }}; {{ "exit 1" if inventory_hostname == "h1" else "true" }}
+    - name: t2
+      debug: msg="t2 {{ inventory_hostname }}"
+    - name: t3
+      shell: '{{ "exit 1" if inventory_hostname == "h2" else "true" }}'
+    - name: t4
+      debug: msg="t4 {{ inventory_hostname }}"

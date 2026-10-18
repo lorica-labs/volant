@@ -124,8 +124,11 @@ pub(super) fn resolve_include(
             // `fatal: [h1]: FAILED! => {"changed": false, "include": "mapping.yml", "reason":
             // "included task files must contain a list of tasks"}`, exit 2, with a recap.
             Ok(request) => match crate::compile::expand_include(compiled, step, &request).and_then(
-                |expanded| {
+                |mut expanded| {
                     crate::preflight::check_built(&expanded, plan.python.as_deref())?;
+                    if plan.strategy.free() {
+                        warnings.extend(super::free::loosen(&mut expanded));
+                    }
                     Ok(expanded)
                 },
             ) {

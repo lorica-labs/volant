@@ -1077,3 +1077,88 @@ n: 5
     );
     assert!(err.is::<VaultFile>());
 }
+
+/// The implicit `localhost` gets the controller's interpreter, at the layer of its implicit
+/// connection; a named host or nothing resolved leaves it unset.
+#[rstest::rstest]
+#[case::implicit(Some("/ctl/python3"), "", &[], false, Some("/ctl/python3"))]
+#[case::nothing_resolves(None, "", &[], false, None)]
+#[case::named_in_the_inventory(Some("/ctl/python3"), "localhost\n", &[], false, None)]
+#[case::host_vars_file(Some("/ctl/python3"), "", &[("host_vars/localhost.yml", "ansible_python_interpreter: /hv/python\n")], false, Some("/hv/python"))]
+#[case::play_vars(Some("/ctl/python3"), "", &[], true, Some("/play/python"))]
+#[case::group_vars_all_loses(Some("/ctl/python3"), "", &[("group_vars/all.yml", "ansible_python_interpreter: /gv/python
+")], false, Some("/ctl/python3"))]
+fn the_implicit_localhost_runs_under_the_controller_python(
+    #[case] controller: Option<&str>,
+    #[case] hosts: &str,
+    #[case] files: &[(&str, &str)],
+    #[case] play_var: bool,
+    #[case] expected: Option<&str>,
+) {
+    let tmp = scratch();
+    let dir = tmp.path();
+    write(dir, "inventory/hosts.ini", &format!("[web]\nweb1\n{hosts}"));
+    for (rel, text) in files {
+        write(dir, &format!("inventory/{rel}"), text);
+    }
+    let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
+    let mut store = VarStore::new(
+        &inv,
+        Some(&dir.join("inventory/hosts.ini")),
+        &dir.join("play"),
+        Map::new(),
+    )
+    .unwrap();
+    crate::runtime::resolve::set_test_python(controller);
+    let mut sc = scope(&["localhost"]);
+    if play_var {
+        sc.play_vars = json!({"ansible_python_interpreter": "/play/python"})
+            .as_object()
+            .unwrap()
+            .clone();
+    }
+    let got = store
+        .for_host("localhost", &sc)
+        .get("ansible_python_interpreter")
+        .and_then(Value::as_str)
+        .map(str::to_owned);
+    assert_eq!(got.as_deref(), expected);
+}
+
+/// `-e` beats the controller's interpreter too.
+#[test]
+fn an_extra_var_beats_the_controller_python_of_the_implicit_localhost() {
+    let tmp = tree();
+    let dir = tmp.path();
+    let inv = Inventory::load(&dir.join("inventory/hosts.ini")).unwrap();
+    let extra = json!({"ansible_python_interpreter": "/e/python"})
+        .as_object()
+        .unwrap()
+        .clone();
+    let mut store = VarStore::new(
+        &inv,
+        Some(&dir.join("inventory/hosts.ini")),
+        &dir.join("play"),
+        extra,
+    )
+    .unwrap();
+    crate::runtime::resolve::set_test_python(Some("/ctl/python3"));
+    let v = store.for_host("localhost", &scope(&["localhost"]));
+    assert_eq!(v["ansible_python_interpreter"], json!("/e/python"));
+}
+
+/// A role default sits below the inventory layer, so the implicit value beats it.
+#[test]
+fn a_role_default_loses_to_the_controller_python_of_the_implicit_localhost() {
+    let tmp = tree();
+    let dir = tmp.path();
+    let (_, mut store) = store(dir);
+    crate::runtime::resolve::set_test_python(Some("/ctl/python3"));
+    let mut sc = scope(&["localhost"]);
+    sc.role_defaults = json!({"ansible_python_interpreter": "/role/python"})
+        .as_object()
+        .unwrap()
+        .clone();
+    let v = store.for_host("localhost", &sc);
+    assert_eq!(v["ansible_python_interpreter"], json!("/ctl/python3"));
+}

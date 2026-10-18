@@ -1,0 +1,3 @@
+# `max_fail_percentage` under `host_pinned` warns and never ends the batch: every host finishes.
+args: [-i, inv.ini, play.yml]
+forks: 2

@@ -1,0 +1,3 @@
+# `host_pinned` with `serial: 2` and `max_fail_percentage: 0`: the second batch still runs.
+args: [-i, inv.ini, play.yml]
+forks: 2

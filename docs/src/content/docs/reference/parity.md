@@ -24,7 +24,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | test | 82 | 0 | 0 | 0 |
 | lookup | 25 | 0 | 0 | 0 |
 | become | 2 | 0 | 0 | 1 |
-| strategy | 2 | 2 | 0 | 0 |
+| strategy | 4 | 0 | 0 | 0 |
 | inventory | 9 | 0 | 0 | 0 |
 | shell | 1 | 0 | 0 | 2 |
 | vars | 1 | 0 | 0 | 0 |
@@ -659,8 +659,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `debug` | <span class="kw kw-runs">runs</span> | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs. `task_vars` edited at the prompt reach a redo through `u` only |
-| `free` | <span class="kw kw-partial">partial</span> | refused with `max_fail_percentage` |
-| `host_pinned` | <span class="kw kw-partial">partial</span> | refused with `max_fail_percentage`, and with fewer forks than hosts when the play has handlers, dynamic includes, `run_once`, `pause` or `any_errors_fatal` |
+| `free` | <span class="kw kw-runs">runs</span> |  |
+| `host_pinned` | <span class="kw kw-runs">runs</span> |  |
 | `linear` | <span class="kw kw-runs">runs</span> |  |
 
 ## shell

@@ -180,10 +180,6 @@ jobs:
     needs: runtime-binary
     runs-on: ubuntu-latest
     container: debian:stable-slim
-    env:
-      # The container has no Python, so the copy and template tasks run under the interpreter
-      # the first run installs. The lookup is evaluated when a task runs, after the install.
-      HOST_PYTHON: "ansible_python_interpreter={{ lookup('pipe', 'ls -d $HOME/.local/share/volant/runtime/*/python/bin/python3 | head -n1') }}"
     steps:
       - name: Install curl, the only tool the download needs
         run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
@@ -199,14 +195,14 @@ jobs:
         run: |
           set -euo pipefail
           chmod +x volant
-          ./volant playbook -i runtime-clean/inventory.yml runtime-clean/site.yml -e "$HOST_PYTHON" 2> first.err
+          ./volant playbook -i runtime-clean/inventory.yml runtime-clean/site.yml 2> first.err
           cat first.err
           grep -q "^Installing Volant's Python runtime" first.err
       - name: Second run installs nothing
         working-directory: dist
         run: |
           set -euo pipefail
-          ./volant playbook -i runtime-clean/inventory.yml runtime-clean/site.yml -e "$HOST_PYTHON" 2> second.err
+          ./volant playbook -i runtime-clean/inventory.yml runtime-clean/site.yml 2> second.err
           cat second.err
           ! grep -q "Installing Volant's Python runtime" second.err
       - name: A collection filter after installing its collection

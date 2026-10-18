@@ -436,6 +436,18 @@ pub(super) async fn drive_host(
                 pos = next;
                 continue;
             }
+            // `pause` and `add_host` under `free` and `host_pinned`: measured, the reference ends
+            // the run at the first host that reaches one, before its banner.
+            if plan.strategy.free()
+                && !masked_out
+                && let Some(why) = crate::executor::free::bypass_error(task)
+            {
+                if !batch.is_empty() {
+                    break;
+                }
+                options.abort.raise_plain(why);
+                break 'run;
+            }
             // A step the hosts of the batch meet in front of: `run_once`, or a text naming another
             // host's state. In front of the flush, include and mask arms rather than behind them,
             // because a host that walked into one of those without stopping here would report a

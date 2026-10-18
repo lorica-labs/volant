@@ -1,0 +1,9 @@
+- hosts: g
+  strategy: host_pinned
+  gather_facts: false
+  serial: 2
+  max_fail_percentage: 0
+  tasks:
+    - name: a
+      shell: sleep {{ s }}; {{ "exit 1" if inventory_hostname == "h1" else "true" }}
+    - {name: z, debug: {msg: "z {{ inventory_hostname }}"}}

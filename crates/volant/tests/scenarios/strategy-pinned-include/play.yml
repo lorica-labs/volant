@@ -1,0 +1,7 @@
+- hosts: g
+  strategy: host_pinned
+  gather_facts: false
+  tasks:
+    - {name: a, shell: "sleep {{ s }}"}
+    - {name: incl, include_tasks: inc.yml}
+    - {name: z, debug: {msg: "z {{ inventory_hostname }}"}}

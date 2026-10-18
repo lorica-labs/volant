@@ -1,0 +1,7 @@
+- hosts: g
+  strategy: host_pinned
+  gather_facts: false
+  tasks:
+    - {name: a, shell: "sleep {{ s }}"}
+    - {name: pz, pause: {seconds: 1}}
+    - {name: z, debug: {msg: "z {{ inventory_hostname }}"}}

@@ -5529,6 +5529,61 @@ fn a_python_module_in_a_dynamically_included_file_runs() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// The implicit `localhost` runs Python modules under the controller's interpreter and names it
+/// in `hostvars`, as the reference does, with no discovery warning.
+#[test]
+fn the_implicit_localhost_runs_under_the_controller_python() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("implicit-localhost-python");
+    std::fs::write(
+        dir.join("inv.ini"),
+        "h1 ansible_connection=local
+",
+    )
+    .expect("an inventory");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - stat: path=/
+    - debug:
+        msg: \"{{ hostvars['localhost'].ansible_python_interpreter }}\"
+",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        out.status.success(),
+        "the run failed:
+{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains(&format!("\"msg\": \"{python}\"")),
+        "hostvars does not name the controller's Python:
+{stdout}"
+    );
+    assert!(
+        !stdout.contains("discovered Python interpreter") && !stderr.contains("discovered Python"),
+        "the interpreter was discovered:
+{stdout}{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A module that answers `<name> says <word>`, as a `library/` holds one.
 fn library_module(dir: &Path, name: &str, field: &str) {
     std::fs::create_dir_all(dir).expect("a library directory");
@@ -6250,32 +6305,63 @@ fn free_with_run_once_and_throttle_terminates() {
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// `host_pinned` with fewer forks than hosts and a point where hosts must meet is refused by
-/// name, and so is `free` with `max_fail_percentage`: neither has anything to wait at.
+/// `free` and `host_pinned` run what made them refuse a play before: the keywords that would
+/// have the hosts wait warn once each, and a `pause` ends the run with the reference's error.
 #[test]
-fn a_strategy_that_cannot_wait_is_refused_by_name() {
-    let dir = probe_dir("strategy-refusals");
+fn a_strategy_that_does_not_wait_warns_or_stops_like_the_reference() {
+    let dir = probe_dir("strategy-warnings");
     let inventory = two_hosts(&dir);
-    for (name, play, sentence) in [
+    let once = "[WARNING]: Using run_once with the free strategy is not currently supported. This task will still be executed for every host in the inventory list.";
+    let fatal = "[WARNING]: Using any_errors_fatal with the free strategy is not supported, as tasks are executed independently on each host";
+    let max_fail = "[WARNING]: Using max_fail_percentage with the free strategy is not supported, as tasks are executed independently on each host";
+    let pause = "[ERROR]: The 'pause' module bypasses the host loop, which is currently not supported in the free strategy and would instead execute for every host in the inventory list.";
+    for (name, play, code, warned) in [
         (
-            "pinned-run-once",
-            "- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  tasks:\n    - debug: msg=once\n      run_once: true\n",
-            "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
+            "pinned-run-once-handler",
+            "- hosts: all
+  strategy: host_pinned
+  gather_facts: false
+  handlers:
+    - name: later
+      debug: msg=later
+  tasks:
+    - debug: msg=once
+      run_once: true
+      changed_when: true
+      notify: later
+    - debug: msg=again
+      run_once: true
+",
+            0,
+            &[once][..],
         ),
         (
-            "pinned-second-play",
-            "- hosts: all\n  gather_facts: false\n  tasks:\n    - debug: msg=first\n- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  tasks:\n    - debug: msg=once\n      run_once: true\n",
-            "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
+            "free-max-fail-fatal",
+            "- hosts: all
+  strategy: free
+  max_fail_percentage: 0
+  any_errors_fatal: true
+  gather_facts: false
+  tasks:
+    - fail: msg=no
+      when: inventory_hostname == 'h1'
+    - debug: msg=now
+",
+            2,
+            &[max_fail, fatal][..],
         ),
         (
-            "pinned-handler",
-            "- hosts: all\n  strategy: host_pinned\n  gather_facts: false\n  handlers:\n    - name: later\n      debug: msg=later\n  tasks:\n    - debug: msg=now\n      changed_when: true\n      notify: later\n",
-            "strategy 'host_pinned' with fewer forks than hosts is not supported yet",
-        ),
-        (
-            "free-max-fail",
-            "- hosts: all\n  strategy: free\n  max_fail_percentage: 30\n  gather_facts: false\n  tasks:\n    - debug: msg=now\n",
-            "strategy 'free' with 'max_fail_percentage' is not supported yet",
+            "pinned-pause",
+            "- hosts: all
+  strategy: host_pinned
+  gather_facts: false
+  tasks:
+    - debug: msg=first
+    - pause: {seconds: 1}
+    - debug: msg=never
+",
+            1,
+            &[pause][..],
         ),
     ] {
         let file = dir.join(format!("{name}.yml"));
@@ -6291,18 +6377,19 @@ fn a_strategy_that_cannot_wait_is_refused_by_name() {
             ],
             PROBE_DEADLINE,
         );
-        let text = format!(
-            "{}{}",
+        let (stdout, stderr) = (
             String::from_utf8_lossy(&out.stdout),
-            String::from_utf8_lossy(&out.stderr)
+            String::from_utf8_lossy(&out.stderr),
         );
-        assert_eq!(out.status.code(), Some(4), "{name}: {text}");
-        assert!(text.contains(sentence), "{name}: {text}");
-        assert!(!text.contains("TASK ["), "{name}: nothing ran: {text}");
+        assert_eq!(out.status.code(), Some(code), "{name}: {stdout}{stderr}");
+        for line in warned {
+            assert_eq!(stderr.matches(line).count(), 1, "{name}: {stderr}");
+        }
+        assert_eq!(stdout.contains("PLAY RECAP"), code != 1, "{name}: {stdout}");
+        assert!(!stdout.contains("never"), "{name}: {stdout}");
     }
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
-
 /// Two forks over three `host_pinned` hosts: every host runs its whole play, and a host that
 /// finishes hands its fork to the one behind it.
 #[test]

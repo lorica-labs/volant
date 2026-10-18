@@ -248,6 +248,12 @@ impl VarStore {
                 "ansible_connection".into(),
                 Value::String("local".to_string()),
             );
+            // The reference also sets the controller's own interpreter there
+            // (`sys.executable`), at the same layer, so the host runs Python tasks under it
+            // and discovers nothing. Left unset when no interpreter resolves.
+            if let Some(python) = crate::runtime::resolve::controller_python() {
+                vars.insert("ansible_python_interpreter".into(), Value::String(python));
+            }
         }
         for files in &self.host_files {
             if let Some(h) = files.get(host) {

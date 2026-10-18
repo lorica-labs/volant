@@ -593,16 +593,6 @@ async fn run_all(
     // block whose result is read afterwards rather than a stretch of `?`. `AgentLink::drop`
     // busy-polls for its agent for up to 200 ms, on the runtime thread and one link at a time,
     // so a `?` returning past the shutdown would pay that for every live link in series.
-    // Before the first play starts: a play that cannot run is not found out after the ones in
-    // front of it have.
-    for (pb, steps) in playbooks.iter().zip(&compiled) {
-        for (play, compiled) in pb.plays.iter().zip(steps) {
-            if play.strategy.as_deref() == Some("host_pinned") {
-                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned, false)?;
-                executor::refuse_unsafe_pinning(play, compiled, hosts.len(), options.forks)?;
-            }
-        }
-    }
     let plays: anyhow::Result<()> = async {
         'plays: for ((pb, steps), file) in playbooks.iter().zip(&compiled).zip(&args.playbooks) {
             out.playbook(file, pb.plays.len(), &dump);

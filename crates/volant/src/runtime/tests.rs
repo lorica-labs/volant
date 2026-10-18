@@ -326,3 +326,49 @@ fn a_collections_argument_is_a_file_only_when_it_is_a_yaml_file(
         files.iter().map(PathBuf::from).collect::<Vec<_>>()
     );
 }
+
+/// The controller's interpreter: the first candidate that imports ansible-core, else the path an
+/// install will leave, else nothing.
+#[cfg(unix)]
+#[test]
+fn the_controller_python_is_the_first_candidate_with_ansible_or_the_install_path() {
+    use std::os::unix::fs::PermissionsExt;
+    let tmp = scratch();
+    let script = |name: &str, code: i32| {
+        let path = tmp.path().join(name);
+        fs::write(
+            &path,
+            format!(
+                "#!/bin/sh
+exit {code}
+"
+            ),
+        )
+        .unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o755)).unwrap();
+        path.display().to_string()
+    };
+    let without = script("without", 1);
+    let with = script("with", 0);
+    let missing = tmp.path().join("missing").display().to_string();
+    let list = |paths: &[&str]| -> Vec<resolve::Candidate> {
+        paths
+            .iter()
+            .map(|python| resolve::Candidate {
+                python: (*python).to_owned(),
+                origin: Origin::Path,
+            })
+            .collect()
+    };
+    let later = || Some("/rt/python3".to_owned());
+    assert_eq!(
+        resolve::pick(&list(&[&missing, &without, &with]), later),
+        Some(with.clone())
+    );
+    assert_eq!(
+        resolve::pick(&list(&[&without]), later),
+        Some("/rt/python3".to_owned()),
+        "none has ansible-core: the install's interpreter"
+    );
+    assert_eq!(resolve::pick(&list(&[&without]), || None), None);
+}

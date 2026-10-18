@@ -374,11 +374,11 @@ impl PlayTask {
                 .is_some_and(|action| META_ONCE.contains(&action))
     }
 
-    fn pauses(&self) -> bool {
+    pub(crate) fn pauses(&self) -> bool {
         short_name(&self.module) == "pause"
     }
 
-    fn adds_host(&self) -> bool {
+    pub(crate) fn adds_host(&self) -> bool {
         crate::action_plugins::kind(&self.module)
             == Some(crate::action_plugins::Kind::Bridged("add_host"))
     }

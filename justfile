@@ -5,6 +5,12 @@ set windows-shell := ["bash", "-uc"]
 # that one refactor removing a covered branch does not break.
 COVERAGE_FLOOR := "91"
 
+# The files coverage leaves out: the toolchain's sources, the integration tests, examples, benches
+# and the build output. It replaces cargo-llvm-cov's default filter, which also drops every
+# `tests.rs`, so the unit tests in their own files would stop counting.
+COVERAGE_IGNORE := '(^|/)(rustc/[0-9a-f.]+|tests|examples|benches|target)/|/\.cargo/'
+
+
 default:
     @just --list
 
@@ -159,8 +165,12 @@ test-one crate pattern:
 # pipefail by default (see line 1), and without it the exit status is `tee`'s, which is always 0.
 # Line coverage over the workspace, gated at COVERAGE_FLOOR.
 coverage:
-    set -o pipefail; cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}} | tee /tmp/volant-coverage.txt
+    set -o pipefail; cargo llvm-cov nextest --workspace --summary-only --fail-under-lines {{COVERAGE_FLOOR}} --no-default-ignore-filename-regex --ignore-filename-regex '{{COVERAGE_IGNORE}}' | tee /tmp/volant-coverage.txt
     @awk '/^TOTAL/ {print "regions " $4 "   functions " $7 "   LINES " $10 "  <- the threshold is on this one"}' /tmp/volant-coverage.txt
+
+# The lcov file Codecov reads, from the profile data `just coverage` left behind and with its filter.
+coverage-lcov:
+    cargo llvm-cov report --lcov --output-path lcov.info --no-default-ignore-filename-regex --ignore-filename-regex '{{COVERAGE_IGNORE}}'
 
 # Mutation score over the files this recipe is pointed at. Each mutant is a small edit to the
 # source that the tests must notice; a mutant nothing catches is an assertion that could not have

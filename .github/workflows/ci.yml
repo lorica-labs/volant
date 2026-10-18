@@ -100,7 +100,7 @@ jobs:
       - run: just coverage
       # The report reuses the profile data `just coverage` left behind rather than running the
       # tests again.
-      - run: cargo llvm-cov report --lcov --output-path lcov.info
+      - run: just coverage-lcov
       - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
         with:
           files: lcov.info

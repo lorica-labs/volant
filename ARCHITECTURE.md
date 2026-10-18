@@ -55,7 +55,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `preflight.rs` | What a run refuses before it touches a host. |
 | `compile.rs`, `roles.rs` | A play flattened into steps, and roles spliced into them. |
 | `listing.rs` | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`. |
-| `transport.rs`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. |
+| `transport/`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. `transport` holds the connection settings, the `ssh` command lines and shared connections, the agent bootstrap, and `escalation/` for `sudo` and `su`. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
 | `python.rs`, `python_helper.py` | The Python helper that builds module payloads. |
 | `render.rs`, `stats.rs` | Console output, the recap, and exit codes. |

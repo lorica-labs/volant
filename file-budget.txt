@@ -34,7 +34,6 @@ crates/volant/src/template/filters.rs 1182
 crates/volant/src/template/lookups.rs 805
 crates/volant/src/template/mod.rs 1005
 crates/volant/src/template/yaml_dump.rs 669
-crates/volant/src/transport.rs 2040
 crates/volant/src/union_cache.rs 749
 crates/volant/src/vars.rs 1617
 crates/volant/src/vault.rs 553

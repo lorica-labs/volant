@@ -7,6 +7,7 @@ pub(crate) mod collections;
 pub(crate) mod fetch;
 pub(crate) mod install;
 pub(crate) mod manifest;
+pub(crate) mod pack;
 pub(crate) mod resolve;
 
 pub use resolve::Mode;

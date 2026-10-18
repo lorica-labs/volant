@@ -6,6 +6,7 @@ use clap::Subcommand;
 use crate::runtime::collections;
 use crate::runtime::install::{self, installed};
 use crate::runtime::manifest::Manifest;
+use crate::runtime::pack;
 use crate::runtime::{runtimes_dir, status};
 
 #[derive(Subcommand, Debug)]
@@ -18,6 +19,14 @@ pub enum RuntimeCommand {
         /// Also install the collections a requirements file lists.
         #[arg(long, value_name = "FILE")]
         collections_file: Option<std::path::PathBuf>,
+        /// Install from a file `volant runtime pack` made, with no download.
+        #[arg(long, value_name = "FILE")]
+        from: Option<std::path::PathBuf>,
+    },
+    /// Pack the installed runtime into a file another host of the same platform can install from.
+    Pack {
+        /// The file to write.
+        file: std::path::PathBuf,
     },
     /// Show the managed runtime and whether it is installed.
     Status,
@@ -52,8 +61,12 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
         RuntimeCommand::Install {
             collections,
             collections_file,
+            from,
         } => {
-            let done = install::install(&runtimes, &manifest)?;
+            let done = match &from {
+                Some(file) => pack::install_from(&runtimes, &manifest, file)?,
+                None => install::install(&runtimes, &manifest)?,
+            };
             println!("{} is installed in {}", done.id, done.dir.display());
             if !collections.is_empty() {
                 collections::install(&done, &collections::Source::Names(&collections))?;
@@ -61,6 +74,10 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
             if let Some(file) = &collections_file {
                 collections::install(&done, &collections::Source::File(file))?;
             }
+        }
+        RuntimeCommand::Pack { file } => {
+            pack::pack(&runtimes, &manifest, &file)?;
+            println!("{} is packed in {}", manifest.id(), file.display());
         }
         RuntimeCommand::Status => {
             let config = crate::config::Config::load().unwrap_or_else(|e| {

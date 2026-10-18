@@ -99,7 +99,7 @@ fn download(url: &str, out: &Path) -> Result<(), String> {
     }
 }
 
-fn run(mut command: Command) -> io::Result<Output> {
+pub(super) fn run(mut command: Command) -> io::Result<Output> {
     command
         .stdin(Stdio::null())
         .stdout(Stdio::null())

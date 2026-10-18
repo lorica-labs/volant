@@ -233,8 +233,33 @@ fn parts(body: &[u8]) -> Result<Parts, VaultError> {
     })
 }
 
+type Derived = ([u8; 32], [u8; 32], [u8; 16]);
+type Cache = HashMap<(Vec<u8>, Vec<u8>), Derived>;
+
 /// PBKDF2-HMAC-SHA256, 10000 rounds, 80 bytes: AES key, HMAC key, counter start.
+///
+/// Kept per (secret, salt) for the life of the process: the same vaulted file is read again by
+/// every task and every host that names it, and each derivation is 10000 rounds. The cache holds
+/// nothing the secrets themselves do not already.
 fn keys(secret: &[u8], salt: &[u8]) -> ([u8; 32], [u8; 32], [u8; 16]) {
+    static CACHE: LazyLock<Mutex<Cache>> = LazyLock::new(|| Mutex::new(HashMap::new()));
+    let found = CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .get(&(secret.to_vec(), salt.to_vec()))
+        .copied();
+    if let Some(derived) = found {
+        return derived;
+    }
+    let derived = derive(secret, salt);
+    CACHE
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .insert((secret.to_vec(), salt.to_vec()), derived);
+    derived
+}
+
+fn derive(secret: &[u8], salt: &[u8]) -> ([u8; 32], [u8; 32], [u8; 16]) {
     let mut derived = [0u8; 80];
     pbkdf2::pbkdf2_hmac::<Sha256>(secret, salt, ITERATIONS, &mut derived);
     let key: [u8; 32] = derived[..32].try_into().expect("80 bytes");

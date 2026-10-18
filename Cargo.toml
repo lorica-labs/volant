@@ -80,6 +80,21 @@ volant-protocol = { path = "crates/volant-protocol", version = "0.1.0-alpha.7" }
 [profile.dev]
 debug = "line-tables-only"
 
+# The vault derives a key with 10000 PBKDF2 rounds on every decrypt; unoptimised, that is seconds
+# per playbook run in the test profile.
+[profile.dev.package.sha2]
+opt-level = 3
+[profile.dev.package.hmac]
+opt-level = 3
+[profile.dev.package.pbkdf2]
+opt-level = 3
+[profile.dev.package.aes]
+opt-level = 3
+[profile.dev.package.ctr]
+opt-level = 3
+[profile.dev.package.cipher]
+opt-level = 3
+
 [profile.release]
 lto = "fat"
 codegen-units = 1

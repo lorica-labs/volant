@@ -18,7 +18,7 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
 ## Hosts and connections
 
 <Option name="-i, --inventory, --inventory-file" arg="PATH" config="[defaults] inventory" env="ANSIBLE_INVENTORY">
-  The inventory file. Only INI inventories are read, see [Inventories](/hosts/inventories/). Without one, only the implicit `localhost` exists.
+  An inventory source: a file, a directory, a script or a comma list of hosts. Repeat it to merge several, see [Inventories](/hosts/inventories/). Without one, only the implicit `localhost` exists.
 </Option>
 
 <Option name="-l, --limit" arg="SUBSET">
@@ -34,7 +34,7 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
 </Option>
 
 <Option name="--flush-cache">
-  Accepted and ignored: there is no fact cache plugin yet, so there is nothing to clear.
+  Remove the [fact cache](/hosts/fact-cache/#flushing) entries of the inventory hosts before the run.
 </Option>
 
 <Option name="--version">

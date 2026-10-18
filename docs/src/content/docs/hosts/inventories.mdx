@@ -3,11 +3,41 @@ title: Inventories and host patterns
 description: The inventory format Volant reads, where group and host variables come from, and the host-pattern grammar.
 ---
 
-import { Aside } from '@astrojs/starlight/components';
+Volant reads inventories the way ansible-core does: one or more sources, each parsed by the first enabled plugin that accepts it. A static run (INI, YAML, TOML, a host list) starts no Python.
 
-<Aside type="caution" title="INI inventories only">
-This release reads static inventories in Ansible's INI format. YAML inventories, inventory directories, dynamic inventory scripts and inventory plugins are not supported yet. Pass a single INI file with `-i`, or set `inventory` in `ansible.cfg`.
-</Aside>
+## Sources
+
+`-i` (also `--inventory` and `--inventory-file`) takes a source and can be repeated. Without `-i`, Volant reads `ANSIBLE_INVENTORY`, then `inventory` in `ansible.cfg`. Both accept a comma-separated list. Without any of them, only the implicit `localhost` exists.
+
+A source is one of:
+
+| Source | Notes |
+|---|---|
+| An INI file | Hosts, `[group]`, `[group:children]`, `[group:vars]`, and ranges such as `web[01:03]`. |
+| A YAML or TOML file | Ansible's `yaml` and `toml` formats. |
+| A directory | Every file in it is a source, walked in sorted order. Files with an ignored extension or matching an ignore pattern, and the `group_vars` and `host_vars` directories, are skipped. |
+| A comma list | `-i web1,web2,` is a list of hosts (`host_list`). A single host needs a trailing comma. `advanced_host_list` is read when you enable it. |
+| An executable file | Run as a dynamic inventory script: `--list` once, then `--host <name>` for hosts the list gave no variables for. |
+| A plugin file | A YAML file with `plugin:` naming `constructed`, `generator` or a collection's inventory plugin (the `auto` plugin). |
+
+Several sources are merged in the order given. A later source wins per key, group members are unioned, and hosts and groups keep the order in which they first appeared.
+
+### The plugin chain
+
+The `[inventory]` section of `ansible.cfg` controls how a source is matched:
+
+- `enable_plugins` lists the plugins to try, in order. The default is `host_list, script, auto, yaml, ini, toml`.
+- `ignore_extensions` and `ignore_patterns` skip files in directories.
+- `unparsed_is_failed` fails the run when no source could be read at all.
+- `any_unparsed_is_failed` fails the run at the first source no plugin could read.
+
+A source that no plugin reads is skipped with a warning, as in Ansible. `-vvv` prints which plugin took each source, and which ones declined it.
+
+### Dynamic sources
+
+A script prints its inventory as JSON, in the format `ansible-inventory --list` writes. `constructed` and `generator` build groups and hosts from templates.
+
+A collection's inventory plugin (a cloud provider, for instance) runs inside ansible-core, through the [Python helper](/internals/python/). The helper starts only when such a source is present.
 
 ## An INI inventory
 
@@ -30,15 +60,19 @@ ansible_user=deploy
 ansible_ssh_common_args=-o ProxyJump=bastion
 ```
 
-Volant reads hosts with inline variables, `[group]` sections, `[group:children]` and `[group:vars]`, and comments starting with `#` or `;`. Host ranges such as `web[01:20]` are not expanded.
-
-`localhost` exists implicitly, with a local connection, when the inventory does not define it. Without `-i` and without an `inventory` setting, that implicit `localhost` is the only host.
+Comments start with `#` or `;`. `localhost` exists implicitly, with a local connection, when the inventory does not define it.
 
 ## Group and host variables
 
-Volant reads `group_vars/` and `host_vars/` next to the inventory and next to the playbook, as files (`group_vars/web.yml`) or directories (`group_vars/web/*.yml`). [Precedence](/variables/precedence/) shows where each layer sits.
+Volant reads `group_vars/` and `host_vars/` next to each source, then next to the playbook, as files (`group_vars/web.yml`) or directories (`group_vars/web/*.yml`). [Precedence](/variables/precedence/) shows where each layer sits.
+
+When a host is in several groups, the deeper group wins. Between groups at the same depth, `ansible_group_priority` decides (the higher value wins), then the group name.
 
 A name that is both a host and a group means the host. Volant warns once per run when an inventory contains such a name, whatever pattern the run uses, because Ansible detects it when it loads the inventory.
+
+## Refreshing
+
+`meta: refresh_inventory` reads every source again, see [Meta tasks](/playbooks/meta/#refreshing-the-inventory).
 
 ## Host patterns
 

@@ -24,7 +24,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 ## [defaults]
 
 <Option name="inventory" id="defaults-inventory" flag="-i" env="ANSIBLE_INVENTORY">
-  The inventory file. Only INI inventories are read.
+  The inventory sources, as a comma-separated list. See [Inventories](/hosts/inventories/#sources).
 </Option>
 
 <Option name="timeout" id="defaults-timeout" default="10" flag="-T" env="ANSIBLE_TIMEOUT">
@@ -61,6 +61,48 @@ A file that exists but cannot be read is skipped, and the run continues with the
 
 <Option name="collections_path" id="defaults-collections-path" default="~/.ansible/collections:/usr/share/ansible/collections" env="ANSIBLE_COLLECTIONS_PATH">
   Where a three-part role name such as `acme.demo.hello` is looked for. A collection's modules are found by the controller's ansible-core, in the paths it is configured with: see [Modules from collections](/internals/python/#modules-from-collections).
+</Option>
+
+<Option name="gathering" id="defaults-gathering" default="implicit" env="ANSIBLE_GATHERING">
+  `implicit`, `explicit` or `smart`. See [The fact cache](/hosts/fact-cache/#gathering).
+</Option>
+
+<Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
+  `memory` keeps facts for the run, `jsonfile` keeps them between runs. See [The fact cache](/hosts/fact-cache/).
+</Option>
+
+<Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">
+  The directory of the `jsonfile` cache.
+</Option>
+
+<Option name="fact_caching_timeout" id="defaults-fact-caching-timeout" default="86400" env="ANSIBLE_CACHE_PLUGIN_TIMEOUT">
+  Seconds a cached entry stays fresh. `0` never expires.
+</Option>
+
+<Option name="fact_caching_prefix" id="defaults-fact-caching-prefix" env="ANSIBLE_CACHE_PLUGIN_PREFIX">
+  Put in front of each cache file name.
+</Option>
+
+## [inventory]
+
+<Option name="enable_plugins" id="inventory-enable-plugins" default="host_list, script, auto, yaml, ini, toml" env="ANSIBLE_INVENTORY_ENABLED">
+  The inventory plugins to try, in order. See [the plugin chain](/hosts/inventories/#the-plugin-chain).
+</Option>
+
+<Option name="ignore_extensions" id="inventory-ignore-extensions" env="ANSIBLE_INVENTORY_IGNORE">
+  File extensions skipped when a directory is read.
+</Option>
+
+<Option name="ignore_patterns" id="inventory-ignore-patterns" env="ANSIBLE_INVENTORY_IGNORE_REGEX">
+  Regular expressions for file names skipped when a directory is read.
+</Option>
+
+<Option name="unparsed_is_failed" id="inventory-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_UNPARSED_FAILED">
+  Fail the run when no source could be read.
+</Option>
+
+<Option name="any_unparsed_is_failed" id="inventory-any-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED">
+  Fail the run at the first source no plugin could read.
 </Option>
 
 ## [privilege_escalation]

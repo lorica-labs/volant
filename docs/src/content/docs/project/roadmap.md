@@ -21,7 +21,6 @@ Native versions of the common modules, native fact gathering, a cache for the Py
 
 ## Then: ready for daily use
 
-- YAML inventories.
 - A `volant check` command that tells you whether a project will run, and what blocks it.
 - A Homebrew formula.
 - A nightly run over a corpus of public roles, compared with ansible-core.
@@ -30,7 +29,6 @@ Native versions of the common modules, native fact gathering, a cache for the Py
 ## Later
 
 - Controller-side plugins from collections.
-- Dynamic inventories.
 - Windows hosts and network devices.
 
 Something missing that blocks you? [Open a feature request](https://github.com/lorica-labs/volant/issues/new?template=feature.yml) or start a thread in [Discussions](https://github.com/lorica-labs/volant/discussions).

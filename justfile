@@ -2,8 +2,9 @@ set shell := ["bash", "-uc"]
 set windows-shell := ["bash", "-uc"]
 
 # The measured line coverage minus one point: a threshold that cannot drift down in silence, and
-# that one refactor removing a covered branch does not break.
-COVERAGE_FLOOR := "91"
+# that one refactor removing a covered branch does not break. Measured without the test modules,
+# which llvm-cov leaves out once they live in their own `tests.rs` files: 89.65% on 2026-10-18.
+COVERAGE_FLOOR := "88"
 
 default:
     @just --list

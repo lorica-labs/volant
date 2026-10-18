@@ -99,7 +99,7 @@ A name outside `ansible.builtin` and `ansible.legacy` gets one of four answers:
 The refusals come before the first connection, with exit code 4:
 
 ```text
-task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicates a misspelling, missing collection, or incorrect module path. The collection 'ns.coll' is not installed on the controller: install it with ansible-galaxy collection install ns.coll
+task 'Forward': couldn't resolve module/action 'ns.coll.mod'. This often indicates a misspelling, missing collection, or incorrect module path. The collection 'ns.coll' is not installed on the controller: install it with volant runtime install --collections ns.coll
 task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 ```
 

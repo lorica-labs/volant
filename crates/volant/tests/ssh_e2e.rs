@@ -117,7 +117,7 @@ fn write_executable(path: &Path, body: &str) {
 }
 
 fn volant(args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_volant"))
+    volant_command()
         .args(args)
         .env("NO_COLOR", "1")
         .env("ANSIBLE_HOST_KEY_CHECKING", "False")
@@ -193,7 +193,7 @@ fn ssh_an_outdated_cached_agent_is_replaced() {
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_a_host_that_cannot_be_reached_says_why(#[case] why: Unreachable, #[case] says: &[&str]) {
     let dir = tmp(&format!("unreachable-{why:?}"));
-    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    let mut command = volant_command();
     command
         .env("NO_COLOR", "1")
         .env("ANSIBLE_HOST_KEY_CHECKING", "False");
@@ -660,7 +660,7 @@ fn ssh_runs_a_python_module_and_changes_the_disk() {
     let dir = tmp("pythonmodule");
     let inv = inventory(&dir, &[("box", "")]);
     let target = dir.join("touched");
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+    let out = volant_command()
         .args([
             "playbook",
             "-i",
@@ -740,7 +740,7 @@ fn ssh_a_python_module_s_result_is_never_evaluated() {
         format!("{{{{ lookup('pipe', 'touch {}') }}}}", marker.display()),
     )
     .unwrap();
-    let out = Command::new(env!("CARGO_BIN_EXE_volant"))
+    let out = volant_command()
         .args([
             "playbook",
             "-i",
@@ -782,7 +782,7 @@ fn ssh_ctrl_c_stops_the_task_on_the_real_host() {
         ),
     )
     .unwrap();
-    let child = Command::new(env!("CARGO_BIN_EXE_volant"))
+    let child = volant_command()
         .args(["playbook", "-i", &inv, &play.display().to_string()])
         .env("NO_COLOR", "1")
         .env("ANSIBLE_HOST_KEY_CHECKING", "False")
@@ -983,7 +983,7 @@ fn volant_within(args: &[&str], deadline: Duration) -> Output {
 /// the host's side of the session ends with it rather than running on.
 fn volant_env_within(args: &[&str], envs: &[(&str, &str)], deadline: Duration) -> Output {
     process::run_within(
-        Command::new(env!("CARGO_BIN_EXE_volant"))
+        volant_command()
             .args(args)
             .envs(envs.iter().copied())
             .env("NO_COLOR", "1")
@@ -2369,4 +2369,11 @@ fn ssh_reset_connection_stops_the_shared_master() {
         "reset_connection must stop the master, found {gone:?}:\n{}",
         both(&reset)
     );
+}
+
+/// The binary, on the controller's own Python: the suite never installs Volant's runtime.
+fn volant_command() -> Command {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command.env("VOLANT_RUNTIME", "system");
+    command
 }

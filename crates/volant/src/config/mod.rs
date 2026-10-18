@@ -14,7 +14,9 @@ mod settings;
 
 use parse::parse;
 use paths::{default_collections_path, default_roles_path, expand_home, path_list};
-use settings::{boolean, cache_plugin, forks, gathering, integer, switch, timeout_secs};
+use settings::{
+    boolean, cache_plugin, forks, gathering, integer, runtime_mode, switch, timeout_secs,
+};
 
 /// Ansible's own default for `remote_tmp`, where the agent is cached on a host.
 pub const DEFAULT_REMOTE_TMP: &str = "~/.ansible/tmp";
@@ -91,6 +93,9 @@ pub struct Config {
     /// with its native module instead of running the task's Python module. On by default; off
     /// sends every Python task to Python, which is the switch to compare the two.
     pub native_modules: bool,
+    /// `[volant] runtime`, or `VOLANT_RUNTIME`: `auto` (the default), `managed` or `system`,
+    /// which Python ansible-core runs under (see `runtime::resolve`).
+    pub runtime: crate::runtime::Mode,
     /// `[volant] ssh_control_master`, or `VOLANT_SSH_CONTROL_MASTER`: whether the `ssh` runs
     /// of one inventory host share one connection. On by default.
     pub ssh_control_master: bool,
@@ -133,6 +138,7 @@ impl Default for Config {
             tags_skip: Vec::new(),
             batching: false,
             native_modules: true,
+            runtime: crate::runtime::Mode::Auto,
             ssh_control_master: true,
             fact_caching: "memory".to_string(),
             fact_caching_connection: None,
@@ -301,6 +307,9 @@ impl Config {
                 &value,
             )?;
         }
+        if let Ok(value) = std::env::var("VOLANT_RUNTIME") {
+            config.runtime = runtime_mode(&value, "env: VOLANT_RUNTIME")?;
+        }
         if let Ok(value) = std::env::var("VOLANT_SSH_CONTROL_MASTER")
             && let Some(on) = switch(&value)
         {
@@ -360,6 +369,11 @@ impl Config {
         if let Ok(list) = std::env::var("ANSIBLE_SKIP_TAGS") {
             config.tags_skip = tag_list(&list);
         }
+        // After the user's own entries, so their collections shadow the ones Volant fetched.
+        config.collections_path = crate::runtime::collections::after(
+            config.collections_path,
+            crate::runtime::collections::active_dir(),
+        );
         Ok(config)
     }
 }

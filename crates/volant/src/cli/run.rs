@@ -82,7 +82,7 @@ async fn run_all(
     out: &mut Renderer,
     profile: &Arc<Profile>,
 ) -> anyhow::Result<i32> {
-    let config = Config::load()?;
+    let config = crate::runtime::resolve::configured(Config::load()?);
     announce(out);
     python::set_module_path(module_path_dirs(args));
     let secrets = match crate::vault::load(&crate::vault::Request {

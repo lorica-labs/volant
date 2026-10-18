@@ -121,7 +121,6 @@ fn failure(message: String) -> PluginError {
         message,
         origin: None,
         cause: None,
-        unsupported: false,
     }
 }
 
@@ -162,7 +161,6 @@ fn with_stderr(path: &str, message: String, stderr: &str) -> PluginError {
         message,
         origin: help,
         cause: None,
-        unsupported: false,
     }
 }
 

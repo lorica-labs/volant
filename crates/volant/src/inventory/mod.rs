@@ -27,7 +27,7 @@ use serde_json::Value;
 pub(crate) use patterns::glob_match;
 use patterns::{apply_subscript, split_subscript, split_terms};
 pub use sources::{
-    InventoryPlugin, Loaded, Note, ParseCx, PluginConfig, PluginError, Source, load_sources,
+    InventoryPlugin, Note, ParseCx, PluginConfig, PluginError, Source, load_sources,
     load_sources_with,
 };
 
@@ -111,6 +111,7 @@ impl fmt::Display for InventoryError {
 impl std::error::Error for InventoryError {}
 
 impl Inventory {
+    #[cfg(test)]
     pub fn empty() -> Self {
         Self::default()
     }

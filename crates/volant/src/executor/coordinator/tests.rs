@@ -174,3 +174,19 @@ fn a_gap_in_a_hosts_reports_holds_the_barrier_where_it_is() {
         "the batch reported, so everything behind it counts"
     );
 }
+
+/// A failed host forgiven by `clear_host_errors` before its `Finished` stays forgiven; a
+/// failure no result announced is still filed by `Finished`.
+#[test]
+fn a_finished_host_is_not_filed_again_after_its_failure_was() {
+    let mut round = super::types::Round::default();
+    let mut failed = HashSet::new();
+    round.failed(&mut failed, "h2");
+    assert!(failed.contains("h2"));
+    // `clear_host_errors` forgives it before its `Finished` is read.
+    failed.remove("h2");
+    assert!(!round.files_failure("h2", true));
+    assert!(round.files_failure("h2", true));
+    assert!(round.files_failure("h3", true));
+    assert!(!round.files_failure("h4", false));
+}

@@ -130,20 +130,6 @@ pub struct PluginError {
     /// What this error was raised from: its message and its `Origin:`, a second block of the
     /// reference's chain; the `Origin:` line is left out when the cause has none.
     pub cause: Option<(String, Option<String>)>,
-    /// A plugin this release does not have yet: refused by name when no other plugin reads the
-    /// source, rather than reported as a source that could not be parsed.
-    pub unsupported: bool,
-}
-
-impl PluginError {
-    pub fn unsupported(plugin: &str) -> Self {
-        Self {
-            message: format!("the {plugin} inventory plugin is not supported yet"),
-            origin: None,
-            cause: None,
-            unsupported: true,
-        }
-    }
 }
 
 /// What a plugin may use while it reads a source: the chain's settings, and the lines it says.
@@ -367,7 +353,6 @@ struct Chain<'a, 'c> {
 impl Chain<'_, '_> {
     /// `parse_source`: a directory's entries in sorted order, anything else offered to each
     /// plugin until one reads it. Whether something was read.
-    #[expect(clippy::too_many_lines)]
     fn source(&self, source: &Source, into: &mut Inventory) -> Result<bool, Fatal> {
         let mut parsed = false;
         let mut failures = Vec::new();
@@ -417,22 +402,6 @@ impl Chain<'_, '_> {
         }
         if parsed || (source.text == DEFAULT_SOURCE && !source.path().exists()) {
             return Ok(parsed);
-        }
-        let missing: Vec<&str> = failures
-            .iter()
-            .filter(|(_, e)| e.unsupported)
-            .map(|(name, _)| *name)
-            .collect();
-        if !missing.is_empty() {
-            return Err(Fatal {
-                code: 4,
-                message: format!(
-                    "inventory source {} needs the {} inventory plugin, which is not supported \
-                     yet",
-                    source.text,
-                    missing.join(" or ")
-                ),
-            });
         }
         for (plugin, err) in failures {
             let origin = err.origin.unwrap_or_else(|| {

@@ -27,8 +27,7 @@ pub use sources::{
     load_sources_with,
 };
 
-/// Every inventory plugin this release knows, the ones `enable_plugins` picks from. A plugin it
-/// does not read yet takes what the reference's would and refuses it by name.
+/// Every inventory plugin this release knows, the ones `enable_plugins` picks from.
 const PLUGINS: &[&dyn InventoryPlugin] = &[
     &host_list::HostList { advanced: false },
     &host_list::HostList { advanced: true },
@@ -40,6 +39,11 @@ const PLUGINS: &[&dyn InventoryPlugin] = &[
     &constructed::Constructed,
     &generator::Generator,
 ];
+
+/// The names of the builtin inventory plugins this release reads.
+pub fn plugin_names() -> impl Iterator<Item = &'static str> {
+    PLUGINS.iter().map(|p| p.name())
+}
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Host {

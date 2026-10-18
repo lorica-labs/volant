@@ -2,6 +2,7 @@
 
 //! Whether a rename between two places crosses a mount, and the mount id the kernel gives.
 
+#[cfg(target_os = "linux")]
 use std::ffi::CString;
 
 /// Whether a rename between two places, each given by its device and its mount (`None` where the

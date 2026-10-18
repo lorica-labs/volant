@@ -198,6 +198,7 @@ async fn controller_side(
             timeout: task.timeout,
             check_mode: item.check_mode == Some(true),
             diff: item.diff == Some(true),
+            async_val: task.async_val,
         },
     );
     let mut last = None;

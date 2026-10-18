@@ -266,3 +266,10 @@ pub(in crate::executor) fn raw_params_refusal(task: &PlayTask) -> Option<TaskRes
     );
     Some(TaskResult(r))
 }
+
+/// What each item of a task reports when the task asks for `async` and its action does not
+/// support it, or the raw parameters it was given are refused: the failure the reference raises
+/// before the action runs, so neither `failed_when` nor `retries` changes it.
+pub(in crate::executor) fn refusal(task: &PlayTask) -> Option<TaskResult> {
+    raw_params_refusal(task).or_else(|| super::async_job::async_refusal(task))
+}

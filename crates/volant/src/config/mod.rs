@@ -22,6 +22,18 @@ use settings::{
 pub const DEFAULT_REMOTE_TMP: &str = "~/.ansible/tmp";
 /// Ansible's own default for `forks`: how many hosts a play runs at once.
 pub const DEFAULT_FORKS: usize = 5;
+
+/// `async_dir` of the configuration the run loaded, for the code that names a job's directory
+/// without a `Config` in hand.
+static ASYNC_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+/// The directory `ansible.cfg` names for jobs, if it names one.
+pub(crate) fn configured_async_dir() -> Option<String> {
+    ASYNC_DIR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}
 /// Ansible's own defaults for `[privilege_escalation]`.
 pub const DEFAULT_BECOME_USER: &str = "root";
 pub const DEFAULT_BECOME_METHOD: &str = "sudo";
@@ -37,6 +49,9 @@ pub struct Config {
     pub private_key_file: Option<PathBuf>,
     pub host_key_checking: bool,
     pub remote_tmp: String,
+    /// `[defaults] async_dir`: where a job's status file goes when neither `ansible_async_dir`
+    /// nor `ANSIBLE_ASYNC_DIR` names a directory.
+    pub async_dir: Option<String>,
     pub forks: usize,
     pub r#become: bool,
     pub become_user: String,
@@ -121,6 +136,7 @@ impl Default for Config {
             private_key_file: None,
             host_key_checking: true,
             remote_tmp: DEFAULT_REMOTE_TMP.to_string(),
+            async_dir: None,
             forks: DEFAULT_FORKS,
             r#become: false,
             become_user: DEFAULT_BECOME_USER.to_string(),
@@ -374,6 +390,11 @@ impl Config {
             config.collections_path,
             crate::runtime::collections::active_dir(),
         );
+        let mut held = ASYNC_DIR
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner);
+        held.clone_from(&config.async_dir);
+        drop(held);
         Ok(config)
     }
 }

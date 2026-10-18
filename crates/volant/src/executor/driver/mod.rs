@@ -29,12 +29,13 @@ use super::prepare::{Item, PlayPlan, Prepared, failure_text, pause_of, prepare, 
 use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Polled, Relinker,
-    RetryLine, any_retried, break_after, broke_before, chosen_interpreter, discovers_interpreter,
-    discovery_warning, fact_targets, failed_task_value, finish, judge_attempt, local_timed_out,
-    notified_handlers, pause_lines, poll_job, polls, python_for, raw_params_refusal, record_facts,
-    record_inventory_results, record_local_facts, record_registered, requested_interpreter,
-    retry_plans, reuse_or_connect, run_agent_batch, run_local, run_plugin_attempts,
-    running_host_vars, silent_discovery, stamp_discovery, step_tasks, take_warnings,
+    RetryLine, announce_retry, any_retried, break_after, broke_before, chosen_interpreter,
+    discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
+    judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
+    record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
+    requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
+    run_plugin_attempts, running_host_vars, silent_discovery, stamp_discovery, step_tasks,
+    take_warnings,
 };
 use super::{LinkKey, RunOptions};
 
@@ -1108,7 +1109,7 @@ pub(super) async fn drive_host(
                         let mut mine = Vec::new();
                         let r = if let Some(s) = &item.skipped {
                             s.clone()
-                        } else if let Some(refused) = raw_params_refusal(task) {
+                        } else if let Some(refused) = refusal(task) {
                             refused
                         } else if let Err(failed) = plan {
                             failed.clone()
@@ -1432,9 +1433,7 @@ pub(super) async fn drive_host(
                         payloads.insert(pos, (module, asked));
                     }
                     // A task refused for its raw parameters fails before it is sent anywhere.
-                    if raw_params_refusal(task).is_none()
-                        && discovers_interpreter(&task.module, target_vars)
-                    {
+                    if refusal(task).is_none() && discovers_interpreter(&task.module, target_vars) {
                         discovering.insert(pos, !silent_discovery(target_vars));
                     }
                     batch.push((pos, items));
@@ -1749,7 +1748,7 @@ pub(super) async fn drive_host(
                     if item.skipped.is_some() {
                         continue;
                     }
-                    if let Some(refused) = raw_params_refusal(&step.task) {
+                    if let Some(refused) = refusal(&step.task) {
                         received[0][ii] = Some(refused);
                         continue;
                     }
@@ -1774,6 +1773,8 @@ pub(super) async fn drive_host(
                         templar: &templar,
                         origin: &step.origin,
                         playbook_dir: &playbook_dir,
+                        tx: &tx,
+                        index: *index,
                     };
                     let ran = run_plugin_attempts(
                         &mut owned,
@@ -1996,6 +1997,19 @@ pub(super) async fn drive_host(
                             Attempt::Done(r) => {
                                 received[0][ii] = Some(r);
                                 continue 'items;
+                            }
+                            // As it happens for a job that is waited for: see the plugin path.
+                            Attempt::Again(left, failed) if polls(task) => {
+                                announce_retry(
+                                    &tx,
+                                    &name,
+                                    *index,
+                                    retry_name(task, &item.vars, &templar),
+                                    task,
+                                    left,
+                                    failed,
+                                )
+                                .await;
                             }
                             Attempt::Again(left, failed) => lefts[ii].push((left, failed)),
                         }

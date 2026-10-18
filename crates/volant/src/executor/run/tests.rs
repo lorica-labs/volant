@@ -1921,6 +1921,7 @@ async fn plugin_item_on<R: Relink<FakeAgent>>(
                 timeout: None,
                 check_mode: false,
                 diff: false,
+                async_val: 0,
             },
         );
         run_plugin_item(
@@ -3169,6 +3170,7 @@ async fn copy_attempts<C: AgentChannel>(
     let origin = crate::compile::Origin::default();
     let running = HostVars::default();
     let union = union_of("ab", crate::action_plugins::modules_for(kind));
+    let (sink, _held) = tokio::sync::mpsc::channel(8);
     let start = PluginStart {
         kind,
         running_vars: &running,
@@ -3178,6 +3180,8 @@ async fn copy_attempts<C: AgentChannel>(
         templar: &templar,
         origin: &origin,
         playbook_dir: Path::new("."),
+        tx: &sink,
+        index: 0,
     };
     let mut lefts = Vec::new();
     let ran = run_plugin_attempts(

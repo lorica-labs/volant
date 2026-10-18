@@ -64,6 +64,7 @@ fn a_host_named_controller_file_is_refused(#[case] name: &'static str, #[case] a
             timeout: None,
             check_mode: false,
             diff: false,
+            async_val: 0,
         },
     );
     let Step::Done(result) = plugin.next(None) else {

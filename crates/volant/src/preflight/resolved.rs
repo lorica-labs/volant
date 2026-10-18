@@ -4,7 +4,6 @@
 use anyhow::bail;
 
 use super::CODE;
-use super::refusals::refuse_async;
 use crate::action_plugins;
 use crate::playbook::PlayTask;
 use crate::stats::Refusal;
@@ -108,7 +107,6 @@ pub(crate) fn check_built(
     expanded: &crate::compile::Compiled,
     union: Option<&crate::python::Union>,
 ) -> anyhow::Result<()> {
-    check_collection_actions(expanded)?;
     for task in set_aside(expanded).filter(|task| action_plugins::kind(&task.module).is_none()) {
         let (name, module) = (&task.name, &task.module);
         if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(module))) {
@@ -125,8 +123,8 @@ pub(crate) fn check_built(
     Ok(())
 }
 
-/// `async` on a collection's action plugin, which the first pass could not see for a plugin until
-/// the controller had resolved the name: refused as it is on the builtin ones.
-pub(crate) fn check_collection_actions(compiled: &crate::compile::Compiled) -> anyhow::Result<()> {
-    set_aside(compiled).try_for_each(refuse_async)
+/// Kept for the caller that runs it after resolution: `async` on an action plugin is no longer
+/// refused before the run, since the reference fails it per host when the task runs.
+pub(crate) fn check_collection_actions(_compiled: &crate::compile::Compiled) -> anyhow::Result<()> {
+    Ok(())
 }

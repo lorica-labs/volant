@@ -30,9 +30,7 @@ mod refusals;
 mod resolved;
 
 pub(crate) use refusals::PROMPT_REFUSED;
-use refusals::{
-    check_arguments, check_end_role, check_meta, check_pause, refuse_async, refuse_retries,
-};
+use refusals::{check_arguments, check_end_role, check_meta, check_pause, refuse_retries};
 use resolved::unresolved;
 pub(crate) use resolved::{
     check_built, check_collection_actions, check_resolved, collection_modules, refusal_of,
@@ -187,7 +185,6 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     if let Some(kw) = task.unsupported.first() {
         bail!("task '{}': keyword '{kw}' is not supported yet", task.name);
     }
-    refuse_async(task)?;
     if is_meta(task) {
         return check_meta(task);
     }

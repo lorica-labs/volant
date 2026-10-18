@@ -5,20 +5,6 @@ use crate::playbook::parse;
 use crate::stats::error_code;
 use rstest::rstest;
 
-/// `async` on a collection's action plugin is refused once the name is known to be one.
-#[test]
-fn async_on_a_collection_action_plugin_is_refused_after_resolution() {
-    let mut task = crate::testing::task("ns.preflightcoll.shutdown");
-    task.async_val = 5;
-    assert!(refuse_async(&task).is_ok());
-    action_plugins::note_collection_action(&task.module, &task.module, false);
-    let err = refuse_async(&task).unwrap_err().to_string();
-    assert!(
-        err.contains("keyword 'async' is not supported yet on 'ns.preflightcoll.shutdown'"),
-        "{err}"
-    );
-}
-
 /// A `pause` with a prompt and a duration on a terminal is refused before anything connects
 /// when the step is sure to run, and left to the run when something may leave it out.
 #[test]

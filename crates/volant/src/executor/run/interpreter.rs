@@ -9,7 +9,7 @@ use crate::playbook::PlayTask;
 use crate::python::{ModulePayload, Union};
 use crate::vars::HostVars;
 
-use super::argspec::raw_params_refusal;
+use super::argspec::refusal;
 use super::plugin::{protocol_task, with_modes};
 
 /// One step's items, as the tasks to send and the results of those that cannot be sent at all.
@@ -26,7 +26,7 @@ pub(in crate::executor) fn step_tasks(
     results: &mut [Option<TaskResult>],
 ) -> Vec<(usize, Task)> {
     let mut out = Vec::new();
-    let refused = raw_params_refusal(task);
+    let refused = refusal(task);
     for (ii, item) in items.iter().enumerate() {
         // A skipped item already has its result and never had a task.
         if item.skipped.is_some() {
@@ -255,7 +255,7 @@ pub(super) fn sub_task(
                     with_modes(item, args)
                 }
             },
-            job: None,
+            job: sub_job(task, item, sub),
             ..protocol_task(task, item, None)
         });
     }
@@ -282,7 +282,27 @@ pub(super) fn sub_task(
             })
             .collect(),
         force_python: payload.force_python,
-        job: None,
+        job: sub_job(task, item, sub),
+    })
+}
+
+/// The job a sub-task runs as under the task's `async`: the module an action plugin that
+/// supports `async` picks and runs, never the `setup` it asks for first or a command of its own.
+fn sub_job(
+    task: &PlayTask,
+    item: &Item,
+    sub: &crate::action_plugins::Sub,
+) -> Option<volant_protocol::AsyncJob> {
+    use crate::action_plugins::Kind;
+    let runs_as_job = task.async_val > 0
+        && sub.module != "setup"
+        && matches!(
+            crate::action_plugins::kind(&task.module),
+            Some(Kind::Dnf | Kind::Package | Kind::Service | Kind::Bridged("uri"))
+        );
+    runs_as_job.then(|| volant_protocol::AsyncJob {
+        limit: task.async_val,
+        dir: super::async_job::async_dir(&item.vars),
     })
 }
 

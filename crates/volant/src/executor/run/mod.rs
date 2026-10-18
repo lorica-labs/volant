@@ -17,8 +17,8 @@ mod record;
 mod register;
 mod retry;
 
-pub(super) use argspec::raw_params_refusal;
-pub(super) use async_job::{Polled, poll_job, polls};
+pub(super) use argspec::refusal;
+pub(super) use async_job::{Polled, announce_retry, poll_job, polls};
 pub(super) use batch::run_agent_batch;
 
 pub(super) use channel::Relinker;

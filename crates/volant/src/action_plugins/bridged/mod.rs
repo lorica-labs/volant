@@ -117,6 +117,11 @@ pub(super) fn start(
     // task's `check_mode: false`, and a plugin that never heard of check mode changes the host.
     task.insert("check_mode".into(), Value::Bool(ctx.check_mode));
     task.insert("diff".into(), Value::Bool(ctx.diff));
+    // What `ActionBase.run` reads to refuse an action that does not support it, and what a plugin
+    // such as `uri` reads to ask for its module to be wrapped.
+    if ctx.async_val > 0 {
+        task.insert("async".into(), json!(ctx.async_val));
+    }
     let task = Value::Object(task);
     let vars = ctx.running_vars;
     // The layers in the order a read goes through them: the host's own map last.

@@ -27,6 +27,43 @@ pub(in crate::executor) fn polls(task: &PlayTask) -> bool {
     task.async_val > 0 && task.poll.unwrap_or(DEFAULT_POLL) > 0
 }
 
+/// The failure of a task that asks for `async` from an action that does not support it, as
+/// ansible-core 2.19.12's `ActionBase.run` raises it, when the task runs and per host. `async: 0`
+/// runs the task as any other.
+pub(super) fn async_refusal(task: &PlayTask) -> Option<TaskResult> {
+    if task.async_val == 0 || crate::action_plugins::supports_async(&task.module) {
+        return None;
+    }
+    let mut refused = TaskResult::failed_with(format!(
+        "This action ({}) does not support async.",
+        task.module
+    ));
+    refused.0.insert("changed".into(), Value::Bool(false));
+    Some(refused)
+}
+
+/// The `FAILED - RETRYING` line of an attempt, sent at once rather than with the task's result.
+pub(in crate::executor) async fn announce_retry(
+    tx: &tokio::sync::mpsc::Sender<crate::executor::coordinator::Event>,
+    host: &str,
+    index: usize,
+    name: String,
+    task: &PlayTask,
+    left: u32,
+    result: TaskResult,
+) {
+    let _ = tx
+        .send(crate::executor::coordinator::Event::Retrying {
+            host: host.to_string(),
+            index,
+            name,
+            left,
+            result,
+            censored: task.censors(),
+        })
+        .await;
+}
+
 /// What waiting for a started job came to.
 pub(in crate::executor) enum Polled {
     /// The job's last status, or the failure the reference makes of a job that did not finish.
@@ -220,12 +257,14 @@ fn python_repr(value: Option<&Value>) -> String {
 const DEFAULT_ASYNC_DIR: &str = "~/.ansible_async";
 
 /// Where a host keeps its jobs' status files: `ansible_async_dir`, then `ANSIBLE_ASYNC_DIR`,
-/// then the default, as the shell plugin's option is resolved. Expanded on the host.
+/// then `async_dir` of `ansible.cfg`, then the default, as the shell plugin's option is
+/// resolved. Expanded on the host.
 pub(super) fn async_dir(vars: &HostVars) -> String {
     let set = |value: Option<String>| value.filter(|dir| !dir.trim().is_empty());
     set(crate::vars::host_setting(vars, "ansible_async_dir")
         .and_then(Value::as_str)
         .map(str::to_string))
     .or_else(|| set(std::env::var("ANSIBLE_ASYNC_DIR").ok()))
+    .or_else(|| set(crate::config::configured_async_dir()))
     .unwrap_or_else(|| DEFAULT_ASYNC_DIR.to_string())
 }

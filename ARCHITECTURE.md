@@ -69,7 +69,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `play_checks.rs` | What a play is checked for before it runs: `host_pinned`, `max_fail_percentage`, the gather keywords and `vars_files`. |
 | `coordinator.rs` | The serialized view of a batch's progress, and everything that reaches the terminal. |
 | `driver/` | One host's run through a play, from its first step to the moment it leaves. `mod.rs` holds `drive_host`, `boundaries.rs` the scan that decides where the hosts meet, `waits.rs` the waits on the other hosts, `unreachable.rs` the `ignore_unreachable` steps, `timings.rs` the profile records of a link. |
-| `prepare.rs` | Rendering one task for one host: variables, escalation, environment and loop items. |
+| `prepare/` | Rendering one task for one host: variables, escalation, environment and loop items. `mod.rs` holds `prepare`, `plan.rs` the play's shared settings, `escalation.rs` the `become` keywords, `vars.rs` a host's variables, `item.rs` the prepared task and its keywords, `loops.rs` the loop items, `connect.rs` connection and delegation. |
 | `run/` | Running one task and judging its result, on the controller or on the agent: `local` and `controller` run the controller-side modules, `argspec` checks arguments, `judge`, `register` and `retry` decide the outcome, `interpreter` picks the Python, `plugin` runs action plugins, `async_job` polls async jobs, `channel`, `blob`, `batch` and `output` talk to the agent, `record` and `links` keep facts and connections. |
 | `report.rs` | Turning one task's results into the events the coordinator shows. |
 | `include.rs` | Resolving a dynamic `include_tasks` or `include_role` for one host. |

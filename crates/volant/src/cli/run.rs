@@ -8,7 +8,8 @@ use anstream::ColorChoice;
 use tokio::sync::watch;
 
 use super::announce::{
-    announce, announce_callbacks, inventory_sources, module_path_dirs, options_dump, version_line,
+    announce, announce_callbacks, banner_before_vars_refusal, inventory_sources, module_path_dirs,
+    options_dump, version_line,
 };
 use super::args::PlaybookArgs;
 use super::hosts::{play_hosts, resolve_limit, tag_selection};
@@ -486,20 +487,8 @@ async fn run_all(
     // Kept for the local-agent check below, which runs before any host has an effective view
     // and would otherwise read `ansible_connection` from the inventory alone.
     let extra_for_check = extra.clone();
-    let mut store = match VarStore::with_sources(&inventory, &sources, &playbook_dir, extra) {
-        Ok(store) => store,
-        Err(err) => {
-            // The reference reads group_vars and host_vars as the first play starts, so a vaulted
-            // file it cannot decrypt stops the run after that play's banner.
-            let refused = err.downcast_ref::<Refusal>();
-            if refused.is_some_and(|r| r.code == 4)
-                && let Some(play) = playbooks.iter().flat_map(|pb| &pb.plays).next()
-            {
-                out.play(&play.name);
-            }
-            return Err(err);
-        }
-    };
+    let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra)
+        .inspect_err(|err| banner_before_vars_refusal(out, err, &playbooks))?;
     store.set_forks(forks);
     store.set_reload(
         sources.clone(),

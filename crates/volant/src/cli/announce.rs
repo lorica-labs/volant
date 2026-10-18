@@ -223,3 +223,18 @@ fn py_str(text: &str) -> String {
         .replace('\r', r"\r");
     format!("{quote}{body}{quote}")
 }
+
+/// The reference reads group_vars and host_vars as the first play starts, so a vaulted file it
+/// cannot decrypt stops the run after that play's banner.
+pub(super) fn banner_before_vars_refusal(
+    out: &mut Renderer,
+    err: &anyhow::Error,
+    playbooks: &[crate::playbook::Playbook],
+) {
+    let refused = err.downcast_ref::<crate::stats::Refusal>();
+    if refused.is_some_and(|r| r.code == 4)
+        && let Some(play) = playbooks.iter().flat_map(|pb| &pb.plays).next()
+    {
+        out.play(&play.name);
+    }
+}

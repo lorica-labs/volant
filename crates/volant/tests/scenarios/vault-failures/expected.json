@@ -1,9 +1,5 @@
 [
   {
-    "code": 2,
-    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [debug] *******************************************************************\n[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: Attempt to use undecryptable variable: Decryption failed (no vault secrets were found that could decrypt).\n\nTask failed: Finalization of task args for 'ansible.builtin.debug' failed.\nOrigin: <golden-tmp>/task_time.yml:12:7\n\n10               3035\n11   tasks:\n12     - debug: {msg: \"{{ sv }}\"}\n         ^ column 7\n\n<<< caused by >>>\n\nError while resolving value for 'msg': Error rendering template.\nOrigin: <golden-tmp>/task_time.yml:12:20\n\n10               3035\n11   tasks:\n12     - debug: {msg: \"{{ sv }}\"}\n                      ^ column 20\n\n<<< caused by >>>\n\nAttempt to use undecryptable variable: Decryption failed (no vault secrets were found that could decrypt).\nOrigin: <golden-tmp>/task_time.yml:4:9\n\n2   gather_facts: false\n3   vars:\n4     sv: !vault |\n          ^ column 9\n\nfatal: [localhost]: FAILED! => {\"msg\": \"Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: Attempt to use undecryptable variable: Decryption failed (no vault secrets were found that could decrypt).\"}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
-  },
-  {
     "code": 4,
     "stdout": "\nPLAY [localhost] ***************************************************************\n"
   },

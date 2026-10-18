@@ -252,7 +252,7 @@ pub fn register(
     );
     super::yaml_dump::register(env);
 
-    super::tests::register(env);
+    super::test_plugins::register(env);
     add_test(env, "truthy", |v: Value| truthy(&json(&v)));
     add_test(env, "falsy", |v: Value| !truthy(&json(&v)));
     add_test(env, "match", |v: Value, pattern: String, kwargs: Kwargs| {

@@ -50,6 +50,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
 | `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
+| `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `vm.rs` the bytecode rewrite and error conversion, `test_plugins.rs` the Jinja tests Ansible ships. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |
 | `preflight.rs` | What a run refuses before it touches a host. |
@@ -97,7 +98,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | File | What it holds |
 |---|---|
 | `frame.rs`, `messages.rs` | The wire format and the messages. |
-| `modules.rs` | The native and controller modules, and the arguments each one reads. The module reference page is generated from it. |
+| `modules/` | The native and controller modules and the arguments each one reads, the builtin module list, the action plugins and the generated module reference page. |
 
 ### Documentation and tests
 

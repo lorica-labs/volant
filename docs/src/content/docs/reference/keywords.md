@@ -39,7 +39,7 @@ This page is generated from the tables the loader and the pre-flight read, so it
 <tr><td><code>check_mode</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>collections</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>connection</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
-<tr><td><code>debugger</code></td><td><span class="kw kw-partial">partial</span></td><td><span class="kw kw-partial">partial</span></td><td><span class="kw kw-partial">partial</span></td></tr>
+<tr><td><code>debugger</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>delay</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>delegate_facts</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
 <tr><td><code>delegate_to</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
@@ -121,7 +121,12 @@ Each keyword below behaves the same way in every place the grid marks it `partia
 | Keyword | What is missing |
 |---|---|
 | `async` | runs on modules the agent runs, native or Python. It is refused before the run on the controller's own modules, on the action plugins this release runs on the controller (`package`, `service` and `dnf` among them, which the reference runs as jobs), on statements, and on `raw` and `async_status`, which the reference refuses too. `async_dir` in `ansible.cfg` is not read; `ansible_async_dir` and `ANSIBLE_ASYNC_DIR` are. |
-| `debugger` | the prompt answers every command except `r` (redo), which is not supported yet; `p` evaluates a subset of Python |
+
+## Limits of what runs
+
+| Keyword | Limit |
+|---|---|
+| `debugger` | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs. `task_vars` edited at the prompt reach a redo through `u` only |
 
 ## Handlers
 

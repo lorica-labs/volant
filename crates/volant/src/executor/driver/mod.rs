@@ -18,12 +18,12 @@ use crate::playbook::PlayTask;
 use crate::profile::{Phase, micros};
 use crate::python::ModulePayload;
 use crate::render::Dump;
-use crate::stats::Outcome;
 use crate::template::{Templar, TemplateError};
 use crate::transport::{ConnectError, Escalation, Transport};
 use crate::vars::{HostVars, VarStore};
 
 use super::coordinator::{Event, MetaEffect, Progress, escalated_links, render_name};
+use super::debugger::{self, Hold};
 use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, failure_text, pause_of, prepare, retry_name};
 use super::report::report_task;
@@ -39,6 +39,8 @@ use super::run::{
 use super::{LinkKey, RunOptions};
 
 mod boundaries;
+mod messages;
+mod redo;
 mod throttle;
 mod timings;
 mod unreachable;
@@ -47,6 +49,7 @@ mod waits;
 pub(in crate::executor) use boundaries::{Definitions, mark_boundaries};
 use boundaries::{calls_lookup, meets, strict, writes_facts};
 pub(crate) use boundaries::{expressions, strings, task_strings};
+pub(in crate::executor) use throttle::Turn as ThrottleTurn;
 use timings::file_timings;
 use unreachable::{ignore_the_batch, ignore_unreachable};
 use waits::RunOnce;
@@ -165,8 +168,39 @@ pub(super) async fn drive_host(
     // Set when `failed_at` is another host's failure under `any_errors_fatal`: this host has no
     // failed task, so a rescue it enters has no `ansible_failed_task` to read.
     let mut peer_failure = false;
+    // What `failed` was when the current batch began, which `r` at the debugger prompt puts back,
+    // and the arguments the operator edited there for the step it runs again.
+    let mut failed_before = failed;
+    let mut edited: Option<(usize, debugger::Edits)> = None;
 
     'run: loop {
+        // A host that could not be reached leaves the play, unless the operator asks at the
+        // debugger prompt to run the step again.
+        if let Some(msg) = unreachable.take() {
+            // Whatever went wrong, none of these connections is one to hand to anyone.
+            for (_, link) in links.drain() {
+                link.shutdown().await;
+            }
+            if !plan.strategy.pinned() {
+                permit = None;
+            }
+            let gone = Event::Unreachable {
+                host: name.clone(),
+                msg,
+                censored: unreachable_censored,
+                delegate: unreachable_delegate.take(),
+                origin: unreachable_origin.take(),
+                index: unreachable_index,
+            };
+            let Some((at, edits)) = redo::unreachable(&tx, &plan, gone).await else {
+                failed = true;
+                break 'run;
+            };
+            failed = failed_before;
+            edited = edits.map(|edits| (at, edits));
+            pos = at;
+            continue 'run;
+        }
         let c = plan.steps();
         let n = c.steps.len();
         // Another host failed at an `any_errors_fatal` step this host has just finished: this
@@ -208,6 +242,15 @@ pub(super) async fn drive_host(
             }
         }
         if let Some((index, result)) = failed_at.take() {
+            // `r` at the debugger prompt: the step runs again from where the host stood before
+            // it, with the arguments the operator edited, and its first result counts for
+            // nothing.
+            if let Some(args) = debugger::redo_of(&result) {
+                failed = failed_before;
+                edited = args.map(|args| (index, args));
+                pos = index;
+                continue 'run;
+            }
             // A handler that failed under `force_handlers` stops the rest: measured on
             // ansible-core 2.19.12, `good handler` does not run behind a `bad handler` that
             // failed, with the flag and without it.
@@ -285,6 +328,7 @@ pub(super) async fn drive_host(
         if pos >= n || driver.stopped() {
             break 'run;
         }
+        failed_before = failed;
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();
@@ -535,6 +579,7 @@ pub(super) async fn drive_host(
                                     Dump::No,
                                     rescuable,
                                     None,
+                                    Hold::new(&plan, &mut permit),
                                 )
                                 .await
                                 {
@@ -820,6 +865,10 @@ pub(super) async fn drive_host(
                 &options.defaults,
                 &mut warnings,
             );
+            let prepared = match debugger::invalid(&step.task) {
+                Some(err) => Err(err),
+                None => debugger::with_edited(prepared, pos, &mut edited),
+            };
             let took = micros(preparing);
             options.profile.phase(Some(&name), Phase::Prepare, took);
             prepare_micros.insert(pos, took);
@@ -981,7 +1030,8 @@ pub(super) async fn drive_host(
                     // made no attempt to retry.
                     // No delegate on a skipped task: measured on ansible-core 2.19.12, a
                     // `delegate_to` a `when` left out prints `skipping: [h1]` with no arrow.
-                    report_task(
+                    // The one answer it can have is `r` at an `on_skipped` prompt.
+                    if let Some(redo) = report_task(
                         &tx,
                         &name,
                         pos,
@@ -994,8 +1044,13 @@ pub(super) async fn drive_host(
                         Dump::No,
                         false,
                         None,
+                        Hold::new(&plan, &mut permit),
                     )
-                    .await;
+                    .await
+                    {
+                        failed_at = Some((pos, redo));
+                        continue 'run;
+                    }
                     record_registered(
                         &mut store.lock().expect("vars lock"),
                         task,
@@ -1173,6 +1228,7 @@ pub(super) async fn drive_host(
                         dump,
                         rescuable,
                         delegate.as_deref(),
+                        Hold::new(&plan, &mut permit),
                     )
                     .await
                     {
@@ -1255,6 +1311,7 @@ pub(super) async fn drive_host(
                                     dump_of(task),
                                     rescuable,
                                     delegate_name.as_deref(),
+                                    Hold::new(&plan, &mut permit),
                                 )
                                 .await
                                 {
@@ -1298,7 +1355,7 @@ pub(super) async fn drive_host(
                                 unreachable_delegate = delegate_name;
                                 unreachable_index = Some(pos);
                                 unreachable = Some(format!("{err:#}"));
-                                break 'run;
+                                continue 'run;
                             }
                         };
                     if !batch.is_empty()
@@ -1352,7 +1409,8 @@ pub(super) async fn drive_host(
                         || batch_retry.is_some()
                         || batch_action.is_some()
                         || task.ignores_unreachable()
-                        || throttled;
+                        || throttled
+                        || debugger::may_open(task, debugger::by_default(plan.strategy));
                     if let Some(module) = payload {
                         // Off the same variables the connection was resolved from, which is the
                         // point: the module runs where the link goes, so its interpreter has to
@@ -1407,7 +1465,7 @@ pub(super) async fn drive_host(
             if batch_throttle.is_some() && !plan.strategy.pinned() {
                 permit = None;
             }
-            let Some(gate) = driver.throttled(batch[0].0, batch_throttle).await else {
+            let Some(mut gate) = driver.throttled(batch[0].0, batch_throttle).await else {
                 break 'run;
             };
             if permit.is_none() {
@@ -1417,7 +1475,7 @@ pub(super) async fn drive_host(
                     // Nothing in this run closes the semaphore, so this is a bug rather than
                     // a shutdown. Reporting it beats returning as if the host had run.
                     unreachable = Some("the run's fork limit is gone".to_string());
-                    break 'run;
+                    continue 'run;
                 }
             }
             // The delegate's own connection, never the delegating host's. Measured on
@@ -1430,7 +1488,7 @@ pub(super) async fn drive_host(
             // `else` is unreachable and says so rather than guessing a connection.
             let Some(transport) = batch_transport.clone() else {
                 unreachable = Some("the batch lost its resolved connection".to_string());
-                break 'run;
+                continue 'run;
             };
             let key = LinkKey {
                 host: target,
@@ -1528,6 +1586,7 @@ pub(super) async fn drive_host(
                         Dump::No,
                         rescuable,
                         batch_delegate.as_deref(),
+                        Hold::new(&plan, &mut permit).with_turn(&mut gate),
                     )
                     .await;
                     failed |= !rescuable;
@@ -1569,7 +1628,7 @@ pub(super) async fn drive_host(
                         continue 'run;
                     }
                     unreachable = Some(err.to_string());
-                    break 'run;
+                    continue 'run;
                 }
             };
             let mut received: Vec<Vec<Option<TaskResult>>> = batch
@@ -1620,7 +1679,7 @@ pub(super) async fn drive_host(
                     Ok(step) => step,
                     Err(msg) => {
                         unreachable = Some(msg);
-                        break 'run;
+                        continue 'run;
                     }
                 };
                 let step = &c.steps[*index];
@@ -1629,7 +1688,7 @@ pub(super) async fn drive_host(
                 // drop the host's other links, and back in once the task is done, fresh or not.
                 let Some(mut owned) = links.remove(&key) else {
                     unreachable = Some("the batch lost its connection".to_string());
-                    break 'run;
+                    continue 'run;
                 };
                 let mut relink = Relinker {
                     links: &mut links,
@@ -2239,6 +2298,7 @@ pub(super) async fn drive_host(
                     dump_of(task),
                     rescuable,
                     batch_delegate.as_deref(),
+                    Hold::new(&plan, &mut permit).with_turn(&mut gate),
                 )
                 .await
                 {
@@ -2291,7 +2351,7 @@ pub(super) async fn drive_host(
                         continue 'run;
                     }
                     unreachable = Some(msg);
-                    break 'run;
+                    continue 'run;
                 }
                 Ok(BatchOutcome::Cancelled { .. }) => break 'run,
                 Ok(_) => {}
@@ -2321,7 +2381,9 @@ pub(super) async fn drive_host(
             // testing `'Task failed' in result.msg` must still see it. `failed_when` does not get
             // it: there the reference leaves `msg` empty and fills `failed_when_result`.
             let mut result = TaskResult::failed_with(failure_text(&err));
-            if let Some(causes) = throttle::causes(task, &err.0) {
+            if let Some(causes) =
+                debugger::causes(task, &err.0).or_else(|| throttle::causes(task, &err.0))
+            {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
             } else if let Some(detail) = err.0.strip_prefix("Task failed: ")
                 && detail
@@ -2355,6 +2417,7 @@ pub(super) async fn drive_host(
                 dump_of(task),
                 rescuable,
                 None,
+                Hold::new(&plan, &mut permit),
             )
             .await
             {
@@ -2369,23 +2432,6 @@ pub(super) async fn drive_host(
         }
     }
     drop(permit);
-    if let Some(msg) = unreachable {
-        // Whatever went wrong, none of these connections is one to hand to the next play.
-        for (_, link) in links.drain() {
-            link.shutdown().await;
-        }
-        failed = true;
-        let _ = tx
-            .send(Event::Unreachable {
-                host: name.clone(),
-                msg,
-                censored: unreachable_censored,
-                delegate: unreachable_delegate,
-                origin: unreachable_origin,
-                index: unreachable_index,
-            })
-            .await;
-    }
     // A link this driver opened to somebody else's host - a `delegate_to` - goes no further than
     // this play, because the run keeps exactly one link per host and a second one handed back for
     // a host whose own driver also handed one back would race for the same key. Awaited rather
@@ -2466,98 +2512,6 @@ impl Driver<'_> {
     /// Whether the run has been interrupted.
     fn stopped(&self) -> bool {
         *self.stop.borrow()
-    }
-
-    /// Tells the coordinator this host is done with the step at `index`.
-    async fn task_done(&self, index: usize) {
-        let _ = self
-            .tx
-            .send(Event::TaskDone {
-                host: self.name.to_string(),
-                index,
-            })
-            .await;
-    }
-
-    /// Tells the coordinator what the `meta` action at `index` asks of the batch.
-    async fn meta(&self, index: usize, effect: MetaEffect) {
-        let _ = self
-            .tx
-            .send(Event::Meta {
-                host: self.name.to_string(),
-                index,
-                effect,
-            })
-            .await;
-    }
-
-    /// The line of a `meta` whose condition did not hold, with the words the reference gives it
-    /// at `-v`. It is no result the recap counts: measured, a skipped `meta` adds nothing.
-    async fn meta_skipped(&self, index: usize, action: &str, role: Option<&str>) {
-        let host = self.name;
-        let held = format!("{action} conditional evaluated to False");
-        let (msg, why) = match action {
-            "flush_handlers" => (
-                action.to_string(),
-                format!("{held}, not running handlers for {host}"),
-            ),
-            "clear_facts" => (
-                action.to_string(),
-                format!("{held}, not clearing facts and fact cache for {host}"),
-            ),
-            "clear_host_errors" => (
-                action.to_string(),
-                format!("{held}, not clearing host error state for {host}"),
-            ),
-            "end_batch" => (
-                action.to_string(),
-                format!("{held}, continuing current batch"),
-            ),
-            "end_play" => (action.to_string(), format!("{held}, continuing play")),
-            "end_host" => (
-                format!("end_host conditional evaluated to false, continuing execution for {host}"),
-                format!("{held}, continuing execution for {host}"),
-            ),
-            // The reference's sentence runs the two halves together, and so does this.
-            _ => (
-                action.to_string(),
-                format!(
-                    "{held}continuing role {} for {host}",
-                    role.unwrap_or_default()
-                ),
-            ),
-        };
-        let mut result = TaskResult::default();
-        result.0.insert("msg".into(), Value::String(msg));
-        result.0.insert("skipped".into(), Value::Bool(true));
-        result.0.insert("skip_reason".into(), Value::String(why));
-        let _ = self
-            .tx
-            .send(Event::Result {
-                host: host.to_string(),
-                index,
-                label: None,
-                outcome: Outcome::Skipped,
-                result,
-                dump: Dump::No,
-                show: true,
-                counts: false,
-                censored: false,
-                delegate: None,
-                error: None,
-            })
-            .await;
-    }
-
-    /// Asks for the banner of the step at `index`.
-    async fn banner(&self, index: usize) {
-        let _ = self
-            .tx
-            .send(Event::Banner {
-                host: self.name.to_string(),
-                index,
-            })
-            .await;
     }
 }
 

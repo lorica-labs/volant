@@ -26,6 +26,11 @@ async fn two_failed_items(ignored: &[Option<bool>]) -> (bool, Vec<Outcome>) {
         Dump::No,
         false,
         None,
+        Hold {
+            by_default: false,
+            permit: None,
+            turn: None,
+        },
     )
     .await
     .is_some();
@@ -66,6 +71,11 @@ async fn all_items_skipped() -> Vec<(Outcome, bool)> {
         Dump::No,
         false,
         None,
+        Hold {
+            by_default: false,
+            permit: None,
+            turn: None,
+        },
     )
     .await;
     drop(tx);

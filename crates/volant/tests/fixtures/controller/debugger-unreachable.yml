@@ -1,0 +1,6 @@
+- hosts: u1
+  gather_facts: false
+  tasks:
+    - name: reach
+      command: "true"
+      debugger: on_unreachable

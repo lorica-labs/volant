@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: items
+      command: "{{ item }}"
+      loop: ["true", "false"]
+      debugger: on_failed
+    - name: after
+      debug: {msg: after}

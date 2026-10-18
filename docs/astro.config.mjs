@@ -133,6 +133,7 @@ export default defineConfig({
             { label: 'Keywords', slug: 'reference/keywords' },
             { label: 'Modules', slug: 'reference/modules' },
             { label: 'Parity', slug: 'reference/parity' },
+            { label: 'Managed runtime', slug: 'reference/runtime' },
             { label: 'Action plugins', slug: 'reference/action-plugins' },
             { label: 'Exit codes', slug: 'reference/exit-codes' },
             { label: 'Glossary', slug: 'reference/glossary' },

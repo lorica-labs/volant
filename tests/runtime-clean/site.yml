@@ -1,0 +1,20 @@
+# Needs Volant's Python helper (the hash filter is bridged to ansible-core) and the copy and
+# template action plugins. Everything runs on the controller itself, which has no Python.
+- hosts: h1
+  gather_facts: false
+  vars:
+    out: "{{ lookup('env', 'RUNTIME_CLEAN_OUT') | default('/tmp', true) }}"
+  tasks:
+    - name: Copy a file
+      ansible.builtin.copy:
+        content: "hello\n"
+        dest: "{{ out }}/volant-runtime-clean-copy.txt"
+        mode: "0644"
+    - name: Template a file with a bridged filter
+      ansible.builtin.template:
+        src: hash.j2
+        dest: "{{ out }}/volant-runtime-clean-hash.txt"
+        mode: "0644"
+    - name: Check the result
+      ansible.builtin.command: grep -qx 'sha1=59fe31f876a8d8712d83a3fdae69a92af275c043' {{ out }}/volant-runtime-clean-hash.txt
+      changed_when: false

@@ -216,7 +216,7 @@ pub(crate) fn compile(
         run_once: play.run_once,
         timeout: play.timeout,
         throttle: play.throttle.clone(),
-        debugger: play.debugger,
+        debugger: play.debugger.clone(),
         any_errors_fatal: play.any_errors_fatal,
         ignore_errors: play.ignore_errors.clone(),
         ignore_unreachable: play.ignore_unreachable,

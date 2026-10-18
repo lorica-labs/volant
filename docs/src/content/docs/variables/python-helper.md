@@ -23,7 +23,7 @@ Volant renders every argument first and sends the result as data. The helper doe
 
 ## How the interpreter is found
 
-The helper is the same Python 3 with `ansible-core` that builds module payloads. Volant uses `VOLANT_PYTHON` when it is set, and nothing else. Otherwise it tries the active virtual environment, then `python3` on your `PATH`.
+The helper is the same Python 3 with `ansible-core` that builds module payloads. Volant uses `VOLANT_PYTHON` when it is set, and nothing else. Otherwise it tries its [managed runtime](/reference/runtime/), then the active virtual environment, then `python3` on your `PATH`, and installs the managed runtime when none works.
 
 An interpreter without `ansible-core` is refused by name, and the message says which interpreters were tried. A task that calls a bridged name fails with a message such as `filter 'hash' needs the Python helper, which could not start: …`, followed by the reason, and the run exits non-zero.
 

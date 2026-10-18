@@ -225,6 +225,7 @@ impl SshTarget {
         offered: Option<&str>,
     ) -> Result<Captured, ConnectError> {
         let argv = self.ssh_argv_with(remote_command, stdin.is_some());
+        super::trace::exec(self, &argv);
         let mut command = Command::new(&argv[0]);
         command
             .args(&argv[1..])
@@ -254,6 +255,7 @@ impl SshTarget {
             stdout: String::from_utf8_lossy(&output.stdout).into_owned(),
             stderr: String::from_utf8_lossy(&output.stderr).into_owned(),
         };
+        super::trace::result(self, &captured);
         // `ssh` reports its own failures as 255 and none of the bootstrap commands ever
         // returns it, so this cannot swallow a remote command's own status.
         if captured.code == Some(EXIT_SSH_FAILURE) {

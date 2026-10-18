@@ -1,0 +1,6 @@
+# At -vvvv the run lists the plugin set-up and every option it holds, in the reference's order; the transfer arguments show though no transfer of this engine uses them.
+runs:
+  - args: [-vvvv, -i, inv.ini, p.yml]
+  - args: [-vvvv, -i, inv.ini, -u, bob, --private-key, K, -T, "20", -e, x=1, --ssh-common-args=-o A=10, --sftp-extra-args=-o A=8, --scp-extra-args=-o A=7, --ssh-extra-args=-o A=9, p.yml]
+  - args: [-vvvv, -i, inv.ini, -b, --become-user, root, -C, -D, -l, l, --skip-tags, x, --start-at-task, first task, --force-handlers, -M, mods, --flush-cache, p.yml]
+needs: [ansible-core]

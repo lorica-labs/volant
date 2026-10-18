@@ -77,6 +77,7 @@ jobs:
       - name: Same tests as the merge base
         env:
           BASE_REF: ${{ github.base_ref }}
+          CARGO_TARGET_DIR: ${{ github.workspace }}/target
         run: |
           just test-names > "$RUNNER_TEMP/head.txt"
           git worktree add "$RUNNER_TEMP/base" "$(git merge-base "origin/${BASE_REF}" HEAD)"

@@ -49,14 +49,13 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `inventory/` | Inventories from every source plugin, with the group graph in `graph.rs` and host patterns, globs and subscripts in `patterns.rs`. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
 | `vars/` | Variable sources and Ansible's precedence: `store` builds the `VarStore`, `layers` merges a host's view, `facts` holds gathered and cached facts, `magic` the magic variables, `load` reads variable files. |
-| `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`. `vm.rs` the bytecode rewrite and error conversion. |
-| `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `vm.rs` the bytecode rewrite and error conversion, `test_plugins.rs` the Jinja tests Ansible ships. |
+| `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `vm.rs` the bytecode rewrite and error conversion. `filters/` holds the filters, one file each for JSON and YAML, regular expressions, collections and text, with `register` in `mod.rs`; `lookups/` the lookup plugins, with `lookup` and its dispatch in `mod.rs` and one file each for the basic ones, `template`, `fileglob` and `first_found`; `test_plugins.rs` the Jinja tests Ansible ships. |
 | `keywords.rs` | Every keyword ansible-core knows, and whether this release runs or refuses it. The keyword reference page is generated from it. |
 | `action_plugins/` | The action plugins this release runs itself (`package`, `service`), and the builtin modules whose plugin it does not have yet and refuses. |
 | `preflight.rs` | What a run refuses before it touches a host. |
 | `compile/`, `roles.rs` | A play flattened into steps (`builder` walks the tree, `model` and `compiled` hold the steps, `nav` finds the next one, `include` grafts dynamic includes), and roles spliced into them. |
 | `listing.rs` | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`. |
-| `transport/`, `agent.rs` | Reaching a host, finding the agent binaries, and talking to a running agent. `transport` holds the connection settings, the `ssh` command lines and shared connections, the agent bootstrap, and `escalation/` for `sudo` and `su`. |
+| `transport/`, `agent/` | Reaching a host, finding the agent binaries (`agent/source.rs`), the blob frames sent to it (`agent/blobs.rs`), and talking to a running agent (`agent/mod.rs`). `transport` holds the connection settings, the `ssh` command lines and shared connections, the agent bootstrap, and `escalation/` for `sudo` and `su`. |
 | `agent/embedded.rs`, `build.rs` | The agents built into a release controller, and their extraction to a cache directory on first use. |
 | `python/`, `python_helper.py` | The Python helper that builds module payloads: `types` holds the facts and payload shapes, `reach` what a run can reach, `union_build` builds the union, `builder` talks to the helper, `action_helper` runs action plugins. |
 | `render/`, `stats.rs` | Console output, the recap, and exit codes. `render/` keeps the renderer in `mod.rs`, one task's result line in `result.rs`, the error blocks in `error.rs` and Ansible's JSON text in `recap_json.rs`. |
@@ -65,11 +64,13 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 
 | File | What it holds |
 |---|---|
-| `mod.rs` | The run's settings, the connections kept between plays, and the entry point the command line calls. |
+| `mod.rs` | The run's settings and `run_play`, the entry point the command line calls. |
+| `state.rs` | What a run carries from play to play: the abort, the reboots counted, the connections kept and the failed hosts. |
+| `play_checks.rs` | What a play is checked for before it runs: `host_pinned`, `max_fail_percentage`, the gather keywords and `vars_files`. |
 | `coordinator.rs` | The serialized view of a batch's progress, and everything that reaches the terminal. |
 | `driver/` | One host's run through a play, from its first step to the moment it leaves. `mod.rs` holds `drive_host`, `boundaries.rs` the scan that decides where the hosts meet, `waits.rs` the waits on the other hosts, `unreachable.rs` the `ignore_unreachable` steps, `timings.rs` the profile records of a link. |
 | `prepare.rs` | Rendering one task for one host: variables, escalation, environment and loop items. |
-| `run.rs` | Running one task and judging its result, on the controller or on the agent. |
+| `run/` | Running one task and judging its result, on the controller or on the agent: `local` and `controller` run the controller-side modules, `argspec` checks arguments, `judge`, `register` and `retry` decide the outcome, `interpreter` picks the Python, `plugin` runs action plugins, `async_job` polls async jobs, `channel`, `blob`, `batch` and `output` talk to the agent, `record` and `links` keep facts and connections. |
 | `report.rs` | Turning one task's results into the events the coordinator shows. |
 | `include.rs` | Resolving a dynamic `include_tasks` or `include_role` for one host. |
 
@@ -89,6 +90,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 | `natives/setup/` | The native `setup`: one file per collector, plus the request, the collection run and the `fnmatch` filter. |
 | `natives/systemd/` | The native `systemd`: the answer, the request and its options, the `systemctl` host, and the reading of `systemctl show` and init scripts. |
 | `natives/file/` | The native `file`: the answer and the states it ensures, and the check before a tree is removed. |
+| `natives/group/` | The native `group`, and what `user` shares with it: the host gate, the commands, the account files and the result keys. |
 | `natives/package_facts/` | The native `package_facts` for apt: the run and its arguments, dpkg's status, the configured sources, and the scan of the lists. |
 | `blobs/` | The cache of module payloads, addressed by hash: reading the controller's messages, the staged files of a connection, and the filesystem checks. |
 | `interpreter.rs` | Finding the host's Python interpreters, in the order Ansible prefers them. |

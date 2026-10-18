@@ -51,6 +51,14 @@ A file that exists but cannot be read is skipped, and the run continues with the
   How many hosts a play works on at once. Zero or a value that is not a number is rejected before the run starts. Playbooks read the current value as `ansible_forks`.
 </Option>
 
+<Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
+  The directory on each host that holds the status files of [async tasks](/playbooks/how-a-play-runs/#async-tasks). `ansible_async_dir` overrides it.
+</Option>
+
+<Option name="enable_task_debugger" id="defaults-enable-task-debugger" default="false" env="ANSIBLE_ENABLE_TASK_DEBUGGER">
+  Open the [debugger](/playbooks/how-a-play-runs/#other-strategies) after every failed or unreachable task.
+</Option>
+
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
   Run notified handlers even on hosts that failed.
 </Option>

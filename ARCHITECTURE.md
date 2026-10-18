@@ -46,7 +46,7 @@ The controller keeps one Python helper process for the whole run. It uses ansibl
 |---|---|
 | `cli.rs` | The `playbook` command and its arguments. |
 | `config.rs` | The `ansible.cfg` settings this release reads. |
-| `inventory.rs` | INI inventories and host patterns. |
+| `inventory/` | Inventories from every source plugin, with the group graph in `graph.rs` and host patterns, globs and subscripts in `patterns.rs`. |
 | `playbook/`, `yaml.rs` | Loading plays: `model` holds the parsed shape, `load`, `play`, `task` and `fields` parse it, `keywords` the keyword tables. YAML on saphyr, with PyYAML's scalar typing and Ansible's tags. |
 | `vars.rs` | Variable sources, Ansible's precedence, and the magic variables. |
 | `template/` | The Jinja2 templar, with Ansible's filters, tests and lookups. `templar.rs` is `Templar`, `context.rs` the variables a render reads and their trust, `env.rs` the minijinja environment and the registration helpers, `vm.rs` the bytecode rewrite and error conversion. |

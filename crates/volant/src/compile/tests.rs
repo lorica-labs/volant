@@ -1,9 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use rstest::rstest;
-use serde_json::json;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
+use rstest::rstest;
+use serde_json::{Map, Value, json};
+
+use super::include::include_role_options;
 use super::*;
-use crate::playbook::parse;
+use crate::inventory::Host;
+use crate::playbook::{PlayTask, parse};
+use crate::roles::RoleSearch;
+use crate::template::Templar;
 use crate::testing::{compiled, play, scratch};
 
 /// A file beside the importer wins; the role's own `tasks/` is the fallback.

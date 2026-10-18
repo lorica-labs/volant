@@ -6,11 +6,15 @@ use rstest::rstest;
 use serde_json::{Map, Value, json};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
+#[cfg(unix)]
+use super::bootstrap::is_this_agent;
 use super::bootstrap::{
     Captured, EXIT_AGENT_MISSING, EXIT_AGENT_UNRUNNABLE, EXIT_SSH_FAILURE, EXIT_UNAME_FAILED,
     bootstrap_probe_ran,
 };
 use super::control::{CONTROL_PATH_MAX, asks_for_debug};
+#[cfg(unix)]
+use super::control::{STOP_MASTER_TIMEOUT, control_dir_in};
 use super::escalation::{
     SudoForm, agent_version_ran, become_success, escalated_command, escalation_outcome,
     interactive, local_argv, preamble, settle_form, su_command, su_ended, su_exchange, sudo_prefix,

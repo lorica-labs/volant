@@ -138,7 +138,11 @@ pub fn control_dir() -> Option<PathBuf> {
 /// over too: `ssh` reads `-o ControlPath=...` as a configuration line, where a space ends the
 /// value and `%` starts a token.
 #[cfg(unix)]
-fn control_dir_in(runtime: Option<&Path>, tmp: &Path, uid: u32) -> Result<PathBuf, String> {
+pub(super) fn control_dir_in(
+    runtime: Option<&Path>,
+    tmp: &Path,
+    uid: u32,
+) -> Result<PathBuf, String> {
     use std::os::unix::fs::{DirBuilderExt, MetadataExt};
     let plain = |p: &Path| {
         p.to_str().is_some_and(|text| {

@@ -287,7 +287,7 @@ pub(super) fn first_words(text: &str, fallback: &str) -> String {
 /// printed this version and a hash of its own file equal to the blake3 hash of the binary this
 /// controller would upload. The version alone proves nothing, since any build of this source
 /// reports it.
-fn is_this_agent(probe: &Captured, hash: &str) -> bool {
+pub(super) fn is_this_agent(probe: &Captured, hash: &str) -> bool {
     let expected = format!("volant-agent {} {hash}", env!("CARGO_PKG_VERSION"));
     probe.code == Some(0) && probe.stdout.lines().nth(1).map(str::trim) == Some(expected.as_str())
 }

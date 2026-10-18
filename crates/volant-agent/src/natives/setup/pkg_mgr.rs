@@ -17,20 +17,4 @@ pub fn collect(host: &Host) -> Result<Map<String, Value>, String> {
 }
 
 #[cfg(test)]
-mod tests {
-    use super::super::tests::{FakeRoot, probe};
-    use super::*;
-
-    #[test]
-    fn the_debian_family_uses_apt_unless_rpm_is_there() {
-        let fake = FakeRoot::new("pkg-mgr");
-        let (root, probe) = (fake.root(), probe());
-        fake.write("/usr/bin/dnf", "");
-        assert_eq!(
-            collect(&fake.host(&root, &probe)).unwrap()["pkg_mgr"],
-            "apt"
-        );
-        fake.write("/usr/bin/rpm", "");
-        assert!(collect(&fake.host(&root, &probe)).is_err());
-    }
-}
+mod tests;

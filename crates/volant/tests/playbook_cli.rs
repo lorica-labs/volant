@@ -1378,7 +1378,7 @@ fn fake_password_host(name: &str, expected: &str) -> std::path::PathBuf {
     let dir = fake_su_host(name);
     std::fs::write(dir.join("expected"), expected).unwrap();
     let script = "#!/bin/sh\n\
-        echo \"$0 $*\" >> \"$FAKE_SSH_DIR/ssh.log\"\n\
+        printf '%s\n' \"$0 $*\" >> \"$FAKE_SSH_DIR/ssh.log\"\n\
         env | sort >> \"$FAKE_SSH_DIR/ssh.log.env\"\n\
         ask=\n\
         case \" $* \" in *' BatchMode=no '*) ask=1;; esac\n\

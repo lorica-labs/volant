@@ -13,6 +13,9 @@ homepage.workspace = true
 documentation = "https://volant.sh"
 authors.workspace = true
 build = "build.rs"
+# The scenario fixtures hold symlinks, some dangling on purpose, that `cargo package` cannot archive;
+# integration tests are not part of the published crate.
+exclude = ["tests/scenarios/"]
 
 [lints]
 workspace = true

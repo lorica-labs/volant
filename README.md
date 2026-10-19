@@ -100,7 +100,7 @@ Not there yet: a few modules backed by an action plugin (`uri`, `script`), a col
 
 ## Contributing
 
-Bug reports, fixes and ideas are welcome. Start with [CONTRIBUTING.md](https://github.com/lorica-labs/volant/blob/main/CONTRIBUTING.md). Questions go to [Discussions](https://github.com/lorica-labs/volant/discussions), bugs and feature requests to [Issues](https://github.com/lorica-labs/volant/issues), and security problems to the [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md).
+Bug reports, fixes and ideas are welcome. Start with [CONTRIBUTING.md](https://github.com/lorica-labs/volant/blob/main/CONTRIBUTING.md). The [roadmap board](https://github.com/orgs/lorica-labs/projects/1) lists the planned work as issues, each with the expected behaviour and where to start in the code. Questions go to [Discussions](https://github.com/lorica-labs/volant/discussions), bugs and feature requests to [Issues](https://github.com/lorica-labs/volant/issues), and security problems to the [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md).
 
 ## License
 

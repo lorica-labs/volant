@@ -5,6 +5,7 @@ Thanks for your interest. Bug reports, fixes, features and documentation are all
 ## Before you start
 
 - Search the existing [issues](https://github.com/lorica-labs/volant/issues) and [discussions](https://github.com/lorica-labs/volant/discussions).
+- Looking for something to work on? The [roadmap board](https://github.com/orgs/lorica-labs/projects/1) groups the planned work by release. Each issue gives the expected behaviour, the acceptance criteria and where to start; comment on it before you begin.
 - For anything larger than a fix, open an issue first so we can agree on the approach.
 - Report security problems privately, as described in [SECURITY.md](SECURITY.md), never in a public issue.
 - A playbook that behaves differently under Volant and `ansible-playbook` is a bug. The [compatibility template](https://github.com/lorica-labs/volant/issues/new?template=compat.yml) asks for what we need to reproduce it.

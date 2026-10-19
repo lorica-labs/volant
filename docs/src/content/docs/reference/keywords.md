@@ -18,7 +18,7 @@ A keyword inside a file that only a dynamic `include_tasks` or `include_role` na
 
 A keyword that takes a boolean or a number may be written as a template: `become`, `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable`, `delegate_facts`, `timeout`, `async` and `poll`. It is rendered for each host when its task runs, once the task's `when` has held, and a value the keyword cannot take fails the task with the reference's sentence. `gather_facts` and `force_handlers` of a play are rendered when the play starts. A literal that is not a boolean is refused when the playbook loads.
 
-This page is generated from the tables the loader and the pre-flight read, so it always describes the release it ships with.
+This page is generated from the tables the loader and the pre-flight read, so it always describes the release it ships with. A status says what Volant does with the keyword, not that every value works: the [known gaps](/start/compatibility/#known-gaps) list the values that fail.
 
 ## All keywords
 

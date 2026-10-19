@@ -13993,5 +13993,162 @@
       "template": "{{ ('{:.70000f}'.format(1.5)) | length }}"
     },
     "result": 70002
+  },
+  {
+    "case": {
+      "template": "{{ 7 // -2 }}"
+    },
+    "result": -4
+  },
+  {
+    "case": {
+      "template": "{{ -7 // 2 }}"
+    },
+    "result": -4
+  },
+  {
+    "case": {
+      "template": "{{ 7.5 // -2 }}"
+    },
+    "result": -4.0
+  },
+  {
+    "case": {
+      "template": "{{ 1 / 0 }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: division by zero"
+  },
+  {
+    "case": {
+      "template": "{{ 1 // 0 }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: integer division or modulo by zero"
+  },
+  {
+    "case": {
+      "template": "{{ 2.5 | round }}"
+    },
+    "result": 2.0
+  },
+  {
+    "case": {
+      "template": "{{ 3.5 | round }}"
+    },
+    "result": 4.0
+  },
+  {
+    "case": {
+      "template": "{{ 0.125 | round(2) }}"
+    },
+    "result": 0.12
+  },
+  {
+    "case": {
+      "template": "{{ true is number }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ [true, true] | sum }}"
+    },
+    "result": 2
+  },
+  {
+    "case": {
+      "template": "{{ \"don't\" | title }}"
+    },
+    "result": "Don't"
+  },
+  {
+    "case": {
+      "template": "{{ 'a-b c(d' | title }}"
+    },
+    "result": "A-B C(D"
+  },
+  {
+    "case": {
+      "template": "{{ -x.y }}",
+      "vars": {
+        "x": {
+          "y": 3
+        }
+      }
+    },
+    "result": -3
+  },
+  {
+    "case": {
+      "template": "{{ -1 | abs }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "template": "{{ 1 and 'x' }}"
+    },
+    "result": "x"
+  },
+  {
+    "case": {
+      "template": "{{ 0 or 'y' }}"
+    },
+    "result": "y"
+  },
+  {
+    "case": {
+      "template": "{{ ['b', 'P', 'n'] | max }}"
+    },
+    "result": "P"
+  },
+  {
+    "case": {
+      "template": "{{ ['b', 'P', 'n'] | min }}"
+    },
+    "result": "b"
+  },
+  {
+    "case": {
+      "template": "{{ ['b', 'P', 'n'] | max(case_sensitive=true) }}"
+    },
+    "result": "n"
+  },
+  {
+    "case": {
+      "template": "{{ [{'a': 2}, {'a': 5}] | min(attribute='a') }}"
+    },
+    "result": {
+      "a": 2
+    }
+  },
+  {
+    "case": {
+      "template": "{{ 'FOO 1' is upper }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ '' is upper }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ 'foo 1' is lower }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ['A'] is upper }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 1 is lower }}"
+    },
+    "result": false
   }
 ]

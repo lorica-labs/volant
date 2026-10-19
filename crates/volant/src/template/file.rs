@@ -6,7 +6,6 @@
 
 use std::borrow::Cow;
 
-use minijinja::machinery::WhitespaceConfig;
 use minijinja::syntax::SyntaxConfig;
 
 use super::{Templar, TemplateError, Vars, context_of, convert_error, render_str, take_failure};
@@ -213,16 +212,20 @@ impl Templar {
         let syntax = effective
             .syntax
             .config()
+            .and_then(|syntax| {
+                syntax
+                    .to_builder()
+                    .keep_trailing_newline(effective.keep_trailing_newline)
+                    .lstrip_blocks(effective.lstrip_blocks)
+                    .trim_blocks(effective.trim_blocks)
+                    .build()
+                    .map_err(|err| format!("these delimiters cannot be used together: {err}"))
+            })
             .map_err(|msg| TemplateError(format!("Syntax error in template: {msg}")))?;
-        let ws = WhitespaceConfig {
-            keep_trailing_newline: effective.keep_trailing_newline,
-            lstrip_blocks: effective.lstrip_blocks,
-            trim_blocks: effective.trim_blocks,
-        };
         let normalized = body.replace("\r\n", "\n").replace('\r', "\n");
         let (ctx, _tainted) = context_of(self, vars.into());
         let name = options.name.as_deref().unwrap_or("<string>");
-        let rendered = render_str(self, name, &normalized, &ctx, ws, syntax).map_err(convert_error);
+        let rendered = render_str(self, name, &normalized, &ctx, syntax).map_err(convert_error);
         let mut rendered = match take_failure(&ctx) {
             Some(error) => return Err(error),
             None => rendered?,

@@ -8,7 +8,7 @@
 use std::collections::hash_map::RandomState;
 use std::hash::{BuildHasher, Hasher};
 
-use minijinja::value::{Rest, ValueKind};
+use minijinja::value::{Rest, ValueKind, ValueOrKwargs};
 use minijinja::{Error, ErrorKind, Value};
 
 use super::globals::{Callee, bind, python_type};
@@ -77,7 +77,8 @@ fn integer(value: &Value) -> Result<i64, Error> {
 /// `lipsum`. Measured on ansible-core 2.19.12: `html` is read as a truth value, `max` may be
 /// `none` (Python then draws from `0` up to `min`), and a bound is read only when a paragraph
 /// is made, so `lipsum(0, true, 'a')` is empty.
-pub(super) fn lipsum(args: Rest<Value>) -> Result<Value, Error> {
+pub(super) fn lipsum(args: Rest<ValueOrKwargs>) -> Result<Value, Error> {
+    let args = args.into_values();
     let [count, html, min, max] = bind(
         Callee::Python,
         "generate_lorem_ipsum",

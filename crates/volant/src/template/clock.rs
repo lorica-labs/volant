@@ -11,7 +11,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use minijinja::value::{Object, ObjectRepr, Rest, ValueKind};
+use minijinja::value::{Object, ObjectRepr, Rest, ValueKind, ValueOrKwargs};
 use minijinja::{Error, ErrorKind, State, Value};
 
 use super::globals::{Callee, bind, python_type};
@@ -259,7 +259,7 @@ impl Object for DateTime {
 
     fn call_method(
         self: &Arc<Self>,
-        _state: &State<'_, '_>,
+        _state: &mut State<'_, '_>,
         method: &str,
         args: &[Value],
     ) -> Result<Value, Error> {
@@ -355,7 +355,8 @@ impl DateTime {
 /// `now(utc=False, fmt=None)`. Measured on ansible-core 2.19.12: any true `utc` takes UTC, any
 /// false or empty `fmt` leaves the `datetime` as it is, and a true `fmt` that is not text fails
 /// in `strftime`.
-pub(super) fn now(args: Rest<Value>) -> Result<Value, Error> {
+pub(super) fn now(args: Rest<ValueOrKwargs>) -> Result<Value, Error> {
+    let args = args.into_values();
     let [utc, format] = bind(Callee::Python, "_now", &["utc", "fmt"], &args)?;
     let now = DateTime::now(utc.is_some_and(|utc| utc.is_true()));
     match format.filter(Value::is_true) {

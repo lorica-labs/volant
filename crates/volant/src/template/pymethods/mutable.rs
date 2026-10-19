@@ -203,7 +203,7 @@ impl Object for MutList {
 
     fn call_method(
         self: &Arc<Self>,
-        _state: &State<'_, '_>,
+        _state: &mut State<'_, '_>,
         method: &str,
         args: &[Value],
     ) -> Result<Value, Error> {
@@ -227,7 +227,7 @@ impl Object for MutDict {
 
     fn call_method(
         self: &Arc<Self>,
-        _state: &State<'_, '_>,
+        _state: &mut State<'_, '_>,
         method: &str,
         args: &[Value],
     ) -> Result<Value, Error> {
@@ -343,11 +343,11 @@ impl Snapshot {
         if let Some(frozen) = dict.frozen() {
             return frozen;
         }
-        let copied: Value = dict
-            .entries()
-            .iter()
-            .map(|(k, v)| (k.clone(), self.copy(v)))
-            .collect();
+        let copied = Value::from_pairs(
+            dict.entries()
+                .iter()
+                .map(|(k, v)| (k.clone(), self.copy(v))),
+        );
         self.seen.insert(at, copied.clone());
         copied
     }
@@ -364,10 +364,7 @@ impl Snapshot {
                 return Value::from(items.iter().map(|item| self.copy(item)).collect::<Vec<_>>());
             }
             if let Some(entries) = plain_map(value) {
-                return entries
-                    .iter()
-                    .map(|(k, v)| (k.clone(), self.copy(v)))
-                    .collect();
+                return Value::from_pairs(entries.iter().map(|(k, v)| (k.clone(), self.copy(v))));
             }
         }
         // A lazy list (`a + b`) still holds what it was built from.

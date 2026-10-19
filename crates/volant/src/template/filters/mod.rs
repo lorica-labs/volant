@@ -294,7 +294,7 @@ fn data(v: &Value) -> Result<serde_json::Value, Error> {
 }
 
 fn from_json_value(v: serde_json::Value) -> Value {
-    Value::from_serialize(&v)
+    Value::from(minijinja::value::Serde(&v))
 }
 
 fn truthy_value(value: Option<Value>) -> bool {

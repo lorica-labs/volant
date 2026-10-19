@@ -43,7 +43,7 @@ pub(crate) fn format_filter(
     for name in &names {
         pairs.push((Value::from(name.as_str()), kwargs.get::<Value>(name)?));
     }
-    interpolate(&text, &pairs.into_iter().collect(), false).map(Value::from)
+    interpolate(&text, &Value::from_pairs(pairs), false).map(Value::from)
 }
 
 /// An integer or a float as the numeric operators read it: a bool counts as 0 or 1.

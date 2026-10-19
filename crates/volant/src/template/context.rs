@@ -61,7 +61,7 @@ impl Object for LoopView {
         } else {
             self.fields.get(key)
         };
-        found.map(minijinja::Value::from_serialize)
+        found.map(|v| minijinja::Value::from(minijinja::value::Serde(v)))
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
@@ -417,9 +417,9 @@ impl Object for Hostvars {
             self.tainted.store(true, Ordering::Relaxed);
         }
         self.memo.get(key, || {
-            self.hosts
-                .get(key)
-                .map(|entry| minijinja::Value::from_serialize(&*crate::vars::settled(entry)))
+            self.hosts.get(key).map(|entry| {
+                minijinja::Value::from(minijinja::value::Serde(&*crate::vars::settled(entry)))
+            })
         })
     }
 

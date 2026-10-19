@@ -74,7 +74,9 @@ pub(super) fn call(me: &MutDict, name: &str, args: &[Value]) -> Option<Result<Va
             for k in iterate(&a[0])? {
                 keys.push(key(&k)?);
             }
-            Ok(keys.into_iter().map(|k| (k, value.clone())).collect())
+            Ok(Value::from_pairs(
+                keys.into_iter().map(|k| (k, value.clone())),
+            ))
         }),
         _ => return None,
     })

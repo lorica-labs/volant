@@ -3,7 +3,6 @@
 
 use std::borrow::Cow;
 
-use minijinja::machinery::WhitespaceConfig;
 use minijinja::syntax::SyntaxConfig;
 use serde_json::Value;
 
@@ -104,13 +103,12 @@ impl Templar {
             return Ok(with_line_ends(value, text));
         }
         // The line end is dropped by hand, so the lexer is told to keep what is left.
-        let ws = WhitespaceConfig {
-            keep_trailing_newline: true,
-            lstrip_blocks: false,
-            trim_blocks: true,
-        };
-        let counted = render_counted(self, "<string>", body, ctx, ws, SyntaxConfig::default())
-            .map_err(convert_error);
+        let syntax = SyntaxConfig::builder()
+            .keep_trailing_newline(true)
+            .trim_blocks(true)
+            .build()
+            .map_err(|err| TemplateError(err.to_string()))?;
+        let counted = render_counted(self, "<string>", body, ctx, syntax).map_err(convert_error);
         // A variable the text read failed to render: that is the error, whatever the undefined
         // value it was read as did to the text.
         if let Some(error) = take_failure(ctx) {

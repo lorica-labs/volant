@@ -8,7 +8,7 @@ use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, LazyLock, OnceLock};
 
-use minijinja::value::{Kwargs, Rest, ValueKind};
+use minijinja::value::{Kwargs, Rest, ValueKind, ValueOrKwargs};
 use minijinja::{Environment, Error, ErrorKind, State, Value};
 use serde_json::Map;
 
@@ -98,7 +98,8 @@ pub(super) fn register(
     let bridge = Arc::clone(bridge);
     let owned = name.to_string();
     let resolved = Arc::new(OnceLock::new());
-    let call = move |_: &State, Rest(args): Rest<Value>| -> Result<Value, Error> {
+    let call = move |_: &State, args: Rest<ValueOrKwargs>| -> Result<Value, Error> {
+        let args = args.into_values();
         if super::any_undefined(&args) {
             // The name is resolved first, as ansible-core resolves it: a filter it does not
             // know fails even on an undefined value.
@@ -123,7 +124,7 @@ pub(super) fn register(
         let (args, kwargs) = sendable(kind, &owned, positional, keywords)?;
         bridge
             .call(kind, &owned, &args, &kwargs, None)
-            .map(|value| Value::from_serialize(&value))
+            .map(|value| Value::from(minijinja::value::Serde(&value)))
             .map_err(|err| failed(kind, &owned, err))
     };
     match kind {
@@ -165,7 +166,7 @@ pub(super) fn lookup(
     super::lookups::taint(state);
     bridge
         .call(kind, name, &args, &kwargs, Some(&vars))
-        .map(|value| Value::from_serialize(&value))
+        .map(|value| Value::from(minijinja::value::Serde(&value)))
         .map_err(|err| failed(kind, name, err))
 }
 

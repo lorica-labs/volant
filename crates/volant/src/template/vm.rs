@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use minijinja::machinery::{
-    CodeGenerator, CompiledTemplate, Instruction, Instructions, TemplateConfig, Vm,
-    WhitespaceConfig, make_string_output, parse_expr,
+    CodeGenerator, CompiledTemplate, Instruction, Instructions, TemplateConfig, eval,
+    make_string_output, parse_expr,
 };
 use minijinja::syntax::SyntaxConfig;
 use minijinja::{AutoEscape, ErrorKind};
@@ -105,7 +105,6 @@ pub(super) struct TemplateReads {
 pub(super) fn template_reads(source: &str) -> Option<TemplateReads> {
     let config = TemplateConfig {
         syntax_config: SyntaxConfig::default(),
-        ws_config: WhitespaceConfig::default(),
         default_auto_escape: Arc::new(|_| AutoEscape::None),
     };
     let compiled = no_panic(|| CompiledTemplate::new("<reads>", source, &config)).ok()?;
@@ -191,6 +190,18 @@ pub(super) fn route_calls(instructions: &mut Instructions<'_>, mutating: bool) -
         };
         if let Some(named) = named {
             *op = Instruction::LoadConst(minijinja::Value::from(named));
+        }
+        // Tuples are read as lists, which is what minijinja made of them before it had tuples
+        // of its own: the list helpers, the in-place methods and `%` all know lists. A tuple
+        // stays changeable in place and prints as a list, as it always did here.
+        match op {
+            Instruction::BuildTuple(n) => *op = Instruction::BuildList(*n),
+            Instruction::LoadConst(value) => {
+                if let Some(listed) = tuples_as_lists(value) {
+                    *value = listed;
+                }
+            }
+            _ => {}
         }
         match op {
             Instruction::StringConcat => *op = Instruction::CallFunction(CONCAT_KEY, Some(2)),
@@ -322,6 +333,49 @@ pub(super) fn note_emit(out: &minijinja::Output<'_>, value: &minijinja::Value) {
     });
 }
 
+/// `value` with every tuple in it made a list; `None` when it holds no tuple.
+fn tuples_as_lists(value: &minijinja::Value) -> Option<minijinja::Value> {
+    use minijinja::value::{Tuple, ValueKind};
+    if let Some(tuple) = value.downcast_object_ref::<Tuple>() {
+        let items = tuple
+            .iter()
+            .map(|item| tuples_as_lists(item).unwrap_or_else(|| item.clone()));
+        return Some(minijinja::Value::from(items.collect::<Vec<_>>()));
+    }
+    match value.kind() {
+        ValueKind::Seq => {
+            let items: Vec<_> = value.try_iter().ok()?.collect();
+            let listed: Vec<_> = items.iter().map(tuples_as_lists).collect();
+            listed.iter().any(Option::is_some).then(|| {
+                let pairs = items.iter().zip(listed);
+                minijinja::Value::from(
+                    pairs
+                        .map(|(item, l)| l.unwrap_or_else(|| item.clone()))
+                        .collect::<Vec<_>>(),
+                )
+            })
+        }
+        ValueKind::Map => {
+            let pairs: Vec<_> = value
+                .try_iter()
+                .ok()?
+                .map(|key| {
+                    let item = value.get_item(&key).unwrap_or_default();
+                    (key, tuples_as_lists(&item), item)
+                })
+                .collect();
+            pairs.iter().any(|(_, l, _)| l.is_some()).then(|| {
+                minijinja::Value::from_pairs(
+                    pairs
+                        .into_iter()
+                        .map(|(key, l, item)| (key, l.unwrap_or(item))),
+                )
+            })
+        }
+        _ => None,
+    }
+}
+
 /// Whether an instruction pushes a list written out in the template, `(a, b)` or `['a', 'b']`: what
 /// stands on the right of `%` as a tuple does. A list that a variable holds, or a call answers, is
 /// one argument, as it is in Python.
@@ -355,7 +409,7 @@ pub(super) fn mutates(instructions: &Instructions<'_>) -> bool {
 }
 
 /// `env.render_named_str`, with `~` routed through [`concat()`]. Compiled once per call, as
-/// `render_named_str` does, with the whitespace and syntax settings given. The only place that
+/// `render_named_str` does, with the syntax settings given (whitespace included). The only place that
 /// decides auto-escape. The environment is the templar's, with the filters and tests the
 /// compiled code calls that only the Python helper has ([`Templar::env_for`]).
 pub(super) fn render_str(
@@ -363,10 +417,9 @@ pub(super) fn render_str(
     name: &str,
     source: &str,
     ctx: &minijinja::Value,
-    ws_config: WhitespaceConfig,
     syntax_config: SyntaxConfig,
 ) -> Result<String, minijinja::Error> {
-    render_counted(templar, name, source, ctx, ws_config, syntax_config).map(|(text, _)| text)
+    render_counted(templar, name, source, ctx, syntax_config).map(|(text, _)| text)
 }
 
 /// [`render_str`], and what the render printed through `{{ }}`.
@@ -375,12 +428,10 @@ pub(super) fn render_counted(
     name: &str,
     source: &str,
     ctx: &minijinja::Value,
-    ws_config: WhitespaceConfig,
     syntax_config: SyntaxConfig,
 ) -> Result<(String, Emitted), minijinja::Error> {
     let config = TemplateConfig {
         syntax_config,
-        ws_config,
         // Never by file name: measured on ansible-core 2.19.12, `index.html.j2` holding
         // `{{ "<b>" }}` writes `<b>`.
         default_auto_escape: Arc::new(|_| AutoEscape::None),
@@ -400,7 +451,8 @@ pub(super) fn render_counted(
         captures,
         ..Emitted::default()
     });
-    let run = Vm::new(&env).eval(
+    let run = eval(
+        &env,
         &compiled.instructions,
         ctx.clone(),
         &compiled.blocks,
@@ -441,7 +493,8 @@ pub(super) fn eval_expr(
     let _ = route_calls(&mut instructions, mutating);
     let env = templar.env_for([&instructions]);
     let mut out = String::new();
-    let (value, _) = Vm::new(&env).eval(
+    let (value, _) = eval(
+        &env,
         &instructions,
         ctx.clone(),
         &BTreeMap::new(),

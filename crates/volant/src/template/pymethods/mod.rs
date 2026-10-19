@@ -40,7 +40,7 @@ pub(super) fn register(env: &mut Environment<'static>) {
     });
 }
 
-fn call(state: &State, value: &Value, method: &str, args: &[Value]) -> Result<Value, Error> {
+fn call(state: &mut State, value: &Value, method: &str, args: &[Value]) -> Result<Value, Error> {
     if value.kind() == ValueKind::String
         && let Some(s) = value.as_str()
     {

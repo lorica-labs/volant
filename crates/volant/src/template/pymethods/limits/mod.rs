@@ -5,7 +5,7 @@
 //! tries to build the text and stops with a `MemoryError` when the machine cannot. Volant stops
 //! earlier, with a task error that names the limit, before it allocates.
 
-use minijinja::value::Rest;
+use minijinja::value::{Rest, ValueOrKwargs};
 use minijinja::{Error, State, Value};
 
 use super::args::{Call, raise};
@@ -39,7 +39,8 @@ pub(crate) fn check(chars: u128) -> Result<usize, Error> {
 }
 
 /// The `indent` filter, which adds `width` blanks to each line: the result is checked first.
-pub(crate) fn indent(state: &State, args: Rest<Value>) -> Result<Value, Error> {
+pub(crate) fn indent(state: &mut State, args: Rest<ValueOrKwargs>) -> Result<Value, Error> {
+    let args = args.into_values();
     let call = Call::new(args.get(1..).unwrap_or_default());
     let width = call
         .pos

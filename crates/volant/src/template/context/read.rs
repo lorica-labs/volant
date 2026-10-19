@@ -83,7 +83,10 @@ impl Context {
             self.any_soiled.store(true, Ordering::Relaxed);
         }
         match rendered {
-            Ok(value) => (minijinja::Value::from_serialize(&value), true),
+            Ok(value) => (
+                minijinja::Value::from(minijinja::value::Serde(&value)),
+                true,
+            ),
             // A variable that reads a name with no value has none either, which is what
             // `default` and `is defined` ask.
             Err(error) if error.is_undefined() => (minijinja::Value::UNDEFINED, false),
@@ -167,13 +170,13 @@ impl Context {
         if let Some(shared) = &self.shared
             && let Some(value) = shared.get(key)
         {
-            return Some((minijinja::Value::from_serialize(value), true));
+            return Some((minijinja::Value::from(minijinja::value::Serde(value)), true));
         }
         // Between the two: the facts that answer, the ones no layer of the map outranks.
         if let Some(facts) = &self.facts
             && let Some(value) = facts.get(key)
         {
-            return Some((minijinja::Value::from_serialize(value), true));
+            return Some((minijinja::Value::from(minijinja::value::Serde(value)), true));
         }
         if key == LOOP_KEY
             && let (Some(Value::Object(fields)), Some(base)) = (self.vars.get(key), &self.base)
@@ -193,13 +196,13 @@ impl Context {
             {
                 return Some(self.resolve(key, value));
             }
-            return Some((minijinja::Value::from_serialize(value), true));
+            return Some((minijinja::Value::from(minijinja::value::Serde(value)), true));
         }
         // The variables the items of a loop share hold no template that a render could change:
         // `HostVars::shared_by_items` keeps in `map` every value that has one, except the text of
         // a managed host, which is data. So a read of this layer has nothing to resolve.
         let value = self.base.as_ref()?.get(key)?;
-        Some((minijinja::Value::from_serialize(value), true))
+        Some((minijinja::Value::from(minijinja::value::Serde(value)), true))
     }
 }
 

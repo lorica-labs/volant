@@ -63,7 +63,11 @@ rstest = "0.27"
 saphyr = "0.2.0"
 saphyr-parser = "0.2.1"
 serde = { version = "1", features = ["derive"] }
-serde_json = { version = "1", features = ["preserve_order", "unbounded_depth"] }
+serde_json = { version = "1", features = [
+  "arbitrary_precision",
+  "preserve_order",
+  "unbounded_depth",
+] }
 sha1_smol = "1.0"
 sha2 = "0.10"
 shlex = "2"

@@ -1531,6 +1531,32 @@ fn a_module_result_is_reported_as_it_wrote_it(
     }
 }
 
+/// A module that returns a Python integer of any width is not refused: the result holds every
+/// digit, and an integer of 100 bits is not made a float.
+#[test]
+fn a_module_result_keeps_integers_wider_than_a_word() {
+    let blob = stub_blob(
+        "\n    print(json.dumps({\"wide\": 2**4096 - 1, \"digits\": str(2**4096 - 1), \"mid\": 2**100 + 1, \"low\": -2**70}))\n",
+    );
+    let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+    let result = done(server.run(
+        &payload("ansible.modules.probe"),
+        &args(json!({})),
+        &Context::default(),
+        &|| false,
+    ));
+    assert!(!result.failed(), "{:?}", result.0);
+    assert_eq!(
+        result.0["wide"].to_string(),
+        result.0["digits"].as_str().unwrap()
+    );
+    assert_eq!(
+        result.0["mid"].to_string(),
+        "1267650600228229401496703205377"
+    );
+    assert_eq!(result.0["low"].to_string(), "-1180591620717411303424");
+}
+
 /// An interpreter that cannot start, is not there, or starts and says nothing fails the task
 /// naming itself and what happened. `$PY` stands for the interpreter's path.
 #[rstest]

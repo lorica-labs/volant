@@ -236,6 +236,9 @@ fn int_against_float(x: i128, y: f64) -> Option<Ordering> {
 /// Python's `<` between two values, for those that can be ordered.
 fn compare(a: &Value, b: &Value) -> Result<Ordering, Error> {
     let kinds = (a.kind(), b.kind());
+    if let Some(order) = crate::template::bigint::order(a, b) {
+        return order.ok_or_else(|| raise("cannot order a number that is not a number"));
+    }
     if let (Some(x), Some(y)) = (number(a), number(b)) {
         return x
             .cmp_exact(y)

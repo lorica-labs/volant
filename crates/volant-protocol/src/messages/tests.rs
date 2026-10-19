@@ -436,3 +436,26 @@ fn failed_with_builds_the_ansible_shape() {
     assert!(r.failed());
     assert_eq!(r.0["msg"], "boom");
 }
+
+/// A result that holds an integer of any width crosses the wire with every digit.
+#[test]
+fn a_result_carries_an_integer_of_any_width_exactly() {
+    let wide = "9".repeat(1300);
+    let line = format!(
+        r#"{{"type":"task_result","batch":1,"index":0,"result":{{"changed":false,"n":{wide},"m":1267650600228229401496703205377,"l":[-{wide}]}}}}"#
+    );
+    let FromAgent::TaskResult { result, .. } = serde_json::from_str(&line).unwrap() else {
+        panic!("a task result")
+    };
+    assert_eq!(result.0["n"].to_string(), wide);
+    assert_eq!(result.0["m"].to_string(), "1267650600228229401496703205377");
+    assert_eq!(
+        serde_json::to_string(&result).unwrap().len(),
+        result_text(&line).len()
+    );
+}
+
+fn result_text(line: &str) -> &str {
+    let start = line.find(r#""result":"#).unwrap() + r#""result":"#.len();
+    &line[start..line.len() - 1]
+}

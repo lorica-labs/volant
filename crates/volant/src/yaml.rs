@@ -179,16 +179,14 @@ fn read_scalar<'a>(
 ) -> anyhow::Result<Yaml<'a>> {
     match tag {
         Some(tag) if tag.handle == "!" && tag.suffix == "unsafe" => {
-            let inner = Yaml::Value(scalar::plain(value).map_err(|e| anyhow!(e))?);
+            let inner = scalar::plain(value).map_err(|e| anyhow!(e))?;
             Ok(Yaml::Tagged(tag, Box::new(inner)))
         }
         Some(tag) if tag.handle == "!" && is_vault(&tag.suffix) => {
             let inner = scalar::plain(value).map_err(|e| anyhow!(e))?;
-            read_tagged(tag, Yaml::Value(inner))
+            read_tagged(tag, inner)
         }
-        tag => scalar::read(value, style, tag.as_deref())
-            .map(Yaml::Value)
-            .map_err(|e| anyhow!(e)),
+        tag => scalar::read(value, style, tag.as_deref()).map_err(|e| anyhow!(e)),
     }
 }
 

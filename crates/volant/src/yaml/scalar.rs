@@ -13,7 +13,7 @@ use std::fmt::Write;
 use std::sync::LazyLock;
 
 use regex::Regex;
-use saphyr::Scalar;
+use saphyr::{Scalar, Yaml};
 use saphyr_parser::{ScalarStyle, Tag};
 
 /// The prefix of the tags PyYAML knows by their short form `!!`.
@@ -41,7 +41,7 @@ static INT: LazyLock<Regex> = LazyLock::new(|| {
 ///
 /// `<<` and `=` also have a pattern there, which no constructor serves. They stay strings here.
 /// The merge key is the business of the code that flattens a mapping.
-pub(super) fn plain(value: Cow<'_, str>) -> Result<Scalar<'_>, String> {
+pub(super) fn plain(value: Cow<'_, str>) -> Result<Yaml<'_>, String> {
     let first = value.chars().next();
     let body = value.strip_suffix('\n').unwrap_or(&value);
     if matches!(
@@ -51,26 +51,26 @@ pub(super) fn plain(value: Cow<'_, str>) -> Result<Scalar<'_>, String> {
     {
         // A block scalar's last line feed passes the pattern and fails the lookup.
         return if body.len() == value.len() {
-            Ok(Scalar::Boolean(truth))
+            Ok(Yaml::Value(Scalar::Boolean(truth)))
         } else {
             Err(py_repr(&value.to_lowercase()))
         };
     }
     if matches!(first, Some('-' | '+' | '.' | '0'..='9')) {
         if FLOAT.is_match(&value) {
-            return float(&value);
+            return float(&value).map(Yaml::Value);
         }
         if INT.is_match(&value) {
             return int(value);
         }
     }
     if matches!(body, "~" | "null" | "Null" | "NULL" | "") {
-        return Ok(Scalar::Null);
+        return Ok(Yaml::Value(Scalar::Null));
     }
     if matches!(first, Some('0'..='9')) && TIMESTAMP_PATTERN.is_match(&value) {
-        return timestamp(&value);
+        return timestamp(&value).map(Yaml::Value);
     }
-    Ok(Scalar::String(value))
+    Ok(Yaml::Value(Scalar::String(value)))
 }
 
 /// How a scalar written with `style` and `tag` reads. An untagged scalar that is not plain is
@@ -79,12 +79,12 @@ pub(super) fn read<'a>(
     value: Cow<'a, str>,
     style: ScalarStyle,
     tag: Option<&Tag>,
-) -> Result<Scalar<'a>, String> {
+) -> Result<Yaml<'a>, String> {
     let Some(tag) = tag else {
         return if style == ScalarStyle::Plain {
             plain(value)
         } else {
-            Ok(Scalar::String(value))
+            Ok(Yaml::Value(Scalar::String(value)))
         };
     };
     let Some(name) = tag
@@ -94,13 +94,14 @@ pub(super) fn read<'a>(
     else {
         return Err(no_constructor(tag));
     };
+    let scalar = |made: Result<Scalar<'a>, String>| made.map(Yaml::Value);
     match name.as_str() {
-        "str" | "python/unicode" => Ok(Scalar::String(value)),
+        "str" | "python/unicode" => Ok(Yaml::Value(Scalar::String(value))),
         "int" => int(value),
-        "float" => float(&value),
-        "bool" => bool_constructor(&value),
-        "null" => Ok(Scalar::Null),
-        "timestamp" => timestamp(&value),
+        "float" => scalar(float(&value)),
+        "bool" => scalar(bool_constructor(&value)),
+        "null" => Ok(Yaml::Value(Scalar::Null)),
+        "timestamp" => scalar(timestamp(&value)),
         "seq" => Err("Expected a sequence node, but found scalar.".into()),
         "map" | "set" | "python/dict" => Err("Expected a mapping node, but found scalar.".into()),
         "omap" => {
@@ -129,9 +130,10 @@ fn bool_constructor(value: &str) -> Result<Scalar<'static>, String> {
 }
 
 /// PyYAML's `construct_yaml_int`: sign, then `0b`, `0x`, a leading `0` for octal, base 60 with
-/// `:`, or decimal. A value beyond what an `i64` holds is left as the string it was written as,
-/// since the value model has no wider integer.
-fn int(value: Cow<'_, str>) -> Result<Scalar<'_>, String> {
+/// `:`, or decimal. A value beyond what an `i64` holds is an integer node tagged `!!int` that
+/// holds its decimal digits: [`wide_digits`] says how [`super::walk`] reads it back. Past 128
+/// bits, only base 60 stays the string it was written as.
+fn int(value: Cow<'_, str>) -> Result<Yaml<'_>, String> {
     let cleaned = value.replace('_', "");
     let (negative, digits) = match cleaned.as_bytes().first() {
         Some(b'-') => (true, &cleaned[1..]),
@@ -139,13 +141,17 @@ fn int(value: Cow<'_, str>) -> Result<Scalar<'_>, String> {
         Some(_) => (false, cleaned.as_str()),
         None => return Err("string index out of range".into()),
     };
+    let mut wide: Option<(u32, &str)> = None;
     let magnitude = if digits == "0" {
         Some(0)
     } else if let Some(rest) = digits.strip_prefix("0b") {
+        wide = Some((2, rest));
         radix(rest, 2)?
     } else if let Some(rest) = digits.strip_prefix("0x") {
+        wide = Some((16, rest));
         radix(rest, 16)?
     } else if digits.starts_with('0') {
+        wide = Some((8, digits));
         radix(digits, 8)?
     } else if digits.contains(':') {
         let mut total: Option<i128> = Some(0);
@@ -162,12 +168,102 @@ fn int(value: Cow<'_, str>) -> Result<Scalar<'_>, String> {
     } else if digits.is_empty() {
         return Err("string index out of range".into());
     } else {
+        wide = Some((10, digits));
         radix(digits, 10)?
     };
-    Ok(magnitude
-        .map(|m| if negative { -m } else { m })
-        .and_then(|v| i64::try_from(v).ok())
-        .map_or(Scalar::String(value), Scalar::Integer))
+    let signed = magnitude.map(|m| if negative { -m } else { m });
+    if let Some(small) = signed.and_then(|v| i64::try_from(v).ok()) {
+        return Ok(Yaml::Value(Scalar::Integer(small)));
+    }
+    let text = match (signed, wide) {
+        (Some(v), _) => Some(v.to_string()),
+        (None, Some((base, digits))) => to_decimal(base, digits, negative)?,
+        (None, None) => None,
+    };
+    Ok(text.map_or_else(
+        || Yaml::Value(Scalar::String(value)),
+        |text| {
+            let tag = Tag {
+                handle: CORE.to_string(),
+                suffix: "int".to_string(),
+            };
+            Yaml::Tagged(
+                Cow::Owned(tag),
+                Box::new(Yaml::Value(Scalar::String(text.into()))),
+            )
+        },
+    ))
+}
+
+/// The digits of an integer read through a `!!int` node that [`int`] made, when `tag` is one.
+pub(super) fn wide_digits<'a>(tag: &Tag, inner: &'a Yaml<'_>) -> Option<&'a str> {
+    match inner {
+        Yaml::Value(Scalar::String(text)) if tag.handle == CORE && tag.suffix == "int" => {
+            Some(text)
+        }
+        _ => None,
+    }
+}
+
+/// Python 3.11 and later refuse to turn an integer of more than this many decimal digits into
+/// text, or text of that many digits into an integer.
+const MAX_DIGITS: usize = 4300;
+
+fn too_many_digits(count: usize) -> String {
+    format!(
+        "Exceeds the limit ({MAX_DIGITS} digits) for integer string conversion: value has {count} digits; use sys.set_int_max_str_digits() to increase the limit"
+    )
+}
+
+/// The decimal text of `digits` written in `base`, for a number too wide for `i128`; `None` when
+/// a character is not a digit of `base`. A decimal number is already text. For the other bases
+/// the work is schoolbook multiplication on limbs of nine decimal digits, the square of the
+/// length, so a number past Python's limit is refused before any work is done.
+fn to_decimal(base: u32, digits: &str, negative: bool) -> Result<Option<String>, String> {
+    const LIMB: u64 = 1_000_000_000;
+    let digits = digits.trim();
+    let sign = if negative { "-" } else { "" };
+    if base == 10 {
+        if !digits.bytes().all(|b| b.is_ascii_digit()) {
+            return Ok(None);
+        }
+        let digits = digits.trim_start_matches('0');
+        if digits.len() > MAX_DIGITS {
+            return Err(too_many_digits(digits.len()));
+        }
+        return Ok(Some(format!("{sign}{digits}")));
+    }
+    // Each digit of `base` is at most four bits; four bits are at most 1.21 decimal digits.
+    if digits.len() * 5 / 4 > MAX_DIGITS + 1000 {
+        return Err(too_many_digits(digits.len() * 5 / 4));
+    }
+    let mut limbs: Vec<u64> = vec![0];
+    for c in digits.chars() {
+        let Some(digit) = c.to_digit(base) else {
+            return Ok(None);
+        };
+        let mut carry = u64::from(digit);
+        for limb in &mut limbs {
+            let next = *limb * u64::from(base) + carry;
+            *limb = next % LIMB;
+            carry = next / LIMB;
+        }
+        if carry > 0 {
+            limbs.push(carry);
+        }
+    }
+    let mut text = String::from(sign);
+    let mut rest = limbs.iter().rev();
+    if let Some(first) = rest.next() {
+        write!(text, "{first}").ok();
+    }
+    for limb in rest {
+        write!(text, "{limb:09}").ok();
+    }
+    if text.len() - sign.len() > MAX_DIGITS {
+        return Err(too_many_digits(text.len() - sign.len()));
+    }
+    Ok(Some(text))
 }
 
 /// Python's `int(text, base)` for the digits the resolver lets through: the number, or `None`

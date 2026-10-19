@@ -21,6 +21,7 @@ pub(super) fn type_of(value: &Value) -> &'static str {
         ValueKind::Bool => "bool",
         ValueKind::Number if value.is_integer() => "int",
         ValueKind::Number => "float",
+        _ if crate::template::bigint::is_big(value) => "int",
         ValueKind::String => "str",
         ValueKind::Bytes => "bytes",
         ValueKind::Seq => "list",

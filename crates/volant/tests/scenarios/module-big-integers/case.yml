@@ -1,0 +1,3 @@
+# An integer wider than 64 bits in a module result, a variable, an INI value or JSON text keeps every digit, as it does in Python: through display, `string`, `to_json`, `set_fact` and arithmetic that fits 128 bits.
+args: [-i, inv.ini, p.yml]
+needs: [ansible-core]

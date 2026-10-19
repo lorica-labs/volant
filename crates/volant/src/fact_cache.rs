@@ -147,7 +147,7 @@ fn dumps(value: &Value) -> String {
 pub fn tag(value: &Value) -> Value {
     let (kind, inner) = match value {
         Value::String(_) => ("_AnsibleTaggedStr", value.clone()),
-        Value::Number(n) if n.is_i64() || n.is_u64() => ("_AnsibleTaggedInt", value.clone()),
+        Value::Number(n) if !n.is_f64() => ("_AnsibleTaggedInt", value.clone()),
         Value::Array(items) => (
             "_AnsibleTaggedList",
             Value::Array(items.iter().map(tag).collect()),

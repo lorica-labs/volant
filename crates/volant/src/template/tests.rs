@@ -1567,6 +1567,75 @@ fn a_nested_read_renders_only_variables_that_read_author_text() {
     assert_eq!(resolved["dir"], json!("/srv/h1"));
 }
 
+fn number(text: &str) -> Value {
+    serde_json::from_str(text).unwrap()
+}
+
+/// Integers wider than 64 bits keep every digit through a template, as Python's do; arithmetic
+/// works up to 128 bits and a wider operand is refused by name.
+#[test]
+fn integers_of_any_width_keep_their_digits_through_templates() {
+    let (u64_end, i128_end, past) = (
+        "18446744073709551616",
+        "170141183460469231731687303715884105727",
+        "340282366920938463463374607431768211456",
+    );
+    let wide = format!("1{}", "0".repeat(400));
+    let vars = vars(Value::Object(Map::from_iter([
+        ("a".to_string(), number(u64_end)),
+        ("b".to_string(), number(i128_end)),
+        ("c".to_string(), number(past)),
+        ("d".to_string(), number(&format!("-{wide}"))),
+        ("list".to_string(), number(&format!("[{past}, 1.5, 7]"))),
+    ])));
+    let t = templar();
+    for (text, want) in [
+        ("{{ a }}", number(u64_end)),
+        ("{{ c }}", number(past)),
+        ("{# a note #}{{ c }}", number(past)),
+        ("{% if true %}{{ c }}{% endif %}", number(past)),
+        ("{{ d }}", number(&format!("-{wide}"))),
+        ("{{ list }}", number(&format!("[{past}, 1.5, 7]"))),
+        ("{{ [c, d] | last }}", number(&format!("-{wide}"))),
+        ("{{ {'k': c} }}", number(&format!(r#"{{"k": {past}}}"#))),
+        ("{{ c | string }}", json!(past)),
+        ("{{ c ~ '' }}", json!(past)),
+        ("{{ d | string | length }}", json!(402)),
+        ("{{ a + 1 }}", number("18446744073709551617")),
+        ("{{ a * 3 }}", number("55340232221128654848")),
+        (
+            "{{ b - 1 }}",
+            number("170141183460469231731687303715884105726"),
+        ),
+        ("{{ c == c }}", json!(true)),
+        ("{{ c < c }}", json!(false)),
+        ("{{ d < c }}", json!(true)),
+        ("{{ c > a }}", json!(true)),
+        ("{{ c in list }}", json!(true)),
+        ("{{ c | int == c }}", json!(true)),
+        ("{{ c | to_json }}", json!(past)),
+        (
+            "{{ {'k': [d]} | to_json }}",
+            json!(format!(r#"{{"k": [-{wide}]}}"#)),
+        ),
+        ("{{ c | type_debug }}", json!("int")),
+        (
+            "{{ c is integer and c is number and c is not float }}",
+            json!(true),
+        ),
+        ("{{ (c | string | int) == c }}", json!(true)),
+        (
+            "{{ '340282366920938463463374607431768211457' | int > c }}",
+            json!(true),
+        ),
+        ("{{ (list | to_json | from_json)[0] == c }}", json!(true)),
+    ] {
+        assert_eq!(t.render(text, &vars), Ok(want), "{text}");
+    }
+    let err = t.render("{{ c + 1 }}", &vars).unwrap_err();
+    assert!(err.0.contains("wider than 128 bits"), "{err}");
+}
+
 const ISO: &str = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{6})?$";
 const SPACED: &str = r"^\d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{6})?$";
 const AT_SPACED: &str = r"^at \d{4}-\d\d-\d\d \d\d:\d\d:\d\d(\.\d{6})?$";

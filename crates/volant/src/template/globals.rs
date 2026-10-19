@@ -84,6 +84,7 @@ pub(super) fn python_type(value: &Value) -> &'static str {
         ValueKind::None => "NoneType",
         ValueKind::Bool => "bool",
         ValueKind::Number => serde_json::to_value(value).map_or("int", |json| type_name(&json)),
+        _ if super::bigint::is_big(value) => "int",
         ValueKind::String => "str",
         ValueKind::Bytes => "bytes",
         ValueKind::Seq => "list",

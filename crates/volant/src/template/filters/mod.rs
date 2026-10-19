@@ -168,9 +168,14 @@ pub fn register(
         add_test(env, "odd", t::is_odd);
         add_test(env, "even", t::is_even);
         add_test(env, "divisibleby", t::is_divisibleby);
-        add_test(env, "number", t::is_number);
-        add_test(env, "integer", t::is_integer);
-        add_test(env, "int", t::is_integer);
+        add_test(env, "number", |v: Value| {
+            t::is_number(&v) || super::bigint::is_big(&v)
+        });
+        for name in ["integer", "int"] {
+            add_test(env, name, |v: Value| {
+                t::is_integer(&v) || super::bigint::is_big(&v)
+            });
+        }
         add_test(env, "float", t::is_float);
         add_test(env, "string", t::is_string);
         add_test(env, "sequence", t::is_sequence);
@@ -287,7 +292,7 @@ pub fn register(
 }
 
 fn json(v: &Value) -> serde_json::Value {
-    serde_json::to_value(v).unwrap_or(serde_json::Value::Null)
+    super::bigint::to_json(v).unwrap_or(serde_json::Value::Null)
 }
 
 /// `json`, for a filter whose result carries the value on. An undefined value inside it would
@@ -301,7 +306,7 @@ fn data(v: &Value) -> Result<serde_json::Value, Error> {
 }
 
 fn from_json_value(v: serde_json::Value) -> Value {
-    Value::from(minijinja::value::Serde(&v))
+    super::bigint::to_template(&v)
 }
 
 fn truthy_value(value: Option<Value>) -> bool {
@@ -359,20 +364,31 @@ fn to_bool(value: Value) -> bool {
 }
 
 fn to_int(value: Value, default_value: Option<i64>) -> Result<Value, Error> {
+    use super::bigint::integer;
     let fallback = default_value.unwrap_or(0);
-    Ok(Value::from(match json(&value) {
+    let truncated = |f: f64| Value::from(f.trunc() as i64);
+    Ok(match json(&value) {
         serde_json::Value::Number(n) => n
             .as_i64()
-            .or_else(|| n.as_f64().map(|f| f.trunc() as i64))
-            .unwrap_or(fallback),
-        serde_json::Value::Bool(b) => i64::from(b),
-        serde_json::Value::String(s) => s
-            .trim()
-            .parse::<i64>()
-            .or_else(|_| s.trim().parse::<f64>().map(|f| f.trunc() as i64))
-            .unwrap_or(fallback),
-        _ => fallback,
-    }))
+            .map(Value::from)
+            .or_else(|| integer(&n.to_string()))
+            .unwrap_or_else(|| n.as_f64().map_or(Value::from(fallback), truncated)),
+        serde_json::Value::Bool(b) => Value::from(i64::from(b)),
+        serde_json::Value::String(s) => {
+            let text = s.trim();
+            // Python's int() of text refuses more than 4300 digits; the filter then answers
+            // its default, as it does for any text int() refuses.
+            let parsed = integer(text).map(|n| {
+                if text.trim_start_matches(['-', '+']).len() > 4300 {
+                    Value::from(fallback)
+                } else {
+                    n
+                }
+            });
+            parsed.unwrap_or_else(|| text.parse().map_or(Value::from(fallback), truncated))
+        }
+        _ => Value::from(fallback),
+    })
 }
 
 fn to_float(value: Value, default_value: Option<f64>) -> Value {

@@ -1,0 +1,40 @@
+- hosts: l
+  gather_facts: false
+  vars:
+    literal: 123456789012345678901234567890
+    hexed: 0x1ffffffffffffffffffffffffffffffffffffff
+    text: '{"k": 18446744073709551616, "f": 1.5}'
+  tasks:
+    - bignums:
+      register: r
+    - debug: var=r.wide
+    - debug: var=r.mid
+    - debug: var=r.low
+    - debug: var=r.small
+    - debug:
+        msg: >-
+          {{ r.wide | string | length }}
+          {{ (r.wide | string)[:12] }}
+          {{ (r.wide | string)[-12:] }}
+          {{ r.wide | type_debug }}
+          {{ r.mid | type_debug }}
+          {{ r.wide == r.wide }}
+          {{ r.wide > r.low }}
+          {{ r.mid + 1 }}
+          {{ r.mid * 3 }}
+          {{ r.mid > r.small }}
+    - debug:
+        msg: "{{ {'a': r.low, 'b': [r.mid]} | to_json }}"
+    - debug:
+        msg: "{{ r.wide | int == r.wide }} {{ r.wide is integer }} {{ r.wide is number }}"
+    - set_fact:
+        kept: "{{ r.wide }}"
+    - debug:
+        msg: "{{ kept | type_debug }} {{ kept == r.wide }}"
+    - debug: var=literal
+    - debug: var=hexed
+    - debug: var=big
+    - debug:
+        msg: "{{ literal }} {{ literal + 1 }} {{ literal | type_debug }} {{ big | type_debug }}"
+    - debug:
+        msg: "{{ (text | from_json).k }} {{ (text | from_json).k + 1 }} {{ text | from_json | to_json }}"

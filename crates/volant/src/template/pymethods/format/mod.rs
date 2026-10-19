@@ -47,7 +47,7 @@ pub(crate) fn repr(value: &Value) -> String {
                     .join(", "))
                 .unwrap_or_default()
         ),
-        _ => serde_json::to_value(value).map_or_else(
+        _ => crate::template::bigint::to_json(value).map_or_else(
             |_| value.to_string(),
             |json| crate::playbook::python_repr(&json),
         ),

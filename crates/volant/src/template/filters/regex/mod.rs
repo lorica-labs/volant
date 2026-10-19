@@ -41,7 +41,7 @@ fn unfold_pattern(s: &str) -> String {
 /// `to_text(value, nonstring='simplerepr')`: text as it is, anything else as Python prints it.
 fn to_text(value: &Value) -> String {
     value.as_str().map_or_else(
-        || python_repr(&serde_json::to_value(value).unwrap_or(serde_json::Value::Null)),
+        || python_repr(&crate::template::bigint::to_json(value).unwrap_or(serde_json::Value::Null)),
         str::to_string,
     )
 }
@@ -94,7 +94,9 @@ fn text_arg(filter: &str, what: &str, slot: Option<&Option<Value>>) -> Result<St
         Some(v) => v.as_str().map(str::to_string).ok_or_else(|| {
             invalid(format!(
                 "{filter}: the {what} must be a string, not {}",
-                python_repr(&serde_json::to_value(v).unwrap_or(serde_json::Value::Null))
+                python_repr(
+                    &crate::template::bigint::to_json(v).unwrap_or(serde_json::Value::Null)
+                )
             ))
         }),
     }

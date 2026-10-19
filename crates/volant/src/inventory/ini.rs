@@ -276,13 +276,7 @@ fn key_values(words: &[String]) -> Result<BTreeMap<String, Value>, String> {
 /// `"010"` (Python's grammar rejects a leading zero as a syntax error, so `literal_eval` raises
 /// and the ini plugin falls back to the raw text), while `grouped=1_000` becomes the integer
 /// `1000` (`_` is a valid digit separator in Python's integer literals since 3.6).
-///
-/// Deliberate ceiling: Python's integers are unbounded, ours are not. A literal outside
-/// `i64::MIN..=i64::MAX` (`clean.parse` failing) falls back to a string here, same as any other
-/// value `ast.literal_eval` would refuse to call an int for — no inventory host var plausibly
-/// needs more than 63 bits, so this stays a documented ceiling rather than a `serde_json`
-/// arbitrary-precision dependency for a case that never comes up in practice.
-fn python_int(t: &str) -> Option<i64> {
+fn python_int(t: &str) -> Option<serde_json::Number> {
     let digits = t.strip_prefix(['+', '-']).unwrap_or(t);
     if digits.is_empty()
         || digits.starts_with('_')
@@ -296,8 +290,12 @@ fn python_int(t: &str) -> Option<i64> {
     if clean.len() > 1 && clean.starts_with('0') {
         return None;
     }
-    let value: i64 = clean.parse().ok()?;
-    Some(if t.starts_with('-') { -value } else { value })
+    let sign = if t.starts_with('-') && clean != "0" {
+        "-"
+    } else {
+        ""
+    };
+    format!("{sign}{clean}").parse().ok()
 }
 
 /// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text.
@@ -306,7 +304,7 @@ fn python_int(t: &str) -> Option<i64> {
 fn literal(text: &str) -> Value {
     let t = text.trim();
     if let Some(i) = python_int(t) {
-        return Value::from(i);
+        return Value::Number(i);
     }
     if t.contains('.')
         && let Ok(f) = t.parse::<f64>()

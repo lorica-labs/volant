@@ -241,8 +241,8 @@ fn an_explicit_core_tag_picks_the_type() {
     ]);
 }
 
-/// Plain scalars the resolver types, with the near misses it leaves as strings. Integers beyond
-/// `i64` and the non-finite floats are not here; the next test holds the floats.
+/// Plain scalars the resolver types, with the near misses it leaves as strings. The wide integers and
+/// the non-finite floats are not here: the next tests hold them.
 #[test]
 fn plain_scalars_are_resolved_as_pyyaml_resolves_them() {
     assert_loads_as(&[
@@ -276,6 +276,112 @@ fn plain_scalars_are_resolved_as_pyyaml_resolves_them() {
         ("a: 00_7\n", json!({"a": 7})),
         ("a: 0B1\n", json!({"a": "0B1"})),
     ]);
+}
+
+/// An integer of any width keeps its digits, whatever base it is written in. The expected values
+/// are Python's own.
+#[test]
+fn an_integer_wider_than_a_word_keeps_every_digit() {
+    let wide = "1".to_string() + &"0".repeat(400);
+    let cases = [
+        ("9223372036854775808", "9223372036854775808"),
+        ("-9223372036854775809", "-9223372036854775809"),
+        (
+            "123456789012345678901234567890",
+            "123456789012345678901234567890",
+        ),
+        ("1_000_000_000_000_000_000_000", "1000000000000000000000"),
+        (
+            "!!int 123456789012345678901234567890",
+            "123456789012345678901234567890",
+        ),
+        (
+            "0x1ffffffffffffffffffffffffffffffffffffff",
+            "11417981541647679048466287755595961091061972991",
+        ),
+        (
+            "0xffffffffffffffffffffffffffffffffffffffff",
+            "1461501637330902918203684832716283019655932542975",
+        ),
+        (
+            "-0xffffffffffffffffffffffffffffffffffffffff",
+            "-1461501637330902918203684832716283019655932542975",
+        ),
+        (
+            "0777777777777777777777777777777777777777777777",
+            "43556142965880123323311949751266331066367",
+        ),
+        (
+            &format!("0b{}", "1".repeat(130)),
+            "1361129467683753853853498429727072845823",
+        ),
+        (&wide, &wide),
+    ];
+    let loaded: Vec<(String, Value)> = cases
+        .iter()
+        .map(|(yaml, int)| {
+            let want = serde_json::from_str(&format!(r#"{{"a": {int}}}"#)).unwrap();
+            (format!("a: {yaml}\n"), want)
+        })
+        .collect();
+    let borrowed: Vec<(&str, Value)> = loaded
+        .iter()
+        .map(|(t, v)| (t.as_str(), v.clone()))
+        .collect();
+    assert_loads_as(&borrowed);
+}
+
+/// Python 3.11 and later refuse more than 4300 decimal digits. A hexadecimal number would cost
+/// the square of its length to convert, so it stops at the same limit before any work.
+#[test]
+fn an_integer_past_pythons_digit_limit_is_refused() {
+    for text in [
+        format!(
+            "a: {}
+",
+            "9".repeat(4301)
+        ),
+        format!(
+            "a: 0x{}
+",
+            "f".repeat(3700)
+        ),
+        format!(
+            "a: 0x{}
+",
+            "f".repeat(2_000_000)
+        ),
+        format!(
+            "a: 0b{}
+",
+            "1".repeat(20_000)
+        ),
+    ] {
+        let err = format!("{:#}", load(&text, "t.yml").unwrap_err());
+        assert!(err.contains("Exceeds the limit (4300 digits)"), "{err}");
+    }
+    assert!(
+        load(
+            &format!(
+                "a: {}
+",
+                "9".repeat(4300)
+            ),
+            "t.yml"
+        )
+        .is_ok()
+    );
+    assert!(
+        load(
+            &format!(
+                "a: 0x{}
+",
+                "f".repeat(3500)
+            ),
+            "t.yml"
+        )
+        .is_ok()
+    );
 }
 
 /// A date and a datetime have no counterpart in the value model: they load as the string that

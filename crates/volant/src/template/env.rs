@@ -101,7 +101,7 @@ pub(super) fn container_repr(value: &minijinja::Value) -> Option<String> {
     ) {
         return None;
     }
-    let json = serde_json::to_value(value).ok()?;
+    let json = super::bigint::to_json(value).ok()?;
     Some(crate::playbook::python_repr(&json))
 }
 
@@ -154,7 +154,7 @@ pub(super) fn fresh_const(json: &str) -> Option<minijinja::Value> {
     let parsed: Value = serde_json::from_str(json).ok()?;
     Some(minijinja::Value::from_function(
         move || -> minijinja::Value {
-            let plain = minijinja::Value::from(minijinja::value::Serde(&parsed));
+            let plain = super::bigint::to_template(&parsed);
             mutable(&plain).unwrap_or(plain)
         },
     ))

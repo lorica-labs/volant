@@ -130,7 +130,9 @@ pub(super) fn candidates_of(
         _ => {
             return Err(invalid(format!(
                 "Invalid term supplied. A string, dict or list is required, not '{}'.",
-                crate::template::type_name(&serde_json::to_value(term).unwrap_or_default())
+                crate::template::type_name(
+                    &crate::template::bigint::to_json(term).unwrap_or_default()
+                )
             )));
         }
     }

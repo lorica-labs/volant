@@ -80,6 +80,7 @@ pub(super) fn python_type(value: &Value) -> &'static str {
     match value.kind() {
         ValueKind::Bool => "<class 'bool'>",
         ValueKind::Number if value.is_integer() => "<class 'int'>",
+        _ if crate::template::bigint::is_big(value) => "<class 'int'>",
         ValueKind::Number => "<class 'float'>",
         ValueKind::Seq => "<class 'list'>",
         ValueKind::Map => "<class 'dict'>",

@@ -62,6 +62,7 @@ pub(super) fn scalar_text(v: &Value) -> (String, bool) {
         ValueKind::Undefined | ValueKind::None => ("null".to_string(), true),
         ValueKind::Bool => (v.is_true().to_string(), true),
         ValueKind::Number if v.is_integer() => (v.to_string(), true),
+        _ if crate::template::bigint::is_big(v) => (v.to_string(), true),
         ValueKind::Number => (py_float(f64::try_from(v.clone()).unwrap_or(f64::NAN)), true),
         _ => {
             let s = v.as_str().map_or_else(|| v.to_string(), str::to_string);

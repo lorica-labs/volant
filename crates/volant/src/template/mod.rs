@@ -6,6 +6,7 @@ use std::fmt;
 use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 
+mod bigint;
 mod bridged;
 mod clock;
 mod context;

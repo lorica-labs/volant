@@ -218,11 +218,14 @@ fn a_syntax_error_carries_its_line_number(#[case] ini: &str, #[case] line: usize
     assert_eq!(Inventory::parse_ini(ini).unwrap_err().line, line);
 }
 
-/// `ok` is the ceiling an int still parses to; the rest are Python literals when they parse
+/// An integer of any width is an int, as in Python; the rest are Python literals when they parse
 /// as such and text when they do not.
 #[rstest]
 #[case::i64_max("ok=9223372036854775807", "ok", json!(i64::MAX))]
-#[case::past_i64("huge=9223372036854775808", "huge", json!("9223372036854775808"))]
+#[case::past_i64("huge=9223372036854775808", "huge", json!(9_223_372_036_854_775_808_u64))]
+#[case::past_u64("huge=123_456_789_012_345_678_901_234_567_890", "huge", json!(123_456_789_012_345_678_901_234_567_890_u128))]
+#[case::below_i64("huge=-9223372036854775809", "huge", json!(-9_223_372_036_854_775_809_i128))]
+#[case::negative_zero("zero=-0", "zero", json!(0))]
 #[case::int("port=8080", "port", json!(8080))]
 #[case::float("ratio=0.5", "ratio", json!(0.5))]
 #[case::boolean("flag=True", "flag", json!(true))]

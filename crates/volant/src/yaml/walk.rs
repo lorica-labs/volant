@@ -304,6 +304,10 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
                     next = Some(&**inner);
                     continue;
                 }
+                Yaml::Tagged(tag, inner) if scalar::wide_digits(tag, inner).is_some() => {
+                    let digits = scalar::wide_digits(tag, inner).unwrap_or_default();
+                    done = Some(Value::Number(digits.parse()?));
+                }
                 Yaml::Tagged(tag, _) => bail!(scalar::no_constructor(tag)),
                 Yaml::Alias(_) => bail!("YAML aliases are not supported yet"),
                 Yaml::Representation(..) => bail!("unresolved YAML scalar"),

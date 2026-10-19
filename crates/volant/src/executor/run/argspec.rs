@@ -212,7 +212,7 @@ fn converts(value: &Value, wanted: &str) -> Result<(), String> {
     };
     match wanted {
         "int" => match value {
-            Value::Number(n) if n.is_i64() || n.is_u64() => Ok(()),
+            Value::Number(n) if !n.is_f64() => Ok(()),
             Value::String(s) if s.trim().parse::<i64>().is_ok() => Ok(()),
             _ => Err(quoted()),
         },

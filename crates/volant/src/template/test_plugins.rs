@@ -65,7 +65,7 @@ fn result_test(name: &str, which: Which, value: &Value) -> Result<bool, Error> {
         Which::Failed | Which::Succeeded => "failed",
         Which::Skipped => "skipped",
     };
-    let Json::Object(result) = serde_json::to_value(value).unwrap_or(Json::Null) else {
+    let Json::Object(result) = super::bigint::to_json(value).unwrap_or(Json::Null) else {
         return Err(failed_test(
             name,
             &format!("The '{own}' test expects a dictionary"),
@@ -187,7 +187,7 @@ fn version_test(
         }
     }
     kwargs.assert_all_used()?;
-    let json = |v: &Value| serde_json::to_value(v).unwrap_or(Json::Null);
+    let json = |v: &Value| super::bigint::to_json(v).unwrap_or(Json::Null);
     if !truthy(&json(value)) {
         return Err(failed_test(name, "Input version value cannot be empty"));
     }

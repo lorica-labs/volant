@@ -124,7 +124,7 @@ pub(super) fn register(
         let (args, kwargs) = sendable(kind, &owned, positional, keywords)?;
         bridge
             .call(kind, &owned, &args, &kwargs, None)
-            .map(|value| Value::from(minijinja::value::Serde(&value)))
+            .map(|value| super::bigint::to_template(&value))
             .map_err(|err| failed(kind, &owned, err))
     };
     match kind {
@@ -166,7 +166,7 @@ pub(super) fn lookup(
     super::lookups::taint(state);
     bridge
         .call(kind, name, &args, &kwargs, Some(&vars))
-        .map(|value| Value::from(minijinja::value::Serde(&value)))
+        .map(|value| super::bigint::to_template(&value))
         .map_err(|err| failed(kind, name, err))
 }
 
@@ -211,7 +211,7 @@ fn sendable(
 }
 
 fn to_json(kind: PluginKind, name: &str, value: &Value) -> Result<serde_json::Value, Error> {
-    serde_json::to_value(value).map_err(|err| {
+    super::bigint::to_json(value).map_err(|err| {
         raise(format!(
             "{} '{name}' was given a value that cannot be sent to the Python helper: {err}",
             kind.as_str()
@@ -223,7 +223,7 @@ fn to_json(kind: PluginKind, name: &str, value: &Value) -> Result<serde_json::Va
 /// function.
 fn jinja_object(value: &Value) -> bool {
     if matches!(value.kind(), ValueKind::Plain | ValueKind::Invalid) {
-        return true;
+        return !super::bigint::is_big(value);
     }
     // Both are maps to minijinja, and would be sent as their attributes.
     if let Some(object) = value.as_object() {

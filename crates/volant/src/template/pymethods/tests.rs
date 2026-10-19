@@ -8,8 +8,8 @@ use super::mutable::{identity, is_literal, mutable, plain_list, plain_map, snaps
 /// their Rust type. An upgrade that changes those types fails here, not in a template.
 #[test]
 fn plain_lists_and_mappings_are_told_from_other_objects() {
-    assert!(plain_list(&Value::from(minijinja::value::Serde(json!([1, 2])))).is_some());
-    assert!(plain_map(&Value::from(minijinja::value::Serde(json!({"a": 1})))).is_some());
+    assert!(plain_list(&crate::template::bigint::to_template(&json!([1, 2]))).is_some());
+    assert!(plain_map(&crate::template::bigint::to_template(&json!({"a": 1}))).is_some());
     assert!(plain_list(&Value::from(vec![Value::from(1)])).is_some());
     let namespace = Environment::new()
         .compile_expression("namespace()")
@@ -22,18 +22,18 @@ fn plain_lists_and_mappings_are_told_from_other_objects() {
 
 #[test]
 fn one_plain_value_has_one_identity_and_a_copy_has_another() {
-    let list = Value::from(minijinja::value::Serde(json!([1, 2])));
+    let list = crate::template::bigint::to_template(&json!([1, 2]));
     let same = list.clone();
-    let other = Value::from(minijinja::value::Serde(json!([1, 2])));
+    let other = crate::template::bigint::to_template(&json!([1, 2]));
     assert_eq!(identity(&list), identity(&same));
     assert_ne!(identity(&list), identity(&other));
 }
 
 #[test]
 fn a_snapshot_holds_no_mutable_object() {
-    let made = mutable(&Value::from(minijinja::value::Serde(
-        json!({"a": [1], "b": {"c": []}}),
-    )))
+    let made = mutable(&crate::template::bigint::to_template(
+        &json!({"a": [1], "b": {"c": []}}),
+    ))
     .unwrap();
     let inner = made.get_attr("a").unwrap();
     assert!(plain_list(&inner).is_none());
@@ -41,16 +41,16 @@ fn a_snapshot_holds_no_mutable_object() {
     assert!(plain_map(&copy).is_some());
     assert!(plain_list(&copy.get_attr("a").unwrap()).is_some());
     assert_eq!(
-        serde_json::to_value(&copy).unwrap(),
+        crate::template::bigint::to_json(&copy).unwrap(),
         json!({"a": [1], "b": {"c": []}})
     );
 }
 
 #[test]
 fn only_a_literal_that_json_carries_back_is_routed() {
-    assert!(is_literal(&Value::from(minijinja::value::Serde(
-        json!([1, "a", null, [true], {"k": 1.5}])
-    ))));
+    assert!(is_literal(&crate::template::bigint::to_template(
+        &json!([1, "a", null, [true], {"k": 1.5}])
+    )));
     let int_key = Value::from_pairs([(Value::from(1), Value::from("a"))]);
     assert!(!is_literal(&int_key));
 }
@@ -243,4 +243,45 @@ fn percent_pads_infinity_with_blanks_and_bounds_the_whole_text() {
         .render("{{ '%.*f' % (2147483648, 1.5) }}", &v)
         .unwrap_err();
     assert!(err.0.contains("C int"), "{err}");
+}
+
+/// A wide integer sorts against native integers, floats and other wide integers by value, as
+/// Python's does, and is an `int` in an error.
+#[test]
+fn sorting_a_wide_integer_is_exact() {
+    let vars = vars(json!({}));
+    let t = crate::testing::templar();
+    let wide = "340282366920938463463374607431768211457";
+    // 2^200 is 1606938044258990275541962092341162602522202993782792835301376.
+    let above = "1606938044258990275541962092341162602522202993782792835301377";
+    let below = "1606938044258990275541962092341162602522202993782792835301375";
+    for (template, want) in [
+        (
+            format!(
+                "{{% set l = ['{wide}' | int, 1, '-{wide}' | int, 2.5, 0] %}}{{% set _ = l.sort() %}}{{{{ l | map('string') | join(',') }}}}"
+            ),
+            format!("-{wide},0,1,2.5,{wide}"),
+        ),
+        (
+            format!(
+                "{{% set l = ['{above}' | int, 2.0 ** 200, 1.0e300, '{below}' | int] %}}{{% set _ = l.sort() %}}{{{{ l | map('type_debug') | join(',') }}}}"
+            ),
+            "int,float,int,float".to_string(),
+        ),
+        (
+            format!(
+                "{{% set l = [1.0e300, 2.0 ** 200, '-{above}' | int, -1.0e300] %}}{{% set _ = l.sort(reverse=True) %}}{{{{ l | map('type_debug') | join(',') }}}}"
+            ),
+            "float,float,int,float".to_string(),
+        ),
+    ] {
+        assert_eq!(t.render(&template, &vars), Ok(json!(want)), "{template}");
+    }
+    let err = t
+        .render(
+            &format!("{{% set l = ['{wide}' | int, 'a'] %}}{{% set _ = l.sort() %}}"),
+            &vars,
+        )
+        .unwrap_err();
+    assert!(err.0.contains("'int'") && err.0.contains("'str'"), "{err}");
 }

@@ -5,6 +5,7 @@ use serde_json::json;
 use volant_protocol::facts::NATIVE_FACT_KEYS;
 
 use std::os::unix::fs::PermissionsExt;
+#[cfg(target_os = "linux")]
 use std::time::Instant;
 
 use super::collect::filtered;

@@ -24,6 +24,7 @@ pub(super) fn type_of(value: &Value) -> &'static str {
         _ if crate::template::bigint::is_big(value) => "int",
         ValueKind::String => "str",
         ValueKind::Bytes => "bytes",
+        ValueKind::Seq if value.is_tuple() => "tuple",
         ValueKind::Seq => "list",
         ValueKind::Map => "dict",
         ValueKind::Iterable => "generator",

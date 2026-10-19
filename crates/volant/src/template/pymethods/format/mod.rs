@@ -27,6 +27,16 @@ pub(crate) fn to_str(value: &Value) -> String {
 pub(crate) fn repr(value: &Value) -> String {
     match value.kind() {
         ValueKind::Number if !value.is_integer() => to_str(value),
+        ValueKind::Seq if value.is_tuple() => {
+            let items: Vec<String> = value
+                .try_iter()
+                .map(|it| it.map(|v| repr(&v)).collect())
+                .unwrap_or_default();
+            match items.as_slice() {
+                [one] => format!("({one},)"),
+                _ => format!("({})", items.join(", ")),
+            }
+        }
         ValueKind::Seq => format!(
             "[{}]",
             value
@@ -51,6 +61,21 @@ pub(crate) fn repr(value: &Value) -> String {
             |_| value.to_string(),
             |json| crate::playbook::python_repr(&json),
         ),
+    }
+}
+
+/// Whether a tuple is in `value`. Python's `str` of such a value differs from the text of a
+/// printed node, which reads every tuple as a list.
+pub(crate) fn holds_tuple(value: &Value) -> bool {
+    match value.kind() {
+        ValueKind::Seq if value.is_tuple() => true,
+        ValueKind::Seq => value
+            .try_iter()
+            .is_ok_and(|mut it| it.any(|v| holds_tuple(&v))),
+        ValueKind::Map => value.try_iter().is_ok_and(|mut keys| {
+            keys.any(|k| holds_tuple(&k) || value.get_item(&k).is_ok_and(|v| holds_tuple(&v)))
+        }),
+        _ => false,
     }
 }
 

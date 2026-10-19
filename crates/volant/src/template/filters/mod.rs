@@ -257,6 +257,8 @@ pub fn register(
             "UndefinedMarker"
         } else if v.downcast_object_ref::<super::clock::DateTime>().is_some() {
             "datetime"
+        } else if v.is_tuple() {
+            "tuple"
         } else {
             super::type_name(&json(&v))
         }
@@ -435,6 +437,9 @@ mod tests;
 /// `string`, which prints a `range` or a `datetime` as Python does and leaves every other value
 /// to MiniJinja.
 fn string(state: &State, value: Value) -> Result<Value, Error> {
+    if super::pymethods::format::holds_tuple(&value) {
+        return Ok(Value::from(super::pymethods::format::repr(&value)));
+    }
     if value.downcast_object_ref::<super::env::Range>().is_some()
         || value
             .downcast_object_ref::<super::clock::DateTime>()

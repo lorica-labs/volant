@@ -58,18 +58,6 @@ pub(in crate::template) fn route_calls(
         if let Some(named) = named {
             *op = Instruction::LoadConst(minijinja::Value::from(named));
         }
-        // Tuples are read as lists, which is what minijinja made of them before it had tuples
-        // of its own: the list helpers, the in-place methods and `%` all know lists. A tuple
-        // stays changeable in place and prints as a list, as it always did here.
-        match op {
-            Instruction::BuildTuple(n) => *op = Instruction::BuildList(*n),
-            Instruction::LoadConst(value) => {
-                if let Some(listed) = tuples_as_lists(value) {
-                    *value = listed;
-                }
-            }
-            _ => {}
-        }
         match op {
             Instruction::StringConcat => *op = Instruction::CallFunction(CONCAT_KEY, Some(2)),
             Instruction::Rem => {
@@ -109,55 +97,12 @@ pub(in crate::template) fn route_calls(
     captures
 }
 
-/// `value` with every tuple in it made a list; `None` when it holds no tuple.
-fn tuples_as_lists(value: &minijinja::Value) -> Option<minijinja::Value> {
-    use minijinja::value::{Tuple, ValueKind};
-    if let Some(tuple) = value.downcast_object_ref::<Tuple>() {
-        let items = tuple
-            .iter()
-            .map(|item| tuples_as_lists(item).unwrap_or_else(|| item.clone()));
-        return Some(minijinja::Value::from(items.collect::<Vec<_>>()));
-    }
-    match value.kind() {
-        ValueKind::Seq => {
-            let items: Vec<_> = value.try_iter().ok()?.collect();
-            let listed: Vec<_> = items.iter().map(tuples_as_lists).collect();
-            listed.iter().any(Option::is_some).then(|| {
-                let pairs = items.iter().zip(listed);
-                minijinja::Value::from(
-                    pairs
-                        .map(|(item, l)| l.unwrap_or_else(|| item.clone()))
-                        .collect::<Vec<_>>(),
-                )
-            })
-        }
-        ValueKind::Map => {
-            let pairs: Vec<_> = value
-                .try_iter()
-                .ok()?
-                .map(|key| {
-                    let item = value.get_item(&key).unwrap_or_default();
-                    (key, tuples_as_lists(&item), item)
-                })
-                .collect();
-            pairs.iter().any(|(_, l, _)| l.is_some()).then(|| {
-                minijinja::Value::from_pairs(
-                    pairs
-                        .into_iter()
-                        .map(|(key, l, item)| (key, l.unwrap_or(item))),
-                )
-            })
-        }
-        _ => None,
-    }
-}
-
-/// Whether an instruction pushes a list written out in the template, `(a, b)` or `['a', 'b']`: what
-/// stands on the right of `%` as a tuple does. A list that a variable holds, or a call answers, is
-/// one argument, as it is in Python.
+/// Whether an instruction pushes a tuple or a list written out in the template, `(a, b)` or
+/// `['a', 'b']`: what stands on the right of `%` as a tuple does. A list that a variable holds, or
+/// a call answers, is one argument, as it is in Python.
 fn writes_a_tuple(op: Option<&Instruction<'_>>) -> bool {
     match op {
-        Some(Instruction::BuildList(Some(_))) => true,
+        Some(Instruction::BuildList(Some(_)) | Instruction::BuildTuple(Some(_))) => true,
         Some(Instruction::LoadConst(value)) => value.kind() == minijinja::value::ValueKind::Seq,
         // The same two, after the rewrite of a template that changes lists in place.
         Some(Instruction::CallFunction(name, _)) => {

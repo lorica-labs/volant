@@ -21,6 +21,7 @@ pub(super) use expression::single_expression;
 use super::bridged;
 use super::context::set_literal;
 use super::env::{container_repr, holds_undefined};
+use super::pymethods::format::{holds_tuple, repr};
 use super::templar::Templar;
 use super::{TemplateError, UNDEFINED};
 
@@ -106,7 +107,12 @@ pub(super) fn concat(
     if holds_undefined(&left) || holds_undefined(&right) {
         return Err(minijinja::Error::from(ErrorKind::UndefinedError));
     }
-    let shown = |v: &minijinja::Value| container_repr(v).unwrap_or_else(|| v.to_string());
+    let shown = |v: &minijinja::Value| {
+        if holds_tuple(v) {
+            return repr(v);
+        }
+        container_repr(v).unwrap_or_else(|| v.to_string())
+    };
     Ok(minijinja::Value::from(format!(
         "{}{}",
         shown(&left),

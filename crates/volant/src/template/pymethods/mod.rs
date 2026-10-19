@@ -3,7 +3,9 @@
 //! `'{:>5}'.format(x)`. minijinja has no such methods of its own, so the environment's
 //! unknown-method hook answers them. A name no table below holds fails by its name.
 
-use minijinja::value::ValueKind;
+use std::sync::Arc;
+
+use minijinja::value::{Tuple, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, State, Value};
 
 mod args;
@@ -55,6 +57,20 @@ fn call(state: &mut State, value: &Value, method: &str, args: &[Value]) -> Resul
                 "object of type 'str' has no attribute '{method}'"
             )));
         }
+    }
+    if let Some(tuple) = value.downcast_object_ref::<Tuple>() {
+        if super::any_undefined(args) {
+            return Err(Error::from(ErrorKind::UndefinedError));
+        }
+        if matches!(method, "index" | "count")
+            && let Some(answer) =
+                lists::call(&MutList::temp(Arc::new(tuple.to_vec())), method, args)
+        {
+            return answer;
+        }
+        return Err(raise(format!(
+            "object of type 'tuple' has no attribute '{method}'"
+        )));
     }
     if matches!(value.kind(), ValueKind::Seq | ValueKind::Iterable)
         && !is_list(value)

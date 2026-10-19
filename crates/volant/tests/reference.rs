@@ -477,14 +477,19 @@ fn no_tracked_fixture_is_a_dangling_link() {
 
 /// The `links` of a case in a copy: each path becomes a link to its target, which may not exist.
 fn make_links(copy: &Path, links: &[(String, String)]) {
+    #[cfg(not(unix))]
+    if let Some((path, target)) = links.first() {
+        panic!(
+            "{path} -> {target} in {}: a link in a scenario needs unix",
+            copy.display()
+        );
+    }
+    #[cfg(unix)]
     for (path, target) in links {
         let link = copy.join(path);
         std::fs::create_dir_all(link.parent().expect("a link sits in a directory"))
             .expect("the link's directory is made");
-        #[cfg(unix)]
         std::os::unix::fs::symlink(target, &link).expect("the link is made");
-        #[cfg(not(unix))]
-        panic!("{path} -> {target}: a link in a scenario needs unix");
     }
 }
 

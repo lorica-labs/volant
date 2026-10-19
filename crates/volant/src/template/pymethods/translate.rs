@@ -76,7 +76,7 @@ pub(super) fn maketrans(call: &Call<'_>) -> Result<Value, Error> {
             };
             table.push((code, map.get_item(&key)?));
         }
-        return Ok(table.into_iter().collect());
+        return Ok(Value::from_pairs(table));
     }
     let from = args[0].as_str().ok_or_else(|| {
         raise(format!(
@@ -121,5 +121,5 @@ pub(super) fn maketrans(call: &Call<'_>) -> Result<Value, Error> {
             set(&mut table, c, Value::from(()));
         }
     }
-    Ok(table.into_iter().collect())
+    Ok(Value::from_pairs(table))
 }

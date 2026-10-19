@@ -38,8 +38,9 @@ use super::shell::shell_word;
 /// `judge` reads: `LC_ALL=C` sorts the three paths in that order, because each is a prefix of
 /// the next, and `ent` fails any line that is not about the path it is given. `prepare` makes
 /// the directory for an upload, with `mkdir -m 700`, because a default ACL on `remote_tmp` takes
-/// the place of the umask. `sweep` removes the other versions' directories that belong to this
-/// user and that nobody else can write.
+/// the place of the umask. It accepts a directory another link of the same account made in the
+/// meantime, which `fit` then judges like any other. `sweep` removes the other versions'
+/// directories that belong to this user and that nobody else can write.
 const CHECKS: &str = concat!(
     r#"ent() { m=; o=; gp=; case "$1" in *" $2"|*" $2 -> "*) set -f; set -- $1; set +f; m=$1; o=$3; gp=$4;; esac; }; "#,
     r#"okmode() { case "$m" in "$1"????[!w]??[!w]*) [ "$o" = "$u" ]; return;; esac; return 1; }; "#,
@@ -57,8 +58,8 @@ const CHECKS: &str = concat!(
     r#"if [ -L "$d" ] || [ -e "$d" ]; then if ! fit d "$d"; then "#,
     r#"case "$m" in d*) [ "$o" = "$u" ] || { bad_dir; return @UNSAFE@; };; *) bad_dir; return @UNSAFE@;; esac; "#,
     r#"rm -f "$d/volant-agent" "$d"/volant-agent.tmp.* "$d/agent.stderr"; "#,
-    r#"rmdir "$d" 2>/dev/null || { bad_dir; return @UNSAFE@; }; mkdir -m 700 "$d" || return 1; fi; "#,
-    r#"else mkdir -m 700 "$d" || return 1; fi; fit d "$d" || { bad_dir; return @UNSAFE@; }; }; "#,
+    r#"rmdir "$d" 2>/dev/null || { bad_dir; return @UNSAFE@; }; mkdir -m 700 "$d" 2>/dev/null || [ -d "$d" ] || return 1; fi; "#,
+    r#"else mkdir -m 700 "$d" 2>/dev/null || [ -d "$d" ] || return 1; fi; fit d "$d" || { bad_dir; return @UNSAFE@; }; }; "#,
     r#"sweep() { for old in "$rt"/volant-agent-*; do [ "$old" = "$d" ] && continue; "#,
     r#"ent "$(ls -ldn -- "$old" 2>/dev/null)" "$old"; okmode d && rm -rf -- "$old"; done; return 0; }; "#,
 );

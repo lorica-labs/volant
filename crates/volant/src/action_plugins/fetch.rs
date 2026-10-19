@@ -32,6 +32,9 @@ use super::{Context, Plugin, Step, Sub, lost};
 use crate::executor::as_bool_value;
 
 mod dest;
+mod paths;
+
+use paths::{absolute, normalise, walk};
 
 /// The reference's failure when the source is a directory, from `stat` or from `slurp`.
 const IS_A_DIRECTORY: &str = "remote file is a directory, fetch cannot work on directories";
@@ -434,83 +437,6 @@ impl Plugin for Fetch {
             State::Slurp => Step::Done(last.map_or_else(|| lost("slurp"), |r| self.slurped(r))),
         }
     }
-}
-
-/// `dest` as the reference reads it: `~` for the controller's home, relative to the playbook.
-fn absolute(dest: &str, playbook_dir: &Path) -> PathBuf {
-    let home = std::env::var_os("HOME").map(PathBuf::from);
-    match (dest.strip_prefix('~'), home) {
-        (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
-            PathBuf::from(format!("{}{rest}", home.display()))
-        }
-        _ => playbook_dir.join(dest),
-    }
-}
-
-/// A path with `.` dropped and `..` taken off the component before it, and nothing looked up:
-/// a link in it is not followed, it is refused later by [`walk`].
-fn normalise(path: &Path) -> PathBuf {
-    let mut out = PathBuf::new();
-    for part in path.components() {
-        match part {
-            Component::CurDir => {}
-            Component::ParentDir => match out.components().next_back() {
-                Some(Component::Normal(_)) => {
-                    out.pop();
-                }
-                // `/..` is `/`, as `os.path.normpath` has it.
-                Some(Component::RootDir | Component::Prefix(_)) => {}
-                _ => out.push(".."),
-            },
-            other => out.push(other),
-        }
-    }
-    out
-}
-
-/// Every component of `path` below `root`, refused when it is a symbolic link; with `create`, the
-/// directories that are missing made one by one on the way down. With `guarded`, a directory that
-/// already exists is refused when another user could change it (see [`dest::guard`]).
-fn walk(root: &Path, path: &Path, create: bool, guarded: bool) -> Result<(), String> {
-    let fail = |err: std::io::Error| format!("Failed to fetch the file: {err}");
-    if create {
-        std::fs::create_dir_all(root).map_err(fail)?;
-    }
-    let below: Vec<Component<'_>> = path
-        .strip_prefix(root)
-        .map_err(|_| {
-            format!(
-                "the fetched path {} is outside '{}'",
-                path.display(),
-                root.display()
-            )
-        })?
-        .components()
-        .collect();
-    let mut at = root.to_path_buf();
-    for (i, part) in below.iter().enumerate() {
-        at.push(part);
-        match std::fs::symlink_metadata(&at) {
-            Ok(meta) if meta.file_type().is_symlink() => {
-                return Err(format!(
-                    "the fetched path {} goes through the symbolic link {}, and fetch never follows one",
-                    path.display(),
-                    at.display()
-                ));
-            }
-            Ok(meta) if guarded && meta.is_dir() => dest::guard(&at, &meta)?,
-            Ok(_) => {}
-            Err(err) if err.kind() == std::io::ErrorKind::NotFound => {
-                if create && i + 1 < below.len() {
-                    std::fs::create_dir(&at).map_err(fail)?;
-                }
-            }
-            // A component that is a file: nothing below it can exist, and the write says so.
-            Err(_) if !create => return Ok(()),
-            Err(err) => return Err(fail(err)),
-        }
-    }
-    Ok(())
 }
 
 #[cfg(test)]

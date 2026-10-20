@@ -1,0 +1,3 @@
+- name: Read a template from an included file
+  ansible.builtin.debug:
+    msg: "{{ lookup('ansible.builtin.template', 't.j2') }}"

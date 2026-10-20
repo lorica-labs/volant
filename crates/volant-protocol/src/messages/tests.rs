@@ -444,18 +444,12 @@ fn a_result_carries_an_integer_of_any_width_exactly() {
     let line = format!(
         r#"{{"type":"task_result","batch":1,"index":0,"result":{{"changed":false,"n":{wide},"m":1267650600228229401496703205377,"l":[-{wide}]}}}}"#
     );
-    let FromAgent::TaskResult { result, .. } = serde_json::from_str(&line).unwrap() else {
-        panic!("a task result")
-    };
-    assert_eq!(result.0["n"].to_string(), wide);
-    assert_eq!(result.0["m"].to_string(), "1267650600228229401496703205377");
-    assert_eq!(
-        serde_json::to_string(&result).unwrap().len(),
-        result_text(&line).len()
-    );
-}
-
-fn result_text(line: &str) -> &str {
-    let start = line.find(r#""result":"#).unwrap() + r#""result":"#.len();
-    &line[start..line.len() - 1]
+    let received: FromAgent = serde_json::from_str(&line).unwrap();
+    let sent = serde_json::to_value(&received).unwrap();
+    let result = &sent["result"];
+    assert_eq!(result["n"].to_string(), wide);
+    assert_eq!(result["m"].to_string(), "1267650600228229401496703205377");
+    assert_eq!(result["l"][0].to_string(), format!("-{wide}"));
+    let original: Value = serde_json::from_str(&line).unwrap();
+    assert_eq!(*result, original["result"]);
 }

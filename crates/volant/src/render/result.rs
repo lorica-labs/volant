@@ -167,14 +167,11 @@ impl Renderer {
             body.remove("failed");
             body.remove("skipped");
             if self.verbosity < 3 {
-                // The reference's `_dump_results` keeps the diff off the line; it prints it apart.
+                // The reference's `_dump_results` keeps the diff and the `invocation` off the line
+                // of every outcome below `-vvv`; it prints the diff apart. Measured on `ok`,
+                // `changed`, `failed` and `skipped` results at `-v` and `-vv`, no module keeps it.
                 body.remove("diff");
-                if matches!(
-                    outcome,
-                    Outcome::Failed | Outcome::Rescued | Outcome::Ignored
-                ) {
-                    body.remove("invocation");
-                }
+                body.remove("invocation");
             }
         }
         // Registered and never shown: the reference's callback pops it off every line, measured.

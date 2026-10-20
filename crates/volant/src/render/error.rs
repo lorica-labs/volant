@@ -23,6 +23,9 @@ pub struct ErrorBlock {
     /// shortened (`textwrap.shorten(str(value), 120)`).
     pub unknown: Option<String>,
     pub causes: Vec<Cause>,
+    /// What the first segment says in place of `Task failed.`, when the first link of the chain
+    /// carries more: a module's own message, behind `Task failed: Module failed: `.
+    pub lead: Option<String>,
 }
 
 /// One link of a failure's chain: its own message, where the value it is about was written, and
@@ -32,6 +35,14 @@ pub struct Cause {
     pub msg: String,
     pub origin: Option<crate::playbook::Origin>,
     pub help: Option<String>,
+}
+
+/// The first link of [`CHAIN_KEY`] when it replaces the `Task failed.` that opens the block.
+pub fn lead(msg: &str) -> serde_json::Value {
+    let mut c = serde_json::Map::new();
+    c.insert("msg".into(), msg.into());
+    c.insert("lead".into(), true.into());
+    serde_json::Value::Object(c)
 }
 
 /// The key the executor leaves a failure's causes under, as `[{"msg", "path", "line", "col",
@@ -77,6 +88,7 @@ pub(super) fn causes_of(result: &TaskResult) -> Vec<Cause> {
             .and_then(|n| usize::try_from(n).ok())
     };
     list.iter()
+        .filter(|c| c.get("lead").is_none())
         .map(|c| Cause {
             msg: text(c, "msg").unwrap_or_default(),
             origin: match (text(c, "path"), number(c, "line"), number(c, "col")) {
@@ -90,6 +102,15 @@ pub(super) fn causes_of(result: &TaskResult) -> Vec<Cause> {
             help: text(c, "help"),
         })
         .collect()
+}
+
+/// The text [`lead`] put first in the failure's chain, when there is one.
+fn lead_of(result: &TaskResult) -> Option<String> {
+    let serde_json::Value::Array(list) = result.0.get(CHAIN_KEY)? else {
+        return None;
+    };
+    let first = list.first().filter(|c| c.get("lead").is_some())?;
+    first.get("msg")?.as_str().map(str::to_string)
 }
 
 impl ErrorBlock {
@@ -124,6 +145,7 @@ impl ErrorBlock {
             } else {
                 causes_of(result)
             },
+            lead: if censored { None } else { lead_of(result) },
         }
     }
 
@@ -140,6 +162,7 @@ impl ErrorBlock {
             origin: origin.cloned(),
             unknown: None,
             causes: Vec::new(),
+            lead: None,
         }
     }
 }
@@ -324,7 +347,10 @@ impl Renderer {
             }
         } else {
             // `format_event_verbose_message`: the brief message, then one segment per link.
-            let mut first = "Task failed.".to_string();
+            let mut first = block
+                .lead
+                .clone()
+                .unwrap_or_else(|| "Task failed.".to_string());
             if let Some(origin) = &block.origin {
                 first.push('\n');
                 first.push_str(&source_context(origin));

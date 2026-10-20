@@ -103,6 +103,9 @@ pub(in crate::executor) enum Event {
         delegate: Option<String>,
         /// The `[ERROR]:` block printed in front of a failure's line, when it has one.
         error: Option<crate::render::ErrorBlock>,
+        /// Where the task is written, for the `task path:` line that `show_task_path_on_failure`
+        /// puts in front of a failure's line. `None` for a task no file holds.
+        task_origin: Option<crate::playbook::Origin>,
     },
     /// One attempt of a task with `until` or `retries` failed and another one is coming, or this
     /// was the last: the reference prints this line after every failed attempt, the last

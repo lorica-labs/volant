@@ -13,6 +13,8 @@ A role is static composition. Volant reads its directory while the play compiles
 2. `roles_path` from `ansible.cfg`, or `ANSIBLE_ROLES_PATH`. Without either, the defaults are `~/.ansible/roles`, `/usr/share/ansible/roles` and `/etc/ansible/roles`.
 3. `<playbook_dir>` itself
 
+A relative `roles_path` entry is read against the directory of `ansible.cfg`, or against the working directory when it comes from `ANSIBLE_ROLES_PATH`. Every entry is made absolute, with `.` and `..` removed, before it is used. A role's `ansible_search_path` and the `included:` lines show that path, as ansible-core does.
+
 A three-part name such as `acme.demo.hello` is also looked for under `<collections path>/ansible_collections/acme/demo/roles/hello`.
 
 A role nobody can find stops the run with exit code 1, and the message lists every path that was tried.

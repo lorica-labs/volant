@@ -1,0 +1,3 @@
+# `str.encode` makes bytes, which a template counts, decodes, prints and passes to the filters
+# that read text; a result that is bytes becomes its text. `dict.fromkeys` is called on `dict`.
+args: [-i, inv.ini, play.yml]

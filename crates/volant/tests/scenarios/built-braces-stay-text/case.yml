@@ -1,0 +1,7 @@
+# Braces that a computation builds (`~`, `replace`, `join`, `format`) are text, however the result is
+# read afterwards. A variable that holds a template of the playbook still renders when it is read.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, built.yml]
+  - args: [-i, names.yml, names-read.yml]
+  - args: [-i, idioms.ini, idioms.yml]

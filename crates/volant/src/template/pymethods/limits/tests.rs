@@ -38,6 +38,33 @@ fn a_size_past_the_limit_is_a_task_error_before_any_text_is_built() {
     }
 }
 
+/// `encode`, `decode` and `hex` check the size of their result from the length alone, so the
+/// test asks with a length and builds nothing.
+#[test]
+fn encode_decode_and_hex_check_their_size_before_building() {
+    use super::super::bytes::{check_decode, check_encode, check_hex};
+    use super::super::codec::{Codec, Order};
+    const HUNDRED_MILLION: usize = 100_000_000;
+    for (name, result) in [
+        (
+            "utf-32",
+            check_encode(HUNDRED_MILLION, Codec::Utf32(Order::Little, true), "strict"),
+        ),
+        (
+            "ascii backslashreplace",
+            check_encode(HUNDRED_MILLION, Codec::Ascii, "backslashreplace"),
+        ),
+        ("decode", check_decode(HUNDRED_MILLION, "backslashreplace")),
+        ("hex", check_hex(HUNDRED_MILLION)),
+    ] {
+        let err = result.expect_err(name);
+        assert!(err.to_string().contains("256 MiB"), "{name}: {err}");
+    }
+    assert!(check_encode(HUNDRED_MILLION, Codec::Utf8, "strict").is_ok());
+    assert!(check_decode(HUNDRED_MILLION, "strict").is_ok());
+    assert!(check_hex(1000).is_ok());
+}
+
 /// A count past what an index holds is Python's own error, and a bound past it is a clamp.
 #[test]
 fn a_count_past_an_index_is_pythons_error() {

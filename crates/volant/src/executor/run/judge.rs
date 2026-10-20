@@ -11,7 +11,7 @@ use crate::vars::HostVars;
 
 use super::argspec::refusal;
 use super::local::set_fact_data;
-use super::output::{CAUSE_KEY, RAISED_SKIP, python_falsy};
+use super::output::{CAUSE_KEY, RAISED_SKIP, brief_message, python_falsy, verbose_segments};
 
 /// One module result, ready to report: `changed_when` and `failed_when` decide its outcome
 /// wherever the module ran, controller side as well as on the agent.
@@ -269,10 +269,16 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
             Some(e) if !local && !python_falsy(e) => "Module",
             _ => "Action",
         };
-        result
-            .0
-            .entry("msg")
-            .or_insert_with(|| json!(format!("Task failed: {by} failed: Unknown error.")));
+        // A module that raised sends no `msg`, only the summary of its exception, which the
+        // reference words into the result's `msg` (`result_dict_from_exception`).
+        let by_failed = format!("{by} failed.");
+        let brief = cause.as_ref().and_then(brief_message);
+        let raised = brief.as_ref().map(|brief| {
+            crate::render::task_failed(&crate::render::concat_message(&by_failed, brief))
+        });
+        result.0.entry("msg").or_insert_with(|| {
+            json!(raised.unwrap_or_else(|| format!("Task failed: {by} failed: Unknown error.")))
+        });
         // The block the reference prints over the failure's line: `Task failed: <by> failed: `
         // and the error's brief message, the module's summary when it sent one.
         let msg = match result.0.get("msg") {
@@ -280,12 +286,8 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
             Some(other) => crate::render::ansible_json(other),
             None => String::new(),
         };
-        let detail = cause
-            .as_ref()
-            .and_then(Value::as_str)
-            .map_or(msg.clone(), str::to_string);
+        let detail = brief.unwrap_or_else(|| msg.clone());
         // `AnsibleError`: an empty message is the default one alone, `Action failed.`.
-        let by_failed = format!("{by} failed.");
         // `Unexpected AnsibleActionFail error: ...` is the sentence the reference's own `copy`
         // fails with for a source that is not there, and its block carries it as it is. Any
         // other result starting with it only loses the `Action failed: ` in its error block.
@@ -298,6 +300,25 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
         } else {
             crate::render::task_failed(&crate::render::concat_message(&by_failed, &detail))
         };
+        // The causes the module's summary chains: the first link says the task and the module
+        // failed and gives the module's own message, the others follow behind `caused by`.
+        if let Some(mut links) = cause.as_ref().and_then(verbose_segments)
+            && links.len() > 1
+            && !result.0.contains_key(crate::render::CHAIN_KEY)
+        {
+            let lead = links.remove(0);
+            let lead =
+                crate::render::task_failed(&crate::render::concat_message(&by_failed, &lead));
+            let mut chain = vec![crate::render::lead(&lead)];
+            chain.extend(
+                links
+                    .iter()
+                    .map(|link| crate::render::cause(link, None, None)),
+            );
+            result
+                .0
+                .insert(crate::render::CHAIN_KEY.into(), Value::Array(chain));
+        }
         // A failure raised before the action ran already carries its block's message.
         result
             .0

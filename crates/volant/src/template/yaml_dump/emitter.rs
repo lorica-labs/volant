@@ -16,6 +16,12 @@ pub(super) fn dump(
     if crate::template::holds_undefined(value) {
         return Err(Error::from(ErrorKind::UndefinedError));
     }
+    if super::super::pymethods::bytes::holds(value) {
+        return Err(Error::new(
+            ErrorKind::InvalidOperation,
+            "to_yaml does not write bytes yet",
+        ));
+    }
     let indent = kwargs
         .get::<Option<usize>>("indent")?
         .or(indent)

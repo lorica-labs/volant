@@ -110,9 +110,9 @@ pub(super) fn add_output_lines(result: &mut TaskResult) {
 pub(super) fn summarise_exception(result: &mut TaskResult) {
     let sent = result.0.remove("exception");
     let failed = result.0.get("failed").is_some_and(|v| !python_falsy(v));
-    // What the summary says, causes and all, for the error block `settle_failure` words.
-    if failed && let Some(brief) = sent.as_ref().and_then(brief_message) {
-        result.0.insert(CAUSE_KEY.into(), Value::from(brief));
+    // The summary itself, for the error block `settle_failure` words: its message and its causes.
+    if failed && let Some(summary) = sent.as_ref().filter(|s| brief_message(s).is_some()) {
+        result.0.insert(CAUSE_KEY.into(), summary.clone());
     }
     if failed || sent.is_some_and(|e| !python_falsy(&e)) {
         result
@@ -121,25 +121,42 @@ pub(super) fn summarise_exception(result: &mut TaskResult) {
     }
 }
 
-/// Where `summarise_exception` leaves a failed module's own brief message for `settle_failure`.
+/// Where `summarise_exception` leaves a failed module's error summary for `settle_failure`.
 pub(super) const CAUSE_KEY: &str = "_volant_cause";
 
 /// `format_event_brief_message` of a serialised `ErrorSummary`: the event's message and those of
 /// the causes it follows, each part ending where the next begins, as the reference joins them.
-fn brief_message(summary: &Value) -> Option<String> {
+pub(super) fn brief_message(summary: &Value) -> Option<String> {
     let mut parts = Vec::new();
     let mut event = summary.get("event")?;
     loop {
         parts.push(event.get("msg")?.as_str()?.to_string());
-        match event.get("chain") {
-            Some(chain) if chain.get("follow") == Some(&Value::Bool(true)) => {
-                event = chain.get("event")?;
-            }
-            _ => break,
+        match followed(event) {
+            Some(next) => event = next,
+            None => break,
         }
     }
+    Some(join_parts(parts))
+}
+
+/// The event `event` is chained to, when the chain is one the reference follows.
+fn followed(event: &Value) -> Option<&Value> {
+    let chain = event.get("chain")?;
+    (chain.get("follow") == Some(&Value::Bool(true)))
+        .then(|| chain.get("event"))
+        .flatten()
+}
+
+/// Why the event is chained to its cause.
+fn msg_reason(event: &Value) -> Option<&Value> {
+    event.get("chain")?.get("msg_reason")
+}
+
+/// `deduplicate_message_parts`: the innermost part first, each outer part put before it unless
+/// the outer one already ends with it.
+fn join_parts(parts: Vec<String>) -> String {
     let mut parts = parts.into_iter().rev();
-    let mut message = parts.next()?;
+    let mut message = parts.next().unwrap_or_default();
     for part in parts {
         message = if part.ends_with(&message) {
             part
@@ -147,7 +164,66 @@ fn brief_message(summary: &Value) -> Option<String> {
             crate::render::concat_message(&part, &message)
         };
     }
-    Some(message)
+    message
+}
+
+/// `format_event_verbose_message` of a serialised `ErrorSummary`, one text for each link the
+/// reference prints behind `<<< caused by >>>`. A link whose event adds nothing is folded into
+/// the one before it, as the reference does. `None` when the summary holds sub-events, which
+/// the block does not show.
+pub(super) fn verbose_segments(summary: &Value) -> Option<Vec<String>> {
+    let text = |event: &Value, key: &str| {
+        event
+            .get(key)
+            .and_then(Value::as_str)
+            .filter(|t| !t.is_empty())
+            .map(str::to_string)
+    };
+    let mut segments = Vec::new();
+    let mut event = Some(summary.get("event")?);
+    while let Some(current) = event {
+        if current.get("events").is_some_and(|e| !python_falsy(e)) {
+            return None;
+        }
+        let msg = |e: &Value| e.get("msg").and_then(Value::as_str).map(str::to_string);
+        let mut parts = vec![msg(current)?];
+        let mut last = current;
+        let mut next = followed(current);
+        while let Some(linked) = next {
+            let details = |e: &Value| (text(e, "formatted_source_context"), text(e, "help_text"));
+            let folds = linked.get("events").is_none_or(python_falsy)
+                && (details(linked) == (None, None) || details(linked) == details(current))
+                && (linked.get("chain").is_none() || msg_reason(linked) == msg_reason(last));
+            if !folds {
+                break;
+            }
+            parts.push(msg(linked)?);
+            last = linked;
+            next = followed(linked);
+        }
+        let (context, help) = (
+            text(current, "formatted_source_context"),
+            text(current, "help_text"),
+        );
+        let message = join_parts(parts);
+        segments.push(match (context, help) {
+            (None, None) => message,
+            (None, Some(help)) if !message.contains('\n') && !help.contains('\n') => {
+                format!("{message} {help}")
+            }
+            (context, help) => {
+                let mut lines = vec![message];
+                lines.extend(context);
+                if let Some(help) = help {
+                    lines.push(String::new());
+                    lines.push(help);
+                }
+                lines.join("\n")
+            }
+        });
+        event = next;
+    }
+    Some(segments)
 }
 
 /// Whether Python's `bool()` is false for the value a module sent: `None`, `False`, a zero, or

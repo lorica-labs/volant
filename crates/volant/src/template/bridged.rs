@@ -199,6 +199,12 @@ fn sendable(
             kind.as_str()
         )));
     }
+    if all().any(super::pymethods::bytes::holds) {
+        return Err(raise(format!(
+            "{} '{name}' was given bytes, which cannot be sent to the Python helper",
+            kind.as_str()
+        )));
+    }
     let args = positional
         .iter()
         .map(|v| to_json(kind, name, v))

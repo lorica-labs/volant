@@ -1,0 +1,29 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - name: ignored failure
+      ansible.builtin.fail:
+        msg: ignored
+      ignore_errors: true
+    - name: caught failure
+      block:
+        - name: fails in the block
+          ansible.builtin.assert:
+            that: false
+            fail_msg: in the block
+      rescue:
+        - name: rescue task
+          ansible.builtin.debug:
+            msg: rescued
+    - name: loop failure
+      ansible.builtin.fail:
+        msg: "item {{ item }}"
+      loop: [1, 2]
+      ignore_errors: true
+    - name: role failure
+      ansible.builtin.include_role:
+        name: r
+      ignore_errors: true
+    - name: the end
+      ansible.builtin.fail:
+        msg: stop

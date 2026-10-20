@@ -6,7 +6,7 @@ use minijinja::{Error, Value};
 
 use super::args::{Call, iterate, raise};
 use super::format::repr;
-use super::mutable::{Dict, MutDict, key, snapshot};
+use super::mutable::{Dict, MutDict, is_mutable, key, snapshot};
 
 fn none() -> Result<Value, Error> {
     Ok(Value::from(()))
@@ -68,17 +68,33 @@ pub(super) fn call(me: &MutDict, name: &str, args: &[Value]) -> Option<Result<Va
             }))
         }),
         "update" => update(me, &call),
-        "fromkeys" => call.between(name, 1, 2).and_then(|a| {
-            let value = a.get(1).map_or_else(|| Value::from(()), snapshot);
-            let mut keys = Vec::new();
-            for k in iterate(&a[0])? {
-                keys.push(key(&k)?);
-            }
-            Ok(Value::from_pairs(
-                keys.into_iter().map(|k| (k, value.clone())),
-            ))
-        }),
+        "fromkeys" => fromkeys(args),
         _ => return None,
+    })
+}
+
+/// `dict.fromkeys(iterable, value=None)`: a mapping of every item of `iterable` to `value`. It is
+/// a method of the type, so `dict.fromkeys(...)` and `{}.fromkeys(...)` are the same call.
+pub(in crate::template) fn fromkeys(args: &[Value]) -> Result<Value, Error> {
+    let call = Call::of("dict", args);
+    let a = call.between("fromkeys", 1, 2)?;
+    // A list or mapping that is a mutable object stays one, and every key holds that one object,
+    // as in Python: a change through one key shows through the others.
+    let value = a.get(1).map_or_else(
+        || Value::from(()),
+        |v| {
+            if is_mutable(v) {
+                v.clone()
+            } else {
+                snapshot(v)
+            }
+        },
+    );
+    let entries = super::super::globals::keyed(iterate(&a[0])?, &value)?;
+    Ok(if is_mutable(&value) {
+        MutDict::from_entries(entries.into_iter().collect())
+    } else {
+        Value::from_pairs(entries)
     })
 }
 

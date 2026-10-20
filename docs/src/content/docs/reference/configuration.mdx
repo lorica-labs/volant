@@ -61,6 +61,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Open the [debugger](/playbooks/how-a-play-runs/#other-strategies) after every failed or unreachable task.
 </Option>
 
+<Option name="show_task_path_on_failure" id="defaults-show-task-path-on-failure" default="false" env="ANSIBLE_SHOW_TASK_PATH_ON_FAILURE">
+  Print `task path: <file>:<line>` before the `fatal:` line of a failed task. From `-vv` the line already follows every task banner, so this changes nothing there. A loop item's `failed:` line and an unreachable host get no path line. As in Ansible, `y`, `yes`, `on`, `true`, `t` and `1` turn it on in any case, and any other word, an empty variable included, leaves it off.
+</Option>
+
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Warn when the inventory holds no host, so that only the implicit `localhost` is left. `all` does not match that host.
 </Option>

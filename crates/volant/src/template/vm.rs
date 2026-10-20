@@ -338,8 +338,9 @@ pub(super) fn convert_error(err: minijinja::Error) -> TemplateError {
 /// Notes that a pass left text that must stay as it is, when the result still holds a template
 /// marker and the marker is the text's own:
 ///
-/// - the pass read no variable, so no variable's template can be in the result: the text wrote
-///   the marker itself, with a `raw` block or in a string such as `'{{'`;
+/// - no read of the pass handed out a template that was not rendered, so no stored template can
+///   be in the result: the text wrote the marker itself, with a `raw` block or in a string such as
+///   `'{{'`, or built it from names and text that hold none (`'{{ ' ~ name ~ ' }}'`, `replace`);
 /// - or `source` has a `raw` block. `source` is the author's text on the `first` pass. On a
 ///   later pass it is a variable's value, and a result that still has a `raw` block is a chain
 ///   not read to its end.
@@ -351,14 +352,14 @@ pub(super) fn keep_literal(
     result: &Value,
     ctx: &minijinja::Value,
     first: bool,
-    read_none: bool,
+    none_deferred: bool,
 ) {
     if !holds_template(result) {
         return;
     }
     let raw =
         opens_raw(source) && (first || !matches!(result, Value::String(text) if opens_raw(text)));
-    if read_none || raw {
+    if none_deferred || raw {
         set_literal(ctx, true);
     }
 }

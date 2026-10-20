@@ -1235,9 +1235,28 @@ const EVERY_LIST: &[&str] = &[
     "play_hosts",
 ];
 
+const EVERY_LIST_AND_GROUP_NAMES: &[&str] = &[
+    "ansible_play_batch",
+    "ansible_play_hosts",
+    "ansible_play_hosts_all",
+    "group_names",
+    "groups",
+    crate::template::HOSTVARS_KEYS,
+    "inventory_hostname",
+    "inventory_hostname_short",
+    "play_hosts",
+];
+
 const NAME_ROWS: &[NameRow] = &[
     name_row("web1", &["web"], "web1", &["web1"], &[], false),
-    name_row("a{b}", &["x}{y"], "a{b}", &["a{b}"], &[], false),
+    name_row(
+        "a{b}",
+        &["x}{y"],
+        "a{b}",
+        &["a{b}"],
+        EVERY_LIST_AND_GROUP_NAMES,
+        true,
+    ),
     name_row(
         "nh",
         &[EVIL],
@@ -1350,6 +1369,47 @@ fn a_group_by_name_that_holds_a_template_is_data_wherever_it_is_read() {
         if group == evil {
             assert!(data.contains("group_names"), "group_names after {group:?}");
         }
+    }
+}
+
+/// A host or group name that holds `{` is data wherever the inventory came from: the one the run
+/// starts with, and the one `meta: refresh_inventory` reads again.
+#[test]
+fn an_inventory_name_that_holds_template_syntax_is_data() {
+    const EVIL: &str = "{{ lookup('pipe','id') }}";
+    // What a read of `h1` finds data: `groups`, `group_names`, `hostvars`' keys, and whether
+    // `hostvars['{{x}}']` is.
+    type Data = (bool, bool, bool, bool);
+    let reads = |store: &mut VarStore| -> Data {
+        let data = store.untrusted_of("h1", &scope(&["h1"]));
+        (
+            data.contains("groups"),
+            data.contains("group_names"),
+            data.contains(crate::template::HOSTVARS_KEYS),
+            store.untrusted_hosts().contains("{{x}}"),
+        )
+    };
+    let rows: [(&str, &str, &str, Data); 4] = [
+        ("group", "h1", EVIL, (true, true, false, false)),
+        ("brace", "h1", "a{b", (true, true, false, false)),
+        ("host", "{{x}}", "g", (true, false, true, true)),
+        ("clean", "h2", "g", (false, false, false, false)),
+    ];
+    for (what, host, group, expected) in rows {
+        let tmp = scratch();
+        let mut inv = Inventory::parse_ini("[g]\nh1\n").unwrap();
+        inv.add_member(host, group);
+        let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
+        assert_eq!(reads(&mut store), expected, "{what}: on load");
+        let clean = Inventory::parse_ini("[g]\nh1\n").unwrap();
+        let mut store = VarStore::new(&clean, None, tmp.path(), Map::new()).unwrap();
+        assert_eq!(
+            reads(&mut store),
+            (false, false, false, false),
+            "{what}: before"
+        );
+        store.refresh_inventory(&inv);
+        assert_eq!(reads(&mut store), expected, "{what}: after a refresh");
     }
 }
 

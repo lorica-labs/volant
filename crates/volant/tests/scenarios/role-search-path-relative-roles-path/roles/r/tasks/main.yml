@@ -1,0 +1,14 @@
+- name: Read a template by its bare name
+  ansible.builtin.debug:
+    msg: "{{ lookup('ansible.builtin.template', 't.j2') }}"
+
+- name: Read a file by its bare name
+  ansible.builtin.debug:
+    msg: "{{ lookup('ansible.builtin.file', 'f.txt') }}"
+
+- name: Show the search path
+  ansible.builtin.debug:
+    var: ansible_search_path
+
+- name: Include a file of the role
+  ansible.builtin.include_tasks: more.yml

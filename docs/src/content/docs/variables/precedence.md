@@ -43,6 +43,7 @@ A fixed set of magic variables sits on top of every host's view and always wins:
 | `ansible_play_batch`, `play_hosts` | The hosts of the current [`serial` batch](/playbooks/serial/). `play_hosts` is deprecated. |
 | `playbook_dir`, `inventory_dir`, `inventory_file` | Paths of the current run. |
 | `omit` | The placeholder that drops a module argument. |
+| `ansible_playbook_python` | The Python interpreter that runs ansible-core for Volant. Found when a template reads it, and undefined when none is found. |
 | `ansible_check_mode`, `ansible_diff_mode` | Always false in this release. |
 | `ansible_forks` | The current `forks` value. |
 | `ansible_version` | The reference release Volant reproduces, see [decision record 0003](/decisions/0003-ansible-version-reports-the-reference-release/). |

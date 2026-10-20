@@ -21,7 +21,7 @@ use super::links::{check_kept, connect, reuse_or_connect};
 #[cfg(unix)]
 use super::local::set_fact_names;
 use super::local::{run_local, set_fact_data};
-use super::output::{TTY_KEY, add_output_lines, classify, give_terminals};
+use super::output::{TTY_KEY, add_output_lines, classify, give_terminals, summarise_exception};
 use super::plugin::{
     PluginStart, protocol_task, run_plugin_attempts, run_plugin_item, wait_or_stop,
 };
@@ -1583,6 +1583,63 @@ async fn a_host_cannot_forge_the_controller_s_internal_keys() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A module that raised sends only the summary of its exception. The result and the block take
+/// the message from it, as ansible-core 2.19.12 does; a module's own `msg` stays the result's.
+#[test]
+fn a_raised_module_failure_takes_its_message_from_the_summary() {
+    let event = |msg: &str, cause: Option<Value>| {
+        let mut event = json!({"msg": msg});
+        if let Some(cause) = cause {
+            event["chain"] =
+                json!({"msg_reason": "<<< caused by >>>", "follow": true, "event": cause});
+        }
+        event
+    };
+    let pattern = event("missing ), unterminated subpattern at position 0", None);
+    // As the module sends it: the cause has a context of its own, which is not followed.
+    let mut errno = event("[Errno 13] Permission denied: b'/d/.tmp.txt'", None);
+    errno["chain"] = json!({"msg_reason": "<<< while handling >>>", "follow": false, "event": event("[Errno 13] rename", None)});
+    let denied = event(
+        "The destination directory '/d' is not writable by the current user.",
+        Some(errno.clone()),
+    );
+    let rows = [
+        (
+            json!({"failed": true, "exception": {"event": pattern}}),
+            "Task failed: Module failed: missing ), unterminated subpattern at position 0",
+            0,
+        ),
+        (
+            json!({"failed": true, "exception": {"event": denied.clone()}}),
+            "Task failed: Module failed: The destination directory '/d' is not writable by the current user: [Errno 13] Permission denied: b'/d/.tmp.txt'",
+            1,
+        ),
+        (
+            json!({"failed": true, "msg": "Permission denied", "exception": {"event": event("Permission denied", Some(errno))}}),
+            "Permission denied",
+            1,
+        ),
+    ];
+    for (answer, msg, causes) in rows {
+        let mut result = TaskResult(vars(answer.clone()));
+        summarise_exception(&mut result);
+        settle_failure(&mut result, &task("blockinfile"));
+        assert_eq!(result.0["msg"], json!(msg), "{answer}");
+        let block = crate::render::ErrorBlock::of(&result, None, false);
+        assert_eq!(block.causes.len(), causes, "{answer}: {block:?}");
+        if causes == 1 {
+            assert!(
+                block
+                    .lead
+                    .as_deref()
+                    .is_some_and(|l| l.starts_with("Task failed: Module failed: ")),
+                "{block:?}"
+            );
+        }
+        assert!(!block.message.contains("Unknown error"), "{block:?}");
+    }
+}
+
 /// An agent result keeps its error summary, its timings, how it ran and the lines of its output.
 #[tokio::test]
 #[expect(clippy::too_many_lines)]
@@ -2758,6 +2815,21 @@ fn the_playbook_interpreter_wins_and_a_missing_one_says_so() {
             .expect("the playbook named it, so it travels"),
             "/opt/python3.12/bin/python"
         );
+    }
+    {
+        for (named, want) in [
+            ("{{ nopy }}", "Task failed: 'nopy' is undefined"),
+            (
+                "{{ root }}/bin/{{ name }}",
+                "Task failed: The task includes an option with an undefined variable.",
+            ),
+        ] {
+            let failure = chosen_interpreter(Some(named), &["/usr/bin/python3".to_string()])
+                .expect_err("a template that did not render is not a path");
+            let msg = failure.0.get("msg").and_then(Value::as_str).unwrap_or("");
+            assert!(msg.starts_with(want), "{named}: {msg}");
+            assert!(failure.failed(), "{failure:?}");
+        }
     }
     {
         let failure = chosen_interpreter(None, &[]).expect_err("nothing to run a module under");

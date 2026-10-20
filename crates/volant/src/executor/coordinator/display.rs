@@ -165,6 +165,7 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
         censored,
         delegate,
         error,
+        task_origin,
         ..
     } = event
     else {
@@ -179,6 +180,15 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
     if show {
         if let Some(error) = &error {
             out.error(error);
+        }
+        // A loop item has its own `failed:` line and the reference gives it no path.
+        if label.is_none()
+            && matches!(
+                outcome,
+                Outcome::Failed | Outcome::Rescued | Outcome::Ignored
+            )
+        {
+            out.failure_path(task_origin.as_ref());
         }
         out.result(
             &host,

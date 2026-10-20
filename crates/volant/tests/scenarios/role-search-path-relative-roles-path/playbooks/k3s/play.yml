@@ -1,0 +1,12 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    x: 1
+  roles:
+    - r
+  tasks:
+    - ansible.builtin.include_role:
+        name: r
+    - ansible.builtin.import_role:
+        name: r
+    - ansible.builtin.include_tasks: ../../roles/r/tasks/plain.yml

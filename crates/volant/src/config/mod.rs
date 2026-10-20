@@ -17,8 +17,8 @@ pub(crate) use locate::is_world_writable;
 use parse::parse;
 use paths::{default_collections_path, default_roles_path, expand_home, path_list};
 use settings::{
-    boolean, cache_plugin, forks, gathering, host_named_dest_dirs, host_named_paths, integer,
-    runtime_mode, switch, timeout_secs,
+    boolean, cache_plugin, callback_flag, forks, gathering, host_named_dest_dirs, host_named_paths,
+    integer, runtime_mode, switch, timeout_secs,
 };
 
 /// Ansible's own default for `remote_tmp`, where the agent is cached on a host.
@@ -110,6 +110,10 @@ pub struct Config {
     /// `[defaults] show_custom_stats` or `ANSIBLE_SHOW_CUSTOM_STATS`: print what `set_stats`
     /// collected after the recap. Off by default, as in the reference.
     pub show_custom_stats: bool,
+    /// `[defaults] show_task_path_on_failure` or `ANSIBLE_SHOW_TASK_PATH_ON_FAILURE`: print the
+    /// `task path:` line before the `fatal:` line of a failed task below `-vv`, where the
+    /// reference prints it for no task. Off by default, as in the reference.
+    pub show_task_path_on_failure: bool,
     /// `[defaults] enable_task_debugger` or `ANSIBLE_ENABLE_TASK_DEBUGGER`: a failed or
     /// unreachable task with no `debugger` keyword opens the debugger prompt.
     pub enable_task_debugger: bool,
@@ -195,6 +199,7 @@ impl Default for Config {
             force_handlers: false,
             localhost_warning: true,
             show_custom_stats: false,
+            show_task_path_on_failure: false,
             enable_task_debugger: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
@@ -347,6 +352,10 @@ impl Config {
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {
             config.show_custom_stats = on;
+        }
+        // Set and empty still wins, and a word the reference does not know reads as false.
+        if let Ok(flag) = std::env::var("ANSIBLE_SHOW_TASK_PATH_ON_FAILURE") {
+            config.show_task_path_on_failure = callback_flag(&flag);
         }
         if let Ok(flag) = std::env::var("ANSIBLE_ENABLE_TASK_DEBUGGER")
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())

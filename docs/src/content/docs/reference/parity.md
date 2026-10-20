@@ -20,7 +20,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | YAML tag | 2 | 0 | 0 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
-| filter | 114 | 8 | 0 | 0 |
+| filter | 115 | 7 | 0 | 0 |
 | test | 80 | 2 | 0 | 0 |
 | lookup | 25 | 0 | 0 | 0 |
 | become | 2 | 0 | 0 | 1 |
@@ -422,7 +422,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `human_readable` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `human_to_bytes` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `indent` | <span class="kw kw-runs">runs</span> |  |
-| `int` | <span class="kw kw-partial">partial</span> | the base argument is not supported |
+| `int` | <span class="kw kw-runs">runs</span> |  |
 | `intersect` | <span class="kw kw-runs">runs</span> |  |
 | `items` | <span class="kw kw-runs">runs</span> |  |
 | `items2dict` | <span class="kw kw-runs">runs</span> |  |

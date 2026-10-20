@@ -172,6 +172,53 @@ fn the_volant_section_can_turn_connection_sharing_off() {
     }
 }
 
+/// `show_task_path_on_failure` is a callback option: `y`, `t` and `1` are true in any case, every
+/// other word is false, and a variable that is set wins over the file, empty or not.
+#[test]
+fn the_failure_path_switch_reads_the_spellings_of_the_reference() {
+    assert!(!Config::default().show_task_path_on_failure);
+    for (word, on) in [
+        ("true", true),
+        ("TRUE", true),
+        ("Yes", true),
+        ("on", true),
+        ("y", true),
+        ("t", true),
+        ("1", true),
+        ("false", false),
+        ("no", false),
+        ("0", false),
+        ("2", false),
+        ("maybe", false),
+    ] {
+        let text = format!("[defaults]\nshow_task_path_on_failure = {word}\n");
+        assert_eq!(cfg(&text, ".").show_task_path_on_failure, on, "{word}");
+    }
+    let saved_config = std::env::var("ANSIBLE_CONFIG").ok();
+    let dir = std::env::temp_dir().join(format!("volant-taskpath-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("a scratch dir");
+    let file = dir.join("ansible.cfg");
+    std::fs::write(&file, "[defaults]\nshow_task_path_on_failure = true\n").expect("the file");
+    unsafe { std::env::set_var("ANSIBLE_CONFIG", &file) };
+    assert!(Config::load().unwrap().show_task_path_on_failure);
+    for (word, on) in [("no", false), ("", false), ("maybe", false), ("T", true)] {
+        unsafe { std::env::set_var("ANSIBLE_SHOW_TASK_PATH_ON_FAILURE", word) };
+        assert_eq!(
+            Config::load().unwrap().show_task_path_on_failure,
+            on,
+            "{word:?}"
+        );
+    }
+    unsafe {
+        std::env::remove_var("ANSIBLE_SHOW_TASK_PATH_ON_FAILURE");
+        match saved_config {
+            Some(v) => std::env::set_var("ANSIBLE_CONFIG", v),
+            None => std::env::remove_var("ANSIBLE_CONFIG"),
+        }
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 fn defaults_section_is_read_and_paths_are_anchored() {
     let c = cfg(
@@ -186,6 +233,19 @@ fn defaults_section_is_read_and_paths_are_anchored() {
         ]
     );
     assert_eq!(c.timeout, Duration::from_secs(3));
+}
+
+/// A `roles_path` entry comes out absolute with `.` and `..` folded out, as `os.path.abspath`
+/// leaves it in ansible-core 2.19.12; the role search and `ansible_search_path` are built from it.
+#[rstest::rstest]
+#[case::dot_slash("./roles", "/etc/x/roles")]
+#[case::bare("roles", "/etc/x/roles")]
+#[case::parent("../shared/./roles", "/etc/shared/roles")]
+#[case::doubled("a//b/../c", "/etc/x/a/c")]
+#[case::absolute("/abs/./r/", "/abs/r")]
+fn a_roles_path_entry_is_absolute_and_folded(#[case] entry: &str, #[case] expected: &str) {
+    let c = cfg(&format!("[defaults]\nroles_path = {entry}\n"), "/etc/x");
+    assert_eq!(c.roles_path, [PathBuf::from(expected)]);
 }
 
 #[test]

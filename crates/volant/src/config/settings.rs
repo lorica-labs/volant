@@ -144,6 +144,17 @@ pub(super) fn switch(value: &str) -> Option<bool> {
     }
 }
 
+/// A switch as the reference reads the options of its callback: `y`, `yes`, `on`, `1`, `true` and
+/// `t` in any case are true, and every other word, an empty one included, is false. Measured on
+/// ansible-core 2.19.12 with `show_task_path_on_failure`: `maybe`, `2` and an empty value show
+/// nothing and raise no error.
+pub(super) fn callback_flag(value: &str) -> bool {
+    matches!(
+        value.trim().to_ascii_lowercase().as_str(),
+        "y" | "yes" | "on" | "1" | "true" | "t"
+    )
+}
+
 /// A switch that has to be one, or the refusal the integer settings get, worded for a boolean.
 ///
 /// The reference reads every word it does not know as `false`; `native_modules = maybe` read that

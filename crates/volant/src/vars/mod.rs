@@ -95,9 +95,9 @@ pub struct VarStore {
     /// Of the `set_fact` layer's facts, the names that came from a managed host rather than
     /// from the playbook.
     untrusted: BTreeMap<String, BTreeSet<String>>,
-    /// The host names and group names `add_host` and `group_by` took from text the playbook did
-    /// not write: a name whose argument read a managed host's value, or that still holds a
-    /// template after the task rendered it. Reading one of them back
+    /// The host names and group names that are data: a name of the inventory or one `add_host`
+    /// and `group_by` made that holds `{`, and a name those two took from an argument that read
+    /// a managed host's value. Reading one of them back
     /// through `groups`, `hostvars`, `group_names`, a play's host list or `inventory_hostname`
     /// taints the render, so the name is shown as it is and never evaluated.
     data_hosts: BTreeSet<String>,
@@ -184,9 +184,10 @@ pub(crate) fn holds_template(value: &Value) -> bool {
     }
 }
 
-/// Whether a host or group name still holds a template, a comment included.
+/// Whether a host or group name holds template syntax: any `{`, so two names that the playbook
+/// joins into a template are text too. The reference takes every name as data, whatever it holds.
 pub(crate) fn is_data_name(name: &str) -> bool {
-    Templar::is_template(name) || name.contains("{#")
+    name.contains('{')
 }
 
 /// The play and batch host lists one `shared` map was built from.

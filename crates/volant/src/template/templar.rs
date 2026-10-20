@@ -13,7 +13,7 @@ use serde_json::{Map, Value};
 use crate::bridge::{Bridge, PluginKind};
 
 use super::bridged;
-use super::context::{Vars, begin, context_of, is_literal, reads, take_failure};
+use super::context::{Vars, begin, context_of, deferred, is_literal, take_failure};
 use super::env::{environment, holds_undefined, truthy, type_name};
 use super::filters;
 use super::vm::{
@@ -211,7 +211,7 @@ impl Templar {
         tainted.store(false, Ordering::Relaxed);
         let before = begin(ctx);
         let mut value = self.render_once(text, ctx)?;
-        keep_literal(text, &value, ctx, true, reads(ctx) == before);
+        keep_literal(text, &value, ctx, true, deferred(ctx) == before);
         // A variable can hold a template of its own, so Ansible renders a result again while it
         // still carries a marker. Three further passes: a chain longer than that is a loop, and
         // an unchanged result ends it earlier. Not when the pass read a value that came from a
@@ -226,12 +226,12 @@ impl Templar {
             if !Self::holds_expression(text) {
                 break;
             }
-            let before = reads(ctx);
+            let before = deferred(ctx);
             let next = self.render_once(text, ctx)?;
             if next == value {
                 break;
             }
-            keep_literal(text, &next, ctx, false, reads(ctx) == before);
+            keep_literal(text, &next, ctx, false, deferred(ctx) == before);
             value = next;
         }
         Ok(value)
@@ -389,8 +389,8 @@ impl Templar {
                 ErrorKind::UndefinedError,
             )));
         }
-        super::bigint::to_json(&value)
-            .map_err(|e| TemplateError(format!("cannot convert template result: {e}")))
+        super::pymethods::bytes::to_json(&value)
+            .map_err(|e| TemplateError(super::pymethods::bytes::result_error(&e)))
     }
 
     /// A `when` clause. Ansible accepts `{{ }}` around it with a warning; the result must be a

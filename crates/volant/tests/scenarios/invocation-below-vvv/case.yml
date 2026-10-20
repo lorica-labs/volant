@@ -1,0 +1,5 @@
+# A result line at -v and -vv has no `invocation`, whatever the module and the outcome.
+runs:
+  - args: [-v, -i, inv.ini, play.yml]
+  - args: [-vv, -i, inv.ini, play.yml]
+needs: [ansible-core]

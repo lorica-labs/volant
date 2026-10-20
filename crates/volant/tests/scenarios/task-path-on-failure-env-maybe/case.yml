@@ -1,0 +1,3 @@
+# ANSIBLE_SHOW_TASK_PATH_ON_FAILURE=maybe is no true value: no failure prints its path.
+args: [-i, inv.ini, p.yml]
+env: {ANSIBLE_SHOW_TASK_PATH_ON_FAILURE: "maybe"}

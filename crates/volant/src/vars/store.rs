@@ -88,7 +88,7 @@ impl VarStore {
             .find(|s| s.path().is_file())
             .map(|s| s.path().to_path_buf());
         let (groups, inventory_vars, host_line_vars, group_names) = inventory_maps(inventory);
-        Ok(Self {
+        let mut store = Self {
             inventory_dir: inventory_file
                 .as_deref()
                 .and_then(Path::parent)
@@ -136,7 +136,20 @@ impl VarStore {
             play_hosts_all: None,
             inventory_changed: false,
             custom_stats: CustomStats::default(),
-        })
+        };
+        store.mark_inventory_names();
+        Ok(store)
+    }
+
+    /// Marks every host name and group name of the inventory that holds template syntax as data,
+    /// whichever source it came from: the files the run started with, `refresh_inventory`,
+    /// `add_host` and `group_by`.
+    fn mark_inventory_names(&mut self) {
+        let hosts = self.groups.get("all").into_iter().flatten();
+        self.data_hosts
+            .extend(hosts.filter(|name| is_data_name(name)).cloned());
+        let groups = self.groups.keys().filter(|name| is_data_name(name));
+        self.data_groups.extend(groups.cloned());
     }
 
     /// Every variable map the inventory, its `group_vars` and `host_vars` and the command line
@@ -206,6 +219,7 @@ impl VarStore {
             self.host_line_vars,
             self.group_names,
         ) = inventory_maps(&self.dynamic);
+        self.mark_inventory_names();
         self.inventory_changed = false;
         self.forget_hostvars();
         self.shared = None;
@@ -284,6 +298,7 @@ impl VarStore {
             self.host_line_vars,
             self.group_names,
         ) = inventory_maps(&self.dynamic);
+        self.mark_inventory_names();
         self.inventory_changed = true;
         self.forget_hostvars();
         self.shared = None;

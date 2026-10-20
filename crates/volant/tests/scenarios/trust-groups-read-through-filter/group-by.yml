@@ -1,0 +1,30 @@
+# A group named from a value a host printed: the variables that read `groups` still resolve.
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - command: echo Debian
+      register: family
+      changed_when: false
+    - group_by:
+        key: "os_{{ family.stdout }}"
+      changed_when: false
+
+- hosts: h1
+  gather_facts: false
+  vars:
+    names: "{{ groups | list | sort }}"
+    names1: "{{ names | map('upper') | list }}"
+    os: "{{ groups['os_Debian'] | sort }}"
+    os1: "{{ os | map('upper') | list }}"
+    ips: "{{ groups['os_Debian'] | sort | map('extract', hostvars, 'ansible_host') | list }}"
+    ips1: "{{ ips | map('regex_replace', '^', 'IP:') | list }}"
+    ips2: "{{ ips1 | list }}"
+    peer: "{{ hostvars['h2'].ansible_host }}"
+    peer1: "{{ peer | upper }}"
+  tasks:
+    - debug:
+        msg: "{{ names }} {{ names1 }} {{ os }} {{ os1 }}"
+    - debug:
+        msg: "{{ ips }} {{ ips1 }} {{ ips2 }} {{ peer }} {{ peer1 }}"
+    - debug:
+        msg: "{{ group_names | select('match', '^os_') | list }}"

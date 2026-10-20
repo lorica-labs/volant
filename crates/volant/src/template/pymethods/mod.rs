@@ -9,6 +9,8 @@ use minijinja::value::{Tuple, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, State, Value};
 
 mod args;
+pub(crate) mod bytes;
+mod codec;
 mod dicts;
 mod digits;
 pub(crate) mod format;
@@ -22,6 +24,7 @@ mod translate;
 
 pub(super) use args::type_of;
 use args::{Call, raise};
+pub(in crate::template) use dicts::fromkeys;
 use mutable::{Dict, MutDict, MutList, is_dict, is_list};
 pub(super) use percent::{format_filter, percent};
 
@@ -58,6 +61,13 @@ fn call(state: &mut State, value: &Value, method: &str, args: &[Value]) -> Resul
                 "object of type 'str' has no attribute '{method}'"
             )));
         }
+    }
+    if let Some(held) = bytes::of(value) {
+        if super::any_undefined(args) {
+            return Err(Error::from(ErrorKind::UndefinedError));
+        }
+        return bytes::call(held, method, args)
+            .unwrap_or_else(|| Err(Error::from(ErrorKind::UnknownMethod)));
     }
     if let Some(tuple) = value.downcast_object_ref::<Tuple>() {
         if super::any_undefined(args) {
@@ -220,6 +230,7 @@ fn string(s: &str, name: &str, args: &[Value]) -> Option<Result<Value, Error>> {
             .one(name)
             .and_then(|table| translate::translate(s, table)),
         "maketrans" => translate::maketrans(&call),
+        "encode" => bytes::encode(s, &call),
         _ => return None,
     })
 }

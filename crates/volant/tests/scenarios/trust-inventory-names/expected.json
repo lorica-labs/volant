@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"['all', 'a{b', 'ungrouped', \\\"{{ lookup('pipe','touch MARK_GROUP') }}\\\"] ['h1', \\\"{{lookup('pipe','touch MARK_HOST')}}\\\"] ['a{b', \\\"{{ lookup('pipe','touch MARK_GROUP') }}\\\"]\"\n}\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"one_group\": [\n        \"h1\",\n        \"{{lookup('pipe','touch MARK_HOST')}}\"\n    ]\n}\n\nTASK [debug] *******************************************************************\nok: [h1] => (item=all) => {\n    \"msg\": \"all\"\n}\nok: [h1] => (item=a{b) => {\n    \"msg\": \"a{b\"\n}\nok: [h1] => (item=ungrouped) => {\n    \"msg\": \"ungrouped\"\n}\nok: [h1] => (item={{ lookup('pipe','touch MARK_GROUP') }}) => {\n    \"msg\": \"{{ lookup('pipe','touch MARK_GROUP') }}\"\n}\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"h1,{{lookup('pipe','touch MARK_HOST')}}\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [meta] ********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"['all', 'a{b', 'ungrouped', \\\"{{ lookup('pipe','touch MARK_GROUP') }}\\\"] ['h1', \\\"{{lookup('pipe','touch MARK_HOST')}}\\\"] ['a{b', \\\"{{ lookup('pipe','touch MARK_GROUP') }}\\\"]\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

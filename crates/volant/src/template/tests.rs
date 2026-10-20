@@ -276,6 +276,68 @@ fn hostvars_hides_the_unlisted_controller_from_iteration(
     assert_eq!(t.render(source, vars).unwrap(), want, "{source}");
 }
 
+/// `ansible_playbook_python` is the controller's Python, beats a variable of the same name and
+/// is undefined when no interpreter resolves, as in ansible-core 2.19.12.
+#[rstest::rstest]
+#[case::read_by_name(Some("/ctl/python3"), json!({}), "{{ ansible_playbook_python }}", json!("/ctl/python3"))]
+#[case::in_text(Some("/ctl/python3"), json!({}), "{{ ansible_playbook_python }} -m x", json!("/ctl/python3 -m x"))]
+#[case::through_a_variable(Some("/ctl/python3"), json!({"py": "{{ ansible_playbook_python }}"}), "{{ py }}", json!("/ctl/python3"))]
+#[case::beats_an_extra_var(Some("/ctl/python3"), json!({"ansible_playbook_python": "/x"}), "{{ ansible_playbook_python }}", json!("/ctl/python3"))]
+#[case::defined(Some("/ctl/python3"), json!({}), "{{ ansible_playbook_python is defined }}", json!(true))]
+#[case::undefined_without_one(None, json!({}), "{{ ansible_playbook_python is defined }}", json!(false))]
+#[case::default_without_one(None, json!({}), "{{ ansible_playbook_python | default('none') }}", json!("none"))]
+fn ansible_playbook_python_is_the_controller_python(
+    #[case] controller: Option<&str>,
+    #[case] own: Value,
+    #[case] source: &str,
+    #[case] want: Value,
+) {
+    crate::runtime::resolve::set_test_python(controller);
+    assert_eq!(
+        templar().render(source, &vars(own)).unwrap(),
+        want,
+        "{source}"
+    );
+}
+
+/// `hostvars` gives every host the controller's Python, over a value the host sets, as in
+/// ansible-core 2.19.12; with no interpreter the name is undefined for all.
+#[rstest::rstest]
+#[case::replaced(json!({"ansible_playbook_python": "/inv"}), Some("/ctl/python3"), json!("/ctl/python3"))]
+#[case::added(json!({}), Some("/ctl/python3"), json!("/ctl/python3"))]
+#[case::dropped_without_one(json!({"ansible_playbook_python": "/inv"}), None, json!("none"))]
+#[case::absent_without_one(json!({}), None, json!("none"))]
+fn hostvars_gives_the_controller_python_to_every_host(
+    #[case] host: Value,
+    #[case] controller: Option<&str>,
+    #[case] want: Value,
+) {
+    crate::runtime::resolve::set_test_python(controller);
+    let hosts = Arc::new(vars(json!({ "h1": host })));
+    let own = Map::new();
+    let vars = Vars {
+        map: &own,
+        hostvars: Some(&hosts),
+        shared: None,
+        facts: None,
+        untrusted: None,
+        untrusted_hosts: None,
+        base: None,
+    };
+    let source = "{{ hostvars['h1'].ansible_playbook_python | default('none') }}";
+    assert_eq!(templar().render(source, vars).unwrap(), want);
+}
+
+/// Reading `ansible_playbook_python` with no interpreter to name fails as any undefined name.
+#[test]
+fn ansible_playbook_python_with_no_interpreter_fails_when_read() {
+    crate::runtime::resolve::set_test_python(None);
+    let err = templar()
+        .render("{{ ansible_playbook_python }}", &Map::new())
+        .expect_err("nothing resolves");
+    assert!(err.is_undefined(), "{}", err.0);
+}
+
 /// The context hands out the shared view itself, builds it once, ranks inventory-wide names over
 /// a fact and lists a shared name once.
 #[test]
@@ -452,7 +514,7 @@ fn extract_reads_hostvars_by_host_name_and_taints_like_a_bare_read() {
 }
 
 /// A host name from a managed host taints a listing of `hostvars`, and a nested template of
-/// another host still renders.
+/// another host still renders. A name that holds braces is text even when nothing tracks it.
 #[test]
 fn a_host_name_from_data_taints_the_hostvars_listing_only() {
     let t = templar();
@@ -471,7 +533,7 @@ fn a_host_name_from_data_taints_the_hostvars_listing_only() {
             json!("{{ 1 + 1 }}"),
         ),
         (true, "{{ hostvars.h2.x }}", json!(42)),
-        (false, "{{ hostvars | list | first }}", json!(2)),
+        (false, "{{ hostvars | list | first }}", json!("{{ 1 + 1 }}")),
     ] {
         let untrusted = BTreeSet::from([HOSTVARS_KEYS.to_string()]);
         let v = Vars {
@@ -922,6 +984,13 @@ fn an_undefined_value_given_to_a_missing_filter_fails_as_unknown() {
     ),
     0
 )]
+#[case::bytes_are_refused(
+    "{{ 'v'.encode() | community.general.dict_kv('k') }}",
+    Err(
+        "filter 'community.general.dict_kv' was given bytes, which cannot be sent to the Python helper"
+    ),
+    0
+)]
 #[case::a_filter(
     "{{ 'v' | community.general.dict_kv('k') }}",
     Err(
@@ -1188,6 +1257,142 @@ fn a_raw_block_is_emitted_once() {
     // A variable that chains to a variable holding it is still read to its end.
     let map = vars(json!({"x": "val", "a": "{{ b }}", "b": "{% raw %}{{ x }}{% endraw %}"}));
     assert_eq!(t.render("{{ a }}", &map), Ok(json!("{{ x }}")));
+}
+
+/// Braces that a computation builds are text, as in the reference, rendered as written, through
+/// a variable and through a variable of a variable.
+#[rstest::rstest]
+#[case::concat("{{ x ~ '{{ 1 + 1 }}' }}", json!({"x": "a"}), "a{{ 1 + 1 }}")]
+#[case::replace("{{ x | replace('a', '{{ 7 * 6 }}') }}", json!({"x": "a"}), "{{ 7 * 6 }}")]
+#[case::helm("{{ '{{ .Values.' ~ n ~ ' }}' }}", json!({"n": "web"}), "{{ .Values.web }}")]
+#[case::a_name_of_a_variable(
+    "{{ '{{ ' ~ n ~ '_port }}' }}",
+    json!({"n": "web", "web_port": 80}),
+    "{{ web_port }}"
+)]
+#[case::join("{{ ['{{', x, '}}'] | join(' ') }}", json!({"x": "7 * 6"}), "{{ 7 * 6 }}")]
+#[case::format("{{ '{{ %s }}' % x }}", json!({"x": "7 * 6"}), "{{ 7 * 6 }}")]
+fn braces_a_computation_builds_stay_text(
+    #[case] text: &str,
+    #[case] given: Value,
+    #[case] want: &str,
+) {
+    let t = templar();
+    assert_eq!(t.render(text, &vars(given.clone())), Ok(json!(want)));
+    let mut map = vars(given);
+    map.insert("v".into(), json!(text));
+    map.insert("w".into(), json!("{{ v }}"));
+    let mut data = BTreeSet::new();
+    for pass in 0..3 {
+        let (resolved, untrusted) = t.resolve_vars_tainted(Vars {
+            untrusted: Some(&data),
+            ..Vars::from(&map)
+        });
+        map = resolved;
+        data = untrusted;
+        assert_eq!(map["v"], json!(want), "resolution {pass}");
+        assert_eq!(
+            map["w"],
+            json!(want),
+            "read by another variable, resolution {pass}"
+        );
+        for read in ["{{ v }}", "{{ w }}"] {
+            let with = Vars {
+                untrusted: Some(&data),
+                ..Vars::from(&map)
+            };
+            assert_eq!(
+                t.render(read, with),
+                Ok(json!(want)),
+                "{read}, resolution {pass}"
+            );
+        }
+    }
+}
+
+/// Text that holds a stored template still renders when a read hands it out: a chain of
+/// variables, a mapping, a list, the variables of another host, a lookup of a variable by name.
+#[rstest::rstest]
+#[case::chain("{{ a }}", json!({"n": 7, "c": "{{ n }}", "b": "{{ c }}", "a": "{{ b }}"}), json!(7))]
+#[case::mapping("{{ d.k }}", json!({"n": 7, "d": {"k": "{{ n }}"}}), json!(7))]
+#[case::list("{{ l[0] }}-{{ l[1] }}", json!({"n": 7, "l": ["{{ n }}", "z"]}), json!("7-z"))]
+#[case::suffix("{{ a }}-sfx", json!({"n": 7, "a": "{{ n }}"}), json!("7-sfx"))]
+#[case::lookup("{{ lookup('vars', 'a') }}", json!({"n": 7, "a": "{{ n }}"}), json!(7))]
+#[case::a_name_built("{{ lookup('vars', n ~ '_port') }}", json!({"n": "web", "web_port": "{{ 40 + 40 }}"}), json!(80))]
+#[case::a_value_then_text("{{ a ~ '!' }}", json!({"n": 7, "a": "{{ n }}"}), json!("7!"))]
+fn a_stored_template_still_renders_when_read(
+    #[case] text: &str,
+    #[case] given: Value,
+    #[case] want: Value,
+) {
+    let t = templar();
+    assert_eq!(t.render(text, &vars(given.clone())), Ok(want.clone()));
+    let mut map = vars(given);
+    map.insert("v".into(), json!(text));
+    assert_eq!(t.render("{{ v }}", &map), Ok(want));
+}
+
+/// The variables of another host render when read, and braces built from them do not make more
+/// of them render: `hostvars` hands out the host's own stored template, and nothing else.
+#[test]
+fn the_variables_of_another_host_render_and_built_braces_stay_text() {
+    let t = templar();
+    let view = Arc::new(vars(json!({
+        "h2": {"x": "{{ 40 + 2 }}", "plain": "p"},
+        "h3": {"plain": "q"},
+    })));
+    let empty = Map::new();
+    let hosts = BTreeSet::new();
+    for (text, want) in [
+        ("{{ hostvars.h2.x }}", json!(42)),
+        ("{{ hostvars.h2.x }}-sfx", json!("42-sfx")),
+        (
+            "{{ hostvars.h3.plain ~ '{{ 1 + 1 }}' }}",
+            json!("q{{ 1 + 1 }}"),
+        ),
+        (
+            "{{ hostvars | list | map('upper') | list }}",
+            json!(["H2", "H3"]),
+        ),
+    ] {
+        let v = Vars {
+            hostvars: Some(&view),
+            untrusted: Some(&hosts),
+            ..Vars::from(&empty)
+        };
+        assert_eq!(t.render(text, v), Ok(want), "{text}");
+    }
+}
+
+/// A group name that a computation turns into template syntax is text, whatever put the name in
+/// the inventory: no rule about its source is needed, since the render read no stored template.
+#[test]
+fn a_group_name_turned_into_braces_by_a_filter_stays_text() {
+    let t = templar();
+    let shared = Arc::new(vars(json!({
+        "groups": {"all": ["h1"], "LBLB 1 + 1 }}": ["h1"]},
+        "group_names": ["LBLB 1 + 1 }}"],
+    })));
+    let empty = Map::new();
+    let hosts = BTreeSet::new();
+    for tracked in [None, Some(&hosts)] {
+        for text in [
+            "{{ groups | list | map('replace', 'LB', '{') | list | sort }}",
+            "{{ group_names | map('replace', 'LB', '{') | list }}",
+            "{{ (groups | list | sort | last) | replace('LB', '{') }}",
+        ] {
+            let v = Vars {
+                shared: Some(&shared),
+                untrusted: tracked,
+                ..Vars::from(&empty)
+            };
+            let got = t.render(text, v).unwrap();
+            assert!(
+                got.to_string().contains("{{ 1 + 1 }}") && !got.to_string().contains('2'),
+                "{text} -> {got}"
+            );
+        }
+    }
 }
 
 /// A raw block does not make text from a managed host evaluate: a name that holds text from a
@@ -1507,8 +1712,8 @@ fn unsafe_text_and_facts_are_data_through_a_nested_variable() {
     }
 }
 
-/// A read renders a variable only when all it reads is author-written: a chain over inventory
-/// names, shared lists, `hostvars` or a lookup by text stays as written, at any depth.
+/// A variable over the inventory's names renders when the store tracks which hold host text, and
+/// stays as written when it does not; a lookup by text never renders, at any depth.
 #[test]
 fn a_nested_read_renders_only_variables_that_read_author_text() {
     let t = templar();
@@ -1529,41 +1734,92 @@ fn a_nested_read_renders_only_variables_that_read_author_text() {
         "b": "{{ c }}",
         "s": "{{ b | int + 1 }}",
     }));
-    let shared = Arc::new(vars(json!({
+    let clean = Arc::new(vars(json!({
+        "groups": {"all": ["h1"], "web": ["h2"]},
+        "ansible_play_hosts_all": ["h1", "h2"],
+    })));
+    let brace = Arc::new(vars(json!({
         "groups": {"all": ["h1"], "{{ 1 + 1 }}": ["h2"]},
         "ansible_play_hosts_all": ["h1", "{{ 1 + 1 }}"],
     })));
-    let untrusted = BTreeSet::new();
-    let vars = || Vars {
-        map: &map,
-        hostvars: None,
-        shared: Some(&shared),
-        facts: None,
-        untrusted: Some(&untrusted),
-        untrusted_hosts: None,
-        base: None,
-    };
+    let none = BTreeSet::new();
+    let data: BTreeSet<String> = ["groups", "ansible_play_hosts_all"]
+        .map(String::from)
+        .into();
+    let raw = |name: &str| map[name].as_str().unwrap().len();
+    // Where the store tracks the names and none holds host text, a read of them is the author's.
+    fn view<'a>(
+        map: &'a Map<String, Value>,
+        shared: &'a Arc<Map<String, Value>>,
+        untrusted: Option<&'a BTreeSet<String>>,
+    ) -> Vars<'a> {
+        Vars {
+            map,
+            hostvars: None,
+            shared: Some(shared),
+            facts: None,
+            untrusted,
+            untrusted_hosts: None,
+            base: None,
+        }
+    }
     assert_eq!(
-        t.render("{{ __volant_with_terms[0] | length }}", vars()),
+        t.render(
+            "{{ __volant_with_terms[0] | length }}",
+            view(&map, &clean, Some(&none))
+        ),
         Ok(json!(11))
     );
-    // Left as written, so a filter reads the text of the variable and nothing is evaluated.
-    for (text, raw) in [
-        ("{{ gk | length }}", "{{ gn | list }}"),
-        ("{{ gl | length }}", "{{ gk | last }}"),
-        ("{{ pl | length }}", "{{ ph | list | last }}"),
-        ("{{ lp | length }}", "{{ lk | length }}"),
-        ("{{ lb | length }}", "{{ la | length }}"),
+    let (resolved, tainted) = t.resolve_vars_tainted(view(&map, &clean, Some(&none)));
+    assert_eq!(resolved["gk"], json!(["all", "web"]));
+    assert_eq!(resolved["gl"], json!("web"));
+    assert_eq!(resolved["pl"], json!("h2"));
+    assert!(!tainted.contains("gk"), "{tainted:?}");
+    assert_eq!(
+        t.render("{{ gk | length }}", view(&map, &clean, Some(&none))),
+        Ok(json!(2))
+    );
+    // A name that holds a template is data: the chain keeps the text, tainted, and renders none.
+    let (resolved, tainted) = t.resolve_vars_tainted(view(&map, &brace, Some(&data)));
+    assert_eq!(resolved["gk"], json!(["all", "{{ 1 + 1 }}"]));
+    assert_eq!(resolved["gl"], json!("{{ 1 + 1 }}"));
+    assert_eq!(resolved["pl"], json!("{{ 1 + 1 }}"));
+    assert!(
+        ["gk", "gl", "pl"].iter().all(|n| tainted.contains(*n)),
+        "{tainted:?}"
+    );
+    // The store gave no set: nothing says which names are host text, so a read stays as written.
+    for (text, name) in [
+        ("{{ gk | length }}", "gk"),
+        ("{{ gl | length }}", "gl"),
+        ("{{ pl | length }}", "pl"),
     ] {
-        assert_eq!(t.render(text, vars()), Ok(json!(raw.len())), "{text}");
+        assert_eq!(
+            t.render(text, view(&map, &brace, None)),
+            Ok(json!(raw(name))),
+            "{text}"
+        );
     }
-    let (resolved, _) = t.resolve_vars_tainted(vars());
+    let (resolved, _) = t.resolve_vars_tainted(view(&map, &brace, None));
     for name in ["gk", "gl", "pl"] {
         assert_ne!(resolved[name], json!(2), "{name}");
     }
+    // A lookup by text is left as written in every case.
+    for shared in [&clean, &brace] {
+        for (text, name) in [("{{ lp | length }}", "lp"), ("{{ lb | length }}", "lb")] {
+            for untrusted in [None, Some(&none)] {
+                assert_eq!(
+                    t.render(text, view(&map, shared, untrusted)),
+                    Ok(json!(raw(name))),
+                    "{text}"
+                );
+            }
+        }
+    }
     // Author-written names still chain, and a path built from the host's name is the playbook's.
+    let (resolved, _) = t.resolve_vars_tainted(view(&map, &clean, None));
     assert_eq!(resolved["s"], json!(8));
-    assert_eq!(t.render("{{ s }}", vars()), Ok(json!(8)));
+    assert_eq!(t.render("{{ s }}", view(&map, &clean, None)), Ok(json!(8)));
     assert_eq!(resolved["dir"], json!("/srv/h1"));
 }
 
@@ -1572,7 +1828,7 @@ fn number(text: &str) -> Value {
 }
 
 /// Integers wider than 64 bits keep every digit through a template, as Python's do; arithmetic
-/// works up to 128 bits and a wider operand is refused by name.
+/// works up to 128 bits, a wider operand is refused by name, and an error names the type `int`.
 #[test]
 fn integers_of_any_width_keep_their_digits_through_templates() {
     let (u64_end, i128_end, past) = (
@@ -1587,6 +1843,7 @@ fn integers_of_any_width_keep_their_digits_through_templates() {
         ("c".to_string(), number(past)),
         ("d".to_string(), number(&format!("-{wide}"))),
         ("list".to_string(), number(&format!("[{past}, 1.5, 7]"))),
+        ("long".to_string(), json!("9".repeat(4301))),
     ])));
     let t = templar();
     for (text, want) in [
@@ -1629,11 +1886,24 @@ fn integers_of_any_width_keep_their_digits_through_templates() {
             json!(true),
         ),
         ("{{ (list | to_json | from_json)[0] == c }}", json!(true)),
+        ("{{ true | int }}", json!(1)),
+        ("{{ [c] | int(7) }}", json!(7)),
+        ("{{ long | int(7) }}", json!(7)),
+        ("{{ long[1:] | int | string | length }}", json!(4300)),
     ] {
         assert_eq!(t.render(text, &vars), Ok(want), "{text}");
     }
-    let err = t.render("{{ c + 1 }}", &vars).unwrap_err();
-    assert!(err.0.contains("wider than 128 bits"), "{err}");
+    for (text, want) in [
+        ("{{ c + 1 }}", "wider than 128 bits"),
+        (
+            "{{ lookup('first_found', c) }}",
+            "A string, dict or list is required, not 'int'",
+        ),
+        ("{{ lookup('varnames', c) }}", "<class 'int'>"),
+    ] {
+        let err = t.render(text, &vars).unwrap_err();
+        assert!(err.0.contains(want), "{text}: {err}");
+    }
 }
 
 const ISO: &str = r"^\d{4}-\d\d-\d\dT\d\d:\d\d:\d\d(\.\d{6})?$";

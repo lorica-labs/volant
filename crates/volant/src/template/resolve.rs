@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 
 use serde_json::{Map, Value};
 
-use super::context::{Vars, context_of, is_literal};
+use super::context::{Vars, context_tracking, is_literal};
 use super::templar::Templar;
 use super::vm::{holds_template, unwrap_unsafe};
 use super::{Tainted, TemplateError};
@@ -78,7 +78,7 @@ impl Templar {
         for _ in 0..5 {
             // One context for the whole pass: every value of the map renders against the same
             // map, so building it per value paid for the same conversion once per variable.
-            let (ctx, tainted) = context_of(
+            let (ctx, tainted) = context_tracking(
                 self,
                 Vars {
                     map: &current,
@@ -89,6 +89,7 @@ impl Templar {
                     untrusted_hosts: vars.untrusted_hosts,
                     base: vars.base,
                 },
+                vars.untrusted.is_some(),
             );
             let mut next = current.clone();
             let mut changed = false;

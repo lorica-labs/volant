@@ -1,0 +1,18 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    one: "{{ groups | list | sort | map('replace', 'LB', '{') | list }}"
+    hosts: "{{ hostvars | list | sort | map('replace', 'LB', '{') | list }}"
+  tasks:
+    - debug: {msg: "direct={{ groups | list | sort | map('replace', 'LB', '{') | list }}"}
+    - debug: {msg: "one={{ one }}"}
+    - debug: {msg: "hosts={{ hosts }}"}
+    - debug: {msg: "names={{ group_names | sort | map('replace', 'LB', '{') | list }}"}
+    - set_fact:
+        fact: "{{ one }}"
+    - debug: {msg: "fact={{ fact }}"}
+    - debug: {msg: "lookup={{ lookup('vars', 'one') }}"}
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: {msg: "self={{ inventory_hostname | replace('LB', '{') }}"}

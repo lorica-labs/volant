@@ -1,0 +1,38 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: lineinfile changed
+      lineinfile: {path: "{{ playbook_dir }}/f", line: one, create: true}
+    - name: lineinfile ok
+      lineinfile: {path: "{{ playbook_dir }}/f", line: one}
+    - name: file changed
+      file: {path: "{{ playbook_dir }}/g", state: absent}
+      register: made
+      changed_when: true
+    - name: file ok
+      file: {path: "{{ playbook_dir }}/g", state: absent}
+    - name: stat
+      stat: {path: "{{ playbook_dir }}/missing"}
+    - name: slurp
+      slurp: {src: "{{ playbook_dir }}/f"}
+    - name: ping
+      ping:
+    - name: file items
+      file: {path: "{{ playbook_dir }}/{{ item }}", state: absent}
+      loop: [a, b]
+    - name: skipped item
+      ping:
+      loop: [a]
+      when: item != 'a'
+    - name: registered result
+      debug: {var: made}
+    - name: failed and ignored
+      file: {path: "{{ playbook_dir }}/g", state: file}
+      ignore_errors: true
+    - block:
+        - name: failed and rescued
+          lineinfile: {path: "{{ playbook_dir }}/nodir/f", line: one}
+      rescue:
+        - debug: {msg: rescued}
+    - name: failed
+      slurp: {src: "{{ playbook_dir }}/missing"}

@@ -47,12 +47,14 @@ pub(super) fn expand_home(path: &str, base: &Path) -> PathBuf {
 
 /// A colon-separated list of directories, as every Ansible path setting is written. Relative
 /// entries are anchored against `base`, which is the configuration file's directory for a value
-/// read from one and the working directory for one read from the environment.
+/// read from one and the working directory for one read from the environment. Every entry comes
+/// out absolute, with `.` and `..` folded out of its text, as the reference's `unfrackpath`
+/// leaves it: `./roles` read from `./ansible.cfg` is `<cwd>/roles`.
 pub(super) fn path_list(value: &str, base: &Path) -> Vec<PathBuf> {
     value
         .split(':')
         .map(str::trim)
         .filter(|p| !p.is_empty())
-        .map(|p| base.join(p))
+        .map(|p| crate::roles::folded(&expand_home(p, base)))
         .collect()
 }

@@ -14,7 +14,8 @@ mod result;
 
 pub(crate) use error::source_context;
 pub use error::{
-    CHAIN_KEY, ERROR_KEY, ErrorBlock, UNKNOWN_KEY, cause, concat_message, shorten, task_failed,
+    CHAIN_KEY, ERROR_KEY, ErrorBlock, UNKNOWN_KEY, cause, concat_message, lead, shorten,
+    task_failed,
 };
 pub(crate) use recap_json::ansible_json;
 use recap_json::dumps_indented;
@@ -49,6 +50,9 @@ pub struct Renderer {
     errored: std::collections::HashSet<String>,
     /// Where a result's `diff` becomes text: ansible-core's `_get_diff`, behind the run's helper.
     diffs: Option<std::sync::Arc<crate::bridge::Bridge>>,
+    /// `show_task_path_on_failure`: a failure line is preceded by the task's `task path:` line
+    /// when the run is below `-vv`, which already prints it under every banner.
+    path_on_failure: bool,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -94,6 +98,7 @@ impl Renderer {
             warned: std::collections::HashSet::new(),
             errored: std::collections::HashSet::new(),
             diffs: None,
+            path_on_failure: false,
         }
     }
 
@@ -107,7 +112,13 @@ impl Renderer {
             warned: std::collections::HashSet::new(),
             errored: std::collections::HashSet::new(),
             diffs: None,
+            path_on_failure: false,
         }
+    }
+
+    /// Turns on the `task path:` line before a failure, from `show_task_path_on_failure`.
+    pub fn set_path_on_failure(&mut self, on: bool) {
+        self.path_on_failure = on;
     }
 
     /// Serves the diffs of the results this renderer prints.
@@ -152,11 +163,28 @@ impl Renderer {
     /// task starts on.
     pub fn task_path(&mut self, origin: &crate::playbook::Origin) {
         if self.verbosity >= 2 {
-            let path = std::path::absolute(&*origin.path)
-                .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
-            let line = format!("task path: {}:{}", path.display(), origin.line);
-            let _ = writeln!(self.out, "{}", self.paint(DEBUG, &line));
+            self.path_line(origin);
         }
+    }
+
+    /// The `task path:` line in front of a failed task's `fatal:` line, below `-vv` and when
+    /// `show_task_path_on_failure` is on. Measured on ansible-core 2.19.12: it follows the
+    /// `[ERROR]` block, and a loop item's `failed:` line, an unreachable host and a task that no
+    /// file holds get none.
+    pub fn failure_path(&mut self, origin: Option<&crate::playbook::Origin>) {
+        if self.path_on_failure
+            && self.verbosity < 2
+            && let Some(origin) = origin
+        {
+            self.path_line(origin);
+        }
+    }
+
+    fn path_line(&mut self, origin: &crate::playbook::Origin) {
+        let path = std::path::absolute(&*origin.path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
+        let line = format!("task path: {}:{}", path.display(), origin.line);
+        let _ = writeln!(self.out, "{}", self.paint(DEBUG, &line));
     }
 
     /// Whether `-v` was given `level` times or more.

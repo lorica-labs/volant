@@ -55,7 +55,7 @@ A variable that reads a name with no value has none either: `default` and `is de
 
 A variable from a managed host is not rendered, and neither is a variable built from one. Reading it through a filter gives its text. See [Trusted and untrusted values](/variables/trust/).
 
-A variable is rendered by a read only when everything its text reads is written by the playbook, or is a value a managed host sent, which stays data. A variable that reads `groups`, `hostvars`, `vars`, `inventory_hostname`, `group_names`, one of the play host lists, or calls `lookup` or `query`, is left as written, and so is a variable that reads one of those through other variables. Names in the inventory can be added during the run from text a host sent, so values derived from them stay data. A variable left this way is rendered when the task uses it, as before. `hostvars['other']['name']` also gives the raw text of a variable that holds a template.
+A variable is rendered by a read only when everything its text reads is written by the playbook, or is a value a managed host sent, which stays data. `groups`, `hostvars`, `inventory_hostname`, `group_names` and the play host lists are in the first case, so a variable that reads them is rendered, also when another variable reads it through a filter. A host name or a group name that a managed host sent, or that holds `{`, is data. A variable built from these lists resolves, with such a name as text that nothing evaluates, and counts as data. A variable that reads `vars`, or calls `lookup` or `query`, is left as written, and so is a variable that reads one of those through other variables. A variable left this way is rendered when the task uses it, as before. `hostvars['other']['name']` also gives the raw text of a variable that holds a template.
 
 ## What is available
 
@@ -90,7 +90,7 @@ These `str` methods run, with the arguments and keywords Python takes and Python
 | Search | `find`, `rfind`, `index`, `rindex`, `count`, `startswith`, `endswith`, `replace` |
 | Case | `upper`, `lower`, `title`, `capitalize`, `swapcase`, `casefold` |
 | Test | `isalpha`, `isalnum`, `isdigit`, `isdecimal`, `isnumeric`, `isspace`, `islower`, `isupper`, `istitle`, `isascii`, `isidentifier`, `isprintable` |
-| Other | `format`, `format_map`, `translate`, `maketrans` |
+| Other | `format`, `format_map`, `translate`, `maketrans`, `encode` |
 
 Positions count characters, not bytes, and `start` and `end` take negative values. `split(maxsplit=1)` and the other keyword forms work. `startswith` and `endswith` take a text or a tuple of texts. A list is accepted as a tuple, because Volant's Jinja has no tuple type.
 
@@ -100,12 +100,12 @@ What differs from CPython:
 - `isdigit`, `isalpha` and the other tests outside ASCII follow Rust's Unicode tables. `'½'.isdigit()` is true here and false in Python.
 - A format field can read an item (`{0[a]}`, `{a[0]}`) but not an attribute (`{0.real}`).
 - A width, a count or a precision that would make a method build more than 256 MiB of text (`'a'.ljust(10000000000)`, `'{:.300000000f}'.format(x)`) stops the task with an error that names the limit. Python builds the text until the machine runs out of memory. A number too large for an index gives Python's own error, `Python int too large to convert to C ssize_t`.
-- `encode` and `decode` are not available, because Volant has no bytes values.
+- `encode` makes a bytes value, and Volant runs only a few methods of bytes. See [Bytes](#bytes).
 - A backslash escape such as `'\n'` inside a template string is read by the template engine. ansible-core 2.19 keeps the two characters. Pass a value in a variable when the text must hold a real newline.
 
 ### Lists and mappings
 
-`list` and `dict` methods run too: `append`, `extend`, `insert`, `remove`, `pop`, `sort`, `reverse`, `index`, `count`, `copy` and `clear` on a list, and `get`, `keys`, `values`, `items`, `pop`, `popitem`, `setdefault`, `update`, `copy`, `clear` and `fromkeys` on a mapping. `keys()`, `values()` and `items()` give lists. `sort` takes `reverse`, and `key` only as `none`. The usual ways to write a change are `{% set _ = items.append(x) %}` and `{{ items.append(x) or '' }}`: the method changes the list and answers `none`.
+`list` and `dict` methods run too: `append`, `extend`, `insert`, `remove`, `pop`, `sort`, `reverse`, `index`, `count`, `copy` and `clear` on a list, and `get`, `keys`, `values`, `items`, `pop`, `popitem`, `setdefault`, `update`, `copy`, `clear` and `fromkeys` on a mapping. `fromkeys` is also a method of the `dict` name: `dict.fromkeys(['a', 'b'], 0)`. `keys()`, `values()` and `items()` give lists. `sort` takes `reverse`, and `key` only as `none`. The usual ways to write a change are `{% set _ = items.append(x) %}` and `{{ items.append(x) or '' }}`: the method changes the list and answers `none`.
 
 A template changes a list or mapping in place, and other names for the same value see the change:
 
@@ -136,6 +136,18 @@ What differs from ansible-core:
 - `{% do %}` is accepted here and refused by ansible-core 2.19, which does not enable `jinja2.ext.do`. Use `{% set _ = ... %}` in a template that has to run on both.
 - `items()` and `popitem()` give lists where Python gives tuples, so they print as `['a', 1]` and not `('a', 1)`.
 - `sort(key=...)` with a function is not available.
+
+### Bytes
+
+`'text'.encode(encoding='utf-8', errors='strict')` makes a bytes value:
+
+- `| length` counts the bytes. `b[0]`, `b[-1]`, `| first`, `| list` and `{% for %}` give integers.
+- `b.decode(encoding, errors)` and `b.hex(sep, bytes_per_sep)` give text. `.encode('ascii', 'ignore').decode('ascii')` removes the characters that are not ASCII.
+- `b64encode` reads the exact bytes. `b64decode`, `regex_replace`, `regex_search`, `regex_findall` and `quote` read them as UTF-8 text.
+- A result that is bytes becomes its text, and so does `x {{ b }}`. `'x' ~ b`, `b | string` and `'%s' % b` give `b'abc'`, as in Python.
+- `==`, `is sequence`, `is string` and `type_debug` (`bytes`) answer as in ansible-core. `to_json` and `to_nice_json` fail with `Object of type 'bytes' is not JSON serializable`.
+
+`encode` knows `utf-8`, `ascii`, `latin-1`, `utf-16` and `utf-32` (`-le` and `-be` too), under the alias names Python reads (`UTF-8`, `utf8`, `iso-8859-1`). The error handlers are `strict`, `ignore`, `replace`, `backslashreplace` and `xmlcharrefreplace`. `decode` knows `utf-8`, `ascii` and `latin-1`, with `strict`, `ignore`, `replace` and `backslashreplace`. An error has Python's words: `'ascii' codec can't encode character '\xe9' in position 0: ordinal not in range(128)`.
 
 ### The `%` operator
 
@@ -187,6 +199,8 @@ The `template` module and `lookup('template')` share one render, and it differs 
 
 Text that a `raw` block writes, or a string such as `'{{'`, is literal: it is not rendered again as an argument, in a variable, in a `set_fact` value or in a loop item. A variable that holds a `raw` block is read to its end first, so `a: "{{ b }}"` with `b: "{% raw %}{{ x }}{% endraw %}"` gives `{{ x }}`.
 
+Braces that an expression builds are literal too. With `x: a`, `{{ x ~ '{{ 1 + 1 }}' }}` gives `a{{ 1 + 1 }}`, `{{ x | replace('a', '{{ 7 * 6 }}') }}` gives `{{ 7 * 6 }}`, and `{{ '{{ ' ~ n ~ '_port }}' }}` gives `{{ web_port }}` whatever `web_port` holds. A variable that holds a template is rendered when it is read, so a chain such as `a: "{{ b }}"` with `b: "{{ c }}"` gives the value of `c`. A result is rendered again only when a read gave it a template that was not rendered yet: `hostvars['other']['name']` for a variable that holds one, or a variable left as written by the rule above. A text that joins such a read to braces it builds is then rendered as a whole.
+
 It takes the options the `template` module reads:
 
 | Option | Default | Effect |
@@ -219,7 +233,7 @@ The file's own trailing newline survives the render. [Action plugins](/reference
 
 - A string that reads two variables, one of them chained through a third that holds a `raw` block, is rendered once more than in the reference.
 - A value under `!unsafe` is data and is never templated. A `!vault` value is decrypted; see [Vault](/variables/vault/).
-- These filter arguments are not supported: the method of `round`, `start` and `attribute` of `sum`, `attribute` of `min` and `max`, `count` of `replace`, `base` of `int`, `sort_keys` of `to_json`, `encoding` of `b64encode`, and `strict` and `version_type` of the `version` test.
+- These filter arguments are not supported: the method of `round`, `start` and `attribute` of `sum`, `attribute` of `min` and `max`, `count` of `replace`, `sort_keys` of `to_json`, `encoding` of `b64encode`, and `strict` and `version_type` of the `version` test.
 - `password_hash`, `json_query` and `ipaddr` need the Python packages `passlib`, `jmespath` and `netaddr`. The managed runtime does not carry them. See [the managed runtime](/reference/runtime/).
 - A `datetime` from `now()` does not take part in arithmetic, so `now() - now()` fails, and it lacks the methods `date`, `time`, `replace`, `astimezone`, `utcoffset` and `timetuple`.
 - In a template file, `template_host`, `template_uid`, `template_run_date` and `template_mtime` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
@@ -229,6 +243,10 @@ The file's own trailing newline survives the render. [Action plugins](/reference
 - A delimiter longer than 64 characters and a `#jinja2:` line longer than 16 KiB are refused with an error that names the option. Parentheses in a `#jinja2:` value nest to 200 levels, as in Python.
 - A `variable_end_string` or `block_end_string` that begins with whitespace is refused by name. An empty delimiter is refused too, where Jinja2 reads it in a way that depends on the template.
 - An `output_encoding` that is not in the list above, such as `koi8-r`, `shift_jis` or `utf-7`, is refused by name.
+- `dict` alone and `dict.fromkeys` alone are no result, as in ansible-core (`Type 'type' is unsupported for variable storage.`), and print as `<class 'dict'>` and `<built-in method fromkeys of type object>` inside a text. A loop over bytes items shows `(item=abc)` where ansible-core shows `(item=b'abc')`, because a loop item is stored as text.
+- A bytes value is a sequence of integers that prints as `b'abc'`. A slice and `+` (`b[1:]`, `b + b`) give a list of integers, where Python gives bytes. A bytes value that a variable holds (`set_fact`, `vars:`) is stored as its text: its `| length` counts characters, and `.decode()` fails. The methods of bytes other than `decode` and `hex` (`upper`, `split`, `startswith`) fail with their name.
+- A bytes value that is not UTF-8 cannot be a result or be printed in text: ansible-core prints `?` in their place. `to_yaml`, `dict2items`, `flatten`, `hash`, `checksum`, `md5`, `sha1` and every filter that runs in Python refuse bytes by name.
+- `encode` and `decode` refuse by name the encodings other than the ones listed above (`cp1252`, `shift_jis`), `decode` of `utf-16` and `utf-32`, and the error handlers `namereplace`, `surrogateescape` and `surrogatepass` on `decode`.
 
 ## Limits on YAML
 

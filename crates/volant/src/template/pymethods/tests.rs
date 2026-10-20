@@ -245,6 +245,194 @@ fn percent_pads_infinity_with_blanks_and_bounds_the_whole_text() {
     assert!(err.0.contains("C int"), "{err}");
 }
 
+/// `dict.fromkeys` and `{}.fromkeys` refuse a call in CPython's words. The golden rows only
+/// record that the reference failed; these are the texts it printed.
+#[test]
+fn fromkeys_refuses_in_the_words_of_python() {
+    for (template, want) in [
+        ("{{ dict.fromkeys([[1]]) }}", "unhashable type: 'list'"),
+        ("{{ dict.fromkeys([{'a': 1}]) }}", "unhashable type: 'dict'"),
+        ("{{ dict.fromkeys(5) }}", "'int' object is not iterable"),
+        (
+            "{{ {}.fromkeys(none) }}",
+            "'NoneType' object is not iterable",
+        ),
+        (
+            "{{ dict.fromkeys() }}",
+            "fromkeys expected at least 1 argument, got 0",
+        ),
+        (
+            "{{ dict.fromkeys(1, 2, 3) }}",
+            "fromkeys expected at most 2 arguments, got 3",
+        ),
+        (
+            "{{ dict.fromkeys([], value=1) }}",
+            "dict.fromkeys() takes no keyword arguments",
+        ),
+    ] {
+        let err = render(template).unwrap_err();
+        assert!(err.contains(want), "{template}: {err}");
+    }
+    assert!(render("{{ dict.fromkeys(nope) }}").is_err());
+}
+
+/// The type `dict` and its bound method print as Python prints them inside a text, and are no
+/// result: ansible-core refuses to store either, with these words.
+#[test]
+fn the_dict_type_and_its_method_are_no_result() {
+    for (template, kind) in [
+        ("{{ dict }}", "type"),
+        ("{{ dict.fromkeys }}", "builtin_function_or_method"),
+    ] {
+        let err = render(template).unwrap_err();
+        assert!(
+            err.contains(&format!(
+                "Error rendering template: Type '{kind}' is unsupported for variable storage."
+            )),
+            "{template}: {err}"
+        );
+    }
+    assert_eq!(render("a {{ dict }}").unwrap(), json!("a <class 'dict'>"));
+    assert_eq!(
+        render("a {{ dict.fromkeys }}").unwrap(),
+        json!("a <built-in method fromkeys of type object>")
+    );
+}
+
+/// `encode` and the bytes it makes refuse a call in CPython's words, and fail by name for what
+/// this engine does not run. The golden rows only record that the reference failed.
+#[test]
+fn encode_and_bytes_refuse_in_the_words_of_python() {
+    for (template, want) in [
+        (
+            "{{ 'é'.encode('ascii') }}",
+            "'ascii' codec can't encode character '\\xe9' in position 0: ordinal not in range(128)",
+        ),
+        (
+            "{{ 'a€€b'.encode('latin-1') }}",
+            "'latin-1' codec can't encode characters in position 1-2: ordinal not in range(256)",
+        ),
+        (
+            "{{ 'é'.encode('ascii', 'nope') }}",
+            "unknown error handler name 'nope'",
+        ),
+        ("{{ 'a'.encode('nope') }}", "unknown encoding: nope"),
+        (
+            "{{ 'a'.encode(1) }}",
+            "encode() argument 'encoding' must be str, not int",
+        ),
+        (
+            "{{ 'a'.encode(none) }}",
+            "encode() argument 'encoding' must be str, not None",
+        ),
+        (
+            "{{ 'a'.encode('utf-8', 'strict', 3) }}",
+            "encode() takes at most 2 arguments (3 given)",
+        ),
+        (
+            "{{ 'a'.encode(foo=1) }}",
+            "encode() got an unexpected keyword argument 'foo'",
+        ),
+        (
+            "{{ 'é'.encode().decode('ascii') }}",
+            "'ascii' codec can't decode byte 0xc3 in position 0: ordinal not in range(128)",
+        ),
+        (
+            "{{ 'é'.encode('latin-1').decode() }}",
+            "'utf-8' codec can't decode byte 0xe9 in position 0: unexpected end of data",
+        ),
+        (
+            "{{ 'é'.encode('utf-16').decode('utf-8') }}",
+            "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+        ),
+        (
+            "{{ 'abc'.encode().decode('utf-8', 'x', 3) }}",
+            "decode() takes at most 2 arguments (3 given)",
+        ),
+        ("{{ 'a'.encode().hex('--') }}", "sep must be length 1."),
+        (
+            "{{ 'a'.encode().nope() }}",
+            "object of type 'bytes' has no attribute 'nope'",
+        ),
+        (
+            "{{ 'a'.encode().upper() }}",
+            "method upper is not available yet",
+        ),
+    ] {
+        let err = render(template).unwrap_err();
+        assert!(err.contains(want), "{template}: {err}");
+    }
+}
+
+/// What a template can ask for and this engine does not run fails with a message that names it.
+#[test]
+fn what_bytes_lack_is_refused_by_name() {
+    for (template, want) in [
+        (
+            "{{ 'a'.encode('cp1252') }}",
+            "the encoding 'cp1252' is not supported",
+        ),
+        (
+            "{{ 'é'.encode('ascii', 'namereplace') }}",
+            "the error handler 'namereplace' is not supported",
+        ),
+        (
+            "{{ 'é'.encode('latin-1').decode('utf-8', 'surrogateescape') }}",
+            "the error handler 'surrogateescape' is not supported",
+        ),
+        (
+            "{{ 'a'.encode('utf-16').decode('utf-16') }}",
+            "decoding with 'utf-16' is not supported",
+        ),
+        (
+            "{{ 'é'.encode('latin-1') }}",
+            "bytes that are not UTF-8 cannot be a result",
+        ),
+        (
+            "x {{ 'é'.encode('latin-1') }}",
+            "bytes that are not UTF-8 cannot be a result",
+        ),
+        (
+            "{{ ['é'.encode('latin-1')] }}",
+            "bytes that are not UTF-8 cannot be a result",
+        ),
+        (
+            "{{ 'a'.encode() | to_json }}",
+            "Object of type 'bytes' is not JSON serializable",
+        ),
+        (
+            "{{ {'k': 'a'.encode()} | to_nice_json }}",
+            "Object of type 'bytes' is not JSON serializable",
+        ),
+        (
+            "{{ 'a'.encode() | to_yaml }}",
+            "to_yaml does not write bytes yet",
+        ),
+        (
+            "{{ {'k': 'a'.encode()} | dict2items }}",
+            "this filter does not take bytes yet",
+        ),
+    ] {
+        let err = render(template).unwrap_err();
+        assert!(err.contains(want), "{template}: {err}");
+    }
+}
+
+/// A bytes value counts, indexes and prints as Python does, and a result that holds one shows
+/// its text; the rows of the golden corpus hold the reference's answers to the same templates.
+#[test]
+fn bytes_inside_a_result_show_their_text() {
+    assert_eq!(
+        render("{{ ['abc'.encode(), {'k': 'é'.encode()}] }}"),
+        Ok(json!(["abc", {"k": "é"}]))
+    );
+    assert_eq!(render("{{ ['abc'.encode()] ~ '' }}"), Ok(json!("[b'abc']")));
+    assert_eq!(
+        render("{{ 'a\"b\\'c'.encode() ~ '' }}"),
+        Ok(json!("b'a\"b\\'c'"))
+    );
+}
+
 /// A wide integer sorts against native integers, floats and other wide integers by value, as
 /// Python's does, and is an `int` in an error.
 #[test]
@@ -273,6 +461,30 @@ fn sorting_a_wide_integer_is_exact() {
                 "{{% set l = [1.0e300, 2.0 ** 200, '-{above}' | int, -1.0e300] %}}{{% set _ = l.sort(reverse=True) %}}{{{{ l | map('type_debug') | join(',') }}}}"
             ),
             "float,float,int,float".to_string(),
+        ),
+        (
+            format!(
+                "{{% set l = ['{wide}' | int, '-{wide}' | int] %}}{{% set _ = l.sort() %}}{{{{ l | map('string') | join(',') }}}}"
+            ),
+            format!("-{wide},{wide}"),
+        ),
+        (
+            format!(
+                "{{% set l = ['-{wide}' | int, '{wide}' | int, '-{wide}' | int] %}}{{% set _ = l.sort() %}}{{{{ l | map('string') | join(',') }}}}"
+            ),
+            format!("-{wide},-{wide},{wide}"),
+        ),
+        (
+            format!(
+                "{{% set l = ['{wide}' | int, true, '-{wide}' | int, false] %}}{{% set _ = l.sort() %}}{{{{ l | map('type_debug') | join(',') }}}}"
+            ),
+            "int,bool,bool,int".to_string(),
+        ),
+        (
+            format!(
+                "{{% set l = ['inf' | float, '{wide}' | int, '-inf' | float, '-{wide}' | int] %}}{{% set _ = l.sort() %}}{{{{ l | map('string') | join(',') }}}}"
+            ),
+            format!("-inf,-{wide},{wide},inf"),
         ),
     ] {
         assert_eq!(t.render(&template, &vars), Ok(json!(want)), "{template}");

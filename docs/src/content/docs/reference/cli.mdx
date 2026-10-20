@@ -155,7 +155,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 </Option>
 
 <Option name="-v" id="verbose">
-  Show module results for successful tasks too. Repeatable, like Ansible's `-vvv`. At `-vvvv` the run also prints every option it was given, the plugins it loads and the `ssh` commands it runs. `--scp-extra-args` and `--sftp-extra-args` are shown but have no effect, because Volant moves files over the agent link and runs neither `scp` nor `sftp`.
+  Show module results for successful tasks too. Repeatable, like Ansible's `-vvv`. A result carries its `invocation` key, the arguments the module received, only from `-vvv` on. At `-vvvv` the run also prints every option it was given, the plugins it loads and the `ssh` commands it runs. `--scp-extra-args` and `--sftp-extra-args` are shown but have no effect, because Volant moves files over the agent link and runs neither `scp` nor `sftp`.
 </Option>
 
 <Option name="--no-color">

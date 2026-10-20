@@ -299,6 +299,11 @@ mod tests {
         Ordering::Less
     )]
     #[case(
+        "340282366920938463463374607431768211457",
+        "-340282366920938463463374607431768211457",
+        Ordering::Greater
+    )]
+    #[case(
         "1000000000000000000000000000000000000000",
         "999999999999999999999999999999999999999999",
         Ordering::Less
@@ -318,6 +323,7 @@ mod tests {
     #[case(r#"{"n":1267650600228229401496703205377,"l":[-1,18446744073709551616],"f":1.5}"#)]
     #[case(&format!(r#"{{"n":{}}}"#, "9".repeat(1234)))]
     #[case(&format!("[-{}, 0, 7]", "1".repeat(80)))]
+    #[case("[9223372036854775808, 18446744073709551615, -9223372036854775809]")]
     fn json_survives_a_round_trip_through_a_template_value(#[case] text: &str) {
         let json: serde_json::Value = serde_json::from_str(text).unwrap();
         let back = to_json(&to_template(&json)).unwrap();

@@ -3,12 +3,13 @@
 //! the sink that records a read of one.
 
 use std::collections::{BTreeSet, HashMap};
-use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, Mutex, PoisonError};
 
 use minijinja::value::{Enumerator, Object};
 use serde_json::{Map, Value};
 
+mod hostvars;
 mod read;
 
 use super::env::{chained_attr, fresh_const, mutable_attr, mutable_var};
@@ -19,7 +20,6 @@ use super::{
     MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY, TAINT_KEY, Tainted, TemplateError,
     VAR_KEY,
 };
-use crate::inventory::is_localhost;
 
 /// The name, in the variables an extended loop shares between its items, under which the list of
 /// all the items is kept once. It is no variable: a render never finds it by name, it reads it
@@ -76,6 +76,8 @@ impl Object for LoopView {
     }
 }
 
+pub(super) use hostvars::Hostvars;
+use read::Deferred;
 pub(super) use read::take_failure;
 
 #[derive(Debug)]
@@ -181,13 +183,16 @@ pub(super) struct Context {
     pub(super) shared: Option<Arc<Map<String, Value>>>,
     pub(super) facts: Option<Arc<Map<String, Value>>>,
     pub(super) untrusted: BTreeSet<String>,
+    /// Whether the caller tracks which names hold host text: `untrusted` is then complete. Without
+    /// it, a read of the inventory's names cannot be told from a read of host text.
+    pub(super) tracked: bool,
     pub(super) untrusted_hosts: BTreeSet<String>,
     tainted: Tainted,
     /// Set when a pass left text that must stay as it is: see `Templar::render_in`. Not data:
     /// nothing is refused because of it.
     literal: AtomicBool,
-    /// How many names the render has read, to tell a pass that read none.
-    reads: AtomicUsize,
+    /// The reads that handed out a template unrendered, to tell a pass whose markers are its own.
+    deferred: Arc<Deferred>,
     memo: Memo,
     /// The mutable form of each plain list or mapping read while one string renders, by the
     /// address of the plain one, which it keeps alive. Emptied before the next string.
@@ -242,13 +247,13 @@ impl Context {
 }
 
 /// Starts a render over `ctx`: clears the mark of the last one and what it changed in lists and
-/// mappings, and returns the reads so far.
+/// mappings, and returns the deferred reads so far.
 pub(super) fn begin(ctx: &minijinja::Value) -> usize {
     set_literal(ctx, false);
     if let Some(root) = ctx.downcast_object_ref::<Context>() {
         root.forget_changes();
     }
-    reads(ctx)
+    deferred(ctx)
 }
 
 /// Records that the render over `ctx` left text that no further pass may render.
@@ -258,10 +263,10 @@ pub(super) fn set_literal(ctx: &minijinja::Value, on: bool) {
     }
 }
 
-/// How many names the renders over `ctx` have read so far.
-pub(super) fn reads(ctx: &minijinja::Value) -> usize {
+/// How many reads of the renders over `ctx` handed out a template unrendered so far.
+pub(super) fn deferred(ctx: &minijinja::Value) -> usize {
     ctx.downcast_object_ref::<Context>()
-        .map_or(0, |root| root.reads.load(Ordering::Relaxed))
+        .map_or(0, |root| root.deferred.count())
 }
 
 /// Whether the render over `ctx` left such text.
@@ -333,7 +338,7 @@ impl Object for Context {
         if key == CONTEXT_KEY {
             return Some(minijinja::Value::from_dyn_object(Arc::clone(self)));
         }
-        self.reads.fetch_add(1, Ordering::Relaxed);
+        self.deferred.again(key);
         // Before the memo, never after: a second read of the same name is answered from the
         // cache and would otherwise leave the render looking clean.
         // A `hostvars` the map carries as a plain value lists its hosts on any read, so a host
@@ -391,69 +396,16 @@ impl Object for Context {
     }
 }
 
-/// `hostvars`: a map whose values are converted one host at a time. Iterating it still costs
-/// the whole inventory, which is what a `hostvars | dict2items` asks for; reading one host
-/// costs one host.
-#[derive(Debug)]
-pub(super) struct Hostvars {
-    pub(super) hosts: Arc<Map<String, Value>>,
-    /// The inventory-wide values, whose `groups` say which hosts the inventory lists. The map
-    /// answers for the three spellings of the controller whether they are listed or not, and an
-    /// iteration shows only the listed ones, as the reference's does.
-    listed: Option<Arc<Map<String, Value>>>,
-    /// Hosts holding at least one name that came from a managed host. Reading any name of such
-    /// a host taints the render, which is coarser than the reference's per-string tag.
-    untrusted_hosts: BTreeSet<String>,
-    /// Whether one of the host names came from a managed host: listing them taints the render.
-    keys_untrusted: bool,
-    tainted: Tainted,
-    memo: Memo,
-}
-
-impl Object for Hostvars {
-    fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
-        let key = key.as_str()?;
-        // Before the memo, for the same reason as in `Context`.
-        if self.untrusted_hosts.contains(key) {
-            self.tainted.store(true, Ordering::Relaxed);
-        }
-        self.memo.get(key, || {
-            self.hosts
-                .get(key)
-                .map(|entry| super::bigint::to_template(&crate::vars::settled(entry)))
-        })
-    }
-
-    fn enumerate(self: &Arc<Self>) -> Enumerator {
-        if self.keys_untrusted {
-            self.tainted.store(true, Ordering::Relaxed);
-        }
-        let unlisted: BTreeSet<&str> = match &self.listed {
-            Some(shared) if self.hosts.keys().any(|k| is_localhost(k)) => {
-                let all = shared
-                    .get("groups")
-                    .and_then(|groups| groups.get("all"))
-                    .and_then(Value::as_array);
-                let in_all = |name: &str| all.is_some_and(|a| a.iter().any(|h| h == name));
-                self.hosts
-                    .keys()
-                    .map(String::as_str)
-                    .filter(|k| is_localhost(k) && !in_all(k))
-                    .collect()
-            }
-            _ => BTreeSet::new(),
-        };
-        Enumerator::Values(
-            self.hosts
-                .keys()
-                .filter(|k| !unlisted.contains(k.as_str()))
-                .map(|k| minijinja::Value::from(k.as_str()))
-                .collect(),
-        )
-    }
-}
-
 pub(super) fn context_of(templar: &Templar, vars: Vars<'_>) -> (minijinja::Value, Tainted) {
+    context_tracking(templar, vars, vars.untrusted.is_some())
+}
+
+/// `context_of` for a caller that supplies `untrusted` itself and says whether it is complete.
+pub(super) fn context_tracking(
+    templar: &Templar,
+    vars: Vars<'_>,
+    tracked: bool,
+) -> (minijinja::Value, Tainted) {
     let tainted: Tainted = Arc::new(AtomicBool::new(false));
     let ctx = minijinja::Value::from_object(Context {
         vars: vars.map.clone(),
@@ -462,10 +414,11 @@ pub(super) fn context_of(templar: &Templar, vars: Vars<'_>) -> (minijinja::Value
         shared: vars.shared.cloned(),
         facts: vars.facts.cloned(),
         untrusted: vars.untrusted.cloned().unwrap_or_default(),
+        tracked,
         untrusted_hosts: vars.untrusted_hosts.cloned().unwrap_or_default(),
         tainted: Arc::clone(&tainted),
         literal: AtomicBool::new(false),
-        reads: AtomicUsize::new(0),
+        deferred: Arc::new(Deferred::default()),
         memo: Memo::default(),
         mutables: Mutex::default(),
         mutated: AtomicBool::new(false),

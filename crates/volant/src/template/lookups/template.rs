@@ -109,7 +109,8 @@ pub(super) fn render_template_at(
         .as_ref()
         .and_then(|r| r.downcast_object_ref::<Context>());
     let mut map = ctx.map(Context::flat_vars).unwrap_or_default();
-    let mut untrusted: BTreeSet<String> = ctx.map(|c| c.untrusted.clone()).unwrap_or_default();
+    let mut untrusted: BTreeSet<String> =
+        ctx.map(Context::untrusted_for_nested).unwrap_or_default();
     let hostvars = ctx.and_then(|c| c.hostvars.as_ref());
     let shared = ctx.and_then(|c| c.shared.as_ref());
     let facts = ctx.and_then(|c| c.facts.as_ref());

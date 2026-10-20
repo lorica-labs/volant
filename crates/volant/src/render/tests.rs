@@ -58,6 +58,33 @@ fn the_playbook_and_task_path_lines_show_at_vv(#[case] level: u8, #[case] shown:
     }
 }
 
+/// The failure path shows below `-vv` and only with the setting on: from `-vv` on the banner
+/// carries it already.
+#[rstest]
+#[case::off(false, 0, true, 0)]
+#[case::on(true, 0, true, 1)]
+#[case::on_v(true, 1, true, 1)]
+#[case::on_vv(true, 2, true, 0)]
+#[case::no_file(true, 0, false, 0)]
+fn the_failure_path_shows_below_vv_when_asked(
+    #[case] on: bool,
+    #[case] level: u8,
+    #[case] has_origin: bool,
+    #[case] lines: usize,
+) {
+    let origin = crate::playbook::Origin {
+        path: "/abs/p.yml".into(),
+        line: 4,
+        col: 3,
+    };
+    let out = capture_at(false, level, |r| {
+        r.set_path_on_failure(on);
+        r.failure_path(has_origin.then_some(&origin));
+    });
+    assert_eq!(out.lines().count(), lines, "{out}");
+    assert!(lines == 0 || out == "task path: /abs/p.yml:4\n", "{out}");
+}
+
 /// The source lines under `Origin:`, read the way Python's text mode reads them, and what
 /// shows when the file cannot be read.
 #[rstest]
@@ -95,6 +122,32 @@ fn shorten_keeps_whole_words_as_textwrap_does() {
 
 fn result(v: serde_json::Value) -> TaskResult {
     TaskResult(v.as_object().unwrap().clone())
+}
+
+/// A module's own message leads the block, and the cause it names follows behind `caused by`, as
+/// ansible-core 2.19.12 prints a module that raised.
+#[test]
+fn a_raised_module_error_prints_its_message_and_cause() {
+    let failed = result(json!({
+        "failed": true,
+        "msg": "Task failed: Module failed: Not writable: [Errno 13] Denied",
+        (CHAIN_KEY): [
+            {"msg": "Task failed: Module failed: Not writable.", "lead": true},
+            {"msg": "[Errno 13] Denied"},
+        ],
+    }));
+    let block = ErrorBlock::of(&failed, None, false);
+    let out = capture(|r| r.error(&block));
+    assert_eq!(
+        out,
+        "[ERROR]: Task failed: Module failed: Not writable: [Errno 13] Denied\n\n\
+         Task failed: Module failed: Not writable.\n\n<<< caused by >>>\n\n[Errno 13] Denied\n\n"
+    );
+    let censored = ErrorBlock::of(&failed, None, true);
+    assert!(
+        censored.lead.is_none() && censored.causes.is_empty(),
+        "{censored:?}"
+    );
 }
 
 /// Strips ANSI CSI sequences (`ESC [ ... letter`), the shape anstyle emits, so a
@@ -205,6 +258,18 @@ fn banners_recap_and_status_lines() {
 #[case::verbose_ok(
     1, Outcome::Ok, json!({"changed": false, "stdout": "x"}), None, Dump::No, false,
     "ok: [h] => {\"changed\": false, \"stdout\": \"x\"}\n"
+)]
+#[case::invocation_stays_off_an_ok_line_at_v(
+    1, Outcome::Ok, json!({"changed": false, "invocation": {"module_args": {"path": "/tmp/x"}}, "path": "/tmp/x"}), None, Dump::No, false,
+    "ok: [h] => {\"changed\": false, \"path\": \"/tmp/x\"}\n"
+)]
+#[case::invocation_stays_off_a_changed_item_at_vv(
+    2, Outcome::Changed, json!({"changed": true, "invocation": {"module_args": {"path": "/tmp/x"}}, "path": "/tmp/x"}), Some("one"), Dump::No, false,
+    "changed: [h] => (item=one) => {\"changed\": true, \"path\": \"/tmp/x\"}\n"
+)]
+#[case::invocation_stays_on_an_ok_line_at_vvv(
+    3, Outcome::Ok, json!({"changed": false, "invocation": {"module_args": {"path": "/tmp/x"}}}), None, Dump::No, false,
+    "ok: [h] => {\n    \"changed\": false,\n    \"invocation\": {\n        \"module_args\": {\n            \"path\": \"/tmp/x\"\n        }\n    }\n}\n"
 )]
 #[case::verbose_ok_does_not_say_it_did_not_fail(
     1, Outcome::Ok, json!({"changed": false, "failed": false, "ping": "pong"}), None, Dump::No, false,

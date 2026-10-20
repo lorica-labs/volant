@@ -221,6 +221,7 @@ fn failed(host: &str) -> Event {
         censored: false,
         delegate: None,
         error: None,
+        task_origin: None,
     }
 }
 

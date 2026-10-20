@@ -119,6 +119,23 @@ fn what_a_template_lookup_rendered_is_never_rendered_again() {
     );
 }
 
+/// Under a render that tracks no host text, as the `constructed` plugin's, a template lookup
+/// keeps a host name that holds a template as text, also read through a variable.
+#[test]
+fn a_template_lookup_under_an_untracked_render_keeps_a_host_name_as_text() {
+    let role = Role::new();
+    role.write("role/templates/t.j2", "{{ x }}");
+    let t = templar(&role.dir);
+    let mut map = role.vars();
+    map.insert("inventory_hostname".into(), json!("{{ 7 * 7 }}"));
+    map.insert("x".into(), json!("{{ inventory_hostname }}"));
+    assert_eq!(
+        t.render_one_pass("{{ lookup('template', 't.j2') }}", &map)
+            .unwrap(),
+        json!("{{ 7 * 7 }}")
+    );
+}
+
 /// `lookup('template', 'snip.j2')` finds the role's `templates/snip.j2` through
 /// `ansible_search_path` and renders it with the task's variables.
 #[test]

@@ -6,8 +6,8 @@ use std::time::Duration;
 
 use super::paths::{expand_home, path_list};
 use super::settings::{
-    boolean, cache_plugin, forks, gathering, host_named_dest_dirs, host_named_paths, integer,
-    runtime_mode, switch, timeout_secs,
+    boolean, cache_plugin, callback_flag, forks, gathering, host_named_dest_dirs, host_named_paths,
+    integer, runtime_mode, switch, timeout_secs,
 };
 use super::{Config, tag_list};
 
@@ -171,6 +171,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.show_custom_stats = on;
                 }
+            }
+            "show_task_path_on_failure" => {
+                config.show_task_path_on_failure = callback_flag(value);
             }
             "enable_task_debugger" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {

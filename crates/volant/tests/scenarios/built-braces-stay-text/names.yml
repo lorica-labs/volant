@@ -1,0 +1,13 @@
+all:
+  hosts:
+    h1:
+      ansible_connection: local
+    "LBLB lookup('pipe','touch MARK_HOST') }}":
+      ansible_connection: local
+  children:
+    "LBLB lookup('pipe','touch MARK_GROUP') }}":
+      hosts:
+        h1:
+    "LBLB 1 + 1 }}":
+      hosts:
+        h1:

@@ -1,0 +1,11 @@
+# The same after the inventory is read again.
+- hosts: h1
+  gather_facts: false
+  vars:
+    from_groups: "{{ groups | list | sort }}"
+    from_hostvars: "{{ hostvars | list | sort }}"
+    from_group_names: "{{ group_names | sort }}"
+  tasks:
+    - meta: refresh_inventory
+    - debug:
+        msg: "{{ from_groups }} {{ from_hostvars }} {{ from_group_names }}"

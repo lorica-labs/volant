@@ -1,0 +1,6 @@
+# show_task_path_on_failure from ansible.cfg: a failed task prints its path in front of the fatal line below -vv, and a loop item does not.
+runs:
+  - args: [-i, inv.ini, p.yml]
+  - args: [-v, -i, inv.ini, p.yml]
+  - args: [-vv, -i, inv.ini, p.yml]
+needs: [ansible-core]

@@ -1,0 +1,3 @@
+# A module that raises sends no `msg`: the result, the block and the rescue read the exception's message.
+args: [raised.yml]
+needs: [ansible-core]

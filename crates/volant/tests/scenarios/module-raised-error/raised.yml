@@ -1,0 +1,36 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - name: a pattern that does not compile
+      blockinfile:
+        path: target.txt
+        block: two
+        insertafter: "("
+      register: blocked
+      ignore_errors: true
+    - debug:
+        var: blocked
+    - name: the same in a loop
+      lineinfile:
+        path: target.txt
+        line: "{{ item }}"
+        regexp: "("
+      loop: [a]
+      register: looped
+      ignore_errors: true
+    - debug:
+        var: looped
+    - name: a failure the rescue reads
+      block:
+        - replace:
+            path: target.txt
+            regexp: "("
+            replace: x
+      rescue:
+        - debug:
+            msg: "{{ ansible_failed_result.msg }}"
+    - name: a failure that stops the play
+      blockinfile:
+        path: target.txt
+        block: three
+        insertafter: "("

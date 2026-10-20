@@ -1,0 +1,5 @@
+# A host name or a group name of the inventory that holds template syntax is data in every read.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.yml, names.yml]
+  - args: [-i, inv.yml, refresh.yml]

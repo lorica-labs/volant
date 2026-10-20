@@ -166,6 +166,15 @@ pub(in crate::executor) fn chosen_interpreter(
     reported: &[String],
 ) -> Result<String, TaskResult> {
     match named {
+        // Only a template that failed to render is still one here: its variable has no value.
+        // Run as written it would be the name of a file, not an interpreter.
+        Some(named) if crate::template::Templar::is_stored_template(named) => {
+            let message = crate::executor::prepare::undefined_name(
+                named,
+                crate::template::UNDEFINED.to_string(),
+            );
+            Err(TaskResult::failed_with(format!("Task failed: {message}")))
+        }
         Some(named) => Ok(named.to_string()),
         // Worded as what it is. The controller uploads the agent it shipped with, so an agent
         // that predates the interpreter list reports none exactly as a host with no Python does,

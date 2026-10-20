@@ -96,7 +96,8 @@ pub(super) fn include_request(
                 );
                 return Err(TaskResult(body));
             }
-            let what = path.display().to_string();
+            // Shown the way the reference shows it: absolute, with `.` and `..` folded out.
+            let what = crate::roles::folded(&path).display().to_string();
             (IncludeTarget::File(path), what)
         }
         IncludeKind::Role => {

@@ -18,6 +18,7 @@ use super::{data, from_json_value, invalid};
 pub(super) fn to_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     let ensure_ascii = ensure_ascii(&kwargs)?;
     kwargs.assert_all_used()?;
+    not_bytes(&value)?;
     Ok(Value::from(python_json(
         &data(&value)?,
         None,
@@ -33,6 +34,7 @@ pub(super) fn to_nice_json(value: Value, kwargs: Kwargs) -> Result<Value, Error>
     let indent: usize = kwargs.get::<Option<usize>>("indent")?.unwrap_or(4);
     let ensure_ascii = ensure_ascii(&kwargs)?;
     kwargs.assert_all_used()?;
+    not_bytes(&value)?;
     Ok(Value::from(python_json(
         &data(&value)?,
         Some(indent),
@@ -40,6 +42,16 @@ pub(super) fn to_nice_json(value: Value, kwargs: Kwargs) -> Result<Value, Error>
         ensure_ascii,
         0,
     )))
+}
+
+/// `json.dumps` has no way to write bytes.
+fn not_bytes(value: &Value) -> Result<(), Error> {
+    if super::super::pymethods::bytes::holds(value) {
+        return Err(invalid(
+            "Object of type 'bytes' is not JSON serializable by the 'tagless' profile.",
+        ));
+    }
+    Ok(())
 }
 
 pub(super) fn ensure_ascii(kwargs: &Kwargs) -> Result<bool, Error> {

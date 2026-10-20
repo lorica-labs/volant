@@ -603,3 +603,48 @@ fn a_pattern_without_a_rust_counterpart_is_refused_by_name() {
         assert!(err.contains(reason), "{template}: {err}");
     }
 }
+
+/// Python refuses a decimal text of more than 4300 digits, and the filter answers its default.
+/// Past that size a power of two base is exact in Python and answers the default here.
+#[test]
+fn int_refuses_a_text_past_the_digit_limit() {
+    let nines = |count: usize| format!("{{{{ '{}' | int(default=-1) }}}}", "9".repeat(count));
+    assert_eq!(text(&nines(4301)), "-1");
+    assert_eq!(text(&nines(4300)), "9".repeat(4300));
+    let hex = format!(
+        "{{{{ '{}' | int(base=16, default=-1) }}}}",
+        "f".repeat(4301)
+    );
+    assert_eq!(text(&hex), "-1");
+}
+
+/// `int` strips the spaces Python's `int()` and `float()` strip, not the separators `\x1c` to
+/// `\x1f`, and words a bad call as `do_int()` does. Measured on ansible-core 2.19.12.
+#[test]
+fn int_strips_and_refuses_as_python_does() {
+    for (template, out) in [
+        ("{{ '\x0b12\x0c' | int }}", "12"),
+        ("{{ '\u{3000}12' | int }}", "12"),
+        ("{{ ' \x1c12\x1f' | int }}", "0"),
+        ("{{ '\x1c1.5' | int(default=4) }}", "4"),
+    ] {
+        assert_eq!(text(template), out, "{template}");
+    }
+    for (template, reason) in [
+        (
+            "{{ '1' | int(foo=1) }}",
+            "do_int() got an unexpected keyword argument 'foo'",
+        ),
+        (
+            "{{ '1' | int(1, 2, 3) }}",
+            "do_int() takes from 1 to 3 positional arguments but 4 were given",
+        ),
+        (
+            "{{ '1' | int(4, default=5) }}",
+            "do_int() got multiple values for argument 'default'",
+        ),
+    ] {
+        let err = render(template, serde_json::json!({})).unwrap_err();
+        assert!(err.contains(reason), "{template}: {err}");
+    }
+}

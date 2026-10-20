@@ -12,6 +12,18 @@ from ansible.parsing.ajson import AnsibleJSONEncoder
 from ansible.plugins.callback import CallbackBase
 
 
+def _text(value):
+    """The report's encoder has no way to write bytes. A template that ends in bytes
+    (`'x'.encode()`) is shown by the stdout callbacks as the text they hold, and so it is here."""
+    if isinstance(value, bytes):
+        return value.decode("utf-8")
+    if isinstance(value, dict):
+        return {key: _text(item) for key, item in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_text(item) for item in value]
+    return value
+
+
 class CallbackModule(CallbackBase):
     CALLBACK_VERSION = 2.0
     CALLBACK_TYPE = "stdout"
@@ -22,7 +34,7 @@ class CallbackModule(CallbackBase):
         self.tasks = []
 
     def _record(self, result, **info):
-        outcome = dict(result._result, **info)
+        outcome = _text(dict(result._result, **info))
         outcome["action"] = result._task.action
         self.tasks.append({"task": {"name": result._task.get_name()}, "hosts": {result._host.get_name(): outcome}})
 

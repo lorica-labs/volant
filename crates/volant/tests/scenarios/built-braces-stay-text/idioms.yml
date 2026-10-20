@@ -1,0 +1,27 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    n: 7
+    c: "{{ n }}"
+    b: "{{ c }}"
+    srv: "/srv/{{ inventory_hostname }}"
+    ips: "{{ groups['web'] | map('extract', hostvars, 'ansible_host') | list }}"
+    names: "{{ groups['web'] | map('upper') | list }}"
+    rest: "{{ groups.all | difference(groups['db']) }}"
+    first: "{{ hostvars[groups['web'] | sort | first].ansible_host }}"
+    family: Debian
+  tasks:
+    - debug: {msg: "chain={{ b }}|{{ srv }}|{{ ips }}|{{ names }}|{{ rest }}|{{ first }}"}
+    - debug: {msg: "hostvars={{ hostvars['h2'].ansible_host }}|{{ label }}|{{ label }}-sfx|{{ hostvars['h2'].plain }}-sfx|{{ ansible_host }}"}
+    - debug: {msg: "lookup={{ lookup('vars', 'b') }}|{{ lookup('vars', 'srv') }}"}
+    - debug: {msg: "member"}
+      when: inventory_hostname in groups['web']
+    - set_fact:
+        os_family: "{{ family }}"
+    - group_by: {key: "os_{{ os_family }}"}
+      changed_when: false
+    - debug: {msg: "group_by={{ groups['os_Debian'] }}|{{ group_names | sort }}|{{ b }}"}
+- hosts: web
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{{ inventory_hostname }} {{ ansible_host }} {{ group_names | sort }} {{ hostvars[inventory_hostname].ansible_host }}"}

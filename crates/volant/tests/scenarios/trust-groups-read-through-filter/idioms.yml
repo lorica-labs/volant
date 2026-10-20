@@ -1,0 +1,37 @@
+# A variable that reads the inventory's names, read through one or two variables and a filter.
+- hosts: h1
+  gather_facts: false
+  vars:
+    w: "{{ groups['web'] }}"
+    w1: "{{ w | list }}"
+    w2: "{{ w1 | map('upper') | list }}"
+    names: "{{ groups | list | sort }}"
+    names2: "{{ names | map('upper') | list }}"
+    ips: "{{ groups['web'] | map('extract', hostvars, 'ansible_host') | list }}"
+    ips1: "{{ ips | map('regex_replace', '^', 'IP:') | list }}"
+    ips2: "{{ ips1 | list }}"
+    ips_of: "{{ groups['web'] | map('extract', hostvars, 'ansible_host') | map('regex_replace', '^', 'IP:') | list }}"
+    rest: "{{ groups.all | difference(groups['db']) }}"
+    rest1: "{{ rest | map('upper') | list }}"
+    head: "{{ hostvars[groups['web'] | sort | first].ansible_host }}"
+    head1: "{{ head | upper }}"
+    dir: "/srv/{{ inventory_hostname }}"
+    dir1: "{{ dir | upper }}"
+    member: "{{ inventory_hostname in groups['web'] }}"
+    member1: "{{ member | string | upper }}"
+    gn: "{{ group_names | sort }}"
+    gn1: "{{ gn | map('upper') | list }}"
+    peer: "{{ hostvars['h2'].ansible_host }}"
+    peer1: "{{ peer | upper }}"
+  tasks:
+    - debug:
+        msg: "{{ w1 }} {{ w2 }} {{ names }} {{ names2 }}"
+    - debug:
+        msg: "{{ ips }} {{ ips1 }} {{ ips2 }} {{ ips_of }}"
+    - debug:
+        msg: "{{ rest }} {{ rest1 }} {{ head }} {{ head1 }}"
+    - debug:
+        msg: "{{ dir }} {{ dir1 }} {{ member }} {{ member1 }} {{ gn }} {{ gn1 }} {{ peer }} {{ peer1 }}"
+    - debug:
+        msg: in web
+      when: inventory_hostname in groups['web']

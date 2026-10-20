@@ -94,6 +94,7 @@ impl Driver<'_> {
                 censored,
                 delegate: None,
                 error: None,
+                task_origin: None,
             })
             .await;
     }

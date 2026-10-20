@@ -1,0 +1,3 @@
+# A `roles_path` of `./roles` in `ansible.cfg`, read by a playbook in a sub-directory: the role's directory is absolute in the search path, in the lookups and in the `included:` lines.
+args: [-i, inv.ini, playbooks/k3s/play.yml]
+needs: ["ansible-core"]

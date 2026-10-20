@@ -58,6 +58,9 @@ pub(super) fn split(
 /// A value as Python's `to_text` would hand it to a filter: a string as it is, anything else
 /// printed.
 pub(super) fn text_of(value: &Value) -> String {
+    if let Some(bytes) = super::super::pymethods::bytes::of(value) {
+        return String::from_utf8_lossy(&bytes.0).into_owned();
+    }
     value
         .as_str()
         .map_or_else(|| value.to_string(), str::to_string)
@@ -108,7 +111,10 @@ pub(super) fn b64encode(
     kwargs: Kwargs,
 ) -> Result<String, Error> {
     let urlsafe = b64_options("b64encode", encoding, &kwargs)?;
-    let out = b64_encode(text_of(&value).as_bytes());
+    let out = match super::super::pymethods::bytes::of(&value) {
+        Some(bytes) => b64_encode(&bytes.0),
+        None => b64_encode(text_of(&value).as_bytes()),
+    };
     Ok(if urlsafe {
         out.replace('+', "-").replace('/', "_")
     } else {

@@ -1,0 +1,40 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    label: "naïve ñ"
+  tasks:
+    - set_fact:
+        size: "{{ label.encode('utf-8') | length }}"
+        ascii_label: "{{ label.encode('ascii', 'ignore').decode('ascii') }}"
+        token: "{{ label.encode('utf-8') | b64encode }}"
+        hexed: "{{ label.encode('utf-8').hex() }}"
+        slug: "{{ label.encode('ascii', 'replace').decode('ascii') }}"
+    - debug:
+        msg: "{{ size }} {{ ascii_label }} {{ token }} {{ hexed }} {{ slug }}"
+      run_once: true
+    - debug:
+        msg: "{{ item }}: {{ item.encode('utf-8') | length }} {{ item.encode('utf-8')[0] }} {{ item.encode('latin-1', 'ignore') | length }}"
+      loop: ["a", "é", "€x"]
+      run_once: true
+    - assert:
+        that:
+          - label.encode('utf-8').decode('utf-8') == label
+          - label.encode('utf-16') | length == 2 + 2 * (label | length)
+          - label.encode('utf-8') is not string
+      run_once: true
+    - set_fact:
+        counts: "{{ dict.fromkeys(groups['all'], 0) }}"
+        flags: "{{ dict.fromkeys(['a', 'b', 'a']) }}"
+        shared: "{{ dict.fromkeys('xy', [1]) }}"
+      run_once: true
+    - debug:
+        var: counts
+      run_once: true
+    - debug:
+        msg: "{{ flags }} {{ shared }} {{ counts | combine(dict.fromkeys(['h1'], 1)) }}"
+      run_once: true
+    - debug:
+        msg: >-
+          {% set d = dict.fromkeys(['a', 'b'], 0) %}{% set _ = d.update({'c': 1}) %}{{ d }}
+          {{ dict.fromkeys(label.split(), true) }}
+      run_once: true

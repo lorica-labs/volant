@@ -173,7 +173,6 @@ const ARGUMENT_GAPS: &[(&str, &str, &str)] = &[
     ("filter", "min", "the attribute argument is not supported"),
     ("filter", "max", "the attribute argument is not supported"),
     ("filter", "replace", "the count argument is not supported"),
-    ("filter", "int", "the base argument is not supported"),
     (
         "filter",
         "to_json",

@@ -5896,6 +5896,65 @@ fn the_implicit_localhost_runs_under_the_controller_python() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `ansible_playbook_python` names the controller's interpreter for a host's own interpreter; one
+/// naming a variable with no value fails the task by that name, and `raw` still runs.
+#[test]
+fn ansible_playbook_python_names_the_controller_python() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("playbook-python");
+    std::fs::write(
+        dir.join("inv.ini"),
+        "h1 ansible_connection=local ansible_python_interpreter=\"{{ ansible_playbook_python }}\"
+h2 ansible_connection=local ansible_python_interpreter=\"{{ nopy }}\"
+",
+    )
+    .expect("an inventory");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: all
+  gather_facts: false
+  tasks:
+    - ping:
+      ignore_errors: true
+    - raw: /bin/true
+    - debug:
+        msg: \"{{ ansible_playbook_python }} {{ ansible_python_interpreter }}\"
+      when: inventory_hostname == 'h1'
+",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.ini").to_str().expect("a path"),
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        stdout.contains(&format!("\"msg\": \"{python} {python}\"")),
+        "the variable does not name the controller's Python:
+{stdout}{stderr}"
+    );
+    assert!(
+        stdout.contains("ok: [h1]") && stdout.contains("'nopy' is undefined"),
+        "the interpreter was not read as a variable:
+{stdout}{stderr}"
+    );
+    assert!(
+        !stdout.contains("starting {{"),
+        "a template was run as a path:
+{stdout}{stderr}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// An inventory with no host warns once, as ansible-core 2.19.12 does, unless `localhost_warning`
 /// is off.
 #[rstest::rstest]
@@ -7610,6 +7669,181 @@ fn group_names_read_through_three_variables_stay_data(
         !marker.exists(),
         "a group name from a host ran on the controller:\n{text}\n{}",
         String::from_utf8_lossy(&out.stdout)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// An inventory name a filter turns into template syntax is text in `groups`, `hostvars`,
+/// `group_names` and `inventory_hostname`; ansible-core 2.19.12 creates no file.
+#[rstest]
+#[case::group(
+    "  children:\n    \"LBLB lookup('pipe','touch MARK') }}\":\n      hosts:\n        h1:\n"
+)]
+#[case::host("    \"LBLB lookup('pipe','touch MARK') }}\":\n      ansible_connection: local\n")]
+fn an_inventory_name_a_filter_turns_into_braces_stays_text(#[case] names: &str) {
+    let (dir, marker) = trust_dir("built-names", "");
+    let names = names.replace("MARK", &marker.display().to_string());
+    let inventory = format!("all:\n  hosts:\n    h1:\n      ansible_connection: local\n{names}");
+    std::fs::write(dir.join("inv.yml"), inventory).expect("an inventory");
+    let play = "- hosts: all\n  gather_facts: false\n  vars:\n    one: \"{{ groups | map('replace', 'LB', '{') | list }}\"\n    all: \"{{ groups | list }}\"\n    two: \"{{ all | map('replace', 'LB', '{') | list }}\"\n    hosts: \"{{ hostvars | list | map('replace', 'LB', '{') | list }}\"\n  tasks:\n    - debug:\n        msg: \"direct={{ groups | list | map('replace', 'LB', '{') | list }} one={{ one }} two={{ two }} hosts={{ hosts }} names={{ group_names | map('replace', 'LB', '{') | list }} self={{ inventory_hostname | replace('LB', '{') }}\"\n";
+    std::fs::write(dir.join("pb.yml"), play).expect("the playbook");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.yml").to_str().expect("a path"),
+            dir.join("pb.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(
+        !marker.exists(),
+        "a name of the inventory ran on the controller:\n{stdout}{stderr}"
+    );
+    let shown = format!("{{{{ lookup('pipe','touch {}') }}}}", marker.display());
+    assert!(
+        stdout.matches(&shown).count() >= 3,
+        "the name is not shown as text:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Inventory names holding template syntax are text in `groups`, `hostvars` and `group_names`,
+/// through variables and after a refresh; ansible-core 2.19.12 prints them and creates no file.
+#[rstest]
+#[case::group(
+    "  children:\n    \"{{ lookup('pipe','touch MARK') }}\":\n      hosts:\n        h1:\n"
+)]
+#[case::host("    \"{{lookup('pipe','touch MARK')}}\":\n      ansible_connection: local\n")]
+#[case::lone_brace("  children:\n    \"a{b\":\n      hosts:\n        h1:\n")]
+fn an_inventory_name_with_template_syntax_stays_text(
+    #[case] names: &str,
+    #[values("", "    - meta: refresh_inventory\n")] refresh: &str,
+) {
+    let (dir, marker) = trust_dir("inventory-names", "");
+    let names = names.replace("MARK", &marker.display().to_string());
+    let inventory = format!("all:\n  hosts:\n    h1:\n      ansible_connection: local\n{names}");
+    std::fs::write(dir.join("inv.yml"), inventory).expect("an inventory");
+    let play = format!(
+        "- hosts: h1\n  gather_facts: false\n  vars:\n    a: \"{{{{ groups | list }}}}\"\n    b: \"{{{{ a | map('upper') | list }}}}\"\n    c: \"{{{{ hostvars | list }}}}\"\n    d: \"{{{{ group_names }}}}\"\n  tasks:\n{refresh}    - debug:\n        msg: \"a={{{{ a | to_json }}}} b={{{{ b | to_json }}}} c={{{{ c | to_json }}}} d={{{{ d | to_json }}}}\"\n"
+    );
+    std::fs::write(dir.join("pb.yml"), play).expect("the playbook");
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            dir.join("inv.yml").to_str().expect("a path"),
+            dir.join("pb.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(out.status.success(), "{stdout}{stderr}");
+    assert!(
+        !marker.exists(),
+        "a name from the inventory ran on the controller:\n{stdout}{stderr}"
+    );
+    let shown = names.split('"').nth(1).unwrap_or("a{b");
+    assert!(
+        stdout.contains(shown),
+        "{shown} is not shown as text:\n{stdout}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A name a host sent, read through `groups` and then through a filter by other variables, is text:
+/// the chain gives its words and runs nothing. The names of the inventory around it resolve.
+#[test]
+fn a_host_name_read_through_a_filter_stays_text() {
+    if python::reference_python().is_none() {
+        return;
+    }
+    let (dir, marker) = trust_dir("filter-name", "h1 ansible_connection=local\n");
+    let play = format!(
+        "- hosts: h1\n  gather_facts: false\n  vars:\n    gk: \"{{{{ groups.all | list }}}}\"\n    up: \"{{{{ gk | map('upper') | list }}}}\"\n    first: \"{{{{ gk | sort | first }}}}\"\n    last: \"{{{{ gk | sort | last }}}}\"\n  tasks:\n    - command: cat {}\n      register: r\n    - add_host: {{name: \"{{{{ r.stdout }}}}\", ansible_connection: local}}\n    - debug:\n        msg: \"first={{{{ first }}}} up={{{{ up | length }}}} last={{{{ last }}}}\"\n",
+        dir.join("payload.txt").display()
+    );
+    let out = run_trust_playbook(&dir, &play);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        !marker.exists(),
+        "a host name ran on the controller:\n{stdout}"
+    );
+    let payload = std::fs::read_to_string(dir.join("payload.txt")).expect("the payload");
+    assert!(
+        stdout.contains(&format!("first=h1 up=2 last={payload}")),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A group named from a value a host printed (`group_by`) leaves the variables that read `groups`
+/// resolving to the right value, through one variable and through two with a filter after them.
+#[test]
+fn a_group_named_from_a_host_value_reads_through_variables() {
+    if python::reference_python().is_none() {
+        return;
+    }
+    let (dir, _) = trust_dir(
+        "filter-group-by",
+        "h1 ansible_connection=local\nh2 ansible_connection=local\n",
+    );
+    let play = "- hosts: all\n  gather_facts: false\n  tasks:\n    - command: echo Debian\n      register: family\n    - group_by: {key: \"os_{{ family.stdout }}\"}\n- hosts: h1\n  gather_facts: false\n  vars:\n    os: \"{{ groups['os_Debian'] | sort }}\"\n    os1: \"{{ os | list }}\"\n    os2: \"{{ os1 | map('upper') | list }}\"\n    names: \"{{ groups | list | sort | map('upper') | list }}\"\n  tasks:\n    - debug:\n        msg: \"{{ os2 | join(',') }} {{ names | join(',') }} {{ hostvars[os1 | first].inventory_hostname }}\"\n";
+    let out = run_trust_playbook(&dir, play);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        stdout.contains("H1,H2 ALL,OS_DEBIAN,UNGROUPED h1"),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A name a host printed, added by `add_host` or `group_by` on six routes, stays text in every
+/// read of the inventory's names, through variables, a filter and a later play. No file appears.
+#[rstest]
+#[case::host_name("    - add_host: {name: \"{{ r.stdout }}\", ansible_connection: local}\n")]
+#[case::host_name_in_a_loop(
+    "    - add_host: {name: \"{{ item }}\", ansible_connection: local}\n      loop: \"{{ r.stdout_lines }}\"\n"
+)]
+#[case::group_of_a_host(
+    "    - add_host: {name: extra, groups: [\"{{ r.stdout }}\"], ansible_connection: local}\n"
+)]
+#[case::group_by_key_in_a_fact(
+    "    - set_fact: {key: \"{{ r.stdout }}\"}\n    - group_by: {key: \"{{ key }}\"}\n"
+)]
+#[case::group_by_key_in_a_loop(
+    "    - group_by: {key: \"{{ item }}\"}\n      loop: \"{{ r.stdout_lines }}\"\n"
+)]
+#[case::group_by_parents("    - group_by: {key: ok, parents: [\"{{ r.stdout }}\"]}\n")]
+fn a_name_a_host_printed_stays_text_on_every_route(#[case] route: &str) {
+    if python::reference_python().is_none() {
+        return;
+    }
+    let (dir, marker) = trust_dir("printed-name", "h1 ansible_connection=local\n");
+    // A name without a space: `group_by` replaces a space in a group name with a dash.
+    let name = format!("{{{{lookup('pipe','touch${{IFS}}{}')}}}}", marker.display());
+    std::fs::write(dir.join("name.txt"), &name).expect("the name");
+    let play = format!(
+        "- hosts: h1\n  gather_facts: false\n  vars:\n    g1: \"{{{{ groups | list }}}}\"\n    g2: \"{{{{ g1 | map('trim') | list }}}}\"\n    ga: \"{{{{ groups.all | map('trim') | list }}}}\"\n    hv: \"{{{{ hostvars | list }}}}\"\n    gn: \"{{{{ group_names | list }}}}\"\n  tasks:\n    - command: cat {}\n      register: r\n{route}    - set_fact:\n        sf: \"{{{{ g2 | join(',') }}}} {{{{ ga | join(',') }}}} {{{{ hv | join(',') }}}} {{{{ gn | join(',') }}}}\"\n    - debug:\n        msg: \"G={{{{ g2 | to_json }}}} V={{{{ lookup('vars', 'g2') | to_json }}}} S={{{{ sf }}}}\"\n- hosts: all\n  gather_facts: false\n  tasks:\n    - debug: {{msg: \"H={{{{ inventory_hostname }}}}\"}}\n",
+        dir.join("name.txt").display()
+    );
+    let out = run_trust_playbook(&dir, &play);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    let stderr = String::from_utf8_lossy(&out.stderr);
+    assert!(
+        !marker.exists(),
+        "a name a host printed ran on the controller:\n{play}\n{stdout}{stderr}"
+    );
+    assert!(stdout.contains("PLAY RECAP"), "{stdout}{stderr}");
+    assert!(
+        stdout.matches(&name).count() >= 3,
+        "the name is not shown as text:\n{stdout}{stderr}"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }

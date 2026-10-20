@@ -147,9 +147,13 @@ pub struct RoleSearch {
 
 impl RoleSearch {
     pub fn new(playbook_dir: &Path, config: &Config) -> Self {
+        // The reference makes every one of these absolute and folds `.` and `..` out of the text
+        // (`unfrackpath`); the search path a role's lookups read is built from them, and so is
+        // what an `included:` line shows.
+        let playbook_dir = folded(playbook_dir);
         let mut paths = vec![playbook_dir.join("roles")];
         paths.extend(config.roles_path.iter().cloned());
-        paths.push(playbook_dir.to_path_buf());
+        paths.push(playbook_dir.clone());
         let mut collections = vec![playbook_dir.join("collections")];
         collections.extend(config.collections_path.iter().cloned());
         Self { paths, collections }
@@ -369,7 +373,7 @@ fn absolute(path: &Path) -> PathBuf {
 }
 
 /// An absolute path with every `.` and `..` folded out of its text, as `os.path.normpath` does.
-fn folded(path: &Path) -> PathBuf {
+pub(crate) fn folded(path: &Path) -> PathBuf {
     let mut out = PathBuf::new();
     for part in absolute(path).components() {
         match part {

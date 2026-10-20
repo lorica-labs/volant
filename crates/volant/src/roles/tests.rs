@@ -115,6 +115,16 @@ fn a_missing_role_names_every_path_and_exits_1() {
     assert_eq!(crate::stats::error_code(&err), 1, "{text}");
 }
 
+/// The directory of a playbook given as `play/../play/./sub` is searched by its folded name, the
+/// way `os.path.abspath` gives it in ansible-core 2.19.12.
+#[test]
+fn the_playbook_directory_is_searched_by_its_folded_name() {
+    let search = RoleSearch::new(Path::new("/w/other/../play/./sub"), &Config::default());
+    assert_eq!(search.paths[0], Path::new("/w/play/sub/roles"));
+    assert_eq!(search.paths.last().unwrap(), Path::new("/w/play/sub"));
+    assert_eq!(search.collections[0], Path::new("/w/play/sub/collections"));
+}
+
 /// A three-part name is looked for in the collections, beside the playbook first.
 #[test]
 fn a_collection_role_is_found_under_ansible_collections() {

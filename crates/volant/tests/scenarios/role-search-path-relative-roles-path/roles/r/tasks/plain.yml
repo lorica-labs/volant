@@ -1,0 +1,3 @@
+- name: Say where it is
+  ansible.builtin.debug:
+    msg: plain

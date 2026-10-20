@@ -183,6 +183,7 @@ pub(super) async fn report_task(
                 censored: censored || asks_to_be_hidden(r),
                 delegate: delegate.map(str::to_string),
                 error,
+                task_origin: task.origin.clone(),
             })
             .await;
     }
@@ -212,6 +213,7 @@ pub(super) async fn report_task(
                 censored,
                 delegate: delegate.map(str::to_string),
                 error: None,
+                task_origin: None,
             })
             .await;
     }

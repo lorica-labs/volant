@@ -364,11 +364,8 @@ mod unit {
     #[test]
     fn a_method_nobody_knows_names_itself() {
         let err = templar()
-            .render("{{ 'x'.encode() }}", &Map::new())
+            .render("{{ 'x'.encode().upper() }}", &Map::new())
             .unwrap_err();
-        assert!(
-            err.0.contains("method encode is not available yet"),
-            "{err}"
-        );
+        assert!(err.0.contains("method upper is not available yet"), "{err}");
     }
 }

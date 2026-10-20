@@ -1,0 +1,6 @@
+# A variable that reads `groups`, `hostvars` or `group_names` and is read by another variable, or
+# through a filter, gives the same value as in the reference.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, idioms.yml]
+  - args: [-i, inv.ini, group-by.yml]

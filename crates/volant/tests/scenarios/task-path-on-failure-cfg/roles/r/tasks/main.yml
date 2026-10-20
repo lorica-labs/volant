@@ -1,0 +1,4 @@
+- name: fails in the role
+  ansible.builtin.fail:
+    msg: in the role
+  ignore_errors: true

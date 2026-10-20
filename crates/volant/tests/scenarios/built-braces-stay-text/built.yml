@@ -1,0 +1,34 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    x: a
+    n: web
+    web_port: 80
+    cat: "{{ x ~ '{{ 1 + 1 }}' }}"
+    rep: "{{ x | replace('a', '{{ 7 * 6 }}') }}"
+    helm: "{{ '{{ .Values.' ~ n ~ ' }}' }}"
+    port: "{{ '{{ ' ~ n ~ '_port }}' }}"
+    joined: "{{ ['{{', x, '}}'] | join(' ') }}"
+    spelled: "{{ '{{ %s }}' % x }}"
+    twice: "{{ cat }}"
+    thrice: "{{ twice }}"
+    listed: ["{{ cat }}", "{{ helm }}"]
+    mapped: {k: "{{ port }}"}
+    plain: "{{ 3 + 4 }}"
+    chain1: "{{ plain }}"
+    chain2: "{{ chain1 }}"
+    stored: {k: "{{ plain }}", l: ["{{ chain2 }}", z]}
+  tasks:
+    - debug: {msg: "direct={{ x ~ '{{ 1 + 1 }}' }}|{{ x | replace('a', '{{ 7 * 6 }}') }}|{{ '{{ ' ~ n ~ '_port }}' }}"}
+    - debug: {msg: "vars={{ cat }}|{{ rep }}|{{ helm }}|{{ port }}|{{ joined }}|{{ spelled }}"}
+    - debug: {msg: "chain={{ twice }}|{{ thrice }}|{{ listed }}|{{ mapped }}"}
+    - debug: {msg: "lookup={{ lookup('vars', 'cat') }}|{{ lookup('vars', 'thrice') }}"}
+    - set_fact:
+        built: "{{ x ~ '{{ 1 + 1 }}' }}"
+        built2: "{{ cat }}"
+    - debug: {msg: "fact={{ built }}|{{ built2 }}"}
+    - debug: {msg: "item={{ item }}"}
+      loop: ["{{ cat }}", "{{ x ~ '{{ 2 + 2 }}' }}"]
+    - debug: {msg: "stored={{ plain }}|{{ chain2 }}|{{ stored }}|{{ stored.k }}-sfx"}
+    - debug: {msg: "{{ lookup('vars', n ~ '_port') }}"}
+    - debug: {msg: "{% raw %}{{ x }}{% endraw %}|{{ '{{' }} x }}"}

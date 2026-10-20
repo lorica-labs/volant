@@ -25,6 +25,9 @@ pub(crate) fn to_str(value: &Value) -> String {
 
 /// `repr(value)`.
 pub(crate) fn repr(value: &Value) -> String {
+    if let Some(bytes) = super::bytes::of(value) {
+        return bytes.python_repr();
+    }
     match value.kind() {
         ValueKind::Number if !value.is_integer() => to_str(value),
         ValueKind::Seq if value.is_tuple() => {

@@ -1,0 +1,3 @@
+# ANSIBLE_SHOW_TASK_PATH_ON_FAILURE=yes turns the failure path on with no ansible.cfg.
+args: [-i, inv.ini, p.yml]
+env: {ANSIBLE_SHOW_TASK_PATH_ON_FAILURE: "yes"}

@@ -138,13 +138,18 @@ fn numeric(a: &Value, b: &Value) -> Option<Option<Ordering>> {
 #[derive(Clone, Copy)]
 enum Num {
     Int(i128),
+    /// An integer past `i128::MAX`, which minijinja keeps as a `u128`: up to 2^128 - 1.
+    Wide(u128),
     Float(f64),
 }
 
 fn number(v: &Value) -> Option<Num> {
     match v.kind() {
         ValueKind::Bool => Some(Num::Int(i128::from(v.is_true()))),
-        ValueKind::Number if v.is_integer() => i128::try_from(v.clone()).ok().map(Num::Int),
+        ValueKind::Number if v.is_integer() => match i128::try_from(v.clone()) {
+            Ok(n) => Some(Num::Int(n)),
+            Err(_) => u128::try_from(v.clone()).ok().map(Num::Wide),
+        },
         ValueKind::Number => f64::try_from(v.clone()).ok().map(Num::Float),
         _ => None,
     }
@@ -155,6 +160,12 @@ impl Num {
     fn cmp_exact(self, other: Num) -> Option<Ordering> {
         match (self, other) {
             (Num::Int(x), Num::Int(y)) => Some(x.cmp(&y)),
+            (Num::Wide(x), Num::Wide(y)) => Some(x.cmp(&y)),
+            // A wide integer is past every `i128`.
+            (Num::Wide(_), Num::Int(_)) => Some(Ordering::Greater),
+            (Num::Int(_), Num::Wide(_)) => Some(Ordering::Less),
+            (Num::Wide(x), Num::Float(y)) => wide_against_float(x, y),
+            (Num::Float(x), Num::Wide(y)) => wide_against_float(y, x).map(Ordering::reverse),
             (Num::Float(x), Num::Float(y)) => x.partial_cmp(&y),
             (Num::Int(x), Num::Float(y)) => int_against_float(x, y),
             (Num::Float(x), Num::Int(y)) => int_against_float(y, x).map(Ordering::reverse),
@@ -188,6 +199,21 @@ fn int_against_float(x: i128, y: f64) -> Option<Ordering> {
             Ordering::Equal
         }
     }))
+}
+
+/// `x`, at least 2^127, against `y`, exactly. A float of that size holds no fraction, so one
+/// below 2^128 converts to a `u128` without loss.
+fn wide_against_float(x: u128, y: f64) -> Option<Ordering> {
+    if y.is_nan() {
+        return None;
+    }
+    if y >= 2f64.powi(128) {
+        return Some(Ordering::Less);
+    }
+    if y < 2f64.powi(127) {
+        return Some(Ordering::Greater);
+    }
+    Some(x.cmp(&(y as u128)))
 }
 
 /// Python's sort of `items` by `<` on what `key` reads of each. As CPython does, a reverse sort

@@ -9,6 +9,7 @@ use minijinja::{Environment, Error, ErrorKind, State, Value};
 
 mod collections;
 mod json;
+mod ordering;
 mod regex;
 mod text;
 
@@ -136,9 +137,9 @@ pub fn register(
         add_filter(env, "attr", f::attr);
         add_filter(env, "first", f::first);
         add_filter(env, "last", f::last);
-        add_filter(env, "min", f::min);
-        add_filter(env, "max", f::max);
-        add_filter(env, "sort", f::sort);
+        add_filter(env, "min", ordering::min);
+        add_filter(env, "max", ordering::max);
+        add_filter(env, "sort", ordering::sort);
         add_filter(env, "list", f::list);
         add_text_filter(env, "string", string);
         add_filter(env, "batch", f::batch);
@@ -151,7 +152,7 @@ pub fn register(
         add_filter(env, "rejectattr", f::rejectattr);
         add_filter(env, "map", f::map);
         add_filter(env, "groupby", f::groupby);
-        add_filter(env, "unique", f::unique);
+        add_filter(env, "unique", ordering::unique);
         add_filter(env, "chain", f::chain);
         add_filter(env, "zip", f::zip);
         add_filter(env, "pprint", f::pprint);

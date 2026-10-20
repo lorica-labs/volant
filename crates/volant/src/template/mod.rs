@@ -19,6 +19,7 @@ mod lipsum;
 mod lookups;
 mod once;
 mod one_pass;
+mod order;
 mod pymethods;
 mod resolve;
 mod templar;

@@ -49,7 +49,7 @@ fn to_text(value: &Value) -> String {
 /// The arguments of a Python function, positional first and then by name. `names` are the
 /// parameters after the value, in order. A parameter given twice or not at all named, or too
 /// many positional arguments, is an error when `strict`.
-fn bind(
+pub(super) fn bind(
     filter: &str,
     names: &[&str],
     positional: &[Value],

@@ -6,6 +6,7 @@ use minijinja::machinery::{Instruction, Instructions};
 
 use super::super::bridged;
 use super::super::env::{attr_call, const_call, var_call};
+use super::super::order::OPERATORS;
 use super::super::pymethods::mutable::MUTATORS;
 use super::super::{
     CONCAT_KEY, CONST_KEY, ITEM_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY,
@@ -19,6 +20,13 @@ use super::concat;
 /// cannot be rewritten in place, so the swap happens on the bytecode: the concatenation
 /// instruction and a two-argument call take the same two operands off the stack in the same
 /// order, and a call keeps its own, so every jump target stays where it was.
+///
+/// The comparison operators are routed the same way, to the globals of [`OPERATORS`]. A link of a
+/// chained comparison (`a < b < c`) keeps its right operand on the stack for the next link, which
+/// a call cannot do in one instruction: it jumps to code appended after the end, which calls,
+/// unpacks the result and the operand, and jumps back. `in` and `not in` stay minijinja's. A
+/// comparison of literals alone (`'a' < 1`) is folded by minijinja's compiler into its answer
+/// before this rewrite sees it, so its refusal of two types Python cannot order is lost.
 ///
 /// `mutating` is true when the template calls a method that changes a list or mapping in place
 /// (see [`mutates`]). Each variable, attribute and item it reads then goes through a function that
@@ -41,6 +49,7 @@ pub(in crate::template) fn route_calls(
         captures |= matches!(op, Instruction::BeginCapture(..));
         at += 1;
     }
+    let mut links = Vec::new();
     let mut idx = 0;
     loop {
         let named = match (instructions.get(idx), instructions.get(idx + 1)) {
@@ -60,6 +69,22 @@ pub(in crate::template) fn route_calls(
         }
         match op {
             Instruction::StringConcat => *op = Instruction::CallFunction(CONCAT_KEY, Some(2)),
+            Instruction::Eq
+            | Instruction::Ne
+            | Instruction::Lt
+            | Instruction::Lte
+            | Instruction::Gt
+            | Instruction::Gte => {
+                if let Some((key, _)) = operator(&format!("{op:?}")) {
+                    *op = Instruction::CallFunction(key, Some(2));
+                }
+            }
+            // minijinja names no type for the operator a link holds, only its debug form.
+            Instruction::CompareAndPreserve(cmp) => {
+                if let Some((_, keep)) = operator(&format!("{cmp:?}")) {
+                    links.push((idx, keep));
+                }
+            }
             Instruction::Rem => {
                 let key = if tuple_before { REMT_KEY } else { REM_KEY };
                 *op = Instruction::CallFunction(key, Some(2));
@@ -94,7 +119,57 @@ pub(in crate::template) fn route_calls(
         }
         idx += 1;
     }
+    if !links.is_empty() {
+        // Running off the end of the code is how a render ends, `extends` included: the code
+        // that runs into what is appended jumps past it instead.
+        instructions.add(Instruction::Jump(u32::MAX));
+        for (at, keep) in links {
+            let start = append_at(instructions, at, Instruction::CallFunction(keep, Some(2)));
+            append_at(instructions, at, Instruction::UnpackList(2));
+            append_at(instructions, at, Instruction::Jump(at + 1));
+            if let Some(op) = instructions.get_mut(at) {
+                *op = Instruction::Jump(start);
+            }
+        }
+    }
     captures
+}
+
+/// The globals of a comparison instruction, from its debug form (`Lt`, `CompareAndPreserve(Lt)`):
+/// the one that answers, and the one a link of a chain calls.
+fn operator(debug: &str) -> Option<(&'static str, &'static str)> {
+    let name = debug
+        .strip_prefix("CompareAndPreserve(")
+        .and_then(|rest| rest.strip_suffix(')'))
+        .unwrap_or(debug);
+    let symbol = match name {
+        "Eq" => "==",
+        "Ne" => "!=",
+        "Lt" => "<",
+        "Lte" => "<=",
+        "Gt" => ">",
+        "Gte" => ">=",
+        _ => return None,
+    };
+    OPERATORS
+        .iter()
+        .find(|(op, ..)| *op == symbol)
+        .map(|(_, key, keep)| (*key, *keep))
+}
+
+/// Appends `op` to the code, at the source location of the instruction at `at`, so that an error
+/// it raises points where the operator was written.
+fn append_at<'s>(instructions: &mut Instructions<'s>, at: u32, op: Instruction<'s>) -> u32 {
+    if let Some(span) = instructions.get_span(at) {
+        return instructions.add_with_span(op, span);
+    }
+    match instructions
+        .get_line(at)
+        .and_then(|line| u16::try_from(line).ok())
+    {
+        Some(line) => instructions.add_with_line(op, line),
+        None => instructions.add(op),
+    }
 }
 
 /// Whether an instruction pushes a tuple or a list written out in the template, `(a, b)` or

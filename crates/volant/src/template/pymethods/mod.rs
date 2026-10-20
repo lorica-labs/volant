@@ -20,7 +20,8 @@ mod search;
 mod text;
 mod translate;
 
-use args::{Call, raise, type_of};
+pub(super) use args::type_of;
+use args::{Call, raise};
 use mutable::{Dict, MutDict, MutList, is_dict, is_list};
 pub(super) use percent::{format_filter, percent};
 

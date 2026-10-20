@@ -14150,5 +14150,582 @@
       "template": "{{ 1 is lower }}"
     },
     "result": false
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) }}"
+    },
+    "result": [
+      1,
+      2
+    ]
+  },
+  {
+    "case": {
+      "template": "x {{ (1, 2) }}"
+    },
+    "result": "x [1, 2]"
+  },
+  {
+    "case": {
+      "template": "{{ ('a',) }}"
+    },
+    "result": [
+      "a"
+    ]
+  },
+  {
+    "case": {
+      "template": "x {{ ('a',) }}"
+    },
+    "result": "x ['a']"
+  },
+  {
+    "case": {
+      "template": "{{ [(1, 2)] }}"
+    },
+    "result": [
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) | to_json }}"
+    },
+    "result": "[1, 2]"
+  },
+  {
+    "case": {
+      "template": "{{ {'k': (1, 2)} | to_json }}"
+    },
+    "result": "{\"k\": [1, 2]}"
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) | to_nice_json }}"
+    },
+    "result": "[\n    1,\n    2\n]"
+  },
+  {
+    "case": {
+      "template": "{{ '%s-%s' % (1, 2) }}"
+    },
+    "result": "1-2"
+  },
+  {
+    "case": {
+      "template": "{{ '%s' % ((1, 2),) }}"
+    },
+    "result": "(1, 2)"
+  },
+  {
+    "case": {
+      "template": "{{ ['%s'] | map('format', (1, 2)) | list }}"
+    },
+    "result": [
+      "(1, 2)"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) | type_debug }}"
+    },
+    "result": "tuple"
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2).index(2) }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2).count(2) }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) + [3] }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: can only concatenate tuple (not \"list\") to tuple"
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) + (3,) }}"
+    },
+    "result": [
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2).append(3) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': object of type 'tuple' has no attribute 'append'"
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) == [1, 2] }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) ~ 'x' }}"
+    },
+    "result": "(1, 2)x"
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) | string }}"
+    },
+    "result": "(1, 2)"
+  },
+  {
+    "case": {
+      "template": "{{ ('a', 'b') | join(',') }}"
+    },
+    "result": "a,b"
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2)[0] }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "template": "{{ (3, 1) | sort }}"
+    },
+    "result": [
+      1,
+      3
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ (1, 2) in [(1, 2)] }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ [1, 2] in [(1, 2)] }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": ">{% set t = (1, 2) %}{{ t | length }} {{ t[1:] }} {{ t | list }}"
+    },
+    "result": ">2 [2] [1, 2]"
+  },
+  {
+    "case": {
+      "template": "{{ {'a': 1} | dictsort | first }}"
+    },
+    "result": [
+      "a",
+      1
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ ({'a': 1} | dictsort | first) | type_debug }}"
+    },
+    "result": "tuple"
+  },
+  {
+    "case": {
+      "template": "{{ ('-340282366920938463463374607431768211457' | int) < 0 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('-340282366920938463463374607431768211457' | int) < -1 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('-340282366920938463463374607431768211457' | int) > -1.5 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('-340282366920938463463374607431768211457' | int) < ('340282366920938463463374607431768211457' | int) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('-340282366920938463463374607431768211457' | int) >= ('-340282366920938463463374607431768211458' | int) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('340282366920938463463374607431768211457' | int) > 1e300 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('340282366920938463463374607431768211457' | int) <= 1e300 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 0 < ('340282366920938463463374607431768211457' | int) <= 1e300 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 1 < 2 < 3 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 3 > 2 > 2 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ 2 < 1 < 'a' }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('nan' | float) < 1 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ 1 in [1.0] }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 1 not in [2] }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('340282366920938463463374607431768211457' | int) in [('340282366920938463463374607431768211457' | int)] }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ [('-340282366920938463463374607431768211457' | int), 0, -1, 1.5] | max }}"
+    },
+    "result": 1.5
+  },
+  {
+    "case": {
+      "template": "{{ [('-340282366920938463463374607431768211457' | int), 0, -1, 1.5] | min }}"
+    },
+    "result": -340282366920938463463374607431768211457
+  },
+  {
+    "case": {
+      "template": "{{ [0, ('-340282366920938463463374607431768211457' | int), -1, 1.5, ('340282366920938463463374607431768211457' | int), 1e300] | sort }}"
+    },
+    "result": [
+      -340282366920938463463374607431768211457,
+      -1,
+      0,
+      1.5,
+      340282366920938463463374607431768211457,
+      1e+300
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [0, ('-340282366920938463463374607431768211457' | int), -1, 1.5] | sort(reverse=true) }}"
+    },
+    "result": [
+      1.5,
+      0,
+      -1,
+      -340282366920938463463374607431768211457
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [0, ('-340282366920938463463374607431768211457' | int), 0, ('-340282366920938463463374607431768211457' | int)] | unique }}"
+    },
+    "result": [
+      0,
+      -340282366920938463463374607431768211457
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [1, true, 1.0, 'A', 'a'] | unique }}"
+    },
+    "result": [
+      1,
+      "A"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [1, true, 1.0, 'A', 'a'] | unique(case_sensitive=true) }}"
+    },
+    "result": [
+      1,
+      "A",
+      "a"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [{'k': 'A'}, {'k': 'a'}, {'k': 'b'}] | unique(attribute='k') }}"
+    },
+    "result": [
+      {
+        "k": "A"
+      },
+      {
+        "k": "b"
+      }
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ ['a', 'A'] | max }}"
+    },
+    "result": "a"
+  },
+  {
+    "case": {
+      "template": "{{ ['a', 'A'] | min }}"
+    },
+    "result": "a"
+  },
+  {
+    "case": {
+      "template": "{{ [1, 1.0] | max }}"
+    },
+    "result": 1
+  },
+  {
+    "case": {
+      "template": "{{ ['a', 1] | max }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.max' failed: '>' not supported between instances of 'int' and 'str'"
+  },
+  {
+    "case": {
+      "template": "{{ ['a', 1] | min }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.min' failed: '<' not supported between instances of 'int' and 'str'"
+  },
+  {
+    "case": {
+      "template": "{{ ['b', 'A', 'a'] | sort }}"
+    },
+    "result": [
+      "A",
+      "a",
+      "b"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ ['b', 'A', 'a'] | sort(case_sensitive=true) }}"
+    },
+    "result": [
+      "A",
+      "a",
+      "b"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [3, 1, 2] | sort(true) }}"
+    },
+    "result": [
+      3,
+      2,
+      1
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ ['a', 1] | sort }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.sort' failed: '<' not supported between instances of 'int' and 'str'"
+  },
+  {
+    "case": {
+      "template": "{{ [none, 1] | sort }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.sort' failed: '<' not supported between instances of 'int' and 'NoneType'"
+  },
+  {
+    "case": {
+      "template": "{{ [{'a': 2, 'b': 1}, {'a': 1, 'b': 2}, {'a': 1, 'b': 1}] | sort(attribute='a,b') }}"
+    },
+    "result": [
+      {
+        "a": 1,
+        "b": 1
+      },
+      {
+        "a": 1,
+        "b": 2
+      },
+      {
+        "a": 2,
+        "b": 1
+      }
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [{'a': 2}, {'a': 1}] | sort(attribute='a', reverse=true) }}"
+    },
+    "result": [
+      {
+        "a": 2
+      },
+      {
+        "a": 1
+      }
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [{'a': 'B'}, {'a': 'a'}] | max(attribute='a') }}"
+    },
+    "result": {
+      "a": "B"
+    }
+  },
+  {
+    "case": {
+      "template": "{{ [[2, 1], [1, 2]] | sort(attribute='1') }}"
+    },
+    "result": [
+      [
+        2,
+        1
+      ],
+      [
+        1,
+        2
+      ]
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [3, 1] | sort(foo=1) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.sort' failed: do_sort() got an unexpected keyword argument 'foo'"
+  },
+  {
+    "case": {
+      "template": "{{ [1, 2] | max(foo=1) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.max' failed: do_max() got an unexpected keyword argument 'foo'"
+  },
+  {
+    "case": {
+      "template": "{{ [1, 2] | unique(foo=1) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.unique' failed: unique() got an unexpected keyword argument 'foo'"
+  },
+  {
+    "case": {
+      "template": "{{ {'b': 1, 'a': 2} | sort }}"
+    },
+    "result": [
+      "a",
+      "b"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ 'cba' | sort }}"
+    },
+    "result": [
+      "a",
+      "b",
+      "c"
+    ]
+  },
+  {
+    "case": {
+      "template": "{{ [1, 2] | max(true, 'x') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': object of type 'int' has no attribute 'x'"
+  },
+  {
+    "case": {
+      "template": ">{% set l = [0, ('-340282366920938463463374607431768211457' | int), -1, 1.5] %}{% set _ = l.sort() %}{{ l }}"
+    },
+    "result": ">[-340282366920938463463374607431768211457, -1, 0, 1.5]"
+  },
+  {
+    "case": {
+      "template": "{{ s < 1 }}",
+      "vars": {
+        "s": "a"
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: '<' not supported between instances of '_AnsibleTaggedStr' and 'int'"
+  },
+  {
+    "case": {
+      "template": "{{ n < 1 }}",
+      "vars": {
+        "n": null
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: '<' not supported between instances of 'NoneType' and 'int'"
+  },
+  {
+    "case": {
+      "template": "{{ l < (1,) }}",
+      "vars": {
+        "l": [
+          1
+        ]
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: '<' not supported between instances of '_AnsibleLazyTemplateList' and 'tuple'"
+  },
+  {
+    "case": {
+      "template": "{{ 1 < 2 < s }}",
+      "vars": {
+        "s": "a"
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: '<' not supported between instances of 'int' and '_AnsibleTaggedStr'"
+  },
+  {
+    "case": {
+      "template": "{{ [] | max | default(5) }}"
+    },
+    "result": 5
   }
 ]

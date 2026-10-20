@@ -54,6 +54,7 @@ pub(super) fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> En
         }
     });
     filters::register(&mut env, base_dir, bridge);
+    super::order::register(&mut env);
     env.add_function(CONCAT_KEY, concat);
     env.add_function("range", range);
     env.add_function("dict", globals::dict);

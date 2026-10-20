@@ -7,10 +7,11 @@ use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
 use minijinja::value::{Kwargs, Rest};
-use minijinja::{Error, Value};
+use minijinja::{Error, ErrorKind, Value};
 
 use super::regex::bind;
 use crate::template::order::{order, sort as sort_by, unique_key};
+use crate::template::pymethods::type_of;
 
 /// `sort(value, reverse=False, case_sensitive=False, attribute=None)`. The attribute may name
 /// several, separated by commas, which compare in turn.
@@ -104,8 +105,16 @@ pub(super) fn unique(value: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result<
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
     for item in value.try_iter()? {
+        // Measured on ansible-core 2.19.12: an item without the attribute fails the filter.
         let key = match &a[1] {
-            Some(attr) => attribute(&item, attr),
+            Some(attr) => walk(&item, attr).map_err(|said| {
+                Error::new(
+                    ErrorKind::InvalidOperation,
+                    format!(
+                        "Jinja2's unique filter failed and we cannot fall back to Ansible's                          version as it does not support the parameters supplied: {said}"
+                    ),
+                )
+            })?,
             None => item.clone(),
         };
         let fresh = unique_key(&folded(key, case_sensitive)).is_none_or(|key| seen.insert(key));
@@ -132,8 +141,19 @@ fn folded(value: Value, case_sensitive: bool) -> Value {
 /// What Jinja2's attribute getter reads of `item`: a dotted path, a part made of digits being an
 /// index, or an integer index. Undefined when a part is missing.
 fn attribute(item: &Value, attr: &Value) -> Value {
+    walk(item, attr).unwrap_or(Value::UNDEFINED)
+}
+
+/// [`attribute`], or Python's words for the part that is missing.
+fn walk(item: &Value, attr: &Value) -> Result<Value, String> {
+    let missing = |at: &Value, part: &str| {
+        format!("object of type '{}' has no attribute '{part}'", type_of(at))
+    };
     let Some(path) = attr.as_str() else {
-        return item.get_item(attr).unwrap_or(Value::UNDEFINED);
+        return match item.get_item(attr) {
+            Ok(found) if !found.is_undefined() => Ok(found),
+            _ => Err(missing(item, &attr.to_string())),
+        };
     };
     let mut at = item.clone();
     for part in path.split('.') {
@@ -143,8 +163,8 @@ fn attribute(item: &Value, attr: &Value) -> Value {
         };
         at = match at.get_item(&key) {
             Ok(next) if !next.is_undefined() => next,
-            _ => return Value::UNDEFINED,
+            _ => return Err(missing(&at, part)),
         };
     }
-    at
+    Ok(at)
 }

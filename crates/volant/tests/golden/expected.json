@@ -14727,5 +14727,113 @@
       "template": "{{ [] | max | default(5) }}"
     },
     "result": 5
+  },
+  {
+    "case": {
+      "template": "{{ [3, ('nan' | float), 1, 2] | sort | map('string') | join(',') }}"
+    },
+    "result": "3,nan,1,2"
+  },
+  {
+    "case": {
+      "template": "{{ [('nan' | float), 3, 1, 2] | sort | map('string') | join(',') }}"
+    },
+    "result": "1,nan,2,3"
+  },
+  {
+    "case": {
+      "template": "{{ [2, 1, ('nan' | float), 0, -1] | sort | map('string') | join(',') }}"
+    },
+    "result": "-1,1,nan,0,2"
+  },
+  {
+    "case": {
+      "template": "{{ [2, 1, ('nan' | float), 0, -1] | sort(reverse=true) | map('string') | join(',') }}"
+    },
+    "result": "2,1,nan,0,-1"
+  },
+  {
+    "case": {
+      "template": "{{ [1, 1.0, ('nan' | float), 1, 0] | sort | map('string') | join(',') }}"
+    },
+    "result": "0,1,1.0,nan,1"
+  },
+  {
+    "case": {
+      "template": "{{ [{'a': ('nan' | float)}, {'a': 2}, {'a': 1}] | sort(attribute='a') | map(attribute='a') | map('string') | join(',') }}"
+    },
+    "result": "1,nan,2"
+  },
+  {
+    "case": {
+      "template": "{{ [1, ('nan' | float), 0] | max | string }}"
+    },
+    "result": "1"
+  },
+  {
+    "case": {
+      "template": "{{ [('nan' | float), 1, 0] | max | string }}"
+    },
+    "result": "nan"
+  },
+  {
+    "case": {
+      "template": "{{ [('nan' | float), 1, 0] | min | string }}"
+    },
+    "result": "nan"
+  },
+  {
+    "case": {
+      "template": "{{ [1, 0, ('nan' | float)] | min | string }}"
+    },
+    "result": "0"
+  },
+  {
+    "case": {
+      "template": "{{ [('nan' | float), 1, ('nan' | float), 1.0] | unique | map('string') | join(',') }}"
+    },
+    "result": "nan,1,nan"
+  },
+  {
+    "case": {
+      "template": "{{ ('nan' | float) < 1 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('nan' | float) >= ('nan' | float) }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('nan' | float) == ('nan' | float) }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('nan' | float) != ('nan' | float) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ 1 < ('nan' | float) < 2 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": ">{% set l = [3, ('nan' | float), 1, 2, ('nan' | float), 0] %}{% set _ = l.sort() %}{{ l | map('string') | join(',') }}"
+    },
+    "result": ">3,nan,1,2,nan,0"
+  },
+  {
+    "case": {
+      "template": ">{% set l = [3, ('nan' | float), 1, 2, ('nan' | float), 0] %}{% set _ = l.sort(reverse=True) %}{{ l | map('string') | join(',') }}"
+    },
+    "result": ">3,nan,2,1,nan,0"
   }
 ]

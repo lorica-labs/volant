@@ -438,6 +438,10 @@ mod tests;
 /// `string`, which prints a `range` or a `datetime` as Python does and leaves every other value
 /// to MiniJinja.
 fn string(state: &State, value: Value) -> Result<Value, Error> {
+    // Python's `str` of a float: `nan`, `inf`, `1e+16`.
+    if value.kind() == minijinja::value::ValueKind::Number && !value.is_integer() {
+        return Ok(Value::from(to_str(&value)));
+    }
     if super::pymethods::format::holds_tuple(&value) {
         return Ok(Value::from(super::pymethods::format::repr(&value)));
     }

@@ -190,25 +190,103 @@ fn int_against_float(x: i128, y: f64) -> Option<Ordering> {
     }))
 }
 
-/// Python's stable sort of `items` by `<` on what `key` reads of each, the comparison swapped
-/// when `reverse` is set, as `list.sort(reverse=True)` keeps equal items in their order. A `nan`
-/// among the keys is refused: Python's answer then depends on where it stands.
+/// Python's sort of `items` by `<` on what `key` reads of each. As CPython does, a reverse sort
+/// reverses the items, sorts them and reverses them again, which keeps equal items in their
+/// order. A `nan` is never less nor greater than anything, so where it lands depends on the
+/// algorithm: under 64 items this is CPython's (one run, then binary insertion), which places a
+/// `nan` where Python does. A longer list holding one may come out in another order than
+/// CPython's merges give.
 pub(crate) fn sort<T>(
-    items: Vec<T>,
+    mut items: Vec<T>,
     key: &dyn Fn(&T) -> &Value,
     reverse: bool,
 ) -> Result<Vec<T>, Error> {
     let less = |a: &T, b: &T| -> Result<bool, Error> {
-        let (a, b) = if reverse { (b, a) } else { (a, b) };
-        match order(key(a), key(b), "<")? {
-            Some(o) => Ok(o == Ordering::Less),
-            None => Err(Error::new(
-                ErrorKind::InvalidOperation,
-                "cannot order a number that is not a number",
-            )),
-        }
+        Ok(order(key(a), key(b), "<")? == Some(Ordering::Less))
     };
-    merge_sort(items, &less)
+    if reverse {
+        items.reverse();
+    }
+    let mut items = if items.len() < 64 {
+        let ok = count_run(&mut items, &less)?;
+        binary_insertion(&mut items, ok, &less)?;
+        items
+    } else {
+        merge_sort(items, &less)?
+    };
+    if reverse {
+        items.reverse();
+    }
+    Ok(items)
+}
+
+/// CPython's `count_run`: the length of the run that starts the list, which it turns ascending.
+/// A run is non-descending, or descending where equal items keep their order.
+fn count_run<T>(a: &mut [T], less: &dyn Fn(&T, &T) -> Result<bool, Error>) -> Result<usize, Error> {
+    let n = a.len();
+    if n < 2 {
+        return Ok(n);
+    }
+    let mut k = 1;
+    while k < n && !less(&a[k], &a[k - 1])? {
+        k += 1;
+    }
+    if k == n {
+        return Ok(k);
+    }
+    if k > 1 {
+        if less(&a[0], &a[k - 1])? {
+            return Ok(k);
+        }
+        a[..k].reverse();
+    }
+    k += 1;
+    // The last `equal + 1` items seen are equal: they are reversed now so that the reversal of
+    // the whole run puts them back in their order.
+    let mut equal = 0;
+    while k < n {
+        if less(&a[k], &a[k - 1])? {
+            if equal > 0 {
+                a[k - equal - 1..k].reverse();
+                equal = 0;
+            }
+        } else if less(&a[k - 1], &a[k])? {
+            break;
+        } else {
+            equal += 1;
+        }
+        k += 1;
+    }
+    if equal > 0 {
+        a[k - equal - 1..k].reverse();
+    }
+    a[..k].reverse();
+    while k < n && !less(&a[k], &a[k - 1])? {
+        k += 1;
+    }
+    Ok(k)
+}
+
+/// CPython's `binarysort`: each item after the first `sorted` goes after every earlier item it
+/// is not less than.
+fn binary_insertion<T>(
+    a: &mut [T],
+    sorted: usize,
+    less: &dyn Fn(&T, &T) -> Result<bool, Error>,
+) -> Result<(), Error> {
+    for i in sorted.max(1)..a.len() {
+        let (mut low, mut high) = (0, i);
+        while low < high {
+            let mid = (low + high) / 2;
+            if less(&a[i], &a[mid])? {
+                high = mid;
+            } else {
+                low = mid + 1;
+            }
+        }
+        a[low..=i].rotate_right(1);
+    }
+    Ok(())
 }
 
 /// A stable sort by a comparison that can fail. `slice::sort_by` may panic when the comparison
@@ -238,18 +316,20 @@ fn merge_sort<T>(
 
 /// What `unique` tells items apart by: a bool as its integer and a float with no fraction as the
 /// integer it is, so that minijinja's own equality finds `1`, `true` and `1.0` the same, as
-/// Python's set does.
-pub(crate) fn unique_key(value: &Value) -> Value {
-    match value.kind() {
+/// Python's set does. `None` for `nan`, which equals nothing: Python's set only merges a `nan`
+/// with the very same object, which a template value cannot tell, so every `nan` is kept.
+pub(crate) fn unique_key(value: &Value) -> Option<Value> {
+    Some(match value.kind() {
         ValueKind::Bool => Value::from(i64::from(value.is_true())),
         ValueKind::Number if !value.is_integer() => match f64::try_from(value.clone()) {
+            Ok(f) if f.is_nan() => return None,
             Ok(f) if f.is_finite() && f.fract() == 0.0 => {
                 bigint::integer(&format!("{f:.0}")).unwrap_or_else(|| value.clone())
             }
             _ => value.clone(),
         },
         _ => value.clone(),
-    }
+    })
 }
 
 #[cfg(test)]

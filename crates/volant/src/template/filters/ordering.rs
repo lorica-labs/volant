@@ -108,7 +108,8 @@ pub(super) fn unique(value: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result<
             Some(attr) => attribute(&item, attr),
             None => item.clone(),
         };
-        if seen.insert(unique_key(&folded(key, case_sensitive))) {
+        let fresh = unique_key(&folded(key, case_sensitive)).is_none_or(|key| seen.insert(key));
+        if fresh {
             out.push(item);
         }
     }

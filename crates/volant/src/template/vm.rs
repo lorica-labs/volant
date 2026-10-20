@@ -21,7 +21,7 @@ pub(super) use expression::single_expression;
 use super::bridged;
 use super::context::set_literal;
 use super::env::{container_repr, holds_undefined};
-use super::pymethods::format::{holds_tuple, repr};
+use super::pymethods::format::{holds_tuple, repr, to_str};
 use super::templar::Templar;
 use super::{TemplateError, UNDEFINED};
 
@@ -110,6 +110,10 @@ pub(super) fn concat(
     let shown = |v: &minijinja::Value| {
         if holds_tuple(v) {
             return repr(v);
+        }
+        // Python's `str` of a float: `nan`, `1e+16`.
+        if v.kind() == minijinja::value::ValueKind::Number && !v.is_integer() {
+            return to_str(v);
         }
         container_repr(v).unwrap_or_else(|| v.to_string())
     };

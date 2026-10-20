@@ -14835,5 +14835,113 @@
       "template": ">{% set l = [3, ('nan' | float), 1, 2, ('nan' | float), 0] %}{% set _ = l.sort(reverse=True) %}{{ l | map('string') | join(',') }}"
     },
     "result": ">3,nan,2,1,nan,0"
+  },
+  {
+    "case": {
+      "template": "{{ ('200000000000000000000000000000000000000' | int) > 0 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('200000000000000000000000000000000000000' | int) < -1 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('200000000000000000000000000000000000000' | int) < 2e38 }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "template": "{{ ('200000000000000000000000000000000000000' | int) > 1.7e38 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('200000000000000000000000000000000000000' | int) < 3.4e38 }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('200000000000000000000000000000000000000' | int) < ('300000000000000000000000000000000000000' | int) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ ('200000000000000000000000000000000000000' | int) < ('340282366920938463463374607431768211457' | int) }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "template": "{{ [('200000000000000000000000000000000000000' | int), 5, -3, 2.5e38, 1.5e38] | sort | map('string') | join(',') }}"
+    },
+    "result": "-3,5,1.5e+38,200000000000000000000000000000000000000,2.5e+38"
+  },
+  {
+    "case": {
+      "template": "{{ [('200000000000000000000000000000000000000' | int), 5, -3, 1.5e38] | max | string }}"
+    },
+    "result": "200000000000000000000000000000000000000"
+  },
+  {
+    "case": {
+      "template": "{{ [5, ('200000000000000000000000000000000000000' | int), 2.5e38] | max | string }}"
+    },
+    "result": "2.5e+38"
+  },
+  {
+    "case": {
+      "template": "{{ [('200000000000000000000000000000000000000' | int), -3] | min | string }}"
+    },
+    "result": "-3"
+  },
+  {
+    "case": {
+      "template": "{{ 'x' ~ ('nan' | float) }}"
+    },
+    "result": "xnan"
+  },
+  {
+    "case": {
+      "template": "{{ 'x' ~ ('1e16' | float) }}"
+    },
+    "result": "x1e+16"
+  },
+  {
+    "case": {
+      "template": "{{ 'x' ~ 1.5 }}"
+    },
+    "result": "x1.5"
+  },
+  {
+    "case": {
+      "template": "{{ 2.0 ~ 'x' }}"
+    },
+    "result": "2.0x"
+  },
+  {
+    "case": {
+      "template": "{{ 'x' ~ ('inf' | float) }}"
+    },
+    "result": "xinf"
+  },
+  {
+    "case": {
+      "template": "{{ [{'k': 1}, {}] | unique(attribute='k') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.unique' failed: Jinja2's unique filter failed and we cannot fall back to Ansible's version as it does not support the parameters supplied: object of type 'dict' has no attribute 'k'"
+  },
+  {
+    "case": {
+      "template": "{{ [{'k': 1}, {'j': 2}] | unique(attribute='k') | length }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.unique' failed: Jinja2's unique filter failed and we cannot fall back to Ansible's version as it does not support the parameters supplied: object of type 'dict' has no attribute 'k'"
   }
 ]

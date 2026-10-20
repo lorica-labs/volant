@@ -75,13 +75,21 @@ pub(in crate::template) fn route_calls(
             | Instruction::Lte
             | Instruction::Gt
             | Instruction::Gte => {
-                if let Some((key, _)) = operator(&format!("{op:?}")) {
+                let symbol = match op {
+                    Instruction::Eq => "==",
+                    Instruction::Ne => "!=",
+                    Instruction::Lt => "<",
+                    Instruction::Lte => "<=",
+                    Instruction::Gt => ">",
+                    _ => ">=",
+                };
+                if let Some((key, _)) = operator(symbol) {
                     *op = Instruction::CallFunction(key, Some(2));
                 }
             }
             // minijinja names no type for the operator a link holds, only its debug form.
             Instruction::CompareAndPreserve(cmp) => {
-                if let Some((_, keep)) = operator(&format!("{cmp:?}")) {
+                if let Some((_, keep)) = link_symbol(&format!("{cmp:?}")).and_then(operator) {
                     links.push((idx, keep));
                 }
             }
@@ -135,14 +143,10 @@ pub(in crate::template) fn route_calls(
     captures
 }
 
-/// The globals of a comparison instruction, from its debug form (`Lt`, `CompareAndPreserve(Lt)`):
-/// the one that answers, and the one a link of a chain calls.
-fn operator(debug: &str) -> Option<(&'static str, &'static str)> {
-    let name = debug
-        .strip_prefix("CompareAndPreserve(")
-        .and_then(|rest| rest.strip_suffix(')'))
-        .unwrap_or(debug);
-    let symbol = match name {
+/// The operator a link of a chained comparison holds, from the debug form of its operator (`Lt`);
+/// `None` for `in` and `not in`.
+fn link_symbol(debug: &str) -> Option<&'static str> {
+    Some(match debug {
         "Eq" => "==",
         "Ne" => "!=",
         "Lt" => "<",
@@ -150,7 +154,12 @@ fn operator(debug: &str) -> Option<(&'static str, &'static str)> {
         "Gt" => ">",
         "Gte" => ">=",
         _ => return None,
-    };
+    })
+}
+
+/// The globals of a comparison operator: the one that answers, and the one a link of a chain
+/// calls.
+fn operator(symbol: &str) -> Option<(&'static str, &'static str)> {
     OPERATORS
         .iter()
         .find(|(op, ..)| *op == symbol)

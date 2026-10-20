@@ -203,3 +203,6 @@ pub(super) fn mutates(instructions: &Instructions<'_>) -> bool {
     }
     false
 }
+
+#[cfg(test)]
+mod tests;

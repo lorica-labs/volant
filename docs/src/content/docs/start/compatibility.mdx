@@ -71,6 +71,7 @@ These differ from `ansible-playbook` without a message before the run, or with a
 |---|---|
 | `callback_plugins/`, `vars_plugins/`, `stdout_callback`, `callbacks_enabled`, `result_format` | Ignored. The output is the default one. |
 | `volant check`, `inventory`, `vault`, `doc`, `config`, `galaxy` and ad-hoc commands | They do not exist. `volant` has `playbook` and `runtime`. |
+| A comparison written between two literals of types Python cannot order, such as `{{ 'a' < 1 }}` | It answers `false` or `true` where ansible-core fails with `'<' not supported between instances of 'str' and 'int'`. The template engine works out a comparison of literals before Volant sees it. With a variable on either side the comparison fails as in ansible-core. |
 
 [Templating](/variables/templating/#not-there-yet) lists the filters and arguments that fail. The [parity page](/reference/parity/) marks a filter `partial` when one of its arguments fails.
 

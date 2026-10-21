@@ -1,0 +1,57 @@
+# A gate that dist adds to the release workflow (global-artifacts-jobs in dist-workspace.toml).
+# It runs after every archive is built and before the release is published. A failure here stops
+# the release: no archive is published.
+name: Release link check
+
+on:
+  workflow_call:
+    inputs:
+      plan:
+        description: The dist plan. The gate does not read it; dist passes it to every custom job.
+        required: true
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  link-check:
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runner: ubuntu-latest
+            archives: "*-unknown-linux-*"
+          - runner: macos-latest
+            archives: "*-apple-darwin"
+    runs-on: ${{ matrix.runner }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: just
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          pattern: artifacts-*
+          path: artifacts
+          merge-multiple: true
+      - name: Check the libraries of every archive of this platform
+        env:
+          ARCHIVES: ${{ matrix.archives }}
+        run: |
+          set -euo pipefail
+          # The pattern is meant to expand here: it picks the controller and the agent archives
+          # of this platform.
+          # shellcheck disable=SC2086
+          just link-check artifacts/volant-$ARCHIVES.tar.xz
+      - name: Run the static controller in an image built FROM scratch
+        if: runner.os == 'Linux'
+        run: |
+          set -euo pipefail
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends busybox-static
+          mkdir "$RUNNER_TEMP/controller"
+          tar -xJf artifacts/volant-x86_64-unknown-linux-musl.tar.xz -C "$RUNNER_TEMP/controller" --strip-components=1
+          just scratch-test "$RUNNER_TEMP/controller/volant"

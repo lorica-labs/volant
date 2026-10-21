@@ -1,0 +1,20 @@
+# Runs inside a container built FROM scratch. The controller, its embedded agent and busybox
+# are static, so nothing here needs a libc, a shell, ssh or Python.
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Run a program by its argv
+      ansible.builtin.command:
+        argv: [/busybox, echo, hello from scratch]
+      register: hello
+      changed_when: false
+
+    - name: The output came back through the agent
+      ansible.builtin.assert:
+        that: hello.stdout == 'hello from scratch'
+
+    - name: The image has no shell, no passwd file and no libc
+      ansible.builtin.command:
+        argv: [/busybox, test, '!', -e, "{{ item }}"]
+      changed_when: false
+      loop: [/bin/sh, /etc/passwd, /lib, /lib64, /usr/lib]

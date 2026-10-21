@@ -30,6 +30,9 @@
       *-unknown-linux-musl)
         cp "$agents/volant-agent-$TARGET" "$agents/volant-agent"
         ;;
+      *-unknown-linux-gnu)
+        cp "$agents/volant-agent-${TARGET%%-*}-unknown-linux-musl" "$agents/volant-agent"
+        ;;
       *)
         cargo build --locked -p volant-agent --profile dist --target "$TARGET"
         cp "$CARGO_TARGET_DIR/$TARGET/dist/volant-agent" "$agents/volant-agent"
@@ -42,3 +45,36 @@
       exit 1
     fi
     echo "VOLANT_EMBED_AGENTS_DIR=$agents" >> "$GITHUB_ENV"
+- name: Pin the glibc floor of the glibc build
+  shell: bash
+  env:
+    TARGET: ${{ join(matrix.targets, '') }}
+  run: |
+    set -euo pipefail
+    case "$TARGET" in
+      *-unknown-linux-gnu) ;;
+      *) exit 0 ;;
+    esac
+    wrapper="$RUNNER_TEMP/cargo-glibc-floor"
+    cat > "$wrapper" <<'EOF'
+    #!/bin/sh
+    # Build a glibc triple with cargo-zigbuild and put the glibc floor in the triple. Send every
+    # other command to cargo. cargo-zigbuild reads CARGO too, so it must not see this file.
+    unset CARGO
+    [ "${1:-}" = build ] || exec cargo "$@"
+    shift
+    prev=
+    for arg in "$@"; do
+      shift
+      case "$arg" in
+        --target=*-unknown-linux-gnu) arg="$arg.$GLIBC_FLOOR" ;;
+        *-unknown-linux-gnu) [ "$prev" = --target ] && arg="$arg.$GLIBC_FLOOR" ;;
+      esac
+      set -- "$@" "$arg"
+      prev=$arg
+    done
+    exec cargo zigbuild "$@"
+    EOF
+    chmod +x "$wrapper"
+    echo "CARGO=$wrapper" >> "$GITHUB_ENV"
+    echo "GLIBC_FLOOR=2.17" >> "$GITHUB_ENV"

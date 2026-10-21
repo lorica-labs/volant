@@ -263,14 +263,14 @@ agent-musl:
 # recipes under `bash -uc`, without pipefail (see line 1), so this one is a script with the
 # options it needs. `env -u VOLANT_AGENT_DIR` and the empty directory are the test: the
 # controller has to use the agent it carries, with no other agent to fall back on.
-smoke tag:
+smoke tag target="x86_64-unknown-linux-musl":
     #!/usr/bin/env bash
     set -euo pipefail
     work="$(mktemp -d)"
     trap 'rm -rf "$work"' EXIT
     cd "$work"
-    curl -fsSL -O "https://github.com/lorica-labs/volant/releases/download/{{tag}}/volant-x86_64-unknown-linux-musl.tar.xz"
-    tar -xJf volant-x86_64-unknown-linux-musl.tar.xz --strip-components=1
+    curl -fsSL -O "https://github.com/lorica-labs/volant/releases/download/{{tag}}/volant-{{target}}.tar.xz"
+    tar -xJf volant-{{target}}.tar.xz --strip-components=1
     printf 'h1 ansible_connection=local\n' > inv.ini
     printf -- '- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n' > site.yml
     env -u VOLANT_AGENT_DIR ./volant playbook -i inv.ini site.yml
@@ -301,6 +301,112 @@ smoke-embedded: agent-musl
     printf -- '- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: /bin/true\n' > site.yml
     env -u VOLANT_AGENT_DIR XDG_CACHE_HOME="$work/cache" ./volant playbook -i inv.ini site.yml
     cmp cache/volant/agents/*/volant-agent "$agents/volant-agent"
+
+# What the release promises about the libraries of each binary, checked on the file. An item is
+# a release archive (`volant-<target>.tar.xz`, `volant-agent-<target>.tar.xz`) or `<target>=<file>`.
+# A musl binary is static: no NEEDED entry, `file` and `ldd` agree. A glibc binary needs only
+# glibc's own libraries and no symbol version above the floor (GLIBC_FLOOR, default 2.17: the
+# floor of dist-workspace.toml and of .github/build-setup.yml). A macOS binary links only
+# libraries under /usr/lib and /System/Library, which holds libSystem. The checks read the ELF
+# tables, so they run on a binary of another architecture. A target with no rule fails: add a
+# rule here with each new target.
+#
+# Check the libraries of release binaries: `just link-check <archive | target=file>...`
+link-check +items:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    floor="${GLIBC_FLOOR:-2.17}"
+    glibc_libs='^(libc\.so\.6|libm\.so\.6|libdl\.so\.2|libpthread\.so\.0|librt\.so\.1|libutil\.so\.1|ld-linux-[a-z0-9_-]+\.so\.[0-9]+)$'
+    otool="$(command -v otool || command -v llvm-otool || true)"
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    failed=0
+    bad() { echo "FAIL $1: $2"; failed=1; }
+    good() { echo "ok   $1: $2"; }
+    check_file() {
+        local target="$1" file="$2" name needed max deps ldd_out
+        name="$target $(basename "$file")"
+        case "$target" in
+        *-unknown-linux-musl)
+            needed="$(readelf -d "$file" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p')"
+            if [ -n "$needed" ]; then bad "$name" "needs $(echo $needed)"; else good "$name" "no NEEDED entry"; fi
+            if file -b "$file" | grep -Eq 'statically linked|static-pie linked'; then
+                good "$name" "file reports a static binary"
+            else
+                bad "$name" "file reports: $(file -b "$file")"
+            fi
+            ldd_out="$(ldd "$file" 2>&1 || true)"
+            if echo "$ldd_out" | grep -Eq 'not a dynamic executable|statically linked'; then
+                good "$name" "ldd reports a static binary"
+            else
+                bad "$name" "ldd reports: $ldd_out"
+            fi
+            ;;
+        *-unknown-linux-gnu)
+            needed="$(readelf -d "$file" | sed -n 's/.*(NEEDED).*\[\(.*\)\]/\1/p' | grep -Ev "$glibc_libs" || true)"
+            if [ -n "$needed" ]; then bad "$name" "needs a library beyond glibc: $(echo $needed)"; else good "$name" "needs only glibc libraries"; fi
+            max="$(readelf --dyn-syms -W "$file" | { grep -o 'GLIBC_[0-9][0-9.]*' || true; } | sed 's/^GLIBC_//' | sort -uV | tail -n 1)"
+            if [ -z "$max" ]; then
+                bad "$name" "no GLIBC symbol version found: is this a glibc binary?"
+            elif [ "$(printf '%s\n' "$floor" "$max" | sort -V | tail -n 1)" = "$floor" ]; then
+                good "$name" "highest GLIBC version is $max, floor $floor"
+            else
+                bad "$name" "needs GLIBC_$max, above the floor $floor"
+            fi
+            ;;
+        *-apple-darwin)
+            [ -n "$otool" ] || { bad "$name" "needs otool or llvm-otool"; return; }
+            deps="$("$otool" -L "$file" | awk 'NR > 1 { print $1 }')"
+            if [ -z "$deps" ]; then
+                bad "$name" "otool lists no library"
+            elif outside="$(echo "$deps" | { grep -Ev '^(/usr/lib/|/System/Library/)' || true; })"; [ -n "$outside" ]; then
+                bad "$name" "links outside /usr/lib and /System/Library: $(echo $outside)"
+            else
+                good "$name" "links only system libraries: $(echo $deps | sed 's#/usr/lib/##g; s#/System/Library/Frameworks/##g')"
+            fi
+            ;;
+        *)
+            bad "$name" "no rule for the target $target"
+            ;;
+        esac
+    }
+    n=0
+    for item in {{items}}; do
+        n=$((n + 1))
+        case "$item" in
+        *=*) check_file "${item%%=*}" "${item#*=}" ;;
+        *)
+            target="$(basename "$item" | sed -E 's/^.*-((x86_64|aarch64|i686)-.*)\.tar\.xz$/\1/')"
+            if [ "$target" = "$(basename "$item")" ]; then bad "$item" "no target in the archive name"; continue; fi
+            mkdir "$work/$n"
+            tar -xJf "$item" -C "$work/$n"
+            found=0
+            while IFS= read -r file; do
+                case "$(file -b "$file")" in ELF* | Mach-O*) found=1; check_file "$target" "$file" ;; esac
+            done < <(find "$work/$n" -type f | sort)
+            [ "$found" = 1 ] || bad "$item" "the archive holds no binary"
+            ;;
+        esac
+    done
+    exit "$failed"
+
+# Run a static controller in a container built FROM scratch, which holds the controller and a
+# static busybox only. The image is built here and never pushed. The recipe runs one playbook on
+# `connection: local` that runs programs by argv, so it proves the controller and the agent it
+# embeds need no libc, no shell and no /etc/passwd. The controller must match this machine's
+# architecture. busybox-static on Debian and Ubuntu gives the busybox.
+scratch-test controller busybox="/bin/busybox":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    file -b "{{busybox}}" | grep -Eq 'statically linked|static-pie linked' || { echo "{{busybox}} is not a static busybox"; exit 1; }
+    work="$(mktemp -d)"
+    image="volant-scratch-test:$$"
+    trap 'docker rmi -f "$image" > /dev/null 2>&1 || true; rm -rf "$work"' EXIT
+    cp tests/scratch/Dockerfile tests/scratch/inventory.ini tests/scratch/site.yml "$work/"
+    install -m 755 "{{controller}}" "$work/volant"
+    install -m 755 "{{busybox}}" "$work/busybox"
+    docker build -q -t "$image" "$work" > /dev/null
+    docker run --rm --network none "$image" playbook -i /inventory.ini /site.yml
 
 # Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING). The
 # native module tests among them change the machine they run on: they go to the host

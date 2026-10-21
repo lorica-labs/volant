@@ -47,6 +47,17 @@ curl -fsSL https://volant.sh/install.sh | sh
 
 The script works on Linux and macOS, x86_64 and arm64. It downloads the newest release, checks its checksum, and installs `volant` under `~/.local`, without root. The binary carries the agents it uploads to your hosts, so `cargo binstall volant` gives the same result. Ansible does not have to be installed. When a playbook needs Python, Volant downloads its own Python and ansible-core on first use, checks every file against a pinned hash, and keeps them under `~/.local/share/volant`; see [the managed runtime](https://volant.sh/reference/runtime/). The managed runtime is untested on macOS. The [installation guide](https://volant.sh/start/installation/) covers its options, what the controller and the hosts need, and the other ways to install.
 
+Each release has one archive per platform. On Linux there is a static build with no libc, which runs from a `FROM scratch` container, and a glibc build. macOS has one build, because it cannot link statically.
+
+| Platform | Archive | Linkage | Minimum | Needs beside it |
+|---|---|---|---|---|
+| Linux x86_64, static | `volant-x86_64-unknown-linux-musl.tar.xz` | Static. No libc. | Any Linux | `ssh` client, Python for Python modules |
+| Linux x86_64, glibc | `volant-x86_64-unknown-linux-gnu.tar.xz` | Dynamic, glibc only | glibc 2.17 | `ssh` client, Python for Python modules |
+| Linux arm64, static | `volant-aarch64-unknown-linux-musl.tar.xz` | Static. No libc. | Any Linux | `ssh` client, Python for Python modules |
+| Linux arm64, glibc | `volant-aarch64-unknown-linux-gnu.tar.xz` | Dynamic, glibc only | glibc 2.17 | `ssh` client, Python for Python modules |
+| macOS, Apple silicon | `volant-aarch64-apple-darwin.tar.xz` | Dynamic, system libraries only | macOS 11 | `ssh` client, Python for Python modules |
+| macOS, Intel | `volant-x86_64-apple-darwin.tar.xz` | Dynamic, system libraries only | macOS 10.12 | `ssh` client, Python for Python modules |
+
 ## A first run
 
 ```sh

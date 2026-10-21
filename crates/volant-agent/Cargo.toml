@@ -38,3 +38,12 @@ volant-agent = { path = ".", features = ["test-natives"] }
 [package.metadata.cargo-machete]
 # The dev-dependency on this very package exists for the feature it turns on, not for code.
 ignored = ["volant-agent"]
+
+[package.metadata.dist]
+# The agent runs on the managed hosts and is static, so it has no glibc archive.
+targets = [
+  "aarch64-apple-darwin",
+  "aarch64-unknown-linux-musl",
+  "x86_64-apple-darwin",
+  "x86_64-unknown-linux-musl",
+]

@@ -31,12 +31,14 @@ just setup
 | `just coverage` | Line coverage, gated at the floor CI enforces. |
 | `just ssh-test` | The tests that run a playbook over a real `ssh`, see below. |
 | `just smoke-embedded` | Builds a controller with its agents embedded, as a release does, and runs one task with no agent beside it. |
+| `just link-check <archive \| target=file>...` | Checks that release binaries link what they promise: a static musl binary, a glibc binary that needs no glibc above 2.17, a macOS binary with system libraries only. |
+| `just scratch-test <controller>` | Runs a static controller in a `FROM scratch` container, as the release gate does. Needs Docker and a static busybox. |
 | `just mutants [file]` | Mutation testing on one file. |
 | `just bench-compile` | Times Volant against `ansible-playbook` on a large real role, see below. |
 | `just docs-keywords`, `just docs-modules` | Regenerate the keyword and module reference pages from the source tables. |
 | `just ci-local` | Runs the CI workflow locally. Needs Docker and `gh extension install nektos/gh-act`. |
 
-CI runs more than `just check`: the SSH tests, the coverage floor, a musl build, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS.
+CI runs more than `just check`: the SSH tests, the coverage floor, a musl build, the link checks of the static and glibc controllers, the controller in a `FROM scratch` container, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS.
 
 ### SSH tests
 

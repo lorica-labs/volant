@@ -168,6 +168,11 @@ jobs:
           VOLANT_EMBED_AGENTS_DIR="$agents" cargo build -p volant --release --target x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/volant dist/
           cp -r tests/runtime-clean dist/
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: just
+      - name: The controller and the agent are static
+        run: just link-check x86_64-unknown-linux-musl=dist/volant x86_64-unknown-linux-musl=target/x86_64-unknown-linux-musl/release/volant-agent
       - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:
           name: runtime-clean
@@ -211,6 +216,63 @@ jobs:
           set -euo pipefail
           ./volant runtime install --collections community.general
           ./volant playbook -i runtime-clean/inventory.yml runtime-clean/collection.yml
+
+  # The static controller in an image built FROM scratch: no libc, no shell, no /etc/passwd.
+  scratch:
+    needs: runtime-binary
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: just
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: runtime-clean
+          path: dist
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends busybox-static
+      - run: just scratch-test dist/volant
+
+  # The glibc controller as a release builds it: cargo-zigbuild, with the glibc floor of the
+  # release in the target. aarch64 is built here too and checked on its ELF tables.
+  glibc-floor:
+    strategy:
+      fail-fast: false
+      matrix:
+        arch: [x86_64, aarch64]
+    runs-on: ubuntu-latest
+    env:
+      # zig prints a linker warning, and the denial of warnings would turn it into an error.
+      RUSTFLAGS: ""
+      CARGO_PROFILE_RELEASE_LTO: "off"
+      CARGO_PROFILE_RELEASE_CODEGEN_UNITS: "16"
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          target: ${{ matrix.arch }}-unknown-linux-gnu
+          rustflags: ""
+      - uses: mlugg/setup-zig@d1434d08867e3ee9daa34448df10607b98908d29 # v2.2.1
+        with:
+          version: 0.15.2
+          use-cache: false
+      - uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2
+        with:
+          tool: cargo-zigbuild@0.23.4,just
+      - name: Build the controller against glibc 2.17
+        env:
+          TARGET: ${{ matrix.arch }}-unknown-linux-gnu
+          # The setup action sets CARGO_BUILD_WARNINGS to deny for every later step.
+          CARGO_BUILD_WARNINGS: warn
+        run: cargo zigbuild --locked -p volant --release --target "$TARGET.2.17"
+      - name: The controller needs no glibc symbol above the floor
+        env:
+          TARGET: ${{ matrix.arch }}-unknown-linux-gnu
+        run: just link-check "$TARGET=target/$TARGET/release/volant" "$TARGET=target/$TARGET/release/volant-playbook"
 
   ssh:
     runs-on: ubuntu-latest

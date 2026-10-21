@@ -179,7 +179,7 @@ jobs:
   runtime-clean:
     needs: runtime-binary
     runs-on: ubuntu-latest
-    container: debian:stable-slim
+    container: debian:stable-slim@sha256:a717a33469731894e77e912ea7d714e27c2dc38ee6554fd1a3102e92999cfc66
     steps:
       - name: Install curl, the only tool the download needs
         run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates

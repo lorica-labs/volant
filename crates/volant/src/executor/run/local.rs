@@ -98,7 +98,7 @@ async fn controller_side(
             playbook_dir: std::path::Path::new("."),
             // These plugins read no controller file.
             host_named_paths: crate::config::HostNamedPaths::Refuse,
-            host_named_dest_dirs: &[],
+            host_named_dest_dirs: None,
             warnings: &mut warnings,
             environment: Some(&item.environment),
             timeout: task.timeout,

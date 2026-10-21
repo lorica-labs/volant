@@ -81,7 +81,7 @@ Measured on ansible-core 2.19.12, a relative `src` climbing with `..` makes the 
 
 - `the fetched path <p> is outside '<dest>'`
 
-This is checked twice: once on the `src` the playbook wrote, and again on the path the host names back, which does not have to match. A `dest` whose render read a managed host is refused before anything is asked unless `[volant] host_named_dest_dirs` covers it (see [A dest a managed host named](#a-dest-a-managed-host-named)), and so is a loop's `inventory_hostname` when a host set it, or one that is not a single path component:
+This is checked twice: once on the `src` the playbook wrote, and again on the path the host names back, which does not have to match. Once the protection is on, a `dest` whose render read a managed host is refused before anything is asked unless `[volant] host_named_dest_dirs` covers it (see [A dest a managed host named](#a-dest-a-managed-host-named)), and so is a loop's `inventory_hostname` when a host set it. An `inventory_hostname` that is not a single path component is always refused:
 
 - `the 'dest' of this task was named by a managed host, and a controller path a host chose is never written unless host_named_dest_dirs names a directory above it`
 - `the inventory_hostname '<name>' is not one path component, and fetch files what it fetches under it`
@@ -92,9 +92,9 @@ A symbolic link anywhere below `dest` is refused rather than followed, on both t
 
 ### A dest a managed host named
 
-A `dest` is named by a managed host when its render read something a host contributed. A real case is `dest: "{{ tmp.path }}/out/"`, where `tmp` is the registered result of a `tempfile` task. ansible-core writes there. A host that answers `tempfile` with `/home/<operator>/.ssh` would make the controller write as the operator under that directory, so by default `fetch` refuses it and names the setting.
+A `dest` is named by a managed host when its render read something a host contributed. A real case is `dest: "{{ tmp.path }}/out/"`, where `tmp` is the registered result of a `tempfile` task. ansible-core writes there, and so does `fetch` by default. A host that answers `tempfile` with `/home/<operator>/.ssh` makes the controller write as the operator under that directory. The same holds for a loop variable named `inventory_hostname` over a registered list, which names the directory below `dest`.
 
-`[volant] host_named_dest_dirs` (environment: `VOLANT_HOST_NAMED_DEST_DIRS`) is a colon-separated list of absolute directories, empty by default. A `dest` a host named is written only when the path it resolves to on the file system lies strictly inside one of them:
+Two settings turn the protection on, for a run where a host is less trusted than the person who runs the playbook. The first is `[volant] host_named_dest_dirs` (environment: `VOLANT_HOST_NAMED_DEST_DIRS`), a colon-separated list of absolute directories, unset by default. The second is `[volant] host_named_paths` set to `contained` or `refuse`, which acts as an empty list when `host_named_dest_dirs` is unset, so every such `dest` is refused. A list that is set always applies, whatever `host_named_paths` says, and an empty value refuses every such `dest`. With the protection on, a `dest` a host named is written only when the path it resolves to on the file system lies strictly inside one of the directories:
 
 - The `dest` must be absolute and hold no `..`. A relative path and a path that starts with `~` are refused, never expanded.
 - The deepest part of the path that exists is resolved through every link, and the rest is appended. A link that leaves the directory, a link that points nowhere, the directory itself and a sibling that shares its name as a prefix (`/srv/fetch-evil` for `/srv/fetch`) are refused. The check runs again just before the write.
@@ -220,7 +220,7 @@ The setting covers the tasks listed above. It does not cover `include_vars`, `va
 
 The mode changes which file is read, never how the text of a template is trusted. When the `src` of a `template` was named by a host, `template_path` and `template_fullpath` are that host's values in the render, the way `template_destpath` is for a `dest`.
 
-`fetch` is outside this setting. Its `dest` is a place the controller writes, not a file it reads, and `host_named_dest_dirs` decides what happens to one a host named (see [A dest a managed host named](#a-dest-a-managed-host-named)). `dest` of the other plugins is only ever a place to write on the host, so it is not refused; `template_destpath` carries it into the render as the host's own value.
+A `fetch` whose `dest` a host named follows this setting too, though its `dest` is a place the controller writes and not a file it reads: `allow` writes it, and `contained` and `refuse` write it only inside `host_named_dest_dirs` (see [A dest a managed host named](#a-dest-a-managed-host-named)). `dest` of the other plugins is only ever a place to write on the host, so it is not refused; `template_destpath` carries it into the render as the host's own value.
 
 ## What stays on the host
 

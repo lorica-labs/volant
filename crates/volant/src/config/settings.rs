@@ -84,15 +84,15 @@ pub(super) fn host_named_paths(value: &str, origin: &str) -> anyhow::Result<supe
 
 /// `[volant] host_named_dest_dirs`: a colon-separated list of absolute directories, refused when
 /// an entry is empty, relative, written with `~` or `..`, or the root directory (which would
-/// hold every path). An empty value is an empty list. Nothing is looked up here: a directory
-/// that does not exist yet is checked when a `fetch` uses it.
+/// hold every path). An empty value is an empty list, which is not the same as no key. Nothing
+/// is looked up here: a directory that does not exist yet is checked when a `fetch` uses it.
 pub(super) fn host_named_dest_dirs(
     value: &str,
     origin: &str,
-) -> anyhow::Result<Vec<std::path::PathBuf>> {
+) -> anyhow::Result<Option<Vec<std::path::PathBuf>>> {
     let value = value.trim();
     if value.is_empty() {
-        return Ok(Vec::new());
+        return Ok(Some(Vec::new()));
     }
     value
         .split(':')
@@ -120,7 +120,8 @@ pub(super) fn host_named_dest_dirs(
                 ),
             ))
         })
-        .collect()
+        .collect::<anyhow::Result<Vec<_>>>()
+        .map(Some)
 }
 
 /// A negative `forks` is clamped to zero, where the single startup check refuses it with the

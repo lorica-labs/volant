@@ -1,0 +1,26 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    T: "{{ playbook_dir }}/t"
+  tasks:
+    - name: Set up
+      file: {path: "{{ T }}", state: directory}
+    - name: Name a destination by a command
+      command: echo {{ T }}/named/
+      register: named
+      changed_when: false
+    - name: fetch into a destination a result named
+      fetch: {src: "{{ playbook_dir }}/files/body.txt", dest: "{{ named.stdout }}", flat: true}
+    - name: Name a host directory by a command
+      command: echo kept
+      register: who
+      changed_when: false
+    - name: fetch below a host directory a result named
+      fetch: {src: "{{ playbook_dir }}/files/body.txt", dest: "{{ T }}/by-host"}
+      loop: "{{ who.stdout_lines }}"
+      loop_control: {loop_var: inventory_hostname, label: kept}
+    - name: What the controller holds
+      shell: cd {{ T }} && find . -type f | sed 's|^./by-host/kept/.*/files/|./by-host/kept/.../files/|' | sort
+      register: held
+      changed_when: false
+    - debug: {var: held.stdout_lines}

@@ -1811,7 +1811,7 @@ pub(super) async fn drive_host(
                         origin: &step.origin,
                         playbook_dir: &playbook_dir,
                         host_named_paths: options.host_named_paths,
-                        host_named_dest_dirs: &options.host_named_dest_dirs,
+                        host_named_dest_dirs: options.host_named_dest_dirs.as_deref(),
                         tx: &tx,
                         index: *index,
                     };

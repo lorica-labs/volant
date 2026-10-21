@@ -6,6 +6,7 @@ use serde_json::json;
 use volant_protocol::encoding::b64_encode;
 
 use super::*;
+use crate::config::HostNamedPaths;
 use crate::vars::HostVars;
 
 fn start_with(
@@ -25,16 +26,24 @@ fn start_vars(
     item_vars: &HostVars,
     escalated: bool,
 ) -> Box<dyn Plugin> {
-    start_within(args, untrusted, item_vars, escalated, &[])
+    start_within(
+        args,
+        untrusted,
+        item_vars,
+        escalated,
+        HostNamedPaths::Allow,
+        None,
+    )
 }
 
-/// [`start_vars`] under a `host_named_dest_dirs` that names `dirs`.
+/// [`start_vars`] under a `host_named_paths` of `mode` and a `host_named_dest_dirs` of `dirs`.
 fn start_within(
     args: Value,
     untrusted: &BTreeSet<String>,
     item_vars: &HostVars,
     escalated: bool,
-    dirs: &[PathBuf],
+    mode: HostNamedPaths,
+    dirs: Option<&[PathBuf]>,
 ) -> Box<dyn Plugin> {
     let Value::Object(args) = args else {
         unreachable!()
@@ -56,8 +65,7 @@ fn start_within(
         templar: &templar,
         origin: &origin,
         playbook_dir: &dir,
-        // A write on the controller is refused whatever the mode says about reads.
-        host_named_paths: crate::config::HostNamedPaths::Allow,
+        host_named_paths: mode,
         host_named_dest_dirs: dirs,
         warnings: &mut warnings,
 
@@ -116,32 +124,49 @@ fn modules(subs: &[Sub]) -> Vec<&str> {
     subs.iter().map(|s| s.module).collect()
 }
 
-/// A `dest` whose render read a managed host is refused before the host is asked anything, and
-/// nothing is created under it.
-#[test]
-fn a_dest_a_host_named_is_never_written() {
+/// A `dest` a managed host named is written as the reference writes it; with the protection on,
+/// it is refused before the host is asked anything and nothing is created under it.
+#[rstest::rstest]
+#[case::default(HostNamedPaths::Allow, None, true)]
+#[case::empty_list(HostNamedPaths::Allow, Some(Vec::new()), false)]
+#[case::contained(HostNamedPaths::Contained, None, false)]
+#[case::refuse(HostNamedPaths::Refuse, None, false)]
+fn a_dest_a_host_named_is_written_unless_the_protection_is_on(
+    #[case] mode: HostNamedPaths,
+    #[case] dirs: Option<Vec<PathBuf>>,
+    #[case] written: bool,
+    #[values(false, true)] escalated: bool,
+) {
     let dir_guard = scratch();
     let dir = dir_guard.path().to_path_buf();
     let dest = dir.join("chosen");
     let untrusted: BTreeSet<String> = ["dest".to_string()].into();
-    for escalated in [false, true] {
-        let mut plugin = start_with(
-            json!({"src": "/etc/one.txt", "dest": dest.display().to_string()}),
-            &untrusted,
-            "probe-hostname",
-            escalated,
-        );
-        let (subs, result) = drive(plugin.as_mut(), b"x", "/etc/one.txt");
-        assert!(subs.is_empty(), "the host was asked: {:?}", modules(&subs));
-        assert_eq!(result["failed"], json!(true));
-        assert_eq!(
-            result["msg"],
-            json!(
-                "the 'dest' of this task was named by a managed host, and a controller path a host chose is never written unless host_named_dest_dirs names a directory above it"
-            )
-        );
-        assert!(!dest.exists(), "{} was created", dest.display());
+    let mut item_vars = HostVars::default();
+    item_vars.insert("inventory_hostname".into(), json!("probe-hostname"));
+    let mut plugin = start_within(
+        json!({"src": "/etc/one.txt", "dest": dest.display().to_string()}),
+        &untrusted,
+        &item_vars,
+        escalated,
+        mode,
+        dirs.as_deref(),
+    );
+    let (subs, result) = drive(plugin.as_mut(), b"x", "/etc/one.txt");
+    if written {
+        assert_eq!(result["changed"], json!(true), "{result}");
+        let file = dest.join("probe-hostname/etc/one.txt");
+        assert_eq!(std::fs::read(file).unwrap(), b"x");
+        return;
     }
+    assert!(subs.is_empty(), "the host was asked: {:?}", modules(&subs));
+    assert_eq!(result["failed"], json!(true));
+    assert_eq!(
+        result["msg"],
+        json!(
+            "the 'dest' of this task was named by a managed host, and a controller path a host chose is never written unless host_named_dest_dirs names a directory above it"
+        )
+    );
+    assert!(!dest.exists(), "{} was created", dest.display());
 }
 
 /// A fetch of `/etc/one.txt` whose `dest` a host named, under `host_named_dest_dirs = dirs`.
@@ -155,7 +180,8 @@ fn fetch_named(dest: &str, dirs: &[PathBuf]) -> (Vec<Sub>, Value) {
         &untrusted,
         &item_vars,
         false,
-        dirs,
+        HostNamedPaths::Allow,
+        Some(dirs),
     );
     drive(plugin.as_mut(), b"x", "/etc/one.txt")
 }
@@ -278,16 +304,22 @@ fn a_dest_a_host_named_goes_through_no_path_another_user_controls(
     }
 }
 
-/// A link put where `dest` stands after the plugin was built, before it writes, is seen: the
-/// containment is decided again on the path the write will use.
+/// A link planted after the plugin was built is seen before the write: by the containment
+/// check with the protection on, by the walk below `dest` without it.
 #[cfg(unix)]
-#[test]
-fn a_link_planted_after_the_first_check_is_seen_before_the_write() {
+#[rstest::rstest]
+#[case::protected(true, "slot", "resolves to")]
+#[case::default(false, "slot/probe-hostname", "goes through the symbolic link")]
+fn a_link_planted_after_the_first_check_is_seen_before_the_write(
+    #[case] protected: bool,
+    #[case] planted: &str,
+    #[case] says: &str,
+) {
     use std::os::unix::fs::PermissionsExt as _;
     let dir_guard = scratch();
     let dir = dir_guard.path().canonicalize().unwrap();
     let (allowed, outside) = (dir.join("allowed"), dir.join("outside"));
-    std::fs::create_dir_all(allowed.join("slot")).unwrap();
+    std::fs::create_dir_all(allowed.join("slot/probe-hostname")).unwrap();
     std::fs::create_dir_all(&outside).unwrap();
     std::fs::set_permissions(&allowed, std::fs::Permissions::from_mode(0o755)).unwrap();
     let untrusted: BTreeSet<String> = ["dest".to_string()].into();
@@ -300,16 +332,14 @@ fn a_link_planted_after_the_first_check_is_seen_before_the_write() {
         &untrusted,
         &item_vars,
         false,
-        &dirs,
+        HostNamedPaths::Allow,
+        protected.then_some(&dirs[..]),
     );
-    std::fs::remove_dir(allowed.join("slot")).unwrap();
-    std::os::unix::fs::symlink(&outside, allowed.join("slot")).unwrap();
+    std::fs::remove_dir_all(allowed.join(planted)).unwrap();
+    std::os::unix::fs::symlink(&outside, allowed.join(planted)).unwrap();
     let (_, result) = drive(plugin.as_mut(), b"x", "/etc/one.txt");
     assert_eq!(result["failed"], json!(true), "{result}");
-    assert!(
-        result["msg"].as_str().unwrap().contains("resolves to"),
-        "{result}"
-    );
+    assert!(result["msg"].as_str().unwrap().contains(says), "{result}");
     assert_eq!(std::fs::read_dir(&outside).unwrap().count(), 0);
 }
 
@@ -453,9 +483,14 @@ fn a_symlink_inside_dest_never_redirects_the_write() {
             flat.join("one.txt"),
         ),
     ] {
-        for escalated in [false, true] {
-            let mut plugin =
-                start_with(args.clone(), &BTreeSet::new(), "probe-hostname", escalated);
+        // A `dest` a host named is walked the same way when no protection is on.
+        let named: BTreeSet<String> = ["dest".to_string()].into();
+        for (escalated, untrusted) in [
+            (false, BTreeSet::new()),
+            (true, BTreeSet::new()),
+            (false, named),
+        ] {
+            let mut plugin = start_with(args.clone(), &untrusted, "probe-hostname", escalated);
             let (_, result) = drive(plugin.as_mut(), b"planted", "/etc/one.txt");
             assert_eq!(result["failed"], json!(true), "{args}: {result}");
             let msg = result["msg"].as_str().unwrap();
@@ -782,22 +817,39 @@ fn a_file_fetched_again_keeps_its_mode() {
     assert_eq!(mode & 0o7777, 0o600);
 }
 
-/// An `inventory_hostname` a managed host set - a loop variable of that name over a registered
-/// list - is refused without `flat`, as a host-named `dest` is.
-#[test]
-fn a_host_directory_a_host_named_is_refused() {
+/// A loop variable `inventory_hostname` a managed host set names the directory of the fetch
+/// without `flat`, as the reference does; with the protection on, it is refused.
+#[rstest::rstest]
+#[case::default(HostNamedPaths::Allow, None, true)]
+#[case::empty_list(HostNamedPaths::Allow, Some(Vec::new()), false)]
+#[case::refuse(HostNamedPaths::Refuse, None, false)]
+fn a_host_directory_a_host_named_is_refused_only_when_the_protection_is_on(
+    #[case] mode: HostNamedPaths,
+    #[case] dirs: Option<Vec<PathBuf>>,
+    #[case] written: bool,
+) {
     let dir_guard = scratch();
     let dir = dir_guard.path().to_path_buf();
     let dest = dir.join("fetched");
     let mut vars = HostVars::default();
     vars.insert_untrusted("inventory_hostname".into(), json!("other-host"));
-    let mut plugin = start_vars(
+    let mut plugin = start_within(
         json!({"src": "/etc/one.txt", "dest": dest.display().to_string()}),
         &BTreeSet::new(),
         &vars,
         false,
+        mode,
+        dirs.as_deref(),
     );
     let (subs, done) = drive(plugin.as_mut(), b"x", "/etc/one.txt");
+    if written {
+        assert_eq!(done["changed"], json!(true), "{done}");
+        assert_eq!(
+            std::fs::read(dest.join("other-host/etc/one.txt")).unwrap(),
+            b"x"
+        );
+        return;
+    }
     assert!(subs.is_empty(), "{:?}", modules(&subs));
     assert_eq!(
         done["msg"],

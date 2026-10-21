@@ -47,8 +47,8 @@ pub const DEFAULT_BECOME_METHOD: &str = "sudo";
 ///
 /// Measured on ansible-core 2.19.12: the reference reads whatever readable controller file such a
 /// name points at and sends it, or its rendering, to the host. `Allow` does the same. The two
-/// other modes tighten it. A `fetch` whose `dest` a host named is refused in every mode: that is
-/// a write on the controller, which no mode lets a host steer.
+/// other modes tighten it. A `fetch` whose `dest` a host named follows the same word: see
+/// `host_named_dest_dirs`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum HostNamedPaths {
     /// The reference's behaviour: the file is looked up and sent.
@@ -152,9 +152,10 @@ pub struct Config {
     /// `batching` is not one.
     pub host_named_paths: HostNamedPaths,
     /// `[volant] host_named_dest_dirs`, or `VOLANT_HOST_NAMED_DEST_DIRS`: the controller
-    /// directories under which a `fetch` writes when a managed host named its `dest`. Empty by
-    /// default, which refuses every such `dest`. Every entry is absolute, with no `..`.
-    pub host_named_dest_dirs: Vec<PathBuf>,
+    /// directories under which a `fetch` writes when a managed host named its `dest`. Unset by
+    /// default: such a `dest` is written as the reference writes it, unless `host_named_paths` is
+    /// `contained` or `refuse`. Set, it limits every such `dest`; an empty list refuses them all.
+    pub host_named_dest_dirs: Option<Vec<PathBuf>>,
     /// `[volant] native_modules`, or `VOLANT_NATIVE_MODULES`: whether an agent may answer a task
     /// with its native module instead of running the task's Python module. On by default; off
     /// sends every Python task to Python, which is the switch to compare the two.
@@ -207,7 +208,7 @@ impl Default for Config {
             tags_skip: Vec::new(),
             batching: false,
             host_named_paths: HostNamedPaths::Allow,
-            host_named_dest_dirs: Vec::new(),
+            host_named_dest_dirs: None,
             native_modules: true,
             runtime: crate::runtime::Mode::Auto,
             ssh_control_master: true,

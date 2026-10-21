@@ -34,7 +34,7 @@ pub(in crate::executor) struct PluginStart<'a> {
     /// What the task does with a controller file a managed host named.
     pub(in crate::executor) host_named_paths: crate::config::HostNamedPaths,
     /// The controller directories a `fetch` may write under when a host named its `dest`.
-    pub(in crate::executor) host_named_dest_dirs: &'a [std::path::PathBuf],
+    pub(in crate::executor) host_named_dest_dirs: Option<&'a [std::path::PathBuf]>,
     /// Where an `async` task's `ASYNC` and `RETRYING` lines go, and the step they belong to.
     pub(in crate::executor) tx: &'a tokio::sync::mpsc::Sender<crate::executor::coordinator::Event>,
     pub(in crate::executor) index: usize,

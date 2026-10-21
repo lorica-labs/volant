@@ -8,16 +8,17 @@
 //! and nothing else. They are a file and never a value: nothing renders them, and they reach no
 //! variable.
 //!
-//! Two refusals are this engine's own, and stricter than the reference:
+//! The path written is built, normalised without following anything, and refused unless it sits
+//! under `dest` (and under `dest/<inventory_hostname>/` without `flat`). This is stricter than
+//! the reference. Measured on ansible-core 2.19.12, the reference checks the containment before
+//! it builds the path, so a relative `src` of `../../../../../../../../tmp/x` without `flat`
+//! writes `/tmp/x` on the controller. A symbolic link below `dest` is refused as well, so a link
+//! planted inside it cannot send the write elsewhere.
 //!
-//! - A `dest` whose render read a managed host is refused, unless `host_named_dest_dirs` names a
-//!   directory it resolves strictly inside (see `dest`). Beyond that a host never picks the path.
-//! - The path written is built, normalised without following anything, and refused unless it sits
-//!   under `dest` (and under `dest/<inventory_hostname>/` without `flat`). Measured on
-//!   ansible-core 2.19.12, the reference checks the containment before it builds the path, so a
-//!   relative `src` of `../../../../../../../../tmp/x` without `flat` writes `/tmp/x` on the
-//!   controller. A symbolic link below `dest` is refused as well, so a link planted inside it
-//!   cannot send the write elsewhere.
+//! A `dest` whose render read a managed host is written as the reference writes it, unless the
+//! operator asked for the protection: `host_named_dest_dirs` is set, or `host_named_paths` is
+//! `contained` or `refuse`. The `dest` must then resolve strictly inside one of those
+//! directories (see `dest`).
 
 use std::io::Write;
 use std::path::{Component, Path, PathBuf};
@@ -103,11 +104,13 @@ impl Fetch {
                 .to_string()
         };
         let (src, dest) = (text("src"), text("dest"));
-        let within = if ctx.args_untrusted.contains("dest") {
-            dest::check_text(&dest, ctx.host_named_dest_dirs)?;
-            Some(ctx.host_named_dest_dirs.to_vec())
-        } else {
-            None
+        let limit = dest::limit(ctx.host_named_paths, ctx.host_named_dest_dirs);
+        let within = match limit {
+            Some(dirs) if ctx.args_untrusted.contains("dest") => {
+                dest::check_text(&dest, dirs)?;
+                Some(dirs.to_vec())
+            }
+            _ => None,
         };
         let flat = flag(args, "flat", false);
         let host = ctx
@@ -117,8 +120,8 @@ impl Fetch {
             .unwrap_or_default()
             .to_string();
         // A loop variable named `inventory_hostname` whose value came from a host would let it
-        // pick which host's directory it writes into.
-        if !flat && ctx.item_vars.untrusted.contains("inventory_hostname") {
+        // pick which host's directory it writes into. Only the protection refuses it.
+        if limit.is_some() && !flat && ctx.item_vars.untrusted.contains("inventory_hostname") {
             return Err("the 'inventory_hostname' of this item was named by a managed host, and a controller path a host chose is never written".into());
         }
         // Without `flat` the host's name is a directory under `dest`: `..` or a `/` in it would

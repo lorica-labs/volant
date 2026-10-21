@@ -49,7 +49,7 @@ A `delegate_to` that renders from a host value names a host with that text, what
 
 The `src` of `copy`, `template`, `script`, `unarchive` and `assemble` is read as the reference reads it by default, and `[volant] host_named_paths` can restrict a `src` whose render read a managed host to the `files` and `templates` directories of the task (`contained`) or refuse it (`refuse`). See [Action plugins](/reference/action-plugins/#a-source-file-a-managed-host-named).
 
-The `dest` of `fetch` is a path the controller writes. When its render read a managed host, `fetch` refuses it unless `[volant] host_named_dest_dirs` names a directory that the resolved path lies strictly inside. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named).
+The `dest` of `fetch` is a path the controller writes. By default `fetch` writes it as ansible-core does, even when its render read a managed host. Such a host can then choose where the controller writes the file, with the rights of the user who runs the playbook, and a loop variable named `inventory_hostname` that a host set picks the directory below `dest` in the same way. The protection is off by default. To turn it on, set `[volant] host_named_dest_dirs` to the directories such a `dest` may use, or set `host_named_paths` to `contained` or `refuse`, which refuses every such `dest` unless that list is set too. With the protection on, `fetch` refuses a `dest` a host named unless its resolved path lies strictly inside a directory of the list. A symbolic link below `dest` is refused in every mode. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named).
 
 ## How fine-grained it is
 

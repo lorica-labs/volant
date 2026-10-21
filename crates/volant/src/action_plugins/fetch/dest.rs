@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Where a `fetch` may write when a managed host named its `dest`, under
-//! `[volant] host_named_dest_dirs`.
+//! Where a `fetch` may write when a managed host named its `dest`, once the protection is on:
+//! `[volant] host_named_dest_dirs` is set, or `[volant] host_named_paths` is `contained` or
+//! `refuse`.
 //!
 //! A `dest` of this kind is refused unless the setting names a directory above it. The decision
 //! is made on the path the file system resolves, not on the text: the deepest part that exists
@@ -10,7 +11,9 @@
 
 use std::path::{Component, Path, PathBuf};
 
-/// The refusal when the setting is empty, which is its default.
+use crate::config::HostNamedPaths;
+
+/// The refusal when the protection is on and the setting names no directory.
 const NEVER: &str = "the 'dest' of this task was named by a managed host, and a controller path a host chose is never written unless host_named_dest_dirs names a directory above it";
 
 /// The refusal of a `dest` that the setting does not cover, naming the setting.
@@ -20,6 +23,17 @@ fn refusal(dest: &str, why: &str, dirs: &[PathBuf]) -> String {
         "the 'dest' of this task was named by a managed host, and '{dest}' {why} (host_named_dest_dirs = {})",
         list.join(":")
     )
+}
+
+/// The directories a `dest` a host named must stay inside, or `None` when it is not limited, as
+/// in the reference. The setting, when present, always limits: an empty list refuses every such
+/// `dest`. Without it, `contained` and `refuse` limit to no directory at all.
+pub(super) fn limit(mode: HostNamedPaths, dirs: Option<&[PathBuf]>) -> Option<&[PathBuf]> {
+    match (dirs, mode) {
+        (Some(dirs), _) => Some(dirs),
+        (None, HostNamedPaths::Allow) => None,
+        (None, HostNamedPaths::Contained | HostNamedPaths::Refuse) => Some(&[]),
+    }
 }
 
 /// What the text of `dest` says, before any path is built from it: nothing is accepted when

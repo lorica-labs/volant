@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `[volant] host_named_dest_dirs`: where a `fetch` may write when a managed host named its
-//! `dest`, through a registered result or a fact.
+//! `[volant] host_named_dest_dirs` and `host_named_paths`: where a `fetch` may write when a managed
+//! host named its `dest`, through a registered result or a fact. Without either, it writes it.
 //!
 //! The host here is the controller (`ansible_connection=local`), so a host-named path is the
 //! output of an `echo`. The tests skip when the recorded ansible-core is not there, as the
@@ -23,7 +23,7 @@ mod python;
 
 const DEADLINE: Duration = Duration::from_secs(120);
 
-/// What the file of a refusal says, for a `dest` that no setting lets through.
+/// What the file of a refusal says, for a `dest` that no directory covers.
 const NEVER: &str = "the 'dest' of this task was named by a managed host, and a controller path a host chose is never written unless host_named_dest_dirs names a directory above it";
 
 struct Fixture {
@@ -80,6 +80,11 @@ impl Fixture {
     }
 
     fn run(&self, python: &Path) -> String {
+        self.run_with(python, &[])
+    }
+
+    /// [`Self::run`] with `env` set on top of the clean environment.
+    fn run_with(&self, python: &Path, env: &[(&str, &str)]) -> String {
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
         command
             .args(["playbook", "-i", "inv.ini", "site.yml"])
@@ -88,7 +93,8 @@ impl Fixture {
         command
             .env("HOME", &self.home)
             .env("VOLANT_PYTHON", python)
-            .env("ANSIBLE_CONFIG", self.play.join("ansible.cfg"));
+            .env("ANSIBLE_CONFIG", self.play.join("ansible.cfg"))
+            .envs(env.iter().copied());
         let out = process::run_within(&mut command, DEADLINE, None);
         format!(
             "{}{}",
@@ -189,32 +195,64 @@ fn a_dest_a_host_named_is_written_only_inside_the_directories() {
     assert!(!fx.root.join("allowed-evil").exists(), "{stdout}");
 }
 
-/// The default refuses every host-named `dest`, and so does a setting that names another
-/// directory. The message names the setting, and the marker file is not there.
+/// A host-named `dest` is written by default, as ansible-core writes it; an empty list,
+/// `contained` and `refuse`, from the file or the environment, refuse it and name the setting.
 #[rstest]
-#[case::default("")]
-#[case::elsewhere("[volant]\nhost_named_dest_dirs = /nonexistent/volant-dest\n")]
-fn a_dest_a_host_named_is_refused_unless_the_setting_covers_it(#[case] config: &str) {
+#[case::default("", &[], true)]
+#[case::allow("[volant]\nhost_named_paths = allow\n", &[], true)]
+#[case::empty_list("[volant]\nhost_named_dest_dirs =\n", &[], false)]
+#[case::contained("[volant]\nhost_named_paths = contained\n", &[], false)]
+#[case::refuse("[volant]\nhost_named_paths = refuse\n", &[], false)]
+#[case::refuse_env("", &[("VOLANT_HOST_NAMED_PATHS", "refuse")], false)]
+#[case::empty_list_env("", &[("VOLANT_HOST_NAMED_DEST_DIRS", "")], false)]
+fn a_dest_a_host_named_is_written_unless_the_protection_is_on(
+    #[case] config: &str,
+    #[case] env: &[(&str, &str)],
+    #[case] written: bool,
+) {
     let Some(python) = python::reference_python() else {
         return;
     };
     let fx = Fixture::new();
     let marker = fx.allowed.join("marker.txt");
     fx.write(&[("marker", marker.display().to_string())], config);
-    let stdout = fx.run(&python);
+    let stdout = fx.run_with(&python, env);
     let said = block(&stdout, "marker");
-    if config.is_empty() {
-        assert!(said.contains(NEVER), "{stdout}");
+    if written {
+        assert!(said.contains("\nchanged: [h1]"), "{stdout}");
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "fetched\n");
     } else {
+        assert!(said.contains(NEVER), "{stdout}");
         assert!(
-            said.contains("(host_named_dest_dirs = /nonexistent/volant-dest)"),
-            "{stdout}"
+            !marker.exists(),
+            "a host-chosen dest was written:\n{stdout}"
         );
     }
-    assert!(
-        !marker.exists(),
-        "a host-chosen dest was written:\n{stdout}"
+}
+
+/// A list that names another directory refuses a `dest` outside it, whatever `host_named_paths`
+/// says, and names the list in the message.
+#[rstest]
+#[case::allow("allow")]
+#[case::contained("contained")]
+fn a_dest_a_host_named_outside_the_list_is_refused(#[case] mode: &str) {
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let fx = Fixture::new();
+    let marker = fx.allowed.join("marker.txt");
+    fx.write(
+        &[("marker", marker.display().to_string())],
+        &format!(
+            "[volant]\nhost_named_paths = {mode}\nhost_named_dest_dirs = /nonexistent/volant-dest\n"
+        ),
     );
+    let stdout = fx.run(&python);
+    assert!(
+        block(&stdout, "marker").contains("(host_named_dest_dirs = /nonexistent/volant-dest)"),
+        "{stdout}"
+    );
+    assert!(!marker.exists(), "{stdout}");
 }
 
 /// A directory that other users can write is no place for a host's choice, a sticky one such as

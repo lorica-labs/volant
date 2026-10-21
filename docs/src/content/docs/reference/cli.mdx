@@ -191,11 +191,11 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 </Option>
 
 <Option name="VOLANT_HOST_NAMED_PATHS" arg="allow|contained|refuse" config="[volant] host_named_paths">
-  What a task does with a controller `src` that a managed host named. See [A source file a managed host named](/reference/action-plugins/#a-source-file-a-managed-host-named).
+  What a task does with a controller `src` that a managed host named. With `contained` or `refuse`, it also limits a `fetch` `dest` that a host named. See [A source file a managed host named](/reference/action-plugins/#a-source-file-a-managed-host-named).
 </Option>
 
 <Option name="VOLANT_HOST_NAMED_DEST_DIRS" arg="/dir:/other" config="[volant] host_named_dest_dirs">
-  The controller directories a `fetch` may write under when a managed host named its `dest`. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named).
+  The controller directories a `fetch` may write under when a managed host named its `dest`. Unset, a `fetch` writes such a `dest` as ansible-core does. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named).
 </Option>
 
 <Option name="VOLANT_NATIVE_MODULES" arg="0" config="[volant] native_modules">

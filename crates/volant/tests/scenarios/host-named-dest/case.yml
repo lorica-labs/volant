@@ -1,0 +1,5 @@
+# `fetch` writes a `dest` that a registered result names, and a directory named by an
+# `inventory_hostname` loop variable over such a result, as ansible-core does. This is the default:
+# `host_named_dest_dirs` unset and `host_named_paths = allow`.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

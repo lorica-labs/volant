@@ -693,17 +693,17 @@ fn volant_host_named_paths_in_the_environment_sets_the_mode() {
     );
 }
 
-/// `[volant] host_named_dest_dirs` is a colon-separated list of absolute directories, empty when
-/// absent, and refuses any other entry with the key, the value and the entry.
+/// `[volant] host_named_dest_dirs` is a colon-separated list of absolute directories, unset when
+/// absent and empty when blank, and refuses any other entry with the key, the value and the entry.
 #[rstest::rstest]
-#[case::absent("[defaults]\nforks = 3\n", Ok(vec![]))]
-#[case::one("[volant]\nhost_named_dest_dirs = /srv/fetch\n", Ok(vec!["/srv/fetch"]))]
+#[case::absent("[defaults]\nforks = 3\n", Ok(None))]
+#[case::one("[volant]\nhost_named_dest_dirs = /srv/fetch\n", Ok(Some(vec!["/srv/fetch"])))]
 #[case::two(
     "[volant]\nhost_named_dest_dirs = /srv/a : /srv/b/\n",
-    Ok(vec!["/srv/a", "/srv/b/"])
+    Ok(Some(vec!["/srv/a", "/srv/b/"]))
 )]
-#[case::blank("[volant]\nhost_named_dest_dirs =\n", Ok(vec![]))]
-#[case::wrong_section("[defaults]\nhost_named_dest_dirs = /srv/a\n", Ok(vec![]))]
+#[case::blank("[volant]\nhost_named_dest_dirs =\n", Ok(Some(vec![])))]
+#[case::wrong_section("[defaults]\nhost_named_dest_dirs = /srv/a\n", Ok(None))]
 #[case::relative(
     "[volant]\nhost_named_dest_dirs = fetch\n",
     Err(
@@ -728,11 +728,12 @@ fn volant_host_named_paths_in_the_environment_sets_the_mode() {
 )]
 fn the_volant_section_names_the_directories_a_host_named_dest_may_use(
     #[case] text: &str,
-    #[case] expected: Result<Vec<&str>, &str>,
+    #[case] expected: Result<Option<Vec<&str>>, &str>,
 ) {
     match (parse(text, Path::new("/base"), "ansible.cfg"), expected) {
         (Ok(config), Ok(dirs)) => {
-            let want: Vec<PathBuf> = dirs.into_iter().map(PathBuf::from).collect();
+            let want: Option<Vec<PathBuf>> =
+                dirs.map(|dirs| dirs.into_iter().map(PathBuf::from).collect());
             assert_eq!(config.host_named_dest_dirs, want);
         }
         (Err(err), Err(says)) => {
@@ -757,7 +758,12 @@ fn volant_host_named_dest_dirs_in_the_environment_sets_the_list() {
     }
     assert_eq!(
         Config::load().unwrap().host_named_dest_dirs,
-        [PathBuf::from("/srv/a"), PathBuf::from("/srv/b")]
+        Some(vec![PathBuf::from("/srv/a"), PathBuf::from("/srv/b")])
+    );
+    unsafe { std::env::set_var("VOLANT_HOST_NAMED_DEST_DIRS", "") };
+    assert_eq!(
+        Config::load().unwrap().host_named_dest_dirs,
+        Some(Vec::new())
     );
     unsafe { std::env::set_var("VOLANT_HOST_NAMED_DEST_DIRS", "rel") };
     let err = Config::load().unwrap_err();
@@ -768,5 +774,5 @@ fn volant_host_named_dest_dirs_in_the_environment_sets_the_list() {
         "{err:#}"
     );
     unsafe { std::env::remove_var("VOLANT_HOST_NAMED_DEST_DIRS") };
-    assert!(Config::load().unwrap().host_named_dest_dirs.is_empty());
+    assert_eq!(Config::load().unwrap().host_named_dest_dirs, None);
 }

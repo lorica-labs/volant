@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::executor::DEFAULT_CONNECT_TIMEOUT;
 
+mod color;
 mod locate;
 mod parse;
 mod paths;
@@ -83,6 +84,15 @@ pub struct Config {
     /// `task path:` line before the `fatal:` line of a failed task below `-vv`, where the
     /// reference prints it for no task. Off by default, as in the reference.
     pub show_task_path_on_failure: bool,
+    /// `[defaults] force_color` or `ANSIBLE_FORCE_COLOR`: colour the output even when it is not a
+    /// terminal. It wins over `nocolor` and `NO_COLOR`, as measured on ansible-core 2.19.12;
+    /// only `--no-color` wins over it.
+    pub force_color: bool,
+    /// `[defaults] nocolor` or `ANSIBLE_NOCOLOR`: never colour the output.
+    pub nocolor: bool,
+    /// `[defaults] deprecation_warnings` or `ANSIBLE_DEPRECATION_WARNINGS`: print the
+    /// `[DEPRECATION WARNING]` blocks and the line that tells how to stop them. On by default.
+    pub deprecation_warnings: bool,
     /// `[ssh_connection] usetty` or `ANSIBLE_SSH_USETTY`: give `raw`, `script` and the commands a
     /// plugin sends without input a terminal (`ssh -tt`). On by default; `ansible_ssh_use_tty`
     /// on a host wins over both.
@@ -174,6 +184,9 @@ impl Default for Config {
             localhost_warning: true,
             show_custom_stats: false,
             show_task_path_on_failure: false,
+            force_color: false,
+            nocolor: false,
+            deprecation_warnings: true,
             ssh_usetty: true,
             enable_task_debugger: false,
             roles_path: default_roles_path(),
@@ -328,6 +341,7 @@ impl Config {
         {
             config.show_custom_stats = on;
         }
+        color::read_env(&mut config)?;
         // The environment wins over the file; an empty or unknown word reads as false, measured.
         if let Ok(flag) = std::env::var("ANSIBLE_SSH_USETTY") {
             config.ssh_usetty = callback_flag(&flag);

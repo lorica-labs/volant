@@ -537,13 +537,13 @@ def actions(names):
     return {name: resolve_action(name) is not None for name in names}
 
 
-def diff_text(diffs):
+def diff_text(diffs, colored=False):
     """The text `ansible-playbook` prints for a result's `diff`: ansible-core's own
-    `CallbackBase._get_diff`, uncoloured (the controller paints it)."""
+    `CallbackBase._get_diff`, which colours the lines difflib made and nothing else."""
     from ansible.plugins.callback import CallbackBase
     from ansible.utils import color
 
-    color.ANSIBLE_COLOR = False
+    color.ANSIBLE_COLOR = bool(colored)
     return CallbackBase()._get_diff(diffs)
 
 
@@ -733,7 +733,7 @@ def call(request):
     if kind == "inventory":
         return {"value": inventory(request["args"][0])}
     if kind == "diff":
-        return {"value": diff_text(request["args"][0])}
+        return {"value": diff_text(request["args"][0], request["kwargs"].get("color", False))}
     if kind == "action_groups":
         return {"value": action_groups(request["args"])}
     if kind == "actions":

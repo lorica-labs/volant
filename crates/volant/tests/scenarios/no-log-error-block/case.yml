@@ -1,0 +1,5 @@
+# The `[ERROR]` block of a failed `no_log` task shows its message, one block for each distinct message; the `fatal:` lines stay censored.
+runs:
+  - args: [-i, inv.ini, distinct.yml]
+  - args: [-i, inv.ini, same.yml]
+  - args: [-i, inv.ini, module.yml]

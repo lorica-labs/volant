@@ -107,7 +107,9 @@ const STATS_KEY: &str = "ansible_stats";
 ///
 /// Keyed on the action's name and never on the keys alone: a managed host's module result can
 /// carry any key, and `add_host` among them is a restricted one that is taken out of its facts.
-/// A failed task, or one of its loop items, applies nothing, as in the reference.
+/// A failed task, or one of its loop items, applies nothing, as in the reference. An `add_host`
+/// result is marked `changed` when the host, a variable or a group membership is new, as
+/// `add_dynamic_host` decides it.
 ///
 /// A name whose argument read a value that came from a managed host is data, whatever it holds:
 /// `items` carry which arguments did. A name that holds a template is data too, which the
@@ -117,7 +119,7 @@ pub(in crate::executor) fn record_inventory_results(
     task: &PlayTask,
     items: &[Item],
     host: &str,
-    results: &[(Option<Value>, TaskResult)],
+    results: &mut [(Option<Value>, TaskResult)],
 ) {
     let kind = short_name(&task.module);
     if !["add_host", "group_by", "set_stats"].contains(&kind) || task_fails(results) {
@@ -132,7 +134,7 @@ pub(in crate::executor) fn record_inventory_results(
             .collect()
     };
     for (i, (_, result)) in results
-        .iter()
+        .iter_mut()
         .enumerate()
         .filter(|(_, (_, r))| !r.skipped())
     {
@@ -155,7 +157,7 @@ pub(in crate::executor) fn record_inventory_results(
                     .cloned()
                     .unwrap_or_default();
                 let groups = names(added.get("groups"));
-                vars.add_host(name, &groups, &host_vars);
+                let changed = vars.add_host(name, &groups, &host_vars);
                 let hosts = if from_data(&["name", "hostname", "host"]) {
                     vec![name]
                 } else {
@@ -167,6 +169,10 @@ pub(in crate::executor) fn record_inventory_results(
                     Vec::new()
                 };
                 vars.mark_data_names(&hosts, &groups);
+                // `changed_when` was judged already and has the last word, as in the reference.
+                if task.changed_when.is_empty() {
+                    result.0.insert("changed".into(), Value::Bool(changed));
+                }
             }
             "group_by" => {
                 if let Some(group) = result.0.get("add_group").and_then(Value::as_str) {

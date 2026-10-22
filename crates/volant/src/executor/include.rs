@@ -316,9 +316,8 @@ pub(super) async fn report_include(
                 counts: !is_loop,
                 censored,
                 delegate: None,
-                error: (item.failed && item.result.0.contains_key(crate::render::CHAIN_KEY)).then(
-                    || crate::render::ErrorBlock::of(&item.result, task.origin.as_ref(), censored),
-                ),
+                error: (item.failed && item.result.0.contains_key(crate::render::CHAIN_KEY))
+                    .then(|| crate::render::ErrorBlock::of(&item.result, task.origin.as_ref())),
                 task_origin: task.origin.clone(),
             })
             .await;

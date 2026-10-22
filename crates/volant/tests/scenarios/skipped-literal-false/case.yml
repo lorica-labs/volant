@@ -1,0 +1,3 @@
+# A literal `when: false` keeps its boolean in `false_condition`, and a skipped `debug` is cleaned like any `debug` result.
+runs:
+  - args: [-v, play.yml]

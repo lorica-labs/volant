@@ -232,7 +232,7 @@ pub(super) fn prepare(
                 r.insert("changed".into(), json!(false));
                 r.insert("skipped".into(), json!(true));
                 r.insert("skip_reason".into(), json!("Conditional result was False"));
-                r.insert("false_condition".into(), json!(condition));
+                r.insert("false_condition".into(), item::false_condition(condition));
                 skipped = Some(TaskResult(r));
                 break;
             }

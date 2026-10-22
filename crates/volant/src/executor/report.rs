@@ -142,8 +142,8 @@ pub(super) async fn report_task(
         }
         let label = labels.get(i).cloned().flatten();
         let error = r.failed().then(|| {
-            let mut block = ErrorBlock::of(r, task.origin.as_ref(), censored);
-            if task.origin.is_none() && !censored {
+            let mut block = ErrorBlock::of(r, task.origin.as_ref());
+            if task.origin.is_none() {
                 block.unknown = generated_source(task);
             }
             block

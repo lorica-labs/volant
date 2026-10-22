@@ -1,0 +1,6 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - fail:
+        msg: "{{ inventory_hostname }} failed"
+      no_log: true

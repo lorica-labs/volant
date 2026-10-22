@@ -1,0 +1,6 @@
+[
+  {
+    "code": 0,
+    "stdout": "Using <golden-tmp>/ansible.cfg as config file\n\nPLAY [localhost] ***************************************************************\n\nTASK [debug] *******************************************************************\nskipping: [localhost] => {\"false_condition\": false}\n\nTASK [command] *****************************************************************\nskipping: [localhost] => {\"changed\": false, \"false_condition\": false, \"skip_reason\": \"Conditional result was False\"}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=0    changed=0    unreachable=0    failed=0    skipped=2    rescued=0    ignored=0   \n\n"
+  }
+]

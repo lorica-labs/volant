@@ -1,0 +1,9 @@
+plugin: generator
+hosts:
+  name: "{{ first }}{{ second }}"
+  parents:
+    - name: "{{ first }}.{{ second }}-group"
+    - name: "c-group"
+layers:
+  first: [a]
+  second: [b]

@@ -7,10 +7,13 @@ use std::collections::BTreeMap;
 use serde_json::{Map, Value};
 
 use super::auto::failed;
-use super::constructed::{has_invalid_chars, py_str, read_config, verify_config};
+use super::constructed::{invalid_chars_report, py_str, read_config, reason, verify_config};
 use super::yaml::{Dialect, add_child_checked};
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source};
+use crate::playbook::Origin;
 use crate::template::Templar;
+use crate::yaml;
+use saphyr::Yaml;
 
 pub(super) struct Generator;
 
@@ -62,6 +65,7 @@ impl InventoryPlugin for Generator {
             ),
             cx,
             file: source.path(),
+            source,
         };
         let mut lists = Vec::new();
         for values in layers.values() {
@@ -69,9 +73,16 @@ impl InventoryPlugin for Generator {
         }
         for combination in product(&lists) {
             let vars: Map<String, Value> = layers.keys().cloned().zip(combination).collect();
-            let host = py_str(&run.template(&name, &vars).map_err(failed)?);
+            let at = ["hosts".to_string(), "name".to_string()];
+            let host = py_str(&run.template(&name, &vars, &at)?);
             into.add_source_host(&host, None, BTreeMap::new(), Some(run.file));
-            run.parents(into, &host, &parents, &vars).map_err(failed)?;
+            run.parents(
+                into,
+                &host,
+                &parents,
+                &vars,
+                &["hosts".to_string(), "parents".to_string()],
+            )?;
         }
         Ok(())
     }
@@ -81,41 +92,70 @@ struct Run<'a, 'c> {
     templar: Templar,
     cx: &'a ParseCx<'c>,
     file: &'a std::path::Path,
+    source: &'a Source,
 }
 
 impl Run<'_, '_> {
-    /// `template`: a string is rendered, anything else is passed through for later.
-    fn template(&self, pattern: &Value, vars: &Map<String, Value>) -> Result<Value, String> {
+    /// `template`: a string is rendered, anything else is passed through for later. A failure
+    /// points at `at`, the place of the pattern in the config file.
+    fn template(
+        &self,
+        pattern: &Value,
+        vars: &Map<String, Value>,
+        at: &[String],
+    ) -> Result<Value, PluginError> {
         match pattern {
-            Value::String(text) => self.templar.render_one_pass(text, vars).map_err(|e| {
-                e.0.split_once("The error was: ")
-                    .map_or(e.0.clone(), |(_, r)| r.to_string())
-            }),
+            Value::String(text) => {
+                self.templar
+                    .render_one_pass(text, vars)
+                    .map_err(|e| PluginError {
+                        origin: origin_of(self.source, at),
+                        ..failed(reason(&e.0, text, vars))
+                    })
+            }
             other => Ok(other.clone()),
         }
     }
 
+    /// `parents` is the list found at `at` in the config file.
     fn parents(
         &self,
         inv: &mut Inventory,
         child: &str,
         parents: &Value,
         vars: &Map<String, Value>,
-    ) -> Result<(), String> {
-        for parent in items(parents)? {
+        at: &[String],
+    ) -> Result<(), PluginError> {
+        let step = |index: usize, key: &str| {
+            let mut next = at.to_vec();
+            next.extend([index.to_string(), key.to_string()]);
+            next
+        };
+        for (index, parent) in items(parents).map_err(failed)?.into_iter().enumerate() {
             let Value::Object(parent) = parent else {
-                return Err("'str' object has no attribute 'get'".to_string());
+                return Err(failed("'str' object has no attribute 'get'".to_string()));
             };
-            let name = self.template(parent.get("name").unwrap_or(&Value::Null), vars)?;
+            let name = self.template(
+                parent.get("name").unwrap_or(&Value::Null),
+                vars,
+                &step(index, "name"),
+            )?;
             if super::yaml::falsy(&name) {
-                return Err(format!("Element {child} has a parent with no name."));
+                return Err(failed(format!(
+                    "Element {child} has a parent with no name."
+                )));
             }
             let group = py_str(&name);
             if inv.group(&group).is_none() {
-                if has_invalid_chars(&group) {
+                if let Some(chars) = invalid_chars_report(&group) {
+                    self.cx.verbose(
+                        4,
+                        format!(
+                            "Not replacing invalid character(s) \"{chars}\" in group name ({group})"
+                        ),
+                    );
                     self.cx.warn_once(
-                        "Invalid characters were found in group names but not replaced, use \
-                         -vvvv to see details"
+                        "Invalid characters were found in group names but not replaced, use                          -vvvv to see details"
                             .to_string(),
                     );
                 }
@@ -123,9 +163,11 @@ impl Run<'_, '_> {
             }
             if let Some(Value::Object(set)) = parent.get("vars") {
                 for (var, value) in set {
-                    let value = self.template(value, vars)?;
+                    let mut place = step(index, "vars");
+                    place.push(var.clone());
+                    let value = self.template(value, vars, &place)?;
                     if var == "ansible_group_priority" {
-                        if let Some(p) = super::ini::priority(&value)? {
+                        if let Some(p) = super::ini::priority(&value).map_err(failed)? {
                             inv.group_mut(&group).priority = Some(p);
                         }
                     } else {
@@ -134,7 +176,7 @@ impl Run<'_, '_> {
                 }
             }
             if inv.group(child).is_some() {
-                add_child_checked(inv, &group, child)?;
+                add_child_checked(inv, &group, child).map_err(failed)?;
             } else {
                 inv.add_member(child, &group);
             }
@@ -143,10 +185,35 @@ impl Run<'_, '_> {
                 &group,
                 parent.get("parents").unwrap_or(&Value::Array(Vec::new())),
                 vars,
+                &step(index, "parents"),
             )?;
         }
         Ok(())
     }
+}
+
+/// Where the value found at `path` of a config file starts, as the reference words it after
+/// `Origin:`: the file, line and column, then the lines around it.
+fn origin_of(source: &Source, path: &[String]) -> Option<String> {
+    let text = std::fs::read_to_string(source.path()).ok()?;
+    let (docs, origins) = yaml::load_with_origins(&text, source.text()).ok()?;
+    let mut node = docs.first()?;
+    for step in path {
+        node = match node {
+            Yaml::Sequence(items) => items.get(step.parse::<usize>().ok()?)?,
+            _ => yaml::field(node, step)?,
+        };
+    }
+    let (line, col) = origins.of_value(node)?;
+    let shown = std::path::absolute(source.text())
+        .map_or_else(|_| source.text().to_string(), |p| p.display().to_string());
+    let origin = Origin {
+        path: shown.into(),
+        line,
+        col,
+    };
+    let context = crate::render::source_context(&origin);
+    Some(context.strip_prefix("Origin: ")?.to_string())
 }
 
 /// What iterating a value yields, as Python iterates it.

@@ -93,3 +93,8 @@ nmap: {sources: [nmap.yml], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$P
 nmap_then_ini: {sources: [nmap.yml, one.ini], needs: [ansible-core], env: {PATH: "$COPY/fakebin:$PATH"}}
 collection_plugin_fails: {sources: [icinga2.yml], needs: [ansible-core]}
 collection_plugin_fails_then_ini: {sources: [icinga2.yml, one.ini], needs: [ansible-core]}
+constructed_undefined_call: {sources: [constructed_base.ini, constructed_undefined_call.yml]}
+constructed_compose_int: {sources: [constructed_base.ini, constructed_compose_int.yml]}
+constructed_compose_int_lax: {sources: [constructed_base.ini, constructed_compose_int_lax.yml]}
+generator_undefined: {sources: [generator_undefined.yml]}
+generator_invalid_chars: {sources: [generator_invalid_chars.yml], hosts: unordered}

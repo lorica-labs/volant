@@ -49,10 +49,74 @@ pub(crate) fn check_resolved(
     module: &str,
     answer: &crate::python::Resolved,
 ) -> anyhow::Result<()> {
-    match refusal_of(module, answer) {
-        None => Ok(()),
-        Some(why) => Err(Refusal::at(CODE, format!("task '{task}': {why}"))),
+    let Some(why) = refusal_of(module, answer) else {
+        return Ok(());
+    };
+    let message = format!("task '{task}': {why}");
+    match answer {
+        crate::python::Resolved::Missing { collection } => Err(Refusal::unresolved(
+            CODE,
+            message,
+            Unresolved {
+                task: task.to_string(),
+                module: module.to_string(),
+                collection: collection.clone(),
+                origin: None,
+            },
+        )),
+        _ => Err(Refusal::at(CODE, message)),
     }
+}
+
+/// A module no collection on the controller holds, as ansible-core 2.19.12 prints it: a warning
+/// naming the import that failed, then an error block with the task's place.
+#[derive(Debug, Clone)]
+pub struct Unresolved {
+    task: String,
+    module: String,
+    collection: Option<String>,
+    origin: Option<crate::playbook::Origin>,
+}
+
+impl Unresolved {
+    /// The warning, when the name points at a collection, and the error block. The install hint
+    /// goes last, on its own line, so the first line stays the reference's.
+    pub fn report(&self) -> (Option<String>, String) {
+        let warning = self
+            .collection
+            .as_ref()
+            .map(|collection| crate::transport::plugin_load_warning(&self.module, collection));
+        let mut error = unresolved_tail(&self.module);
+        if let Some(origin) = &self.origin {
+            error.push('\n');
+            error.push_str(&crate::render::source_context(origin));
+        }
+        if let Some(collection) = &self.collection {
+            error = format!(
+                "{error}\nThe collection '{collection}' is not installed on the controller: install it with volant runtime install --collections {collection}"
+            );
+        }
+        (warning, error)
+    }
+}
+
+/// Puts the place of the task an [`Unresolved`] refusal names into it, from the plays it was
+/// found in; any other error comes back as it was.
+pub(crate) fn locate_unresolved<'a>(
+    err: anyhow::Error,
+    plays: impl Iterator<Item = &'a crate::compile::Compiled>,
+) -> anyhow::Error {
+    let mut refusal = match err.downcast::<Refusal>() {
+        Ok(refusal) => refusal,
+        Err(err) => return err,
+    };
+    if let Some(u) = &mut refusal.unresolved {
+        u.origin = plays
+            .flat_map(set_aside)
+            .find(|t| t.module == u.module && t.name == u.task)
+            .and_then(|t| t.origin.clone());
+    }
+    anyhow::Error::new(refusal)
 }
 
 /// Why a collection's module the controller resolved cannot run, as the refusal says it after

@@ -2106,6 +2106,81 @@ fn module_defaults_and_collections_that_cannot_be_honoured_say_why(
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
+/// A module from a collection that is not installed prints the reference's warning and error
+/// block, then Volant's hint on its own line.
+#[test]
+fn a_missing_collection_prints_the_reference_warning_and_error_block() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("missing-collection");
+    let body = "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - foo.bar.baz:
+";
+    let (code, text) = run_probe_env(&dir, "site", body, &[], None, &[("VOLANT_PYTHON", &python)]);
+    let file = dir.join("site.yml").display().to_string();
+    assert_eq!(code, 4, "{text}");
+    let tail = "couldn't resolve module/action 'foo.bar.baz'. This often indicates a misspelling, missing collection, or incorrect module path.";
+    assert_eq!(
+        text,
+        format!(
+            "[WARNING]: Error loading plugin 'foo.bar.baz': No module named 'ansible_collections.foo'
+[ERROR]: {tail}
+Origin: {file}:4:7
+
+2   gather_facts: false
+3   tasks:
+4     - foo.bar.baz:
+        ^ column 7
+The collection 'foo.bar' is not installed on the controller: install it with volant runtime install --collections foo.bar
+"
+        )
+    );
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A connection a collection took over warns once with the routed name; a name nobody routes
+/// does not.
+#[rstest]
+#[case::docker("docker", Some("[WARNING]: Error loading plugin 'community.docker.docker': No module named 'ansible_collections.community'
+"))]
+#[case::network_cli("network_cli", Some("[WARNING]: Error loading plugin 'ansible.netcommon.network_cli': No module named 'ansible_collections.ansible.netcommon'
+"))]
+#[case::bogus("bogus", None)]
+fn a_missing_connection_plugin_warns_with_the_routed_name(
+    #[case] connection: &str,
+    #[case] warning: Option<&str>,
+) {
+    let dir = probe_dir(&format!("missing-connection-{connection}"));
+    std::fs::write(
+        dir.join("inv.ini"),
+        format!(
+            "h ansible_connection={connection}
+"
+        ),
+    )
+    .expect("an inventory");
+    let inventory = dir.join("inv.ini").display().to_string();
+    let body = "- hosts: all
+  gather_facts: false
+  tasks:
+    - command: \"true\"
+";
+    let (_, text) = run_probe_env(&dir, "site", body, &["-i", &inventory], None, &[]);
+    assert!(text.contains("was not found"), "{text}");
+    assert_eq!(
+        text.matches("[WARNING]: Error loading plugin").count(),
+        usize::from(warning.is_some()),
+        "{text}"
+    );
+    if let Some(warning) = warning {
+        assert!(text.contains(warning), "{text}");
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// Every task of a batch is rendered before the batch goes out, so a task that writes facts ends
 /// its batch.
 #[test]

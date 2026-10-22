@@ -58,6 +58,16 @@ pub fn run(args: PlaybookArgs) -> i32 {
         Ok(code) => code,
         Err(err) => {
             match err.downcast_ref::<Refusal>() {
+                Some(Refusal {
+                    unresolved: Some(u),
+                    ..
+                }) => {
+                    let (warning, error) = u.report();
+                    if let Some(warning) = warning {
+                        eprintln!("[WARNING]: {warning}");
+                    }
+                    eprintln!("[ERROR]: {error}");
+                }
                 Some(r) if r.plain => eprintln!("[ERROR]: {}", r.message),
                 _ => eprintln!("ERROR! {err:#}"),
             }
@@ -345,7 +355,12 @@ async fn run_all(
             out.warning(&warning, false);
         },
     )
-    .map_err(|e| Refusal::or(4, e))?;
+    .map_err(|e| {
+        Refusal::or(
+            4,
+            preflight::locate_unresolved(e, compiled.iter().flatten()),
+        )
+    })?;
     for play in compiled.iter().flatten() {
         preflight::check_collection_actions(play).map_err(|e| Refusal::or(4, e))?;
     }

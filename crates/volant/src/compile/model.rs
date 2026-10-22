@@ -238,6 +238,9 @@ pub(crate) struct Compiled {
     /// in the recap and lets `--skip-tags always` drop it - and it is left out of the four
     /// listings alone, which is where the reference leaves it out too.
     pub gathers: bool,
+    /// The `Gathering Facts` step of a play whose `gather_facts` is off. Measured on ansible-core
+    /// 2.19.12: `--start-at-task` runs it once before the task it found, whatever the play says.
+    pub idle_gather: Option<Box<Step>>,
     /// Per step, whether it reads what another host did, so the hosts meet in front of it under
     /// `[volant] batching`. Filled by the executor's `mark_boundaries` once the list is laid out,
     /// and again behind every splice, because a role an include brings in brings its own

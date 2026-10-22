@@ -159,6 +159,7 @@ pub(crate) fn expand_include(
         // An expansion is spliced into a play that has already gathered, so it never carries a
         // gather step of its own.
         gathers: false,
+        idle_gather: None,
         crosses: Vec::new(),
         resolved: Arc::clone(&base.resolved),
         warnings: Vec::new(),

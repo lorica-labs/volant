@@ -35,7 +35,7 @@ pub(crate) use model::{
     Compiled, Handler, IncludeKind, IncludeParams, Origin, Section, Step, StepKind, is_splice_point,
 };
 pub(crate) use nav::{
-    after, after_failure, after_pending, find_task, first, listed, rescue_target,
+    after, after_failure, after_pending, first, listed, rescue_target, start_at_task,
 };
 pub(crate) use tags::TagSelection;
 

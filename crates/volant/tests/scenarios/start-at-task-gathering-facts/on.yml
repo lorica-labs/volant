@@ -1,0 +1,3 @@
+- hosts: l
+  tasks:
+    - debug: msg=one

@@ -1,0 +1,3 @@
+# su over a local connection with a wrong password: the reference starts su on a terminal and fails with what su printed.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

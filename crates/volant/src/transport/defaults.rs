@@ -150,6 +150,9 @@ pub const MISSING_SUDO_PASSWORD: &str = "Missing sudo password";
 pub const INCORRECT_SUDO_PASSWORD: &str = "Incorrect sudo password";
 /// The reference's text for a `su` that refused the password, or asked for it a second time.
 pub const INCORRECT_SU_PASSWORD: &str = "Incorrect su password";
+/// The reference's text for a `su` that never started the command over a local connection, which
+/// follows it with what `su` printed.
+pub const SU_PREMATURE_END: &str = "Premature end of stream waiting for become success.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Transport {

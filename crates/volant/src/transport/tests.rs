@@ -272,6 +272,7 @@ async fn su_prompt_l10n_replaces_the_built_in_prompts(
         &l10n,
         BECOME_SUCCESS,
         Duration::from_millis(300),
+        false,
     )
     .await;
     assert_eq!(got.is_ok(), answered, "{got:?}");
@@ -315,6 +316,7 @@ async fn su_is_talked_through_as_the_reference_does(
         &[],
         BECOME_SUCCESS,
         Duration::from_millis(300),
+        false,
     )
     .await;
     match (got, want) {
@@ -336,6 +338,36 @@ async fn su_is_talked_through_as_the_reference_does(
         (Err(err), Err(says)) => assert_eq!(err.to_string(), says),
         (got, want) => panic!("got {got:?}, wanted {want:?}"),
     }
+    su.abort();
+}
+
+/// Over a local connection a refusal is the reference's `Premature end of stream`, with what `su`
+/// printed under it and the carriage returns of the terminal taken out.
+#[rstest]
+#[case::refuses(
+    FakeSu::Refuses,
+    "Premature end of stream waiting for become success.\n>>> Standard Error\nPassword: \nsu: Authentication failure"
+)]
+#[case::asks_twice(
+    FakeSu::AsksTwice,
+    "Premature end of stream waiting for become success.\n>>> Standard Error\nPassword: \nPassword:"
+)]
+#[tokio::test]
+async fn a_local_su_that_refuses_says_what_it_printed(#[case] mode: FakeSu, #[case] says: &str) {
+    let (mut ours, theirs) = tokio::io::duplex(1024);
+    let su = tokio::spawn(fake_su(mode, theirs, "pw"));
+    let (mut read, mut write) = tokio::io::split(&mut ours);
+    let got = su_exchange(
+        &mut read,
+        &mut write,
+        Some("pw"),
+        &[],
+        BECOME_SUCCESS,
+        Duration::from_millis(300),
+        true,
+    )
+    .await;
+    assert_eq!(got.unwrap_err().to_string(), says);
     su.abort();
 }
 

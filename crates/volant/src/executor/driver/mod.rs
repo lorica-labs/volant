@@ -1612,11 +1612,13 @@ pub(super) async fn drive_host(
                     let index = batch[0].0;
                     let mut task = step_at(&c, &rendered, index).task.clone();
                     task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    // Measured for `Incorrect su password` (scout case `c5w`): the reference
-                    // raises it from its connection, so the result is `changed: false` and a
+                    // Measured for `Incorrect su password` (scout case `c5w`) and, over a local
+                    // connection, `Premature end of stream`: the reference raises them from its connection, so the result is `changed: false` and a
                     // `msg` that already says `Task failed: `. The other refusals keep their shape
                     // until they are measured too.
-                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD {
+                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD
+                        || msg.starts_with(crate::transport::SU_PREMATURE_END)
+                    {
                         let mut shaped = TaskResult::failed_with(crate::render::task_failed(&msg));
                         shaped.0.insert("changed".into(), Value::Bool(false));
                         shaped

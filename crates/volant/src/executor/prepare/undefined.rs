@@ -76,7 +76,11 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
     let resolved = crate::render::cause(resolving, origin(&format!("args.{key}")), None);
     // A task with no name of its own starts where its action does, and the reference puts the
     // two links in one: the block opens with the finalization's sentence.
-    if task.origin.is_some() && task.origin.as_ref() == origin("action") {
+    // A syntax error is the head of the block itself, not a link behind it: measured on
+    // ansible-core 2.19.12, `No filter named` prints one `caused by`, the value.
+    if resolving.contains(crate::template::NO_FILTER)
+        || (task.origin.is_some() && task.origin.as_ref() == origin("action"))
+    {
         return Some(Value::Array(vec![
             crate::render::lead(&format!("Task failed: {head}")),
             resolved,

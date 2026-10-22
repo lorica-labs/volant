@@ -51,6 +51,9 @@ pub(crate) const UNDEFINED: &str = "The task includes an option with an undefine
 pub(crate) const RECURSION: &str =
     "Recursive loop detected in template: maximum recursion depth exceeded";
 
+/// How the reference words a call to a filter it does not have; the filter's name in quotes follows.
+pub(crate) const NO_FILTER: &str = "Syntax error in template: No filter named ";
+
 /// What [`Templar::render_map_tainted`] puts before a plugin's failure, then the key in quotes.
 pub(crate) const RESOLVING: &str = "Error while resolving value for ";
 

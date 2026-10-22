@@ -309,11 +309,11 @@ pub fn load_sources_with(
             loaded.parsed = true;
             loaded.inventory.reconcile();
         }
-        // What a source that failed part-way added stays only when a later source is read: the
-        // reference attaches groups to `all` once something parsed, so with nothing parsed the
-        // run sees no host at all.
+        // What a source that failed part-way added stays, as the reference keeps it, but
+        // `reconcile` does not run: the reference attaches groups to `all` once something
+        // parsed, so with nothing parsed `all` and `ungrouped` stay empty.
         Ok(false) if config.unparsed_is_failed => {
-            loaded.inventory = Inventory::default();
+            loaded.inventory.detached = true;
             loaded.error = Some(Fatal {
                 code: 1,
                 message: "No inventory was parsed, please check your configuration and options."
@@ -321,7 +321,7 @@ pub fn load_sources_with(
             });
         }
         Ok(false) => {
-            loaded.inventory = Inventory::default();
+            loaded.inventory.detached = true;
             cx.warn("No inventory was parsed, only implicit localhost is available".into());
         }
         Err(fatal) => loaded.error = Some(fatal),

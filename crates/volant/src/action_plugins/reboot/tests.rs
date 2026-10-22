@@ -98,3 +98,12 @@ fn the_shutdown_line_follows_the_reference_s_tables() {
         ("/usr/bin/systemctl".into(), "reboot -i".into())
     );
 }
+
+/// The reference's low-level commands get a terminal over ssh, and `reboot`'s raw ones ask for it.
+#[test]
+fn the_raw_commands_ask_for_a_terminal() {
+    assert_eq!(
+        raw("true").args.get("_volant_tty"),
+        Some(&Value::Bool(true))
+    );
+}

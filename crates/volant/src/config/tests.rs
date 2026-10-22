@@ -776,3 +776,15 @@ fn volant_host_named_dest_dirs_in_the_environment_sets_the_list() {
     unsafe { std::env::remove_var("VOLANT_HOST_NAMED_DEST_DIRS") };
     assert_eq!(Config::load().unwrap().host_named_dest_dirs, None);
 }
+
+/// `[ssh_connection] usetty` is on without a line, and reads like the reference's callback
+/// options: an unknown word is off.
+#[rstest::rstest]
+#[case("", true)]
+#[case("[ssh_connection]\nusetty = False\n", false)]
+#[case("[ssh_connection]\nusetty = true\n", true)]
+#[case("[ssh_connection]\nusetty = maybe\n", false)]
+#[case("[defaults]\nusetty = False\n", true)]
+fn the_ssh_terminal_setting_is_read_from_its_section(#[case] text: &str, #[case] on: bool) {
+    assert_eq!(cfg(text, ".").ssh_usetty, on);
+}

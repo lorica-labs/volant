@@ -298,7 +298,10 @@ impl Templar {
                     // 'x' failed: …`.
                     // A read with no value is worded the same way: `... for 'msg': 'x' is
                     // undefined`.
-                    if bridged::is_plugin_failure(&err.0) || err.is_undefined() {
+                    if bridged::is_plugin_failure(&err.0)
+                        || err.is_undefined()
+                        || err.0.starts_with(super::NO_FILTER)
+                    {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
                     } else if err.0.starts_with(filters::UNDECRYPTABLE) {
                         TemplateError(format!(

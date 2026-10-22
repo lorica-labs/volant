@@ -194,8 +194,8 @@ fn lookup(
                 };
                 let text = std::fs::read_to_string(&path).map_err(|e| {
                     invalid(format!(
-                        "Unable to access the file '{term_text}': could not read {}: {e}",
-                        path.display()
+                        "Unable to access the file '{term_text}': {}",
+                        read_failure(&path, &e)
                     ))
                 })?;
                 taint();
@@ -258,8 +258,8 @@ fn lookup(
             // never `2`, exactly as `lookup('file')` does.
             "template" | "ansible.builtin.template" => {
                 let path = find_template(state, &term_text, base_dir)?;
-                let text = std::fs::read_to_string(&path)
-                    .map_err(|e| invalid(format!("template lookup: {}: {e}", path.display())))?;
+                let text =
+                    std::fs::read_to_string(&path).map_err(|e| invalid(read_failure(&path, &e)))?;
                 taint();
                 render_template(
                     state,
@@ -283,7 +283,19 @@ fn found_file(state: &State, term: &str, base_dir: &Path) -> Option<PathBuf> {
     let search = search_path(state, base_dir);
     relative_stack(&search, Some("files"), term)
         .into_iter()
-        .find(|p| p.is_file())
+        .find(|p| p.exists())
+}
+
+/// A file that could not be read, as the reference's loader words it: the path, then Python's
+/// `[Errno N] reason: 'path'`.
+fn read_failure(path: &Path, err: &std::io::Error) -> String {
+    let path = path.display();
+    let os = err
+        .raw_os_error()
+        .map_or_else(String::new, |n| format!("[Errno {n}] "));
+    let reason = err.to_string();
+    let reason = reason.split(" (os error").next().unwrap_or(&reason);
+    format!("An error occurred while trying to read the file '{path}': {os}{reason}: '{path}'")
 }
 
 /// The shape a plugin's list takes through `lookup()` without `wantlist=True`, read from

@@ -371,6 +371,11 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     if let Some(origin) = key_origin(source.unwrap_or(value)) {
         value_origins.insert("action".to_string(), origin);
     }
+    // Where the `action:` statement's own value starts, which the reference points the cause of a
+    // name it cannot resolve at.
+    if let Some(origin) = source.and_then(value_origin) {
+        value_origins.insert("action.value".to_string(), origin);
+    }
     for node in [Some(source.unwrap_or(value)), field(yaml, "args")]
         .into_iter()
         .flatten()

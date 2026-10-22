@@ -970,6 +970,19 @@ pub(super) async fn drive_host(
                             .await;
                     }
                     driver.banner(pos).await;
+                    // An action nobody has ends the run at the banner, whatever the `when` says:
+                    // the reference raises it before it reads the condition.
+                    if !crate::compile::META_ACTIONS.contains(&action) {
+                        let at = task
+                            .origin
+                            .as_ref()
+                            .map(|o| format!("\n{}", crate::render::source_context(o)))
+                            .unwrap_or_default();
+                        options
+                            .abort
+                            .raise_plain(format!("invalid meta action requested: {action}{at}"));
+                        break 'run;
+                    }
                     let held = ignores_when || !matches!(prepared, Prepared::Skipped(_));
                     let role = step
                         .role

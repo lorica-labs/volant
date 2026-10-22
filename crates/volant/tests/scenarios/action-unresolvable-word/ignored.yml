@@ -1,0 +1,6 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - action: module=ping
+      ignore_errors: true
+    - debug: msg=after

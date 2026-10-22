@@ -88,12 +88,6 @@ pub(super) fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Y
             if name.is_empty() {
                 bail!("no module/action detected in task.");
             }
-            if name.contains('=') {
-                return Err(crate::stats::Refusal::at(
-                    2,
-                    format!("Cannot resolve '{name}' to an action or module."),
-                ));
-            }
             let args = if rest.is_empty() {
                 Yaml::Value(Scalar::Null)
             } else {
@@ -127,6 +121,12 @@ pub(super) fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Y
         }
         _ => bail!("no module/action detected in task."),
     }
+}
+
+/// Whether a task's module word is one the reference cannot resolve to an action: it has a `=`
+/// in it. The task keeps the word and fails when it is reached.
+pub(crate) fn names_no_action(module: &str) -> bool {
+    module.contains('=')
 }
 
 /// A `[DEPRECATION WARNING]:` block on stderr, after the line that says how to silence them,

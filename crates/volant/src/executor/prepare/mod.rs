@@ -384,7 +384,11 @@ pub(super) fn prepare(
         return Ok(Prepared::Skipped(items));
     }
     let delegate = delegate_for(task, &base, templar)?;
-    if is_local(&task.module) || crate::action_plugins::controller_side(&task.module) {
+    // A word that names no action fails on the controller before any link is opened.
+    if is_local(&task.module)
+        || crate::action_plugins::controller_side(&task.module)
+        || crate::playbook::names_no_action(&task.module)
+    {
         late::check_become(task, plan, &base, templar)?;
         return Ok(Prepared::Local(items, delegate.map(|(name, _)| name)));
     }

@@ -30,7 +30,7 @@ mod refusals;
 mod resolved;
 
 pub(crate) use refusals::PROMPT_REFUSED;
-use refusals::{check_arguments, check_end_role, check_meta, check_pause, refuse_retries};
+use refusals::{check_arguments, check_end_role, check_pause, refuse_retries};
 use resolved::unresolved;
 pub(crate) use resolved::{
     check_built, check_collection_actions, check_resolved, collection_modules, refusal_of,
@@ -168,8 +168,10 @@ fn check_items(items: &[TaskOrBlock]) -> anyhow::Result<()> {
 /// One task, checked on its own so the compiler can call it per step once roles put tasks
 /// somewhere other than a play's own list.
 pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
+    // A `meta` action nobody has is not refused here: the reference fails it when the task is
+    // reached, after the banner (`invalid meta action requested`), and the driver does the same.
     if is_meta(task) {
-        return check_meta(task);
+        return Ok(());
     }
     // The three import statements never reach a host: the compiler reads what they name and
     // splices it in, so what has to be checked is the tasks that came out of them, which the
@@ -216,6 +218,11 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     // the plugin's whole sequence of sub-tasks and `until` reads the result it ended with, as a
     // module's retry does - `k3s_server` retries a `remote_src` copy three times.
     if action_plugins::kind(&task.module).is_some() {
+        return Ok(());
+    }
+    // `action: module=ping` names no action; the task fails with the reference's sentence when it
+    // is reached, so a play that is half right still runs up to it.
+    if crate::playbook::names_no_action(&task.module) {
         return Ok(());
     }
     if !is_known(&task.module) {

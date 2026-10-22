@@ -18,7 +18,7 @@ use super::escalation::unreachable_message;
 use super::escalation::{
     RunAs, SudoForm, become_success, escalated_command, preamble, preparing_for,
 };
-use super::escalation::{settle_form, su_command, su_ended, su_exchange};
+use super::escalation::{refuse_option_user, settle_form, su_command, su_ended, su_exchange};
 
 impl SshTarget {
     /// Opens a link, through the shared connection unless the operator's own ssh configuration
@@ -243,6 +243,7 @@ impl SshTarget {
             &escalation.prompt_l10n,
             &success,
             timeout,
+            false,
         )
         .await?
         {
@@ -274,13 +275,7 @@ impl SshTarget {
         compress: bool,
         stderr: Stdio,
     ) -> Result<tokio::process::Child, ConnectError> {
-        if escalation.user.starts_with('-') {
-            // `su` would read it as one of its own options.
-            return Err(ConnectError::Become(format!(
-                "'become_user' must be a user name for su, found '{}'",
-                escalation.user
-            )));
-        }
+        refuse_option_user(escalation)?;
         let mut argv = self.ssh_argv_with(&su_command(escalation, command, success), compress);
         let address = argv.len() - 3;
         argv.splice(
@@ -337,6 +332,7 @@ impl SshTarget {
             &escalation.prompt_l10n,
             &success,
             timeout,
+            false,
         )
         .await?
         {

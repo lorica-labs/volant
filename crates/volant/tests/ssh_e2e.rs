@@ -653,19 +653,19 @@ fn ssh_become_over_ssh() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// Real `su` to a throwaway account: the right password runs the task as it, a wrong one is
-/// `Incorrect su password`, none is the timeout; the agent is cached in the account's home.
-#[rstest]
-#[case::the_password(Some(true), 0)]
-#[case::a_wrong_password(Some(false), 2)]
-#[case::no_password(None, 4)]
-#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
-fn ssh_su_reaches_an_account_through_its_password(#[case] right: Option<bool>, #[case] code: i32) {
+/// A throwaway account `su` logs into, with a password, and the guard that removes it.
+fn su_account(code: i32) -> (String, String, Account) {
     assert_passwordless_sudo("the test creates the account su logs into");
     let target = format!("volant-s{}-{code}", std::process::id());
     let password = format!("su-pw-{}-{code}", std::process::id());
+    // Above `UID_MAX`, with no group of its own: `useradd` numbers the next ordinary account
+    // after the highest in its range, and a test that compares numbers with the reference must
+    // not see them move because this one ran in between.
+    let uid = (61000 + code).to_string();
     let added = Command::new("sudo")
-        .args(["-n", "useradd", "-m", "-s", "/bin/sh", &target])
+        .args([
+            "-n", "useradd", "-m", "-s", "/bin/sh", "-N", "-g", "users", "-u", &uid, &target,
+        ])
         .output()
         .unwrap();
     assert!(
@@ -688,6 +688,18 @@ fn ssh_su_reaches_an_account_through_its_password(#[case] right: Option<bool>, #
         chpasswd.wait().unwrap().success(),
         "setting {target}'s password"
     );
+    (target, password, account)
+}
+
+/// Real `su` to a throwaway account: the right password runs the task as it, a wrong one is
+/// `Incorrect su password`, none is the timeout; the agent is cached in the account's home.
+#[rstest]
+#[case::the_password(Some(true), 0)]
+#[case::a_wrong_password(Some(false), 2)]
+#[case::no_password(None, 4)]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_su_reaches_an_account_through_its_password(#[case] right: Option<bool>, #[case] code: i32) {
+    let (target, password, account) = su_account(code);
     let dir = tmp(&format!("su{code}"));
     let offered = match right {
         Some(true) => format!(" ansible_become_password={password}"),
@@ -759,6 +771,72 @@ impl Drop for Account {
             .args(["-n", "userdel", "-r", &self.0])
             .output();
     }
+}
+
+/// Real `su` over a local connection to a throwaway account: the right password runs the task as
+/// it, and the agent's stderr stays out of the stream the frames travel on.
+#[test]
+#[ignore = "needs passwordless sudo to make the account, run through just ssh-test"]
+fn ssh_local_su_runs_the_task_as_the_account() {
+    let (target, password, account) = su_account(60);
+    let dir = tmp("local-su");
+    let inv = dir.join("inventory.ini");
+    std::fs::write(
+        &inv,
+        format!("l ansible_connection=local ansible_become_password={password}\n"),
+    )
+    .unwrap();
+    let play = dir.join("su.yml");
+    std::fs::write(
+        &play,
+        format!(
+            "- hosts: l\n  gather_facts: false\n  tasks:\n    - command: whoami\n      \
+             become: true\n      become_method: su\n      become_user: {target}\n      \
+             register: who\n    - debug:\n        msg: \"{{{{ who.stdout }}}}\"\n"
+        ),
+    )
+    .unwrap();
+    // The account has to reach the agent: the build directory sits in a home it may not enter.
+    let agents = dir.join("agents");
+    std::fs::create_dir_all(&agents).unwrap();
+    std::fs::set_permissions(&agents, std::fs::Permissions::from_mode(0o755)).unwrap();
+    let shipped = std::env::var("VOLANT_AGENT_DIR").expect("VOLANT_AGENT_DIR is set");
+    for entry in std::fs::read_dir(shipped).unwrap() {
+        let entry = entry.unwrap();
+        if !entry.file_type().unwrap().is_file() {
+            continue;
+        }
+        let name = entry.file_name();
+        // The musl build of this machine is the one `local` looks for under its plain name; any
+        // other file would send it to the build directory, which the account cannot enter.
+        let musl = format!("volant-agent-{}-unknown-linux-musl", std::env::consts::ARCH);
+        let to = agents.join(if name.to_str() == Some(musl.as_str()) {
+            "volant-agent".into()
+        } else {
+            name
+        });
+        std::fs::copy(entry.path(), &to).unwrap();
+        std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
+    }
+    let out = volant_env_within(
+        &[
+            "playbook",
+            "-i",
+            &inv.display().to_string(),
+            &play.display().to_string(),
+        ],
+        &[("VOLANT_AGENT_DIR", &agents.display().to_string())],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    drop(account);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(&format!(r#""msg": "{target}""#)), "{text}");
+    assert!(
+        !text.contains(&password),
+        "the password never reaches the output"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
 
 /// A delegated task travels over the **delegate's** connection, never the delegating host's.

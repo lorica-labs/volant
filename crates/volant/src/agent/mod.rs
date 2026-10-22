@@ -2,8 +2,8 @@
 //! Finding the agent binary and talking to a running agent.
 
 use anyhow::{Context, bail};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{Child, ChildStdin, ChildStdout};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::process::Child;
 use tokio::sync::mpsc;
 use volant_protocol::frame::{header, payload_len};
 use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
@@ -28,12 +28,15 @@ pub use source::AgentSource;
 const DROP_GRACE: std::time::Duration = std::time::Duration::from_millis(1000);
 const DROP_POLL_INTERVAL: std::time::Duration = std::time::Duration::from_millis(5);
 
+/// The write side of a link: the child's stdin, or the master of the terminal a local `su` runs on.
+type Input = Box<dyn AsyncWrite + Send + Unpin>;
+
 /// A running agent reached through a transport: frames in, frames out.
 ///
 /// `stdin` is an `Option` so `Drop` can close it explicitly, ahead of waiting on `child`, even
 /// though a type with a manual `Drop` impl cannot otherwise move a field out of itself.
 pub struct AgentLink {
-    stdin: Option<ChildStdin>,
+    stdin: Option<Input>,
     frames: mpsc::Receiver<std::io::Result<Vec<u8>>>,
     /// The batch last sent and which of its tasks have answered, for a refused result to be
     /// matched with a task that waits for it.
@@ -49,6 +52,8 @@ pub struct AgentLink {
     tty: bool,
     /// Where, on the host, the agent's stderr goes when it cannot share the link's stream.
     stderr_file: Option<String>,
+    /// The controller's directory that holds `stderr_file`, which the link removes when it ends.
+    stderr_local: Option<std::path::PathBuf>,
     /// Whether this is [`AgentLink::dead`]'s stand-in for a host that never answered.
     stand_in: bool,
     /// The line `ssh -tt` ends a command's stderr with, for a link over ssh that gives commands a
@@ -56,18 +61,31 @@ pub struct AgentLink {
     tty_target: Option<crate::transport::SshTarget>,
     /// The line, once asked for: `Some(None)` is an answer of no line.
     tty_line: Option<Option<String>>,
+    /// The reader of a local terminal's master, stopped when the link ends: its descriptor would
+    /// otherwise keep the terminal open, and the agent behind it would never see the hangup.
+    hangup: Option<tokio::task::AbortHandle>,
 }
 
 impl AgentLink {
     pub fn new(mut child: Child) -> anyhow::Result<Self> {
         let stdin = child.stdin.take().context("agent stdin is not piped")?;
-        let stdout = BufReader::new(child.stdout.take().context("agent stdout is not piped")?);
+        let stdout = child.stdout.take().context("agent stdout is not piped")?;
+        Ok(Self::over(child, Box::new(stdin), Box::new(stdout)).0)
+    }
+
+    /// A link whose frames travel over `stdin` and `stdout` rather than over the child's own pipes.
+    fn over(
+        child: Child,
+        stdin: Input,
+        stdout: Box<dyn AsyncRead + Send + Unpin>,
+    ) -> (Self, tokio::task::AbortHandle) {
+        let stdout = BufReader::new(stdout);
         // Owning the stdout reader in its own task, rather than reading it directly inside
         // `recv`, is what makes `recv` cancellation-safe: dropping its future only drops a
         // channel receive, never a partially read frame.
         let (tx, rx) = mpsc::channel(1);
-        tokio::spawn(read_frames(stdout, tx));
-        Ok(Self {
+        let reader = tokio::spawn(read_frames(stdout, tx)).abort_handle();
+        let link = Self {
             stdin: Some(stdin),
             frames: rx,
             batch: None,
@@ -78,10 +96,13 @@ impl AgentLink {
             ledger: crate::profile::Ledger::default(),
             tty: false,
             stderr_file: None,
+            stderr_local: None,
             stand_in: false,
             tty_target: None,
             tty_line: None,
-        })
+            hangup: None,
+        };
+        (link, reader)
     }
 
     pub(crate) fn set_tty_target(&mut self, target: Option<crate::transport::SshTarget>) {
@@ -127,6 +148,24 @@ impl AgentLink {
         let mut link = Self::new(child)?;
         link.tty = true;
         link.stderr_file = Some(stderr_file);
+        Ok(link)
+    }
+
+    /// The same, for a `su` started on a terminal of the controller's own: `su` is `child`, and
+    /// the agent's frames travel over `stdin` and `stdout`, the two ends of that terminal.
+    /// `scratch` is a directory of the controller that holds the agent's stderr, removed with the
+    /// link.
+    pub fn new_over_local_tty(
+        child: Child,
+        stdin: Input,
+        stdout: Box<dyn AsyncRead + Send + Unpin>,
+        scratch: std::path::PathBuf,
+    ) -> anyhow::Result<Self> {
+        let (mut link, reader) = Self::over(child, stdin, stdout);
+        link.hangup = Some(reader);
+        link.tty = true;
+        link.stderr_file = Some(scratch.join("agent.stderr").display().to_string());
+        link.stderr_local = Some(scratch);
         Ok(link)
     }
 
@@ -189,7 +228,7 @@ impl AgentLink {
         std::mem::take(&mut self.ledger)
     }
 
-    fn stdin(&mut self) -> &mut ChildStdin {
+    fn stdin(&mut self) -> &mut Input {
         self.stdin.as_mut().expect("stdin is only taken on drop")
     }
 
@@ -332,6 +371,12 @@ impl Drop for AgentLink {
     /// falls through and lets the `child` field's own `kill_on_drop` kill it as before.
     fn drop(&mut self) {
         drop(self.stdin.take());
+        if let Some(reader) = self.hangup.take() {
+            reader.abort();
+        }
+        if let Some(dir) = self.stderr_local.take() {
+            let _ = std::fs::remove_dir_all(dir);
+        }
         // Nothing reaches an agent behind a terminal until `ssh` goes, which `kill_on_drop`
         // sees to as soon as this returns.
         if self.tty {
@@ -351,7 +396,7 @@ impl Drop for AgentLink {
 /// a read error, or nothing at all once the stream ends cleanly (dropping the sender, which
 /// is what turns the matching `recv` into `Ok(None)`).
 async fn read_frames(
-    mut stdout: BufReader<ChildStdout>,
+    mut stdout: BufReader<Box<dyn AsyncRead + Send + Unpin>>,
     tx: mpsc::Sender<std::io::Result<Vec<u8>>>,
 ) {
     loop {

@@ -1,0 +1,4 @@
+{
+  "code": 2,
+  "stdout": "\nPLAY [l] ***********************************************************************\n\nTASK [ping] ********************************************************************\n[ERROR]: Task failed: Premature end of stream waiting for become success.\n>>> Standard Error\nPassword: \nsu: Authentication failure\nOrigin: <golden-tmp>/play.yml:9:7\n\n7     ansible_become_password: wrong\n8   tasks:\n9     - ping:\n        ^ column 7\n\nfatal: [l]: FAILED! => {\"changed\": false, \"msg\": \"Task failed: Premature end of stream waiting for become success.\\n>>> Standard Error\\nPassword: \\nsu: Authentication failure\"}\n\nPLAY RECAP *********************************************************************\nl                          : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+}

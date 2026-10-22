@@ -2590,9 +2590,18 @@ pub(super) fn finalization_causes(task: &PlayTask, message: &str) -> Option<Valu
         .split('\'')
         .next()?;
     let origin = |name: &str| task.value_origins.get(name);
+    let value = crate::render::cause(resolving, origin(&format!("args.{key}")), None);
+    // A syntax error is the head of the block itself, not a link behind it: measured on
+    // ansible-core 2.19.12, `No filter named` prints one `caused by`, the value.
+    if resolving.contains(crate::template::NO_FILTER) {
+        return Some(Value::Array(vec![
+            crate::render::lead(&format!("Task failed: {head}")),
+            value,
+        ]));
+    }
     Some(Value::Array(vec![
         crate::render::cause(&head, origin("action"), None),
-        crate::render::cause(resolving, origin(&format!("args.{key}")), None),
+        value,
     ]))
 }
 

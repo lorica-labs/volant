@@ -1,0 +1,3 @@
+# `!unsafe` on a mapping key loads as the key, in a play, in group_vars, in an extra-vars file and
+# under from_yaml.
+args: [-i, inv.ini, -e, "@extra.yml", site.yml]

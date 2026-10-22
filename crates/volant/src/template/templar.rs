@@ -295,7 +295,7 @@ impl Templar {
                     // Measured on ansible-core 2.19.12: a plugin's failure names the value it
                     // was resolving, `Error while resolving value for 'msg': The lookup plugin
                     // 'x' failed: …`.
-                    if bridged::is_plugin_failure(&err.0) {
+                    if bridged::is_plugin_failure(&err.0) || err.0.starts_with(super::NO_FILTER) {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
                     } else if err.0.starts_with(filters::UNDECRYPTABLE) {
                         TemplateError(format!(

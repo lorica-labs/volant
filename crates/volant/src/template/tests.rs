@@ -1712,6 +1712,22 @@ fn unsafe_text_and_facts_are_data_through_a_nested_variable() {
     }
 }
 
+/// The loader's filters are not a playbook's: only the loader's own wrapper may call them.
+#[rstest::rstest]
+#[case::unsafe_filter("{{ 'x' | volant_unsafe }}", "volant_unsafe")]
+#[case::vault_filter("{{ 'x' | volant_vault }}", "volant_vault")]
+#[case::inside_text("a {{ \"x\" | volant_unsafe }}", "volant_unsafe")]
+fn a_playbook_cannot_call_the_loaders_filters(#[case] text: &str, #[case] name: &str) {
+    let t = templar();
+    let want = format!("Syntax error in template: No filter named '{name}'.");
+    assert_eq!(t.render(text, &vars(json!({}))), Err(TemplateError(want)));
+    let wrapped = crate::yaml::unsafe_data(json!("{{ c }}"));
+    assert_eq!(
+        t.render(wrapped.as_str().unwrap(), &vars(json!({}))),
+        Ok(json!("{{ c }}"))
+    );
+}
+
 /// A variable over the inventory's names renders when the store tracks which hold host text, and
 /// stays as written when it does not; a lookup by text never renders, at any depth.
 #[test]

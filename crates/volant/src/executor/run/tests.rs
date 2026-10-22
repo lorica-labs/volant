@@ -92,6 +92,7 @@ async fn every_local_module_has_an_arm_in_run_local() {
             diff: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            label_error: None,
             notify: Vec::new(),
         };
         // Arguments are deliberately empty: what is asserted is that the name is known, not
@@ -637,6 +638,7 @@ fn the_argument_check_speaks_the_reference_s_sentences() {
             diff: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            label_error: None,
             notify: Vec::new(),
         };
         validate_argument_spec(&item)
@@ -782,6 +784,7 @@ fn a_result_that_ran_says_whether_it_failed() {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     };
     let failed = |r: Value| {
@@ -830,6 +833,7 @@ fn the_recap_counts_changed_the_way_the_reference_does() {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     };
     let plain = task("command");
@@ -886,6 +890,7 @@ fn failed_when_false_rescues_a_non_zero_rc() {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     };
     let r = apply_conditions(
@@ -4190,6 +4195,7 @@ fn a_gathered_fact_is_data_and_moves_nothing_it_should_not() {
             become_password: None,
             ssh_common_args: Vec::new(),
             ssh_extra_args: Vec::new(),
+            ssh_use_tty: true,
         };
         let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
             panic!("a fact turned the host's connection local");
@@ -4317,6 +4323,7 @@ async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
         become_password: None,
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
+        ssh_use_tty: true,
     };
     let transport = Transport::for_host(&host, &defaults).expect("a local transport");
     let mut link = transport
@@ -4683,6 +4690,7 @@ async fn a_connect_timeout_reaches_the_connection_as_ssh_s_connecttimeout() {
             become_password: None,
             ssh_common_args: Vec::new(),
             ssh_extra_args: Vec::new(),
+            ssh_use_tty: true,
         };
         let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
         let argv = |t: &Transport| match t {
@@ -4719,6 +4727,7 @@ fn shared_to_h1(dir: &Path) -> Transport {
         become_password: None,
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
+        ssh_use_tty: true,
     };
     Transport::for_vars("h1", vars.as_object().expect("an object"), &defaults)
         .expect("an ssh transport")
@@ -5015,6 +5024,7 @@ fn local_agents() -> (AgentSource, ConnectionDefaults) {
         become_password: None,
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
+        ssh_use_tty: true,
     };
     (AgentSource::discover(), defaults)
 }

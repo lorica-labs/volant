@@ -3105,6 +3105,48 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
+    "partial_quote": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "partial_quote.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Error parsing host definition 'h1 x=\"unterminated': No closing quotation\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory.\nOrigin: <golden-tmp>/partial_quote.ini\n\n<<< caused by >>>\n\nError parsing host definition 'h1 x=\"unterminated': No closing quotation\n\n[WARNING]: Unable to parse <golden-tmp>/partial_quote.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "partial_second_group": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "partial_second_group.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Error parsing host definition 'h2 x=\"unterminated': No closing quotation\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory.\nOrigin: <golden-tmp>/partial_second_group.ini\n\n<<< caused by >>>\n\nError parsing host definition 'h2 x=\"unterminated': No closing quotation\n\n[WARNING]: Unable to parse <golden-tmp>/partial_second_group.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
     "partial_then_good": {
       "env": {},
       "hosts": [

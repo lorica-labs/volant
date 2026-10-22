@@ -31,6 +31,7 @@ pub(super) fn local_item(args: Value) -> Item {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     }
 }
@@ -329,6 +330,7 @@ pub(super) fn bare_item() -> Item {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     }
 }

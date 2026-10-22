@@ -277,6 +277,26 @@ pub(in crate::executor) fn judge_attempt(
     retry: &Retry,
     templar: &Templar,
 ) -> Attempt {
+    // The item's label is rendered once its last attempt is in, as `finish` does it.
+    match attempt_verdict(task, item, raw, attempt, retry, templar) {
+        Attempt::Done(mut r) => {
+            if let Some(message) = &item.label_error {
+                crate::executor::prepare::label_failed(message, &mut r);
+            }
+            Attempt::Done(r)
+        }
+        again @ Attempt::Again(..) => again,
+    }
+}
+
+fn attempt_verdict(
+    task: &PlayTask,
+    item: &Item,
+    raw: TaskResult,
+    attempt: u32,
+    retry: &Retry,
+    templar: &Templar,
+) -> Attempt {
     // Out of the whole loop, as the reference's timeout exception is: see `finish`.
     if timed_out(&raw) {
         return Attempt::Done(raw);

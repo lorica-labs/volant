@@ -83,6 +83,9 @@ impl Inventory {
         if let Some(ungrouped) = self.group("ungrouped") {
             out.push(ungrouped);
         }
+        if self.detached {
+            return out;
+        }
         let has_parent: HashSet<&str> = self
             .groups
             .iter()
@@ -128,6 +131,9 @@ impl Inventory {
             .map(|g| g.hosts.clone())
             .unwrap_or_default();
         let mut hosts = self.hosts_breadth_first("all", &own_hosts, self.all_children());
+        if self.detached {
+            return hosts;
+        }
         let reached: HashSet<&str> = hosts.iter().map(String::as_str).collect();
         let missed: Vec<String> = self
             .hosts

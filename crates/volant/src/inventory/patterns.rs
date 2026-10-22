@@ -5,6 +5,8 @@ use std::sync::LazyLock;
 
 use regex::Regex;
 
+use super::Host;
+
 /// The terms of a host pattern, as `split_host_pattern` of ansible-core 2.19.12 cuts them. A
 /// pattern with a comma is that comma-separated list, and a `:` in one of its terms stays. A
 /// pattern with none is one term when it is a valid address or host name with a port or a range
@@ -255,4 +257,16 @@ pub(super) fn apply_subscript(names: &[String], sub: Subscript) -> Vec<String> {
             }
         }
     }
+}
+
+#[derive(Debug, Default)]
+pub struct Resolution {
+    pub hosts: Vec<Host>,
+    pub unmatched: Vec<String>,
+    pub warnings: Vec<String>,
+    /// The first `~regex` term that does not compile: the reference stops on it with
+    /// `Invalid host list pattern`, so the caller refuses the run.
+    pub invalid: Option<String>,
+    /// The first spelling of the implicit controller host a pattern names: it stands for the host.
+    pub(super) implicit: Option<String>,
 }

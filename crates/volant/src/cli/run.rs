@@ -479,6 +479,7 @@ async fn run_all(
         become_password,
         ssh_common_args: ssh_words("--ssh-common-args", args.ssh_common_args.as_deref())?,
         ssh_extra_args: ssh_words("--ssh-extra-args", args.ssh_extra_args.as_deref())?,
+        ssh_use_tty: config.ssh_usetty,
     };
     let mut stats = Stats::default();
 

@@ -119,6 +119,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             }
             _ => {}
         }
+        if section == "ssh_connection" && key.trim() == "usetty" {
+            config.ssh_usetty = callback_flag(value);
+        }
         if section != "defaults" {
             continue;
         }

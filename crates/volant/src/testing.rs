@@ -46,6 +46,7 @@ pub(crate) fn defaults() -> ConnectionDefaults {
         become_password: None,
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
+        ssh_use_tty: true,
     }
 }
 

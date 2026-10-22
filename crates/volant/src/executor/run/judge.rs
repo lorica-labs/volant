@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use volant_protocol::modules::short_name;
 use volant_protocol::{TaskResult, failed_when_decides};
 
-use crate::executor::prepare::Item;
+use crate::executor::prepare::{Item, label_failed};
 use crate::playbook::PlayTask;
 use crate::template::{Templar, TemplateError};
 use crate::vars::HostVars;
@@ -25,11 +25,16 @@ pub(in crate::executor) fn finish(
     // timeout is an exception raised out of the handler's run, past everything that would have
     // judged the result, so `failed_when: false` cannot make a pass of it. A refused raw
     // argument is raised before the handler runs, and stands the same way.
-    if timed_out(&result) || refusal(task).is_some() {
-        return result;
+    let mut r = if timed_out(&result) || refusal(task).is_some() {
+        result
+    } else {
+        let mut r = apply_conditions(task, item, result, templar);
+        settle_failure(&mut r, task);
+        r
+    };
+    if let Some(message) = &item.label_error {
+        label_failed(message, &mut r);
     }
-    let mut r = apply_conditions(task, item, result, templar);
-    settle_failure(&mut r, task);
     r
 }
 

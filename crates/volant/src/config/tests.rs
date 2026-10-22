@@ -811,3 +811,15 @@ fn deprecation_warnings_are_on_unless_the_file_turns_them_off() {
         .is_err()
     );
 }
+
+/// `[ssh_connection] usetty` is on without a line, and reads like the reference's callback
+/// options: an unknown word is off.
+#[rstest::rstest]
+#[case("", true)]
+#[case("[ssh_connection]\nusetty = False\n", false)]
+#[case("[ssh_connection]\nusetty = true\n", true)]
+#[case("[ssh_connection]\nusetty = maybe\n", false)]
+#[case("[defaults]\nusetty = False\n", true)]
+fn the_ssh_terminal_setting_is_read_from_its_section(#[case] text: &str, #[case] on: bool) {
+    assert_eq!(cfg(text, ".").ssh_usetty, on);
+}

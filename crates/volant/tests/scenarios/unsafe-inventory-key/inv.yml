@@ -1,0 +1,7 @@
+all:
+  hosts:
+    h1:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+      d:
+        !unsafe a: 1

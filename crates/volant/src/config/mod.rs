@@ -93,6 +93,10 @@ pub struct Config {
     /// `[defaults] deprecation_warnings` or `ANSIBLE_DEPRECATION_WARNINGS`: print the
     /// `[DEPRECATION WARNING]` blocks and the line that tells how to stop them. On by default.
     pub deprecation_warnings: bool,
+    /// `[ssh_connection] usetty` or `ANSIBLE_SSH_USETTY`: give `raw`, `script` and the commands a
+    /// plugin sends without input a terminal (`ssh -tt`). On by default; `ansible_ssh_use_tty`
+    /// on a host wins over both.
+    pub ssh_usetty: bool,
     /// `[defaults] enable_task_debugger` or `ANSIBLE_ENABLE_TASK_DEBUGGER`: a failed or
     /// unreachable task with no `debugger` keyword opens the debugger prompt.
     pub enable_task_debugger: bool,
@@ -183,6 +187,7 @@ impl Default for Config {
             force_color: false,
             nocolor: false,
             deprecation_warnings: true,
+            ssh_usetty: true,
             enable_task_debugger: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
@@ -337,6 +342,10 @@ impl Config {
             config.show_custom_stats = on;
         }
         color::read_env(&mut config)?;
+        // The environment wins over the file; an empty or unknown word reads as false, measured.
+        if let Ok(flag) = std::env::var("ANSIBLE_SSH_USETTY") {
+            config.ssh_usetty = callback_flag(&flag);
+        }
         // Set and empty still wins, and a word the reference does not know reads as false.
         if let Ok(flag) = std::env::var("ANSIBLE_SHOW_TASK_PATH_ON_FAILURE") {
             config.show_task_path_on_failure = callback_flag(&flag);

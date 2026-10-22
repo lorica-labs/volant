@@ -149,7 +149,7 @@ pub(super) fn from_yaml(value: Value) -> Result<Value, Error> {
     let Some(text) = value.as_str() else {
         return Ok(value);
     };
-    let docs = crate::yaml::load(text, "from_yaml").map_err(|e| {
+    let docs = crate::yaml::load_plain(text, "from_yaml").map_err(|e| {
         if crate::yaml::is_second_document(&e) {
             invalid("from_yaml: expected a single document in the stream")
         } else {

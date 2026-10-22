@@ -1,0 +1,6 @@
+# A loop renders each item's fields when it reaches it: an item behind a `break_when` that ended
+# the loop never fails, and without one an item that fails to render fails alone.
+runs:
+  - args: [-i, inv.ini, broken.yml]
+  - args: [-i, inv.ini, failing.yml]
+needs: ["ansible-core"]

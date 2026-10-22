@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Arguments] ***************************************************************\nok: [h1] => (item=1) => {\n    \"msg\": \"ok\"\n}\n\nTASK [Conditional] *************************************************************\nok: [h1] => (item=1) => {\n    \"msg\": 1\n}\n\nTASK [Label] *******************************************************************\nok: [h1] => (item=a) => {\n    \"msg\": 1\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 2,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => (item=1) => {\n    \"msg\": \"ok\"\n}\n[ERROR]: Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'badv' failed: lookup boom value\n\nTask failed: Finalization of task args for 'ansible.builtin.debug' failed.\nOrigin: <golden-tmp>/failing.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - debug:\n        ^ column 7\n\n<<< caused by >>>\n\nError while resolving value for 'msg': The lookup plugin 'badv' failed: lookup boom value\nOrigin: <golden-tmp>/failing.yml:5:14\n\n3   tasks:\n4     - debug:\n5         msg: \"{{ 'ok' if item != 2 else lookup('badv', 'x') }}\"\n               ^ column 14\n\nfailed: [h1] (item=2) => {\"msg\": \"Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'badv' failed: lookup boom value\"}\nok: [h1] => (item=3) => {\n    \"msg\": \"ok\"\n}\nfatal: [h1]: FAILED! => {\"msg\": \"One or more items failed\"}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

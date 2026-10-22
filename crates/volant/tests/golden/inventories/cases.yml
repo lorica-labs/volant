@@ -98,3 +98,6 @@ constructed_compose_int: {sources: [constructed_base.ini, constructed_compose_in
 constructed_compose_int_lax: {sources: [constructed_base.ini, constructed_compose_int_lax.yml]}
 generator_undefined: {sources: [generator_undefined.yml]}
 generator_invalid_chars: {sources: [generator_invalid_chars.yml], hosts: unordered}
+reserved_all_two_sources: {sources: [reserved_all.ini, one.ini]}
+generator_non_ascii: {sources: [generator_non_ascii.yml], hosts: unordered}
+yaml_non_ascii: {sources: [yaml_non_ascii.yml]}

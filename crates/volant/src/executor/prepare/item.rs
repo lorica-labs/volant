@@ -231,11 +231,14 @@ pub(super) fn item_failure(task: &PlayTask, err: &TemplateError) -> TaskResult {
     result.0.insert("changed".into(), Value::Bool(false));
     if let Some(Value::Array(mut causes)) =
         crate::executor::prepare::undefined::finalization_causes(task, &err.0)
-        && let Some(head) = causes.first_mut()
-        && head.get("lead").is_none()
-        && let Some(text) = head.get("msg").and_then(Value::as_str)
     {
-        *head = crate::render::lead(&format!("Task failed: {text}"));
+        // A head that already leads the block stays; a plain one becomes the lead.
+        if let Some(head) = causes.first_mut()
+            && head.get("lead").is_none()
+            && let Some(text) = head.get("msg").and_then(Value::as_str)
+        {
+            *head = crate::render::lead(&format!("Task failed: {text}"));
+        }
         result
             .0
             .insert(crate::render::CHAIN_KEY.into(), Value::Array(causes));

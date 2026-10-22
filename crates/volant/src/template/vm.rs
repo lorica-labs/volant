@@ -330,7 +330,8 @@ pub(super) fn eval_expr(
     let mut codegen = CodeGenerator::new("<expression>", expr);
     codegen.compile_expr(&ast);
     let (mut instructions, _) = codegen.finish();
-    internal_filter([&instructions], None)?;
+    // A one-expression template reaches here without its braces.
+    internal_filter([&instructions], Some(&format!("{{{{ {} }}}}", expr.trim())))?;
     let mutating = mutates(&instructions);
     let _ = route_calls(&mut instructions, mutating);
     let env = templar.env_for([&instructions]);

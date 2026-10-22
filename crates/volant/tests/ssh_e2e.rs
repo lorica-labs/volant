@@ -658,8 +658,14 @@ fn su_account(code: i32) -> (String, String, Account) {
     assert_passwordless_sudo("the test creates the account su logs into");
     let target = format!("volant-s{}-{code}", std::process::id());
     let password = format!("su-pw-{}-{code}", std::process::id());
+    // Above `UID_MAX`, with no group of its own: `useradd` numbers the next ordinary account
+    // after the highest in its range, and a test that compares numbers with the reference must
+    // not see them move because this one ran in between.
+    let uid = (61000 + code).to_string();
     let added = Command::new("sudo")
-        .args(["-n", "useradd", "-m", "-s", "/bin/sh", &target])
+        .args([
+            "-n", "useradd", "-m", "-s", "/bin/sh", "-N", "-g", "users", "-u", &uid, &target,
+        ])
         .output()
         .unwrap();
     assert!(
@@ -800,7 +806,15 @@ fn ssh_local_su_runs_the_task_as_the_account() {
         if !entry.file_type().unwrap().is_file() {
             continue;
         }
-        let to = agents.join(entry.file_name());
+        let name = entry.file_name();
+        // The musl build of this machine is the one `local` looks for under its plain name; any
+        // other file would send it to the build directory, which the account cannot enter.
+        let musl = format!("volant-agent-{}-unknown-linux-musl", std::env::consts::ARCH);
+        let to = agents.join(if name.to_str() == Some(musl.as_str()) {
+            "volant-agent".into()
+        } else {
+            name
+        });
         std::fs::copy(entry.path(), &to).unwrap();
         std::fs::set_permissions(&to, std::fs::Permissions::from_mode(0o755)).unwrap();
     }

@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Ignored
+      debug:
+        msg: "{{ lookup('file', '/nonexistent/x', errors='ignore') | default('none', true) }}"
+    - name: Warned
+      debug:
+        msg: "{{ lookup('file', '/nonexistent/x', errors='warn') | default('none', true) }}"

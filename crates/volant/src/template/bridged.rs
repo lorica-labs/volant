@@ -301,10 +301,11 @@ pub(super) fn said(err: &Error) -> Option<&str> {
 }
 
 /// Whether a template error is a plugin's own failure, `The <kind> plugin '<name>' failed: …`
-/// or `The lookup plugin '<name>' was not found.`, which the reference chains behind the value
-/// it was resolving.
+/// or `The lookup plugin '<name>' was not found.`, or the `vars` lookup's `No variable named
+/// '<name>' was found.`, which the reference chains behind the value it was resolving.
 pub(crate) fn is_plugin_failure(message: &str) -> bool {
     [
+        "No variable named '",
         "The filter plugin '",
         "The test plugin '",
         "The lookup plugin '",

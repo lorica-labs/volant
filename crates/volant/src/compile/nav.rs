@@ -81,12 +81,38 @@ pub(crate) fn first(c: &Compiled) -> usize {
 }
 
 /// The first step `--start-at-task` names, as the reference finds it: a task (or the statement of
-/// an include) whose name matches the pattern, `Gathering Facts` and handlers apart.
+/// an include) whose name matches the pattern, the implicit `Gathering Facts` included and
+/// handlers apart.
 pub(crate) fn find_task(c: &Compiled, pattern: &str) -> Option<usize> {
-    (usize::from(c.gathers)..c.steps.len()).find(|&i| {
+    (0..c.steps.len()).find(|&i| {
         matches!(c.steps[i].kind, StepKind::Task | StepKind::Include(_))
             && crate::inventory::glob_match(pattern, &c.steps[i].task.name)
     })
+}
+
+/// Applies `--start-at-task` to one play and says whether the play holds the task.
+///
+/// Measured on ansible-core 2.19.12: the `Gathering Facts` step runs first and the step found
+/// follows it, so a pattern that matches `Gathering Facts` itself runs it twice, and a play with
+/// `gather_facts: false` still runs it once in front of a task found behind it (and never
+/// matches it). Both are laid out here as steps, before anything reads the list.
+pub(crate) fn start_at_task(c: &mut Compiled, pattern: &str) -> bool {
+    let Some(at) = find_task(c, pattern) else {
+        c.start_at = Some(c.steps.len());
+        return false;
+    };
+    c.start_at = Some(if at == 0 && c.gathers {
+        let again = c.steps[0].clone();
+        c.splice(1, vec![again]);
+        1
+    } else if let Some(step) = c.idle_gather.take().filter(|_| !c.gathers) {
+        c.splice(0, vec![*step]);
+        c.gathers = true;
+        at + 1
+    } else {
+        at
+    });
+    true
 }
 
 /// The index a host moves to after finishing `pos` without failing: the next step it has a

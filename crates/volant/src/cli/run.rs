@@ -264,13 +264,7 @@ async fn run_all(
             if start_found {
                 break;
             }
-            compiled.start_at = Some(match compile::find_task(compiled, pattern) {
-                Some(at) => {
-                    start_found = true;
-                    at
-                }
-                None => compiled.steps.len(),
-            });
+            start_found = compile::start_at_task(compiled, pattern);
         }
     }
     // Asking needs somebody to answer. Refused before any host is touched, with the code the

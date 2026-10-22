@@ -89,6 +89,10 @@ async fn run_all(
 ) -> anyhow::Result<i32> {
     let config = crate::runtime::resolve::configured(Config::load()?);
     out.set_path_on_failure(config.show_task_path_on_failure);
+    playbook::set_deprecation_warnings(config.deprecation_warnings);
+    let choice = config.color_choice(args.no_color);
+    out.set_choice(choice);
+    crate::transport::trace::configure(args.verbose, choice);
     announce(out);
     python::set_module_path(module_path_dirs(args));
     let secrets = match crate::vault::load(&crate::vault::Request {

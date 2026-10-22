@@ -102,6 +102,13 @@ impl Renderer {
         }
     }
 
+    /// Settles the colour once the configuration is read.
+    pub fn set_choice(&mut self, choice: ColorChoice) {
+        let stream = AutoStream::new(std::io::stdout(), choice);
+        self.color = stream.current_choice() != ColorChoice::Never;
+        self.out = Box::new(stream);
+    }
+
     #[cfg(test)]
     pub fn with_writer(out: Box<dyn Write>, color: bool, width: usize, verbosity: u8) -> Self {
         Self {

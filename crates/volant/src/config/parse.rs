@@ -172,6 +172,12 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     config.show_custom_stats = on;
                 }
             }
+            "force_color" => config.force_color = boolean("COLOR_FORCE", origin, value.trim())?,
+            "nocolor" => config.nocolor = boolean("NOCOLOR", origin, value.trim())?,
+            "deprecation_warnings" => {
+                config.deprecation_warnings =
+                    boolean("DEPRECATION_WARNINGS", origin, value.trim())?;
+            }
             "show_task_path_on_failure" => {
                 config.show_task_path_on_failure = callback_flag(value);
             }

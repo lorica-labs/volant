@@ -1335,14 +1335,7 @@ pub(super) async fn drive_host(
                                     err.downcast_ref::<crate::transport::ConnectionNotFound>() =>
                             {
                                 if let Some(message) = missing.warning() {
-                                    let _ = tx
-                                        .send(Event::Warning {
-                                            host: name.clone(),
-                                            index: pos,
-                                            message,
-                                            censored: false,
-                                        })
-                                        .await;
+                                    driver.warn(pos, message).await;
                                 }
                                 let msg = format!("Task failed: {missing}");
                                 let results: Vec<(Option<Value>, TaskResult)> = items

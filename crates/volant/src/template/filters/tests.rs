@@ -453,7 +453,7 @@ fn extract_reads_container_item_then_each_more_key() {
     // An undefined `morekeys` is a key that cannot be read, not an omitted argument: the
     // reference fails `'missing' is undefined` bare, and `default` catches it.
     let err = r("{{ 'a' | extract({'a': 1}, missing) }}").unwrap_err();
-    assert!(err.starts_with(super::super::UNDEFINED), "{err}");
+    assert_eq!(err, "'missing' is undefined");
     assert_eq!(
         r("{{ 'a' | extract({'a': 1}, missing) | default('d') }}"),
         Ok(json!("d"))

@@ -2460,8 +2460,8 @@ pub(super) async fn drive_host(
             }
             if let Some(causes) = debugger::causes(task, &err.0)
                 .or_else(|| throttle::causes(task, &err.0))
+                .or_else(|| super::prepare::undefined::conditional_causes(task, &err.0))
                 .or_else(|| super::prepare::undefined_causes(task, &err.0))
-                .or_else(|| super::prepare::conditional_causes(task, &err.0))
             {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
             } else if let Some(detail) = err.0.strip_prefix("Task failed: ")
@@ -2478,12 +2478,7 @@ pub(super) async fn drive_host(
                     )]),
                 );
             }
-            if let Some(at) = super::prepare::keyword_at(task, &err) {
-                result
-                    .0
-                    .insert(crate::render::ERROR_KEY.into(), err.0.clone().into());
-                result.0.insert(crate::render::AT_KEY.into(), at);
-            }
+            super::prepare::undefined::mark_keyword(task, &err, &mut result);
             let results = vec![(None, result)];
             // Measured on ansible-core 2.19.12: an undefined variable in a task's arguments
             // fails that task, and a rescue around it takes the failure with the error's own
@@ -2585,34 +2580,6 @@ impl Driver<'_> {
 fn first_batch_id() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// The chain of a task whose arguments a plugin failed to render, as the reference prints it:
-/// `Finalization of task args for '<action>' failed.` at the action's key, then the value it was
-/// resolving at that value.
-pub(super) fn finalization_causes(task: &PlayTask, message: &str) -> Option<Value> {
-    let rest = message.strip_prefix(super::prepare::FINALIZING)?;
-    let at = rest.find(&format!(": {}", crate::template::RESOLVING))?;
-    let head = format!("{}{}.", super::prepare::FINALIZING, &rest[..at]);
-    let resolving = &rest[at + 2..];
-    let key = resolving[crate::template::RESOLVING.len()..]
-        .strip_prefix('\'')?
-        .split('\'')
-        .next()?;
-    let origin = |name: &str| task.value_origins.get(name);
-    let resolved = crate::render::cause(resolving, origin(&format!("args.{key}")), None);
-    // A task with no name of its own starts where its action does, and the reference puts the
-    // two links in one: the block opens with the finalization's sentence.
-    if task.origin.is_some() && task.origin.as_ref() == origin("action") {
-        return Some(Value::Array(vec![
-            crate::render::lead(&format!("Task failed: {head}")),
-            resolved,
-        ]));
-    }
-    Some(Value::Array(vec![
-        crate::render::cause(&head, origin("action"), None),
-        resolved,
-    ]))
 }
 
 /// How the reference's callback cleans this task's result lines.

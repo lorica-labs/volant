@@ -105,11 +105,7 @@ fn an_undefined_input_stays_undefined_through_every_filter_and_test() {
     {
         let t = templar();
         let err = t.render("{{ missing }}", &Map::new()).unwrap_err();
-        assert!(
-            err.0
-                .starts_with("The task includes an option with an undefined variable."),
-            "{err}"
-        );
+        assert_eq!(err.0, "'missing' is undefined");
         assert!(
             t.render("{{ conf.missing }}", &vars(json!({"conf": {}})))
                 .is_err()
@@ -2070,7 +2066,7 @@ fn lipsum_differs_from_one_call_to_the_next() {
 #[case::attribute_of_a_missing_name("{{ nope.x == 1 }}", "'nope' is undefined")]
 #[case::missing_attribute("{{ a.b }}", "object of type 'dict' has no attribute 'b'")]
 #[case::missing_key("{{ a['b'] }}", "object of type 'dict' has no attribute 'b'")]
-#[case::after_a_guarded_read("{{ (nope | default(1)) + other }}", "'other' is undefined")]
+#[case::after_a_guarded_read("{{ nope | default(1) }}{{ other }}", "'other' is undefined")]
 #[case::in_a_block("{% if gone %}x{% endif %}", "'gone' is undefined")]
 fn an_undefined_read_names_what_was_missing(#[case] source: &str, #[case] want: &str) {
     let own = vars(json!({"a": {}}));

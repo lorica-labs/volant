@@ -1,0 +1,21 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Arguments
+      debug:
+        msg: "{{ 'ok' if item == 1 else nope }}"
+      loop: [1, 2]
+      loop_control:
+        break_when: item == 1
+    - name: Conditional
+      debug: msg="{{ item }}"
+      loop: [1, 2]
+      when: item == 1 or nope
+      loop_control:
+        break_when: item == 1
+    - name: Label
+      debug: msg="{{ item }}"
+      loop: [1, 2]
+      loop_control:
+        break_when: item == 1
+        label: "{{ 'a' if item == 1 else nope }}"

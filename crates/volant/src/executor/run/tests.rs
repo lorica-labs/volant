@@ -3518,7 +3518,7 @@ fn changed_when_reads_the_attempt_it_judges() {
         why.starts_with("Error while evaluating conditional: "),
         "{r:?}"
     );
-    assert!(why.contains("undefined"), "{r:?}");
+    assert!(why.contains("has no attribute 'nosuchkey'"), "{r:?}");
     assert_eq!(
         msg(&r),
         "Task failed: Action failed: Unknown error.",

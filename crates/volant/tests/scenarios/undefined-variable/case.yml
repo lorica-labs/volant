@@ -1,0 +1,14 @@
+# A name with no value is worded as the reference words it: the variable, or the attribute and
+# the type it was read from. A task argument chains two causes, a condition or `until` one, a
+# `loop_control` field and a prompt stand alone at their value.
+runs:
+  - args: [arg-bare.yml]
+  - args: [arg-free-form.yml]
+  - args: [arg-attribute.yml]
+  - args: [arg-filter.yml]
+  - args: [when.yml]
+  - args: [until.yml]
+  - args: [-i, inv.ini, until-host.yml]
+  - args: [loop-pause.yml]
+  - args: [skipped-result.yml]
+  - args: [vars-prompt.yml]

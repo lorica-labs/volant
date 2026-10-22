@@ -23,6 +23,7 @@ mod item;
 mod late;
 mod loops;
 mod plan;
+pub(in crate::executor) mod undefined;
 mod vars;
 
 pub(in crate::executor) use escalation::retry_name;

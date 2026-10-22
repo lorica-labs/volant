@@ -59,7 +59,7 @@ pub(super) fn render_fields(
         // A conditional that cannot be evaluated yields to a kept loop error, as there.
         let holds = templar
             .condition(condition, vars)
-            .map_err(|e| loop_error.clone().unwrap_or(e))?;
+            .map_err(|e| super::undefined::when_error(e, loop_error.as_ref()))?;
         if !holds {
             let mut r = Map::new();
             r.insert("changed".into(), json!(false));

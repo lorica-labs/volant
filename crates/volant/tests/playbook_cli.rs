@@ -2119,7 +2119,14 @@ fn a_missing_collection_prints_the_reference_warning_and_error_block() {
   tasks:
     - foo.bar.baz:
 ";
-    let (code, text) = run_probe_env(&dir, "site", body, &[], None, &[("VOLANT_PYTHON", &python)]);
+    let (code, text) = run_probe_env(
+        &dir,
+        "site",
+        body,
+        &["-i", "localhost,"],
+        None,
+        &[("VOLANT_PYTHON", &python)],
+    );
     let file = dir.join("site.yml").display().to_string();
     assert_eq!(code, 4, "{text}");
     let tail = "couldn't resolve module/action 'foo.bar.baz'. This often indicates a misspelling, missing collection, or incorrect module path.";

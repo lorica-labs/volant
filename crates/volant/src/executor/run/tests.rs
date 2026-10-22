@@ -1222,12 +1222,16 @@ async fn a_file_is_staged_then_put_and_a_refusal_is_the_agents_own() {
     );
 }
 
-/// An agent that never answers the put is given up on, so its late answer cannot desync the next task.
+/// An agent that never answers the put, or never takes its request, is given up on, so a late answer cannot desync the next task.
+#[rstest::rstest]
+#[case::no_answer(false)]
+#[case::request_never_written(true)]
 #[tokio::test]
-async fn a_put_the_agent_never_answers_abandons_the_link() {
+async fn a_put_the_agent_never_answers_abandons_the_link(#[case] ask_hangs: bool) {
     let hash = blake3::hash(b"abc").to_hex().to_string();
     let mut agent = FakeAgent {
         hangs_when_empty: true,
+        put_ask_hangs: ask_hangs,
         ..FakeAgent::answering(vec![state(&hash, true)])
     };
     let err = put_file_within(

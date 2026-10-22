@@ -156,7 +156,10 @@ pub(in crate::inventory) fn reason(error: &str, expr: &str, vars: &Map<String, V
     ];
     NAME.captures_iter(expr)
         .filter(|c| c.get(1).is_none())
-        .filter_map(|c| c.get(2).map(|m| m.as_str()))
+        .filter_map(|c| c.get(2))
+        // A name followed by `(` is a call (`range(nope)`): the name to report is in its arguments.
+        .filter(|m| !expr[m.end()..].trim_start().starts_with('('))
+        .map(|m| m.as_str())
         .find(|n| !vars.contains_key(*n) && !WORDS.contains(&n.to_lowercase().as_str()))
         .map_or_else(
             || reason.to_string(),

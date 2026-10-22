@@ -155,7 +155,8 @@ impl Run<'_, '_> {
                         ),
                     );
                     self.cx.warn_once(
-                        "Invalid characters were found in group names but not replaced, use                          -vvvv to see details"
+                        "Invalid characters were found in group names but not replaced, use \
+                         -vvvv to see details"
                             .to_string(),
                     );
                 }

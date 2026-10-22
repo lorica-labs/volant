@@ -149,15 +149,13 @@ fn copy_xattrs(from: &Path, to: &Path) -> io::Result<()> {
     }
     let from = CString::new(from.as_os_str().as_bytes()).map_err(io::Error::other)?;
     let to = CString::new(to.as_os_str().as_bytes()).map_err(io::Error::other)?;
-    // SAFETY: a null buffer of size 0 asks `listxattr` for the size of the list.
-    let size = unsafe { libc::listxattr(from.as_ptr(), std::ptr::null_mut(), 0) };
+    let size = xattr::list(&from, &mut []);
     if size < 0 {
         let err = io::Error::last_os_error();
         return if tolerated(&err) { Ok(()) } else { Err(err) };
     }
     let mut names = vec![0u8; size.unsigned_abs()];
-    // SAFETY: `names` holds `size` bytes, which is what `listxattr` may write.
-    let size = unsafe { libc::listxattr(from.as_ptr(), names.as_mut_ptr().cast(), names.len()) };
+    let size = xattr::list(&from, &mut names);
     if size < 0 {
         let err = io::Error::last_os_error();
         return if tolerated(&err) { Ok(()) } else { Err(err) };
@@ -166,8 +164,7 @@ fn copy_xattrs(from: &Path, to: &Path) -> io::Result<()> {
     for name in names.split(|b| *b == 0).filter(|n| !n.is_empty()) {
         let name = CString::new(name).map_err(io::Error::other)?;
         let name: &CStr = &name;
-        // SAFETY: as above, with the size first and the value next.
-        let len = unsafe { libc::getxattr(from.as_ptr(), name.as_ptr(), std::ptr::null_mut(), 0) };
+        let len = xattr::get(&from, name, &mut []);
         if len < 0 {
             let err = io::Error::last_os_error();
             if tolerated(&err) {
@@ -176,15 +173,7 @@ fn copy_xattrs(from: &Path, to: &Path) -> io::Result<()> {
             return Err(err);
         }
         let mut value = vec![0u8; len.unsigned_abs()];
-        // SAFETY: `value` holds `len` bytes, which is what `getxattr` may write.
-        let got = unsafe {
-            libc::getxattr(
-                from.as_ptr(),
-                name.as_ptr(),
-                value.as_mut_ptr().cast(),
-                value.len(),
-            )
-        };
+        let got = xattr::get(&from, name, &mut value);
         if got < 0 {
             let err = io::Error::last_os_error();
             if tolerated(&err) {
@@ -192,16 +181,7 @@ fn copy_xattrs(from: &Path, to: &Path) -> io::Result<()> {
             }
             return Err(err);
         }
-        // SAFETY: `value` holds the `got` bytes `setxattr` reads.
-        let set = unsafe {
-            libc::setxattr(
-                to.as_ptr(),
-                name.as_ptr(),
-                value.as_ptr().cast(),
-                got.unsigned_abs(),
-                0,
-            )
-        };
+        let set = xattr::set(&to, name, &value[..got.unsigned_abs()]);
         if set < 0 {
             let err = io::Error::last_os_error();
             if !tolerated(&err) {
@@ -210,6 +190,82 @@ fn copy_xattrs(from: &Path, to: &Path) -> io::Result<()> {
         }
     }
     Ok(())
+}
+
+/// The extended attribute calls, over buffers. A buffer of size 0 asks for the size. macOS adds
+/// a position and an options argument to each call.
+#[cfg(unix)]
+mod xattr {
+    use std::ffi::CStr;
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn list(path: &CStr, buf: &mut [u8]) -> isize {
+        // SAFETY: `buf` holds `buf.len()` bytes, which is what `listxattr` may write.
+        unsafe { libc::listxattr(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), 0) }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn list(path: &CStr, buf: &mut [u8]) -> isize {
+        // SAFETY: `buf` holds `buf.len()` bytes, which is what `listxattr` may write.
+        unsafe { libc::listxattr(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn get(path: &CStr, name: &CStr, buf: &mut [u8]) -> isize {
+        // SAFETY: `buf` holds `buf.len()` bytes, which is what `getxattr` may write.
+        unsafe {
+            libc::getxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+                0,
+                0,
+            )
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn get(path: &CStr, name: &CStr, buf: &mut [u8]) -> isize {
+        // SAFETY: `buf` holds `buf.len()` bytes, which is what `getxattr` may write.
+        unsafe {
+            libc::getxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                buf.as_mut_ptr().cast(),
+                buf.len(),
+            )
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    pub(super) fn set(path: &CStr, name: &CStr, value: &[u8]) -> libc::c_int {
+        // SAFETY: `value` holds the `value.len()` bytes `setxattr` reads.
+        unsafe {
+            libc::setxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+                0,
+            )
+        }
+    }
+
+    #[cfg(not(target_os = "macos"))]
+    pub(super) fn set(path: &CStr, name: &CStr, value: &[u8]) -> libc::c_int {
+        // SAFETY: `value` holds the `value.len()` bytes `setxattr` reads.
+        unsafe {
+            libc::setxattr(
+                path.as_ptr(),
+                name.as_ptr(),
+                value.as_ptr().cast(),
+                value.len(),
+                0,
+            )
+        }
+    }
 }
 
 #[cfg(not(unix))]

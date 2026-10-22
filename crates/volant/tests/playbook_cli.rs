@@ -2106,45 +2106,61 @@ fn module_defaults_and_collections_that_cannot_be_honoured_say_why(
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
-/// A module from a collection that is not installed prints the reference's warning and error
-/// block, then Volant's hint on its own line.
-#[test]
-fn a_missing_collection_prints_the_reference_warning_and_error_block() {
+/// A module no collection holds prints the reference's warning and error block, then Volant's
+/// hint on its own line when a collection would have to be installed.
+#[rstest]
+#[case::missing_collection(
+    "foo.bar.baz",
+    "Error loading plugin 'foo.bar.baz': No module named 'ansible_collections.foo'",
+    "
+The collection 'foo.bar' is not installed on the controller: install it with volant runtime install --collections foo.bar"
+)]
+#[case::not_a_reference(
+    "sub.hello",
+    "Error loading plugin 'sub.hello': sub.hello is not a valid collection reference",
+    ""
+)]
+fn a_module_nothing_holds_prints_the_reference_warning_and_error_block(
+    #[case] module: &str,
+    #[case] warning: &str,
+    #[case] hint: &str,
+) {
     let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
         return;
     };
     let dir = probe_dir("missing-collection");
-    let body = "- hosts: localhost
+    let body = format!(
+        "- hosts: localhost
   gather_facts: false
   tasks:
-    - foo.bar.baz:
-";
+    - {module}:
+"
+    );
     let (code, text) = run_probe_env(
         &dir,
         "site",
-        body,
+        &body,
         &["-i", "localhost,"],
         None,
         &[("VOLANT_PYTHON", &python)],
     );
     let file = dir.join("site.yml").display().to_string();
     assert_eq!(code, 4, "{text}");
-    let tail = "couldn't resolve module/action 'foo.bar.baz'. This often indicates a misspelling, missing collection, or incorrect module path.";
-    assert_eq!(
-        text,
-        format!(
-            "[WARNING]: Error loading plugin 'foo.bar.baz': No module named 'ansible_collections.foo'
+    let tail = format!(
+        "couldn't resolve module/action '{module}'. This often indicates a misspelling, missing collection, or incorrect module path."
+    );
+    let block = format!(
+        "[WARNING]: {warning}
 [ERROR]: {tail}
 Origin: {file}:4:7
 
 2   gather_facts: false
 3   tasks:
-4     - foo.bar.baz:
-        ^ column 7
-The collection 'foo.bar' is not installed on the controller: install it with volant runtime install --collections foo.bar
+4     - {module}:
+        ^ column 7{hint}
 "
-        )
     );
+    assert!(text.ends_with(&block), "{text}");
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 

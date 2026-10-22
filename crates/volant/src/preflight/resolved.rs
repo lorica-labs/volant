@@ -82,10 +82,18 @@ impl Unresolved {
     /// The warning, when the name points at a collection, and the error block. The install hint
     /// goes last, on its own line, so the first line stays the reference's.
     pub fn report(&self) -> (Option<String>, String) {
-        let warning = self
-            .collection
-            .as_ref()
-            .map(|collection| crate::transport::plugin_load_warning(&self.module, collection));
+        let warning = match &self.collection {
+            Some(collection) => Some(crate::transport::plugin_load_warning(
+                &self.module,
+                collection,
+            )),
+            // `ns.name` is not a collection reference, which the reference says before it fails.
+            None if self.module.matches('.').count() == 1 => Some(format!(
+                "Error loading plugin '{0}': {0} is not a valid collection reference",
+                self.module
+            )),
+            None => None,
+        };
         let mut error = unresolved_tail(&self.module);
         if let Some(origin) = &self.origin {
             error.push('\n');

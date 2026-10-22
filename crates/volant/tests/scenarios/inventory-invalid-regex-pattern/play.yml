@@ -1,4 +1,5 @@
 - hosts: "~(web"
   gather_facts: false
   tasks:
-    - ping:
+    - debug:
+        msg: hi

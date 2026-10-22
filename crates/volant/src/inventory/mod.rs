@@ -15,7 +15,10 @@ pub mod ranges;
 mod script;
 mod sources;
 mod toml;
+mod unsafe_text;
 mod yaml;
+
+pub use patterns::Resolution;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -30,6 +33,7 @@ pub use sources::{
     InventoryPlugin, Note, ParseCx, PluginConfig, PluginError, Source, load_sources,
     load_sources_with,
 };
+use unsafe_text::{mark_unsafe, show_unsafe};
 
 /// Every inventory plugin this release knows, the ones `enable_plugins` picks from.
 const PLUGINS: &[&dyn InventoryPlugin] = &[
@@ -66,18 +70,6 @@ struct Group {
     priority: Option<i64>,
 }
 
-/// A computed value as `--list` prints it: every string in it wrapped, mapping keys left alone.
-fn mark_unsafe(value: &mut Value, computed: &HashSet<String>) {
-    match value {
-        Value::String(text) if computed.contains(text.as_str()) => {
-            *value = serde_json::json!({ "__ansible_unsafe": text });
-        }
-        Value::Array(items) => items.iter_mut().for_each(|v| mark_unsafe(v, computed)),
-        Value::Object(map) => map.values_mut().for_each(|v| mark_unsafe(v, computed)),
-        _ => {}
-    }
-}
-
 #[derive(Debug, Default, Clone)]
 pub struct Inventory {
     hosts: Vec<Host>,
@@ -87,18 +79,8 @@ pub struct Inventory {
     /// The `(host, variable)` pairs a `constructed` compose built from a computed string, which
     /// `--list` marks `__ansible_unsafe`.
     unsafe_vars: HashMap<(String, String), HashSet<String>>,
-}
-
-#[derive(Debug, Default)]
-pub struct Resolution {
-    pub hosts: Vec<Host>,
-    pub unmatched: Vec<String>,
-    pub warnings: Vec<String>,
-    /// The first `~regex` term that does not compile: the reference stops on it with
-    /// `Invalid host list pattern`, so the caller refuses the run.
-    pub invalid: Option<String>,
-    /// The first spelling of the implicit controller host a pattern names: it stands for the host.
-    implicit: Option<String>,
+    /// A source failed and none parsed: its groups stay, but `all` holds nothing.
+    detached: bool,
 }
 
 #[derive(Debug)]
@@ -221,6 +203,10 @@ impl Inventory {
     /// in, `all`'s top groups, and each group's own hosts and children. An empty group has no
     /// entry of its own.
     pub fn dump(&self) -> Value {
+        if self.detached {
+            // Nothing is under `all`, which is all the listing walks.
+            return Inventory::default().dump();
+        }
         let mut out = serde_json::Map::new();
         let hostvars: serde_json::Map<String, Value> = self
             .hosts
@@ -469,24 +455,6 @@ impl Inventory {
 /// name. Measured against the reference: `hosts: ::1` with no `::1` in the inventory runs
 /// `changed: [::1]` on the controller, like `localhost` and `127.0.0.1`. One copy of the rule,
 /// read both here and by the store that gives such a host its local connection.
-/// A value as `ansible-inventory --list` prints it: text that is data, never rendered, as
-/// `{"__ansible_unsafe": text}`.
-fn show_unsafe(value: &Value) -> Value {
-    match value {
-        Value::String(text) => crate::yaml::unsafe_text(text).map_or_else(
-            || value.clone(),
-            |text| serde_json::json!({ "__ansible_unsafe": text }),
-        ),
-        Value::Array(items) => Value::Array(items.iter().map(show_unsafe).collect()),
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .map(|(k, v)| (k.clone(), show_unsafe(v)))
-                .collect(),
-        ),
-        other => other.clone(),
-    }
-}
-
 pub fn is_localhost(name: &str) -> bool {
     LOCALHOST_NAMES.contains(&name)
 }

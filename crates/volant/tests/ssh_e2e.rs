@@ -1143,6 +1143,123 @@ fn ssh_raw_and_script_run_on_a_terminal() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// What `ssh/usetty.yml` printed for the raw command's stdout: a terminal gives it CR LF line ends.
+fn usetty_stdout(dir: &Path, hostvars: &str, envs: &[(&str, &str)]) -> String {
+    let inv = inventory(dir, &[("box", hostvars)]);
+    let out = volant_env_within(
+        &["playbook", "-i", &inv, &fixture("ssh/usetty.yml")],
+        envs,
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    text
+}
+
+/// `usetty` of `[ssh_connection]`, `ANSIBLE_SSH_USETTY` and `ansible_ssh_use_tty` choose the
+/// terminal in the reference's order: the host variable, then the environment, then the file.
+/// Measured on ansible-core 2.19.12 with `-vvvv`: `-tt` by default, gone with either setting
+/// off, back with the host variable on.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_usetty_settings_choose_the_terminal() {
+    let dir = tmp("usetty");
+    let cfg = dir.join("ansible.cfg");
+    std::fs::write(&cfg, "[ssh_connection]\nusetty = False\n").unwrap();
+    let cfg = cfg.display().to_string();
+    let on = r"out\r\nerr\r\n";
+    let off = r"out\nerr\n";
+    let cases = [
+        ("default", "", vec![], on),
+        ("file", "", vec![("ANSIBLE_CONFIG", cfg.as_str())], off),
+        (
+            "environment",
+            "",
+            vec![("ANSIBLE_SSH_USETTY", "false")],
+            off,
+        ),
+        (
+            "host variable over both",
+            "ansible_ssh_use_tty=true",
+            vec![
+                ("ANSIBLE_CONFIG", cfg.as_str()),
+                ("ANSIBLE_SSH_USETTY", "false"),
+            ],
+            on,
+        ),
+        (
+            "environment over the file",
+            "",
+            vec![
+                ("ANSIBLE_CONFIG", cfg.as_str()),
+                ("ANSIBLE_SSH_USETTY", "true"),
+            ],
+            on,
+        ),
+    ];
+    for (name, hostvars, envs, want) in cases {
+        let text = usetty_stdout(&dir, hostvars, &envs);
+        assert!(text.contains(want), "{name}: {text}");
+        assert_eq!(text.contains(r"\r\n"), want == on, "{name}: {text}");
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// The line a terminal ends stderr with names `Connection to` when nothing is shared, and the
+/// address written for the host when `ssh -G` cannot run (which also leaves nothing shared). `HostName` on the command line makes
+/// the two answers differ.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_terminal_closing_line_without_a_shared_connection_and_without_ssh_g() {
+    let dir = tmp("tty-close");
+    let inv = |hostvars: &str| {
+        let path = inventory_with_ssh_args(&dir, &[("box", hostvars)], "-o HostName=127.0.0.1");
+        let text = std::fs::read_to_string(&path)
+            .unwrap()
+            .replace("ansible_host=127.0.0.1", "ansible_host=localhost");
+        std::fs::write(&path, text).unwrap();
+        path
+    };
+    let play = fixture("ssh/terminal.yml");
+    let run = |envs: &[(&str, &str)]| {
+        let out = volant_env_within(
+            &["playbook", "-i", &inv(""), &play],
+            envs,
+            Duration::from_secs(120),
+        );
+        assert_eq!(out.status.code(), Some(0), "{}", both(&out));
+        both(&out)
+    };
+    let alone = run(&[("VOLANT_SSH_CONTROL_MASTER", "0")]);
+    assert!(
+        alone.contains(r"Connection to 127.0.0.1 closed."),
+        "{alone}"
+    );
+    assert!(!alone.contains("Shared connection"), "{alone}");
+    // An `ssh` that fails on `-G` and is the real one otherwise.
+    let real = Command::new("sh")
+        .args(["-c", "command -v ssh"])
+        .output()
+        .unwrap();
+    let real = String::from_utf8_lossy(&real.stdout).trim().to_string();
+    let shim = dir.join("bin");
+    write_executable(
+        &shim.join("ssh"),
+        &format!("#!/bin/sh\ncase \" $* \" in *\" -G \"*) exit 1;; esac\nexec {real} \"$@\"\n"),
+    );
+    let path = format!(
+        "{}:{}",
+        shim.display(),
+        std::env::var("PATH").unwrap_or_default()
+    );
+    let fallback = run(&[("PATH", &path)]);
+    assert!(
+        fallback.contains(r"Connection to localhost closed."),
+        "{fallback}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// The unit `ssh/actions.yml` asks to be started. Present and running wherever systemd is the
 /// init system, which the CI runner and the development machine both are, so the task changes
 /// nothing on either.

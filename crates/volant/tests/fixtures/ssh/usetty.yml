@@ -1,0 +1,10 @@
+- name: whether a raw command runs on a terminal
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: A raw command
+      raw: echo out; echo err
+      register: r
+    - name: Show it
+      debug:
+        var: r.stdout

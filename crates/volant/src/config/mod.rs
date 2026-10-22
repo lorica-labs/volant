@@ -16,6 +16,7 @@ mod settings;
 pub(crate) use locate::is_world_writable;
 use parse::parse;
 use paths::{default_collections_path, default_roles_path, expand_home, path_list};
+pub use settings::HostNamedPaths;
 use settings::{
     boolean, cache_plugin, callback_flag, forks, gathering, host_named_dest_dirs, host_named_paths,
     integer, runtime_mode, switch, timeout_secs,
@@ -40,38 +41,6 @@ pub(crate) fn configured_async_dir() -> Option<String> {
 /// Ansible's own defaults for `[privilege_escalation]`.
 pub const DEFAULT_BECOME_USER: &str = "root";
 pub const DEFAULT_BECOME_METHOD: &str = "sudo";
-
-/// `[volant] host_named_paths`: what a `template`, `copy`, `script`, `unarchive` or `assemble`
-/// task does with a controller `src` that a managed host named, through a gathered fact or a
-/// registered result.
-///
-/// Measured on ansible-core 2.19.12: the reference reads whatever readable controller file such a
-/// name points at and sends it, or its rendering, to the host. `Allow` does the same. The two
-/// other modes tighten it. A `fetch` whose `dest` a host named follows the same word: see
-/// `host_named_dest_dirs`.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum HostNamedPaths {
-    /// The reference's behaviour: the file is looked up and sent.
-    #[default]
-    Allow,
-    /// The file is sent only when its path stays inside the directories where the author keeps
-    /// the files of the task: the playbook's, the role's and the ones the reference searches.
-    Contained,
-    /// The name is refused before any path is looked up.
-    Refuse,
-}
-
-impl HostNamedPaths {
-    /// The mode a word names.
-    pub fn parse(word: &str) -> Option<Self> {
-        match word {
-            "allow" => Some(Self::Allow),
-            "contained" => Some(Self::Contained),
-            "refuse" => Some(Self::Refuse),
-            _ => None,
-        }
-    }
-}
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Config {
@@ -114,6 +83,10 @@ pub struct Config {
     /// `task path:` line before the `fatal:` line of a failed task below `-vv`, where the
     /// reference prints it for no task. Off by default, as in the reference.
     pub show_task_path_on_failure: bool,
+    /// `[ssh_connection] usetty` or `ANSIBLE_SSH_USETTY`: give `raw`, `script` and the commands a
+    /// plugin sends without input a terminal (`ssh -tt`). On by default; `ansible_ssh_use_tty`
+    /// on a host wins over both.
+    pub ssh_usetty: bool,
     /// `[defaults] enable_task_debugger` or `ANSIBLE_ENABLE_TASK_DEBUGGER`: a failed or
     /// unreachable task with no `debugger` keyword opens the debugger prompt.
     pub enable_task_debugger: bool,
@@ -201,6 +174,7 @@ impl Default for Config {
             localhost_warning: true,
             show_custom_stats: false,
             show_task_path_on_failure: false,
+            ssh_usetty: true,
             enable_task_debugger: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),
@@ -353,6 +327,10 @@ impl Config {
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {
             config.show_custom_stats = on;
+        }
+        // The environment wins over the file; an empty or unknown word reads as false, measured.
+        if let Ok(flag) = std::env::var("ANSIBLE_SSH_USETTY") {
+            config.ssh_usetty = callback_flag(&flag);
         }
         // Set and empty still wins, and a word the reference does not know reads as false.
         if let Ok(flag) = std::env::var("ANSIBLE_SHOW_TASK_PATH_ON_FAILURE") {

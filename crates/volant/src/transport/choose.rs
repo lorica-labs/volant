@@ -145,7 +145,8 @@ impl Transport {
                 },
                 control_path: None,
                 dumped: None,
-                use_tty: host_setting(vars, "ansible_ssh_use_tty").is_none_or(
+                use_tty: host_setting(vars, "ansible_ssh_use_tty").map_or(
+                    defaults.ssh_use_tty,
                     |value| match value {
                         Value::Bool(on) => *on,
                         Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),

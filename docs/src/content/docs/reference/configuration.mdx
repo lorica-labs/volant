@@ -145,6 +145,12 @@ A file that exists but cannot be read is skipped, and the run continues with the
   The flags given to that program, in place of `-H` for `sudo` and of none for `su`. A blank value gives no flags at all.
 </Option>
 
+## [ssh_connection]
+
+<Option name="usetty" id="ssh-connection-usetty" default="true" env="ANSIBLE_SSH_USETTY">
+  Give `raw`, `script` and the commands a module plugin such as `reboot` sends without input a terminal, as `ssh -tt` does. Set it to `False` when a `sudoers` rule has `requiretty` or a command prints control characters on a terminal. The host variable `ansible_ssh_use_tty` wins over the environment variable, and the environment variable over the file. A word other than `y`, `yes`, `on`, `true`, `t` and `1` reads as off.
+</Option>
+
 ## [tags]
 
 <Option name="run" id="tags-run" flag="--tags" env="ANSIBLE_RUN_TAGS">

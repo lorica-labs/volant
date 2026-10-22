@@ -4190,6 +4190,7 @@ fn a_gathered_fact_is_data_and_moves_nothing_it_should_not() {
             become_password: None,
             ssh_common_args: Vec::new(),
             ssh_extra_args: Vec::new(),
+            ssh_use_tty: true,
         };
         let Transport::Ssh(target) = Transport::for_vars("h1", &v, &defaults).unwrap() else {
             panic!("a fact turned the host's connection local");
@@ -4317,6 +4318,7 @@ async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
         become_password: None,
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
+        ssh_use_tty: true,
     };
     let transport = Transport::for_host(&host, &defaults).expect("a local transport");
     let mut link = transport
@@ -4683,6 +4685,7 @@ async fn a_connect_timeout_reaches_the_connection_as_ssh_s_connecttimeout() {
             become_password: None,
             ssh_common_args: Vec::new(),
             ssh_extra_args: Vec::new(),
+            ssh_use_tty: true,
         };
         let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
         let argv = |t: &Transport| match t {
@@ -4719,6 +4722,7 @@ fn shared_to_h1(dir: &Path) -> Transport {
         become_password: None,
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
+        ssh_use_tty: true,
     };
     Transport::for_vars("h1", vars.as_object().expect("an object"), &defaults)
         .expect("an ssh transport")
@@ -5015,6 +5019,7 @@ fn local_agents() -> (AgentSource, ConnectionDefaults) {
         become_password: None,
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
+        ssh_use_tty: true,
     };
     (AgentSource::discover(), defaults)
 }

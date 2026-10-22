@@ -94,6 +94,9 @@ pub struct Resolution {
     pub hosts: Vec<Host>,
     pub unmatched: Vec<String>,
     pub warnings: Vec<String>,
+    /// The first `~regex` term that does not compile: the reference stops on it with
+    /// `Invalid host list pattern`, so the caller refuses the run.
+    pub invalid: Option<String>,
     /// The first spelling of the implicit controller host a pattern names: it stands for the host.
     implicit: Option<String>,
 }
@@ -373,13 +376,20 @@ impl Inventory {
             return self.group_hosts(g);
         }
         // `~regex` is matched from the start of the name (`re.match`), hosts first, then groups.
-        let regex = term
+        let regex = match term
             .strip_prefix('~')
-            .map(|r| Regex::new(&format!("^(?:{r})")));
+            .map(|r| Regex::new(&format!("^(?:{r})")))
+        {
+            Some(Err(_)) => {
+                res.invalid.get_or_insert_with(|| term.to_string());
+                return Vec::new();
+            }
+            Some(Ok(re)) => Some(re),
+            None => None,
+        };
         if regex.is_some() || term.contains(['*', '?', '[']) {
             let matches = |name: &str| match &regex {
-                Some(Ok(re)) => re.is_match(name),
-                Some(Err(_)) => false,
+                Some(re) => re.is_match(name),
                 None => glob_match(term, name),
             };
             let mut out: Vec<String> = self

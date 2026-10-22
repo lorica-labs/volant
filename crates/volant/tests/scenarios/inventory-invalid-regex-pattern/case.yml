@@ -1,0 +1,8 @@
+# An invalid ~regex in a play's hosts, in --limit, in the middle of a pattern and after & or !.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, --limit, "~(web", plain.yml]
+  - args: [-i, inv.ini, --limit, "all:~(web", plain.yml]
+  - args: [-i, inv.ini, --limit, "all:&~(", plain.yml]
+  - args: [-i, inv.ini, --limit, "all:!~(", plain.yml]
+  - args: [-i, inv.ini, --list-hosts, play.yml]

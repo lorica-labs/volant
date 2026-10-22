@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"msg\": \"{\\\"all\\\": [], \\\"ungrouped\\\": [], \\\"web\\\": []}\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"msg\": \"{\\\"all\\\": [], \\\"ungrouped\\\": [], \\\"web\\\": [\\\"h1\\\"], \\\"zone\\\": []}\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

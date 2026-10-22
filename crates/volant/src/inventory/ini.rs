@@ -41,7 +41,20 @@ impl InventoryPlugin for Ini {
         };
         let bytes = std::fs::read(source.path()).map_err(|e| failed(e.to_string()))?;
         let text = String::from_utf8(bytes).map_err(|e| failed(e.to_string()))?;
-        parse_into(&text, into, Some(source.path())).map_err(|e| failed(e.message))
+        parse_into(&text, into, Some(source.path())).map_err(|e| {
+            // Measured: the reference raises this one inside `except ValueError`, so it chains
+            // the message as a second block under `Failed to parse inventory.`; every other
+            // error of the file prints the merged one-block shape.
+            if e.message.starts_with("Error parsing host definition ") {
+                PluginError {
+                    message: "Failed to parse inventory.".to_string(),
+                    origin: Some(source.text().to_string()),
+                    cause: Some((e.message, None)),
+                }
+            } else {
+                failed(e.message)
+            }
+        })
     }
 }
 

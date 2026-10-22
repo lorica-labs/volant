@@ -12,6 +12,8 @@ host_list_then_file: {sources: ["h1,h9,", one.ini]}
 bad: {sources: [bad.ini]}
 bad_then_good: {sources: [bad.ini, one.ini]}
 partial: {sources: [partial.ini]}
+partial_second_group: {sources: [partial_second_group.ini]}
+partial_quote: {sources: [partial_quote.ini]}
 partial_then_good: {sources: [partial.ini, one.ini]}
 colon: {sources: [colon.ini]}
 missing: {sources: [missing.ini]}

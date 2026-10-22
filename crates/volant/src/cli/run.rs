@@ -264,7 +264,7 @@ async fn run_all(
             if start_found {
                 break;
             }
-            start_found = compile::start_at_task(compiled, pattern);
+            start_found = compile::start_at_task(compiled, pattern, args.force_handlers);
         }
     }
     // Asking needs somebody to answer. Refused before any host is touched, with the code the

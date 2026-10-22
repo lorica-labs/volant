@@ -93,10 +93,12 @@ pub(crate) fn find_task(c: &Compiled, pattern: &str) -> Option<usize> {
 /// Applies `--start-at-task` to one play and says whether the play holds the task.
 ///
 /// Measured on ansible-core 2.19.12: the `Gathering Facts` step runs first and the step found
-/// follows it, so a pattern that matches `Gathering Facts` itself runs it twice, and a play with
-/// `gather_facts: false` still runs it once in front of a task found behind it (and never
-/// matches it). Both are laid out here as steps, before anything reads the list.
-pub(crate) fn start_at_task(c: &mut Compiled, pattern: &str) -> bool {
+/// follows it, so a pattern that matches `Gathering Facts` itself runs it twice. A play with
+/// `gather_facts: false` runs it once in front of its first task when the pattern finds that
+/// one, and never matches it. Both are laid out here as steps, before anything reads the list.
+/// With `--force-handlers` the reference gathers there only for a pattern like `*`; this
+/// release leaves it out for every pattern.
+pub(crate) fn start_at_task(c: &mut Compiled, pattern: &str, force_handlers: bool) -> bool {
     let Some(at) = find_task(c, pattern) else {
         c.start_at = Some(c.steps.len());
         return false;
@@ -105,7 +107,11 @@ pub(crate) fn start_at_task(c: &mut Compiled, pattern: &str) -> bool {
         let again = c.steps[0].clone();
         c.splice(1, vec![again]);
         1
-    } else if let Some(step) = c.idle_gather.take().filter(|_| !c.gathers) {
+    } else if let Some(step) = c
+        .idle_gather
+        .take()
+        .filter(|_| !c.gathers && !force_handlers && find_task(c, "*") == Some(at))
+    {
         c.splice(0, vec![*step]);
         c.gathers = true;
         at + 1

@@ -75,7 +75,7 @@ pub(super) fn lower(root: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
                 YamlData::Mapping(map) if map.iter().all(|(k, v)| is_leaf(k) && is_leaf(v)) => {
                     let mut out = Mapping::new();
                     for (k, v) in map {
-                        out.insert(lower_scalar(k)?, lower_scalar(v)?);
+                        out.insert(key_of(lower_scalar(k)?), lower_scalar(v)?);
                     }
                     done = Some(Yaml::Mapping(out));
                 }
@@ -106,7 +106,7 @@ pub(super) fn lower(root: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
                     value, key, out, ..
                 }) => {
                     if value.is_some() {
-                        *key = Some(child);
+                        *key = Some(key_of(child));
                     } else if let Some(key) = key.take() {
                         out.insert(key, child);
                     }
@@ -144,6 +144,15 @@ pub(super) fn lower(root: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
         if done.is_some() {
             open.pop();
         }
+    }
+}
+
+/// A mapping key as the reference loads it: `!unsafe a` is the key `a`. Keys are never
+/// rendered, so the tag has nothing left to say.
+fn key_of(key: Yaml<'_>) -> Yaml<'_> {
+    match key {
+        Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => *inner,
+        key => key,
     }
 }
 

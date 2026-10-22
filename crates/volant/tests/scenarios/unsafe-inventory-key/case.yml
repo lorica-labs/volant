@@ -1,0 +1,2 @@
+# `!unsafe` on a key of a YAML inventory file.
+args: [-i, inv.yml, site.yml]

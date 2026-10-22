@@ -217,7 +217,7 @@ pub(super) fn prepare(
             vars.map = resolved;
             vars.untrusted = untrusted;
         }
-        let (label, label_error) = label_for(task, element.as_ref(), &vars, templar);
+        let (label, label_error) = label_for(task, element.as_ref(), &vars, templar)?;
         // A field of a loop item that fails to render fails that item alone, when the loop
         // reaches it. Measured on ansible-core 2.19.12: `failed: [h] (item=2)` between two items
         // that ran, then `One or more items failed`; an item behind a `break_when` that ended
@@ -270,7 +270,7 @@ pub(super) fn prepare(
                 let mut after = item.vars.clone();
                 carry.lay_over(&mut after);
                 (item.label, item.label_error) =
-                    label_for(task, item.element.as_ref(), &after, templar);
+                    label_for(task, item.element.as_ref(), &after, templar)?;
             }
         }
         // An item that runs nothing reports its label's failure over its result now.

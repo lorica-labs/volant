@@ -170,23 +170,26 @@ pub(in crate::executor) struct Item {
     pub(in crate::executor) label_error: Option<String>,
 }
 
-/// The `(item=...)` label of one item and, when its `loop_control.label` fails to render, the
-/// message the item fails with instead. Measured on ansible-core 2.19.12: `failed: [h]
-/// (item=2) => {..., "msg": "Failed to template loop_control.label: 'nope' is undefined"}`, after
-/// the module ran, and the items after it run. The line then shows the item itself, which a
+/// The `(item=...)` label of one item and, when its `loop_control.label` fails on an undefined
+/// variable, the message the item fails with instead. Measured on ansible-core 2.19.12: `failed:
+/// [h] (item=2) => {..., "msg": "Failed to template loop_control.label: 'nope' is undefined"}`,
+/// after the module ran, and the items after it run. The line then shows the item itself, which a
 /// `debug` result no longer holds once it is cleaned for display: `(item=None)` there.
+///
+/// Any other error, a lookup that raises for one, ends the reference's whole task once the item
+/// ran. That is not done item by item yet: the error fails the task before any item runs.
 pub(super) fn label_for(
     task: &PlayTask,
     element: Option<&Value>,
     vars: &HostVars,
     templar: &Templar,
-) -> (Option<String>, Option<String>) {
-    match (element, &task.loop_label) {
+) -> Result<(Option<String>, Option<String>), TemplateError> {
+    Ok(match (element, &task.loop_label) {
         (None, _) => (None, None),
         (Some(el), None) => (Some(display(el)), None),
         (Some(el), Some(template)) => match templar.render(template, vars) {
             Ok(label) => (Some(display(&label)), None),
-            Err(e) => (
+            Err(e) if e.is_undefined() => (
                 Some(if short_name(&task.module) == "debug" {
                     "None".to_string()
                 } else {
@@ -197,8 +200,9 @@ pub(super) fn label_for(
                     undefined_name(template, e.0)
                 )),
             ),
+            Err(e) => return Err(e),
         },
-    }
+    })
 }
 
 /// `result` failed by a label that did not render, as the reference's `res.update` fails it.

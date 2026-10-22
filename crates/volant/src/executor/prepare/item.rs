@@ -232,6 +232,7 @@ pub(super) fn item_failure(task: &PlayTask, err: &TemplateError) -> TaskResult {
     if let Some(Value::Array(mut causes)) =
         crate::executor::prepare::undefined::finalization_causes(task, &err.0)
         && let Some(head) = causes.first_mut()
+        && head.get("lead").is_none()
         && let Some(text) = head.get("msg").and_then(Value::as_str)
     {
         *head = crate::render::lead(&format!("Task failed: {text}"));

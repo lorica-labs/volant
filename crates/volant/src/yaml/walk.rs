@@ -53,7 +53,7 @@ fn lower_scalar(node: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
 /// PyYAML does (see [`scalar`]). Every other function in this module keeps working on the plain
 /// `Yaml` tree it already expected. A tag with no constructor, or a `!vault` over a value that is
 /// not a string, is an error with PyYAML's own text.
-pub(super) fn lower(root: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
+pub(super) fn lower(root: MarkedYaml<'_>, strict: bool) -> anyhow::Result<Yaml<'_>> {
     let mut open: Vec<Lowering<'_>> = Vec::new();
     let mut next = Some(root);
     let mut done: Option<Yaml<'_>> = None;
@@ -75,7 +75,7 @@ pub(super) fn lower(root: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
                 YamlData::Mapping(map) if map.iter().all(|(k, v)| is_leaf(k) && is_leaf(v)) => {
                     let mut out = Mapping::new();
                     for (k, v) in map {
-                        out.insert(key_of(lower_scalar(k)?), lower_scalar(v)?);
+                        out.insert(key_of(lower_scalar(k)?, strict)?, lower_scalar(v)?);
                     }
                     done = Some(Yaml::Mapping(out));
                 }
@@ -106,7 +106,7 @@ pub(super) fn lower(root: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
                     value, key, out, ..
                 }) => {
                     if value.is_some() {
-                        *key = Some(key_of(child));
+                        *key = Some(key_of(child, strict)?);
                     } else if let Some(key) = key.take() {
                         out.insert(key, child);
                     }
@@ -149,10 +149,15 @@ pub(super) fn lower(root: MarkedYaml<'_>) -> anyhow::Result<Yaml<'_>> {
 
 /// A mapping key as the reference loads it: `!unsafe a` is the key `a`. Keys are never
 /// rendered, so the tag has nothing left to say.
-fn key_of(key: Yaml<'_>) -> Yaml<'_> {
+///
+/// `strict` is PyYAML's own loader, which `from_yaml` uses: it has no constructor for the tag.
+fn key_of(key: Yaml<'_>, strict: bool) -> anyhow::Result<Yaml<'_>> {
     match key {
-        Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => *inner,
-        key => key,
+        Yaml::Tagged(tag, _) if strict && tag.handle == "!" && tag.suffix == "unsafe" => {
+            Err(anyhow!(scalar::no_constructor(&tag)))
+        }
+        Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => Ok(*inner),
+        key => Ok(key),
     }
 }
 

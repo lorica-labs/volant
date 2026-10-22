@@ -1156,10 +1156,8 @@ fn usetty_stdout(dir: &Path, hostvars: &str, envs: &[(&str, &str)]) -> String {
     text
 }
 
-/// `usetty` of `[ssh_connection]`, `ANSIBLE_SSH_USETTY` and `ansible_ssh_use_tty` choose the
-/// terminal in the reference's order: the host variable, then the environment, then the file.
-/// Measured on ansible-core 2.19.12 with `-vvvv`: `-tt` by default, gone with either setting
-/// off, back with the host variable on.
+/// The host variable, then `ANSIBLE_SSH_USETTY`, then `usetty` in the file choose the terminal,
+/// as measured on ansible-core 2.19.12 with `-vvvv`.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_usetty_settings_choose_the_terminal() {
@@ -1205,9 +1203,8 @@ fn ssh_usetty_settings_choose_the_terminal() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// The line a terminal ends stderr with names `Connection to` when nothing is shared, and the
-/// address written for the host when `ssh -G` cannot run (which also leaves nothing shared). `HostName` on the command line makes
-/// the two answers differ.
+/// The terminal's closing line reads `Connection to` with nothing shared, and with `ssh -G`
+/// unable to run it names the address written for the host.
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_terminal_closing_line_without_a_shared_connection_and_without_ssh_g() {

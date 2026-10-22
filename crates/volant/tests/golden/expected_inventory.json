@@ -3616,37 +3616,6 @@
       ],
       "stderr": ""
     },
-    "reserved_all_two_sources": {
-      "env": {},
-      "hosts": [
-        "all"
-      ],
-      "list": {
-        "_meta": {
-          "hostvars": {},
-          "profile": "inventory_legacy"
-        },
-        "all": {
-          "children": [
-            "ungrouped",
-            "web",
-            "shared"
-          ]
-        },
-        "ungrouped": {
-          "hosts": [
-            "all"
-          ]
-        }
-      },
-      "needs": [],
-      "rc": 0,
-      "sources": [
-        "reserved_all.ini",
-        "one.ini"
-      ],
-      "stderr": "[WARNING]: Found both group and host with same name: all\n"
-    },
     "script_badjson": {
       "env": {},
       "hosts": [],

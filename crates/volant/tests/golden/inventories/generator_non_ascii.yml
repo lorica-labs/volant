@@ -1,0 +1,7 @@
+plugin: generator
+hosts:
+  name: "{{ a }}-host"
+  parents:
+    - name: "g-{{ a }}"
+layers:
+  a: ["é", "x"]

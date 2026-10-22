@@ -1,0 +1,4 @@
+plugin: constructed
+compose:
+  x: 5
+  y: true

@@ -115,10 +115,12 @@ fn lead_of(result: &TaskResult) -> Option<String> {
 
 impl ErrorBlock {
     /// The block of a failed result: the message the executor settled on, or `Task failed: ` and
-    /// the result's `msg` for a failure that never went through it. A `no_log` task's is shown
-    /// as it is: the reference censors the `fatal:` line and an unreachable host's block, not
-    /// this one (measured on ansible-core 2.19.12).
-    pub fn of(result: &TaskResult, origin: Option<&crate::playbook::Origin>) -> Self {
+    /// the result's `msg` for a failure that never went through it.
+    pub fn of(
+        result: &TaskResult,
+        origin: Option<&crate::playbook::Origin>,
+        censored: bool,
+    ) -> Self {
         let message = result
             .0
             .get(ERROR_KEY)
@@ -130,15 +132,20 @@ impl ErrorBlock {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string);
         Self {
-            message,
+            message: if censored { censor(&message) } else { message },
             origin: if unknown.is_some() {
                 None
             } else {
                 origin.cloned()
             },
             unknown,
-            causes: causes_of(result),
-            lead: lead_of(result),
+            // A `no_log` task's causes would repeat what its censored message no longer says.
+            causes: if censored {
+                Vec::new()
+            } else {
+                causes_of(result)
+            },
+            lead: if censored { None } else { lead_of(result) },
         }
     }
 
@@ -165,8 +172,9 @@ impl ErrorBlock {
 pub const CENSORED_ERROR: &str = "<error censored due to no log>";
 
 /// A `no_log` task's error message with everything but its fixed prefixes replaced by
-/// `CENSORED_ERROR`, for an unreachable host: the reference prints a failed task's message
-/// as it is, the secret a `fail: msg=` carries included (ansible-core 2.19.12).
+/// `CENSORED_ERROR`. The reference censors only an unreachable host's detail and prints a
+/// failed task's message as it is, the secret a `fail: msg=` carries included (ansible-core
+/// 2.19.12); Volant censors both.
 pub(super) fn censor(message: &str) -> String {
     const PREFIXES: [&str; 4] = [
         "Task failed: ",

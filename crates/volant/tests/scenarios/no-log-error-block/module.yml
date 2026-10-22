@@ -1,5 +1,0 @@
-- hosts: all
-  gather_facts: false
-  tasks:
-    - command: /bin/false
-      no_log: true

@@ -1,6 +1,0 @@
-- hosts: all
-  gather_facts: false
-  tasks:
-    - fail:
-        msg: same failure
-      no_log: true

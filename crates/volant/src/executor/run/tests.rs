@@ -1577,7 +1577,7 @@ async fn a_host_cannot_forge_the_controller_s_internal_keys() {
             && result.0.contains_key("_ansible_parsed"),
         "{keys:?}"
     );
-    let block = crate::render::ErrorBlock::of(&result, None);
+    let block = crate::render::ErrorBlock::of(&result, None, false);
     assert!(block.causes.is_empty(), "{block:?}");
     assert!(!block.message.contains("forged block"), "{block:?}");
     let _ = std::fs::remove_dir_all(&dir);
@@ -1625,7 +1625,7 @@ fn a_raised_module_failure_takes_its_message_from_the_summary() {
         summarise_exception(&mut result);
         settle_failure(&mut result, &task("blockinfile"));
         assert_eq!(result.0["msg"], json!(msg), "{answer}");
-        let block = crate::render::ErrorBlock::of(&result, None);
+        let block = crate::render::ErrorBlock::of(&result, None, false);
         assert_eq!(block.causes.len(), causes, "{answer}: {block:?}");
         if causes == 1 {
             assert!(

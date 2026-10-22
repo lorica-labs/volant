@@ -136,12 +136,17 @@ fn a_raised_module_error_prints_its_message_and_cause() {
             {"msg": "[Errno 13] Denied"},
         ],
     }));
-    let block = ErrorBlock::of(&failed, None);
+    let block = ErrorBlock::of(&failed, None, false);
     let out = capture(|r| r.error(&block));
     assert_eq!(
         out,
         "[ERROR]: Task failed: Module failed: Not writable: [Errno 13] Denied\n\n\
          Task failed: Module failed: Not writable.\n\n<<< caused by >>>\n\n[Errno 13] Denied\n\n"
+    );
+    let censored = ErrorBlock::of(&failed, None, true);
+    assert!(
+        censored.lead.is_none() && censored.causes.is_empty(),
+        "{censored:?}"
     );
 }
 

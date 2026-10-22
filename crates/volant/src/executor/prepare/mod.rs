@@ -12,7 +12,7 @@ use crate::compile::Step;
 use crate::playbook::{Flag, python_repr};
 use crate::template::{ALLITEMS_KEY, Templar, TemplateError};
 use crate::transport::ConnectionDefaults;
-use crate::vars::{HostVars, VarStore};
+use crate::vars::VarStore;
 
 use super::coordinator::Progress;
 
@@ -34,7 +34,7 @@ pub(in crate::executor) use item::{
 pub(in crate::executor) use late::{hide_after_failure, resolve, strategy_reads_as_true};
 pub(in crate::executor) use plan::{Gate, PlayPlan, Strategy};
 pub(in crate::executor) use vars::host_vars;
-use vars::{Named, delegate_host_vars, merged_vars, resolved};
+use vars::{Named, delegate_host_vars, merged_vars, render_default, resolved};
 
 use carry::Carry;
 use connect::{connect_for, delegate_for};
@@ -447,42 +447,6 @@ pub(super) fn prepare(
     Ok(Prepared::Remote(
         items, escalation, delegate, payload, None, connect,
     ))
-}
-
-/// One `module_defaults` value as the mapping it stands for: a mapping with each of its values
-/// rendered, or a whole template that renders to one. The names that read something a managed
-/// host wrote go into `untrusted`, so the arguments they become are never rendered again.
-fn render_default(
-    templar: &Templar,
-    vars: &HostVars,
-    key: &str,
-    value: &Value,
-    untrusted: &mut BTreeSet<String>,
-) -> Result<Map<String, Value>, TemplateError> {
-    let not_a_mapping = || TemplateError(format!("module_defaults for '{key}' must be a mapping"));
-    match value {
-        Value::Null => Ok(Map::new()),
-        Value::Object(map) => {
-            let (map, tainted) = templar.render_map_tainted(map, vars)?;
-            untrusted.extend(tainted);
-            Ok(map)
-        }
-        other => {
-            let mut wrapped = Map::new();
-            wrapped.insert("value".into(), other.clone());
-            let (mut rendered, tainted) = templar.render_map_tainted(&wrapped, vars)?;
-            match rendered.remove("value") {
-                Some(Value::Object(map)) => {
-                    if tainted.contains("value") {
-                        untrusted.extend(map.keys().cloned());
-                    }
-                    Ok(map)
-                }
-                Some(Value::Null) => Ok(Map::new()),
-                _ => Err(not_a_mapping()),
-            }
-        }
-    }
 }
 
 fn is_local(module: &str) -> bool {

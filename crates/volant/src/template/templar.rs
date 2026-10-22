@@ -16,6 +16,7 @@ use super::bridged;
 use super::context::{Vars, begin, context_of, deferred, is_literal, take_failure};
 use super::env::{environment, holds_undefined, truthy, type_name};
 use super::filters;
+use super::missing::named;
 use super::vm::{
     TemplateReads, convert_error, eval_expr, keep_literal, single_expression, template_reads,
 };
@@ -295,7 +296,9 @@ impl Templar {
                     // Measured on ansible-core 2.19.12: a plugin's failure names the value it
                     // was resolving, `Error while resolving value for 'msg': The lookup plugin
                     // 'x' failed: …`.
-                    if bridged::is_plugin_failure(&err.0) {
+                    // A read with no value is worded the same way: `... for 'msg': 'x' is
+                    // undefined`.
+                    if bridged::is_plugin_failure(&err.0) || err.is_undefined() {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
                     } else if err.0.starts_with(filters::UNDECRYPTABLE) {
                         TemplateError(format!(
@@ -379,15 +382,17 @@ impl Templar {
         if let Some(error) = take_failure(ctx) {
             return Err(error);
         }
-        let value = value?;
+        let value = value.map_err(|e| named(e, expr, ctx))?;
         // Strict mode only raises on operations that force an undefined value (printing,
         // comparing, ...); an attribute lookup that never gets used stays a lazy Undefined, alone
         // or inside a list or mapping, that serde_json would otherwise turn into `null`. Force
         // the same error here.
         if holds_undefined(&value) {
-            return Err(convert_error(minijinja::Error::from(
-                ErrorKind::UndefinedError,
-            )));
+            return Err(named(
+                convert_error(minijinja::Error::from(ErrorKind::UndefinedError)),
+                expr,
+                ctx,
+            ));
         }
         super::pymethods::bytes::to_json(&value)
             .map_err(|e| TemplateError(super::pymethods::bytes::result_error(&e)))

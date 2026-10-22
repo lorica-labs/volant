@@ -23,6 +23,7 @@ mod item;
 mod late;
 mod loops;
 mod plan;
+mod undefined;
 mod vars;
 
 pub(in crate::executor) use escalation::retry_name;
@@ -33,6 +34,7 @@ pub(in crate::executor) use item::{
 };
 pub(in crate::executor) use late::{hide_after_failure, resolve, strategy_reads_as_true};
 pub(in crate::executor) use plan::{Gate, PlayPlan, Strategy};
+pub(in crate::executor) use undefined::{conditional_causes, keyword_at};
 pub(in crate::executor) use vars::host_vars;
 use vars::{Named, delegate_host_vars, merged_vars, resolved};
 
@@ -224,9 +226,11 @@ pub(super) fn prepare(
         let mut skipped = None;
         for condition in &task.when {
             // A conditional that cannot be evaluated yields to a kept loop error, as there.
-            let holds = templar
-                .condition(condition, &vars)
-                .map_err(|e| loop_error.clone().unwrap_or(e))?;
+            let holds = templar.condition(condition, &vars).map_err(|e| {
+                loop_error
+                    .clone()
+                    .unwrap_or_else(|| undefined::conditional_error(e))
+            })?;
             if !holds {
                 let mut r = Map::new();
                 r.insert("changed".into(), json!(false));

@@ -2060,3 +2060,21 @@ fn lipsum_differs_from_one_call_to_the_next() {
         .collect();
     assert!(texts.len() > 1, "{texts:?}");
 }
+
+/// A read with no value is worded as ansible-core 2.19.12 words it: the variable, or the
+/// attribute with the type it was read from, inside an expression as well as bare.
+#[rstest::rstest]
+#[case::bare("{{ nope }}", "'nope' is undefined")]
+#[case::text_around("a {{ nope }} b", "'nope' is undefined")]
+#[case::filter("{{ nope | upper }}", "'nope' is undefined")]
+#[case::attribute_of_a_missing_name("{{ nope.x == 1 }}", "'nope' is undefined")]
+#[case::missing_attribute("{{ a.b }}", "object of type 'dict' has no attribute 'b'")]
+#[case::missing_key("{{ a['b'] }}", "object of type 'dict' has no attribute 'b'")]
+#[case::after_a_guarded_read("{{ (nope | default(1)) + other }}", "'other' is undefined")]
+#[case::in_a_block("{% if gone %}x{% endif %}", "'gone' is undefined")]
+fn an_undefined_read_names_what_was_missing(#[case] source: &str, #[case] want: &str) {
+    let own = vars(json!({"a": {}}));
+    let err = templar().render(source, &own).unwrap_err();
+    assert_eq!(err.0, want, "{source}");
+    assert!(err.is_undefined(), "{source}");
+}

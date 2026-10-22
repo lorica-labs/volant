@@ -117,6 +117,8 @@ pub struct Play {
     /// `vars_prompt`, entry by entry as written, every key already known to the reference's
     /// list. Templated and asked when the play starts, see `prompt`.
     pub vars_prompt: Vec<Map<String, Value>>,
+    /// Where each `vars_prompt` entry's `prompt` was written, entry by entry.
+    pub prompt_origins: Vec<Option<Origin>>,
 }
 
 /// One handler as the playbook wrote it: a task, plus the names it answers to besides its own.

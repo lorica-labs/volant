@@ -132,7 +132,13 @@ pub(in crate::executor) fn silent_discovery<V: crate::vars::HostSettings + ?Size
 
 /// Puts the discovered interpreter in the result's `ansible_facts`, where the reference returns
 /// it and where [`super::record::record_facts`] makes it the host's own fact.
+///
+/// A result the executor raised itself (an `until` it could not evaluate) carries none: the
+/// reference's holds the message and `changed: false` alone.
 pub(in crate::executor) fn stamp_discovery(result: &mut TaskResult, interpreter: &str) {
+    if result.0.contains_key(super::retry::RAISED_KEY) {
+        return;
+    }
     let facts = result
         .0
         .entry("ansible_facts")

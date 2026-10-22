@@ -17,6 +17,7 @@ pub(crate) use filters::python_json;
 mod globals;
 mod lipsum;
 mod lookups;
+mod missing;
 mod once;
 mod one_pass;
 mod order;
@@ -60,11 +61,16 @@ impl TemplateError {
     /// Whether the render failed on a variable that had no value, as opposed to a syntax error,
     /// an unknown filter or an illegal operation.
     pub fn is_undefined(&self) -> bool {
-        self.0.starts_with(UNDEFINED)
-            || self
-                .0
-                .strip_prefix("Task failed: '")
-                .is_some_and(|rest| rest.ends_with("' is undefined"))
+        self.0.starts_with(UNDEFINED) || self.names_missing()
+    }
+
+    /// Whether the message is one of the two sentences that name what a read did not find: a
+    /// variable (`'x' is undefined`) or an attribute (`object of type 'dict' has no attribute 'x'`).
+    fn names_missing(&self) -> bool {
+        self.0.ends_with("' is undefined")
+            || (self.0.contains("object of type '")
+                && self.0.ends_with('\'')
+                && self.0.contains("' has no attribute '"))
     }
 }
 

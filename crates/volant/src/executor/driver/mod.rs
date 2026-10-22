@@ -2452,12 +2452,16 @@ pub(super) async fn drive_host(
             // it: there the reference leaves `msg` empty and fills `failed_when_result`.
             let mut result = failed_result(&err);
             // A keyword that did not render fails the task as an unchanged one, `run_once` apart.
-            if rendered.contains_key(&index) && !err.0.contains("'run_once'") {
+            // Arguments that did not render fail the task as an unchanged one as well.
+            if (rendered.contains_key(&index) && !err.0.contains("'run_once'"))
+                || err.0.starts_with(super::prepare::FINALIZING)
+            {
                 result.0.insert("changed".into(), Value::Bool(false));
             }
             if let Some(causes) = debugger::causes(task, &err.0)
                 .or_else(|| throttle::causes(task, &err.0))
                 .or_else(|| super::prepare::undefined_causes(task, &err.0))
+                .or_else(|| super::prepare::conditional_causes(task, &err.0))
             {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
             } else if let Some(detail) = err.0.strip_prefix("Task failed: ")
@@ -2473,6 +2477,12 @@ pub(super) async fn drive_host(
                         None
                     )]),
                 );
+            }
+            if let Some(at) = super::prepare::keyword_at(task, &err) {
+                result
+                    .0
+                    .insert(crate::render::ERROR_KEY.into(), err.0.clone().into());
+                result.0.insert(crate::render::AT_KEY.into(), at);
             }
             let results = vec![(None, result)];
             // Measured on ansible-core 2.19.12: an undefined variable in a task's arguments
@@ -2590,9 +2600,18 @@ pub(super) fn finalization_causes(task: &PlayTask, message: &str) -> Option<Valu
         .split('\'')
         .next()?;
     let origin = |name: &str| task.value_origins.get(name);
+    let resolved = crate::render::cause(resolving, origin(&format!("args.{key}")), None);
+    // A task with no name of its own starts where its action does, and the reference puts the
+    // two links in one: the block opens with the finalization's sentence.
+    if task.origin.is_some() && task.origin.as_ref() == origin("action") {
+        return Some(Value::Array(vec![
+            crate::render::lead(&format!("Task failed: {head}")),
+            resolved,
+        ]));
+    }
     Some(Value::Array(vec![
         crate::render::cause(&head, origin("action"), None),
-        crate::render::cause(resolving, origin(&format!("args.{key}")), None),
+        resolved,
     ]))
 }
 

@@ -2106,6 +2106,104 @@ fn module_defaults_and_collections_that_cannot_be_honoured_say_why(
     std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
 }
 
+/// A module no collection holds prints the reference's warning and error block, then Volant's
+/// hint on its own line when a collection would have to be installed.
+#[rstest]
+#[case::missing_collection(
+    "foo.bar.baz",
+    "Error loading plugin 'foo.bar.baz': No module named 'ansible_collections.foo'",
+    "
+The collection 'foo.bar' is not installed on the controller: install it with volant runtime install --collections foo.bar"
+)]
+#[case::not_a_reference(
+    "sub.hello",
+    "Error loading plugin 'sub.hello': sub.hello is not a valid collection reference",
+    ""
+)]
+fn a_module_nothing_holds_prints_the_reference_warning_and_error_block(
+    #[case] module: &str,
+    #[case] warning: &str,
+    #[case] hint: &str,
+) {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("missing-collection");
+    let body = format!(
+        "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - {module}:
+"
+    );
+    let (code, text) = run_probe_env(
+        &dir,
+        "site",
+        &body,
+        &["-i", "localhost,"],
+        None,
+        &[("VOLANT_PYTHON", &python)],
+    );
+    let file = dir.join("site.yml").display().to_string();
+    assert_eq!(code, 4, "{text}");
+    let tail = format!(
+        "couldn't resolve module/action '{module}'. This often indicates a misspelling, missing collection, or incorrect module path."
+    );
+    let block = format!(
+        "[WARNING]: {warning}
+[ERROR]: {tail}
+Origin: {file}:4:7
+
+2   gather_facts: false
+3   tasks:
+4     - {module}:
+        ^ column 7{hint}
+"
+    );
+    assert!(text.ends_with(&block), "{text}");
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
+/// A connection a collection took over warns once with the routed name; a name nobody routes
+/// does not.
+#[rstest]
+#[case::docker("docker", Some("[WARNING]: Error loading plugin 'community.docker.docker': No module named 'ansible_collections.community'
+"))]
+#[case::network_cli("network_cli", Some("[WARNING]: Error loading plugin 'ansible.netcommon.network_cli': No module named 'ansible_collections.ansible.netcommon'
+"))]
+#[case::bogus("bogus", None)]
+fn a_missing_connection_plugin_warns_with_the_routed_name(
+    #[case] connection: &str,
+    #[case] warning: Option<&str>,
+) {
+    let dir = probe_dir(&format!("missing-connection-{connection}"));
+    std::fs::write(
+        dir.join("inv.ini"),
+        format!(
+            "h ansible_connection={connection}
+"
+        ),
+    )
+    .expect("an inventory");
+    let inventory = dir.join("inv.ini").display().to_string();
+    let body = "- hosts: all
+  gather_facts: false
+  tasks:
+    - command: \"true\"
+";
+    let (_, text) = run_probe_env(&dir, "site", body, &["-i", &inventory], None, &[]);
+    assert!(text.contains("was not found"), "{text}");
+    assert_eq!(
+        text.matches("[WARNING]: Error loading plugin").count(),
+        usize::from(warning.is_some()),
+        "{text}"
+    );
+    if let Some(warning) = warning {
+        assert!(text.contains(warning), "{text}");
+    }
+    std::fs::remove_dir_all(&dir).expect("the probe directory is removed");
+}
+
 /// Every task of a batch is rendered before the batch goes out, so a task that writes facts ends
 /// its batch.
 #[test]

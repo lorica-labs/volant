@@ -20,7 +20,7 @@ pub use control::{control_dir, raise_open_file_limit};
 pub use defaults::{
     BecomeMethod, ConnectError, ConnectionDefaults, ConnectionKeywords, ConnectionNotFound,
     Escalation, EscalationProgram, HostOwn, INCORRECT_SU_PASSWORD, INCORRECT_SUDO_PASSWORD,
-    MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport,
+    MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport, plugin_load_warning,
 };
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;

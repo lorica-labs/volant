@@ -1,7 +1,0 @@
-- hosts: h1
-  gather_facts: false
-  tasks:
-    - name: A failing lookup in when
-      debug:
-        msg: unreachable
-      when: lookup('file', '/nonexistent/x') == 'a'

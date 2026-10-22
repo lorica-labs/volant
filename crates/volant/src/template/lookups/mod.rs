@@ -189,7 +189,7 @@ fn lookup(
             "file" | "ansible.builtin.file" => {
                 let Some(path) = found_file(state, &term_text, base_dir) else {
                     return Err(invalid(format!(
-                        "Unable to access the file '{term_text}': File not found. Use -vvvvv                          to see paths searched."
+                        "Unable to access the file '{term_text}': File not found. Use -vvvvv to see paths searched."
                     )));
                 };
                 let text = std::fs::read_to_string(&path).map_err(|e| {

@@ -367,9 +367,8 @@ fn ctrl_c_at_a_pause_prompt_ends_the_run() {
     run.kill();
 }
 
-/// `--start-at-task` leaves out the tasks in front of the first match (`*` and `?` match any text);
-/// a match on the play's first task still gathers facts first, as the reference does;
-/// a name nothing matches prints an empty recap, then the error, and the exit code stays 0.
+/// `--start-at-task` leaves out the tasks in front of the first match, a first-task match still gathers
+/// facts first, and a name nothing matches prints an empty recap, the error, and exit code 0.
 #[rstest]
 #[case::exact("controller/step.yml", "second task", &["second task", "third task", "tail task"])]
 #[case::glob("controller/step.yml", "tai*", &["tail task"])]

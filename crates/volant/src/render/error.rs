@@ -49,6 +49,10 @@ pub fn lead(msg: &str) -> serde_json::Value {
 /// "help"}]`. Taken off with [`ERROR_KEY`].
 pub const CHAIN_KEY: &str = "_volant_chain";
 
+/// The key the executor leaves on a failure the reference prints no error block for: an item
+/// failed by its `loop_control.label`, which carries no exception. Taken off with [`ERROR_KEY`].
+pub const NO_BLOCK_KEY: &str = "_volant_no_block";
+
 /// The key the executor leaves what the reference shows under `Origin: <unknown>` under, for a
 /// failure that has no place in a file: a `with_` lookup that failed is shown as the expression
 /// `invoke_lookup()`, not at the task. Taken off with [`ERROR_KEY`].

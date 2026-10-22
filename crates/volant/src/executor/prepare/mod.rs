@@ -1,24 +1,24 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Rendering one task for one host: variables, escalation, environment and loop items.
 
-use std::collections::{BTreeMap, BTreeSet};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Map, Value, json};
+use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
 use crate::compile::Step;
-use crate::playbook::{Flag, python_repr};
+use crate::playbook::python_repr;
 use crate::template::{ALLITEMS_KEY, Templar, TemplateError};
 use crate::transport::ConnectionDefaults;
-use crate::vars::{HostVars, VarStore};
+use crate::vars::VarStore;
 
 use super::coordinator::Progress;
 
 mod carry;
 mod connect;
 mod escalation;
+mod fields;
 mod item;
 mod late;
 mod loops;
@@ -28,7 +28,7 @@ mod vars;
 pub(in crate::executor) use escalation::retry_name;
 pub(in crate::executor) use item::strict_boolean;
 pub(in crate::executor) use item::{
-    FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, pause_of,
+    FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, label_failed, pause_of,
     undefined_name,
 };
 pub(in crate::executor) use late::{hide_after_failure, resolve, strategy_reads_as_true};
@@ -38,8 +38,9 @@ use vars::{Named, delegate_host_vars, merged_vars, resolved};
 
 use carry::Carry;
 use connect::{connect_for, delegate_for};
-use escalation::{become_for, remove_omit};
-use item::{check_gather_subset, environment_for, flag_for, ignore_errors_for, notify_for};
+use escalation::become_for;
+use fields::{Fields, render_fields};
+use item::{item_failure, label_for, notify_for};
 pub(in crate::executor) use loops::undefined_causes;
 use loops::{LoopOptions, loop_list, loop_options, named_undefined, with_lookup_items};
 
@@ -216,127 +217,22 @@ pub(super) fn prepare(
             vars.map = resolved;
             vars.untrusted = untrusted;
         }
-        let label = match (&element, &task.loop_label) {
-            (None, _) => None,
-            (Some(_), Some(template)) => Some(display(&templar.render(template, &vars)?)),
-            (Some(el), None) => Some(display(el)),
-        };
-        let mut skipped = None;
-        for condition in &task.when {
-            // A conditional that cannot be evaluated yields to a kept loop error, as there.
-            let holds = templar
-                .condition(condition, &vars)
-                .map_err(|e| loop_error.clone().unwrap_or(e))?;
-            if !holds {
-                let mut r = Map::new();
-                r.insert("changed".into(), json!(false));
-                r.insert("skipped".into(), json!(true));
-                r.insert("skip_reason".into(), json!("Conditional result was False"));
-                r.insert("false_condition".into(), json!(condition));
-                skipped = Some(TaskResult(r));
-                break;
-            }
-        }
-        if skipped.is_none()
-            && let Some(e) = loop_error.take()
-        {
-            return Err(e);
-        }
-        // Rendered argument by argument rather than as one value, because a few arguments are
-        // read back as engine input rather than as data - the name a `debug: var:` compiles -
-        // and the render is the only place that can say which of them came from a host.
-        let (args, args_untrusted) = if skipped.is_some() {
-            (Map::new(), BTreeSet::new())
-        } else {
-            // `assert` reads `that` off the task as written and evaluates it the way `when` is
-            // evaluated, so it is not rendered here: a render error in it would fail the task in
-            // the render's words before the conditional could report it, which the reference's
-            // `finalize_task_arg` for `assert` does not do.
-            //
-            let raw = if short_name(&task.module) == "assert" {
-                let mut raw = task.args.clone();
-                raw.remove("that");
-                std::borrow::Cow::Owned(raw)
-            } else {
-                std::borrow::Cow::Borrowed(&task.args)
-            };
-            let finalizing = |err: TemplateError| {
-                if err.0.starts_with(crate::template::RESOLVING) {
-                    TemplateError(format!(
-                        "{FINALIZING}'{}' failed: {}",
-                        super::run::action_fqcn(&task.module),
-                        err.0
-                    ))
-                } else {
-                    err
-                }
-            };
-            let (mut map, mut untrusted) = templar
-                .render_map_tainted(&raw, &vars)
-                .map_err(finalizing)?;
-            if task.name == "Gathering Facts" && task.module == "ansible.legacy.setup" {
-                check_gather_subset(raw.get("gather_subset"), map.get("gather_subset"))?;
-            }
-            // The task's `module_defaults` lie under its own arguments, each rendered once on
-            // its own: a default is a template like an argument, and may be a whole template
-            // that renders to a mapping. A task's argument wins, `omit` included.
-            if !task.module_defaults.is_empty() {
-                let mut from_default = BTreeSet::new();
-                let mut defaults = crate::collection::defaults_for(
-                    &task.module,
-                    &task.module_defaults,
-                    &plan.steps().resolved.groups(),
-                    &mut |key, value| {
-                        render_default(templar, &vars, key, value, &mut from_default)
-                            .map_err(|err| finalizing(err).0)
-                    },
-                )
-                .map_err(TemplateError)?;
-                from_default.retain(|name| !map.contains_key(name));
-                untrusted.extend(from_default);
-                defaults.extend(std::mem::take(&mut map));
-                map = defaults;
-            }
-            let mut rendered = Value::Object(map);
-            remove_omit(&mut rendered);
-            let Value::Object(map) = rendered else {
-                unreachable!("an object renders to an object")
-            };
-            (map, untrusted)
-        };
-        // Per item, against the item's own variables, and never for an item a `when` left out:
-        // the reference evaluates the conditional before it renders the task's keywords.
-        let ignore_errors = match (&task.ignore_errors, &skipped) {
-            (Some(Flag::Template(raw)), None) => Some(ignore_errors_for(raw, &vars, templar)?),
-            _ => None,
-        };
-        let check_mode = flag_for(
-            "check_mode",
-            task.check_mode.as_ref(),
-            &vars,
-            templar,
-            skipped.is_some(),
-        )?;
-        let diff = flag_for(
-            "diff",
-            task.diff.as_ref(),
-            &vars,
-            templar,
-            skipped.is_some(),
-        )?;
-        // A skipped item runs nothing, so a layer it could not render is not its problem: the
-        // reference does not evaluate `environment` for a task a `when` left out.
-        let environment = if skipped.is_some() {
-            BTreeMap::new()
-        } else {
-            environment_for(task, &vars, templar, warnings)?
+        let (label, label_error) = label_for(task, element.as_ref(), &vars, templar);
+        // A field of a loop item that fails to render fails that item alone, when the loop
+        // reaches it. Measured on ansible-core 2.19.12: `failed: [h] (item=2)` between two items
+        // that ran, then `One or more items failed`; an item behind a `break_when` that ended
+        // the loop shows nothing. A task with no item fails as a whole.
+        let fields = match render_fields(task, plan, templar, &vars, &mut loop_error, warnings) {
+            Ok(fields) => fields,
+            Err(err) if element.is_some() => Fields::failed(item_failure(task, &err)),
+            Err(err) => return Err(err),
         };
         // As `environment`: a keyword the reference renders before the module runs, so an
         // undefined name fails the task even when nothing changes, and a skipped item renders none.
         // In a loop a `notify` that fails to render fails that item only, and the other items
         // run: measured, `failed: [h] (item=2)` between two `changed` items.
-        let (notify, skipped) = if skipped.is_some() {
-            (Vec::new(), skipped)
+        let (notify, skipped) = if fields.skipped.is_some() {
+            (Vec::new(), fields.skipped)
         } else {
             match notify_for(task, &vars, templar) {
                 Ok(names) => (names, None),
@@ -351,36 +247,49 @@ pub(super) fn prepare(
                 Err(err) => return Err(err),
             }
         };
-        items.push(Item {
+        let mut item = Item {
             element,
             label,
-            args,
-            args_untrusted,
+            args: fields.args,
+            args_untrusted: fields.args_untrusted,
             vars,
-            environment,
+            environment: fields.environment,
             skipped,
-            ignore_errors,
-            check_mode,
-            diff,
+            ignore_errors: fields.ignore_errors,
+            check_mode: fields.check_mode,
+            diff: fields.diff,
             set_fact_names: std::sync::OnceLock::new(),
             notify,
-        });
-        if let (Some(carry), Some(item)) = (&mut carry, items.last_mut()) {
-            carry.take(item, templar);
+            label_error,
+        };
+        if let Some(carry) = &mut carry {
+            carry.take(&item, templar);
             // The reference renders `loop_control.label` after the item ran, so it reads the
             // facts the item just set.
-            if let (Some(template), Some(_)) = (&task.loop_label, &item.element) {
+            if task.loop_label.is_some() {
                 let mut after = item.vars.clone();
                 carry.lay_over(&mut after);
-                item.label = Some(display(&templar.render(template, &after)?));
+                (item.label, item.label_error) =
+                    label_for(task, item.element.as_ref(), &after, templar);
             }
         }
+        // An item that runs nothing reports its label's failure over its result now.
+        if let Some(result) = item.skipped.as_mut()
+            && let Some(message) = item.label_error.take()
+        {
+            label_failed(&message, result);
+        }
+        items.push(item);
     }
     // Every item failing to render its `notify` is the task's own failure.
     if let Some(err) = first_notify_error.filter(|_| notify_failures == items.len()) {
         return Err(err);
     }
-    if items.iter().all(|i| i.skipped.is_some()) {
+    // Only when every item was left out: an item that failed to render fails the task.
+    if items
+        .iter()
+        .all(|i| i.skipped.as_ref().is_some_and(|r| !r.failed()))
+    {
         return Ok(Prepared::Skipped(items));
     }
     let delegate = delegate_for(task, &base, templar)?;
@@ -443,42 +352,6 @@ pub(super) fn prepare(
     Ok(Prepared::Remote(
         items, escalation, delegate, payload, None, connect,
     ))
-}
-
-/// One `module_defaults` value as the mapping it stands for: a mapping with each of its values
-/// rendered, or a whole template that renders to one. The names that read something a managed
-/// host wrote go into `untrusted`, so the arguments they become are never rendered again.
-fn render_default(
-    templar: &Templar,
-    vars: &HostVars,
-    key: &str,
-    value: &Value,
-    untrusted: &mut BTreeSet<String>,
-) -> Result<Map<String, Value>, TemplateError> {
-    let not_a_mapping = || TemplateError(format!("module_defaults for '{key}' must be a mapping"));
-    match value {
-        Value::Null => Ok(Map::new()),
-        Value::Object(map) => {
-            let (map, tainted) = templar.render_map_tainted(map, vars)?;
-            untrusted.extend(tainted);
-            Ok(map)
-        }
-        other => {
-            let mut wrapped = Map::new();
-            wrapped.insert("value".into(), other.clone());
-            let (mut rendered, tainted) = templar.render_map_tainted(&wrapped, vars)?;
-            match rendered.remove("value") {
-                Some(Value::Object(map)) => {
-                    if tainted.contains("value") {
-                        untrusted.extend(map.keys().cloned());
-                    }
-                    Ok(map)
-                }
-                Some(Value::Null) => Ok(Map::new()),
-                _ => Err(not_a_mapping()),
-            }
-        }
-    }
 }
 
 fn is_local(module: &str) -> bool {

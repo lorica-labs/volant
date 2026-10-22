@@ -92,6 +92,7 @@ async fn every_local_module_has_an_arm_in_run_local() {
             diff: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            label_error: None,
             notify: Vec::new(),
         };
         // Arguments are deliberately empty: what is asserted is that the name is known, not
@@ -637,6 +638,7 @@ fn the_argument_check_speaks_the_reference_s_sentences() {
             diff: None,
             skipped: None,
             set_fact_names: std::sync::OnceLock::new(),
+            label_error: None,
             notify: Vec::new(),
         };
         validate_argument_spec(&item)
@@ -782,6 +784,7 @@ fn a_result_that_ran_says_whether_it_failed() {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     };
     let failed = |r: Value| {
@@ -830,6 +833,7 @@ fn the_recap_counts_changed_the_way_the_reference_does() {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     };
     let plain = task("command");
@@ -886,6 +890,7 @@ fn failed_when_false_rescues_a_non_zero_rc() {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     };
     let r = apply_conditions(

@@ -14,8 +14,8 @@ mod result;
 
 pub(crate) use error::source_context;
 pub use error::{
-    CHAIN_KEY, ERROR_KEY, ErrorBlock, UNKNOWN_KEY, cause, concat_message, lead, shorten,
-    task_failed,
+    CHAIN_KEY, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, cause, concat_message, lead,
+    shorten, task_failed,
 };
 pub(crate) use recap_json::ansible_json;
 use recap_json::dumps_indented;
@@ -100,6 +100,13 @@ impl Renderer {
             diffs: None,
             path_on_failure: false,
         }
+    }
+
+    /// Settles the colour once the configuration is read.
+    pub fn set_choice(&mut self, choice: ColorChoice) {
+        let stream = AutoStream::new(std::io::stdout(), choice);
+        self.color = stream.current_choice() != ColorChoice::Never;
+        self.out = Box::new(stream);
     }
 
     #[cfg(test)]

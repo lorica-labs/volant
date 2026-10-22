@@ -129,9 +129,20 @@ pub(super) fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Y
     }
 }
 
+static DEPRECATION_WARNINGS: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(true);
+
+/// Turns every deprecation notice off or on, from `deprecation_warnings`.
+pub(crate) fn set_deprecation_warnings(on: bool) {
+    DEPRECATION_WARNINGS.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// A `[DEPRECATION WARNING]:` block on stderr, after the line that says how to silence them,
-/// printed once per run.
+/// printed once per run; nothing when `deprecation_warnings` is off.
 pub(crate) fn print_deprecation(text: &str) {
+    if !DEPRECATION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
+        return;
+    }
     static HEADER: std::sync::Once = std::sync::Once::new();
     HEADER.call_once(|| {
         eprintln!(

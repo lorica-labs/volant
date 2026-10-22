@@ -34,6 +34,9 @@ pub struct ConnectionDefaults {
     /// `ansible_ssh_common_args` or `ansible_ssh_extra_args` replaces the one it names.
     pub ssh_common_args: Vec<String>,
     pub ssh_extra_args: Vec<String>,
+    /// `[ssh_connection] usetty` and `ANSIBLE_SSH_USETTY`: the terminal a host gets when it sets
+    /// no `ansible_ssh_use_tty` of its own.
+    pub ssh_use_tty: bool,
 }
 
 /// Written by hand so `become_password` cannot reach a log or a `-vvv` dump: a derived `Debug`
@@ -56,6 +59,7 @@ impl std::fmt::Debug for ConnectionDefaults {
             .field("become_password", &redacted(self.become_password.as_ref()))
             .field("ssh_common_args", &self.ssh_common_args)
             .field("ssh_extra_args", &self.ssh_extra_args)
+            .field("ssh_use_tty", &self.ssh_use_tty)
             .finish()
     }
 }
@@ -150,6 +154,9 @@ pub const MISSING_SUDO_PASSWORD: &str = "Missing sudo password";
 pub const INCORRECT_SUDO_PASSWORD: &str = "Incorrect sudo password";
 /// The reference's text for a `su` that refused the password, or asked for it a second time.
 pub const INCORRECT_SU_PASSWORD: &str = "Incorrect su password";
+/// The reference's text for a `su` that never started the command over a local connection, which
+/// follows it with what `su` printed.
+pub const SU_PREMATURE_END: &str = "Premature end of stream waiting for become success.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Transport {

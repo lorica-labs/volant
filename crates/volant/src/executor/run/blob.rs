@@ -170,10 +170,11 @@ pub(super) async fn put_file_within<C: AgentChannel>(
         path: remote.into(),
         mode,
     };
-    link.ask(&put)
-        .await
-        .map_err(|err| format!("asking the agent to put the file at '{remote}': {err}"))?;
+    // The write of the request is part of the wait: a link that stopped reading holds it too.
     let wait = async {
+        link.ask(&put)
+            .await
+            .map_err(|err| format!("asking the agent to put the file at '{remote}': {err}"))?;
         loop {
             match link.answer().await {
                 Ok(Some(FromAgent::PutFileDone {

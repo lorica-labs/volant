@@ -1615,11 +1615,13 @@ pub(super) async fn drive_host(
                     let index = batch[0].0;
                     let mut task = step_at(&c, &rendered, index).task.clone();
                     task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    // Measured for `Incorrect su password` (scout case `c5w`): the reference
-                    // raises it from its connection, so the result is `changed: false` and a
+                    // Measured for `Incorrect su password` (scout case `c5w`) and, over a local
+                    // connection, `Premature end of stream`: the reference raises them from its connection, so the result is `changed: false` and a
                     // `msg` that already says `Task failed: `. The other refusals keep their shape
                     // until they are measured too.
-                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD {
+                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD
+                        || msg.starts_with(crate::transport::SU_PREMATURE_END)
+                    {
                         let mut shaped = TaskResult::failed_with(crate::render::task_failed(&msg));
                         shaped.0.insert("changed".into(), Value::Bool(false));
                         shaped
@@ -2593,9 +2595,18 @@ pub(super) fn finalization_causes(task: &PlayTask, message: &str) -> Option<Valu
         .split('\'')
         .next()?;
     let origin = |name: &str| task.value_origins.get(name);
+    let value = crate::render::cause(resolving, origin(&format!("args.{key}")), None);
+    // A syntax error is the head of the block itself, not a link behind it: measured on
+    // ansible-core 2.19.12, `No filter named` prints one `caused by`, the value.
+    if resolving.contains(crate::template::NO_FILTER) {
+        return Some(Value::Array(vec![
+            crate::render::lead(&format!("Task failed: {head}")),
+            value,
+        ]));
+    }
     Some(Value::Array(vec![
         crate::render::cause(&head, origin("action"), None),
-        crate::render::cause(resolving, origin(&format!("args.{key}")), None),
+        value,
     ]))
 }
 

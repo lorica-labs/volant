@@ -58,17 +58,7 @@ pub fn run(args: PlaybookArgs) -> i32 {
         Ok(code) => code,
         Err(err) => {
             match err.downcast_ref::<Refusal>() {
-                Some(Refusal {
-                    unresolved: Some(u),
-                    ..
-                }) => {
-                    let (warning, error) = u.report();
-                    if let Some(warning) = warning {
-                        eprintln!("[WARNING]: {warning}");
-                    }
-                    eprintln!("[ERROR]: {error}");
-                }
-                Some(r) if r.plain => eprintln!("[ERROR]: {}", r.message),
+                Some(r) if r.plain || r.unresolved.is_some() => r.show(),
                 _ => eprintln!("ERROR! {err:#}"),
             }
             error_code(&err)

@@ -263,6 +263,21 @@ impl Refusal {
         })
     }
 
+    /// Prints this refusal on stderr the way the reference does: `[ERROR]: message`, behind its
+    /// warning for a module no collection holds.
+    pub fn show(&self) {
+        match &self.unresolved {
+            Some(u) => {
+                let (warning, error) = u.report();
+                if let Some(warning) = warning {
+                    eprintln!("[WARNING]: {warning}");
+                }
+                eprintln!("[ERROR]: {error}");
+            }
+            None => eprintln!("[ERROR]: {}", self.message),
+        }
+    }
+
     /// Gives `err` this code unless it already carries one of its own, so a blanket code for a
     /// whole family of refusals cannot bury the one a member of it measured for itself.
     pub fn or(code: i32, err: anyhow::Error) -> anyhow::Error {

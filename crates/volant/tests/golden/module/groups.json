@@ -1,0 +1,72 @@
+{
+  "accounts": {
+    "host": true,
+    "needs": [
+      "sudo"
+    ]
+  },
+  "actions": {
+    "host": false,
+    "needs": []
+  },
+  "actions-host": {
+    "host": true,
+    "needs": [
+      "sudo",
+      "apt",
+      "systemd"
+    ]
+  },
+  "apt": {
+    "host": true,
+    "needs": [
+      "sudo",
+      "apt",
+      "hello"
+    ]
+  },
+  "copy": {
+    "host": false,
+    "needs": []
+  },
+  "facts": {
+    "host": true,
+    "needs": [
+      "sudo",
+      "systemd",
+      "apt"
+    ]
+  },
+  "file": {
+    "host": false,
+    "needs": []
+  },
+  "lineinfile": {
+    "host": false,
+    "needs": []
+  },
+  "python": {
+    "host": false,
+    "needs": [
+      "collections"
+    ]
+  },
+  "setup": {
+    "host": false,
+    "needs": [
+      "apt"
+    ]
+  },
+  "stat": {
+    "host": false,
+    "needs": []
+  },
+  "systemd": {
+    "host": true,
+    "needs": [
+      "sudo",
+      "systemd",
+      "cron"
+    ]
+  }
+}

@@ -24,7 +24,8 @@ insta-accept:
     cargo insta accept --workspace
 
 # Regenerate the golden expectations with the reference ansible-core (see tests/golden/ANSIBLE_VERSION):
-# every kind, or those named (template, inventory, scenario, module). Reproducible: running this on
+# every kind, or those named (template, inventory, scenario, module); `module:<case or group>` records
+# only those module cases (their group still runs whole). Reproducible: running this on
 # a correct tree leaves the template, inventory and scenario recordings byte for byte as they were,
 # so an empty diff afterwards is a check and not a coincidence. The `module` kind needs sudo,
 # systemd, apt and cron.

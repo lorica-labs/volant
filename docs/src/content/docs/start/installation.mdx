@@ -27,12 +27,12 @@ The script reads three environment variables:
 
 | Variable | Default | What it changes |
 |---|---|---|
-| `VOLANT_VERSION` | the newest release | The release to install, such as `v0.1.0-alpha.9`. |
+| `VOLANT_VERSION` | the newest release | The release to install, such as `v0.1.0-alpha.10`. |
 | `VOLANT_HOME` | `~/.local/share/volant` | Where releases are unpacked. |
 | `VOLANT_BIN_DIR` | `~/.local/bin` | Where the `volant` and `volant-playbook` links go. |
 
 ```sh
-curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.9 sh
+curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.10 sh
 ```
 
 ## What you get
@@ -108,7 +108,7 @@ Run the install command again. It installs the newest release next to the ones y
   <TabItem label="cargo binstall">
     ```sh
     # Only pre-releases exist so far, so name the version.
-    cargo binstall volant@0.1.0-alpha.9
+    cargo binstall volant@0.1.0-alpha.10
     ```
 
     This downloads a release binary with its agents included. On a glibc host it is the glibc build, on Alpine the static build.

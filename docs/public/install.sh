@@ -6,7 +6,7 @@
 #   curl -fsSL https://volant.sh/install.sh | sh
 #
 # Environment:
-#   VOLANT_VERSION   release tag to install, such as v0.1.0-alpha.9 (default: the newest release)
+#   VOLANT_VERSION   release tag to install, such as v0.1.0-alpha.10 (default: the newest release)
 #   VOLANT_HOME      where releases are unpacked (default: ~/.local/share/volant)
 #   VOLANT_BIN_DIR   where the volant and volant-playbook links go (default: ~/.local/bin)
 

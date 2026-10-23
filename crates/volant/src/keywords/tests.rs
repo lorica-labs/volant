@@ -260,23 +260,18 @@ fn is_barrier_reads_both_the_name_and_the_flag() {
     assert!(!is_barrier("not_a_real_keyword"));
 }
 
-/// The legend and the gap section name a status only when some keyword has it.
+/// The legend and the gap section name `partial` only when some keyword has it, and then list
+/// each gap.
 #[test]
-fn the_page_describes_only_the_statuses_in_use() {
-    let page = documentation();
-    let any_partial = [
-        TASK_KEYWORDS,
-        PLAY_KEYWORDS,
-        LOOP_CONTROL_KEYWORDS,
-        BLOCK_KEYWORDS,
-        HANDLER_KEYWORDS,
-    ]
-    .iter()
-    .flat_map(|table| table.iter())
-    .any(|k| k.support == Partial);
-    assert_eq!(page.contains("kw-partial"), any_partial);
-    assert_eq!(page.contains("## What partial leaves out"), any_partial);
-    assert!(!page.contains("kw-notyet"));
+fn the_page_describes_partial_only_when_a_keyword_is_partial() {
+    let without = page::render(&[]);
+    assert!(!without.contains("kw-partial"));
+    assert!(!without.contains("## What partial leaves out"));
+    let with = page::render(&[("loop_control", "no `extended_allitems`")]);
+    assert!(with.contains("kw-partial"));
+    assert!(with.contains("## What partial leaves out"));
+    assert!(with.contains("| `loop_control` | no `extended_allitems` |"));
+    assert!(!with.contains("kw-notyet"));
 }
 
 /// The keyword page is regenerated from the keyword tables and matches them.

@@ -9,7 +9,6 @@ Volant is in pre-alpha. The [Volant roadmap board](https://github.com/orgs/loric
 
 | Milestone | What it brings |
 |---|---|
-| [v0.1.0-alpha.10](https://github.com/lorica-labs/volant/milestone/11) | Fixes for differences from ansible-core found so far |
 | [v0.1.0-alpha.11](https://github.com/lorica-labs/volant/milestone/2) | The command suite: `volant adhoc`, `volant vault` and `volant inventory` in Rust; `doc`, `config`, `galaxy`, `pull` and `console` through the managed runtime; opt-in `ansible-*` command names, so existing scripts run unchanged without ansible installed |
 | [v0.1.0-alpha.12](https://github.com/lorica-labs/volant/milestone/10) | A safe switch: record real `ansible-playbook` runs, replay them under Volant without touching hosts, and lock the engine version |
 | [v0.1.0-alpha.13](https://github.com/lorica-labs/volant/milestone/3) | Container connections: docker, podman, kubectl, lxd and incus, chroot, buildah, aws_ssm |

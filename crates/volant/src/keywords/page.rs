@@ -54,7 +54,11 @@ fn partial_rows() -> Vec<(&'static str, &'static str)> {
 /// differ: `ignore_errors` runs on a block and on a task and is not supported on a play, and a
 /// single column would have to pick one of the two and be wrong about the other.
 pub fn documentation() -> String {
-    let partial = partial_rows();
+    render(&partial_rows())
+}
+
+/// The page, given the keywords that run with a gap and the sentence naming each gap.
+pub(super) fn render(partial: &[(&str, &str)]) -> String {
     let mut out = String::from(
         "---\ntitle: Keywords\ndescription: Every play, block and task keyword ansible-core 2.19 \
          knows, and what Volant does with each one.\n---\n\n<!-- Generated from \

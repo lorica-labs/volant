@@ -90,6 +90,8 @@ import geist from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff
       '<input class="kw-search" type="search" placeholder="Filter keywords" aria-label="Filter keywords" />' +
       '<div class="kw-filters" role="group" aria-label="Show keywords that">' +
       statuses
+        // A status no keyword has any more gets no button.
+        .filter(([key]) => count(key) > 0)
         .map(
           ([key, label], i) =>
             `<button type="button" class="kw-filter" data-status="${key}" aria-pressed="${i === 0}">` +
@@ -106,8 +108,22 @@ import geist from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff
     wrap.before(controls);
     wrap.after(empty);
 
-    let status = 'all';
+    // The filter lives in the address, so a link can open the grid already filtered.
+    const params = new URL(location.href).searchParams;
+    let status = statuses.some(([key]) => key === params.get('status')) ? params.get('status')! : 'all';
     const search = controls.querySelector<HTMLInputElement>('.kw-search')!;
+    search.value = params.get('q') ?? '';
+    const press = () =>
+      controls
+        .querySelectorAll<HTMLButtonElement>('.kw-filter')
+        .forEach((b) => b.setAttribute('aria-pressed', String(b.dataset.status === status)));
+    const remember = () => {
+      const url = new URL(location.href);
+      const needle = search.value.trim();
+      needle ? url.searchParams.set('q', needle) : url.searchParams.delete('q');
+      status === 'all' ? url.searchParams.delete('status') : url.searchParams.set('status', status);
+      history.replaceState(history.state, '', url);
+    };
     const apply = () => {
       const needle = search.value.trim().toLowerCase();
       let shown = 0;
@@ -119,17 +135,18 @@ import geist from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff
         if (visible) shown++;
       }
       empty.hidden = shown > 0;
+      remember();
     };
     search.addEventListener('input', apply);
     controls.querySelectorAll<HTMLButtonElement>('.kw-filter').forEach((button) => {
       button.addEventListener('click', () => {
         status = button.dataset.status!;
-        controls
-          .querySelectorAll('.kw-filter')
-          .forEach((b) => b.setAttribute('aria-pressed', String(b === button)));
+        press();
         apply();
       });
     });
+    press();
+    if (search.value || status !== 'all') apply();
   }
 
   const reveal = new IntersectionObserver(

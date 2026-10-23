@@ -54,6 +54,18 @@ const many = products.length > 1;
 </div>
 <Default />
 
+<script>
+  // Top-level groups always stay open, whatever state an earlier visit saved: their label is a
+  // heading. Nested groups, such as the decision records, still fold.
+  for (const summary of document.querySelectorAll<HTMLElement>(
+    '.sidebar-content .top-level > li > details > summary',
+  )) {
+    (summary.parentElement as HTMLDetailsElement).open = true;
+    summary.tabIndex = -1;
+    summary.addEventListener('click', (event) => event.preventDefault());
+  }
+</script>
+
 <style>
   .product-switcher {
     margin-bottom: 1.25rem;

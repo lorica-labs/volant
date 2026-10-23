@@ -1,0 +1,74 @@
+---
+// The page title with the sidebar group it belongs to above it and the page's description below,
+// so a reader landing from search sees where they are and what the page answers.
+import type { StarlightRouteData } from '@astrojs/starlight/route-data';
+
+type Entry = StarlightRouteData['sidebar'][number];
+
+const { entry, sidebar } = Astro.locals.starlightRoute;
+
+// The labels of the groups that lead to the current page, outermost first.
+function trail(entries: Entry[]): string[] | undefined {
+  for (const item of entries) {
+    if (item.type === 'link' && item.isCurrent) return [];
+    if (item.type === 'group') {
+      const inner = trail(item.entries);
+      if (inner) return [item.label, ...inner];
+    }
+  }
+}
+
+const groups = trail(sidebar) ?? [];
+const { title, description } = entry.data;
+---
+
+{
+  groups.length > 0 && (
+    <nav class="crumbs not-content" aria-label="Breadcrumb">
+      <ol>
+        {groups.map((label) => (
+          <li>{label}</li>
+        ))}
+      </ol>
+    </nav>
+  )
+}
+<h1 id="_top">{title}</h1>
+{description && <p class="lead">{description}</p>}
+
+<style>
+  .crumbs ol {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 1rem 0 0;
+    padding: 0;
+    list-style: none;
+    color: var(--sl-color-gray-3);
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-xs);
+  }
+  .crumbs li + li::before {
+    content: '/';
+    margin-inline-end: 0.4rem;
+    color: var(--sl-color-gray-4);
+  }
+  .crumbs + h1 {
+    margin-top: 0.35rem;
+  }
+  h1 {
+    margin-top: 1rem;
+    font-size: var(--sl-text-h1);
+    line-height: var(--sl-line-height-headings);
+    font-weight: 600;
+    color: var(--sl-color-white);
+  }
+  .lead {
+    max-width: 62ch;
+    margin-top: 0.75rem;
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-lg);
+    line-height: 1.55;
+    text-wrap: pretty;
+  }
+</style>

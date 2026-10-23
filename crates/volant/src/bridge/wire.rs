@@ -187,3 +187,49 @@ impl fmt::Display for BridgeError {
 }
 
 impl std::error::Error for BridgeError {}
+
+/// The blocks ansible-core prints for a plugin failure that has a cause of its own, by the
+/// message the helper gave. The message is all a template error carries, and the blocks are
+/// what the task's chain needs: the first is the plugin's sentence, the rest are its causes.
+static CHAINS: std::sync::Mutex<Vec<(String, Vec<String>)>> = std::sync::Mutex::new(Vec::new());
+
+/// Most failures kept; a run that raises more distinct messages than this forgets the oldest.
+const CHAINS_KEPT: usize = 256;
+
+pub(super) fn remember_chain(message: &str, blocks: Vec<String>) {
+    let mut kept = CHAINS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    if kept.iter().any(|(text, _)| text == message) {
+        return;
+    }
+    if kept.len() >= CHAINS_KEPT {
+        kept.remove(0);
+    }
+    kept.push((message.to_string(), blocks));
+}
+
+/// `text`, a message that ends with the failure of a bridged plugin that has causes of its own, as
+/// the sentence of its own block and the messages of the blocks of its causes. Any other text is
+/// returned as it is.
+pub(crate) fn split_failure(text: &str) -> (String, Vec<String>) {
+    let kept = CHAINS
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
+    let found = kept
+        .iter()
+        .filter(|(message, _)| text.ends_with(message.as_str()))
+        .max_by_key(|(message, _)| message.len());
+    match found {
+        Some((message, blocks)) => {
+            let mut blocks = blocks.iter();
+            let first = blocks.next().map_or("", String::as_str);
+            let start = text.len() - message.len();
+            (
+                format!("{}{first}", &text[..start]),
+                blocks.cloned().collect(),
+            )
+        }
+        None => (text.to_string(), Vec::new()),
+    }
+}

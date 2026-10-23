@@ -32,13 +32,29 @@ pub(in crate::executor) fn conditional_causes(task: &PlayTask, message: &str) ->
     let sentence = message.strip_prefix("Task failed: ").unwrap_or(message);
     // A lookup's sentence without `Task failed: ` is a `with_` loop's, shown with no task around it.
     let lookup = message.starts_with("Task failed: The lookup plugin '");
-    (sentence.starts_with(CONDITIONAL) || lookup).then(|| {
-        serde_json::json!([crate::render::cause(
+    if sentence.starts_with(CONDITIONAL) || lookup {
+        return Some(serde_json::json!([crate::render::cause(
             sentence,
             task.value_origins.get("when"),
             None
-        )])
-    })
+        )]));
+    }
+    // A plugin's own failure stands as the condition's error, with the causes it has behind it.
+    // (a `with_` loop's lookup has no task around it, so it is not this chain)
+    if (message.starts_with("Task failed: ") || !sentence.starts_with("The lookup plugin '"))
+        && sentence.starts_with("The ")
+        && crate::template::is_plugin_failure(sentence)
+    {
+        let (sentence, behind) = split_plugin_failure(sentence);
+        let mut chain = vec![crate::render::cause(
+            &sentence,
+            task.value_origins.get("when"),
+            None,
+        )];
+        chain.extend(behind);
+        return Some(Value::Array(chain));
+    }
+    None
 }
 
 /// Makes `result` the error of a `loop_control` keyword that read a missing name. Measured on
@@ -80,21 +96,40 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
         .split('\'')
         .next()?;
     let origin = |name: &str| task.value_origins.get(name);
-    let resolved = crate::render::cause(resolving, origin(&format!("args.{key}")), None);
+    // A plugin that failed on an exception of its own is a block of its sentence, then one bare
+    // block per cause.
+    let (resolving, behind) = split_plugin_failure(resolving);
+    let resolved = crate::render::cause(&resolving, origin(&format!("args.{key}")), None);
     // A task with no name of its own starts where its action does, and the reference puts the
     // two links in one: the block opens with the finalization's sentence.
     // A syntax error is the head of the block itself, not a link behind it: measured on
     // ansible-core 2.19.12, `No filter named` prints one `caused by`, the value.
-    if resolving.contains(crate::template::NO_FILTER)
+    let mut chain = if resolving.contains(crate::template::NO_FILTER)
         || (task.origin.is_some() && task.origin.as_ref() == origin("action"))
     {
-        return Some(Value::Array(vec![
+        vec![
             crate::render::lead(&format!("Task failed: {head}")),
             resolved,
-        ]));
-    }
-    Some(Value::Array(vec![
-        crate::render::cause(&head, origin("action"), None),
-        resolved,
-    ]))
+        ]
+    } else {
+        vec![
+            crate::render::cause(&head, origin("action"), None),
+            resolved,
+        ]
+    };
+    chain.extend(behind);
+    Some(Value::Array(chain))
+}
+
+/// `text`, a message that ends with the failure of a bridged plugin, as the sentence of its own
+/// block, and the bare blocks of its causes behind it.
+fn split_plugin_failure(text: &str) -> (String, Vec<Value>) {
+    let (sentence, behind) = crate::bridge::split_failure(text);
+    (
+        sentence,
+        behind
+            .iter()
+            .map(|block| crate::render::cause(block, None, None))
+            .collect(),
+    )
 }

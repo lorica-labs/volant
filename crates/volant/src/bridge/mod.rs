@@ -22,6 +22,7 @@ mod conversation;
 mod wire;
 
 use conversation::{answer, converse, defaults_shape};
+pub(crate) use wire::split_failure;
 pub use wire::{Ask, BridgeError, PluginKind, Reply, TmpOp};
 
 pub(crate) type Start = Box<dyn Fn() -> anyhow::Result<PythonBuilder> + Send + Sync>;

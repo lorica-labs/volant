@@ -9,8 +9,6 @@ Volant loads a playbook against the whole ansible-core 2.19 grammar, so it parse
 
 <ul class="kw-legend not-content">
 <li><span class="kw kw-runs">runs</span><span>Volant honors it, or names the one value it does not support yet.</span></li>
-<li><span class="kw kw-partial">partial</span><span>Accepted and honored, but not everything Ansible does with it. The gap is listed below the grid.</span></li>
-<li><span class="kw kw-notyet">not yet</span><span>Not supported yet. The playbook loads, and the run stops before anything connects. In a file a dynamic include names, the statement fails when a host reaches it instead.</span></li>
 <li><span class="kw kw-no">not accepted</span><span>Cannot be written there. Ansible rejects it too, when it reads the playbook.</span></li>
 </ul>
 
@@ -115,13 +113,6 @@ This page is generated from the tables the loader and the pre-flight read, so it
 </tbody>
 </table>
 </div>
-
-## What partial leaves out
-
-Each keyword below behaves the same way in every place the grid marks it `partial`.
-
-| Keyword | What is missing |
-|---|---|
 
 ## Limits of what runs
 

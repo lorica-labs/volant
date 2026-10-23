@@ -7,6 +7,8 @@ description: What --check and --diff do under Volant, which modules answer them 
 
 The task keywords win over the options. `check_mode: false` runs the task for real under `--check`. `check_mode: true` makes one task a dry run in a normal play. `diff: false` keeps one task's changes off the screen under `--diff`.
 
+`ansible_check_mode` and `ansible_diff_mode` report the command-line `--check` and `--diff` only. A play's or a task's own `check_mode` or `diff` keyword does not change them.
+
 ## What runs where
 
 A task in check mode never changes a host, whichever path runs it.
@@ -24,7 +26,7 @@ The profile (`--profile`) names the reason each hand-back happened: "the task ru
 
 ## A host with no Python
 
-Handing back needs Python on the host. Without it, `apt`, `user`, `group` and `file` fail under `--check` or `--diff`. Install Python on the host, or run the play without those options. Tasks that only read, and `command`, `shell` and `raw`, still work.
+Handing back needs Python on the host. Without it, every native module that changes the host fails under `--check` or `--diff`: `apt`, `user`, `group`, `file`, `lineinfile`, `systemd`, `systemd_service` and the `copy` module that the copy plugin runs. Install Python on the host, or run the play without those options. Tasks that only read (`stat`, `setup`, `package_facts` and `service_facts`), and `command`, `shell` and `raw`, still work.
 
 ## Diff output
 

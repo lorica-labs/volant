@@ -20,6 +20,8 @@ Templates render in strict mode. An undefined variable is an error, not an empty
 
 A `when` whose value is not a boolean is rejected as well.
 
+An undefined variable or attribute is worded and chained as ansible-core words it: `'nope' is undefined`, or `object of type 'dict' has no attribute 'b'`. In a task argument the message sits under `Finalization of task args for 'module' failed: Error while resolving value for 'arg'`. A read guarded by `default` or `is defined` raises nothing.
+
 ## Conditions
 
 `when`, `changed_when`, `failed_when` and `until` take one expression or a list of them. With a list, every expression must hold.
@@ -53,9 +55,9 @@ This holds in play, block and task `vars`, `group_vars`, role defaults, `vars_fi
 
 A variable that reads a name with no value has none either: `default` and `is defined` see it as undefined. A variable that reads itself, directly or through others, fails with `Recursive loop detected in template: maximum recursion depth exceeded`, also behind `default`, as in ansible-core.
 
-A variable from a managed host is not rendered, and neither is a variable built from one. Reading it through a filter gives its text. See [Trusted and untrusted values](/variables/trust/).
+Host data is never rendered. A variable from a managed host, and a variable built from one, stays text. See [Trusted and untrusted values](/variables/trust/).
 
-A variable is rendered by a read only when everything its text reads is written by the playbook, or is a value a managed host sent, which stays data. `groups`, `hostvars`, `inventory_hostname`, `group_names` and the play host lists are in the first case, so a variable that reads them is rendered, also when another variable reads it through a filter. A host name or a group name that a managed host sent, or that holds `{`, is data. A variable built from these lists resolves, with such a name as text that nothing evaluates, and counts as data. A variable that reads `vars`, or calls `lookup` or `query`, is left as written, and so is a variable that reads one of those through other variables. A variable left this way is rendered when the task uses it, as before. `hostvars['other']['name']` also gives the raw text of a variable that holds a template.
+A variable that reads `vars`, or calls `lookup` or `query`, is left as written and renders when a task uses it. `hostvars['other']['name']` gives the raw text of a variable that holds a template.
 
 ## What is available
 
@@ -63,13 +65,13 @@ On top of MiniJinja's own Jinja2 builtins, Volant adds these from Ansible:
 
 | Kind | Names |
 |---|---|
-| Filters | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
+| Filters | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `extract`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
 | Tests | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed` / `change`, `failed` / `failure`, `succeeded` / `success` / `successful`, `skipped` / `skip`, `version` (and `version_compare`) |
-| Lookups | `env`, `file`, `vars`, `pipe`, `first_found`, `fileglob`, `template` |
+| Lookups | `env`, `file`, `vars`, `varnames`, `pipe`, `first_found`, `fileglob`, `template`, `inventory_hostnames`, `unvault` (and the `query` and `q` call forms) |
 | Globals | `now`, `lipsum` |
 | From `ansible.utils` | the `ansible.utils.ipwrap` filter, under that name only |
 
-Every filter, test and lookup in this list also answers under its `ansible.builtin.*` name, so `{{ data | ansible.builtin.to_json }}` works. A filter, test or lookup that is not in this list runs in the controller's Python helper with ansible-core's own code, [when Python is available](/variables/python-helper/). That includes the plugins of other collections.
+Every filter, test and lookup in this list also answers under its `ansible.builtin.*` name, so `{{ data | ansible.builtin.to_json }}` works. A filter, test or lookup that is not in this list runs in the controller's Python helper with ansible-core's own code, [when Python is available](/variables/python-helper/). That includes the plugins of other collections. A filter or test from a collection that raises prints ansible-core's chain, also in a `when` and in a template file.
 
 `first_found`, `fileglob` and `template` look for files along `ansible_search_path`. In a role's task that is the role's directory, the directory of the task's file, then the playbook's directory. Outside a role it is the playbook's directory. `role_path` is set in a role's task and is undefined outside one. `fileglob` tries a relative pattern under `files/` of each entry, then in the entry itself, and the first entry with a match wins. It returns files only, sorted, and a single match comes back as a string. Each one is checked against ansible-core in the golden test corpus under `crates/volant/tests/golden`.
 
@@ -176,7 +178,7 @@ Volant renders any string that holds `{{`, `{%` or `{#`, in a variable, a fact, 
 - `{#` starts a comment. A comment that opens at the very end of the string and never closes is accepted and means nothing. Anything else that is unterminated is a syntax error. To write `{#` as text, use `{{ '{#' }}`: a result that holds `{#` is not rendered again, and neither is a stored variable or fact whose `{#` has no `#}` after it.
 - A string such as `echo ${#items[@]}` fails with a syntax error, as it does in ansible-core. Wrap it in `{% raw %}` or mark it `!unsafe`. ansible-core refuses a `command` or `shell` task that holds one while it loads the tasks, with exit code 4. Volant refuses it when the task runs, with exit code 2, so the tasks before it run first.
 
-A registered result and any other text from a managed host stays text: it is never rendered. See [Trusted and untrusted values](/variables/trust/).
+A registered result and any other text from a managed host stays text: it is never rendered. See [Trusted and untrusted values](/variables/trust/). A value under `!unsafe` is data and is never templated. A `!vault` value is decrypted, see [Vault](/variables/vault/).
 
 ## Regular expressions
 
@@ -231,20 +233,42 @@ The file's own trailing newline survives the render. [Action plugins](/reference
 
 ## Not there yet
 
-- A string that reads two variables, one of them chained through a third that holds a `raw` block, is rendered once more than in the reference.
-- A value under `!unsafe` is data and is never templated. A `!vault` value is decrypted; see [Vault](/variables/vault/).
-- These filter arguments are not supported: the method of `round`, `start` and `attribute` of `sum`, `attribute` of `min` and `max`, `count` of `replace`, `sort_keys` of `to_json`, `encoding` of `b64encode`, and `strict` and `version_type` of the `version` test.
+### Filters and tests
+
+- These filter arguments are not supported: the method of `round`, `start` and `attribute` of `sum`, `attribute` of `min` and `max`, `count` of `replace`, `sort_keys` of `to_json`, and `strict` and `version_type` of the `version` test.
+- `b64encode` and `b64decode` accept `encoding` only as `utf-8`. Any other encoding is refused by name.
 - `password_hash`, `json_query` and `ipaddr` need the Python packages `passlib`, `jmespath` and `netaddr`. The managed runtime does not carry them. See [the managed runtime](/reference/runtime/).
-- A `datetime` from `now()` does not take part in arithmetic, so `now() - now()` fails, and it lacks the methods `date`, `time`, `replace`, `astimezone`, `utcoffset` and `timetuple`.
-- In a template file, `template_host`, `template_uid`, `template_run_date` and `template_mtime` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
+
+### Rendering
+
+- A string that reads two variables, one of them chained through a third that holds a `raw` block, is rendered once more than in the reference.
 - `{% include %}` and `{% import %}` fail, in a template file and in a string: nothing loads a second file during a render. ansible-core loads the file from the playbook directory.
 - A `{% set x %}...{% endset %}` block in a string makes the result a string even when the rest is one expression.
+- `dict` alone and `dict.fromkeys` alone are no result, as in ansible-core (`Type 'type' is unsupported for variable storage.`), and print as `<class 'dict'>` and `<built-in method fromkeys of type object>` inside a text.
+- A `datetime` from `now()` does not take part in arithmetic, so `now() - now()` fails, and it lacks the methods `date`, `time`, `replace`, `astimezone`, `utcoffset` and `timetuple`.
+
+### Integers wider than 128 bits
+
+A module can return such an integer, such as the modulus of an RSA key. Volant keeps every digit in results, variables, `string`, `to_json` and `from_json`. It compares a wide integer with any number by value, in the comparison operators, `min`, `max`, `sort`, `unique` and `list.sort()`.
+
+- The operators `+`, `-`, `*`, `/`, `//`, `%` and `**` and the `abs` and `round` filters refuse a wide operand. A result wider than 128 bits is an error.
+- A YAML integer of more than 4300 digits is refused. So is a text of that size given to `int`, which answers its default, as in Python 3.11 and later.
+
+To do arithmetic on such a value, use a module, or `command` with `python3 -c`, and keep the wide value as text.
+
+### Template files
+
+- `template_host`, `template_uid`, `template_run_date` and `template_mtime` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
 - `line_statement_prefix` and `line_comment_prefix` in a `#jinja2:` line are refused by name. minijinja and Jinja2 differ on a blank line after a line statement and on the newline of a line comment.
 - A delimiter longer than 64 characters and a `#jinja2:` line longer than 16 KiB are refused with an error that names the option. Parentheses in a `#jinja2:` value nest to 200 levels, as in Python.
 - A `variable_end_string` or `block_end_string` that begins with whitespace is refused by name. An empty delimiter is refused too, where Jinja2 reads it in a way that depends on the template.
 - An `output_encoding` that is not in the list above, such as `koi8-r`, `shift_jis` or `utf-7`, is refused by name.
-- `dict` alone and `dict.fromkeys` alone are no result, as in ansible-core (`Type 'type' is unsupported for variable storage.`), and print as `<class 'dict'>` and `<built-in method fromkeys of type object>` inside a text. A loop over bytes items shows `(item=abc)` where ansible-core shows `(item=b'abc')`, because a loop item is stored as text.
-- A bytes value is a sequence of integers that prints as `b'abc'`. A slice and `+` (`b[1:]`, `b + b`) give a list of integers, where Python gives bytes. A bytes value that a variable holds (`set_fact`, `vars:`) is stored as its text: its `| length` counts characters, and `.decode()` fails. The methods of bytes other than `decode` and `hex` (`upper`, `split`, `startswith`) fail with their name.
+
+### Bytes
+
+- A bytes value is a sequence of integers that prints as `b'abc'`. A slice and `+` (`b[1:]`, `b + b`) give a list of integers, where Python gives bytes.
+- A bytes value that a variable holds (`set_fact`, `vars:`) is stored as its text: its `| length` counts characters, and `.decode()` fails. A loop over bytes items shows `(item=abc)` where ansible-core shows `(item=b'abc')`, because a loop item is stored as text.
+- The methods of bytes other than `decode` and `hex` (`upper`, `split`, `startswith`) fail with their name.
 - A bytes value that is not UTF-8 cannot be a result or be printed in text: ansible-core prints `?` in their place. `to_yaml`, `dict2items`, `flatten`, `hash`, `checksum`, `md5`, `sha1` and every filter that runs in Python refuse bytes by name.
 - `encode` and `decode` refuse by name the encodings other than the ones listed above (`cp1252`, `shift_jis`), `decode` of `utf-16` and `utf-32`, and the error handlers `namereplace`, `surrogateescape` and `surrogatepass` on `decode`.
 

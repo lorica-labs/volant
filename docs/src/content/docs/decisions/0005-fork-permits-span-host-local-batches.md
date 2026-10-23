@@ -8,7 +8,7 @@ sidebar:
 
 | Status | Date |
 |---|---|
-| accepted, and conditional on an option since 2026-09-20 (see Status below) | 2026-09-16 |
+| accepted, and conditional on an option since 2026-09-20 (see Status below); the bound on escalated links is superseded by the update of 2026-10-24 | 2026-09-16 |
 
 ## Context
 
@@ -45,3 +45,7 @@ Since 2026-09-20, a driver carries its permit past a host-local step only when t
 The reason is the fourth consequence above. Which steps count as a wait is read from the text of a task, and a dependency that runs through a file, a database or a service leaves no text to read. Ansible's `linear` promises that the hosts meet in front of every task, and a playbook written against that promise is allowed to rely on it. Deciding otherwise from the text alone was the wrong default for an engine whose first promise is that playbooks run unchanged.
 
 Everything the decision describes is kept and still runs under the option. The measured cost of the two settings, and what the default keeps either way, are in [Cross-host batching](/hosts/batching/).
+
+## Update, 2026-10-24
+
+The first consequence above no longer holds. Since 2026-09-22 ([#178](https://github.com/lorica-labs/volant/pull/178)) a host keeps its escalated link across a synchronization point, and it holds its own link plus at most one escalated link, whatever the number of distinct target users. A batch that escalates differently from the one in hand (another user, another escalation program or flags, another transport) closes the old link and opens a new one. The permit itself still goes back in front of every wait, as decided here. [Connections and the agent](/hosts/connections/#persistent-connections) states the current rule.

@@ -94,7 +94,7 @@ volant playbook -i inventory.ini site.yml
 This playbook gathers facts and runs the `file` module, so it needs `ansible-core` on the controller and a Python 3 on the host. [Installation](/start/installation/#what-the-machines-need) lists what each side needs.
 </Aside>
 
-Your `~/.ssh/config` applies, because Volant runs the `ssh` you already have. Volant never prompts for an SSH password: use a key file or an ssh-agent.
+Your `~/.ssh/config` applies, because Volant runs the `ssh` you already have. A key file or an ssh-agent is the simplest way to log in. To use a password, pass [`-k`](/reference/cli/#ask-pass) or set `ansible_password`.
 
 ## Look before you run
 

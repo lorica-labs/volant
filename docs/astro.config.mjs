@@ -87,6 +87,7 @@ export default defineConfig({
             { label: 'Installation', slug: 'start/installation' },
             { label: 'Quickstart', slug: 'start/quickstart' },
             { label: 'Will my playbook run?', slug: 'start/compatibility' },
+            { label: 'When a run fails', slug: 'start/troubleshooting' },
           ],
         },
         {

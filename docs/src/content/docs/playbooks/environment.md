@@ -28,6 +28,8 @@ Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true
 
 The `[ERROR]:` block printed above a failure keeps its prefix, such as `Task failed: Action failed:`, and shows `<error censored due to no log>` in place of the message. Here Volant differs from `ansible-playbook` 2.19.12, which censors only an unreachable host's reason and prints a failed task's message in full, so a secret in a `fail` message reaches the terminal.
 
+`no_log` can be a template. Each host renders it when the task runs. In a loop, one item that hides hides every item, where ansible-core hides each item by its own value.
+
 The task banner and the task's name are not hidden. The registered variable and the recap keep the real result, so a later task can still read it.
 
 ## Differences from Ansible

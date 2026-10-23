@@ -27,7 +27,7 @@ Volant does not wrap each task in `sudo`. It starts a second agent for the targe
 sudo -H <form> -u <user> -- volant-agent
 ```
 
-`<form>` is `-n` or `-k -S -p ''`, depending on a probe described below. Tasks that do not escalate keep using the unprivileged agent. The agent itself knows nothing about escalation. [Decision record 0004](/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why.
+`<form>` is `-n` or `-k -S -p ''`, depending on a probe described below. Volant adds `-H` only when no `become_flags` is set: a flag list replaces it. Tasks that do not escalate keep using the unprivileged agent. The agent itself knows nothing about escalation. [Decision record 0004](/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why.
 
 The escalated agent is kept until the end of the play, so a play of escalated tasks pays for `sudo` once per host.
 
@@ -37,19 +37,27 @@ The escalated agent is kept until the end of the play, so a play of escalated ta
 
 1. A host's `ansible_become` and `ansible_become_user` variables beat both keywords, in either direction.
 2. The task keyword beats the play keyword.
-3. The `ansible.cfg` defaults and `-b`, `--become-user` apply last.
+3. The `ansible.cfg` defaults and `-b`, `--become-user` and `--become-method` apply last.
 
-`become_method` is `sudo` or `su`. Any other method is not supported yet: Volant stops before a task runs and names the method, rather than escalating through a mechanism you did not ask for. `become_exe` and `become_flags` are read from the keyword and from `ansible_become_exe` and `ansible_become_flags`, the host variable winning.
+`become_method` is `sudo` or `su`. Any other method is not supported yet, and so are the fully qualified spellings `ansible.builtin.sudo` and `ansible.builtin.su`. Volant stops before a task runs and names the method, rather than escalating through a mechanism you did not ask for. When a run escalates and the method comes from `--become-method`, `ansible.cfg` or `ansible_become_method`, the run ends with exit code 2 before any task.
+
+`become_user` can be a template such as `{{ app_user }}`. One that changes per loop item is refused, because one batch escalates to one user.
+
+`become_exe` and `become_flags` are read from the keyword and from `ansible_become_exe` and `ansible_become_flags`, the host variable winning. Both are split into words the way a shell splits them, and an unbalanced quote fails the task.
 
 ## The password
 
-The password comes from `-K` (`--ask-become-pass`), which turns terminal echo off on Unix, or from `ansible_become_password` / `ansible_become_pass`.
+The password comes from one of these:
+
+- `-K` (`--ask-become-pass`), which turns terminal echo off on Unix.
+- `--become-password-file`, which reads the first line of a file.
+- `ansible_become_password`, `ansible_become_pass`, or the method's own `ansible_sudo_pass` or `ansible_su_pass`, which wins over the other two. [Connections and the agent](/hosts/connections/#host-variables) lists which variable wins.
 
 It is written once to `sudo`'s standard input. It never appears in a command line, a log or a result: the types that carry it print `<redacted>` in debug output, and `sudo`'s own error output is scrubbed of it before it reaches a message.
 
 ## The sudo probe
 
-Volant asks `sudo` which form to use instead of assuming one. A `sudo` that needs no authentication, because of a `NOPASSWD` rule or a cached timestamp, does not read its standard input at all. A password written there would stay on the pipe and be read by the agent as protocol data. So Volant tries `sudo -n` first, and falls back to `sudo -k -S -p ''` only when `sudo` itself rejects the request for lack of authentication.
+Volant asks `sudo` which form to use instead of assuming one. It tries `sudo -n` first, and falls back to `sudo -k -S -p ''` only when `sudo` itself rejects the request for lack of authentication. [Decision record 0004](/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why a guess would hang the link.
 
 When escalation fails, for a missing password, a wrong one or a `sudoers` rule that forbids the command, the task fails and the host stays reachable. The messages are Ansible's own: `Missing sudo password` or `Incorrect sudo password`.
 

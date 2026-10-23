@@ -11,7 +11,7 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 curl -fsSL https://volant.sh/install.sh | sh
 ```
 
-The script works on Linux and macOS, on x86_64 and arm64. On Linux it takes the static build. It downloads the newest release for your machine, checks its SHA-256 checksum, unpacks it under `~/.local/share/volant`, and links `volant` and `volant-playbook` into `~/.local/bin`. It asks for no root access and changes nothing outside those two directories. You can [read it](https://volant.sh/install.sh) before you run it.
+The script works on Linux and macOS, on x86_64 and arm64. On Linux it takes the static build. It needs `curl`, `tar` and `sha256sum` or `shasum`, plus `xz` on Linux. It downloads the newest release for your machine, checks its SHA-256 checksum, unpacks it under `~/.local/share/volant`, and links `volant` and `volant-playbook` into `~/.local/bin`. It asks for no root access and changes nothing outside those two directories. You can [read it](https://volant.sh/install.sh) before you run it.
 
 Check that it worked:
 
@@ -27,17 +27,17 @@ The script reads three environment variables:
 
 | Variable | Default | What it changes |
 |---|---|---|
-| `VOLANT_VERSION` | the newest release | The release to install, such as `v0.1.0-alpha.7`. |
+| `VOLANT_VERSION` | the newest release | The release to install, such as `v0.1.0-alpha.10`. |
 | `VOLANT_HOME` | `~/.local/share/volant` | Where releases are unpacked. |
 | `VOLANT_BIN_DIR` | `~/.local/bin` | Where the `volant` and `volant-playbook` links go. |
 
 ```sh
-curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.7 sh
+curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.10 sh
 ```
 
 ## What you get
 
-One binary. The release `volant` carries the agents it uploads to your hosts, so there is nothing else to install and nothing to keep next to it:
+The release has two executables. `volant` carries the agents it uploads to your hosts, so there is nothing else to install and nothing to keep next to it:
 
 | File | What it is |
 |---|---|
@@ -48,7 +48,7 @@ On first use, the controller writes its agents to `~/.cache/volant/agents/<versi
 
 ## Builds and platforms
 
-Every release has one archive per platform. Linux has two, a static build and a glibc build. macOS has one, because macOS does not let a program link without its system libraries.
+Every release has one archive per platform. Linux has a static build and a glibc build. macOS has one build, which links the system libraries.
 
 | Platform | Archive | Linkage | Minimum | Needs beside it |
 |---|---|---|---|---|
@@ -59,9 +59,9 @@ Every release has one archive per platform. Linux has two, a static build and a 
 | macOS, Apple silicon | `volant-aarch64-apple-darwin.tar.xz` | Dynamic, system libraries only | macOS 11 | `ssh` client, Python for Python modules |
 | macOS, Intel | `volant-x86_64-apple-darwin.tar.xz` | Dynamic, system libraries only | macOS 10.12 | `ssh` client, Python for Python modules |
 
-Both Linux builds run the same code and carry the same agents. The static build runs on any distribution, on Alpine, and in a container with no libc. The glibc build runs on glibc 2.17 or newer, which covers Debian 8, Ubuntu 14.04, RHEL and CentOS 7 and everything after them, and it takes the security updates of the system libc. The release process checks both builds on the files before it publishes them: a static build has no library dependency, a glibc build needs no symbol above glibc 2.17, and a macOS build links only libraries under `/usr/lib` and `/System/Library`.
+Both Linux builds run the same code and carry the same agents. The static build runs on any distribution, including Alpine and a container with no libc. The glibc build needs glibc 2.17 or newer, which covers Debian 8, Ubuntu 14.04, RHEL and CentOS 7 and everything after them, and it takes the security updates of the system libc.
 
-The install script always takes the static build on Linux. The `volant-installer.sh` file of a release takes the glibc build on a glibc 2.17 host or newer, and the static build on any other Linux, such as Alpine. `cargo binstall` takes the glibc build on any glibc host without reading its version, and the static build on Alpine. On a glibc host older than 2.17, download the static archive by hand.
+The install script always takes the static build on Linux. `volant-installer.sh` takes the glibc build on glibc 2.17 or newer and the static build on any other Linux. `cargo binstall` takes the glibc build on any glibc host and the static build on Alpine. On a glibc host older than 2.17, download the static archive by hand.
 
 ### In a container
 
@@ -82,8 +82,9 @@ A scratch image has no `ssh`, no Python, no shell and no `/etc/passwd`. With onl
     - Linux or macOS.
     - The OpenSSH client on your `PATH`. Volant runs `ssh` itself, so your `~/.ssh/config` applies.
     - `curl` or `wget`, and `tar`, the first time a playbook needs Python.
+    - To use the install script or unpack a release by hand, `curl`, `tar`, `sha256sum` or `shasum`, and `xz` on Linux.
 
-    Ansible is not needed. For Python modules and fact gathering, Volant uses a Python 3 with `ansible-core`. When it finds none, it downloads its own, checks every file against a pinned hash and keeps it under `~/.local/share/volant/runtime`. A run that does this prints one line, and the install takes about 8 seconds. If you already have such a Python, Volant uses `VOLANT_PYTHON` first, then its own runtime, then the active virtual environment, then `python3` on your `PATH`. See [The managed runtime](/reference/runtime/). It has not been tested on macOS.
+    Ansible is not needed. For Python modules and fact gathering, Volant uses a Python 3 with `ansible-core`. When it finds none, it downloads its own, checks every file against a pinned hash and keeps it under `~/.local/share/volant/runtime`. A run that does this prints one line. If you already have such a Python, Volant can use it: [Which interpreter a run uses](/reference/runtime/#which-interpreter-a-run-uses) gives the order. See [The managed runtime](/reference/runtime/). It has not been tested on macOS.
 
     A playbook made only of `command`, `shell`, `raw` and controller-side modules, with `gather_facts: false`, needs no Python at all.
   </TabItem>
@@ -107,13 +108,13 @@ Run the install command again. It installs the newest release next to the ones y
   <TabItem label="cargo binstall">
     ```sh
     # Only pre-releases exist so far, so name the version.
-    cargo binstall volant@0.1.0-alpha.7
+    cargo binstall volant@0.1.0-alpha.10
     ```
 
     This downloads a release binary with its agents included. On a glibc host it is the glibc build, on Alpine the static build.
   </TabItem>
   <TabItem label="Manual download">
-    Every release on the [releases page](https://github.com/lorica-labs/volant/releases) has one archive per platform, named `volant-<target>.tar.xz` as in the table above, with a `.sha256` file next to it. Unpack it and put `volant` on your `PATH`:
+    Every release on the [releases page](https://github.com/lorica-labs/volant/releases) has one archive per platform, named `volant-<target>.tar.xz` as in the table above, with a `.sha256` file next to it. Unpack it (this needs `xz`) and put `volant` on your `PATH`:
 
     ```sh
     tar -xJf volant-x86_64-unknown-linux-musl.tar.xz

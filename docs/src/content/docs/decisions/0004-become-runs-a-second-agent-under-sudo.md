@@ -8,7 +8,7 @@ sidebar:
 
 | Status | Date |
 |---|---|
-| accepted; the bound on live connections is superseded by [ADR 0005](/decisions/0005-fork-permits-span-host-local-batches/) | 2026-09-09 |
+| accepted; the bound on live connections is superseded by [ADR 0005](/decisions/0005-fork-permits-span-host-local-batches/) and the method list is extended to `su` (see the update of 2026-10-24) | 2026-09-09 |
 
 ## Context
 
@@ -26,3 +26,9 @@ The controller opens one agent connection per (host, target user). A task with `
 - A failed escalation is a failed task, not an unreachable host: the connection worked.
 - Live agent connections per host are not bounded. `forks` bounds how many hosts run at once, not how many links one host holds, and the map keeps one link per distinct target user until the recap, each of them a separate `ssh` process. An escalated link also costs one extra `ssh` connection for the probe, two when a password is wanted. This decision adds no connection multiplexing: every link is its own `ssh` process, and a wide inventory pays for each of them separately.
 - `su`, `doas`, `pbrun` and the rest can be added as other ways to start the agent, without a protocol change.
+
+## Update, 2026-10-24
+
+`su` is supported since 2026-10-16 ([#333](https://github.com/lorica-labs/volant/pull/333)), and over a `local` connection since 2026-10-23 ([#755](https://github.com/lorica-labs/volant/pull/755)). It starts the agent the same way as `sudo`, which is the extension the last consequence above expected, and it needs no protocol change. `doas`, `pbrun` and the other methods are still refused. [Privilege escalation](/hosts/become/) describes both methods.
+
+The bound on live connections changed twice after this record. [ADR 0005](/decisions/0005-fork-permits-span-host-local-batches/) tied them to the fork permit. Since 2026-09-22 ([#178](https://github.com/lorica-labs/volant/pull/178)) a host holds its own link plus at most one escalated link, whatever the number of target users in the play. An escalation to a different user replaces the escalated link in hand.

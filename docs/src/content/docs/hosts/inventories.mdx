@@ -7,13 +7,13 @@ Volant reads inventories the way ansible-core does: one or more sources, each pa
 
 ## Sources
 
-`-i` (also `--inventory` and `--inventory-file`) takes a source and can be repeated. Without `-i`, Volant reads `ANSIBLE_INVENTORY`, then `inventory` in `ansible.cfg`. Both accept a comma-separated list. Without any of them, only the implicit `localhost` exists.
+`-i` (also `--inventory` and `--inventory-file`) takes a source and can be repeated. Without `-i`, Volant reads `ANSIBLE_INVENTORY`, then `inventory` in `ansible.cfg`. Both accept a comma-separated list. Without any of them, Volant reads `/etc/ansible/hosts` as ansible-core does and skips it without a message when the file is missing. On a machine with no such file, only the implicit `localhost` exists.
 
 A source is one of:
 
 | Source | Notes |
 |---|---|
-| An INI file | Hosts, `[group]`, `[group:children]`, `[group:vars]`, and ranges such as `web[01:03]`. |
+| An INI file | Hosts, `[group]`, `[group:children]`, `[group:vars]`, and ranges. A range counts digits (`web[01:03]`, zero padding kept), letters (`db[a:c]`) and can take a step (`n[1:10:3]`). |
 | A YAML or TOML file | Ansible's `yaml` and `toml` formats. |
 | A directory | Every file in it is a source, walked in sorted order. Files with an ignored extension or matching an ignore pattern, and the `group_vars` and `host_vars` directories, are skipped. |
 | A comma list | `-i web1,web2,` is a list of hosts (`host_list`). A single host needs a trailing comma. `advanced_host_list` is read when you enable it. |
@@ -38,6 +38,8 @@ A source that no plugin reads is skipped with a warning, as in Ansible. `-vvv` p
 A script prints its inventory as JSON, in the format `ansible-inventory --list` writes. `constructed` and `generator` build groups and hosts from templates.
 
 A collection's inventory plugin (a cloud provider, for instance) runs inside ansible-core, through the [Python helper](/internals/python/). The helper starts only when such a source is present.
+
+Set `always_show_stderr` in `[inventory_plugin_script]` to control what happens to a script's standard error. It is on by default: what a script writes there shows as an `[ERROR]:` line, even when the script succeeds.
 
 ## An INI inventory
 
@@ -91,13 +93,20 @@ A pattern in a play's `hosts:` or in `--limit` follows Ansible's grammar:
 | `web*`, `db?`, `host[abc]`, `host[a-z]` | shell-style wildcards on host and group names |
 | `web:&prod` | hosts in `web` that are also in `prod` |
 | `web:!web2` | hosts in `web` except `web2` |
+| `~web\d+` | hosts and groups whose name matches the regular expression from its first character |
 | `web[0]`, `web[0:2]`, `web[1:]` | an index or a slice of the hosts a term produced |
 | `::1`, `fe80::1`, `[::1]:22` | one host: an address is not cut at its colons |
 
-Slices include their end, as in Ansible: `web[0:2]` is three hosts. `name[N-M]` is accepted as an older spelling of `name[N:M]`.
+Slices include their end, as in Ansible: `web[0:2]` is three hosts. `name[N-M]` is accepted as an older spelling of `name[N:M]`. A `~` term that is not a valid regular expression stops the run, as it does in ansible-core.
 
-A pattern with a comma is cut at the commas only, so `web:db,cache` has the terms `web:db` and `cache`. A pattern without one is a single term when it is a valid address, a host name with a port or a range, and a list cut at the colons otherwise.
+How a pattern is cut into terms:
+
+| Pattern | Terms |
+|---|---|
+| Has a comma, such as `web:db,cache` | Cut at the commas only: `web:db` and `cache`. |
+| No comma, and a valid address, a host name with a port, or a range | One term. |
+| No comma, anything else | Cut at the colons. |
 
 Terms are not applied in the order you write them. Plain terms come first, then `&` terms, then `!` terms, which is what Ansible does. A pattern made only of `!` or `&` terms starts from `all`.
 
-A `--limit` that matches no host warns and narrows the run to what it did match.
+`--limit` follows the same grammar. Each term that matches no host prints `Could not match supplied host pattern, ignoring: <term>` and the run keeps the hosts the other terms matched. A limit that matches no host at all fails with `Specified inventory, host pattern and/or --limit leaves us with no hosts to target.` and exit code 1.

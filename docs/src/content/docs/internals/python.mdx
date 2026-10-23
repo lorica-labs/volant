@@ -23,17 +23,17 @@ flowchart TB
 1. The controller asks a helper process to build ansible-core's payload for every module the run needs, unless the [cache](#the-union-cache) already holds the result.
 2. Volant merges them into one zip, the union blob, with every `module_utils` file they import. The blob is named by the BLAKE3 hash of its contents.
 3. The blob is sent to each host once and cached there. The agent checks the hash before using it, and a host that already has it receives nothing.
-4. The agent starts one Python server per target user, the first time a task needs Python. The server loads the shared code from the blob once, then forks a child for each task. The child runs the module and writes its JSON result back over a pipe. While the child runs, the server imports that module into itself, so the next child of the same module starts with it already loaded.
+4. The agent starts a Python server the first time a task needs Python. It keeps one server for each interpreter, payload and task `environment`, and each target user has an agent of its own. The server loads the shared code from the blob once, then forks a child for each task. The child runs the module and writes its JSON result back over a pipe. While the child runs, the server imports that module into itself, so the next child of the same module starts with it already loaded.
 
 The union is built before the first connection, so it has to hold every module a host might reach. It carries the modules the plays name, those of every task and handler file of the roles in play (their `meta/main.yml` dependencies included), and those of any file an include names literally. A module named only in a file for another platform, such as `setup-RedHat.yml` next to `setup-Debian.yml`, is in it too, so an `include_tasks: setup-{{ ansible_os_family }}.yml` finds its module whichever file a host picks. A name there that no module answers to is left out, and fails by name only if a host reaches it.
 
-Since protocol version 6 the blob travels as raw bytes, compressed with deflate, and the agent checks the hash of the decompressed bytes.
+The blob travels as raw bytes, compressed with deflate when that is shorter, and the agent checks the hash of the decompressed bytes.
 
 Module results are untrusted and are never rendered as controller templates. See [Trusted and untrusted values](/variables/trust/). As ansible-core does on the controller, Volant adds `stdout_lines` and `stderr_lines` to a result that has `stdout` or `stderr` without them, split with Python's `splitlines()` rules.
 
 ## What each side needs
 
-The controller needs Python 3 with `ansible-core`. Volant picks `VOLANT_PYTHON` first, then its [managed runtime](/reference/runtime/), then the active virtual environment, then `python3` on your `PATH`. With none of them, it installs the managed runtime.
+The controller needs Python 3 with `ansible-core`. When `VOLANT_PYTHON` is set, Volant uses it and nothing else. Otherwise it tries its [managed runtime](/reference/runtime/), then the active virtual environment, then `python3` on your `PATH`. If none of them has ansible-core, it installs the managed runtime.
 
 The host needs a Python 3 interpreter, but not ansible-core: the blob carries the module and every file it imports. The agent reports the interpreters it finds when it starts.
 
@@ -54,47 +54,35 @@ These numbers come from an Ubuntu 24.04 host with Python 3.12, over SSH. Each fi
   ]}
 />
 
-Per module under Volant, the cost follows the work the module does. `apt` really does talk to `dpkg`: the warm path removes overhead, not work.
+The cost per module follows the work the module does. `apt` takes 755 ms, mostly in `dpkg`, where `ping` takes 12.8 ms: the warm path removes overhead, not work.
 
-<BarChart
-  title="Per-task cost under Volant, by module"
-  subtitle="Same host and method as above."
-  unit="ms"
-  rows={[
-    { label: 'ping', value: 12.8 },
-    { label: 'lineinfile', value: 22 },
-    { label: 'stat', value: 31.3 },
-    { label: 'file', value: 31.6 },
-    { label: 'apt', value: 755, note: 'Most of it spent in dpkg' },
-  ]}
-/>
-
-Sending the modules as one archive saves 72.7 percent of the bytes, because the files they share travel once. Loading it costs 264.5 ms, once per server.
-
-<BarChart
-  title="Bytes sent for five modules"
-  subtitle="ping, stat, file, lineinfile and apt."
-  unit="MB"
-  rows={[
-    { label: 'One union blob', value: 0.631, highlight: true, note: '631,050 bytes' },
-    { label: 'One zip per module', value: 2.308, note: '2,307,982 bytes' },
-  ]}
-/>
+Sending the modules as one archive saves 72.7 percent of the bytes, because the files they share travel once. For `ping`, `stat`, `file`, `lineinfile` and `apt`, that is 631,050 bytes against 2,307,982 for one zip per module. Loading the archive costs 264.5 ms, once per server.
 
 [Decision record 0006](/decisions/0006-warm-python-path/) has the reasoning and a measurement on a full playbook.
 
 ## Modules from collections
 
-A module from an installed collection, such as `ansible.posix.sysctl` or `community.general.ufw`, runs on the warm Python path like a builtin one. Volant never installs a collection. Before the first connection it asks the controller's ansible-core what each dotted name is, and ansible-core looks only in the collection paths it is configured with, such as `ANSIBLE_COLLECTIONS_PATH`. Nothing is fetched to answer.
+A module from an installed collection, such as `ansible.posix.sysctl` or `community.general.ufw`, runs on the warm Python path like a builtin one.
 
-A name outside `ansible.builtin` and `ansible.legacy` gets one of four answers:
+### How a name is resolved
+
+Before the first connection, Volant asks the controller's ansible-core what each dotted name is. ansible-core looks in the collection paths it is configured with, such as `ANSIBLE_COLLECTIONS_PATH`, and then in the `collections/` directory of the managed runtime, where `volant runtime install --collections` puts them. Volant installs nothing during a run, and nothing is fetched to answer.
+
+A name outside `ansible.builtin` and `ansible.legacy` gets one of five answers:
 
 | What ansible-core finds | What Volant does |
 |---|---|
 | a module it can build | adds it to the union and runs it |
 | a module its collection runs through an action plugin, directly or through `runtime.yml` routing | runs the action plugin in the Python helper, as ansible-core's own |
+| an action plugin that needs a Windows host or a network connection | stops the run: the module needs an action plugin from its collection, which this release does not run |
 | no module by that name | stops the run with the reference's sentence |
 | a module it cannot run: removed, PowerShell only, or failing to build | stops the run, with the reason |
+
+In the union, a builtin keeps its short name and a collection module is keyed by its full name. Two collections that each ship a module called `sysctl` stay apart, and `community.general.command` is never mistaken for `command`.
+
+A collection module's arguments written as a string (`ansible.posix.sysctl: name=net.ipv4.ip_forward value=1`) are split into `key=value` pairs the way ansible-core's `parse_kv` splits them.
+
+### Refusals
 
 The refusals come before the first connection, with exit code 4:
 
@@ -105,15 +93,11 @@ task 'Forward': module 'ns.coll.mod' cannot run: <reason>
 
 The install hint appears only when the collection itself is missing. A module missing from a collection that is installed gets the first sentence alone. `ansible.builtin.nosuch` also gets it alone, because no collection can supply a name in the namespace ansible-core owns. Without an ansible-core on the controller, a name outside `ansible.builtin` is refused with the same first sentence and the reason nothing could look it up.
 
-In the union, a builtin keeps its short name and a collection module is keyed by its full name. Two collections that each ship a module called `sysctl` stay apart, and `community.general.command` is never mistaken for `command`.
-
 A collection module named only in a role's file for another platform is resolved too. If it can be built, it joins the union. Anything else is left out without stopping the run, and the include that reaches it fails for that host before any of the file's tasks run:
 
 ```text
-task 'Forward': module 'ansible.posix.sysctl' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, runs it through an action plugin, or it is named only in a file nothing read before the first connection
+task 'Forward': module 'ansible.posix.sysctl' was not resolved to a module before the run, so no payload holds it: its collection is not installed on the controller, no module path holds it, or it is named only in a file nothing read before the first connection
 ```
-
-A collection module's arguments written as a string (`ansible.posix.sysctl: name=net.ipv4.ip_forward value=1`) are split into `key=value` pairs the way ansible-core's `parse_kv` splits them.
 
 ## Modules backed by an action plugin
 
@@ -127,7 +111,7 @@ Volant has its own version of eight of these plugins: `copy`, `dnf`, `fetch`, `p
 
 Building the union costs a Python start, an ansible-core import and a build of every module: 3.8 seconds on the four Galaxy roles of the [performance page](/project/performance/). The controller keeps the result under `$XDG_CACHE_HOME/volant/unions/`, or `~/.cache/volant/unions/`, in a directory private to your account.
 
-An entry is looked up by everything the build read that is not a file: the Volant version, the interpreter, the modules and collections asked for, the `ANSIBLE_*` and `PYTHON*` environment, the `ansible.cfg` ansible-core would read, and the working directory. It also lists every source file the helper read, with its size and modification time. A run reuses the entry only if each of those files is unchanged and the zip still has its recorded hash. Upgrading ansible-core or a collection in place therefore rebuilds the union, and checking the roughly 150 files takes about a millisecond.
+An entry is looked up by everything the build read that is not a file: the Volant version, the interpreter, the modules and collections asked for, the `ANSIBLE_*` and `PYTHON*` environment, the `ansible.cfg` ansible-core would read, and the working directory. It also lists every source file the helper read, with its size and modification time. A run reuses the entry only if each of those files is unchanged and the zip still has its recorded hash. Upgrading ansible-core or a collection in place therefore rebuilds the union.
 
 A cache that cannot be read, is corrupt or cannot be written never fails a run: the union is rebuilt, and a directory that cannot be written prints one warning per run. To clear it, remove the directory.
 

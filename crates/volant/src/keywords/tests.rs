@@ -260,19 +260,18 @@ fn is_barrier_reads_both_the_name_and_the_flag() {
     assert!(!is_barrier("not_a_real_keyword"));
 }
 
-/// The `not yet` legend says a keyword in a dynamically included file stops the statement, not
-/// the run.
+/// The legend and the gap section name `partial` only when some keyword has it, and then list
+/// each gap.
 #[test]
-fn the_not_yet_legend_names_the_include_path() {
-    let page = documentation();
-    let legend = page
-        .lines()
-        .find(|l| l.starts_with(r#"<li><span class="kw kw-notyet">"#))
-        .expect("the legend has a not yet entry");
-    assert!(
-        legend.contains("before anything connects") && legend.contains("dynamic"),
-        "{legend}"
-    );
+fn the_page_describes_partial_only_when_a_keyword_is_partial() {
+    let without = page::render(&[]);
+    assert!(!without.contains("kw-partial"));
+    assert!(!without.contains("## What partial leaves out"));
+    let with = page::render(&[("loop_control", "no `extended_allitems`")]);
+    assert!(with.contains("kw-partial"));
+    assert!(with.contains("## What partial leaves out"));
+    assert!(with.contains("| `loop_control` | no `extended_allitems` |"));
+    assert!(!with.contains("kw-notyet"));
 }
 
 /// The keyword page is regenerated from the keyword tables and matches them.

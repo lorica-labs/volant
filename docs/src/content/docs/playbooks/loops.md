@@ -22,11 +22,28 @@ description: loop, with_items and loop_control, and how until, retries and delay
 
 ## `with_` loops
 
-`with_<name>` is `loop: "{{ lookup('<name>', *terms, wantlist=True) }}"`, and it runs for every lookup plugin ansible-core has: the twenty-five of `ansible.builtin` (`with_dict`, `with_nested`, `with_subelements`, `with_sequence` and the others), the lookups that ansible-core redirects to `community.general` (`with_flattened`, `with_cartesian`, `with_filetree`), a collection's lookup under its full name (`with_community.general.dependent`), and a plugin in a `lookup_plugins/` directory beside the playbook or a role. A builtin lookup is also accepted as `with_ansible.builtin.<name>` and `with_ansible.legacy.<name>`.
+`with_<name>` is `loop: "{{ lookup('<name>', *terms, wantlist=True) }}"`, and it runs for every lookup plugin ansible-core has:
+
+| Lookup | Examples |
+|---|---|
+| The twenty-five of `ansible.builtin` | `with_dict`, `with_nested`, `with_subelements`, `with_sequence` |
+| Lookups that ansible-core redirects to `community.general` | `with_flattened`, `with_cartesian`, `with_filetree` |
+| A collection's lookup, under its full name | `with_community.general.dependent` |
+| A plugin in a `lookup_plugins/` directory beside the playbook or a role | the plugin's file name, as `with_<name>` |
+
+A builtin lookup is also accepted as `with_ansible.builtin.<name>` and `with_ansible.legacy.<name>`.
 
 The controller's ansible-core says whether a name is a lookup, before the first connection. A `with_` name that is none fails the playbook with `'with_xyz' is not a valid attribute for a Task`, as in Ansible. A task with two loops fails with `duplicate loop in task: <name>`, and a `with_` key with no value with `you must specify a value when using with_<name>`.
 
-A lookup that raises fails the task with the plugin's own sentence. A loop value that is one template reading an undefined variable fails with `'name' is undefined`. A list whose element reads an undefined variable fails with the engine's sentence for it, without the chain that Ansible prints.
+A lookup that raises fails the task with the plugin's own sentence. A native lookup (`file`, `unvault`, `vars`, `pipe`, `template` and `first_found`) fails with `The lookup plugin '<name>' failed: <reason>` and ansible-core's chain, also in a `when:` and in a template file. `vars` words it `No variable named '<name>' was found.`, with no plugin part. A loop value that is one template reading an undefined variable fails with `'name' is undefined`. A list whose element reads an undefined variable fails with the engine's sentence for it, without the chain that Ansible prints.
+
+## Rendering each item
+
+A loop renders an item's arguments, `when`, keywords and label when it reaches the item, not before the loop starts.
+
+- An item that fails to render fails alone, as `failed: [h] (item=2)`. The items after it still run, and the task ends with `One or more items failed`.
+- A `break_when` that ends the loop first hides the render errors of the items after it.
+- A `loop_control.label` that reads an undefined variable fails its item after the module ran.
 
 ## `with_first_found` and `with_fileglob`
 
@@ -85,3 +102,4 @@ A looping task retries each item on its own and finishes one item's attempts bef
 
 - An `until` expression that cannot be evaluated is reported with the reference's prefix and Volant's own message, the same way a failing `when` is.
 - `FAILED - RETRYING` for a task inside a role shows the task's own name rather than `role : name`.
+- A `loop_control.label` that fails for a reason other than an undefined variable, such as a lookup that raises, fails the task before any item runs. ansible-core ends the task after that item has run.

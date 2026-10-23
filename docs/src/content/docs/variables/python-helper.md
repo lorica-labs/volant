@@ -13,7 +13,7 @@ A name with a Rust version never reaches the helper, whatever it is called. `ans
 
 A name in an `import_playbook` line goes through the helper too, rendered with the variables of `-e`.
 
-A bridged plugin that raises a Python exception fails with ansible-core's chain: the plugin's sentence in one block, the exception's message in the next.
+A bridged plugin that raises a Python exception fails with ansible-core's chain: the plugin's sentence in one block, the exception's message in the next. A filter or test that raises prints the same chain in a task argument, in a `when` and in a `template` file.
 
 A play that uses only Rust filters, tests and lookups never starts Python for templating. The helper starts on the first bridged call and then serves the rest of the run.
 
@@ -24,6 +24,8 @@ The helper takes about 0.55 s to start. A run pays that once, on its first bridg
 ## What the helper receives
 
 Volant renders every argument first and sends the result as data. The helper does not template it again, so a value that came from a managed host and still holds `{{ ... }}` stays plain text. Values marked `!unsafe` arrive as data too.
+
+A bridged lookup also receives the play's variables. The helper reads the plugin's source and names the variables it reads: the literal keys it looks up in `variables`, and the ones its settings name. A plugin that lists variables, such as `community.general.merge_variables`, gets all of them. Only such a plugin pays for sending every variable of the host.
 
 ## How the interpreter is found
 

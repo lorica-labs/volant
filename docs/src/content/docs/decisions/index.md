@@ -12,7 +12,7 @@ A record is not rewritten once it is accepted. When a later decision changes it,
 
 | Record | Decision |
 |---|---|
-| [0001](/decisions/0001-gpl-3-0-or-later-license/) | License the whole repository under GPL-3.0-or-later. |
+| [0001](/decisions/0001-gpl-3-0-or-later-license/) | License the repository under GPL-3.0-or-later. Interface crates are the exception, see 0009. |
 | [0002](/decisions/0002-ansible-core-2-19-as-reference/) | Reproduce ansible-core 2.19, and treat any difference as a bug. |
 | [0003](/decisions/0003-ansible-version-reports-the-reference-release/) | `ansible_version` reports the reference release; `volant_version` reports Volant's. |
 | [0004](/decisions/0004-become-runs-a-second-agent-under-sudo/) | `become` starts a second agent under `sudo`. |

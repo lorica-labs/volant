@@ -14,9 +14,11 @@ Volant reaches a managed host, puts a small static agent there, and talks to it 
 | `ssh` | Runs the OpenSSH client from your `PATH`. Volant builds the command line itself, without a wrapper and without a Rust SSH library, so your `~/.ssh/config` applies. |
 | `local` | Runs the agent as a child process on the controller, with no network. |
 
-Ansible's other connection plugins (`paramiko_ssh`, `winrm`, `psrp`) and a collection's are not supported yet: that host is reported unreachable, with the transport named, and the rest of the run continues. A value that names no plugin at all fails the task with `the connection plugin '<name>' was not found`, as Ansible does. A `connection` keyword that names a collection's plugin, such as `docker`, fails the task the same way. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
+Every other connection is refused. That covers `paramiko_ssh`, `winrm`, `psrp`, the container and cloud plugins such as `docker`, `podman`, `kubectl` and `aws_ssm`, and the fully qualified spellings of the two supported ones: `ansible.builtin.ssh`, `ansible.builtin.local` and `ansible.legacy.*`. Any value with a dot in it is refused, so a collection's plugin such as `community.docker.docker` is too. The host is reported unreachable with `connection '<name>' is not supported`, and the rest of the run continues.
 
-A password comes from `-k`, from `--connection-password-file` or from the `ansible_password` variable. Volant hands it to `ssh` through `SSH_ASKPASS` and a private temporary file that is removed at the end of the run, which needs OpenSSH 8.4 or later. The password is never on a command line, in the environment of a program or in the output, `-vvvv` included. A vaulted `ansible_password` works like any vaulted variable. Without a password, `ssh` runs with `BatchMode=yes` and never prompts, so a host that would ask for a password or a passphrase is reported unreachable instead of hanging the run.
+A bare name that no plugin carries fails the task with `the connection plugin '<name>' was not found`, as Ansible does. The same happens for `docker` and the other names a collection took over from ansible-core, because the collection is not there. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
+
+A password comes from `-k`, from `--connection-password-file` or from the `ansible_password` variable. Volant hands it to `ssh` through `SSH_ASKPASS` and a private temporary file that is removed at the end of the run, which needs OpenSSH 8.4 or later. `ssh` then runs with `BatchMode=no` and `NumberOfPasswordPrompts=1`, so one wrong answer ends the attempt. The password is never on a command line, in the environment of a program or in the output, `-vvvv` included. A vaulted `ansible_password` works like any vaulted variable. Without a password, `ssh` runs with `BatchMode=yes` and never prompts, so a host that would ask for a password or a passphrase is reported unreachable instead of hanging the run.
 
 ## Host variables
 
@@ -34,7 +36,7 @@ Volant reads these per host, from the inventory or from any other variable sourc
 | `ansible_ssh_executable` | The `ssh` program to run. Defaults to `ssh` from your `PATH`. |
 | `ansible_ssh_common_args` | Extra `ssh` arguments, split the way a shell would split them |
 | `ansible_ssh_extra_args` | The same, added after the common ones |
-| `ansible_ssh_use_tty` | Run `raw` and `script` commands on a terminal, as `ssh -tt` does. On unless set to false |
+| `ansible_ssh_use_tty` | Run `raw` and `script` commands on a terminal, as `ssh -tt` does. On unless set to false. The default comes from [`usetty`](/reference/configuration/#ssh-connection-usetty). |
 | `ansible_remote_tmp` | Directory that holds the agent cache on that host |
 | `ansible_become` | Escalate or not, overriding the `become` keyword |
 | `ansible_become_user`, `ansible_sudo_user`, `ansible_su_user` | Target user for escalation |
@@ -42,10 +44,25 @@ Volant reads these per host, from the inventory or from any other variable sourc
 | `ansible_become_password`, `ansible_become_pass`, `ansible_sudo_pass`, `ansible_su_pass` | Escalation password |
 | `ansible_become_exe`, `ansible_sudo_exe`, `ansible_su_exe` | The escalation program |
 | `ansible_become_flags`, `ansible_sudo_flags`, `ansible_su_flags` | Its flags |
+| `ansible_su_prompt_l10n` | A list of prompts that `su` may print. It replaces the built-in ones. |
 
-When a host sets a variable and its alias, the one Ansible lets win applies. The `ansible_ssh_*` name beats the plain `ansible_*` one: `ansible_ssh_host` over `ansible_host`, and likewise for the port, the user, the key file and the timeout. For the password, `ansible_ssh_password` beats `ansible_ssh_pass`, which beats `ansible_password`. For `become`, the method's own name wins: `ansible_sudo_pass` beats `ansible_become_pass`, which beats `ansible_become_password`, and `ansible_sudo_user`, `ansible_sudo_exe` and `ansible_sudo_flags` beat their `ansible_become_*` twins. A password variable beats `-k` and `--connection-password-file`, and a variable set to an empty string offers no password at all. A connection variable works at every level that sets variables: inventory, `group_vars`, a play's `vars`, a block, a task's `vars` and `-e`.
+When a host sets a variable and an alias of it, the one Ansible lets win applies. The table lists them from strongest to weakest, with the keyword that sets the same thing:
 
-`remote_user`, `port` and `connection` also work as keywords on a play, a block and a task, and `-c` sets the connection for hosts that name none. The order is the one Ansible uses: a host variable such as `ansible_user` wins, then the task, the block and the play, then the command line and `ansible.cfg`. Facts a host reports about itself never choose its user, port or connection. A keyword written as a template is rendered once per task; a user name that starts with `-` or holds a space, a quote or a control character, a port outside 1-65535 and a connection name with anything but letters, digits, `_` and `.` fail the task. A delegated task uses the task's `remote_user` and `port` unless the delegate sets its own `ansible_user` or `ansible_port`.
+| Setting | Variables | Keyword |
+|---|---|---|
+| Address | `ansible_ssh_host`, `ansible_host` | |
+| Port | `ansible_ssh_port`, `ansible_port` | `port` |
+| User | `ansible_ssh_user`, `ansible_user` | `remote_user` |
+| Key file | `ansible_ssh_private_key_file`, `ansible_private_key_file` | |
+| Timeout | `ansible_ssh_timeout`, `ansible_timeout` | |
+| Password | `ansible_ssh_password`, `ansible_ssh_pass`, `ansible_password` | |
+| Connection | `ansible_connection` | `connection` |
+| Escalation user, program and flags | `ansible_sudo_*` or `ansible_su_*` (the method's own), then `ansible_become_*` | `become_user`, `become_exe`, `become_flags` |
+| Escalation password | `ansible_sudo_pass` or `ansible_su_pass`, then `ansible_become_pass`, then `ansible_become_password` | |
+
+A password variable beats `-k` and `--connection-password-file`, and a variable set to an empty string offers no password at all. A connection variable works at every level that sets variables: inventory, `group_vars`, a play's `vars`, a block, a task's `vars` and `-e`.
+
+The keywords work on a play, a block and a task, and `-c` sets the connection for hosts that name none. The order is the one Ansible uses: a host variable such as `ansible_user` wins, then the task, the block and the play, then the command line and `ansible.cfg`. Facts a host reports about itself never choose its user, port or connection. A keyword written as a template is rendered once per task. These values fail the task: a user name that starts with `-` or holds a space, a quote or a control character, a port outside 1-65535, and a connection name with anything but letters, digits, `_` and `.`. A delegated task uses the task's `remote_user` and `port` unless the delegate sets its own `ansible_user` or `ansible_port`.
 
 An unbalanced quote in `ansible_ssh_common_args` or `ansible_ssh_extra_args` fails the host instead of being dropped. That matters behind a bastion: silently discarding a `ProxyCommand` would connect straight to an address that may belong to a different machine.
 
@@ -71,24 +88,29 @@ sequenceDiagram
 
 ## The agent cache
 
-The agent is a single static executable of a few hundred kilobytes. Volant uploads it once per host and reuses it on every later run.
+The agent is a single static executable. Its release archive for x86_64 Linux is about 1.2 MB. Volant uploads it once per host and reuses it on every later run.
 
 It lives at `<remote_tmp>/volant-agent-<version>-<uid>/volant-agent`, so with the default `remote_tmp` it sits under `~/.ansible/tmp/` in a home directory. The version in the path is the controller's own, which is how an upgraded controller avoids running an older agent. The uid is the numeric id of the account that runs the agent, so the login account and a `become` account that share one `remote_tmp` each get their own directory.
 
-Whose home directory depends on who runs the agent. A task that does not escalate runs it as the account you log in as, and caches it there. A task that escalates runs it as the `become_user` and caches it in that user's home, written through `sudo`. This is what makes a `become_user` other than `root` work: home directories are often mode 0700, so an agent cached under your login account would be out of reach for the user you become. A host therefore holds one cache per account the run acts as, each owned by that account.
+A task that does not escalate runs the agent as the account you log in as and caches it in that account's home. A task that escalates runs it as the `become_user` and caches it in that user's home, written through `sudo`. A `become_user` other than `root` needs this, because home directories are often mode 0700 and an agent cached under your login account would be out of reach. A host holds one cache per account the run acts as, each owned by that account.
 
 The agent travels through `ssh -C`, so OpenSSH compresses it on the wire and nothing has to be unpacked on the host.
+
+### Permission checks
 
 Volant runs the cached agent only from a directory that no other account can change. It checks this on the probe, after an upload and again just before the start:
 
 - The directory and the program are not symbolic links. The account that runs the agent owns both, and neither has a group or other write bit.
-- `remote_tmp` belongs to that account, to root or, under `sudo`, to the account that ran `sudo`. Other accounts cannot write to it, or it has the sticky bit, as `/tmp` has. A `remote_tmp` that the account owns may be open to its group when that group is the account's own primary group, as a umask of 002 with a group per user makes it, but not when an ACL entry shows on it (a `+` after the mode in `ls -l`), because that entry can grant write access to another account. Volant reads only the mode bits, so ACLs that are not in them (NFSv4, ZFS, macOS) are not seen.
+- `remote_tmp` belongs to that account, to root or, under `sudo`, to the account that ran `sudo`. Other accounts cannot write to it, or it has the sticky bit, as `/tmp` has.
+- A `remote_tmp` that the account owns may be open to its group when that group is the account's own primary group, as a umask of 002 with a group per user makes it. It may not when an ACL entry shows on it (a `+` after the mode in `ls -l`), because that entry can grant write access to another account. Volant reads only the mode bits, so ACLs that are not in them (NFSv4, ZFS, macOS) are not seen.
 
-Any other state stops the host with an `UNREACHABLE` error that names the path, its permissions and its owner. An upload made by Volant is created with `umask 077`. If the directory is yours but too open, the upload empties it of Volant's files and makes it again. If another account owns it, Volant leaves it alone and reports it. Only the directories of other versions that the same account owns and that no other account can write are removed.
+Any other state stops the host with an `UNREACHABLE` error that names the path, its permissions and its owner. An upload is created with `umask 077`. If the directory is yours but too open, the upload empties it of Volant's files and makes it again. If another account owns it, Volant leaves it alone and reports it. Only the directories of other versions that the same account owns and that no other account can write are removed.
 
 A `remote_tmp` that does not exist is created by the first account that needs it, with mode 0700, and then belongs to that account. Create it first when several accounts share it. The default `~/.ansible/tmp` needs nothing.
 
 The checks use `ls -ldn`, so they need no `stat` option. Volant does not check the directories above `remote_tmp`. An account that can replace one of them can still swap the path in the short time between the last check and the start of the agent.
+
+### Upload and repair
 
 Before every connection, Volant asks the cached agent for its version. A version mismatch, a missing file or a file that will not start all lead to a fresh upload. A broken cache, such as a copy truncated by an interrupted run, gets repaired instead of reported.
 
@@ -115,9 +137,11 @@ Some tasks add a connection:
 
 All the `ssh` runs Volant makes for one inventory host share a single OpenSSH connection: the version check, the agent upload, the link to the agent and the escalated link. Volant adds `-o ControlMaster=auto -o ControlPath=<dir>/<name> -o ControlPersist=30s` to its command line, so only the first run pays for the key exchange and the authentication. The shared connection stays open for 30 seconds after its last session, and a run started in that window reuses it.
 
+It also adds `ServerAliveInterval=5` and `ServerAliveCountMax=3`, so a master whose host stopped answering exits after about 15 seconds instead of holding every new session. A keepalive in your own `ssh` arguments (anything containing `serveralive`) replaces them.
+
 The sockets live in `$XDG_RUNTIME_DIR/volant-cm`. Without a usable runtime directory they go to `/tmp/volant-cm-<uid>`, created at mode 0700. Whoever can create a socket there could hand your next `ssh` a connection of their own, so a directory that is not yours, or not at mode 0700, is refused. The run then prints `[WARNING]: ssh connections are not shared` with the reason and carries on with one connection per run.
 
-The socket name is a hash of the inventory name and every `ssh` option the host connects with, plus what `ssh -G` resolves from your configuration files. A connection opened for one user, key, port or `ProxyJump` never serves a host that asks for another, and a `HostName` changed in `~/.ssh/config` between two runs gets a new connection. A connection that a password opened is never offered to another run, because the run's own identity is part of the name when a host has a password; the password itself is not. Two inventory aliases of one machine get two connections, because a single one shared by fifty aliases runs into the server's `MaxSessions` limit.
+The socket name is a hash of the inventory name, every `ssh` option the host connects with and what `ssh -G` resolves from your configuration files. So a connection opened for one user, key, port or `ProxyJump` never serves a host that asks for another, and a `HostName` changed in `~/.ssh/config` between two runs gets a new connection. Two inventory aliases of one machine get two connections, because one connection shared by fifty aliases would run into the server's `MaxSessions` limit. A connection that a password opened is never offered to another run.
 
 Volant leaves sharing to you when you already configure it. It adds nothing when:
 
@@ -126,7 +150,7 @@ Volant leaves sharing to you when you already configure it. It adds nothing when
 - the `ssh` arguments ask for debug output with `-v`;
 - `[volant] ssh_control_master = false` or `VOLANT_SSH_CONTROL_MASTER=0`, see [Configuration](/reference/configuration/#volant-ssh-control-master).
 
-An escalated connection runs one extra `ssh` session for the `sudo` probe, two when a password is needed. With sharing on, those sessions ride the same connection too.
+An escalated connection runs one extra `ssh` session for the `sudo` probe, two when a password is needed. With sharing on, those sessions use the same connection.
 
 OpenSSH does the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and your ssh-agent apply exactly as they do for `ansible-playbook`.
 
@@ -148,6 +172,7 @@ ulimit -Sn; ulimit -Hn
 
 ## Not there yet
 
-- Windows and network devices.
+- Windows hosts and network devices.
+- The connection plugins named under Connection types.
 
 [Keywords](/reference/keywords/) is the full list, generated from the tables the engine reads.

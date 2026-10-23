@@ -15,6 +15,10 @@ description: Running a task once for a batch, or on a different host from the on
 
 The hosts of the batch meet in front of such a task before any of them runs it. The election has to be the same for everyone, and the other hosts have to wait for the one that runs.
 
+`run_once` can be a template. Each host of the batch renders it in turn, and the first host for which it is true runs the task. A template that answers differently across the batch ends the run with exit 4.
+
+Under `strategy: free` and `host_pinned`, `run_once` is ignored with a warning and the task runs for every host. A `run_once` task that fails there fails only its own host. See [Other strategies](/playbooks/how-a-play-runs/#other-strategies).
+
 ## delegate_to
 
 `delegate_to` runs a task somewhere other than the host it is running for.
@@ -36,14 +40,14 @@ The task travels over the delegate's own connection, with the delegate's connect
 
 A controller-side module such as `set_fact` or `debug` always runs on the controller, whatever `delegate_to` says. The delegate then only decides the name shown on the result line and, with `delegate_facts`, whose facts are written.
 
-`action:` and `local_action:` take a string (`command echo hi`), a mapping with `module:` that Ansible deprecates, or a bare module name with the arguments under `args:`.
+`action:` and `local_action:` take a string (`command echo hi`), a mapping with `module:` that Ansible deprecates, or a bare module name with the arguments under `args:`. A word such as `module=command` after `action:` names no module. The task fails when a host reaches it, with exit 2, and a `rescue` or `ignore_errors` takes the failure, as in Ansible.
 
 `delegate_to` and `delegate_facts` can be written on a block and on a task, not on a play, which is where Ansible accepts them too. The two keywords combine: a `run_once` task with a `delegate_to` runs once, on the delegate.
 
 ## Differences from Ansible
 
 - `delegate_to` is rendered once per task, not once per loop item. One batch is one message to one agent over one connection, and a per-item delegate would split a loop across connections.
-- `local_action` is `delegate_to: localhost` written another way, and wins over a `delegate_to` on the same task. Ansible reads `module=command` after `action:` as a module name it cannot resolve and fails that task. Volant refuses the playbook before it starts, with the same message and the same exit code 2.
+- `local_action` is `delegate_to: localhost` written another way, and wins over a `delegate_to` on the same task.
 - When the host elected to run a `run_once` task cannot be reached, the waiting hosts leave the play and the run ends there. Ansible prints one more empty play banner. Neither engine elects another host, and the exit code is the same 4.
 - `run_once` combined with `delegate_facts` stores the facts on the delegate, which keeps `delegate_facts` meaning one thing. Ansible's behavior here was not measured.
 - `become_user: "{{ item }}"` fails the task, where Ansible escalates per item. Escalation is settled once per batch, for the same reason as the delegate.

@@ -483,6 +483,48 @@
 - {bridge: true, template: "{{ '%Y-%m-%d %H:%M:%S' | strftime(86400, true) }}"}
 - {bridge: true, template: "{{ '%Y' | strftime(0, true) }}"}
 - {bridge: true, template: "{{ 'x' | password_hash('nope') }}"}
+# Lookups and filters that need a fixture or an extra Python package. `needs` names the packages
+# the recording imported; the replay skips a row, by package name, when the runner lacks one.
+# `lookup('url', ...)` is read over file:// so no server is needed.
+# Not recorded: community.general.merge_variables (its own issue).
+- {bridge: true, template: "{{ lookup('config', 'DEFAULT_FORKS') }}"}
+- {bridge: true, template: "{{ lookup('config', 'VOLANT_NO_SUCH_SETTING') }}"}
+- {bridge: true, template: "{{ lookup('url', 'file:///var/tmp/volant-golden-fs/a.txt') }}"}
+- {bridge: true, template: "{{ lookup('url', 'file:///var/tmp/volant-golden-fs/nope') }}"}
+- {bridge: true, template: "{{ lookup('community.general.filetree', '/var/tmp/volant-golden-fs/tree', wantlist=true) | map(attribute='path') | list }}"}
+- {bridge: true, template: "{{ lookup('community.general.filetree', '/var/tmp/volant-golden-fs/tree', wantlist=true) | map(attribute='state') | list }}"}
+- {bridge: true, template: "{{ lookup('community.general.filetree', '/var/tmp/volant-golden-fs/nope', wantlist=true) }}"}
+- {bridge: true, needs: [xmltodict], template: "{{ '<a><b>1</b></a>' | ansible.utils.from_xml }}"}
+- {bridge: true, needs: [xmltodict], template: "{{ '<a><b>' | ansible.utils.from_xml }}"}
+- {bridge: true, needs: [xmltodict], template: "{{ {'a': {'b': 1}} | ansible.utils.to_xml }}"}
+- {bridge: true, needs: [xmltodict], template: "{{ 'x' | ansible.utils.to_xml }}"}
+- {bridge: true, needs: [jsonschema], template: "{{ {'a': 1} | ansible.utils.validate({'type': 'object', 'properties': {'a': {'type': 'integer'}}}, engine='ansible.utils.jsonschema') }}"}
+- {bridge: true, needs: [jsonschema], template: "{{ {'a': 1} | ansible.utils.validate(criteria={'type': 'object', 'properties': {'a': {'type': 'integer'}}}) }}"}
+- {bridge: true, needs: [jsonschema], template: "{{ {'a': 'x'} | ansible.utils.validate({'type': 'object', 'properties': {'a': {'type': 'integer'}}}, engine='ansible.utils.jsonschema') }}"}
+- {bridge: true, needs: [hashids], template: "{{ [1, 2, 3] | community.general.hashids_encode(salt='volant') }}"}
+- {bridge: true, needs: [hashids], template: "{{ 'B1SQi0' | community.general.hashids_decode(salt='volant') }}"}
+- {bridge: true, needs: [hashids], template: "{{ 'x' | community.general.hashids_decode(salt='volant') }}"}
+- {bridge: true, needs: [hashids], template: "{{ [-1] | community.general.hashids_encode }}"}
+- {bridge: true, needs: [jc], template: "{{ ini_text | community.general.jc('ini') }}", vars: {ini_text: "[s]\nk=v\n"}}
+- {bridge: true, needs: [jc], template: "{{ 'x' | community.general.jc('nope') }}"}
+- {bridge: true, needs: [jsonpatch], template: "{{ {'a': 1} | community.general.json_patch('add', '/b', 2) }}"}
+- {bridge: true, needs: [jsonpatch], template: "{{ {'a': 1} | community.general.json_patch('nope', '/b', 2) }}"}
+- {bridge: true, needs: [jsonpatch], template: "{{ {'a': 1} | community.general.json_patch_recipe([{'op': 'add', 'path': '/b', 'value': 2}]) }}"}
+- {bridge: true, needs: [jsonpatch], template: "{{ {'a': 1} | community.general.json_patch_recipe([{'op': 'remove', 'path': '/zz'}]) }}"}
+- {bridge: true, needs: [prettytable], template: "{{ [{'a': 1, 'b': 2}] | community.general.to_prettytable }}"}
+- {bridge: true, needs: [prettytable], template: "{{ 'x' | community.general.to_prettytable }}"}
+- {bridge: true, needs: [tomlkit], template: "{{ {'a': 1} | community.general.to_toml }}"}
+- {bridge: true, needs: [tomlkit], template: "{{ 'x' | community.general.to_toml }}"}
+- {bridge: true, needs: [fqdn], template: "{{ 'a.example.com' is community.general.fqdn_valid }}"}
+- {bridge: true, needs: [fqdn], template: "{{ '-bad-' is community.general.fqdn_valid }}"}
+- {bridge: true, needs: [petname], template: "{{ lookup('community.general.random_pet', words=2, prefix='x', separator='-') is match('^x-[a-z]+-[a-z]+$') }}"}
+- {bridge: true, needs: [petname], template: "{{ lookup('community.general.random_pet', words='x') }}"}
+- {bridge: true, needs: [xkcdpass], template: "{{ lookup('community.general.random_words', numwords=2, delimiter='-') is match('^[A-Za-z]+-[A-Za-z]+$') }}"}
+- {bridge: true, needs: [xkcdpass], template: "{{ lookup('community.general.random_words', numwords='x') }}"}
+- {bridge: true, needs: [passlib], template: "{{ 'x' | password_hash('sha512', 'saltsalt') }}"}
+- {bridge: true, needs: [passlib], template: "{{ 'x' | password_hash('sha256', 'saltsalt') }}"}
+- {bridge: true, needs: [passlib], template: "{{ 'x' | password_hash('md5_crypt', 'saltsalt') }}"}
+- {bridge: true, needs: [passlib], template: "{{ 'x' | password_hash('sha512', 'bad salt!') }}"}
 # Tests
 - {bridge: true, template: "{{ '/a' is abs }}"}
 - {bridge: true, template: "{{ 'a' is is_abs }}"}

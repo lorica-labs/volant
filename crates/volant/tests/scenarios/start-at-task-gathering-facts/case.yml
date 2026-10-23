@@ -1,0 +1,9 @@
+# `--start-at-task` matches the implicit `Gathering Facts` task like any other, so `*` runs it twice.
+runs:
+  - args: [-i, inv.ini, on.yml, --start-at-task, "*"]
+  - args: [-i, inv.ini, on.yml, --start-at-task, Gathering Facts]
+  - args: [-i, inv.ini, on.yml, --start-at-task, "deb*"]
+  - args: [-i, inv.ini, off.yml, --start-at-task, "*"]
+  - args: [-i, inv.ini, off.yml, --start-at-task, Gathering Facts]
+  - args: [-i, inv.ini, off.yml, --start-at-task, "deb*"]
+needs: [ansible-core]

@@ -19,7 +19,7 @@ use super::defaults::{
     setting_args, timeout_of,
 };
 use super::escalation::check_local_escalation;
-use super::escalation::{local_argv, preamble};
+use super::escalation::{local_argv, local_su, preamble};
 use super::names::{self, first_set, secret_text};
 use super::shell::validate_remote_tmp;
 
@@ -145,7 +145,8 @@ impl Transport {
                 },
                 control_path: None,
                 dumped: None,
-                use_tty: host_setting(vars, "ansible_ssh_use_tty").is_none_or(
+                use_tty: host_setting(vars, "ansible_ssh_use_tty").map_or(
+                    defaults.ssh_use_tty,
                     |value| match value {
                         Value::Bool(on) => *on,
                         Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
@@ -223,13 +224,9 @@ impl Transport {
                     .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))?;
                 let agent = agent.display().to_string();
                 let escalated = match escalation {
-                    // `su` reads its password from a terminal, which this side only reaches
-                    // through `ssh -tt`; a local link has none to give it.
+                    // `su` reads its password from a terminal, so it gets one of its own.
                     Some(e) if e.method == BecomeMethod::Su => {
-                        return Err(ConnectError::Become(
-                            "become_method 'su' is not supported yet on a local connection"
-                                .to_string(),
-                        ));
+                        return local_su(&agent, e).await;
                     }
                     Some(e) => Some((e, check_local_escalation(&agent, e).await?)),
                     None => None,

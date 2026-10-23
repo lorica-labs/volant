@@ -340,6 +340,9 @@ fn after(now: Instant, by: Duration) -> Instant {
 fn raw(line: &str) -> Sub {
     let mut args = Map::new();
     args.insert("_raw_params".into(), Value::from(line));
+    // The reference sends these through `_low_level_execute_command`, which has no stdin and so
+    // gets `ssh -tt`; measured with `-vvvv`.
+    args.insert("_volant_tty".into(), Value::Bool(true));
     Sub {
         module: "raw",
         args,

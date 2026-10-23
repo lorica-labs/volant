@@ -18,7 +18,7 @@ use super::fields::{
 use super::keywords::{connect_keywords, delegation, escalation, flag, shown};
 use super::load::task_list;
 use super::model::{Play, PlayTask};
-use super::origin::task_origin;
+use super::origin::{Origin, task_origin, value_origin};
 #[expect(clippy::too_many_lines)]
 pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let map = yaml
@@ -163,6 +163,7 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         gather_timeout: raw_keyword(yaml, "gather_timeout")?,
         fact_path: raw_keyword(yaml, "fact_path")?,
         vars_prompt: vars_prompt(yaml)?,
+        prompt_origins: prompt_origins(yaml),
     })
 }
 
@@ -186,6 +187,16 @@ const PROMPT_KEYS: &[&str] = &[
     "salt",
     "unsafe",
 ];
+
+/// Where each entry of the play's `vars_prompt` wrote its `prompt`.
+fn prompt_origins(yaml: &Yaml) -> Vec<Option<Origin>> {
+    let at = |entry: &Yaml| field(entry, "prompt").and_then(value_origin);
+    match field(yaml, "vars_prompt") {
+        Some(Yaml::Sequence(entries)) => entries.iter().map(at).collect(),
+        Some(one) => vec![at(one)],
+        None => Vec::new(),
+    }
+}
 
 /// The play's `vars_prompt`: a list of mappings, or one mapping, each with a `name` and no key
 /// the reference does not know.

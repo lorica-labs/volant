@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    d:
+      !unsafe a: 1
+  tasks:
+    - debug: var=d
+    - debug: var=g
+    - debug: var=e

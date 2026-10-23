@@ -49,10 +49,18 @@ pub fn lead(msg: &str) -> serde_json::Value {
 /// "help"}]`. Taken off with [`ERROR_KEY`].
 pub const CHAIN_KEY: &str = "_volant_chain";
 
+/// The key the executor leaves on a failure the reference prints no error block for: an item
+/// failed by its `loop_control.label`, which carries no exception. Taken off with [`ERROR_KEY`].
+pub const NO_BLOCK_KEY: &str = "_volant_no_block";
+
 /// The key the executor leaves what the reference shows under `Origin: <unknown>` under, for a
 /// failure that has no place in a file: a `with_` lookup that failed is shown as the expression
 /// `invoke_lookup()`, not at the task. Taken off with [`ERROR_KEY`].
 pub const UNKNOWN_KEY: &str = "_volant_unknown";
+
+/// The key the executor leaves the place an error points at under, when it is not the task's:
+/// one [`cause`], whose message is not read. Taken off with [`ERROR_KEY`].
+pub const AT_KEY: &str = "_volant_at";
 
 /// One cause as [`CHAIN_KEY`] holds it.
 pub fn cause(
@@ -82,26 +90,28 @@ pub(super) fn causes_of(result: &TaskResult) -> Vec<Cause> {
             .and_then(serde_json::Value::as_str)
             .map(str::to_string)
     };
-    let number = |c: &serde_json::Value, key: &str| {
-        c.get(key)
-            .and_then(serde_json::Value::as_u64)
-            .and_then(|n| usize::try_from(n).ok())
-    };
     list.iter()
         .filter(|c| c.get("lead").is_none())
         .map(|c| Cause {
             msg: text(c, "msg").unwrap_or_default(),
-            origin: match (text(c, "path"), number(c, "line"), number(c, "col")) {
-                (Some(path), Some(line), Some(col)) => Some(crate::playbook::Origin {
-                    path: path.into(),
-                    line,
-                    col,
-                }),
-                _ => None,
-            },
+            origin: origin_of(c),
             help: text(c, "help"),
         })
         .collect()
+}
+
+/// The place a [`cause`] value carries, if it carries one.
+fn origin_of(c: &serde_json::Value) -> Option<crate::playbook::Origin> {
+    let number = |key: &str| {
+        c.get(key)
+            .and_then(serde_json::Value::as_u64)
+            .and_then(|n| usize::try_from(n).ok())
+    };
+    Some(crate::playbook::Origin {
+        path: c.get("path")?.as_str()?.into(),
+        line: number("line")?,
+        col: number("col")?,
+    })
 }
 
 /// The text [`lead`] put first in the failure's chain, when there is one.
@@ -136,7 +146,7 @@ impl ErrorBlock {
             origin: if unknown.is_some() {
                 None
             } else {
-                origin.cloned()
+                result.0.get(AT_KEY).and_then(origin_of).or(origin.cloned())
             },
             unknown,
             // A `no_log` task's causes would repeat what its censored message no longer says.

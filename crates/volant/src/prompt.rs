@@ -8,7 +8,7 @@ use anyhow::{anyhow, bail};
 use serde_json::{Map, Value};
 
 use crate::executor::as_bool_value;
-use crate::playbook::Play;
+use crate::playbook::{Origin, Play};
 use crate::template::Templar;
 
 /// How one prompt is put to the operator: the text, and whether what is typed stays hidden.
@@ -35,18 +35,19 @@ pub(crate) fn answers(
         return Ok(Vec::new());
     }
     // All the entries are templated before the first is asked, as the reference does.
-    let entries = render_once(
-        templar,
-        &Value::Array(
-            play.vars_prompt
-                .iter()
-                .cloned()
-                .map(Value::Object)
-                .collect(),
-        ),
-        vars,
-    )
-    .map_err(|err| anyhow!("Error processing keyword 'vars_prompt': {}", err.0))?;
+    let mut rendered = Vec::new();
+    for (entry, origin) in play.vars_prompt.iter().zip(
+        play.prompt_origins
+            .iter()
+            .map(Option::as_ref)
+            .chain(std::iter::repeat(None)),
+    ) {
+        rendered.push(
+            render_once(templar, &Value::Object(entry.clone()), vars)
+                .map_err(|err| unrendered(err, origin))?,
+        );
+    }
+    let entries = Value::Array(rendered);
     let mut out = Vec::new();
     for entry in entries.as_array().into_iter().flatten() {
         let entry = Entry::read(entry)?;
@@ -145,6 +146,22 @@ fn render_once(
         ),
         other => other.clone(),
     })
+}
+
+/// An entry that did not render. A name with no value stops the run as the reference words it,
+/// `[ERROR]: 'x' is undefined` with the prompt's place; any other failure keeps the keyword's name.
+fn unrendered(err: crate::template::TemplateError, origin: Option<&Origin>) -> anyhow::Error {
+    if !err.is_undefined() {
+        return anyhow!("Error processing keyword 'vars_prompt': {}", err.0);
+    }
+    let place = origin.map_or_else(String::new, |o| {
+        format!(
+            "
+{}",
+            crate::render::source_context(o)
+        )
+    });
+    crate::stats::Refusal::plain(1, format!("{}{place}", err.0))
 }
 
 /// One `vars_prompt` entry after templating, with the reference's defaults.

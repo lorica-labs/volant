@@ -29,7 +29,16 @@ pub fn load<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<Yaml<'a>>> {
     if holds_nothing(text) {
         return Ok(docs.iter().map(|_| Yaml::Value(Scalar::Null)).collect());
     }
-    lower_all(docs, source)
+    lower_all(docs, source, false)
+}
+
+/// [`load`] as PyYAML's own loader reads a text, which knows no `!unsafe` tag on a mapping key.
+pub fn load_plain<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<Yaml<'a>>> {
+    let docs = marked(text, source)?;
+    if holds_nothing(text) {
+        return Ok(docs.iter().map(|_| Yaml::Value(Scalar::Null)).collect());
+    }
+    lower_all(docs, source, true)
 }
 
 /// Whether `error`, from [`load`] or [`load_with_origins`], refused a stream for holding a second
@@ -102,7 +111,7 @@ pub fn load_with_origins<'a>(
     for doc in &marked {
         mapping_starts(doc, &mut starts);
     }
-    let docs = lower_all(marked, source)?;
+    let docs = lower_all(marked, source, false)?;
     let mut addresses = (Vec::new(), Vec::new());
     for doc in &docs {
         mapping_addresses(doc, &mut addresses);
@@ -160,9 +169,13 @@ pub const PYYAML_FALSE: &[&str] = &[
 
 /// Every document of `docs` without the source positions `MarkedYaml` tracks, each scalar read
 /// as PyYAML reads it (see [`scalar`]). Errors name `source`, and carry PyYAML's own text.
-fn lower_all<'a>(docs: Vec<MarkedYaml<'a>>, source: &str) -> anyhow::Result<Vec<Yaml<'a>>> {
+fn lower_all<'a>(
+    docs: Vec<MarkedYaml<'a>>,
+    source: &str,
+    strict: bool,
+) -> anyhow::Result<Vec<Yaml<'a>>> {
     docs.into_iter()
-        .map(lower)
+        .map(|doc| lower(doc, strict))
         .collect::<anyhow::Result<_>>()
         .with_context(|| format!("{source}: invalid YAML"))
 }

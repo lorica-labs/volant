@@ -1,0 +1,7 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    a: {}
+  tasks:
+    - debug:
+        msg: "{{ a.b }}"

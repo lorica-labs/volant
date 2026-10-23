@@ -98,9 +98,24 @@ pub(super) fn add_group(inv: &mut Inventory, name: &str) -> Result<(), Failure> 
 static INVALID_CHARS: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^[\d\W]|[^\w]").expect("a fixed pattern"));
 
-/// Whether the reference would call a character of this group name invalid.
-pub(in crate::inventory) fn has_invalid_chars(name: &str) -> bool {
-    INVALID_CHARS.is_match(name)
+/// The set of invalid characters of a group name as Python prints it, `{'.', '-'}`, or `None`
+/// when the name has none. Python's set order changes from one run to the next; this one is the
+/// order the characters first appear in.
+pub(in crate::inventory) fn invalid_chars_report(name: &str) -> Option<String> {
+    let mut seen: Vec<&str> = Vec::new();
+    for found in INVALID_CHARS.find_iter(name) {
+        if !seen.contains(&found.as_str()) {
+            seen.push(found.as_str());
+        }
+    }
+    if seen.is_empty() {
+        return None;
+    }
+    let items: Vec<String> = seen
+        .into_iter()
+        .map(|c| python_repr(&Value::String(c.to_string())))
+        .collect();
+    Some(format!("{{{}}}", items.join(", ")))
 }
 
 /// `to_safe_group_name(name, force=True, silent=True)`.
@@ -124,11 +139,12 @@ pub(super) fn is_blank(value: &Value) -> bool {
 /// undefined read names the first name of the expression the host has no value for.
 // The engine does not say which name was undefined; the first one not in `vars` is
 // right for a plain expression, and a nested attribute keeps the engine's wording.
-pub(super) fn reason(error: &str, expr: &str, vars: &Map<String, Value>) -> String {
+pub(in crate::inventory) fn reason(error: &str, expr: &str, vars: &Map<String, Value>) -> String {
     let reason = error
         .split_once("The error was: ")
         .map_or(error, |(_, rest)| rest);
-    if !reason.starts_with("undefined value") {
+    // A call such as `range(nope)` fails in the engine before it says which name was undefined.
+    if !reason.starts_with("undefined value") && !reason.contains("cannot convert undefined") {
         return reason.to_string();
     }
     static NAME: LazyLock<Regex> = LazyLock::new(|| {
@@ -140,7 +156,10 @@ pub(super) fn reason(error: &str, expr: &str, vars: &Map<String, Value>) -> Stri
     ];
     NAME.captures_iter(expr)
         .filter(|c| c.get(1).is_none())
-        .filter_map(|c| c.get(2).map(|m| m.as_str()))
+        .filter_map(|c| c.get(2))
+        // A name followed by `(` is a call (`range(nope)`): the name to report is in its arguments.
+        .filter(|m| !expr[m.end()..].trim_start().starts_with('('))
+        .map(|m| m.as_str())
         .find(|n| !vars.contains_key(*n) && !WORDS.contains(&n.to_lowercase().as_str()))
         .map_or_else(
             || reason.to_string(),

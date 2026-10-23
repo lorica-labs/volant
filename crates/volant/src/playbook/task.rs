@@ -363,6 +363,11 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         ("notify", field(yaml, "notify")),
         ("loop", loop_node),
         ("var", var),
+        // A list of conditions is not placed: the reference points at the one that failed.
+        (
+            "when",
+            field(yaml, "when").filter(|n| !matches!(n, Yaml::Sequence(_))),
+        ),
     ] {
         if let Some(origin) = node.and_then(value_origin) {
             value_origins.insert(key.to_string(), origin);
@@ -375,6 +380,19 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     // name it cannot resolve at.
     if let Some(origin) = source.and_then(value_origin) {
         value_origins.insert("action.value".to_string(), origin);
+    }
+    // A free-form action line is the module's `_raw_params`, at the line's value.
+    if !matches!(source.unwrap_or(value), Yaml::Mapping(_))
+        && let Some(origin) = value_origin(source.unwrap_or(value))
+    {
+        value_origins.insert("args._raw_params".to_string(), origin);
+    }
+    if let Some(Yaml::Mapping(control)) = field(yaml, "loop_control") {
+        for (k, v) in control {
+            if let (Some(k), Some(origin)) = (k.as_str(), value_origin(v)) {
+                value_origins.insert(format!("loop_control.{k}"), origin);
+            }
+        }
     }
     for node in [Some(source.unwrap_or(value)), field(yaml, "args")]
         .into_iter()

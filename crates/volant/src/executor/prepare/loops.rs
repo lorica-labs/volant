@@ -7,7 +7,7 @@ use crate::playbook::PlayTask;
 use crate::template::{Templar, TemplateError, UNDEFINED};
 use crate::vars::HostVars;
 
-use super::item::{KEYWORD_ERROR, undefined_name};
+use super::item::KEYWORD_ERROR;
 use crate::executor::as_bool_value;
 
 /// What `loop_control`'s `extended`, `extended_allitems` and `pause` come to once rendered.
@@ -169,23 +169,28 @@ pub(super) fn with_lookup_items(
     Ok((list, tainted))
 }
 
-/// `err`, a loop whose value is one bare `{{ name }}` template that read an undefined variable,
-/// worded as the reference words it: `Task failed: 'name' is undefined`. The engine cannot say
-/// which variable it was, so the template is read back; any other loop keeps the engine's
-/// sentence.
+/// `err`, a loop whose value is a template that read a missing name, worded as the reference
+/// words it: `Task failed: 'name' is undefined`. An error that does not name what was missing
+/// keeps the engine's sentence.
 pub(super) fn named_undefined(raw: &Value, err: TemplateError) -> TemplateError {
-    match raw.as_str().map(|text| undefined_name(text, err.0.clone())) {
-        Some(named) if named != err.0 => TemplateError(format!("Task failed: {named}")),
-        _ => err,
+    if raw.is_string() && is_named(&err.0) {
+        TemplateError(format!("Task failed: {}", err.0))
+    } else {
+        err
     }
+}
+
+/// Whether `text` is a sentence that names what was missing, not the engine's own.
+fn is_named(text: &str) -> bool {
+    !text.starts_with(UNDEFINED) && TemplateError(text.to_string()).is_undefined()
 }
 
 /// The chain of a failed loop whose value was named undefined by [`named_undefined`]: the task,
 /// then the value at where it was written.
 pub(in crate::executor) fn undefined_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let sentence = message.strip_prefix("Task failed: ")?;
-    let template = task.loop_items.as_ref()?.as_str()?;
-    (undefined_name(template, UNDEFINED.into()) == sentence).then(|| {
+    task.loop_items.as_ref()?.as_str()?;
+    is_named(sentence).then(|| {
         serde_json::json!([crate::render::cause(
             sentence,
             task.value_origins.get("loop"),

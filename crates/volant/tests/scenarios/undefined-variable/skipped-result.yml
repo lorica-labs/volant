@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: skipped
+      when: false
+      register: r
+    - debug:
+        msg: "{{ r.x }}"

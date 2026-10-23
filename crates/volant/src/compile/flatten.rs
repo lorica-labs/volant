@@ -272,10 +272,14 @@ pub(crate) fn compile(
         origin: play.origin.clone(),
         ..empty.clone()
     };
-    let gathers = play.gather_facts && selection.selects(&gather.tags);
-    if gathers {
+    // A play with `gather_facts: false` still has this step in the reference once
+    // `--start-at-task` names a task: kept aside, and laid out by `start_at_task` alone.
+    let mut idle_gather = None;
+    let selected = selection.selects(&gather.tags);
+    let gathers = play.gather_facts && selected;
+    if selected {
         let origin = builder.origin();
-        builder.steps.push(Step {
+        let step = Step {
             kind: StepKind::Task,
             task: gather,
             block: None,
@@ -284,7 +288,12 @@ pub(crate) fn compile(
             origin,
             include_params: None,
             hosts: None,
-        });
+        };
+        if gathers {
+            builder.steps.push(step);
+        } else if !play.gather_facts {
+            idle_gather = Some(Box::new(step));
+        }
     }
     // A flush point closes each of the three sections. Measured on ansible-core 2.19.12: the
     // implicit ones are after `pre_tasks`, after the roles and `tasks` **together**, and after
@@ -353,6 +362,7 @@ pub(crate) fn compile(
         search: search.clone(),
         selection: selection.clone(),
         gathers,
+        idle_gather,
         crosses: Vec::new(),
         resolved: Arc::default(),
         warnings,

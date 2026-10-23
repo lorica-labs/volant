@@ -221,6 +221,9 @@ pub struct Refusal {
     /// Printed as `[ERROR]: message`, the reference's line for an error raised while the run
     /// goes, instead of `ERROR! message`.
     pub plain: bool,
+    /// Set for a module no installed collection holds: the run prints the reference's warning
+    /// and error block for it instead of `message`.
+    pub unresolved: Option<crate::preflight::Unresolved>,
 }
 
 impl Refusal {
@@ -232,6 +235,21 @@ impl Refusal {
             code,
             message: format!("{err}"),
             plain: false,
+            unresolved: None,
+        })
+    }
+
+    /// A refusal for a module nothing answers to, printed as the reference prints it.
+    pub fn unresolved(
+        code: i32,
+        message: String,
+        unresolved: crate::preflight::Unresolved,
+    ) -> anyhow::Error {
+        anyhow::Error::new(Refusal {
+            code,
+            message,
+            plain: false,
+            unresolved: Some(unresolved),
         })
     }
 
@@ -241,7 +259,23 @@ impl Refusal {
             code,
             message,
             plain: true,
+            unresolved: None,
         })
+    }
+
+    /// Prints this refusal on stderr the way the reference does: `[ERROR]: message`, behind its
+    /// warning for a module no collection holds.
+    pub fn show(&self) {
+        match &self.unresolved {
+            Some(u) => {
+                let (warning, error) = u.report();
+                if let Some(warning) = warning {
+                    eprintln!("[WARNING]: {warning}");
+                }
+                eprintln!("[ERROR]: {error}");
+            }
+            None => eprintln!("[ERROR]: {}", self.message),
+        }
     }
 
     /// Gives `err` this code unless it already carries one of its own, so a blanket code for a

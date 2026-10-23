@@ -1,14 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The variables one host runs a task with.
 
-use std::collections::BTreeSet;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
 
 use crate::compile::{IncludeParams, Origin};
-use crate::template::{Templar, TemplateError};
+use crate::template::Templar;
 use crate::vars::{HostVars, Scope, VarStore};
 
 use super::connect::insert_search_path;
@@ -196,40 +195,4 @@ pub(in crate::executor) fn resolved(mut vars: HostVars, templar: &Templar) -> Ho
     vars.map = map;
     vars.untrusted = untrusted;
     vars
-}
-
-/// One `module_defaults` value as the mapping it stands for: a mapping with each of its values
-/// rendered, or a whole template that renders to one. The names that read something a managed
-/// host wrote go into `untrusted`, so the arguments they become are never rendered again.
-pub(super) fn render_default(
-    templar: &Templar,
-    vars: &HostVars,
-    key: &str,
-    value: &Value,
-    untrusted: &mut BTreeSet<String>,
-) -> Result<Map<String, Value>, TemplateError> {
-    let not_a_mapping = || TemplateError(format!("module_defaults for '{key}' must be a mapping"));
-    match value {
-        Value::Null => Ok(Map::new()),
-        Value::Object(map) => {
-            let (map, tainted) = templar.render_map_tainted(map, vars)?;
-            untrusted.extend(tainted);
-            Ok(map)
-        }
-        other => {
-            let mut wrapped = Map::new();
-            wrapped.insert("value".into(), other.clone());
-            let (mut rendered, tainted) = templar.render_map_tainted(&wrapped, vars)?;
-            match rendered.remove("value") {
-                Some(Value::Object(map)) => {
-                    if tainted.contains("value") {
-                        untrusted.extend(map.keys().cloned());
-                    }
-                    Ok(map)
-                }
-                Some(Value::Null) => Ok(Map::new()),
-                _ => Err(not_a_mapping()),
-            }
-        }
-    }
 }

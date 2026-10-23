@@ -33,8 +33,8 @@ pub(crate) use refusals::PROMPT_REFUSED;
 use refusals::{check_arguments, check_end_role, check_pause, refuse_retries};
 use resolved::unresolved;
 pub(crate) use resolved::{
-    check_built, check_collection_actions, check_resolved, collection_modules, refusal_of,
-    unresolvable_here,
+    Unresolved, check_built, check_collection_actions, check_resolved, collection_modules,
+    locate_unresolved, refusal_of, unresolvable_here,
 };
 
 /// The strategies this engine implements: the reference's four. A play asking for another one is

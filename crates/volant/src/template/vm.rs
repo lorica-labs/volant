@@ -7,8 +7,8 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::sync::Arc;
 
 use minijinja::machinery::{
-    CodeGenerator, CompiledTemplate, Instruction, TemplateConfig, eval, make_string_output,
-    parse_expr,
+    CodeGenerator, CompiledTemplate, Instruction, Instructions, TemplateConfig, eval,
+    make_string_output, parse_expr,
 };
 use minijinja::syntax::SyntaxConfig;
 use minijinja::{AutoEscape, ErrorKind};
@@ -23,7 +23,7 @@ use super::context::set_literal;
 use super::env::{container_repr, holds_undefined};
 use super::pymethods::format::{holds_tuple, repr, to_str};
 use super::templar::Templar;
-use super::{TemplateError, UNDEFINED};
+use super::{NO_FILTER, TemplateError, UNDEFINED};
 
 mod rewrite;
 
@@ -244,6 +244,10 @@ pub(super) fn render_counted(
         default_auto_escape: Arc::new(|_| AutoEscape::None),
     };
     let mut compiled = no_panic(|| CompiledTemplate::new(name, source, &config))?;
+    internal_filter(
+        std::iter::once(&compiled.instructions).chain(compiled.blocks.values()),
+        Some(source),
+    )?;
     let mutating = mutates(&compiled.instructions) || compiled.blocks.values().any(mutates);
     let mut captures = route_calls(&mut compiled.instructions, mutating);
     for block in compiled.blocks.values_mut() {
@@ -271,6 +275,36 @@ pub(super) fn render_counted(
     Ok((out, emitted))
 }
 
+/// The filters the loader writes into the text of `!unsafe` and `!vault` values. A template that
+/// calls one is refused the way the reference refuses an unknown filter, unless `source` is
+/// exactly the loader's wrapper. A playbook can still spell the wrapper itself; that is the
+/// ceiling of a name check on text.
+fn internal_filter<'a, 's: 'a>(
+    code: impl IntoIterator<Item = &'a Instructions<'s>>,
+    source: Option<&str>,
+) -> Result<(), minijinja::Error> {
+    let wrapper = source.is_some_and(|s| {
+        crate::yaml::unsafe_text(s)
+            .or_else(|| crate::yaml::vault_text(s))
+            .is_some()
+    });
+    if wrapper {
+        return Ok(());
+    }
+    for instructions in code {
+        let mut idx = 0;
+        while let Some(op) = instructions.get(idx) {
+            if let Instruction::ApplyFilter(name, ..) = op
+                && matches!(*name, "volant_unsafe" | "volant_vault")
+            {
+                return Err(bridged::raise(format!("{NO_FILTER}'{name}'.")));
+            }
+            idx += 1;
+        }
+    }
+    Ok(())
+}
+
 /// What a render says when the lexer of minijinja failed on a line it cannot report on.
 pub(super) const LONG_LINE: &str =
     "the template has a syntax error on a line too long to be reported";
@@ -296,6 +330,8 @@ pub(super) fn eval_expr(
     let mut codegen = CodeGenerator::new("<expression>", expr);
     codegen.compile_expr(&ast);
     let (mut instructions, _) = codegen.finish();
+    // A one-expression template reaches here without its braces.
+    internal_filter([&instructions], Some(&format!("{{{{ {} }}}}", expr.trim())))?;
     let mutating = mutates(&instructions);
     let _ = route_calls(&mut instructions, mutating);
     let env = templar.env_for([&instructions]);

@@ -57,6 +57,8 @@ When escalation fails, for a missing password, a wrong one or a `sudoers` rule t
 
 `su` has no flag to read a password without a terminal, so Volant answers its prompt instead. The password is written once to the prompt, never put in a command line, a log or `-vvv` output. A wrong password fails the task with `Incorrect su password`. A prompt that never comes ends the task with `Timeout (12s) waiting for privilege escalation prompt`, as in ansible-core.
 
+Over a `local` connection `su` runs on a terminal of its own. A wrong password fails the task with `Premature end of stream waiting for become success.` and what `su` printed, as ansible-core does there. The wait for the prompt is always 12 seconds on a local connection, whatever `-T` says.
+
 ## Not there yet
 
 - `doas`, `pbrun` and the other methods. They can be added as other ways to start the agent, without a protocol change.

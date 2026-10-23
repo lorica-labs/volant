@@ -1,0 +1,8 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "{{ item }}"
+      loop: [1]
+      loop_control:
+        pause: "{{ nope }}"

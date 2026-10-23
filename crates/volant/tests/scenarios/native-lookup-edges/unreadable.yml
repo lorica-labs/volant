@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: Make an unreadable file
+      copy:
+        content: secret
+        dest: "{{ playbook_dir }}/locked.txt"
+        mode: "0000"
+    - name: Read it
+      debug:
+        msg: "{{ lookup('file', 'locked.txt') }}"

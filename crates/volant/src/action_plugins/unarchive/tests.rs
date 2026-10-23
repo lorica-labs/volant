@@ -219,14 +219,19 @@ fn the_remote_source_is_read_as_ansible_core_reads_it(#[case] extra: Value, #[ca
     task_args.extend(extra.as_object().unwrap().clone());
     let untrusted: BTreeSet<String> = ["src".to_string()].into();
     let mut plugin = start_mode(HostNamedPaths::Contained, &task_args, &untrusted, &dir);
-    let first = run(plugin.as_mut(), None);
-    assert_eq!(first.module, "stat");
-    let step = plugin.next(Some(TaskResult(
-        json!({"stat": {"exists": true, "isdir": true}})
-            .as_object()
-            .unwrap()
-            .clone(),
-    )));
+    // A source on the controller is looked for first, and refused before the host is asked.
+    let step = match plugin.next(None) {
+        Step::Run(first) => {
+            assert_eq!(first.module, "stat");
+            plugin.next(Some(TaskResult(
+                json!({"stat": {"exists": true, "isdir": true}})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )))
+        }
+        other => other,
+    };
     match (step, remote) {
         (Step::Run(sub), true) => {
             assert_eq!(sub.module, "unarchive");

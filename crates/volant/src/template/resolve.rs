@@ -57,7 +57,13 @@ impl Templar {
         let given = || vars.untrusted.cloned().unwrap_or_default();
         // Most maps hold no template at all: walking them once is far cheaper than the two
         // clones a pass costs.
+        let host = || {
+            let named =
+                |m: &Map<String, Value>| m.get("inventory_hostname")?.as_str().map(String::from);
+            named(vars.map).or_else(|| vars.shared.and_then(|s| named(s)))
+        };
         if !vars.map.values().any(holds_template) {
+            crate::vault::set_names(&host().unwrap_or_default(), Vec::new());
             return (vars.map.clone(), given());
         }
         // The names the store knows about, and the ones a pass turns into data as it goes: a
@@ -67,14 +73,16 @@ impl Templar {
         let mut current = vars.map.clone();
         // What `!unsafe` loaded as is text from here on: a sibling that reads it must see the
         // text, not the wrapper, and the name is data so no pass renders it.
+        let mut vaulted = Vec::new();
         for (k, v) in &mut current {
             if matches!(v, Value::String(s) if crate::yaml::vault_text(s).is_some()) {
-                crate::vault::note_name(k);
+                vaulted.push(k.clone());
             }
             if !untrusted.contains(k) && unwrap_unsafe(v) {
                 untrusted.insert(k.clone());
             }
         }
+        crate::vault::set_names(&host().unwrap_or_default(), vaulted);
         for _ in 0..5 {
             // One context for the whole pass: every value of the map renders against the same
             // map, so building it per value paid for the same conversion once per variable.

@@ -3000,7 +3000,406 @@
       "bridge": true,
       "template": "{{ 'x' | password_hash('nope') }}"
     },
-    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.password_hash' failed: Unable to encrypt nor hash, passlib must be installed: No module named 'passlib'"
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.password_hash' failed: nope is not in the list of supported passlib algorithms: md5, blowfish, sha256, sha512"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('config', 'DEFAULT_FORKS') }}"
+    },
+    "result": 5
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('config', 'VOLANT_NO_SUCH_SETTING') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'config' failed: No config definition exists for 'VOLANT_NO_SUCH_SETTING'."
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('url', 'file:///var/tmp/volant-golden-fs/a.txt') }}"
+    },
+    "result": "hi"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('url', 'file:///var/tmp/volant-golden-fs/nope') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'url' failed: Failed lookup url for file:///var/tmp/volant-golden-fs/nope : <urlopen error [Errno 2] No such file or directory: '/var/tmp/volant-golden-fs/nope'>"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.filetree', '/var/tmp/volant-golden-fs/tree', wantlist=true) | map(attribute='path') | list }}"
+    },
+    "result": [
+      "inner",
+      "f.txt"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.filetree', '/var/tmp/volant-golden-fs/tree', wantlist=true) | map(attribute='state') | list }}"
+    },
+    "result": [
+      "directory",
+      "file"
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.filetree', '/var/tmp/volant-golden-fs/nope', wantlist=true) }}"
+    },
+    "result": []
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "xmltodict"
+      ],
+      "template": "{{ '<a><b>1</b></a>' | ansible.utils.from_xml }}"
+    },
+    "result": {
+      "a": {
+        "b": "1"
+      }
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "xmltodict"
+      ],
+      "template": "{{ '<a><b>' | ansible.utils.from_xml }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.utils.from_xml' failed: Error when using plugin 'from_xml': Input Xml is not valid"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "xmltodict"
+      ],
+      "template": "{{ {'a': {'b': 1}} | ansible.utils.to_xml }}"
+    },
+    "result": "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<a>\n\t<b>1</b>\n</a>"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "xmltodict"
+      ],
+      "template": "{{ 'x' | ansible.utils.to_xml }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.utils.to_xml' failed: [\"argument 'data' is of type str and we were unable to convert to dict: dictionary requested, could not parse JSON or key=value\"]"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jsonschema"
+      ],
+      "template": "{{ {'a': 1} | ansible.utils.validate({'type': 'object', 'properties': {'a': {'type': 'integer'}}}, engine='ansible.utils.jsonschema') }}"
+    },
+    "result": []
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jsonschema"
+      ],
+      "template": "{{ {'a': 1} | ansible.utils.validate(criteria={'type': 'object', 'properties': {'a': {'type': 'integer'}}}) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.utils.validate' failed: Missing either 'data' or 'criteria' value in filter input, refer 'ansible.utils.validate' filter plugin documentation for details"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jsonschema"
+      ],
+      "template": "{{ {'a': 'x'} | ansible.utils.validate({'type': 'object', 'properties': {'a': {'type': 'integer'}}}, engine='ansible.utils.jsonschema') }}"
+    },
+    "result": [
+      {
+        "data_path": "a",
+        "expected": "integer",
+        "found": "x",
+        "json_path": "$.a",
+        "message": "'x' is not of type 'integer'",
+        "relative_schema": {
+          "type": "integer"
+        },
+        "schema_path": "properties.a.type",
+        "validator": "type"
+      }
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "hashids"
+      ],
+      "template": "{{ [1, 2, 3] | community.general.hashids_encode(salt='volant') }}"
+    },
+    "result": "B1SQi0"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "hashids"
+      ],
+      "template": "{{ 'B1SQi0' | community.general.hashids_decode(salt='volant') }}"
+    },
+    "result": [
+      1,
+      2,
+      3
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "hashids"
+      ],
+      "template": "{{ 'x' | community.general.hashids_decode(salt='volant') }}"
+    },
+    "result": []
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "hashids"
+      ],
+      "template": "{{ [-1] | community.general.hashids_encode }}"
+    },
+    "result": ""
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jc"
+      ],
+      "template": "{{ ini_text | community.general.jc('ini') }}",
+      "vars": {
+        "ini_text": "[s]\nk=v\n"
+      }
+    },
+    "result": {
+      "s": {
+        "k": "v"
+      }
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jc"
+      ],
+      "template": "{{ 'x' | community.general.jc('nope') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'community.general.jc' failed: Error in jc filter plugin: This parser is disabled."
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jsonpatch"
+      ],
+      "template": "{{ {'a': 1} | community.general.json_patch('add', '/b', 2) }}"
+    },
+    "result": {
+      "a": 1,
+      "b": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jsonpatch"
+      ],
+      "template": "{{ {'a': 1} | community.general.json_patch('nope', '/b', 2) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'community.general.json_patch' failed: json_patch: unsupported 'op' argument: nope"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jsonpatch"
+      ],
+      "template": "{{ {'a': 1} | community.general.json_patch_recipe([{'op': 'add', 'path': '/b', 'value': 2}]) }}"
+    },
+    "result": {
+      "a": 1,
+      "b": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "jsonpatch"
+      ],
+      "template": "{{ {'a': 1} | community.general.json_patch_recipe([{'op': 'remove', 'path': '/zz'}]) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'community.general.json_patch_recipe' failed: json_patch_recipe: patch failed: can't remove a non-existent object 'zz'"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "prettytable"
+      ],
+      "template": "{{ [{'a': 1, 'b': 2}] | community.general.to_prettytable }}"
+    },
+    "result": "+---+---+\n| a | b |\n+---+---+\n| 1 | 2 |\n+---+---+"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "prettytable"
+      ],
+      "template": "{{ 'x' | community.general.to_prettytable }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'community.general.to_prettytable' failed: Expected a list of dictionaries, got a string"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "tomlkit"
+      ],
+      "template": "{{ {'a': 1} | community.general.to_toml }}"
+    },
+    "result": "a = 1\n"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "tomlkit"
+      ],
+      "template": "{{ 'x' | community.general.to_toml }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'community.general.to_toml' failed: to_toml only accepts dictionaries."
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "fqdn"
+      ],
+      "template": "{{ 'a.example.com' is community.general.fqdn_valid }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "fqdn"
+      ],
+      "template": "{{ '-bad-' is community.general.fqdn_valid }}"
+    },
+    "result": false
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "petname"
+      ],
+      "template": "{{ lookup('community.general.random_pet', words=2, prefix='x', separator='-') is match('^x-[a-z]+-[a-z]+$') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "petname"
+      ],
+      "template": "{{ lookup('community.general.random_pet', words='x') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'community.general.random_pet' failed: Config 'words' for 'ansible_collections.community.general.plugins.lookup.random_pet' lookup plugin from 'Direct' has an invalid value: Invalid value provided for 'int': 'x'"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "xkcdpass"
+      ],
+      "template": "{{ lookup('community.general.random_words', numwords=2, delimiter='-') is match('^[A-Za-z]+-[A-Za-z]+$') }}"
+    },
+    "result": true
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "xkcdpass"
+      ],
+      "template": "{{ lookup('community.general.random_words', numwords='x') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The lookup plugin 'community.general.random_words' failed: Config 'numwords' for 'ansible_collections.community.general.plugins.lookup.random_words' lookup plugin from 'Direct' has an invalid value: Invalid value provided for 'int': 'x'"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "passlib"
+      ],
+      "template": "{{ 'x' | password_hash('sha512', 'saltsalt') }}"
+    },
+    "result": "$6$rounds=656000$saltsalt$CHgiItE4beFovthSccE/CsdUJxVzICPubIvQ6GPX/JtuBSTyrDH9wFkJjigJToyotqa8caasS4Tyo/LMQSmpt/"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "passlib"
+      ],
+      "template": "{{ 'x' | password_hash('sha256', 'saltsalt') }}"
+    },
+    "result": "$5$rounds=535000$saltsalt$ns44IdlGJ8mM3ZV7nMCoEDtUqYM1nWDzeDXq6bx4LI3"
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "passlib"
+      ],
+      "template": "{{ 'x' | password_hash('md5_crypt', 'saltsalt') }}"
+    },
+    "result": "$1$saltsalt$4px9i58NU2Z2/vZOUlGjq."
+  },
+  {
+    "case": {
+      "bridge": true,
+      "needs": [
+        "passlib"
+      ],
+      "template": "{{ 'x' | password_hash('sha512', 'bad salt!') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.password_hash' failed: Could not hash the secret: invalid characters in sha512_crypt salt"
   },
   {
     "case": {
@@ -4316,6 +4715,100 @@
       "template": "{{ lookup('community.general.random_string', length=8) | length }}"
     },
     "result": 8
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}",
+      "vars": {
+        "example_a": {
+          "x": 1
+        },
+        "example_b": {
+          "y": 2
+        }
+      }
+    },
+    "result": {
+      "x": 1,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', '^example_[ab]$', pattern_type='regex') }}",
+      "vars": {
+        "example_a": {
+          "x": 1
+        },
+        "example_b": {
+          "y": 2
+        },
+        "example_c": {
+          "z": 3
+        }
+      }
+    },
+    "result": {
+      "x": 1,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix', initial_value={'w': 0}) }}",
+      "vars": {
+        "example_a": {
+          "x": 1
+        },
+        "example_b": {
+          "y": 2
+        }
+      }
+    },
+    "result": {
+      "w": 0,
+      "x": 1,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}",
+      "vars": {
+        "example_a": {
+          "x": "{{ 1 + 1 }}"
+        },
+        "example_b": {
+          "y": 2
+        }
+      }
+    },
+    "result": {
+      "x": 2,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}",
+      "vars": {
+        "example_a": [
+          1
+        ],
+        "example_b": [
+          2
+        ]
+      }
+    },
+    "result": [
+      1,
+      2
+    ]
   },
   {
     "case": {

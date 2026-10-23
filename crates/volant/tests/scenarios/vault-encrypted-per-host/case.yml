@@ -1,0 +1,5 @@
+# `is vault_encrypted` answers for the value a host holds, not for the variable's name.
+runs:
+  - args: [-i, inv, --vault-password-file, pw1, per_host.yml]
+  - args: [-i, inv, --vault-password-file, pw1, sources.yml]
+needs: ["ansible-core"]

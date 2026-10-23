@@ -866,6 +866,10 @@ while True:
         answer["error"] = {"kind": "not_found", "message": "The lookup plugin 'x.y' was not found."}
     elif mode == "failed":
         answer["error"] = {"kind": "plugin", "message": "The filter plugin 'x.y' failed: boom"}
+    elif request["call"]["kind"] == "lookup_needs":
+        answer["value"] = {"names": ["foo"] if mode == "reads" else [], "all": mode == "lists"}
+    elif mode in ("reads", "lists"):
+        answer["value"] = request["call"]["vars"]
     else:
         answer["value"] = request["call"]["args"]
     raw = json.dumps(answer).encode()
@@ -883,6 +887,28 @@ fn failing_helper() -> anyhow::Result<crate::python::PythonBuilder> {
 
 fn echo_helper() -> anyhow::Result<crate::python::PythonBuilder> {
     crate::python::PythonBuilder::spawn("python3", &["-c", STAND_IN, "echo"], &[])
+}
+
+fn reads_helper() -> anyhow::Result<crate::python::PythonBuilder> {
+    crate::python::PythonBuilder::spawn("python3", &["-c", STAND_IN, "reads"], &[])
+}
+
+fn lists_helper() -> anyhow::Result<crate::python::PythonBuilder> {
+    crate::python::PythonBuilder::spawn("python3", &["-c", STAND_IN, "lists"], &[])
+}
+
+/// A lookup is sent the variables it reads: the names it asks for, or all of them when it lists.
+#[rstest::rstest]
+#[case::the_names_it_reads(reads_helper, json!({"foo": 1}))]
+#[case::all_when_it_lists(lists_helper, json!({"foo": 1, "bar": 1}))]
+fn a_lookup_is_sent_the_variables_it_reads(
+    #[case] helper: fn() -> anyhow::Result<crate::python::PythonBuilder>,
+    #[case] want: Value,
+) {
+    let (t, _) = bridged_templar(helper);
+    let vars: Map<String, Value> =
+        serde_json::from_value(json!({"foo": 1, "bar": "{{ foo }}"})).unwrap();
+    assert_eq!(t.render("{{ lookup('x.y') }}", &vars), Ok(want));
 }
 
 /// What the helper answers reaches the template: a value, a plugin's own failure, a name it

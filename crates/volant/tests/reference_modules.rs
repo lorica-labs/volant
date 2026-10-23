@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `module` goldens: the recorded module play replayed under Volant on this machine, which
-//! needs the recorded ansible-core, `sudo -n`, systemd, apt and cron. The `ssh` job runs them.
+//! needs the recorded ansible-core, and for the groups that change the machine `sudo -n`, systemd,
+//! apt and cron. The `ssh` job runs them.
 #![cfg(target_os = "linux")]
 
 use rstest::rstest;
@@ -103,26 +104,22 @@ fn run_recorded_play(
     process::run_within(&mut command, DEADLINE, None)
 }
 
-/// Where `natives()` recorded, fixed for the reason `PYTHON_MODULES_DIR` is: paths, messages and
-/// `_after` carry it, and are compared once both sides read `<golden-tmp>`. Under `/var/tmp`, as
-/// in the generator: on the root filesystem rather than a tmpfs, `stat`'s `attributes` and a
-/// directory's `size` are the same on every machine these run on, and are compared by value.
-#[cfg(target_os = "linux")]
-const NATIVE_DIR: &str = "/var/tmp/volant-golden-native";
-
 /// What `natives()` does to a result before recording it, done here to Volant's result and to a
-/// live reference result alike: staged paths, then `NATIVE_DIR` and this machine's name in every
-/// string, then the running account's own name, group, uid and gid under the ownership keys.
+/// live reference result alike: staged paths, then the group's directory (recorded as
+/// `<golden-tmp>`, under `/var/tmp` as in the generator: on the root filesystem rather than a
+/// tmpfs, `stat`'s `attributes` and a directory's `size` are the same on every machine these run
+/// on, and are compared by value) and this machine's name in every string, then the running account's own name, group, uid and gid under the ownership keys.
 #[cfg(target_os = "linux")]
 struct NativeMasks {
     staged_root: String,
+    dir: String,
     host: String,
     accounts: [(&'static str, Value, &'static str); 6],
 }
 
 #[cfg(target_os = "linux")]
 impl NativeMasks {
-    fn new(staged_root: String) -> Self {
+    fn new(staged_root: String, dir: String) -> Self {
         let id = compare::identity();
         let host = std::fs::read_to_string("/proc/sys/kernel/hostname")
             .expect("the host name is readable")
@@ -130,6 +127,7 @@ impl NativeMasks {
             .to_string();
         Self {
             staged_root,
+            dir,
             host,
             accounts: [
                 ("owner", id.user.clone(), "<user>"),
@@ -144,7 +142,7 @@ impl NativeMasks {
 
     fn apply(&self, value: &mut Value) {
         redact_staged(value, &self.staged_root);
-        replace_in_strings(value, NATIVE_DIR, "<golden-tmp>");
+        replace_in_strings(value, &self.dir, "<golden-tmp>");
         replace_in_strings(value, &self.host, "<golden-generator-host>");
         self.accounts_in(value);
     }
@@ -173,8 +171,8 @@ impl NativeMasks {
 }
 
 /// The reference's own results for the recorded `play`, run now on this machine the way
-/// `natives()` runs it, keyed by task name: the whole play, so each `live` case meets the state
-/// the cases before it left, as it did under Volant.
+/// `natives()` runs it, keyed by task name: the group's whole play, so each `live` case meets the
+/// state the cases before it left, as it did under Volant.
 ///
 /// With the environment Volant had: no `ANSIBLE_*` or `VOLANT_*` of this process, and the same
 /// empty `ANSIBLE_CONFIG`.
@@ -239,65 +237,166 @@ fn succeeds(probe: &str) -> bool {
         .is_ok_and(|out| out.status.success())
 }
 
-/// `module/play.json` under Volant at `-vvv`: each case against its recording or a live reference
-/// run, by its index entry, and a native case on the path the index names.
+/// The groups of `module/groups.json` that change nothing but their own directory, and those that
+/// change the machine (an account, a unit, a package). The `.config/nextest.toml` override puts the
+/// second kind in one thread.
+const FILE_GROUPS: [&str; 7] = [
+    "stat",
+    "file",
+    "copy",
+    "lineinfile",
+    "setup",
+    "python",
+    "actions",
+];
+const HOST_GROUPS: [&str; 5] = ["systemd", "apt", "facts", "accounts", "actions-host"];
+
+/// What a group's `needs` entry asks of the machine: the probe and how to say it is missing.
+#[cfg(target_os = "linux")]
+const PROBES: [(&str, &str, &str); 5] = [
+    ("sudo", "sudo -n true", "passwordless `sudo -n`"),
+    ("systemd", "test -d /run/systemd/system", "running systemd"),
+    ("apt", "command -v apt-get", "apt"),
+    (
+        "cron",
+        "systemctl is-active --quiet cron && systemctl is-enabled --quiet cron",
+        "cron active and enabled",
+    ),
+    (
+        "hello",
+        "test \"$(dpkg-query -W -f='${db:Status-Status}' hello 2>/dev/null)\" != installed",
+        "`hello` not installed (the play installs and removes it)",
+    ),
+];
+
+/// What a group's `needs` ask that this machine lacks, by name.
+#[cfg(target_os = "linux")]
+fn missing_for(needs: &[&str], python: &std::path::Path) -> Vec<String> {
+    let mut missing: Vec<String> = needs
+        .iter()
+        .filter_map(|need| PROBES.iter().find(|(name, _, _)| name == need))
+        .filter(|(_, probe, _)| !succeeds(probe))
+        .map(|(_, _, what)| (*what).to_string())
+        .collect();
+    if needs.contains(&"collections") {
+        let mismatched = collections::collection_mismatches(python);
+        if !mismatched.is_empty() {
+            missing.push(format!(
+                "the pinned collections ({})",
+                mismatched.join("; ")
+            ));
+        }
+    }
+    missing
+}
+
+/// Every group of the recording has a test here, file groups without `sudo`, and the flags agree.
 #[cfg(target_os = "linux")]
 #[test]
+fn every_recorded_module_group_has_a_test() {
+    let groups = module_file("groups.json");
+    let groups = groups.as_object().expect("groups.json is a mapping");
+    let mut run: Vec<&str> = FILE_GROUPS.iter().chain(&HOST_GROUPS).copied().collect();
+    run.sort_unstable();
+    let recorded: Vec<&str> = groups.keys().map(String::as_str).collect();
+    assert_eq!(recorded, run, "the groups recorded and the groups tested");
+    for (name, group) in groups {
+        assert_eq!(
+            group["host"] == true,
+            HOST_GROUPS.contains(&name.as_str()),
+            "{name}: recorded as a host group or not, and tested as the other"
+        );
+        assert!(
+            group["host"] == true || !group["needs"].to_string().contains("sudo"),
+            "{name}: a group that needs `sudo` changes the machine"
+        );
+    }
+}
+
+/// A group that changes only its own directory, so the file groups run beside each other.
+#[cfg(target_os = "linux")]
+#[rstest]
+#[case::stat("stat")]
+#[case::file("file")]
+#[case::copy("copy")]
+#[case::lineinfile("lineinfile")]
+#[case::setup("setup")]
+#[case::python("python")]
+#[case::actions("actions")]
+fn a_file_group_matches_the_reference(#[case] group: &str) {
+    assert!(FILE_GROUPS.contains(&group), "{group} is not a file group");
+    run_group(group, false);
+}
+
+/// The groups that create an account, a unit or a package, one at a time under the machine's lock.
+#[cfg(target_os = "linux")]
+#[rstest]
+#[case::systemd("systemd")]
+#[case::apt("apt")]
+#[case::facts("facts")]
+#[case::accounts("accounts")]
+#[case::actions_host("actions-host")]
+fn a_host_group_matches_the_reference(#[case] group: &str) {
+    assert!(HOST_GROUPS.contains(&group), "{group} is not a host group");
+    run_group(group, true);
+}
+
+/// `group`'s play under Volant at `-vvv`, then its cases against their recordings, or against the
+/// reference's own run of the same play where a case is `live`; a native case on the path the index
+/// names.
+#[cfg(target_os = "linux")]
 #[expect(clippy::too_many_lines)]
-fn every_module_case_matches_the_reference() {
+fn run_group(group: &str, host: bool) {
     let Some(python) = python::reference_python() else {
         return;
     };
     assert!(
         compare::identity().uid != 0,
         "run as root: the recording's literal `root` would read as the running account's own; run \
-         as an ordinary account with passwordless `sudo -n`"
+         as an ordinary account (with passwordless `sudo -n` for the groups that need it)"
     );
     // Before the machine checks: another run holding the lock is between `apt-install-absent` and
     // its cleanup, with `hello` installed, and the check would read that as this machine's state.
-    let _lock = native_lock();
-    let mut missing: Vec<String> = [
-        ("sudo -n true", "passwordless `sudo -n`"),
-        ("test -d /run/systemd/system", "running systemd"),
-        ("command -v apt-get", "apt"),
-        (
-            "systemctl is-active --quiet cron && systemctl is-enabled --quiet cron",
-            "cron active and enabled",
-        ),
-        (
-            "test \"$(dpkg-query -W -f='${db:Status-Status}' hello 2>/dev/null)\" != installed",
-            "`hello` not installed (the play installs and removes it)",
-        ),
-    ]
-    .into_iter()
-    .filter(|(probe, _)| !succeeds(probe))
-    .map(|(_, what)| what.to_string())
-    .collect();
-    let mismatched = collections::collection_mismatches(&python);
-    if !mismatched.is_empty() {
-        missing.push(format!(
-            "the pinned collections ({})",
-            mismatched.join("; ")
-        ));
-    }
+    let _lock = host.then(native_lock);
+    let groups = module_file("groups.json");
+    let needs: Vec<&str> = groups[group]["needs"]
+        .as_array()
+        .unwrap_or_else(|| panic!("groups.json names no group {group}"))
+        .iter()
+        .filter_map(Value::as_str)
+        .collect();
+    let missing = missing_for(&needs, &python);
     if !missing.is_empty() {
         let why = format!(
-            "the native cases were recorded with `become`, systemd, apt and cron, and this \
-             machine lacks: {}",
+            "the {group} cases were recorded with {}, and this machine lacks: {}",
+            needs.join(", "),
             missing.join(", ")
         );
         assert!(
             std::env::var_os("VOLANT_PYTHON").is_none(),
             "VOLANT_PYTHON cannot reproduce the recording: {why}"
         );
-        eprintln!("skipped: {why}.");
+        eprintln!("skipped: group {group}: {why}.");
         return;
     }
 
     let index = module_file("index.json");
     let index = index.as_object().expect("index.json is a mapping");
-    let mut recorded = module_file("play.json");
-    replace_in_strings(&mut recorded, "<golden-tmp>", NATIVE_DIR);
+    // The group's own directory, which `<golden-tmp>` stands for in the recording. As long as the
+    // generator's `/var/tmp/volant-golden-native`: a symlink's `size` is the length of its target.
+    let position = groups
+        .as_object()
+        .and_then(|groups| groups.keys().position(|name| name == group))
+        .unwrap_or_else(|| panic!("groups.json names no group {group}"));
+    let dir = format!("/var/tmp/volant-golden-g{position:05}");
+    let mut plays = module_file("play.json");
+    let recorded_play = plays
+        .as_array_mut()
+        .and_then(|plays| plays.iter_mut().find(|play| play["name"] == group))
+        .unwrap_or_else(|| panic!("play.json holds no play for {group}"))
+        .take();
+    let mut recorded = Value::Array(vec![recorded_play]);
+    replace_in_strings(&mut recorded, "<golden-tmp>", &dir);
     replace_in_strings(&mut recorded, "<golden-action-src>", ACTION_SRC);
     let mut play = recorded.clone();
     // Volant refuses the `connection` play keyword; the inventory `run_recorded_play` writes
@@ -323,18 +422,29 @@ fn every_module_case_matches_the_reference() {
             std::iter::once(task).chain(registered)
         })
         .collect();
+    let cleanups: Vec<String> = recorded[0]["tasks"][0]["always"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .map(|task| task["name"].as_str().unwrap_or_default().to_string())
+        .collect();
+    let cases: Vec<(&String, &Value)> = index
+        .iter()
+        .filter(|(_, spec)| spec["group"] == group)
+        .collect();
+    assert!(!cases.is_empty(), "index.json holds no case of {group}");
 
     // Safety: nextest runs each test in its own process, and nothing here creates files
     // concurrently.
     unsafe { libc::umask(0o022) };
-    native_fixture();
-    // Outside NATIVE_DIR, as in the generator: `stat-dir` reports the directory's link count. Beside
-    // it under `/var/tmp` all the same, because the agent stages `copy`'s source under this
-    // directory: the reference staged its own under `~/.ansible/tmp`, on the file system of
-    // NATIVE_DIR, and renamed it into place, where a staging directory on a tmpfs `/tmp` would
+    native_fixture(&dir);
+    // Outside the group's directory, as in the generator: `stat-dir` reports the directory's link
+    // count. Beside it under `/var/tmp` all the same, because the agent stages `copy`'s source under
+    // this directory: the reference staged its own under `~/.ansible/tmp`, on the file system of
+    // the fixture, and renamed it into place, where a staging directory on a tmpfs `/tmp` would
     // cross a mount and send the native `copy` back to Python.
     let work = std::path::PathBuf::from(format!(
-        "/var/tmp/volant-golden-native-work-{}",
+        "/var/tmp/volant-work-golden-{group}-{}",
         std::process::id()
     ));
     let _ = std::fs::remove_dir_all(&work);
@@ -348,7 +458,7 @@ fn every_module_case_matches_the_reference() {
     )
     .expect("the play is written");
     let profile = work.join("profile.jsonl");
-    // The play's collection cases need the pinned collections wherever the job installed them.
+    // The collection cases need the pinned collections wherever the job installed them.
     let mut env = collections_path_env();
     env.push(("VOLANT_PROFILE_JSON", profile.display().to_string()));
     env.push((
@@ -376,12 +486,7 @@ fn every_module_case_matches_the_reference() {
         ));
     }
     // The recorded play's cleanups, not those of the play Volant was handed.
-    for task in recorded[0]["tasks"][0]["always"]
-        .as_array()
-        .into_iter()
-        .flatten()
-    {
-        let name = task["name"].as_str().unwrap_or_default();
+    for name in &cleanups {
         if !results.contains_key(name) {
             failures.push(format!("the cleanup {name} did not run"));
         } else if failed.contains(name) {
@@ -390,27 +495,27 @@ fn every_module_case_matches_the_reference() {
             failures.push(format!("the cleanup {name} failed"));
         }
     }
-    // The reference replays the whole recorded play from the same fixture, so each live case
-    // meets the state the cases before it left.
-    native_fixture();
-    let live = reference_results(&python, &work, &recorded);
-    for task in recorded[0]["tasks"][0]["always"]
-        .as_array()
-        .into_iter()
-        .flatten()
-    {
-        let name = task["name"].as_str().unwrap_or_default();
-        if live
-            .get(name)
-            .is_none_or(|outcome| outcome["failed"] == true)
-        {
-            failures.push(format!(
-                "the reference's cleanup {name} did not run, or failed"
-            ));
+    // The reference replays the group's play from the same fixture, so each live case meets the
+    // state the cases before it left. Only a group with a live case needs it.
+    let live = if cases.iter().any(|(_, spec)| spec["compare"] == "live") {
+        native_fixture(&dir);
+        let live = reference_results(&python, &work, &recorded);
+        for name in &cleanups {
+            if live
+                .get(name)
+                .is_none_or(|outcome| outcome["failed"] == true)
+            {
+                failures.push(format!(
+                    "the reference's cleanup {name} did not run, or failed"
+                ));
+            }
         }
-    }
+        live
+    } else {
+        Map::new()
+    };
     let staged_root = format!("{}/tmp/", work.display());
-    let masks = NativeMasks::new(staged_root.clone());
+    let masks = NativeMasks::new(staged_root.clone(), dir.clone());
     let profile = native_profile(&profile, "localhost");
     for native in profile.natives.iter().flatten() {
         if native != "volant_echo"
@@ -424,7 +529,7 @@ fn every_module_case_matches_the_reference() {
         }
     }
     let id = compare::identity();
-    for (case, spec) in index {
+    for &(case, spec) in &cases {
         // The modules no native answers: the registered value against the recording, by the
         // index entry's `shape` rules. Their path is not held: a native may answer `copy`'s module.
         if spec["compare"] == "shape" {
@@ -490,24 +595,24 @@ fn every_module_case_matches_the_reference() {
         }
         check_native_path(case, spec, &profile, &mut failures);
     }
-    let _ = std::fs::remove_dir_all(NATIVE_DIR);
+    let _ = std::fs::remove_dir_all(&dir);
     let _ = std::fs::remove_dir_all(&work);
     assert!(
         failures.is_empty(),
-        "{} difference(s) across {} module case(s):\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
+        "{} difference(s) across {} module case(s) of {group}:\n{}\n--- volant said\n{stdout}\n--- stderr\n{}",
         failures.len(),
-        index.len(),
+        cases.len(),
         failures.join("\n"),
         String::from_utf8_lossy(&out.stderr)
     );
 }
 
-/// The generator's fixture under NATIVE_DIR, mode for mode: `stat-*` report these, and
+/// The generator's fixture under `dir`, mode for mode: `stat-*` report these, and
 /// `copy-module-remote-src` creates its file under the umask the caller set.
 #[cfg(target_os = "linux")]
-fn native_fixture() {
+fn native_fixture(dir: &str) {
     use std::os::unix::fs::PermissionsExt as _;
-    let dir = std::path::Path::new(NATIVE_DIR);
+    let dir = std::path::Path::new(dir);
     let _ = std::fs::remove_dir_all(dir);
     std::fs::create_dir_all(dir).expect("the recorded directory is writable");
     std::fs::set_permissions(dir, std::fs::Permissions::from_mode(0o755))
@@ -744,7 +849,7 @@ fn the_bridge_runs_what_only_ansible_core_can(
         _ => PluginKind::Lookup,
     };
     let vars = serde_json::json!({"x": "{{ 1 + 1 }}", "y": "Y"});
-    let bridge = Bridge::under(python, Vec::new());
+    let bridge = Bridge::under(python.clone(), Vec::new());
     let got = bridge.call(
         kind,
         name,
@@ -807,14 +912,27 @@ fn every_bridge_case_matches_the_reference() {
     }
     // Safety: nextest runs each test in its own process; nothing else reads the environment here.
     unsafe { std::env::set_var("VOLANT_GOLDEN_ENV", "golden-env-value") };
-    let templar = Templar::with_bridge(dir.clone(), Some(Bridge::under(python, Vec::new())));
+    let templar =
+        Templar::with_bridge(dir.clone(), Some(Bridge::under(python.clone(), Vec::new())));
     let entries: Vec<Value> =
         serde_json::from_str(include_str!("golden/expected.json")).expect("expected.json parses");
     let mut failures = Vec::new();
     let mut ran = 0;
+    let mut skipped: Vec<String> = Vec::new();
     for entry in entries.iter().filter(|e| e["case"]["bridge"] == true) {
-        ran += 1;
         let case = &entry["case"];
+        // A row names the Python packages its recording imported; one this interpreter lacks is
+        // skipped by name instead of failing for a reason that is not Volant's.
+        let missing = missing_packages(&python, case);
+        if !missing.is_empty() {
+            skipped.push(format!(
+                "{} (needs {})",
+                case["template"],
+                missing.join(", ")
+            ));
+            continue;
+        }
+        ran += 1;
         let vars: Map<String, Value> = case
             .get("vars")
             .and_then(Value::as_object)
@@ -851,6 +969,9 @@ fn every_bridge_case_matches_the_reference() {
             ));
         }
     }
+    for row in &skipped {
+        eprintln!("skipped: {row}");
+    }
     assert!(ran >= 80, "{ran} bridge cases: cases.yml lost some");
     assert!(
         failures.is_empty(),
@@ -862,6 +983,22 @@ fn every_bridge_case_matches_the_reference() {
 "
         )
     );
+}
+
+/// The Python packages a row's `needs` names that `python` cannot import.
+fn missing_packages<'a>(python: &std::path::Path, case: &'a Value) -> Vec<&'a str> {
+    case["needs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|package| {
+            !std::process::Command::new(python)
+                .args(["-c", &format!("import {package}")])
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+        .collect()
 }
 
 /// A local action plugin that asks the controller for each thing a plugin may ask of the host,
@@ -928,7 +1065,7 @@ class ActionModule(ActionBase):
     "Command { cmd: \"/bin/sh -c 'echo hi && sleep 0'\", stdin: None, sudoable: false }",
     "PutFile { local: \"/local/in\", remote: \"/tmp/ansible-tmp-1/in\", mode: None }",
     "FetchFile { remote: \"/tmp/ansible-tmp-1/in\", local: \"/local/out\" }",
-    "Module { name: \"ansible.builtin.ping\", args: Object {\"data\": String(\"x\"), \"_ansible_module_name\": String(\"ansible.builtin.ping\")}, files: [] }",
+    "Module { name: \"ansible.builtin.ping\", args: Object {\"data\": String(\"x\"), \"_ansible_module_name\": String(\"ansible.builtin.ping\")}, files: [], job: None }",
     "HostVar { host: \"other\" }",
     "Tmp(Remove { path: \"/tmp/ansible-tmp-1\" })",
 ], Ok(serde_json::json!({"rc": 0, "stdout": "hi\n", "module": {"ping": "x"}, "other": 7, "args": {"k": "{{ a }}"}})))]

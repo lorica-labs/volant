@@ -178,6 +178,7 @@ fn a_ping_that_lost_its_link_is_retried_over_a_new_one() {
         name: "ansible.legacy.ping".into(),
         args: json!({"data": "x"}),
         files: Vec::new(),
+        job: None,
     };
     let mut plugin = Bridged {
         name: "wait_for_connection",
@@ -215,11 +216,12 @@ fn a_ping_that_lost_its_link_is_retried_over_a_new_one() {
     assert!(matches!(step, Step::RunDropping(_)), "{step:?}");
 }
 
-/// A command the plugin marks as not to escalate still runs, over the task link (the escalated one under `become`).
+/// A `sudoable` command goes over the task link with a terminal; a `sudoable=False` one goes over
+/// the link that does not escalate, with none.
 #[rstest::rstest]
 #[case::sudoable(true, Some(true))]
 #[case::housekeeping(false, None)]
-fn a_command_that_must_not_escalate_runs_over_the_task_link(
+fn a_command_that_must_not_escalate_runs_as_the_connection_user(
     #[case] sudoable: bool,
     #[case] terminal: Option<bool>,
 ) {
@@ -246,10 +248,16 @@ fn a_command_that_must_not_escalate_runs_over_the_task_link(
         stdin: None,
         sudoable,
     };
-    let Ok((Step::Run(sub), Pending::Command)) = plugin.step_for(ask) else {
-        panic!("the command should become a sub-task");
+    let (sub, plain) = match plugin.step_for(ask) {
+        Ok((Step::Run(sub), Pending::Command)) => (sub, false),
+        Ok((Step::Plain(step), Pending::Command)) => match *step {
+            Step::Run(sub) => (sub, true),
+            other => panic!("the command should run as the connection user: {other:?}"),
+        },
+        _ => panic!("the command should become a sub-task"),
     };
     assert_eq!(sub.module, "raw");
+    assert_eq!(plain, !sudoable);
     // Only a command the reference sends through `ssh -tt` asks for a terminal.
     assert_eq!(
         sub.args.get("_volant_tty").and_then(Value::as_bool),
@@ -323,4 +331,52 @@ fn the_play_context_describes_the_link_the_module_runs_over(
         async_val: 0,
     };
     assert_eq!(play_context_of(&ctx, running.as_object().unwrap()), want);
+}
+
+/// A module the plugin wraps as a job starts as one with the plugin's limit, and the plugin polls
+/// it with the agent's own `async_status`, which no plugin lists.
+#[rstest::rstest]
+#[case::wrapped("ansible.builtin.setup", Some(4), "setup", Some(4))]
+#[case::unbounded("setup", Some(0), "setup", Some(0))]
+#[case::polled("ansible.legacy.async_status", None, "async_status", None)]
+#[case::plain("setup", None, "setup", None)]
+fn a_wrapped_module_starts_as_a_job(
+    #[case] name: &str,
+    #[case] job: Option<u64>,
+    #[case] module: &str,
+    #[case] limit: Option<u64>,
+) {
+    let (_, asks) = channel();
+    let (replies, _) = channel();
+    let mut plugin = Bridged {
+        name: "gather_facts",
+        modules: &["setup"],
+        hostvars: Arc::default(),
+        asks,
+        replies: Some(replies),
+        ready: Arc::new(Notify::new()),
+        pending: None,
+        tmps: Vec::new(),
+        _vault_src: None,
+        ending: None,
+        timeout: None,
+        deadline: Instant::now() + Duration::from_secs(600),
+        stale: false,
+        connect_timeout: Duration::from_secs(5),
+    };
+    let ask = Ask::Module {
+        name: name.into(),
+        args: json!({}),
+        files: Vec::new(),
+        job,
+    };
+    let (sub, started) = match plugin.step_for(ask) {
+        Ok((Step::Run(sub), Pending::Module)) => (sub, None),
+        Ok((Step::RunJob { sub, limit }, Pending::Module)) => (sub, Some(limit)),
+        other => panic!(
+            "the module should become a sub-task: {:?}",
+            other.map(|(s, _)| s)
+        ),
+    };
+    assert_eq!((sub.module, started), (module, limit));
 }

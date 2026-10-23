@@ -1,8 +1,9 @@
 # A test that hangs must end as a failure, not as a job that runs until the CI timeout. The
 # ssh tests talk to a real sshd and a stuck connection there has no deadline of its own.
 #
-# The module goldens (`reference_modules`) need the recorded ansible-core, sudo, systemd, apt and
-# cron: they run in the `ssh` job and in `just test-reference`, not on every local check.
+# The module goldens (`reference_modules`) need the recorded ansible-core, and for the host groups
+# sudo, systemd, apt and cron: they run in the `ssh` job and in `just test-reference`, not on every
+# local check. The file groups (`a_file_group_...`) need none of the four.
 [profile.default]
 slow-timeout = { period = "60s", terminate-after = 10 }
 default-filter = "not binary(reference_modules)"
@@ -14,5 +15,5 @@ default-filter = "not binary(reference_modules)"
 max-threads = 1
 
 [[profile.default.overrides]]
-filter = "binary(reference_modules) | binary(native_user) | binary(native_group) | test(=ssh_natives_match_python_on_a_real_host) | test(=ssh_a_native_falls_back_before_touching_the_host) | test(=ssh_twenty_copies_take_the_native_path) | test(/^ssh_su_/) | test(=ssh_become_to_an_unprivileged_user_reaches_the_agent)"
+filter = "(binary(reference_modules) & not test(/^a_file_group/)) | binary(native_user) | binary(native_group) | test(=ssh_natives_match_python_on_a_real_host) | test(=ssh_a_native_falls_back_before_touching_the_host) | test(=ssh_twenty_copies_take_the_native_path) | test(/^ssh_su_/) | test(=ssh_become_to_an_unprivileged_user_reaches_the_agent)"
 test-group = "host-changing"

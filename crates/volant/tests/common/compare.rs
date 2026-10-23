@@ -561,7 +561,8 @@ pub fn unit_after(read: &Value) -> Result<Value, String> {
 }
 
 /// Where the generator's `module` kind records: one file per case, `index.json` saying how each is
-/// compared, and `play.json`, the play that ran them.
+/// compared, `play.json`, the plays that ran them (one for each group of cases), and `groups.json`,
+/// what each group needs of the machine.
 pub const MODULE_GOLDEN: &str = concat!(env!("CARGO_MANIFEST_DIR"), "/tests/golden/module");
 
 /// A file of `MODULE_GOLDEN`, parsed.
@@ -572,10 +573,15 @@ pub fn module_file(name: &str) -> Value {
     serde_json::from_str(&text).unwrap_or_else(|e| panic!("{} parses: {e}", path.display()))
 }
 
-/// The recorded play's tasks in order, its block and `always` flattened.
-pub fn play_tasks(play: &Value) -> Vec<&Value> {
+/// The recorded plays' tasks in order, their blocks and `always` flattened.
+pub fn play_tasks(plays: &Value) -> Vec<&Value> {
     let mut tasks = Vec::new();
-    for task in play[0]["tasks"].as_array().into_iter().flatten() {
+    for task in plays
+        .as_array()
+        .into_iter()
+        .flatten()
+        .flat_map(|play| play["tasks"].as_array().into_iter().flatten())
+    {
         if task.get("block").is_some() {
             for part in ["block", "always"] {
                 tasks.extend(

@@ -4,3 +4,4 @@ runs:
   - args: [-i, hosts.ini, relative.yml]
   - args: [-i, hosts.ini, absolute.yml]
   - args: [-i, hosts.ini, others.yml]
+  - args: [-i, hosts.ini, after-module.yml]

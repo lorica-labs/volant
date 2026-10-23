@@ -1,0 +1,8 @@
+- hosts: work
+  gather_facts: false
+  tasks:
+    - copy: {content: x, dest: /nonexistent-dir/volant/x}
+      register: after
+      failed_when: false
+    - debug:
+        msg: "{{ after.msg }} {{ after.ansible_facts | default({}) | list | join(',') }}"

@@ -68,6 +68,14 @@ The tests only talk to `localhost`, which is why CI can run them unchanged.
 
 `crates/volant/tests/golden` holds what ansible-core 2.19.12 produced for a set of templates, inventory patterns and modules, and each directory of `crates/volant/tests/scenarios` holds a playbook with the output it printed. The tests compare Volant against both. `just golden` regenerates them all, or only the kinds you name (`template`, `inventory`, `scenario`, `module`), and needs ansible-core 2.19.12 installed; `module` also needs `sudo`, systemd, apt and cron. Output snapshots under `crates/volant/tests/snapshots` are reviewed with `cargo insta review`.
 
+Some template rows import a Python package beyond ansible-core, named in the row's `needs` list. Record the goldens in an environment that has all of them:
+
+```sh
+uv pip install --python "$(uv tool dir)/ansible-core/bin/python"   fqdn hashids jc jsonpatch jsonschema passlib petname prettytable tomlkit xkcdpass xmltodict
+```
+
+`jmespath` and `netaddr` are needed too, as for the other bridged rows. The replay skips a row, and prints its template and the missing package, when the interpreter it runs under lacks one.
+
 ## Documentation
 
 The documentation site lives in `docs/` and is built with [Starlight](https://starlight.astro.build). Pages are Markdown or MDX files under `docs/src/content/docs/`. To preview it:

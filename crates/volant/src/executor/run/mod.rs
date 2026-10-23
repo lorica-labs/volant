@@ -42,6 +42,7 @@ pub(super) use record::{
     fact_targets, record_facts, record_inventory_results, record_local_facts, record_registered,
 };
 pub(super) use register::{failed_task_value, notified_handlers, registered_value, take_warnings};
+pub(crate) use retry::RAISED_KEY;
 pub(super) use retry::{
     Attempt, ItemRetry, RetryLine, any_retried, judge_attempt, local_timed_out, retry_plans,
 };

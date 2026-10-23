@@ -1,0 +1,5 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "{{ '1.2.3.4' | ansible.utils.ipaddr(omit) }}"

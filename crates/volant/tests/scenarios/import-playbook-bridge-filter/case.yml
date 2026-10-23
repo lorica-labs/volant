@@ -1,0 +1,9 @@
+# The name of an `import_playbook` is rendered at load with the bridge, so a collection filter
+# works there; a lookup and a variable from `-e` render as they do in a task.
+needs: ["ansible-core"]
+env:
+  IMPORT_NAME: sub.yml
+runs:
+  - args: [-i, inv.ini, filter.yml]
+  - args: [-i, inv.ini, lookup.yml]
+  - args: [-i, inv.ini, var.yml, -e, which=sub.yml]

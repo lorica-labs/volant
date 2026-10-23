@@ -133,11 +133,19 @@ pub fn read_vars_document(path: &Path) -> anyhow::Result<VarsDocument> {
         })?;
     }
     let text = String::from_utf8(bytes).with_context(|| format!("reading {}", path.display()))?;
-    let docs = yaml::load(&text, &path.display().to_string())?;
+    let source = path.display().to_string();
+    // Where a `!vault` value is written is read only for a file that holds one: an error that
+    // names the value points there.
+    let (docs, origins) = if text.contains("!vault") {
+        yaml::load_with_origins(&text, &source)?
+    } else {
+        (yaml::load(&text, &source)?, yaml::Origins::default())
+    };
     let value = match docs.first() {
         None => Value::Null,
         Some(doc) => yaml::to_json(doc).with_context(|| format!("in {}", path.display()))?,
     };
+    yaml::note_vault_origins(&docs, &origins, &source, &text);
     Ok(VarsDocument { value, encrypted })
 }
 

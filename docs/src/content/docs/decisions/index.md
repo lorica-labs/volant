@@ -20,3 +20,4 @@ A record is not rewritten once it is accepted. When a later decision changes it,
 | [0006](/decisions/0006-warm-python-path/) | Send one union blob of Python modules per run, and fork them from a warm server. |
 | [0007](/decisions/0007-action-plugins/) | Run action plugins as a sequence of sub-tasks driven by the controller. |
 | [0008](/decisions/0008-native-modules-and-speed/) | Answer common modules natively in the agent, hand the rest to Python, and share one ssh connection per host. |
+| [0009](/decisions/0009-interface-crates-mit-or-apache/) | Keep the engine under GPL-3.0-or-later, and license crates that describe a public interface MIT OR Apache-2.0. |

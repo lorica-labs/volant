@@ -115,4 +115,4 @@ Bug reports, fixes and ideas are welcome. Start with [CONTRIBUTING.md](https://g
 
 ## License
 
-Volant is licensed under [GPL-3.0-or-later](https://github.com/lorica-labs/volant/blob/main/LICENSE), like Ansible itself. [Decision record 0001](https://volant.sh/decisions/0001-gpl-3-0-or-later-license/) explains why.
+Volant is licensed under [GPL-3.0-or-later](https://github.com/lorica-labs/volant/blob/main/LICENSE), like Ansible itself. [Decision record 0001](https://volant.sh/decisions/0001-gpl-3-0-or-later-license/) explains why. Crates that only describe a public interface for other programs, starting with the planned `volant-events`, are dual-licensed MIT OR Apache-2.0, as [decision record 0009](https://volant.sh/decisions/0009-interface-crates-mit-or-apache/) sets out.

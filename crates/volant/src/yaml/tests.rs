@@ -646,6 +646,19 @@ fn vault_and_unsafe_text_load_as_data() {
             "n": [{"k": r#"{{ "{{ z }}" | volant_unsafe }}"#}, 1],
         })
     );
+    // A tag on a mapping key leaves the key as written, beside a plain-leaf and a nested value.
+    let docs = load(
+        "d:
+  !unsafe a: 1
+  !unsafe b: {c: !unsafe '{{ x }}'}
+",
+        "t.yml",
+    )
+    .unwrap();
+    assert_eq!(
+        to_json(&docs[0]).unwrap(),
+        json!({"d": {"a": 1, "b": {"c": r#"{{ "{{ x }}" | volant_unsafe }}"#}}})
+    );
 }
 
 #[test]

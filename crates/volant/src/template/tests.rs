@@ -105,11 +105,7 @@ fn an_undefined_input_stays_undefined_through_every_filter_and_test() {
     {
         let t = templar();
         let err = t.render("{{ missing }}", &Map::new()).unwrap_err();
-        assert!(
-            err.0
-                .starts_with("The task includes an option with an undefined variable."),
-            "{err}"
-        );
+        assert_eq!(err.0, "'missing' is undefined");
         assert!(
             t.render("{{ conf.missing }}", &vars(json!({"conf": {}})))
                 .is_err()
@@ -1712,6 +1708,22 @@ fn unsafe_text_and_facts_are_data_through_a_nested_variable() {
     }
 }
 
+/// The loader's filters are not a playbook's: only the loader's own wrapper may call them.
+#[rstest::rstest]
+#[case::unsafe_filter("{{ 'x' | volant_unsafe }}", "volant_unsafe")]
+#[case::vault_filter("{{ 'x' | volant_vault }}", "volant_vault")]
+#[case::inside_text("a {{ \"x\" | volant_unsafe }}", "volant_unsafe")]
+fn a_playbook_cannot_call_the_loaders_filters(#[case] text: &str, #[case] name: &str) {
+    let t = templar();
+    let want = format!("Syntax error in template: No filter named '{name}'.");
+    assert_eq!(t.render(text, &vars(json!({}))), Err(TemplateError(want)));
+    let wrapped = crate::yaml::unsafe_data(json!("{{ c }}"));
+    assert_eq!(
+        t.render(wrapped.as_str().unwrap(), &vars(json!({}))),
+        Ok(json!("{{ c }}"))
+    );
+}
+
 /// A variable over the inventory's names renders when the store tracks which hold host text, and
 /// stays as written when it does not; a lookup by text never renders, at any depth.
 #[test]
@@ -2059,4 +2071,22 @@ fn lipsum_differs_from_one_call_to_the_next() {
         })
         .collect();
     assert!(texts.len() > 1, "{texts:?}");
+}
+
+/// A read with no value is worded as ansible-core 2.19.12 words it: the variable, or the
+/// attribute with the type it was read from, inside an expression as well as bare.
+#[rstest::rstest]
+#[case::bare("{{ nope }}", "'nope' is undefined")]
+#[case::text_around("a {{ nope }} b", "'nope' is undefined")]
+#[case::filter("{{ nope | upper }}", "'nope' is undefined")]
+#[case::attribute_of_a_missing_name("{{ nope.x == 1 }}", "'nope' is undefined")]
+#[case::missing_attribute("{{ a.b }}", "object of type 'dict' has no attribute 'b'")]
+#[case::missing_key("{{ a['b'] }}", "object of type 'dict' has no attribute 'b'")]
+#[case::after_a_guarded_read("{{ nope | default(1) }}{{ other }}", "'other' is undefined")]
+#[case::in_a_block("{% if gone %}x{% endif %}", "'gone' is undefined")]
+fn an_undefined_read_names_what_was_missing(#[case] source: &str, #[case] want: &str) {
+    let own = vars(json!({"a": {}}));
+    let err = templar().render(source, &own).unwrap_err();
+    assert_eq!(err.0, want, "{source}");
+    assert!(err.is_undefined(), "{source}");
 }

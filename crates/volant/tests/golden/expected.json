@@ -647,6 +647,24 @@
     "case": {
       "template": "{{ s | from_yaml }}",
       "vars": {
+        "s": "!unsafe a: 1"
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.from_yaml' failed: could not determine a constructor for the tag '!unsafe'\n  in \"<unicode string>\", line 1, column 1"
+  },
+  {
+    "case": {
+      "template": "{{ s | from_yaml }}",
+      "vars": {
+        "s": "a: !unsafe '{{ x }}'"
+      }
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': 'x' is undefined"
+  },
+  {
+    "case": {
+      "template": "{{ s | from_yaml }}",
+      "vars": {
         "s": "a: !!str 5"
       }
     },

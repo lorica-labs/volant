@@ -1,0 +1,3 @@
+# A module of a collection nobody installed stops the run before any task with exit 4. The warning and
+# error block are on stderr, where only the exit code is compared (see the playbook_cli test).
+args: [play.yml]

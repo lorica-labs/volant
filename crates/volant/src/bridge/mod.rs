@@ -235,15 +235,15 @@ impl Bridge {
     }
 
     /// The text ansible-playbook prints for a result's `diff`, from ansible-core's own
-    /// `_get_diff`, without colour.
+    /// `_get_diff`, with its lines coloured when `color` is set.
     ///
     /// # Errors
     /// [`BridgeError`] when the helper cannot start, fails, or answers something else than text.
-    pub fn diff_text(&self, diff: &Value) -> Result<String, BridgeError> {
+    pub fn diff_text(&self, diff: &Value, color: bool) -> Result<String, BridgeError> {
         match self.request(
             PluginKind::Lookup,
             "diff",
-            json!({"kind": "diff", "name": "diff", "args": [diff], "kwargs": {}}),
+            json!({"kind": "diff", "name": "diff", "args": [diff], "kwargs": {"color": color}}),
         )? {
             Value::String(text) => Ok(text),
             _ => Err(BridgeError::Helper(

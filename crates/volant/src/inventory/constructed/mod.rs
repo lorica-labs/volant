@@ -13,8 +13,8 @@ use super::yaml::{Dialect, add_child_checked, falsy};
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source};
 use crate::playbook::python_repr;
 use crate::template::Templar;
-use helpers::{add_group, host_vars, is_blank, is_original, reason, safe_group_name, set_var};
-pub(in crate::inventory) use helpers::{has_invalid_chars, py_str};
+use helpers::{add_group, host_vars, is_blank, is_original, safe_group_name, set_var};
+pub(in crate::inventory) use helpers::{invalid_chars_report, py_str, reason};
 
 pub(super) struct Constructed;
 
@@ -203,7 +203,11 @@ impl Run {
 
     fn evaluate(&self, expr: &Value, vars: &Map<String, Value>) -> Result<Value, String> {
         let Value::String(text) = expr else {
-            return Err("expression must be a string".to_string());
+            // The expressions come from the config file, so the reference's loader tagged them.
+            return Err(format!(
+                "Expressions must be <class 'str'>, got {}.",
+                Dialect::Yaml.type_name(expr)
+            ));
         };
         self.templar
             .evaluate(text, vars)

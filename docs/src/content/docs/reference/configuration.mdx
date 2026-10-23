@@ -65,6 +65,18 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Print `task path: <file>:<line>` before the `fatal:` line of a failed task. From `-vv` the line already follows every task banner, so this changes nothing there. A loop item's `failed:` line and an unreachable host get no path line. As in Ansible, `y`, `yes`, `on`, `true`, `t` and `1` turn it on in any case, and any other word, an empty variable included, leaves it off.
 </Option>
 
+<Option name="force_color" id="defaults-force-color" default="false" env="ANSIBLE_FORCE_COLOR">
+  Colour the output even when it is not a terminal, as CI logs need. It wins over `nocolor`, `ANSIBLE_NOCOLOR` and `NO_COLOR`; only `--no-color` wins over it. In a diff, only the lines Ansible's `difflib` made from `before` and `after` are coloured.
+</Option>
+
+<Option name="nocolor" id="defaults-nocolor" default="false" env="ANSIBLE_NOCOLOR">
+  Never colour the output. `force_color` wins over it.
+</Option>
+
+<Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
+  Print the `[DEPRECATION WARNING]` notices and the line that tells how to stop them. Set to `False` to print neither.
+</Option>
+
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Warn when the inventory holds no host, so that only the implicit `localhost` is left. `all` does not match that host.
 </Option>
@@ -143,6 +155,12 @@ A file that exists but cannot be read is skipped, and the run continues with the
 
 <Option name="become_flags" id="privilege-escalation-become-flags" env="ANSIBLE_BECOME_FLAGS">
   The flags given to that program, in place of `-H` for `sudo` and of none for `su`. A blank value gives no flags at all.
+</Option>
+
+## [ssh_connection]
+
+<Option name="usetty" id="ssh-connection-usetty" default="true" env="ANSIBLE_SSH_USETTY">
+  Give `raw`, `script` and the commands a module plugin such as `reboot` sends without input a terminal, as `ssh -tt` does. Set it to `False` when a `sudoers` rule has `requiretty` or a command prints control characters on a terminal. The host variable `ansible_ssh_use_tty` wins over the environment variable, and the environment variable over the file. A word other than `y`, `yes`, `on`, `true`, `t` and `1` reads as off.
 </Option>
 
 ## [tags]

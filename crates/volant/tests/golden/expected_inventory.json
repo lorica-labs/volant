@@ -803,6 +803,128 @@
       ],
       "stderr": ""
     },
+    "constructed_compose_int": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_compose_int.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_compose_int.yml': Could not set x for host w1: Expressions must be <class 'str'>, got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>.\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_compose_int.yml'.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_compose_int.yml'>\n\n<<< caused by >>>\n\nCould not set x for host w1: Expressions must be <class 'str'>, got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>.\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_compose_int.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_compose_int.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_compose_int.yml as an inventory source\n"
+    },
+    "constructed_compose_int_lax": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_compose_int_lax.yml"
+      ],
+      "stderr": ""
+    },
     "constructed_dict": {
       "env": {},
       "hosts": [
@@ -1978,6 +2100,67 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_strict.yml': Could not set c_bad for host w1: 'nosuch' is undefined\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_strict.yml'.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_strict.yml'>\n\n<<< caused by >>>\n\nCould not set c_bad for host w1: 'nosuch' is undefined\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_strict.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_strict.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_strict.yml as an inventory source\n"
     },
+    "constructed_undefined_call": {
+      "env": {},
+      "hosts": [
+        "w1",
+        "w2",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "dd": "{k:v}",
+              "os": "Debian"
+            },
+            "w1": {
+              "ansible_host": "web1.example.com",
+              "empty": "",
+              "gv": "gval",
+              "os": "Debian",
+              "taglist": [
+                "a",
+                "b"
+              ],
+              "ver": 12
+            },
+            "w2": {
+              "gv": "gval",
+              "os": "RedHat",
+              "role": "",
+              "ver": 9
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "constructed_base.ini",
+        "constructed_undefined_call.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_undefined_call.yml': Could not set y for host w1: 'nope' is undefined\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_undefined_call.yml'.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_undefined_call.yml'>\n\n<<< caused by >>>\n\nCould not set y for host w1: 'nope' is undefined\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_undefined_call.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_undefined_call.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_undefined_call.yml as an inventory source\n"
+    },
     "directory": {
       "env": {},
       "hosts": [
@@ -2216,6 +2399,72 @@
       ],
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
+    "generator_invalid_chars": {
+      "env": {},
+      "hosts": null,
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "a.b-group": {
+          "hosts": [
+            "ab"
+          ]
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "a.b-group",
+            "c-group"
+          ]
+        },
+        "c-group": {
+          "hosts": [
+            "ab"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "generator_invalid_chars.yml"
+      ],
+      "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
+    },
+    "generator_non_ascii": {
+      "env": {},
+      "hosts": null,
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "g-é",
+            "g-x"
+          ]
+        },
+        "g-x": {
+          "hosts": [
+            "x-host"
+          ]
+        },
+        "g-é": {
+          "hosts": [
+            "é-host"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "generator_non_ascii.yml"
+      ],
+      "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
+    },
     "generator_priority": {
       "env": {},
       "hosts": [
@@ -2430,6 +2679,27 @@
         "constructed.yml"
       ],
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
+    },
+    "generator_undefined": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "generator_undefined.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: 'nope' is undefined\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\n'nope' is undefined\nOrigin: <golden-tmp>/generator_undefined.yml:6:13\n\n4   name: \"{{ layer }}-host\"\n5   parents:\n6     - name: \"{{ nope }}-g\"\n              ^ column 13\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/generator_undefined.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/generator_undefined.yml\n\n[WARNING]: Unable to parse <golden-tmp>/generator_undefined.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "host_list": {
       "env": {},
@@ -3104,6 +3374,48 @@
         "partial.ini"
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "partial_quote": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "partial_quote.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Error parsing host definition 'h1 x=\"unterminated': No closing quotation\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory.\nOrigin: <golden-tmp>/partial_quote.ini\n\n<<< caused by >>>\n\nError parsing host definition 'h1 x=\"unterminated': No closing quotation\n\n[WARNING]: Unable to parse <golden-tmp>/partial_quote.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "partial_second_group": {
+      "env": {},
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "partial_second_group.ini"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Error parsing host definition 'h2 x=\"unterminated': No closing quotation\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory.\nOrigin: <golden-tmp>/partial_second_group.ini\n\n<<< caused by >>>\n\nError parsing host definition 'h2 x=\"unterminated': No closing quotation\n\n[WARNING]: Unable to parse <golden-tmp>/partial_second_group.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "partial_then_good": {
       "env": {},
@@ -5076,6 +5388,35 @@
         "yaml_list_hosts.yml"
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_list_hosts.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_list_hosts.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_list_hosts.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Invalid \"hosts\" entry for \"g\" group, requires a dictionary, found \"<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>\" instead.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nInvalid \"hosts\" entry for \"g\" group, requires a dictionary, found \"<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>\" instead.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_list_hosts.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_list_hosts.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_list_hosts.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "yaml_non_ascii": {
+      "env": {},
+      "hosts": [
+        "h1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "g-é"
+          ]
+        },
+        "g-é": {
+          "hosts": [
+            "h1"
+          ]
+        }
+      },
+      "needs": [],
+      "rc": 0,
+      "sources": [
+        "yaml_non_ascii.yml"
+      ],
+      "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "yaml_odd": {
       "env": {},

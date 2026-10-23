@@ -6,7 +6,7 @@ use std::time::Duration;
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 
 use super::super::bootstrap::{Captured, EXIT_SSH_FAILURE, first_words};
-use super::super::defaults::{ConnectError, Escalation, INCORRECT_SU_PASSWORD};
+use super::super::defaults::{ConnectError, Escalation, INCORRECT_SU_PASSWORD, SU_PREMATURE_END};
 use super::super::shell::single_quoted;
 use super::probe::{
     escalation_outcome, redacted_stderr, refused_authentication, unreachable_message,
@@ -109,6 +109,29 @@ pub(in crate::transport) fn su_command(
     )
 }
 
+/// Refuses a `become_user` that `su` would read as one of its own options.
+pub(in crate::transport) fn refuse_option_user(
+    escalation: &Escalation,
+) -> Result<(), ConnectError> {
+    if escalation.user.starts_with('-') {
+        return Err(ConnectError::Become(format!(
+            "'become_user' must be a user name for su, found '{}'",
+            escalation.user
+        )));
+    }
+    Ok(())
+}
+
+/// What a `su` that never started the command costs the task over a local connection, in the
+/// reference's words: it prints `su`'s own lines under `>>> Standard Error`, carriage returns
+/// taken out because a terminal added them.
+pub(in crate::transport) fn premature_end(said: &str) -> ConnectError {
+    ConnectError::Become(format!(
+        "{SU_PREMATURE_END}\n>>> Standard Error\n{}",
+        said.replace('\r', "").trim_end()
+    ))
+}
+
 /// Talks `su` through to the command it guards, the way the reference's ssh connection does:
 /// a prompt is answered with the password once, and a second prompt or an `Authentication
 /// failure` line is the wrong password. Without a password no prompt is answered, so `su` waits
@@ -122,6 +145,9 @@ pub(in crate::transport) fn su_command(
 /// stream. `Ok(None)` is the command running; `Ok(Some(said))` is the stream ending before it
 /// did, with what `su` had said, for the caller to tell a dead connection from a refusal by the
 /// exit code.
+///
+/// `local` is a `su` on a terminal of the controller's own: a refusal is then the reference's
+/// `Premature end of stream`, which carries what `su` printed, the prompt included.
 pub(in crate::transport) async fn su_exchange<R, W>(
     out: &mut R,
     input: &mut W,
@@ -129,6 +155,7 @@ pub(in crate::transport) async fn su_exchange<R, W>(
     prompt_l10n: &[String],
     success: &str,
     timeout: Duration,
+    local: bool,
 ) -> Result<Option<String>, ConnectError>
 where
     R: tokio::io::AsyncRead + Unpin,
@@ -172,6 +199,10 @@ where
                 return Ok(None);
             }
             if complete.contains("Authentication failure") {
+                if local {
+                    said.extend_from_slice(&line);
+                    return Err(premature_end(&text(&said)));
+                }
                 return Err(ConnectError::Become(INCORRECT_SU_PASSWORD.to_string()));
             }
             said.append(&mut line);
@@ -187,12 +218,20 @@ where
             continue;
         }
         if answered {
+            if local {
+                said.extend_from_slice(&line);
+                return Err(premature_end(&text(&said)));
+            }
             return Err(ConnectError::Become(INCORRECT_SU_PASSWORD.to_string()));
         }
         // A `su` that is gone by now closes the terminal, and the read above says so.
         let _ = input.write_all(format!("{password}\n").as_bytes()).await;
         let _ = input.flush().await;
         answered = true;
+        if local {
+            // Kept for the message of a refusal; the line end the terminal sends next follows it.
+            said.extend_from_slice(&line);
+        }
         line.clear();
     }
 }

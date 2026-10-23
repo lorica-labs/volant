@@ -1,0 +1,4 @@
+# A source that fails part-way keeps the groups it added, and the shlex error prints two blocks.
+runs:
+  - args: [-i, bad.ini, groups.yml]
+  - args: [-i, second.ini, groups.yml]

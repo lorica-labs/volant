@@ -1334,6 +1334,9 @@ pub(super) async fn drive_host(
                                 if let Some(missing) =
                                     err.downcast_ref::<crate::transport::ConnectionNotFound>() =>
                             {
+                                if let Some(message) = missing.warning() {
+                                    driver.warn(pos, message).await;
+                                }
                                 let msg = format!("Task failed: {missing}");
                                 let results: Vec<(Option<Value>, TaskResult)> = items
                                     .iter()
@@ -1612,11 +1615,13 @@ pub(super) async fn drive_host(
                     let index = batch[0].0;
                     let mut task = step_at(&c, &rendered, index).task.clone();
                     task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    // Measured for `Incorrect su password` (scout case `c5w`): the reference
-                    // raises it from its connection, so the result is `changed: false` and a
+                    // Measured for `Incorrect su password` (scout case `c5w`) and, over a local
+                    // connection, `Premature end of stream`: the reference raises them from its connection, so the result is `changed: false` and a
                     // `msg` that already says `Task failed: `. The other refusals keep their shape
                     // until they are measured too.
-                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD {
+                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD
+                        || msg.starts_with(crate::transport::SU_PREMATURE_END)
+                    {
                         let mut shaped = TaskResult::failed_with(crate::render::task_failed(&msg));
                         shaped.0.insert("changed".into(), Value::Bool(false));
                         shaped
@@ -2452,11 +2457,15 @@ pub(super) async fn drive_host(
             // it: there the reference leaves `msg` empty and fills `failed_when_result`.
             let mut result = failed_result(&err);
             // A keyword that did not render fails the task as an unchanged one, `run_once` apart.
-            if rendered.contains_key(&index) && !err.0.contains("'run_once'") {
+            // Arguments that did not render fail the task as an unchanged one as well.
+            if (rendered.contains_key(&index) && !err.0.contains("'run_once'"))
+                || err.0.starts_with(super::prepare::FINALIZING)
+            {
                 result.0.insert("changed".into(), Value::Bool(false));
             }
             if let Some(causes) = debugger::causes(task, &err.0)
                 .or_else(|| throttle::causes(task, &err.0))
+                .or_else(|| super::prepare::undefined::conditional_causes(task, &err.0))
                 .or_else(|| super::prepare::undefined_causes(task, &err.0))
             {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
@@ -2474,6 +2483,7 @@ pub(super) async fn drive_host(
                     )]),
                 );
             }
+            super::prepare::undefined::mark_keyword(task, &err, &mut result);
             let results = vec![(None, result)];
             // Measured on ansible-core 2.19.12: an undefined variable in a task's arguments
             // fails that task, and a rescue around it takes the failure with the error's own
@@ -2575,25 +2585,6 @@ impl Driver<'_> {
 fn first_batch_id() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// The chain of a task whose arguments a plugin failed to render, as the reference prints it:
-/// `Finalization of task args for '<action>' failed.` at the action's key, then the value it was
-/// resolving at that value.
-pub(super) fn finalization_causes(task: &PlayTask, message: &str) -> Option<Value> {
-    let rest = message.strip_prefix(super::prepare::FINALIZING)?;
-    let at = rest.find(&format!(": {}", crate::template::RESOLVING))?;
-    let head = format!("{}{}.", super::prepare::FINALIZING, &rest[..at]);
-    let resolving = &rest[at + 2..];
-    let key = resolving[crate::template::RESOLVING.len()..]
-        .strip_prefix('\'')?
-        .split('\'')
-        .next()?;
-    let origin = |name: &str| task.value_origins.get(name);
-    Some(Value::Array(vec![
-        crate::render::cause(&head, origin("action"), None),
-        crate::render::cause(resolving, origin(&format!("args.{key}")), None),
-    ]))
 }
 
 /// How the reference's callback cleans this task's result lines.

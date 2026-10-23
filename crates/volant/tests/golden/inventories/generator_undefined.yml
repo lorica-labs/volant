@@ -1,0 +1,8 @@
+plugin: generator
+strict: true
+hosts:
+  name: "{{ layer }}-host"
+  parents:
+    - name: "{{ nope }}-g"
+layers:
+  layer: [one]

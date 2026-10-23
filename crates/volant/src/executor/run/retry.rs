@@ -205,11 +205,16 @@ pub(in crate::executor) fn local_timed_out(seconds: u64) -> TaskResult {
     r
 }
 
+/// Marks a result [`raised`] built, which carries nothing a module would add, such as the
+/// interpreter the host was found to use. Dropped with the other `_volant_` keys.
+pub(in crate::executor) const RAISED_KEY: &str = "_volant_raised";
+
 /// A failure the executor raised rather than a module returned: `changed: false` and the message,
 /// measured on ansible-core 2.19.12, and the causes its error block chains, if any.
 pub(super) fn raised(msg: &str, causes: Vec<Value>) -> TaskResult {
     let mut failed = TaskResult::failed_with(msg);
     failed.0.insert("changed".into(), json!(false));
+    failed.0.insert(RAISED_KEY.into(), json!(true));
     if !causes.is_empty() {
         failed
             .0
@@ -270,6 +275,26 @@ pub(in crate::executor) enum Attempt {
 /// Running out is a failed task even when the module passed (measured with `changed_when: false`
 /// under `until: r.changed`), and it reports `attempts: R` although R + 1 runs happened.
 pub(in crate::executor) fn judge_attempt(
+    task: &PlayTask,
+    item: &Item,
+    raw: TaskResult,
+    attempt: u32,
+    retry: &Retry,
+    templar: &Templar,
+) -> Attempt {
+    // The item's label is rendered once its last attempt is in, as `finish` does it.
+    match attempt_verdict(task, item, raw, attempt, retry, templar) {
+        Attempt::Done(mut r) => {
+            if let Some(message) = &item.label_error {
+                crate::executor::prepare::label_failed(message, &mut r);
+            }
+            Attempt::Done(r)
+        }
+        again @ Attempt::Again(..) => again,
+    }
+}
+
+fn attempt_verdict(
     task: &PlayTask,
     item: &Item,
     raw: TaskResult,

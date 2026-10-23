@@ -1,0 +1,8 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - command: "true"
+      register: out
+      until: nope.x == 1
+      retries: 1
+      delay: 0

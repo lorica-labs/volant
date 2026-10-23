@@ -58,7 +58,7 @@ pub fn run(args: PlaybookArgs) -> i32 {
         Ok(code) => code,
         Err(err) => {
             match err.downcast_ref::<Refusal>() {
-                Some(r) if r.plain => eprintln!("[ERROR]: {}", r.message),
+                Some(r) if r.plain || r.unresolved.is_some() => r.show(),
                 _ => eprintln!("ERROR! {err:#}"),
             }
             error_code(&err)
@@ -89,6 +89,10 @@ async fn run_all(
 ) -> anyhow::Result<i32> {
     let config = crate::runtime::resolve::configured(Config::load()?);
     out.set_path_on_failure(config.show_task_path_on_failure);
+    playbook::set_deprecation_warnings(config.deprecation_warnings);
+    let choice = config.color_choice(args.no_color);
+    out.set_choice(choice);
+    crate::transport::trace::configure(args.verbose, choice);
     announce(out);
     python::set_module_path(module_path_dirs(args));
     let secrets = match crate::vault::load(&crate::vault::Request {
@@ -264,13 +268,7 @@ async fn run_all(
             if start_found {
                 break;
             }
-            compiled.start_at = Some(match compile::find_task(compiled, pattern) {
-                Some(at) => {
-                    start_found = true;
-                    at
-                }
-                None => compiled.steps.len(),
-            });
+            start_found = compile::start_at_task(compiled, pattern, args.force_handlers);
         }
     }
     // Asking needs somebody to answer. Refused before any host is touched, with the code the
@@ -345,7 +343,12 @@ async fn run_all(
             out.warning(&warning, false);
         },
     )
-    .map_err(|e| Refusal::or(4, e))?;
+    .map_err(|e| {
+        Refusal::or(
+            4,
+            preflight::locate_unresolved(e, compiled.iter().flatten()),
+        )
+    })?;
     for play in compiled.iter().flatten() {
         preflight::check_collection_actions(play).map_err(|e| Refusal::or(4, e))?;
     }
@@ -475,6 +478,7 @@ async fn run_all(
         become_password,
         ssh_common_args: ssh_words("--ssh-common-args", args.ssh_common_args.as_deref())?,
         ssh_extra_args: ssh_words("--ssh-extra-args", args.ssh_extra_args.as_deref())?,
+        ssh_use_tty: config.ssh_usetty,
     };
     let mut stats = Stats::default();
 

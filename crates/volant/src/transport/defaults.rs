@@ -34,6 +34,9 @@ pub struct ConnectionDefaults {
     /// `ansible_ssh_common_args` or `ansible_ssh_extra_args` replaces the one it names.
     pub ssh_common_args: Vec<String>,
     pub ssh_extra_args: Vec<String>,
+    /// `[ssh_connection] usetty` and `ANSIBLE_SSH_USETTY`: the terminal a host gets when it sets
+    /// no `ansible_ssh_use_tty` of its own.
+    pub ssh_use_tty: bool,
 }
 
 /// Written by hand so `become_password` cannot reach a log or a `-vvv` dump: a derived `Debug`
@@ -56,6 +59,7 @@ impl std::fmt::Debug for ConnectionDefaults {
             .field("become_password", &redacted(self.become_password.as_ref()))
             .field("ssh_common_args", &self.ssh_common_args)
             .field("ssh_extra_args", &self.ssh_extra_args)
+            .field("ssh_use_tty", &self.ssh_use_tty)
             .finish()
     }
 }
@@ -150,6 +154,9 @@ pub const MISSING_SUDO_PASSWORD: &str = "Missing sudo password";
 pub const INCORRECT_SUDO_PASSWORD: &str = "Incorrect sudo password";
 /// The reference's text for a `su` that refused the password, or asked for it a second time.
 pub const INCORRECT_SU_PASSWORD: &str = "Incorrect su password";
+/// The reference's text for a `su` that never started the command over a local connection, which
+/// follows it with what `su` printed.
+pub const SU_PREMATURE_END: &str = "Premature end of stream waiting for become success.";
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Transport {
@@ -258,6 +265,57 @@ impl std::fmt::Display for ConnectionNotFound {
 }
 
 impl std::error::Error for ConnectionNotFound {}
+
+/// The collection ansible-core 2.19.12 routes a connection name to, for the names a collection
+/// took over from the core.
+const ROUTED_CONNECTIONS: &[(&str, &str)] = &[
+    ("buildah", "containers.podman.buildah"),
+    ("podman", "containers.podman.podman"),
+    ("aws_ssm", "community.aws.aws_ssm"),
+    ("chroot", "community.general.chroot"),
+    ("docker", "community.docker.docker"),
+    ("funcd", "community.general.funcd"),
+    ("iocage", "community.general.iocage"),
+    ("jail", "community.general.jail"),
+    ("kubectl", "kubernetes.core.kubectl"),
+    ("libvirt_lxc", "community.libvirt.libvirt_lxc"),
+    ("lxc", "community.general.lxc"),
+    ("lxd", "community.general.lxd"),
+    ("oc", "community.okd.oc"),
+    ("qubes", "community.general.qubes"),
+    ("saltstack", "community.general.saltstack"),
+    ("zone", "community.general.zone"),
+    ("vmware_tools", "community.vmware.vmware_tools"),
+    ("httpapi", "ansible.netcommon.httpapi"),
+    ("napalm", "ansible.netcommon.napalm"),
+    ("netconf", "ansible.netcommon.netconf"),
+    ("network_cli", "ansible.netcommon.network_cli"),
+    ("persistent", "ansible.netcommon.persistent"),
+];
+
+/// The warning the reference prints, once, before it fails a task whose connection a missing
+/// collection would have supplied: the routed name, and the first package Python cannot import.
+pub fn plugin_load_warning(plugin: &str, collection: &str) -> String {
+    // `ansible_collections.ansible` exists with the core's own `ansible.builtin`.
+    let mut parts = collection.split('.');
+    let missing = match (parts.next(), parts.next()) {
+        (Some("ansible"), Some(name)) => format!("ansible.{name}"),
+        (Some(namespace), _) => namespace.to_string(),
+        _ => String::new(),
+    };
+    format!("Error loading plugin '{plugin}': No module named 'ansible_collections.{missing}'")
+}
+
+impl ConnectionNotFound {
+    /// The warning that goes with this failure, for a name a collection took over.
+    pub fn warning(&self) -> Option<String> {
+        let (_, routed) = ROUTED_CONNECTIONS
+            .iter()
+            .find(|(name, _)| *name == self.0)?;
+        let collection = routed.rsplit_once('.')?.0;
+        Some(plugin_load_warning(routed, collection))
+    }
+}
 
 /// The `remote_user`, `port` and `connection` keywords of one task, after its block and play
 /// were folded in and its templates rendered. They sit under the host's own variables and over

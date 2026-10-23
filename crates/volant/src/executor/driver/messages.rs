@@ -11,6 +11,19 @@ use crate::stats::Outcome;
 use super::Driver;
 
 impl Driver<'_> {
+    /// A `[WARNING]` for this host at the step at `index`, shown even under `no_log`.
+    pub(super) async fn warn(&self, index: usize, message: String) {
+        let _ = self
+            .tx
+            .send(Event::Warning {
+                host: self.name.to_string(),
+                index,
+                message,
+                censored: false,
+            })
+            .await;
+    }
+
     /// Tells the coordinator this host is done with the step at `index`.
     pub(super) async fn task_done(&self, index: usize) {
         let _ = self

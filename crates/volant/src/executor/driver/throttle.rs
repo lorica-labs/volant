@@ -110,7 +110,7 @@ const CONVERT: &str = "Failed to convert the throttle value to an integer: ";
 pub(super) fn causes(task: &PlayTask, message: &str) -> Option<Value> {
     let Some(sentence) = message.strip_prefix("Task failed: Error processing keyword 'throttle': ")
     else {
-        return super::finalization_causes(task, message);
+        return crate::executor::prepare::undefined::finalization_causes(task, message);
     };
     let at = task.throttle.as_ref().and_then(|t| t.origin.as_ref());
     Some(serde_json::json!([

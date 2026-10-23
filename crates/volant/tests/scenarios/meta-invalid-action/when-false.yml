@@ -1,0 +1,7 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: msg=before
+    - meta: bogus_action
+      when: false
+    - debug: msg=after

@@ -267,9 +267,36 @@ pub(in crate::executor) fn raw_params_refusal(task: &PlayTask) -> Option<TaskRes
     Some(TaskResult(r))
 }
 
+/// What each item of a task reports when its `action:` names no action: a first word with a `=`
+/// in it, a `module=ping` spelling.
+///
+/// Measured on ansible-core 2.19.12: the play starts, the banner shows the word, and the task
+/// fails with `Task failed: Cannot resolve 'module=ping' to an action or module.` and a cause at
+/// the `action:` value; `ignore_errors` and `rescue` take it like any failure of a task.
+fn unresolved_action_refusal(task: &PlayTask) -> Option<TaskResult> {
+    if !crate::playbook::names_no_action(&task.module) {
+        return None;
+    }
+    let msg = format!("Cannot resolve '{}' to an action or module.", task.module);
+    let mut r = TaskResult::failed_with(format!("Task failed: {msg}"));
+    r.0.insert("changed".into(), json!(false));
+    r.0.insert(
+        crate::render::CHAIN_KEY.into(),
+        json!([crate::render::cause(
+            &msg,
+            task.value_origins.get("action.value"),
+            None
+        )]),
+    );
+    Some(r)
+}
+
 /// What each item of a task reports when the task asks for `async` and its action does not
-/// support it, or the raw parameters it was given are refused: the failure the reference raises
-/// before the action runs, so neither `failed_when` nor `retries` changes it.
+/// support it, the raw parameters it was given are refused, or its action cannot be resolved: the
+/// failure the reference raises before the action runs, so neither `failed_when` nor `retries`
+/// changes it.
 pub(in crate::executor) fn refusal(task: &PlayTask) -> Option<TaskResult> {
-    raw_params_refusal(task).or_else(|| super::async_job::async_refusal(task))
+    unresolved_action_refusal(task)
+        .or_else(|| raw_params_refusal(task))
+        .or_else(|| super::async_job::async_refusal(task))
 }

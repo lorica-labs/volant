@@ -94,11 +94,11 @@ pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
 
 /// A plugin that fails the item with `msg` before the host is asked anything.
 pub(super) fn failing(msg: String) -> Box<dyn Plugin> {
-    done(TaskResult::failed_with(msg))
+    Box::new(Then(Some(Step::Done(TaskResult::failed_with(msg)))))
 }
 
-/// A plugin that ends the item with `result` before the host is asked anything.
-pub(super) fn done(result: TaskResult) -> Box<dyn Plugin> {
+/// A plugin that fails the item with `result` before the host is asked anything.
+pub(super) fn failing_with(result: TaskResult) -> Box<dyn Plugin> {
     Box::new(Then(Some(Step::Done(result))))
 }
 

@@ -970,6 +970,19 @@ pub(super) async fn drive_host(
                             .await;
                     }
                     driver.banner(pos).await;
+                    // An action nobody has ends the run at the banner, whatever the `when` says:
+                    // the reference raises it before it reads the condition.
+                    if !crate::compile::META_ACTIONS.contains(&action) {
+                        let at = task
+                            .origin
+                            .as_ref()
+                            .map(|o| format!("\n{}", crate::render::source_context(o)))
+                            .unwrap_or_default();
+                        options
+                            .abort
+                            .raise_plain(format!("invalid meta action requested: {action}{at}"));
+                        break 'run;
+                    }
                     let held = ignores_when || !matches!(prepared, Prepared::Skipped(_));
                     let role = step
                         .role
@@ -1094,7 +1107,7 @@ pub(super) async fn drive_host(
                         &[],
                         &[],
                         &[],
-                        Dump::No,
+                        dump_of(task),
                         false,
                         None,
                         Hold::new(&plan, &mut permit),
@@ -1255,6 +1268,8 @@ pub(super) async fn drive_host(
                     }
                     {
                         let mut vars = store.lock().expect("vars lock");
+                        // Before the result is registered: `add_host` marks its own `changed`.
+                        record_inventory_results(&mut vars, task, &items, &name, &mut results);
                         record_registered(&mut vars, task, &register_hosts, &results, &warnings);
                         record_local_facts(
                             &mut vars,
@@ -1264,7 +1279,6 @@ pub(super) async fn drive_host(
                             &results,
                             &templar,
                         );
-                        record_inventory_results(&mut vars, task, &items, &name, &results);
                     }
                     let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
                     // Whether a body shows at verbosity 0 is each result's own: see

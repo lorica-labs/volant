@@ -1,0 +1,7 @@
+# A role whose task file does not load stops the run when the statement is reached, after the tasks
+# in front of it; `import_role` and `roles:` read it with the playbook.
+runs:
+  - args: [-i, inv.ini, include.yml]
+  - args: [-i, inv.ini, include-skipped.yml]
+  - args: [-i, inv.ini, import.yml]
+  - args: [-i, inv.ini, roles-list.yml]

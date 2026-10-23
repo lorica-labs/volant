@@ -1,0 +1,6 @@
+# An `action:` whose first word has an `=` names no action: the task fails when it is reached, and
+# a `rescue` or `ignore_errors` takes it like any other failure.
+runs:
+  - args: [-i, inv.ini, module-equals.yml]
+  - args: [-i, inv.ini, rescued.yml]
+  - args: [-i, inv.ini, ignored.yml]

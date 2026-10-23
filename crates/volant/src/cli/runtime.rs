@@ -22,6 +22,9 @@ pub enum RuntimeCommand {
         /// Install from a file `volant runtime pack` made, with no download.
         #[arg(long, value_name = "FILE")]
         from: Option<std::path::PathBuf>,
+        /// Refuse the file given to --from unless its SHA-256 is this.
+        #[arg(long, value_name = "HASH", requires = "from")]
+        sha256: Option<String>,
     },
     /// Pack the installed runtime into a file another host of the same platform can install from.
     Pack {
@@ -58,9 +61,17 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
     let runtimes = runtimes_dir()?;
     let manifest = Manifest::pinned()?;
     match command {
-        RuntimeCommand::Install { collections, from } => {
+        RuntimeCommand::Install {
+            collections,
+            from,
+            sha256,
+        } => {
             let done = match &from {
-                Some(file) => pack::install_from(&runtimes, &manifest, file)?,
+                Some(file) => {
+                    let found = pack::verify(file, sha256.as_deref())?;
+                    println!("sha256 {found}");
+                    pack::install_from(&runtimes, &manifest, file)?
+                }
                 None => install::install(&runtimes, &manifest)?,
             };
             println!("{} is installed in {}", done.id, done.dir.display());
@@ -73,8 +84,9 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
             }
         }
         RuntimeCommand::Pack { file } => {
-            pack::pack(&runtimes, &manifest, &file)?;
-            println!("{} is packed in {}", manifest.id(), file.display());
+            let hash = pack::pack(&runtimes, &manifest, &file)?;
+            println!("packed {}", file.display());
+            println!("sha256 {hash}");
         }
         RuntimeCommand::Status => {
             let config = crate::config::Config::load().unwrap_or_else(|e| {

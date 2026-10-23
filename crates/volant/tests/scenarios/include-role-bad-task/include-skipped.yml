@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: msg=before
+    - include_role:
+        name: r
+      when: false
+    - debug: msg=after

@@ -5177,49 +5177,55 @@ h1
     let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
     let ok = |value: Value| vec![(None, TaskResult(value.as_object().unwrap().clone()))];
     let added = json!({"add_host": {"host_name": "n1", "groups": ["g1"], "host_vars": {"x": 1}}});
-    record_inventory_results(&mut store, &task("command"), &[], "h1", &ok(added.clone()));
+    record_inventory_results(
+        &mut store,
+        &task("command"),
+        &[],
+        "h1",
+        &mut ok(added.clone()),
+    );
     assert!(store.take_inventory_changes().is_none());
     let mut failed = added.clone();
     failed["failed"] = json!(true);
-    record_inventory_results(&mut store, &task("add_host"), &[], "h1", &ok(failed));
+    record_inventory_results(&mut store, &task("add_host"), &[], "h1", &mut ok(failed));
     assert!(store.take_inventory_changes().is_none());
     record_inventory_results(
         &mut store,
         &task("ansible.builtin.add_host"),
         &[],
         "h1",
-        &ok(added),
+        &mut ok(added),
     );
     record_inventory_results(
         &mut store,
         &task("group_by"),
         &[],
         "h1",
-        &ok(json!({"add_group": "role_web", "parent_groups": ["all_roles"]})),
+        &mut ok(json!({"add_group": "role_web", "parent_groups": ["all_roles"]})),
     );
     record_inventory_results(
         &mut store,
         &task("set_stats"),
         &[],
         "h1",
-        &ok(json!({"ansible_stats": {"data": {"n": 1}, "per_host": true, "aggregate": true}})),
+        &mut ok(json!({"ansible_stats": {"data": {"n": 1}, "per_host": true, "aggregate": true}})),
     );
     // A loop whose item 2 failed adds nothing, not even items 1 and 3 (measured); a
     // delegated task applies to the host it was written for, which is the one passed in.
     let added = |n: &str| json!({"add_host": {"host_name": n, "groups": ["lg"], "host_vars": {}}});
     let mut second = added("L2");
     second["failed"] = json!(true);
-    let looped: Vec<_> = [added("L1"), second, added("L3")]
+    let mut looped: Vec<_> = [added("L1"), second, added("L3")]
         .into_iter()
         .map(|v| (None, TaskResult(v.as_object().unwrap().clone())))
         .collect();
-    record_inventory_results(&mut store, &task("add_host"), &[], "h1", &looped);
+    record_inventory_results(&mut store, &task("add_host"), &[], "h1", &mut looped);
     record_inventory_results(
         &mut store,
         &task("group_by"),
         &[],
         "h1",
-        &ok(json!({"add_group": "delegated"})),
+        &mut ok(json!({"add_group": "delegated"})),
     );
     let grown = store.take_inventory_changes().expect("grown");
     let groups = grown.groups();
@@ -5399,7 +5405,7 @@ fn a_name_from_a_hosts_text_is_data_whatever_it_holds() {
         all_play_hosts: vec!["h1".into()],
         ..Default::default()
     };
-    for case in origin_cases() {
+    for mut case in origin_cases() {
         let items: Vec<Item> = case
             .untrusted
             .iter()
@@ -5410,7 +5416,13 @@ fn a_name_from_a_hosts_text_is_data_whatever_it_holds() {
             })
             .collect();
         let mut store = VarStore::new(&inv, None, tmp.path(), Map::new()).unwrap();
-        record_inventory_results(&mut store, &task(case.module), &items, "h1", &case.results);
+        record_inventory_results(
+            &mut store,
+            &task(case.module),
+            &items,
+            "h1",
+            &mut case.results,
+        );
         let hosts = store.untrusted_hosts();
         for (_, r) in &case.results {
             let Some(name) = r.0.get("add_host").and_then(|a| a["host_name"].as_str()) else {

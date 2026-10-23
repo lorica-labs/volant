@@ -228,8 +228,20 @@ impl VarStore {
 
     /// `add_host`: the host joins the inventory with `vars` on its line and the groups named,
     /// or, when it is already there, gains them. Visible to `hostvars` and `groups` at once;
-    /// the hosts of the play being run are not changed by it.
-    pub fn add_host(&mut self, name: &str, groups: &[String], vars: &Map<String, Value>) {
+    /// the hosts of the play being run are not changed by it. Whether it changed the inventory:
+    /// a new host, a variable that differs, a group or a membership that was missing.
+    pub fn add_host(&mut self, name: &str, groups: &[String], vars: &Map<String, Value>) -> bool {
+        let known = self.dynamic.groups();
+        let line = self.dynamic.host_line_vars(name);
+        let changed = !known["all"].iter().any(|h| h == name)
+            || vars
+                .iter()
+                .any(|(k, v)| line.and_then(|l| l.get(k)) != Some(v))
+            || groups.iter().filter(|g| *g != "all").any(|g| {
+                !known
+                    .get(g)
+                    .is_some_and(|members| members.iter().any(|h| h == name))
+            });
         // A value that still holds a template after the task rendered it was built from text the
         // playbook did not write (a fact, a registered result): it is data, kept as an untrusted
         // fact of the host and never rendered again. The rest sits on the host's inventory line.
@@ -257,6 +269,7 @@ impl VarStore {
         for (key, value) in data {
             self.set_untrusted_fact(name, key, value.clone());
         }
+        changed
     }
 
     /// Marks names as data whatever they hold: the render that made them read a value that came

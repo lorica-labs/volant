@@ -5,7 +5,7 @@ use anyhow::bail;
 use volant_protocol::modules::{ArgStatus, short_name};
 
 use super::CODE;
-use crate::compile::{META_ACTIONS, meta_action};
+use crate::compile::meta_action;
 use crate::playbook::{PlayTask, is_meta};
 use crate::stats::Refusal;
 
@@ -127,24 +127,6 @@ pub(super) fn check_arguments(task: &PlayTask) -> anyhow::Result<()> {
         );
     }
     Ok(())
-}
-
-/// A `meta` task: the action has to be one the reference has.
-///
-/// Exit 1 for an action nobody has, which is the reference's own code for it - measured, and
-/// notably not the 4 a playbook it cannot load gets. Where the two differ is the moment: the
-/// reference shows the `TASK [meta]` banner and fails there, this refuses before the first
-/// connection, so nothing has run when the operator reads the message.
-pub(super) fn check_meta(task: &PlayTask) -> anyhow::Result<()> {
-    let action = meta_action(task);
-    if META_ACTIONS.contains(&action) {
-        Ok(())
-    } else {
-        Err(Refusal::at(
-            1,
-            format!("invalid meta action requested: {action}"),
-        ))
-    }
 }
 
 /// `end_role` written where no role is: the reference stops loading the playbook, exit 4. Only the

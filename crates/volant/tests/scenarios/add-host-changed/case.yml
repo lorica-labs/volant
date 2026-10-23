@@ -1,0 +1,4 @@
+# `add_host` is `changed`, whether or not the inventory already had the host, and the recap counts it.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, play.yml]

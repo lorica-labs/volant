@@ -1,0 +1,5 @@
+# A meta action nobody has fails when the task is reached, exit 1, after the tasks in front of it.
+runs:
+  - args: [-i, inv.ini, invalid.yml]
+  - args: [-i, inv.ini, when-false.yml]
+  - args: [-i, inv.ini, rescued.yml]

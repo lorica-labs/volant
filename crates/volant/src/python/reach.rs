@@ -335,7 +335,14 @@ impl Reach {
                     .or_else(|| literal("role"))
                     .map(|name| search.locate(name))
                 {
-                    self.role(&dir, search)?;
+                    let read = self.role(&dir, search);
+                    // An `include_role` reads its role when the task is reached, and a role
+                    // that does not parse fails the run there, after the tasks in front of it.
+                    // What this scan could not read is left to that moment. An `import_role`
+                    // is read with the playbook, and the compilation has refused it by now.
+                    if short_name(&task.module) == "import_role" {
+                        read?;
+                    }
                 }
             }
             _ => {}

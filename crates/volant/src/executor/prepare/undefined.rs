@@ -17,6 +17,11 @@ pub(super) fn when_error(err: TemplateError, kept: Option<&TemplateError>) -> Te
     match kept {
         Some(kept) => kept.clone(),
         None if err.is_undefined() => TemplateError(format!("{CONDITIONAL}{}", err.0)),
+        // A lookup's failure is the reference's `Task failed: <plugin sentence>`, with the
+        // sentence again at the `when`; a `with_` loop's lookup has no task around it.
+        None if super::item::is_loop_lookup_failure(&err) => {
+            TemplateError(format!("Task failed: {}", err.0))
+        }
         None => err,
     }
 }
@@ -25,7 +30,9 @@ pub(super) fn when_error(err: TemplateError, kept: Option<&TemplateError>) -> Te
 /// `when` was written.
 pub(in crate::executor) fn conditional_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let sentence = message.strip_prefix("Task failed: ").unwrap_or(message);
-    if sentence.starts_with(CONDITIONAL) {
+    // A lookup's sentence without `Task failed: ` is a `with_` loop's, shown with no task around it.
+    let lookup = message.starts_with("Task failed: The lookup plugin '");
+    if sentence.starts_with(CONDITIONAL) || lookup {
         return Some(serde_json::json!([crate::render::cause(
             sentence,
             task.value_origins.get("when"),

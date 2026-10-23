@@ -84,6 +84,16 @@ impl Prepared {
     }
 }
 
+/// The `false_condition` of a skipped task: a literal `when: false` stays the boolean YAML read.
+/// A quoted `"False"` cannot be told apart from it, which is the ceiling of this.
+pub(super) fn false_condition(condition: &str) -> Value {
+    if condition == "False" {
+        Value::Bool(false)
+    } else {
+        Value::String(condition.to_string())
+    }
+}
+
 /// The start of the message a `loop_control` field that fails to render or convert reports.
 pub(super) const KEYWORD_ERROR: &str = "Error processing keyword ";
 

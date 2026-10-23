@@ -72,7 +72,8 @@ The runtime holds ansible-core and its dependencies and nothing else. A collecti
 | `volant runtime install` | Installs the runtime if it is missing. |
 | `volant runtime install --collections NAME_OR_FILE...` | Also installs collections. |
 | `volant runtime install --from FILE` | Installs from a file made by `pack`, with no download. |
-| `volant runtime pack FILE` | Writes the installed runtime to a file. |
+| `volant runtime install --from FILE --sha256 HASH` | Installs from the file only when its SHA-256 is `HASH`. |
+| `volant runtime pack FILE` | Writes the installed runtime to a file and prints its SHA-256. |
 | `volant runtime status` | Shows the mode, the interpreter the next run uses, and the managed runtime. |
 | `volant runtime path` | Prints the managed runtime's Python. Exits with code 1 when it is not installed. |
 | `volant runtime remove [ID]` | Deletes the current runtime, or the one named. |
@@ -84,10 +85,12 @@ Pack a runtime on a machine that has a network, copy the file, and install it on
 
 ```sh
 volant runtime pack runtime.tar.gz
-volant runtime install --from runtime.tar.gz
+# packed runtime.tar.gz
+# sha256 3f1c...e9
+volant runtime install --from runtime.tar.gz --sha256 3f1c...e9
 ```
 
-`install --from` refuses a file made for another platform or another runtime, and names both. The file is not checked against a hash: it is trusted like any file you copy yourself, and installing it runs the Python inside it. Copy it over a channel you trust.
+`install --from` refuses a file made for another platform or another runtime, and names both. `pack` prints the SHA-256 of the file on a `sha256` line. With `--sha256 HASH`, `install --from` refuses a file whose hash differs, before unpacking it, and shows both hashes. Without it the install prints the hash of the file it used, so you can compare it yourself. Installing a pack runs the Python inside it, so pass the hash you got from the machine that made it.
 
 ## Turning it off
 

@@ -131,6 +131,7 @@ pub fn payload_key(module: &str) -> &str {
 /// one: it is a typo in a namespace ansible-core owns whole, and nothing can supply it.
 pub fn is_resolved_name(module: &str) -> bool {
     !module.is_empty()
+        && !crate::playbook::names_no_action(module)
         && !module.starts_with("ansible.builtin.")
         && !volant_protocol::modules::is_builtin(module)
 }

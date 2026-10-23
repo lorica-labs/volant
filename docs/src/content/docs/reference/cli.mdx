@@ -215,7 +215,7 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 `volant runtime` manages the Python and ansible-core that Volant installs for itself. [The managed runtime](/reference/runtime/) describes what each step does.
 
 ```sh
-volant runtime install [--collections NAME_OR_FILE...] [--from FILE]
+volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
 volant runtime pack FILE
 volant runtime status
 volant runtime path
@@ -227,7 +227,11 @@ volant runtime remove [ID | --all]
 </Option>
 
 <Option name="install --from" arg="FILE">
-  Install from a file `volant runtime pack` wrote, with no download. The platform has to match.
+  Install from a file `volant runtime pack` wrote, with no download. The platform has to match. It prints the SHA-256 of the file on a `sha256` line.
+</Option>
+
+<Option name="install --sha256" arg="HASH">
+  With `--from`, refuse the file before unpacking it when its SHA-256 differs from `HASH`. The error shows both hashes and the exit code is 1.
 </Option>
 
 <Option name="remove --all">

@@ -1200,8 +1200,10 @@ fn ssh_a_command_that_must_not_escalate_runs_as_the_connection_user() {
     // would otherwise make it as root, and the plain link could not put its agent there.
     std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
     std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
-    let out = volant_within(
+    let local = private_local_tmp(&dir);
+    let out = volant_env_within(
         &["playbook", "-i", &inv, &fixture("ssh/sudoable/whoami.yml")],
+        &[("ANSIBLE_LOCAL_TEMP", &local)],
         Duration::from_secs(120),
     );
     let text = both(&out);
@@ -1240,7 +1242,8 @@ echo '{{}}'
         ),
     );
     // Well short of the hung script's sleep: a job nobody stops fails the run here.
-    let out = volant_within(
+    let local = private_local_tmp(&dir);
+    let out = volant_env_within(
         &[
             "playbook",
             "-i",
@@ -1249,6 +1252,7 @@ echo '{{}}'
             &format!("fact_dir={}", facts.display()),
             &fixture("ssh/parallel-facts.yml"),
         ],
+        &[("ANSIBLE_LOCAL_TEMP", &local)],
         Duration::from_secs(40),
     );
     let text = both(&out);
@@ -1466,6 +1470,14 @@ fn assert_passwordless_sudo(why: &str) {
         "{why}, and 'sudo -n true' failed: {}",
         String::from_utf8_lossy(&sudo.stderr)
     );
+}
+
+/// A controller-side temporary directory of the test's own for ansible-core in the helper, so its
+/// `ansible-local-*` directory never shows in the `~/.ansible/tmp` another test counts.
+fn private_local_tmp(dir: &Path) -> String {
+    let local = dir.join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    local.display().to_string()
 }
 
 /// [`volant`], ended at a deadline. A plugin is several sub-tasks over one link, and a sub-task

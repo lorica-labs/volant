@@ -8,6 +8,7 @@
 //! Action plugins run in helpers of their own, one per action running at that moment. While a
 //! plugin runs, its helper may ask the controller to act on the host, and waits for the reply.
 
+use std::collections::HashMap;
 use std::fmt;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, MutexGuard};
@@ -63,6 +64,16 @@ pub struct Bridge {
     actions: Mutex<Actions>,
     /// The plugin directories of a bridge made by [`Bridge::late`].
     dirs: Arc<Mutex<Vec<PathBuf>>>,
+    /// What each lookup reads of the play's variables, asked of the helper once per name.
+    needs: Mutex<HashMap<String, LookupNeeds>>,
+}
+
+/// The variables a lookup plugin reads: the names it asks for, or all of them when it
+/// enumerates or hands them on.
+#[derive(Debug, Clone, Default)]
+pub struct LookupNeeds {
+    pub names: Vec<String>,
+    pub all: bool,
 }
 
 impl fmt::Debug for Bridge {
@@ -90,6 +101,7 @@ impl Bridge {
             state: Mutex::new((State::Idle, 0)),
             actions: Mutex::new(Actions::default()),
             dirs,
+            needs: Mutex::default(),
         })
     }
 
@@ -134,6 +146,7 @@ impl Bridge {
             state: Mutex::new((State::Idle, 0)),
             actions: Mutex::new(Actions::default()),
             dirs: Arc::default(),
+            needs: Mutex::default(),
         })
     }
 
@@ -171,6 +184,45 @@ impl Bridge {
             name,
             json!({"kind": kind.as_str(), "name": name, "args": args, "kwargs": kwargs, "vars": vars}),
         )
+    }
+
+    /// The variables the lookup `name` reads, so that a call sends those and not the whole host.
+    ///
+    /// # Errors
+    /// Why the helper could not say.
+    pub fn lookup_needs(&self, name: &str) -> Result<LookupNeeds, BridgeError> {
+        let cache = || {
+            self.needs
+                .lock()
+                .unwrap_or_else(std::sync::PoisonError::into_inner)
+        };
+        if let Some(known) = cache().get(name) {
+            return Ok(known.clone());
+        }
+        let answer = self.request(
+            PluginKind::Lookup,
+            name,
+            json!({"kind": "lookup_needs", "name": name, "args": [name], "kwargs": {}}),
+        )?;
+        let shape = || {
+            BridgeError::Helper(format!(
+                "the Python helper answered the variables of the lookup '{name}' in a shape it should not"
+            ))
+        };
+        let names = answer
+            .get("names")
+            .and_then(Value::as_array)
+            .ok_or_else(shape)?
+            .iter()
+            .map(|n| n.as_str().map(str::to_string).ok_or_else(shape))
+            .collect::<Result<_, _>>()?;
+        let all = answer
+            .get("all")
+            .and_then(Value::as_bool)
+            .ok_or_else(shape)?;
+        let needs = LookupNeeds { names, all };
+        cache().insert(name.to_string(), needs.clone());
+        Ok(needs)
     }
 
     /// Whether ansible-core has a filter or test of that name, without running it.

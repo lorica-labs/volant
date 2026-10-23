@@ -4320,6 +4320,100 @@
   {
     "case": {
       "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}",
+      "vars": {
+        "example_a": {
+          "x": 1
+        },
+        "example_b": {
+          "y": 2
+        }
+      }
+    },
+    "result": {
+      "x": 1,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', '^example_[ab]$', pattern_type='regex') }}",
+      "vars": {
+        "example_a": {
+          "x": 1
+        },
+        "example_b": {
+          "y": 2
+        },
+        "example_c": {
+          "z": 3
+        }
+      }
+    },
+    "result": {
+      "x": 1,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix', initial_value={'w': 0}) }}",
+      "vars": {
+        "example_a": {
+          "x": 1
+        },
+        "example_b": {
+          "y": 2
+        }
+      }
+    },
+    "result": {
+      "w": 0,
+      "x": 1,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}",
+      "vars": {
+        "example_a": {
+          "x": "{{ 1 + 1 }}"
+        },
+        "example_b": {
+          "y": 2
+        }
+      }
+    },
+    "result": {
+      "x": 2,
+      "y": 2
+    }
+  },
+  {
+    "case": {
+      "bridge": true,
+      "template": "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}",
+      "vars": {
+        "example_a": [
+          1
+        ],
+        "example_b": [
+          2
+        ]
+      }
+    },
+    "result": [
+      1,
+      2
+    ]
+  },
+  {
+    "case": {
+      "bridge": true,
       "template": "{{ r is finished }}",
       "vars": {
         "r": {

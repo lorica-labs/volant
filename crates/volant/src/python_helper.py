@@ -722,6 +722,74 @@ def inventory(path):
         display._warning, display.v = said, spoke
 
 
+def lookup_needs(name):
+    """The variables the lookup `name` reads off its `variables` argument: the names it asks for
+    by literal key, and the variables its settings name, or `all` when it lists them or hands
+    them on, which this cannot follow. Read from the plugin's source, so that a call sends what
+    is read and not every variable of the host."""
+    import ast
+
+    from ansible import constants
+    from ansible.plugins.loader import lookup_loader
+
+    nothing = {"names": [], "all": False}
+    everything = {"names": [], "all": True}
+    if not CALL_NAME.match(name):
+        return nothing
+    try:
+        context = lookup_loader.find_plugin_with_context(name)
+        if not context.resolved:
+            return nothing
+        with open(context.plugin_resolved_path, encoding="utf-8") as source:
+            tree = ast.parse(source.read())
+    except Exception:
+        return everything
+    names = set()
+    try:
+        names.update(constants.config.get_plugin_vars("lookup", context.plugin_resolved_name))
+    except Exception:
+        pass
+    parents = {}
+    for node in ast.walk(tree):
+        for child in ast.iter_child_nodes(node):
+            parents[child] = node
+
+    def literal(node):
+        return isinstance(node, ast.Constant) and isinstance(node.value, str)
+
+    for function in ast.walk(tree):
+        if not isinstance(function, (ast.FunctionDef, ast.AsyncFunctionDef)):
+            continue
+        if "variables" not in [a.arg for a in function.args.args + function.args.kwonlyargs]:
+            continue
+        for use in ast.walk(function):
+            if not (isinstance(use, ast.Name) and use.id == "variables"):
+                continue
+            up = parents.get(use)
+            if isinstance(up, ast.Subscript) and up.value is use and literal(up.slice):
+                names.add(up.slice.value)
+            elif isinstance(up, ast.Attribute) and up.value is use and up.attr in ("get", "pop"):
+                call = parents.get(up)
+                if not (isinstance(call, ast.Call) and call.args and literal(call.args[0])):
+                    return everything
+                names.add(call.args[0].value)
+            elif isinstance(up, ast.Compare) and use in up.comparators and literal(up.left):
+                names.add(up.left.value)
+            elif isinstance(up, ast.keyword) and up.arg == "var_options":
+                continue
+            elif (
+                isinstance(up, ast.Call)
+                and isinstance(up.func, ast.Attribute)
+                and up.func.attr == "find_file_in_search_path"
+            ):
+                continue
+            else:
+                return everything
+    if "available_variables" in ast.unparse(tree):
+        return everything
+    return {"names": sorted(names), "all": False}
+
+
 def call(request):
     """One filter, test or lookup, run through ansible-core's own Jinja environment so its
     argument handling, error text and `errors`/`wantlist` shaping are the reference's."""
@@ -738,6 +806,8 @@ def call(request):
         return {"value": action_groups(request["args"])}
     if kind == "actions":
         return {"value": actions(request["args"])}
+    if kind == "lookup_needs":
+        return {"value": lookup_needs(request["args"][0])}
     if kind not in EXPRESSIONS:
         return {"error": {"kind": "plugin", "message": "unknown plugin kind '%s'" % kind}}
     # Jinja's own sentence for a filter or a test, ansible-core's for a lookup.

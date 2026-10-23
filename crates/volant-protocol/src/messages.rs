@@ -213,6 +213,11 @@ pub struct AsyncJob {
     pub limit: u64,
     /// Where the job's status file goes, `~` not yet expanded (`ansible_async_dir`).
     pub dir: String,
+    /// The module runs in check mode. Only a job an action plugin starts (`wrap_async`) says so:
+    /// the reference's `async_wrapper` runs it in check mode, where a task's own `async` is
+    /// refused. Sent apart from the arguments, which the agent refuses a job in check mode for.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub check_mode: bool,
 }
 
 /// Which code ran a task that carries a Python payload. A task without one (`command`, `shell`,

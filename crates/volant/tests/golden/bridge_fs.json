@@ -4,8 +4,9 @@
     "a.txt": "hi\n",
     "b.txt": "there\n",
     "x.ini": "[s]\nk = v1\n",
-    "x.csv": "k,v\nr,val\n"
+    "x.csv": "k,v\nr,val\n",
+    "tree/f.txt": "in tree\n"
   },
-  "dirs": ["sub"],
+  "dirs": ["sub", "tree", "tree/inner"],
   "links": {"ln": "a.txt", "dangling": "nowhere"}
 }

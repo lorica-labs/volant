@@ -849,7 +849,7 @@ fn the_bridge_runs_what_only_ansible_core_can(
         _ => PluginKind::Lookup,
     };
     let vars = serde_json::json!({"x": "{{ 1 + 1 }}", "y": "Y"});
-    let bridge = Bridge::under(python, Vec::new());
+    let bridge = Bridge::under(python.clone(), Vec::new());
     let got = bridge.call(
         kind,
         name,
@@ -912,14 +912,27 @@ fn every_bridge_case_matches_the_reference() {
     }
     // Safety: nextest runs each test in its own process; nothing else reads the environment here.
     unsafe { std::env::set_var("VOLANT_GOLDEN_ENV", "golden-env-value") };
-    let templar = Templar::with_bridge(dir.clone(), Some(Bridge::under(python, Vec::new())));
+    let templar =
+        Templar::with_bridge(dir.clone(), Some(Bridge::under(python.clone(), Vec::new())));
     let entries: Vec<Value> =
         serde_json::from_str(include_str!("golden/expected.json")).expect("expected.json parses");
     let mut failures = Vec::new();
     let mut ran = 0;
+    let mut skipped: Vec<String> = Vec::new();
     for entry in entries.iter().filter(|e| e["case"]["bridge"] == true) {
-        ran += 1;
         let case = &entry["case"];
+        // A row names the Python packages its recording imported; one this interpreter lacks is
+        // skipped by name instead of failing for a reason that is not Volant's.
+        let missing = missing_packages(&python, case);
+        if !missing.is_empty() {
+            skipped.push(format!(
+                "{} (needs {})",
+                case["template"],
+                missing.join(", ")
+            ));
+            continue;
+        }
+        ran += 1;
         let vars: Map<String, Value> = case
             .get("vars")
             .and_then(Value::as_object)
@@ -956,6 +969,9 @@ fn every_bridge_case_matches_the_reference() {
             ));
         }
     }
+    for row in &skipped {
+        eprintln!("skipped: {row}");
+    }
     assert!(ran >= 80, "{ran} bridge cases: cases.yml lost some");
     assert!(
         failures.is_empty(),
@@ -967,6 +983,22 @@ fn every_bridge_case_matches_the_reference() {
 "
         )
     );
+}
+
+/// The Python packages a row's `needs` names that `python` cannot import.
+fn missing_packages<'a>(python: &std::path::Path, case: &'a Value) -> Vec<&'a str> {
+    case["needs"]
+        .as_array()
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .filter(|package| {
+            !std::process::Command::new(python)
+                .args(["-c", &format!("import {package}")])
+                .output()
+                .is_ok_and(|out| out.status.success())
+        })
+        .collect()
 }
 
 /// A local action plugin that asks the controller for each thing a plugin may ask of the host,
@@ -1033,7 +1065,7 @@ class ActionModule(ActionBase):
     "Command { cmd: \"/bin/sh -c 'echo hi && sleep 0'\", stdin: None, sudoable: false }",
     "PutFile { local: \"/local/in\", remote: \"/tmp/ansible-tmp-1/in\", mode: None }",
     "FetchFile { remote: \"/tmp/ansible-tmp-1/in\", local: \"/local/out\" }",
-    "Module { name: \"ansible.builtin.ping\", args: Object {\"data\": String(\"x\"), \"_ansible_module_name\": String(\"ansible.builtin.ping\")}, files: [] }",
+    "Module { name: \"ansible.builtin.ping\", args: Object {\"data\": String(\"x\"), \"_ansible_module_name\": String(\"ansible.builtin.ping\")}, files: [], job: None }",
     "HostVar { host: \"other\" }",
     "Tmp(Remove { path: \"/tmp/ansible-tmp-1\" })",
 ], Ok(serde_json::json!({"rc": 0, "stdout": "hi\n", "module": {"ping": "x"}, "other": 7, "args": {"k": "{{ a }}"}})))]

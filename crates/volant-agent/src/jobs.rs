@@ -92,13 +92,20 @@ pub fn start(task: &Task, job: &AsyncJob) -> TaskResult {
             dir.display()
         ));
     }
+    let mut task = Task {
+        job: None,
+        ..task.clone()
+    };
+    if job.check_mode {
+        task.args.insert(
+            volant_protocol::modules::CHECK_MODE_ARG.into(),
+            Value::Bool(true),
+        );
+    }
     let spec = Spec {
         limit: job.limit,
         dir: dir.clone(),
-        task: Task {
-            job: None,
-            ..task.clone()
-        },
+        task,
     };
     let jid = match spawn_detached("--async-job", &spec).and_then(first_line) {
         Ok(jid) => jid,

@@ -1104,7 +1104,7 @@ fn the_bridge_runs_action_plugins(
                 Ask::Tmp(TmpOp::Make { .. }) => serde_json::json!("/tmp/ansible-tmp-1"),
                 Ask::Command { .. } => serde_json::json!({"rc": 0, "stdout": "hi\n", "stderr": ""}),
                 Ask::Module { .. } => serde_json::json!({"ping": "x"}),
-                Ask::HostVar { .. } => serde_json::json!({"v": 7}),
+                Ask::HostVar { .. } => serde_json::json!({"vars": {"v": 7}, "trusted": true}),
                 _ => Value::Null,
             };
             asked.push(format!("{ask:?}"));

@@ -52,8 +52,8 @@ pub enum TmpOp {
 }
 
 /// The controller's answer to an [`Ask`]. For a `Command` the value is `{rc, stdout, stderr}`,
-/// for a `Module` its result, for `Tmp(Make)` the path, for a `HostVar` the variables or `null`
-/// when there is no such host.
+/// for a `Module` its result, for `Tmp(Make)` the path, for a `HostVar` `{vars, trusted}` (the
+/// variables, and whether the helper may render them) or `null` when there is no such host.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Reply {
     Value(Value),

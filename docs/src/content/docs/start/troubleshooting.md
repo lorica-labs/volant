@@ -7,8 +7,8 @@ Start from the exit code. It tells you whether the run stopped before it touched
 
 | Code | What happened | Where to look |
 |---|---|---|
-| 4, nothing ran | The playbook stopped before the first connection. It does not parse, or it uses something this release does not support yet. | The message above the code. See [Stopped before the run](#stopped-before-the-run). |
-| 2, 4 or 6 after a recap | A host failed (2), a host was unreachable (4), or both (6). | The `fatal:` line of the task, then [Failed during the run](#failed-during-the-run). |
+| 4, with no recap | The playbook stopped before the first connection. It does not parse, or it uses something this release does not support yet. | The message above the code. See [Stopped before the run](#stopped-before-the-run). |
+| 2, 4 or 6, with a recap | A host failed (2), a host was unreachable (4), or both (6). | The `fatal:` line of the task, then [Failed during the run](#failed-during-the-run). |
 | 1 | A role, a playbook or a host pattern was not found. | The file or the name the message quotes. |
 
 [Exit codes](/reference/exit-codes/) lists every code.
@@ -26,7 +26,7 @@ Most of what this release cannot run is named before Volant connects to anything
 | `become_method 'NAME' is not supported yet` | Use `sudo` or `su`. This one exits with 2. |
 | `the role 'NAME' was not found in ...` | The message lists the directories it searched. Add the role's directory to `roles_path`. This one exits with 1. |
 
-[What is not supported yet](/playbooks/preflight/) explains the check, and [Will my playbook run?](/start/compatibility/) shows how to check a whole project without running it.
+[Will my playbook run?](/start/compatibility/#what-it-refuses-today) lists these refusals and shows how to check a whole project without running it. [The pre-flight check](/internals/preflight/) explains how the check works.
 
 ## Failed during the run
 
@@ -53,6 +53,18 @@ ansible-playbook -i inventory.ini site.yml --limit web1
 ```
 
 If Ansible fails the same way, the problem is in the playbook or on the host. If only Volant fails, or the two give different results, that is a bug in Volant. You can keep the play under `ansible-playbook` while it is fixed.
+
+## Go back to ansible-playbook
+
+The same files run under `ansible-playbook` unchanged. Volant adds nothing to your playbooks, roles, inventories or `ansible.cfg`, so there is nothing to convert back.
+
+On the hosts, the only thing left is the cached agent: a directory called `volant-agent-<version>-<uid>` in `~/.ansible/tmp`, and a `volant-blobs-<version>-<uid>` directory beside it if a run used Python modules. To remove them, delete them on each host, as the account the run used:
+
+```sh
+ssh web1 'rm -rf ~/.ansible/tmp/volant-*'
+```
+
+A host where tasks ran with `become` holds a second copy in the home directory of the account it escalated to. Run the same command as that account. To remove Volant from the controller as well, see [Uninstall](/start/installation/#uninstall). [What Volant leaves on your machines](/#what-volant-leaves-on-your-machines) lists everything.
 
 ## Report it
 

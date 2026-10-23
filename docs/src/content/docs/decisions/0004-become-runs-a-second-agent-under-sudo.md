@@ -29,6 +29,6 @@ The controller opens one agent connection per (host, target user). A task with `
 
 ## Update, 2026-10-24
 
-`su` is supported since 2026-10-16 ([#333](https://github.com/lorica-labs/volant/pull/333)), and over a `local` connection since 2026-10-23 ([#755](https://github.com/lorica-labs/volant/pull/755)). It starts the agent the same way as `sudo`, which is the extension the last consequence above expected, and it needs no protocol change. `doas`, `pbrun` and the other methods are still refused. [Privilege escalation](/hosts/become/) describes both methods.
+`su` is supported since 2026-10-16 ([#333](https://github.com/lorica-labs/volant/pull/333)), and over a `local` connection since 2026-10-23 ([#755](https://github.com/lorica-labs/volant/pull/755)). It starts the agent the same way as `sudo`, which is the extension the last consequence above expected, and it needs no protocol change. `doas`, `pbrun` and the other methods are still refused. [Privilege escalation](/hosts/connections/#become) describes both methods.
 
 The bound on live connections changed twice after this record. [ADR 0005](/decisions/0005-fork-permits-span-host-local-batches/) tied them to the fork permit. Since 2026-09-22 ([#178](https://github.com/lorica-labs/volant/pull/178)) a host holds its own link plus at most one escalated link, whatever the number of target users in the play. An escalation to a different user replaces the escalated link in hand.

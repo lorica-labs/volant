@@ -6,6 +6,8 @@ description: An opt-in setting that lets each host run ahead through tasks that 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 import HostTimeline from '../../../components/HostTimeline.astro';
 
+Batching lets each host run ahead through the tasks that do not depend on other hosts, so a play over many hosts finishes sooner. It is opt-in: it is off unless you turn it on.
+
 By default Volant runs a play the way Ansible's `linear` strategy does: the hosts of a batch meet in front of every task. That guarantee lets a playbook depend on things its tasks never mention. One host can write a file another host reads later, or restart a service another host connects to. None of that shows in the text of a task, so the only safe assumption is that any task may depend on the one before it, on every host.
 
 This page covers the default `linear` strategy. Under `strategy: free` and `host_pinned` each host runs at its own pace, `run_once`, `any_errors_fatal` and `max_fail_percentage` are ignored with a warning, and a `pause` or `add_host` task stops the run. The hosts meet only at the `meta` tasks that act on the whole batch (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` and `refresh_inventory`), at handlers and at dynamic includes, whatever `batching` says. See [Other strategies](/playbooks/how-a-play-runs/#other-strategies).
@@ -40,7 +42,7 @@ Batching decides from the playbook's text. A dependency that the text never spel
 - a file on a host named literally, a shared filesystem, or a database or queue where two hosts' tasks meet;
 - anything a `shell` or `command` task does to another machine.
 
-A computed read such as `vars[name]` or `lookup('vars', name)` keeps the synchronization point, since the text cannot say which host it reads. Under the reference, and under Volant's default, every task is a barrier, so these orderings hold without anyone writing them down. Turn batching on only for plays whose hosts do not depend on each other in these ways.
+A computed read such as `vars[name]` or `lookup('vars', name)` keeps the synchronization point, since the text cannot say which host it reads. Under ansible-core, and under Volant's default, every task is a synchronization point, so these orderings hold without anyone writing them down. Turn batching on only for plays whose hosts do not depend on each other in these ways.
 
 ## Turning it on
 

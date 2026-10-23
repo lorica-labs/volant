@@ -5,7 +5,7 @@ description: Check an existing Ansible project against this release in a few sec
 
 import { Steps, Aside } from '@astrojs/starlight/components';
 
-Volant loads the whole ansible-core 2.19 grammar, so your playbook parses here as it parses under Ansible. Most of what this release does not support yet is named before the first connection, and the run stops there. You find out in seconds. The [known gaps](#known-gaps) below are the exceptions: a run can ignore a setting or give a wrong result there without an error.
+To find out whether a playbook runs, run `--syntax-check` on it, then run it on one host. Volant reads the whole ansible-core 2.19 grammar, so your playbook parses here as it parses under Ansible. Before it connects to anything, a second check, the pre-flight check, looks for what this release does not support yet and stops the run with a message that names it. The [known gaps](#known-gaps) below are the exceptions: a run can ignore a setting or give a wrong result there without an error.
 
 ## Check a project
 
@@ -20,21 +20,33 @@ Volant loads the whole ansible-core 2.19 grammar, so your playbook parses here a
 
    If the task list matches what `ansible-playbook --list-tasks` prints, Volant compiled your roles, imports and tags the same way.
 
-2. Ask for a real run against one host you can afford to touch:
+2. Ask for a real run against one host you can afford to touch. `--check --diff` leaves the host as it is, except for the cached agent, so it is a safe first run:
 
    ```sh
+   volant playbook -i inventory.ini site.yml --limit test1 --check --diff
    volant playbook -i inventory.ini site.yml --limit test1
    ```
 
-   Most of what this release cannot execute stops the run before it connects. The message names the module, the keyword or the value, and the run exits with code 4.
+   Most of what this release cannot execute stops the run before it connects. The message names the module, the keyword or the value, and the run exits with code 4. [What it refuses today](#what-it-refuses-today) lists the messages.
 
 3. Fix or wait. What is not supported yet is listed in [Keywords](/reference/keywords/), [Modules](/reference/modules/) and the [known gaps](#known-gaps) below, and most have a workaround.
 
 </Steps>
 
 <Aside type="note">
-A file that only a dynamic `include_tasks` or `include_role` names is read when a host reaches that statement, so an unsupported module or keyword inside it stops the run at that point instead of before it. See [Includes and imports](/playbooks/includes/).
+A file that only a dynamic `include_tasks` or `include_role` names is read when a host reaches that statement, so an unsupported module or keyword inside it stops the run at that point instead of before it. See [Roles, includes and imports](/playbooks/roles/).
 </Aside>
+
+## Questions people ask
+
+| Question | Answer |
+|---|---|
+| Does `community.general` work? | Yes, once it is installed. Volant does not install a collection during a run, so run `volant runtime install --collections community.general` first. A plugin that needs a Python package the managed runtime does not carry, such as the `json_query` filter with `jmespath`, fails. Use your own Python with `VOLANT_PYTHON` for those. See [The managed runtime](/reference/runtime/#collections). |
+| Does `copy` work? | Yes. The controller reads the file, or takes `content:`, and sends it to the host. A directory as `src` works too. See [Modules](/reference/modules/). |
+| Does `async` work? | Yes: `async`, `poll`, and `poll: 0` with `async_status`. A module that ansible-core cannot run under `async` fails on each host with `This action (<name>) does not support async.` See [Running plays](/playbooks/how-a-play-runs/#async-tasks). |
+| Does `--diff` work? | Yes, with `--check` or alone. A host needs Python for `apt`, `user`, `group`, `file`, `lineinfile` and `systemd` when a run asks for a check or a diff. See [Check mode, diff and listings](/playbooks/check-and-diff/). |
+| Do `become`, vault and `ansible.cfg` work? | `become` through `sudo` or `su`, vault and `ansible.cfg` work. `doas` and other methods do not. See [Connections and become](/hosts/connections/). |
+| Do plugins of my own work? | Not yet. Action plugins of your own stop the run, and `callback_plugins/` and `vars_plugins/` are ignored. See the [known gaps](#known-gaps). |
 
 ## At a glance
 
@@ -45,11 +57,11 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | Blocks | `block`, `rescue`, `always` | |
 | Reuse | roles and dependencies, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
 | Delegation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
-| Modules | `command`, `shell`, `raw`, controller modules, `copy`, `dnf`, `yum`, `fetch`, `package`, `reboot`, `service`, `template`, `unarchive`, `uri`, `script`, most ansible-core Python modules, modules from installed collections and their action plugins | a collection's action plugin that needs Windows or a network device, custom action plugins |
+| Modules | the modules of ansible-core for Linux hosts, including `copy`, `template`, `dnf`, `service`, `uri` and `reboot`, and the modules of installed collections with their action plugins | a collection's action plugin that needs Windows or a network device, action plugins of your own |
 | Inventories | INI, YAML and TOML files, directories, scripts, `constructed`, `generator` and collection plugins, several `-i`, `group_vars`, `host_vars`, the `jsonfile` fact cache | none left |
 | Connections | `ssh` with keys, an ssh-agent or a password (`-k` or `ansible_password`, needs OpenSSH 8.4 or later), `local` | other connection plugins, Windows, network devices |
 | Escalation | `become` through `sudo` or `su`, with or without a password | `doas` and other methods |
-| Templating | Jinja2 with the common Ansible filters, tests and lookups, `!unsafe`, filters and lookups from collections | some filter arguments |
+| Templating | Jinja2 with the Ansible filters, tests and lookups, `!unsafe`, filters and lookups from collections | some filter arguments, listed in [Templating](/variables/templating/) |
 | Run modes | normal runs, [`--check` and `--diff`](/playbooks/check-and-diff/), [vault](/variables/vault/), `--start-at-task`, `--step`, the four listing commands | none left |
 
 ## Common blockers and what to do
@@ -60,8 +72,28 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | A collection that is not installed | Volant does not install one during a run. It asks the controller's ansible-core what is installed, before the first connection. | Run `volant runtime install --collections NAME`, the command the error names. See [The managed runtime](/reference/runtime/#collections) and [Modules from collections](/internals/python/#modules-from-collections). |
 | No Python with ansible-core on the controller | Volant installs its own on first need, with `curl` or `wget` and `tar`. | Nothing, or `volant runtime install` ahead of time. Without a network, use `volant runtime pack` and `install --from`. |
 | `apt`, `user`, `group` or `file` under `--check` or `--diff` on a host with no Python | These modules answer through Python on the host when the run asks for a check or a diff. | Install Python on the host, or run the play without `--check` and `--diff`. |
-| `!!binary`, a duplicate anchor, or a date or a set as a typed value | The value model has no bytes, no date and no set. A date loads as its ISO text, a `!!set`, `!!omap` or `!!pairs` as the mapping or list it is written as. `!!binary` stops the load, and a second `&anchor` of the same name is accepted. | Write the value as a plain string, list or mapping, and give each anchor its own name. |
-| Arithmetic on an integer wider than 128 bits | The operators `+`, `-`, `*`, `/`, `//`, `%` and `**` and the `abs` and `round` filters refuse a wide operand. See [Templating](/variables/templating/#not-there-yet). | Do the arithmetic in a module or in `command` with `python3 -c`, and keep the wide value as text. |
+| `!!binary`, a duplicate anchor, or a date or a set as a typed value | Volant has no type for bytes, dates or sets. A date loads as its ISO text, a `!!set`, `!!omap` or `!!pairs` as the mapping or list it is written as. `!!binary` stops the load, and a second `&anchor` of the same name is accepted. | Write the value as a plain string, list or mapping, and give each anchor its own name. |
+| Arithmetic on an integer wider than 128 bits | The operators `+`, `-`, `*`, `/`, `//`, `%` and `**` and the `abs` and `round` filters refuse a wide operand. See [Templating](/variables/templating/). | Do the arithmetic in a module or in `command` with `python3 -c`, and keep the wide value as text. |
+
+## What it refuses today
+
+The pre-flight check stops the run before the first connection, before any banner and before any recap. Without it, a keyword that slipped past would be ignored in silence, and the run would report success after skipping what you asked for. [The pre-flight check](/internals/preflight/) describes how it works.
+
+| What | Message shape | Exit code |
+|---|---|---|
+| A `strategy` other than `linear`, `free`, `host_pinned` and `debug` | `strategy 'x' is not supported yet` | 4 |
+| `until`, `retries` or `delay` on `include_tasks` or `include_role` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
+| A `pause` with a `prompt` and `seconds` or `minutes`, when standard input is a terminal | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
+| A module argument that ansible-core has and this release does not act on | `argument 'x' is not supported yet on 'module'`, with ` with 'v'` when only that value is refused | 4 |
+| `end_role` outside a role | `Cannot execute 'end_role' from outside of a role` | 4 |
+| A built-in module this release does not carry | `module 'x' is not available in this release` | 4 |
+| A string argument that is one template | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
+| A module or collection that does not resolve | `couldn't resolve module/action 'x' ...`, with the install command for a missing collection | 4 |
+| A collection module that needs an action plugin for Windows or a network device | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| A `become_method` other than `sudo` and `su` | `become_method 'x' is not supported yet` | 2 |
+| A role in `roles:` or `import_role` that nobody can find | `the role 'x' was not found in ...` | 1 |
+
+The `pause` refusal applies only to a step that always runs. A `when`, a `loop` or a `rescue` around it leaves the check to the moment the `pause` is reached. A run the check stops exits with code 4, the code Ansible uses for a playbook it cannot load. [Exit codes](/reference/exit-codes/) lists every code.
 
 ## Known gaps
 
@@ -71,10 +103,19 @@ These differ from `ansible-playbook` without a message before the run, or with a
 |---|---|
 | `callback_plugins/`, `vars_plugins/`, `stdout_callback`, `callbacks_enabled`, `result_format` | Ignored. The output is the default one. |
 | `volant check`, `inventory`, `vault`, `doc`, `config`, `galaxy` and ad-hoc commands | They do not exist. `volant` has `playbook` and `runtime`. |
-| A comparison written between two literals of types Python cannot order, such as `{{ 'a' < 1 }}` | It answers `false` or `true` where ansible-core fails with `'<' not supported between instances of 'str' and 'int'`. The template engine works out a comparison of literals before Volant sees it. With a variable on either side the comparison fails as in ansible-core. |
+| A comparison written between two literals of types Python cannot order, such as `{{ 'a' < 1 }}` | It answers `false` or `true` where ansible-core fails with `'<' not supported between instances of 'str' and 'int'`. The template library works out a comparison of literals before Volant sees it. With a variable on either side the comparison fails as in ansible-core. |
 | A task with `no_log: true` that fails | On purpose. Volant prints `[ERROR]: Task failed: Action failed: <error censored due to no log>` and nothing else of the cause. ansible-core 2.19.12 prints the cause: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, the error of the module, and the `<<< caused by >>>` blocks. That text can hold a secret, such as the `msg` of a `fail` that names a password. The [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) counts a secret that reaches a log or a terminal where `no_log` hides it in ansible-core as a vulnerability, so Volant hides it. The `fatal:` line, the registered result and the recap are the same in both. To read the cause, run the task without `no_log`. |
 | SIGTERM | On purpose. Volant stops cleanly: it cancels the running tasks, removes the directory that holds the connection password, prints the recap, and exits with code 99, as it does for Ctrl-C. `ansible-playbook` does not catch SIGTERM. It dies at once with code 143 and prints no recap. Measured with `kill -TERM` during a `command: sleep`: 99 under Volant, 143 under ansible-core 2.19.12. |
 
-[Templating](/variables/templating/#not-there-yet) lists the filters and arguments that fail. The [parity page](/reference/parity/) marks a filter `partial` when one of its arguments fails.
+[Templating](/variables/templating/) lists the filters and arguments that fail. The [parity page](/reference/parity/) marks a filter `partial` when one of its arguments fails.
 
 If a playbook behaves differently under Volant and `ansible-playbook` without being reported as unsupported, that is a bug. Please [open a compatibility report](https://github.com/lorica-labs/volant/issues/new?template=compat.yml) with a minimal playbook.
+
+## Look up a name
+
+When you need to know about one keyword, module, filter or option, open the reference page for it:
+
+- [Keywords](/reference/keywords/) lists every play, block, task and loop keyword and what Volant does with it.
+- [Modules](/reference/modules/) lists the modules that run in the agent, on the controller and through Python, with the arguments each one supports.
+- [Command line](/reference/cli/) lists every option of `volant playbook` and `volant runtime`.
+- [Parity](/reference/parity/) is the full matrix: each keyword, option and plugin of ansible-core 2.19.12, and each module, filter, test and lookup of the collections in the ansible 12.3.0 package, with a `runs`, `partial`, `not yet` or `later` status.

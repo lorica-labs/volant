@@ -1,56 +1,18 @@
 ---
-title: How a play runs
-description: How Volant turns a play into a list of steps, and how every host walks that list.
+title: Running plays
+description: In what order hosts and tasks run, how strategies, serial batches, the debugger, async tasks and prompts change that, and when a run stops.
 ---
 
 import { Aside } from '@astrojs/starlight/components';
-import Flow from '../../../components/Flow.astro';
+import HostTimeline from '../../../components/HostTimeline.astro';
 
-The pages in this section explain what each keyword does once Volant runs it. [Keywords](/reference/keywords/) says which keywords this release accepts. Each page ends with the places where Volant deliberately behaves differently from ansible-core 2.19.12, and why.
-
-## From a tree to a list
-
-You write a play as a tree: sections, roles, blocks, tasks. Volant flattens it once, before it connects to anything, into a single numbered list of steps. Every host then walks that same list, in the order ansible-core runs it:
-
-<Flow
-  lanes={[
-    {
-      steps: [
-        { text: 'pre_tasks' },
-        { text: 'flush', kind: 'point' },
-        { text: 'roles, each after its dependencies' },
-        { text: 'tasks' },
-        { text: 'flush', kind: 'point' },
-        { text: 'post_tasks' },
-        { text: 'flush', kind: 'point' },
-      ],
-    },
-  ]}
-/>
-
-The three handler flush points are always there. Whether a play has handlers at all is only known once its roles are read from disk, so the compiler lays out all three. A flush with nothing to run prints nothing.
-
-Keywords written on a play, a role entry or a block are folded into each task underneath while the play compiles, and the innermost value wins. A `become: true` on the play and a `become: false` on one task give exactly what Ansible gives, and the run does not have to carry the tree around.
-
-Blocks survive the flattening as spans over the list. A small jump table over those spans tells a host where to go after a step succeeds, fails, or is skipped. [Blocks](/playbooks/blocks/) covers what that means for `rescue` and `always`.
+This page answers one question: in what order do your hosts and tasks run, and what changes that order? It covers the default `linear` strategy, `serial` batches, the other strategies, the debugger, async tasks and prompts. [Keywords](/reference/keywords/) says which keywords this release accepts. Where Volant behaves differently from ansible-core 2.19.12, the last section says so.
 
 ## Hosts move together
 
 By default Volant follows Ansible's `linear` strategy: the hosts of a play meet in front of every task. No host starts task two until every host has finished task one, and the output arrives in task order because the run happens in task order.
 
-```mermaid
-sequenceDiagram
-  participant C as Controller
-  participant A as web1
-  participant B as web2
-  C->>A: task 1
-  C->>B: task 1
-  A-->>C: result
-  B-->>C: result
-  Note over C: every host finished task 1
-  C->>A: task 2
-  C->>B: task 2
-```
+<HostTimeline only="linear" />
 
 [Cross-host batching](/hosts/batching/) is an opt-in setting that lets each host run ahead through tasks that do not depend on the others.
 
@@ -99,6 +61,34 @@ A play's `timeout` is the default `timeout` of its tasks. `timeout`, `async`, `p
 
 See the [keyword reference](/reference/keywords/).
 
+## Serial batches
+
+`serial` splits a play's hosts into batches, in inventory order, and plays each batch in turn. Each batch gets its own banner, its own handler flushes and its own `run_once` election.
+
+```yaml
+- hosts: web
+  serial:
+    - 1       # one canary first
+    - "25%"   # then a quarter of the hosts at a time
+  tasks:
+    - command: /opt/app/upgrade.sh
+```
+
+| Value | Meaning |
+|---|---|
+| A number | That many hosts per batch. |
+| A string ending in `%` | A share of the whole host list, not of what is left. Truncated rather than rounded, and never less than one host. |
+| A list | One size per batch. The last element repeats once the list runs out. |
+| `0`, `-1`, `[]`, or more than the host count | One batch holding every host. |
+
+### When the run stops
+
+The run stops at the first batch that had live hosts and lost all of them, which is where Ansible stops too. The exit code is 2 when they failed and 4 when they all became unreachable.
+
+A batch whose hosts had already failed in an earlier play does not count as that. It prints its banner and the run carries on.
+
+Inside a batch, `ansible_play_batch` and the deprecated `play_hosts` name the batch, while `ansible_play_hosts` names the whole play. `vars_files` is rendered and read again for each batch.
+
 ## The debugger
 
 The debugger prompt opens after a failed task. Three settings turn it on:
@@ -125,18 +115,12 @@ An action that ansible-core runs under `async` runs here too. Any other action f
 
 `module_defaults` fills a module's missing arguments from the play, block or task, for the module's own name and for its group, such as `group/aws`. `collections` resolves short names the way ansible-core does.
 
-## Where the work happens
+## Differences from Ansible
 
-Templating happens on the controller. Each host renders its own copy of a task with its own variables, and the rendered task goes to that host's agent over a connection that stays open for the whole run. The agent runs it and streams the result back. The controller then applies `register`, `changed_when`, `failed_when` and `notify`, and prints the result line.
-
-Some modules never leave the controller: `debug`, `set_fact`, `assert`, `fail`, `pause`, `include_vars` and `validate_argument_spec`. See [Modules](/reference/modules/).
-
-A task written as `action: module=ping` names no action. It fails on the controller when a host reaches it, with exit 2, and a `rescue` or `ignore_errors` takes the failure.
-
-A loop renders each item when it reaches the item, so an item that fails to render fails alone. See [Loops and retries](/playbooks/loops/#rendering-each-item).
-
-The result line follows ansible-core 2.19's format. `failed` and `skipped` are left off the result, on `fatal:` lines and loop items too, since the line's prefix already says it. A module's `warnings` are printed as `[WARNING]:` lines and kept out of the registered value. A failed task registers `exception: "(traceback unavailable)"`, which the line never shows. When `when` skips every item of a loop, each item's `skipping:` line is followed by one `skipping: [host]` line for the task, and the recap counts the task once.
+- A `serial` that is not a number, such as `serial: abc` or `"50% "` with a trailing space, is rejected with exit code 4 and ansible-core's message. Ansible crashes with exit code 250, which is Ansible reporting a bug in itself rather than rejecting a playbook.
+- An undefined variable in `serial` is reported with ansible-core's prefix and Volant's own message, with the same exit code 4.
+- `play_hosts` holds what Ansible puts there, but Volant prints no deprecation warning for it.
 
 <Aside type="tip">
-The [architecture page](/internals/architecture/) follows the same run from the point of view of the source code.
+For how the engine builds and runs this order, see [How a play is compiled](/internals/architecture/#how-a-play-is-compiled) and [A run, end to end](/internals/architecture/#a-run-end-to-end).
 </Aside>

@@ -3,6 +3,8 @@ title: Loops and retries
 description: loop, with_items and loop_control, and how until, retries and delay repeat a task.
 ---
 
+This page answers how to repeat a task over a list of items with `loop` and `with_<lookup>`, and how to run a task again until it succeeds with `until`, `retries` and `delay`.
+
 ## Loops
 
 ```yaml
@@ -35,7 +37,7 @@ A builtin lookup is also accepted as `with_ansible.builtin.<name>` and `with_ans
 
 The controller's ansible-core says whether a name is a lookup, before the first connection. A `with_` name that is none fails the playbook with `'with_xyz' is not a valid attribute for a Task`, as in Ansible. A task with two loops fails with `duplicate loop in task: <name>`, and a `with_` key with no value with `you must specify a value when using with_<name>`.
 
-A lookup that raises fails the task with the plugin's own sentence. A native lookup (`file`, `unvault`, `vars`, `pipe`, `template` and `first_found`) fails with `The lookup plugin '<name>' failed: <reason>` and ansible-core's chain, also in a `when:` and in a template file. `vars` words it `No variable named '<name>' was found.`, with no plugin part. A loop value that is one template reading an undefined variable fails with `'name' is undefined`. A list whose element reads an undefined variable fails with the engine's sentence for it, without the chain that Ansible prints.
+A lookup that raises fails the task with the plugin's own sentence. A lookup that Volant runs itself, in Rust (`file`, `unvault`, `vars`, `pipe`, `template` and `first_found`) fails with `The lookup plugin '<name>' failed: <reason>` and ansible-core's chain, also in a `when:` and in a template file. `vars` words it `No variable named '<name>' was found.`, with no plugin part. A loop value that is one template reading an undefined variable fails with `'name' is undefined`. A list whose element reads an undefined variable fails with the engine's sentence for it, without the chain that Ansible prints.
 
 ## Rendering each item
 
@@ -66,7 +68,7 @@ A loop renders an item's arguments, `when`, keywords and label when it reaches t
 
 Both loop over a lookup, the way any `with_<name>` form does: `with_first_found` walks its terms until one names a file that exists, and `with_fileglob` collects every match of a glob pattern. `with_first_found` also searches a subdirectory of each search entry before the entry itself: `templates/` when the task's action names `template`, `vars/` when it names `include_vars`, `files/` otherwise, the same directory a plain `template:` or `include_vars:` task would search on its own.
 
-Finding nothing fails the task with the reference's own sentence, `No file was found when using first_found.`, unless the term is a mapping with `skip: true`, in which case the loop runs empty. A term that renders undefined is dropped rather than failing the whole lookup, which is what lets a role read a fact no host has set yet and still reach its `when`. A path either lookup finds that still holds a template marker (`{{`, `{%` or `{#`) is refused by name rather than rendered a second time.
+Finding nothing fails the task with ansible-core's own sentence, `No file was found when using first_found.`, unless the term is a mapping with `skip: true`, in which case the loop runs empty. A term that renders undefined is dropped rather than failing the whole lookup, which is what lets a role read a fact no host has set yet and still reach its `when`. A path either lookup finds that still holds a template marker (`{{`, `{%` or `{#`) is refused by name rather than rendered a second time.
 
 A path a lookup found on the controller is the playbook's own content; an item built in part from a host value, such as a term that reads `ansible_distribution`, is bound as data, the same as an item out of a `loop:` over a registered value.
 
@@ -100,6 +102,6 @@ A looping task retries each item on its own and finishes one item's attempts bef
 
 ## Differences from Ansible
 
-- An `until` expression that cannot be evaluated is reported with the reference's prefix and Volant's own message, the same way a failing `when` is.
+- An `until` expression that cannot be evaluated is reported with ansible-core's prefix and Volant's own message, the same way a failing `when` is.
 - `FAILED - RETRYING` for a task inside a role shows the task's own name rather than `role : name`.
 - A `loop_control.label` that fails for a reason other than an undefined variable, such as a lookup that raises, fails the task before any item runs. ansible-core ends the task after that item has run.

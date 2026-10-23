@@ -149,6 +149,76 @@ import geist from '@fontsource-variable/geist/files/geist-latin-wght-normal.woff
     if (search.value || status !== 'all') apply();
   }
 
+  // The full support matrix: one search over every table, with the matches listed together above
+  // them, so a reader looking for one name does not have to know which section holds it.
+  if (location.pathname.endsWith('/reference/parity/')) {
+    type Match = { name: string; kind: string; status: string; note: string };
+    const rows: Match[] = [];
+    for (const table of document.querySelectorAll<HTMLTableElement>('.sl-markdown-content table')) {
+      const heads = [...table.tHead!.rows[0].cells].map((cell) => cell.textContent!.trim());
+      if (heads[0] === 'Category') continue;
+      let heading: Element | null = table.closest('.sl-markdown-content > *');
+      while (heading && !heading.querySelector('h2, h3') && !heading.matches('h2, h3')) {
+        heading = heading.previousElementSibling;
+      }
+      const title = heading?.matches('h2, h3') ? heading : heading?.querySelector('h2, h3');
+      const kind = title?.textContent?.trim() ?? '';
+      for (const row of table.tBodies[0].rows) {
+        const cells = [...row.cells].map((cell) => cell.textContent!.trim());
+        rows.push(
+          heads[1] === 'Status'
+            ? { name: cells[0], kind, status: cells[1], note: cells[2] ?? '' }
+            : {
+                name: cells[0],
+                kind,
+                status: `version ${cells[1]}`,
+                note: cells.slice(2).map((value, i) => `${heads[i + 2]} ${value}`).join(', '),
+              },
+        );
+      }
+    }
+
+    const controls = document.createElement('div');
+    controls.className = 'kw-controls not-content';
+    controls.innerHTML =
+      '<input class="kw-search" type="search" placeholder="Find a module, filter, keyword, option or collection" aria-label="Find a name in the support matrix" />';
+    const results = document.createElement('div');
+    results.className = 'support-results not-content';
+    const first = document.querySelector('.sl-markdown-content h2, .sl-markdown-content .sl-heading-wrapper');
+    first?.before(controls, results);
+
+    const search = controls.querySelector<HTMLInputElement>('input')!;
+    search.value = new URL(location.href).searchParams.get('q') ?? '';
+    const escape = (text: string) =>
+      text.replace(/[&<>"]/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' })[c]!);
+    const show = () => {
+      const needle = search.value.trim().toLowerCase();
+      const url = new URL(location.href);
+      needle ? url.searchParams.set('q', search.value.trim()) : url.searchParams.delete('q');
+      history.replaceState(history.state, '', url);
+      if (!needle) {
+        results.replaceChildren();
+        return;
+      }
+      const found = rows.filter((row) => row.name.toLowerCase().includes(needle));
+      const shown = found.slice(0, 50);
+      results.innerHTML =
+        `<p class="support-count">${found.length === 0 ? 'No name matches.' : `${found.length} ${found.length === 1 ? 'match' : 'matches'}${found.length > shown.length ? `, the first ${shown.length} shown` : ''}.`}</p>` +
+        (shown.length
+          ? '<table><thead><tr><th>Name</th><th>Kind</th><th>Status</th><th>Note</th></tr></thead><tbody>' +
+            shown
+              .map(
+                (row) =>
+                  `<tr><td><code>${escape(row.name)}</code></td><td>${escape(row.kind)}</td><td>${escape(row.status)}</td><td>${escape(row.note)}</td></tr>`,
+              )
+              .join('') +
+            '</tbody></table>'
+          : '');
+    };
+    search.addEventListener('input', show);
+    show();
+  }
+
   const reveal = new IntersectionObserver(
     (entries) => {
       for (const entry of entries) {

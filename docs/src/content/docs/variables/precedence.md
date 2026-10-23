@@ -1,9 +1,11 @@
 ---
-title: Variable precedence
-description: Where variables come from, which source wins, and the magic variables Volant adds.
+title: Precedence and facts
+description: Which source wins when two define the same variable, the magic variables, and how facts are gathered, named and cached.
 ---
 
-When two sources define the same variable, the one further down this list wins. The order is ansible-core 2.19's, and each role layer was measured against its neighbors rather than taken from Ansible's documented numbering.
+This page answers two questions: which value a variable has when several sources set it, and where the facts about a host come from.
+
+When two sources define the same variable, the one further down this list wins. The order is ansible-core 2.19's, with each role layer measured against its neighbors.
 
 1. A role's `defaults/main.yml`
 2. `group_vars/all`, from the inventory directory then the playbook directory
@@ -40,14 +42,14 @@ A fixed set of magic variables sits on top of every host's view and always wins:
 | `group_names`, `groups` | This host's groups, and every group with its hosts. |
 | `hostvars` | Every host's variables, see below. |
 | `ansible_play_hosts`, `ansible_play_hosts_all` | The play's live hosts, and all of its hosts. |
-| `ansible_play_batch`, `play_hosts` | The hosts of the current [`serial` batch](/playbooks/serial/). `play_hosts` is deprecated. |
+| `ansible_play_batch`, `play_hosts` | The hosts of the current [`serial` batch](/playbooks/how-a-play-runs/#serial-batches). `play_hosts` is deprecated. |
 | `playbook_dir`, `inventory_dir`, `inventory_file` | Paths of the current run. |
 | `omit` | The placeholder that drops a module argument. |
 | `ansible_playbook_python` | The Python interpreter that runs ansible-core for Volant. Found when a template reads it, and undefined when none is found. |
 | `ansible_check_mode`, `ansible_diff_mode` | Whether the run has `--check` and `--diff`. A play's or a task's own `check_mode` or `diff` keyword does not change them. |
-| `ansible_run_tags`, `ansible_skip_tags` | The tags the run selects and skips, see [Tags and listings](/playbooks/tags/#ansible_run_tags-and-ansible_skip_tags). |
+| `ansible_run_tags`, `ansible_skip_tags` | The tags the run selects and skips, see [Check mode, diff and listings](/playbooks/check-and-diff/#ansible_run_tags-and-ansible_skip_tags). |
 | `ansible_forks` | The current `forks` value. |
-| `ansible_version` | The reference release Volant reproduces, see [decision record 0003](/decisions/0003-ansible-version-reports-the-reference-release/). |
+| `ansible_version` | The ansible-core release Volant reproduces, see [decision record 0003](/decisions/0003-ansible-version-reports-the-reference-release/). |
 | `volant_version` | Volant's own version. Test `volant_version is defined` to tell the two engines apart. |
 
 Inside a `rescue`, `ansible_failed_task` and `ansible_failed_result` are set as facts on the host that failed.
@@ -61,3 +63,53 @@ Every task also gets `ansible_search_path`, and a role's task gets `role_path`. 
 Every host reads one shared map rather than its own copy, so a task that names `hostvars` costs a lookup, not a copy of the inventory.
 
 A task that reads `hostvars`, `ansible_play_hosts` or `ansible_play_batch` waits for every host to reach it first, so it sees what Ansible would show at that point.
+
+## Facts
+
+Facts are what a host reports about itself, such as its name, distribution and addresses.
+
+```yaml
+- hosts: web
+  tasks:
+    - debug:
+        msg: "{{ ansible_hostname }} runs {{ ansible_facts.distribution }}"
+```
+
+Gathered facts rank above inventory variables and below the play's own variables, as the list at the top of this page shows.
+
+### When facts are gathered
+
+A play gathers facts unless it sets `gather_facts: false`. With `gathering = explicit` in `ansible.cfg`, only a play that writes `gather_facts` gathers. With `smart`, a host that has fresh facts in the [fact cache](/hosts/inventories/#the-fact-cache) is skipped. A `gather_facts` template renders once, when the play starts.
+
+Volant either runs ansible-core's own `setup` module through the [warm Python path](/internals/python/), or lets the agent (the small program Volant puts on each host) collect the facts itself, when the playbook provably reads nothing else. See [Native facts](#native-facts).
+
+Because `setup` can always fall back to its Python module, the controller needs ansible-core and the host needs a Python 3 interpreter. A run that needs Python only to gather facts does not install the [managed runtime](/reference/runtime/), so a controller with no usable ansible-core stops a play that gathers facts before the first connection, instead of carrying on without them. Set `gather_facts: false` on plays that do not need facts.
+
+`gather_subset` and `gather_timeout` work on a play, and on the `setup` module with `filter`, as in ansible-core.
+
+### Two names for each fact
+
+Each fact is readable in two places:
+
+- flat, with an `ansible_` prefix: `ansible_hostname`
+- inside `ansible_facts`, spelled the way the module returned it: `ansible_facts.hostname`
+
+They are separate variables. A later `set_fact` of `ansible_hostname` shadows the flat one and leaves `ansible_facts.hostname` alone. Ansible behaves the same way.
+
+### Native facts
+
+A native fact collector is a version written in Rust that runs inside the agent, so the host needs no Python for it. It exists for Debian and Ubuntu. It collects the 17 collectors ansible-core runs for `gather_subset: min`, the processor and memory facts of ansible-core's `hardware` collector, and the default routes and address lists of its `network` collector. A fact the native collector does not produce, such as mounts, devices or per-interface details, is left out.
+
+An absent fact only matters if something reads it. So before the first connection, Volant reads every play, role, template and variable definition of the run and lists the facts they can read. It uses the native collector only if all of them are facts it produces. A read by a computed name, such as `ansible_facts[item]`, `vars['ansible_' ~ name]`, `lookup('vars', ...)` or a whole `hostvars[host]` passed to a filter, could reach any fact, so it keeps ansible-core's `setup`.
+
+The native collector also hands the task back on a host it cannot reproduce: it gives up and the Python `setup` module runs. That happens on another distribution, with SELinux enabled, with local facts in `/etc/ansible/facts.d`, or with a host name only DNS knows.
+
+`--facts python` always runs ansible-core's module, and `--facts native` always asks the agent. `--profile` prints which one the run chose and why. See [Command line](/reference/cli/#run-and-output).
+
+### Facts are data
+
+Facts are the host's own words, so they arrive untrusted: a template inside a fact stays text and is never rendered. See [Values from hosts are never templated](/variables/templating/#values-from-hosts-are-never-templated).
+
+### Keeping facts between runs
+
+With `fact_caching = jsonfile` facts persist from one run to the next, see [The fact cache](/hosts/inventories/#the-fact-cache).

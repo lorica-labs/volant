@@ -1,9 +1,11 @@
 ---
-title: Connections and the agent
-description: How Volant reaches a host, the host variables and ansible.cfg settings it reads, and how the agent cache works.
+title: Connections and become
+description: How Volant reaches a host, the host variables and ansible.cfg settings it reads, and how become works through sudo and su.
 ---
 
-Volant reaches a managed host, puts a small static agent there, and talks to it over the same connection for the rest of the run.
+This page answers how Volant reaches your hosts, which variables control the connection, and how tasks run as another user with `become`.
+
+Volant reaches a managed host, puts a small static agent there (a program that runs your tasks and reports back), and talks to it over the same connection for the rest of the run.
 
 ## Connection types
 
@@ -68,61 +70,21 @@ An unbalanced quote in `ansible_ssh_common_args` or `ansible_ssh_extra_args` fai
 
 The `ansible.cfg` settings that affect connections, such as `timeout`, `remote_user`, `host_key_checking` and `forks`, are listed in [Configuration](/reference/configuration/).
 
-## Reaching a host
-
-```mermaid
-sequenceDiagram
-  participant C as Controller
-  participant H as Host
-  C->>H: is this agent version cached?
-  alt cached and runnable
-    H-->>C: version matches
-  else missing, outdated or broken
-    H-->>C: architecture, what is missing
-    C->>H: pipe the agent on stdin
-    Note over H: check space, write, verify, rename
-  end
-  C->>H: start the cached agent
-  Note over C,H: the protocol runs over its stdin and stdout
-```
-
 ## The agent cache
 
-The agent is a single static executable. Its release archive for x86_64 Linux is about 1.2 MB. Volant uploads it once per host and reuses it on every later run.
+The agent is a small static program, about 1.2 MB for x86_64 Linux. Volant uploads it once per host and reuses it on every later run, so a host holds only the agent and, when Python modules ran, a payload cache.
 
-It lives at `<remote_tmp>/volant-agent-<version>-<uid>/volant-agent`, so with the default `remote_tmp` it sits under `~/.ansible/tmp/` in a home directory. The version in the path is the controller's own, which is how an upgraded controller avoids running an older agent. The uid is the numeric id of the account that runs the agent, so the login account and a `become` account that share one `remote_tmp` each get their own directory.
+It lives at `<remote_tmp>/volant-agent-<version>-<uid>/volant-agent`, so with the default `remote_tmp` it sits under `~/.ansible/tmp/` in a home directory. The version in the path is the controller's own, which is how an upgraded controller avoids running an older agent. A task that escalates runs its own agent as the `become_user`, cached in that user's home, so a host holds one cache per account the run acts as.
 
-A task that does not escalate runs the agent as the account you log in as and caches it in that account's home. A task that escalates runs it as the `become_user` and caches it in that user's home, written through `sudo`. A `become_user` other than `root` needs this, because home directories are often mode 0700 and an agent cached under your login account would be out of reach. A host holds one cache per account the run acts as, each owned by that account.
+When Python modules have run, a second directory, `volant-blobs-<version>-<uid>`, sits beside the agent directory in the same `remote_tmp` and holds the module payloads Volant sent.
 
-The agent travels through `ssh -C`, so OpenSSH compresses it on the wire and nothing has to be unpacked on the host.
-
-### Permission checks
-
-Volant runs the cached agent only from a directory that no other account can change. It checks this on the probe, after an upload and again just before the start:
-
-- The directory and the program are not symbolic links. The account that runs the agent owns both, and neither has a group or other write bit.
-- `remote_tmp` belongs to that account, to root or, under `sudo`, to the account that ran `sudo`. Other accounts cannot write to it, or it has the sticky bit, as `/tmp` has.
-- A `remote_tmp` that the account owns may be open to its group when that group is the account's own primary group, as a umask of 002 with a group per user makes it. It may not when an ACL entry shows on it (a `+` after the mode in `ls -l`), because that entry can grant write access to another account. Volant reads only the mode bits, so ACLs that are not in them (NFSv4, ZFS, macOS) are not seen.
-
-Any other state stops the host with an `UNREACHABLE` error that names the path, its permissions and its owner. An upload is created with `umask 077`. If the directory is yours but too open, the upload empties it of Volant's files and makes it again. If another account owns it, Volant leaves it alone and reports it. Only the directories of other versions that the same account owns and that no other account can write are removed.
-
-A `remote_tmp` that does not exist is created by the first account that needs it, with mode 0700, and then belongs to that account. Create it first when several accounts share it. The default `~/.ansible/tmp` needs nothing.
-
-The checks use `ls -ldn`, so they need no `stat` option. Volant does not check the directories above `remote_tmp`. An account that can replace one of them can still swap the path in the short time between the last check and the start of the agent.
-
-### Upload and repair
-
-Before every connection, Volant asks the cached agent for its version. A version mismatch, a missing file or a file that will not start all lead to a fresh upload. A broken cache, such as a copy truncated by an interrupted run, gets repaired instead of reported.
-
-The upload checks free space with `df` first, and wants room for twice the agent plus a megabyte. It writes to a temporary name that includes the remote shell's process ID, checks the byte count, then renames into place. A transfer cut short never lands under the final name, and two runs uploading to the same host at once cannot mix their bytes.
-
-To clear the cache, remove the directory. Nothing else is left behind:
+To clear both, remove the two directories. Nothing else is left behind:
 
 ```sh
-ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-*'
+ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ```
 
-An upload already removes the cache directories of other versions, so a host holds one agent rather than a history of them.
+[The agent on your hosts](/internals/agent/#the-agent-cache) covers the upload, the repair of a broken cache and the permission checks.
 
 ## Persistent connections
 
@@ -135,44 +97,82 @@ Some tasks add a connection:
 
 ## One connection per host
 
-All the `ssh` runs Volant makes for one inventory host share a single OpenSSH connection: the version check, the agent upload, the link to the agent and the escalated link. Volant adds `-o ControlMaster=auto -o ControlPath=<dir>/<name> -o ControlPersist=30s` to its command line, so only the first run pays for the key exchange and the authentication. The shared connection stays open for 30 seconds after its last session, and a run started in that window reuses it.
+All the `ssh` runs Volant makes for one inventory host share a single OpenSSH connection, so only the first run pays for the key exchange and the authentication. The shared connection stays open for 30 seconds after its last session. OpenSSH does the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and your ssh-agent apply exactly as they do for `ansible-playbook`.
 
-It also adds `ServerAliveInterval=5` and `ServerAliveCountMax=3`, so a master whose host stopped answering exits after about 15 seconds instead of holding every new session. A keepalive in your own `ssh` arguments (anything containing `serveralive`) replaces them.
+Volant leaves sharing to you when your own `ssh` arguments or configuration already set `ControlMaster`, `ControlPath` or `ControlPersist` for the host. Set `[volant] ssh_control_master = false` or `VOLANT_SSH_CONTROL_MASTER=0` to turn it off, see [Configuration](/reference/configuration/#volant-ssh-control-master).
 
-The sockets live in `$XDG_RUNTIME_DIR/volant-cm`. Without a usable runtime directory they go to `/tmp/volant-cm-<uid>`, created at mode 0700. Whoever can create a socket there could hand your next `ssh` a connection of their own, so a directory that is not yours, or not at mode 0700, is refused. The run then prints `[WARNING]: ssh connections are not shared` with the reason and carries on with one connection per run.
+Each connection costs the controller three file descriptors. A hard limit of 1024 open files stops a run at about 330 connections, or about 169 escalating hosts. [The agent on your hosts](/internals/agent/#one-connection-per-host) has the socket location, the keepalive settings and the check to run before a wide run.
 
-The socket name is a hash of the inventory name, every `ssh` option the host connects with and what `ssh -G` resolves from your configuration files. So a connection opened for one user, key, port or `ProxyJump` never serves a host that asks for another, and a `HostName` changed in `~/.ssh/config` between two runs gets a new connection. Two inventory aliases of one machine get two connections, because one connection shared by fifty aliases would run into the server's `MaxSessions` limit. A connection that a password opened is never offered to another run.
+## Become
 
-Volant leaves sharing to you when you already configure it. It adds nothing when:
+`become` runs tasks as another user through `sudo` or `su`.
 
-- `ansible_ssh_common_args` or `ansible_ssh_extra_args` mention `ControlMaster`, `ControlPath` or `ControlPersist`, or pass `-S` or `-M`;
-- your ssh configuration already sets one of them for that host, as `ssh -G` reports it;
-- the `ssh` arguments ask for debug output with `-v`;
-- `[volant] ssh_control_master = false` or `VOLANT_SSH_CONTROL_MASTER=0`, see [Configuration](/reference/configuration/#volant-ssh-control-master).
+```yaml
+- hosts: web
+  become: true
+  tasks:
+    - name: Install nginx
+      apt:
+        name: nginx
+        state: present
 
-An escalated connection runs one extra `ssh` session for the `sudo` probe, two when a password is needed. With sharing on, those sessions use the same connection.
+    - name: Check the app as its own user
+      command: /opt/app/bin/healthcheck
+      become_user: app
+```
 
-OpenSSH does the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and your ssh-agent apply exactly as they do for `ansible-playbook`.
+### How it works
 
-## File descriptors
-
-Each connection is a separate `ssh` process and costs the controller three file descriptors. With escalation, a run can hold two connections per host: the host's own and one escalated.
-
-At startup Volant raises its own soft limit on open files up to the hard limit, capped at 1,048,576. Most Linux systems ship a hard limit far above what a run needs, so nothing has to be done.
-
-:::caution
-A hard limit of 1024 still stops a run at about 330 connections, or about 169 escalating hosts. `ssh` then stops starting, and the hosts it happens to hit are reported unreachable although nothing is wrong with them. In bash, `ulimit -n 1024` lowers the hard limit along with the soft one.
-:::
-
-Check both limits before a run that wide:
+Volant does not wrap each task in `sudo`. It starts a second agent for the target user:
 
 ```sh
-ulimit -Sn; ulimit -Hn
+sudo -H <form> -u <user> -- volant-agent
 ```
+
+`<form>` is `-n` or `-k -S -p ''`, depending on a probe described below. Volant adds `-H` only when no `become_flags` is set: a flag list replaces it. Tasks that do not escalate keep using the unprivileged agent. The agent itself knows nothing about escalation. [Decision record 0004](/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why.
+
+The escalated agent is kept until the end of the play, so a play of escalated tasks pays for `sudo` once per host.
+
+### Which setting wins
+
+`become`, `become_user` and `become_method` are accepted on a play, a block and a task. Measured against Ansible:
+
+1. A host's `ansible_become` and `ansible_become_user` variables beat both keywords, in either direction.
+2. The task keyword beats the play keyword.
+3. The `ansible.cfg` defaults and `-b`, `--become-user` and `--become-method` apply last.
+
+`become_method` is `sudo` or `su`. Any other method is not supported yet, and so are the fully qualified spellings `ansible.builtin.sudo` and `ansible.builtin.su`. Volant stops before a task runs and names the method, rather than escalating through a mechanism you did not ask for. When a run escalates and the method comes from `--become-method`, `ansible.cfg` or `ansible_become_method`, the run ends with exit code 2 before any task.
+
+`become_user` can be a template such as `{{ app_user }}`. One that changes per loop item is refused, because one batch escalates to one user.
+
+`become_exe` and `become_flags` are read from the keyword and from `ansible_become_exe` and `ansible_become_flags`, the host variable winning. Both are split into words the way a shell splits them, and an unbalanced quote fails the task.
+
+### The become password
+
+The password comes from one of these:
+
+- `-K` (`--ask-become-pass`), which turns terminal echo off on Unix.
+- `--become-password-file`, which reads the first line of a file.
+- `ansible_become_password`, `ansible_become_pass`, or the method's own `ansible_sudo_pass` or `ansible_su_pass`, which wins over the other two. [Host variables](#host-variables) lists which variable wins.
+
+It is written once to `sudo`'s standard input. It never appears in a command line, a log or a result: the types that carry it print `<redacted>` in debug output, and `sudo`'s own error output is scrubbed of it before it reaches a message.
+
+### The sudo probe
+
+Volant asks `sudo` which form to use instead of assuming one. It tries `sudo -n` first, and falls back to `sudo -k -S -p ''` only when `sudo` itself rejects the request for lack of authentication. [Decision record 0004](/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why a guess would hang the link.
+
+When escalation fails, for a missing password, a wrong one or a `sudoers` rule that forbids the command, the task fails and the host stays reachable. The messages are Ansible's own: `Missing sudo password` or `Incorrect sudo password`.
+
+### su
+
+`su` has no flag to read a password without a terminal, so Volant answers its prompt instead. The password is written once to the prompt, never put in a command line, a log or `-vvv` output. A wrong password fails the task with `Incorrect su password`. A prompt that never comes ends the task with `Timeout (12s) waiting for privilege escalation prompt`, as in ansible-core.
+
+Over a `local` connection `su` runs on a terminal of its own. A wrong password fails the task with `Premature end of stream waiting for become success.` and what `su` printed, as ansible-core does there. The wait for the prompt is always 12 seconds on a local connection, whatever `-T` says.
 
 ## Not there yet
 
 - Windows hosts and network devices.
 - The connection plugins named under Connection types.
+- `doas`, `pbrun` and the other become methods. They can be added as other ways to start the agent, without a protocol change.
 
 [Keywords](/reference/keywords/) is the full list, generated from the tables the engine reads.

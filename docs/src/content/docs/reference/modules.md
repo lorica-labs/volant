@@ -7,7 +7,7 @@ description: Which modules Volant runs, where each one runs, and which ones are 
 
 Volant runs a module in one of three places: natively in the agent on the host, on the controller itself, or on the host through the warm Python path. A playbook that names a module this release does not support yet stops when it loads, before the first task, the way Ansible stops on a module it cannot resolve.
 
-A module named in a file that only a dynamic `include_tasks` or `include_role` brings in is checked when a host reaches that statement. The statement then fails for that host and nothing in the file runs. See [Includes and imports](/playbooks/includes/).
+A module named in a file that only a dynamic `include_tasks` or `include_role` brings in is checked when a host reaches that statement. The statement then fails for that host and nothing in the file runs. See [Includes and imports](/playbooks/roles/#dynamic-includes).
 
 ## On the agent
 
@@ -97,7 +97,7 @@ The exceptions are the modules ansible-core runs through an action plugin. What 
 
 ## Through an action plugin
 
-The controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary modules over the connection the task already has. `reboot` also waits for the host: it reconnects until the host answers with a new boot id. [Action plugins](/reference/action-plugins/) describes each one.
+The controller runs these as the reference's action plugins do: it picks or renders what reaches the host, then sends it as ordinary modules over the connection the task already has. `reboot` also waits for the host: it reconnects until the host answers with a new boot id. [Action plugins](/internals/action-plugins/) describes each one.
 
 | Module | What it does |
 |---|---|

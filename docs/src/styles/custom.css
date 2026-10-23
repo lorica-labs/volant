@@ -859,3 +859,35 @@ html .expand-dialog .expand-body > pre.mermaid {
     display: none;
   }
 }
+
+/* Matches of the support matrix search, listed above the sections they come from. */
+.support-results table {
+  width: 100%;
+  margin: 0 0 2rem;
+  border: 1px solid var(--v-hairline-strong);
+  border-radius: 0.75rem;
+  border-collapse: separate;
+  border-spacing: 0;
+  overflow: hidden;
+  font-size: var(--sl-text-sm);
+}
+.support-results th,
+.support-results td {
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid var(--v-hairline);
+  text-align: start;
+  vertical-align: top;
+}
+.support-results th {
+  background: var(--v-shell);
+  color: var(--sl-color-white);
+  font-weight: 600;
+}
+.support-results tr:last-child td {
+  border-bottom: 0;
+}
+.support-count {
+  margin: 0 0 0.75rem;
+  color: var(--sl-color-gray-3);
+  font-size: var(--sl-text-sm);
+}

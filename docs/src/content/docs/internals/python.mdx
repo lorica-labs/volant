@@ -29,7 +29,7 @@ The union is built before the first connection, so it has to hold every module a
 
 The blob travels as raw bytes, compressed with deflate when that is shorter, and the agent checks the hash of the decompressed bytes.
 
-Module results are untrusted and are never rendered as controller templates. See [Trusted and untrusted values](/variables/trust/). As ansible-core does on the controller, Volant adds `stdout_lines` and `stderr_lines` to a result that has `stdout` or `stderr` without them, split with Python's `splitlines()` rules.
+Module results are untrusted and are never rendered as controller templates. See [Trusted and untrusted values](/variables/templating/#values-from-hosts-are-never-templated). As ansible-core does on the controller, Volant adds `stdout_lines` and `stderr_lines` to a result that has `stdout` or `stderr` without them, split with Python's `splitlines()` rules.
 
 ## What each side needs
 
@@ -103,7 +103,7 @@ task 'Forward': module 'ansible.posix.sysctl' was not resolved to a module befor
 
 Some ansible-core modules only work together with an action plugin that runs on the controller first. `package` picks the host's package manager, `service` picks its init system, and `template` renders the file on the controller before anything is sent. Sending those modules without their plugin would do something different from what the playbook asked.
 
-Volant has its own version of eight of these plugins: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` run on the controller as a short sequence of sub-tasks, each an ordinary Python module or a bare command sent over the host's existing connection. [Action plugins](/reference/action-plugins/) describes each one. The other plugins, such as the ones of `uri` and `script`, run as ansible-core's own Python in the helper.
+Volant has its own version of eight of these plugins: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive` run on the controller as a short sequence of sub-tasks, each an ordinary Python module or a bare command sent over the host's existing connection. [Action plugins](/internals/action-plugins/) describes each one. The other plugins, such as the ones of `uri` and `script`, run as ansible-core's own Python in the helper.
 
 `assert`, `fail` and `pause` have action plugins too, but none of them calls a module, so Volant runs them on the controller. `setup` runs as an ordinary module, natively or in Python, so fact gathering works.
 
@@ -121,7 +121,7 @@ The agent carries Rust versions of these modules:
 
 | Module | Answered natively when |
 |---|---|
-| `setup` | on Debian and Ubuntu, for the facts listed under [Facts](/variables/facts/#native-facts) |
+| `setup` | on Debian and Ubuntu, for the facts listed under [Facts](/variables/precedence/#native-facts) |
 | `stat` | the path is plain and absolute, and the checksum is SHA-1 |
 | `file` | `state` is `file`, `directory` or `absent`, or unset |
 | `apt` | nothing needs doing: the cache is fresh, and the packages asked for are already installed or already absent |

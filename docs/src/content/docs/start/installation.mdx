@@ -13,6 +13,12 @@ curl -fsSL https://volant.sh/install.sh | sh
 
 The script works on Linux and macOS, on x86_64 and arm64. On Linux it takes the static build. It needs `curl`, `tar` and `sha256sum` or `shasum`, plus `xz` on Linux. It downloads the newest release for your machine, checks its SHA-256 checksum, unpacks it under `~/.local/share/volant`, and links `volant` and `volant-playbook` into `~/.local/bin`. It asks for no root access and changes nothing outside those two directories. You can [read it](https://volant.sh/install.sh) before you run it.
 
+You do not need Ansible. On the first run that needs Python, Volant downloads its own copy of Python and ansible-core, about 155 MB, and keeps it in `~/.local/share/volant/runtime`. It prints one line when it does. [What Volant leaves on your machines](/#what-volant-leaves-on-your-machines) lists everything it writes.
+
+<Aside type="caution" title="macOS is not tested">
+The macOS builds and the managed runtime have not been tested: no Mac was available. If a run cannot install the runtime on macOS, point `VOLANT_PYTHON` at a Python 3 that has ansible-core, as [The managed runtime](/reference/runtime/#which-interpreter-a-run-uses) describes.
+</Aside>
+
 Check that it worked:
 
 ```sh
@@ -37,7 +43,7 @@ curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.10 sh
 
 ## What you get
 
-The release has two executables. `volant` carries the agents it uploads to your hosts, so there is nothing else to install and nothing to keep next to it:
+The release has two executables. `volant` carries the agents it uploads to your hosts. An agent is a small program that runs your tasks on a host. There is nothing else to install and nothing to keep next to it:
 
 | File | What it is |
 |---|---|
@@ -84,7 +90,9 @@ A scratch image has no `ssh`, no Python, no shell and no `/etc/passwd`. With onl
     - `curl` or `wget`, and `tar`, the first time a playbook needs Python.
     - To use the install script or unpack a release by hand, `curl`, `tar`, `sha256sum` or `shasum`, and `xz` on Linux.
 
-    Ansible is not needed. For Python modules and fact gathering, Volant uses a Python 3 with `ansible-core`. When it finds none, it downloads its own, checks every file against a pinned hash and keeps it under `~/.local/share/volant/runtime`. A run that does this prints one line. If you already have such a Python, Volant can use it: [Which interpreter a run uses](/reference/runtime/#which-interpreter-a-run-uses) gives the order. See [The managed runtime](/reference/runtime/). It has not been tested on macOS.
+    For the modules that run in Python, Volant uses a Python 3 with `ansible-core`. When it finds none, it downloads its own (about 155 MB), checks every file against a pinned hash and keeps it under `~/.local/share/volant/runtime`. A run that does this prints one line. If you already have such a Python, Volant can use it: [Which interpreter a run uses](/reference/runtime/#which-interpreter-a-run-uses) gives the order. See [The managed runtime](/reference/runtime/).
+
+    Volant has no `vault`, `galaxy`, `inventory` or `doc` command. For `ansible-vault` and the other tools of ansible-core, install ansible-core yourself.
 
     A playbook made only of `command`, `shell`, `raw` and controller-side modules, with `gather_facts: false`, needs no Python at all.
   </TabItem>
@@ -136,10 +144,10 @@ A Homebrew formula is planned. The [roadmap](/project/roadmap/) tracks it.
 
 ## Uninstall
 
-Remove the release directory, the links and the controller's agent cache. On each host, the agent cache is one directory per account the run acted as:
+Remove the release directory, the links and the controller's caches. On each host, the agent cache is one directory per account the run acted as. Nothing else in your project changes, so [going back to `ansible-playbook`](/start/troubleshooting/#go-back-to-ansible-playbook) needs nothing more:
 
 ```sh
 volant runtime remove --all
 rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook ~/.cache/volant
-ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-*'
+ssh web1 'rm -rf ~/.ansible/tmp/volant-*'
 ```

@@ -7,16 +7,20 @@ import { Aside } from '@astrojs/starlight/components';
 import Flow from '../../components/Flow.astro';
 import BarChart from '../../components/BarChart.astro';
 
-Volant is an engine for Ansible playbooks. It reads the playbooks, roles and inventories you already have, in Ansible's own formats, and runs them against Linux hosts over SSH. You do not convert anything, and the same files keep working with `ansible-playbook`.
+Volant is for people who run Ansible playbooks against Linux hosts and want those runs to finish faster. It reads the playbooks, roles and inventories you already have, in Ansible's own formats, and runs them over SSH. You do not convert anything, and the same files keep working with `ansible-playbook`.
 
 The name is French: a *volant* is a steering wheel. You steer your infrastructure with it.
+
+<Aside type="caution" title="Pre-alpha">
+Volant runs real playbooks end to end, but not every playbook yet. Try it on a test host before a production one. Most of what it does not support yet is named before it connects to anything, and a few gaps are silent: see [Will my playbook run?](/start/compatibility/) for the check to run first.
+</Aside>
 
 ```sh
 curl -fsSL https://volant.sh/install.sh | sh
 volant playbook -i inventory.ini site.yml
 ```
 
-Volant is in pre-alpha: it runs real playbooks end to end, but not every playbook yet, and it names most of what it does not support yet before it touches a host. [Installation](/start/installation/) and the [quickstart](/start/quickstart/) take it from here, and [Will my playbook run?](/start/compatibility/) checks an existing project in a few seconds.
+[Installation](/start/installation/) and the [quickstart](/start/quickstart/) take it from here. You do not need Ansible installed.
 
 ## Where the time goes in Ansible
 
@@ -24,7 +28,7 @@ For every task on every host, `ansible-playbook` builds a module payload, sends 
 
 Volant pays those costs once per run:
 
-- A small static agent is uploaded to each host the first time and cached there. Later runs reuse it.
+- A small program called the agent is uploaded to each host the first time and cached there. Later runs reuse it.
 - The controller keeps one SSH connection per host open for the whole run and streams tasks over it.
 - Python modules travel to the host once, in a single archive. A Python server on the host loads the shared code once and forks a child for each task.
 - The agent answers common modules, such as `apt`, `systemd`, `file` and fact gathering, in Rust when a task's arguments allow it, and hands every other case to the Python module.
@@ -46,8 +50,8 @@ Volant pays those costs once per run:
       label: 'Volant',
       note: 'for every task, once the run has started',
       steps: [
-        { text: 'send over the open link', kind: 'key' },
-        { text: 'fork the warm server', kind: 'key' },
+        { text: 'send over the open connection', kind: 'key' },
+        { text: 'fork the ready Python server', kind: 'key' },
         { text: 'run the module' },
       ],
     },
@@ -56,7 +60,7 @@ Volant pays those costs once per run:
 
 ## Measured
 
-These numbers come from two real workloads against two Ubuntu 24.04 hosts. The first applies four published Galaxy roles, `geerlingguy.security`, `nginx`, `git` and `pip`, to hosts they have already converged. The second is the official k3s-ansible playbook against an installed cluster. Each figure is the median of three passes, measured on 2026-09-27 with `just bench` and `just bench-k3s`, and both engines ended every pass on the same recap. The reference is ansible-core 2.19.12 with `pipelining = True`.
+These numbers come from two real workloads against two Ubuntu 24.04 hosts. The first applies four published Galaxy roles, `geerlingguy.security`, `nginx`, `git` and `pip`, to hosts they have already converged. The second is the official k3s-ansible playbook against an installed cluster. Each figure is the median of three passes, measured on 2026-09-27 with `just bench` and `just bench-k3s`, and both engines ended every pass on the same recap. The comparison runs ansible-core 2.19.12 with `pipelining = True`.
 
 <BarChart
   title="Two workloads, two converged hosts"
@@ -80,14 +84,30 @@ These figures describe two playbooks on two hosts. Your own numbers depend on yo
 
 Your files stay yours. Volant reads Ansible's YAML and follows its variable precedence and its templating, so there is no new format to learn.
 
-It stops instead of guessing. Most of what this release does not support yet is named before the first connection, so a run rarely reports success after quietly skipping something you asked for. The [known gaps](/start/compatibility/#known-gaps) are the exceptions.
+It stops instead of guessing. Most of what this release does not support yet is named before the first connection, so a run rarely reports success after quietly skipping something you asked for. The [known gaps](/start/compatibility/#known-gaps) are the exceptions. The check is called the [pre-flight check](/internals/preflight/).
 
 It targets Linux over SSH first. The controller runs on Linux or macOS and drives Linux hosts. Windows and network devices come later.
 
-It collects no telemetry. Apart from the calls your playbook asks for, its only network use is the download of its [managed runtime](/reference/runtime/), which happens once and only when a run needs it.
+## What Volant leaves on your machines
+
+On the controller, the machine you run `volant` from:
+
+- The install script puts each release under `~/.local/share/volant` and links `volant` and `volant-playbook` into `~/.local/bin`.
+- The managed runtime is a private Python 3 with ansible-core, which Volant downloads the first time a run needs Python and finds no usable one. It lives in `~/.local/share/volant/runtime` (`~/Library/Application Support/volant/runtime` on macOS) and takes about 155 MB. [The managed runtime](/reference/runtime/) says how to skip it or remove it.
+- Caches go under `~/.cache/volant`: the agents it uploads, and the bundles of Python modules it builds.
+
+On each managed host:
+
+- The cached agent, one small executable of about 1.2 MB, in `~/.ansible/tmp/volant-agent-<version>-<uid>/`. A task that uses `become` caches a second copy in the home directory of the account it escalates to.
+- A directory next to it, `volant-blobs-<version>-<uid>`, holds the Python modules sent to the host. It exists once a run has used a Python module.
+- `~/.ansible_async` holds the status files of `async` tasks, when you use `async`.
+
+To remove the cache on a host, delete the `volant-*` directories in `~/.ansible/tmp` (see [Go back to ansible-playbook](/start/troubleshooting/#go-back-to-ansible-playbook)).
+
+Volant never sends telemetry. Apart from the calls your playbook asks for, its only network use is the one-time download of the managed runtime, when a run needs it.
 
 ## How it compares to Ansible
 
-Volant reproduces [ansible-core 2.19](/decisions/0002-ansible-core-2-19-as-reference/), which this documentation calls *the reference*. A difference from the reference is a bug, unless a page lists it as a deliberate choice under *Differences from Ansible*.
+Volant reproduces [ansible-core 2.19](/decisions/0002-ansible-core-2-19-as-reference/). A difference from ansible-core is a bug, unless a page lists it as a deliberate choice under *Differences from Ansible*.
 
 Some features are not there yet: custom action, callback and vars plugins, and the [known gaps](/start/compatibility/#known-gaps). The [roadmap](/project/roadmap/) says what comes next.

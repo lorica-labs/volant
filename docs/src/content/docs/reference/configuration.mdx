@@ -106,11 +106,11 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="gathering" id="defaults-gathering" default="implicit" env="ANSIBLE_GATHERING">
-  `implicit`, `explicit` or `smart`. See [The fact cache](/hosts/fact-cache/#gathering).
+  `implicit`, `explicit` or `smart`. See [The fact cache](/hosts/inventories/#gathering).
 </Option>
 
 <Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
-  `memory` keeps facts for the run, `jsonfile` keeps them between runs. See [The fact cache](/hosts/fact-cache/).
+  `memory` keeps facts for the run, `jsonfile` keeps them between runs. See [The fact cache](/hosts/inventories/#the-fact-cache).
 </Option>
 
 <Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">
@@ -156,7 +156,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 ## [privilege_escalation]
 
 <Option name="become" id="privilege-escalation-become" default="false" flag="-b" env="ANSIBLE_BECOME">
-  Escalate by default. Playbook keywords and host variables take priority, see [Privilege escalation](/hosts/become/#which-setting-wins).
+  Escalate by default. Playbook keywords and host variables take priority, see [Privilege escalation](/hosts/connections/#which-setting-wins).
 </Option>
 
 <Option name="become_user" id="privilege-escalation-become-user" default="root" flag="--become-user" env="ANSIBLE_BECOME_USER">
@@ -212,9 +212,9 @@ Ansible ignores this section, so one `ansible.cfg` can carry it and still drive 
 </Option>
 
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">
-  Sets what `template`, `copy`, `script`, `unarchive` and `assemble` do with a controller `src` that a managed host named, and where a `fetch` may write a `dest` that a host named: `allow`, `contained` or `refuse`. The default is `allow`, which behaves as ansible-core does, and any other word stops the run with exit code 5. See [A source file a managed host named](/reference/action-plugins/#a-source-file-a-managed-host-named) for what each word does.
+  Sets what `template`, `copy`, `script`, `unarchive` and `assemble` do with a controller `src` that a managed host named, and where a `fetch` may write a `dest` that a host named: `allow`, `contained` or `refuse`. The default is `allow`, which behaves as ansible-core does, and any other word stops the run with exit code 5. See [A source file a managed host named](/internals/action-plugins/#a-source-file-a-managed-host-named) for what each word does.
 </Option>
 
 <Option name="host_named_dest_dirs" id="volant-host-named-dest-dirs" default="unset" env="VOLANT_HOST_NAMED_DEST_DIRS">
-  A colon-separated list of absolute controller directories under which `fetch` may write a `dest` that a managed host named. An entry that is relative, uses `~` or `..`, or is `/` stops the run with exit code 5. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named) for the rules.
+  A colon-separated list of absolute controller directories under which `fetch` may write a `dest` that a managed host named. An entry that is relative, uses `~` or `..`, or is `/` stops the run with exit code 5. See [A dest a managed host named](/internals/action-plugins/#a-dest-a-managed-host-named) for the rules.
 </Option>

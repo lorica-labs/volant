@@ -12,7 +12,7 @@ Volant loads a playbook against the whole ansible-core 2.19 grammar, so it parse
 <li><span class="kw kw-no">not accepted</span><span>Cannot be written there. Ansible rejects it too, when it reads the playbook.</span></li>
 </ul>
 
-A keyword inside a file that only a dynamic `include_tasks` or `include_role` names is checked when a host reaches that statement: if it is not supported yet, the statement fails for that host, a `rescue` around it can catch the failure, and nothing in the file runs. See [Includes and imports](/playbooks/includes/).
+A keyword inside a file that only a dynamic `include_tasks` or `include_role` names is checked when a host reaches that statement: if it is not supported yet, the statement fails for that host, a `rescue` around it can catch the failure, and nothing in the file runs. See [Includes and imports](/playbooks/roles/#dynamic-includes).
 
 A keyword that takes a boolean or a number may be written as a template: `become`, `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable`, `delegate_facts`, `timeout`, `async` and `poll`. It is rendered for each host when its task runs, once the task's `when` has held, and a value the keyword cannot take fails the task with the reference's sentence. `gather_facts` and `force_handlers` of a play are rendered when the play starts. A literal that is not a boolean is refused when the playbook loads.
 

@@ -3,13 +3,13 @@ title: Action plugins
 description: How Volant runs the modules ansible-core runs through an action plugin on the controller, in Rust or on the Python bridge.
 ---
 
-Most modules ansible-core ships run as themselves: the controller sends a payload, the host runs it, the result comes back. A handful run differently: the reference itself decides what to send, sometimes after asking the host something first, and the module name on the task is only the entry point. `package` is one: what runs is `apt` or `dnf`, chosen after the host says which one it has. `copy` is another: whether anything travels to the host at all depends on a checksum the host reports back first.
+Most modules ansible-core ships run as themselves: the controller sends a payload, the host runs it, the result comes back. A handful run differently: ansible-core itself decides what to send, sometimes after asking the host something first, and the module name on the task is only the entry point. `package` is one: what runs is `apt` or `dnf`, chosen after the host says which one it has. `copy` is another: whether anything travels to the host at all depends on a checksum the host reports back first.
 
 Volant runs eight of these itself: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
 
 A task's own `timeout:` keyword bounds the whole item this way, on any of the eight: every sub-task and every wait for the host to come back, `reboot`'s reconnecting included. Running out of it ends the task there with `Task failed: Timed out after <seconds> second(s).`, never whatever the plugin would have made of the time it had left.
 
-The names the reference also runs through an action plugin, and every action plugin of the collections in the corpus, run on a second road: the plugin's own Python, from ansible-core, in the controller's helper. See [On the bridge](#on-the-bridge) below. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
+The names ansible-core also runs through an action plugin, and every action plugin of the collections in the corpus, run on a second road: the plugin's own Python, from ansible-core, in the controller's helper. See [On the bridge](#on-the-bridge) below. See [Modules](/reference/modules/) for what this release runs natively, on the controller, and on the warm Python path.
 
 ## `copy`
 
@@ -19,7 +19,7 @@ The plugin runs `stat` on the destination first, asking for a SHA-1 unless `forc
 
 `remote_src: true` skips all of this: `copy` runs alone, with the task's own arguments, and `src` names a file already on the host.
 
-Rejected before the host is asked anything, in the reference's own words:
+Rejected before the host is asked anything, in ansible-core's own words:
 
 - `src (or content) is required`
 - `dest is required`
@@ -35,9 +35,9 @@ A template rendered on the controller, then handed to the same path `copy` uses.
 
 The plugin finds the template under `templates/`, renders it once with the task's variables and its own delimiters, and copies the result the way `copy` copies a `content:`: `stat`, then `file` or a staged `copy`. Rendering happens exactly once; nothing renders the result a second time, so a value a managed host contributed lands in the file as text rather than as a template of its own.
 
-Four variables are set for the render, on top of the task's own: `ansible_managed` (unless the task already set it), `template_path` (`src` as the task wrote it), `template_fullpath` (the path found on the controller) and `template_destpath` (`dest` as rendered, see below). `template_host`, `template_uid`, `template_run_date` and `template_mtime`, which the reference also sets, are not.
+Four variables are set for the render, on top of the task's own: `ansible_managed` (unless the task already set it), `template_path` (`src` as the task wrote it), `template_fullpath` (the path found on the controller) and `template_destpath` (`dest` as rendered, see below). `template_host`, `template_uid`, `template_run_date` and `template_mtime`, which ansible-core also sets, are not.
 
-`trim_blocks` defaults on and `lstrip_blocks` defaults off, as in the reference, and the file's trailing newline is kept. `newline_sequence` takes `\n`, `\r` or `\r\n`, the escaped four-character spelling read the same as the literal one. The six delimiter options (`variable_start_string` and its five relatives) and a `#jinja2:` first line in the template file are read as the reference reads them, see [Rendering a template file](/variables/templating/#rendering-a-template-file). `output_encoding` writes UTF-8, UTF-8 with a signature, Latin-1, ASCII, cp1252, ISO 8859-15, UTF-16 and UTF-32, and names any other encoding as not supported yet. A template that uses `{% include %}` or `{% import %}` fails: nothing here loads a second file mid-render.
+`trim_blocks` defaults on and `lstrip_blocks` defaults off, as in ansible-core, and the file's trailing newline is kept. `newline_sequence` takes `\n`, `\r` or `\r\n`, the escaped four-character spelling read the same as the literal one. The six delimiter options (`variable_start_string` and its five relatives) and a `#jinja2:` first line in the template file are read as ansible-core reads them, see [Rendering a template file](/variables/templating/#rendering-a-template-file). `output_encoding` writes UTF-8, UTF-8 with a signature, Latin-1, ASCII, cp1252, ISO 8859-15, UTF-16 and UTF-32, and names any other encoding as not supported yet. A template that uses `{% include %}` or `{% import %}` fails: nothing here loads a second file mid-render.
 
 Rejected before the host is asked anything:
 
@@ -47,7 +47,7 @@ Rejected before the host is asked anything:
 - `Block, variable and comment start strings must be different.`
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`, for a delimiter option that is empty or null
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
-- A `src` that names nothing on the controller, in the reference's own words, with no `AnsibleActionFail` wrapper this time.
+- A `src` that names nothing on the controller, in ansible-core's own words, with no `AnsibleActionFail` wrapper this time.
 - A render bigger than one frame is rejected, naming both sizes, before anything is staged.
 
 ## `package`
@@ -60,14 +60,14 @@ The name comes from `use:`, unless it is `auto`; then from the host's `ansible_p
 
 The host's package manager again, this time picking between two module names instead of four.
 
-The backend name comes from `use:`, or from `use_backend:` when `use` is absent; the two together are rejected: `parameters are mutually exclusive: ('use', 'use_backend')`. `auto` and `yum` read `ansible_facts.pkg_mgr` of the host the module runs on, gathered through a `setup` filtered to that one fact when it is not already known; any other name is taken as given. `yum`, `yum4` and `dnf4` all run the `dnf` module, `dnf5` runs `dnf5`, and a name that is still none of these fails with the reference's own two-line message, closing brace and all:
+The backend name comes from `use:`, or from `use_backend:` when `use` is absent; the two together are rejected: `parameters are mutually exclusive: ('use', 'use_backend')`. `auto` and `yum` read `ansible_facts.pkg_mgr` of the host the module runs on, gathered through a `setup` filtered to that one fact when it is not already known; any other name is taken as given. `yum`, `yum4` and `dnf4` all run the `dnf` module, `dnf5` runs `dnf5`, and a name that is still none of these fails with ansible-core's own two-line message, closing brace and all:
 
 ```text
 Could not detect which major revision of dnf is in use, which is required to determine module backend.
 You should manually specify use_backend to tell the module whether to use the dnf4 or dnf5 backend})
 ```
 
-A failed `setup` ends the task with its own cause, `Failed to fetch ansible_pkg_mgr to determine the package action backend: <msg>`. When the task is not delegated, its result carries `ansible_facts.pkg_mgr` set to whatever the `setup` answered, the way the reference's own result does; a delegated task's result carries none, since a delegate's answer would otherwise land under the wrong host's facts.
+A failed `setup` ends the task with its own cause, `Failed to fetch ansible_pkg_mgr to determine the package action backend: <msg>`. When the task is not delegated, its result carries `ansible_facts.pkg_mgr` set to whatever the `setup` answered, the way ansible-core's own result does; a delegated task's result carries none, since a delegate's answer would otherwise land under the wrong host's facts.
 
 The module `yum` is not a module of its own in ansible-core 2.19: `yum`, `ansible.builtin.yum` and `ansible.legacy.yum` are redirects to the `dnf` action, and a task that names one runs this plugin. A `module_defaults` key for `yum` applies to a `dnf` task, and the reverse.
 
@@ -77,7 +77,7 @@ A file read from a host, written onto the controller under `dest` and nowhere el
 
 Without `become` the plugin runs `stat` on the source first and leaves an already-matching local file alone; under `become` it goes straight to `slurp`. The bytes always travel back through `slurp`, decoded strictly, never rendered and never put in a variable. The destination is `dest/<inventory_hostname>/<src>`, unless `flat: true` names `dest` itself directly, or, with a trailing slash, `dest/<basename of src>`.
 
-Measured on ansible-core 2.19.12, a relative `src` climbing with `..` makes the reference write outside `dest` on the controller: a `src` of `../../../../../../../../tmp/x` without `flat` writes `/tmp/x`. Here every candidate path is built and normalised without touching the filesystem, and refused unless it sits under `dest`, before a directory is even created:
+Measured on ansible-core 2.19.12, a relative `src` climbing with `..` makes ansible-core write outside `dest` on the controller: a `src` of `../../../../../../../../tmp/x` without `flat` writes `/tmp/x`. Here every candidate path is built and normalised without touching the filesystem, and refused unless it sits under `dest`, before a directory is even created:
 
 - `the fetched path <p> is outside '<dest>'`
 
@@ -88,7 +88,7 @@ This is checked twice: once on the `src` the playbook wrote, and again on the pa
 
 A symbolic link anywhere below `dest` is refused rather than followed, on both the path built from the playbook and the one the host names back.
 
-`fail_on_missing`, on by default as in the reference, fails the task on a missing source or a directory; `fail_on_missing: false` turns either into an `ok` result carrying the reference's own message instead. Either way, any other failure, such as a read the agent refuses because the module server's per-stream limit was reached, still fails the task. That limit is 4 MiB of `slurp`'s base64-encoded stdout, about 3 MiB of source file before encoding. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike the reference, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
+`fail_on_missing`, on by default as in ansible-core, fails the task on a missing source or a directory; `fail_on_missing: false` turns either into an `ok` result carrying ansible-core's own message instead. Either way, any other failure, such as a read the agent refuses because the module server's per-stream limit was reached, still fails the task. That limit is 4 MiB of `slurp`'s base64-encoded stdout, about 3 MiB of source file before encoding. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike ansible-core, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
 
 ### A dest a managed host named
 
@@ -121,7 +121,7 @@ A run naming both `package` and `service` carries every backend of both in the u
 
 An archive read on the controller, or already on the host, extracted by the `unarchive` module.
 
-`copy:` folds into `remote_src` (the reference's own inversion), and the two together are rejected: `parameters are mutually exclusive: ('copy', 'remote_src')`. A `creates:` that already exists on the host skips the task, checked with a `stat` before `dest` is even looked at: `{"changed": false, "msg": "skipped, since <path> exists", "skipped": true}`; a `stat` that fails is read as "not there", the way a shell existence test would read a command it could not run, not as a task failure. The destination must exist and be a directory, or the task fails with `dest '<dest>' must be an existing dir`. Only then is the source searched, rejected if a host named it, staged and sent, unless `remote_src` names a file already there.
+`copy:` folds into `remote_src` (ansible-core's own inversion), and the two together are rejected: `parameters are mutually exclusive: ('copy', 'remote_src')`. A `creates:` that already exists on the host skips the task, checked with a `stat` before `dest` is even looked at: `{"changed": false, "msg": "skipped, since <path> exists", "skipped": true}`; a `stat` that fails is read as "not there", the way a shell existence test would read a command it could not run, not as a task failure. The destination must exist and be a directory, or the task fails with `dest '<dest>' must be an existing dir`. Only then is the source searched, rejected if a host named it, staged and sent, unless `remote_src` names a file already there.
 
 Rejected before the host is asked anything:
 
@@ -135,15 +135,15 @@ Rejected before the host is asked anything:
 
 Restart the host, then wait for it to answer with a new boot id and its test command to succeed, before the task ends.
 
-Read off `plugins/action/reboot.py` of ansible-core 2.19.12 and measured against it, under `become`, on a host that came back on its own: a `setup` filtered to the distribution, `cat /proc/sys/kernel/random/boot_id` run as a bare command, a `find` across five search paths for the shutdown program, the shutdown command itself, then the boot id read again until it changes, and finally the test command. All of these run over the host's existing connection, through `raw`, the same way the reference's low-level command runs over its own.
+Read off `plugins/action/reboot.py` of ansible-core 2.19.12 and measured against it, under `become`, on a host that came back on its own: a `setup` filtered to the distribution, `cat /proc/sys/kernel/random/boot_id` run as a bare command, a `find` across five search paths for the shutdown program, the shutdown command itself, then the boot id read again until it changes, and finally the test command. All of these run over the host's existing connection, through `raw`, the same way ansible-core's low-level command runs over its own.
 
 Run against `local`, the connection the controller itself uses, the task is rejected before anything else: `Running reboot with local connection would reboot the control node.`
 
-Once the shutdown command has gone out, this release drops the connection and opens a fresh one to check on the host, rather than holding the old one open across the reboot. `post_reboot_delay` is how long it waits before the first check, and `reboot_timeout` (600 seconds by default) bounds the whole wait unless the task's own `timeout:` cuts it short first. `connect_timeout`, when the task gives one, only sets each reconnection's own SSH `ConnectTimeout`; it no longer bounds the try itself. An empty boot id answer is not read as a new boot: a host can answer nothing in the moment just before it goes down. Once the boot id has changed, `test_command` (`whoami` by default) still has to succeed before the task is done; either wait running out fails the task with the reference's own message, `Timed out waiting for <what> (timeout=<reboot_timeout>)`. A link another host of the same run kept open to the one just rebooted gets one extra liveness check before its next use, and is replaced if the reboot killed it: this driver only drops its own links, not a delegate's.
+Once the shutdown command has gone out, this release drops the connection and opens a fresh one to check on the host, rather than holding the old one open across the reboot. `post_reboot_delay` is how long it waits before the first check, and `reboot_timeout` (600 seconds by default) bounds the whole wait unless the task's own `timeout:` cuts it short first. `connect_timeout`, when the task gives one, only sets each reconnection's own SSH `ConnectTimeout`; it no longer bounds the try itself. An empty boot id answer is not read as a new boot: a host can answer nothing in the moment just before it goes down. Once the boot id has changed, `test_command` (`whoami` by default) still has to succeed before the task is done; either wait running out fails the task with ansible-core's own message, `Timed out waiting for <what> (timeout=<reboot_timeout>)`. A link another host of the same run kept open to the one just rebooted gets one extra liveness check before its next use, and is replaced if the reboot killed it: this driver only drops its own links, not a delegate's.
 
-The shutdown line follows the reference's own table: `shutdown -r <minutes> "<msg>"` on most distributions, bare `reboot` on Alpine, `shutdown -r +<minutes> "<msg>"` on Void, or `reboot_command` split at its first space when the task gives one. `search_paths` (five directories by default) is where the shutdown program is found when `reboot_command` does not already name an absolute path; not finding it there fails the task, naming every path searched.
+The shutdown line follows ansible-core's own table: `shutdown -r <minutes> "<msg>"` on most distributions, bare `reboot` on Alpine, `shutdown -r +<minutes> "<msg>"` on Void, or `reboot_command` split at its first space when the task gives one. `search_paths` (five directories by default) is where the shutdown program is found when `reboot_command` does not already name an absolute path; not finding it there fails the task, naming every path searched.
 
-Rejected before the host is asked anything: an argument outside the reference's own nine (`boot_time_command`, `connect_timeout`, `msg`, `post_reboot_delay`, `pre_reboot_delay`, `reboot_command`, `reboot_timeout`, `search_paths`, `test_command`) fails the task, sorted and named: `Invalid options for reboot: <name>[,<name>...]`.
+Rejected before the host is asked anything: an argument outside ansible-core's own nine (`boot_time_command`, `connect_timeout`, `msg`, `post_reboot_delay`, `pre_reboot_delay`, `reboot_command`, `reboot_timeout`, `search_paths`, `test_command`) fails the task, sorted and named: `Invalid options for reboot: <name>[,<name>...]`.
 
 ## On the bridge
 
@@ -151,14 +151,14 @@ Rejected before the host is asked anything: an argument outside the reference's 
 
 The plugin asks for what it needs and the controller answers: run this module, run this command, read a variable, make a temporary directory, put this file. Every answer is bounded by the task's `timeout:`. A plugin that never returns, or a helper that dies, fails that task and not the run; a temporary directory the plugin left on the host is removed. `add_host`, `group_by` and `set_stats` need no host and run without a connection. What they return is applied by the executor: new hosts and groups for the next tasks, and the custom stats printed after the recap. A value of `add_host` rendered from a fact stays data: it is kept as a fact of the new host, never as an inventory variable. So does a host name or a group name of `add_host` or `group_by` that was built from text a managed host wrote. So does any host name or group name that holds `{`, whether the inventory files, a dynamic inventory source, `meta: refresh_inventory`, `add_host` or `group_by` gave it: `groups`, `hostvars`, `group_names`, the host lists of a play and `inventory_hostname` show it as text, as ansible-core does. Once one such name exists, every read of the lists that carry it is data. Reading one host through `hostvars[name]` is data only for that host, so a nested template of another host still renders.
 
-The helper stands in for the controller's connection, so some things the reference lets a plugin do are refused, by name, before they do anything:
+The helper stands in for the controller's connection, so some things ansible-core lets a plugin do are refused, by name, before they do anything:
 
 - A member of the connection or play context that is not one of the few the shim carries: `Connection.<name> is not supported yet`, `the connection option <name> is not supported yet`, `the play context field <name> is not supported yet`, `the shell plugin <name> is not supported yet`.
 - An `async_status` mode other than `status` and `cleanup`.
 - A module that is not UTF-8 text where the shim reads it as text.
 - The task keywords `action`, `local_action` and `module_defaults` inside the helper: the controller merged the defaults already.
 
-Two parts of the helper's connection follow the reference:
+Two parts of the helper's connection follow ansible-core:
 
 - `wrap_async` starts a real job on the agent. Jobs run side by side, and a job that outlives its `async:` limit is killed and ends with `Timeout exceeded`.
 - A command a plugin sends with `sudoable=False`, the plugin's temporary directory and the files it puts run as the connection user, over a second link that does not escalate. Under `become`, only `sudoable` commands and modules run escalated.
@@ -171,7 +171,7 @@ The plugin reads the link's key and user (the host variable, `--private-key`, `-
 
 ### Known gaps
 
-- `wait_for_connection` on a host that is down from the first connection ends `UNREACHABLE` for a plugin item that never got a link; the reference reports `failed` with `timed out waiting for ping module test`.
+- `wait_for_connection` on a host that is down from the first connection ends `UNREACHABLE` for a plugin item that never got a link; ansible-core reports `failed` with `timed out waiting for ping module test`.
 - A bridged result that is `unreachable` at the result level prints as `ok`.
 - A skipped bridged result carries `"failed": false`.
 - The warnings a plugin writes with `display` go to the helper's standard error, not to the task's output; so does ansible-core's `Error loading plugin` warning for an unknown collection name.

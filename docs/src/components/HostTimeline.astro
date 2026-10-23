@@ -22,13 +22,16 @@ const groups: { title: string; note: string; barrier?: number; hosts: { name: st
     ],
   },
 ];
+// `linear` shows the default strategy alone, for the page that introduces it.
+const { only } = Astro.props as { only?: 'linear' };
+const shown = only ? groups.slice(0, 1) : groups;
 const span = 6;
 const pos = (t: number) => `${(t / span) * 100}%`;
 ---
 
 <figure class="timeline not-content">
   {
-    groups.map((group) => (
+    shown.map((group) => (
       <div class="tl-group">
         <p class="tl-head">
           <span class="tl-title">{group.title}</span>

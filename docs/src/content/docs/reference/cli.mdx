@@ -35,7 +35,7 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
 </Option>
 
 <Option name="--flush-cache">
-  Remove the [fact cache](/hosts/fact-cache/#flushing) entries of the inventory hosts before the run.
+  Remove the [fact cache](/hosts/inventories/#flushing) entries of the inventory hosts before the run.
 </Option>
 
 <Option name="--version">
@@ -81,7 +81,7 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
 </Option>
 
 <Option name="-t, --tags" arg="TAGS" config="[tags] run" env="ANSIBLE_RUN_TAGS">
-  Run only tasks with these tags. Comma-separated and repeatable, and added to the configured default rather than replacing it. See [Tags and listings](/playbooks/tags/).
+  Run only tasks with these tags. Comma-separated and repeatable, and added to the configured default rather than replacing it. See [Tags and listings](/playbooks/check-and-diff/#tags).
 </Option>
 
 <Option name="--skip-tags" arg="TAGS" config="[tags] skip" env="ANSIBLE_SKIP_TAGS">
@@ -111,7 +111,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 ## Privilege escalation
 
 <Option name="-b, --become" default="false" config="[privilege_escalation] become" env="ANSIBLE_BECOME">
-  Run tasks with privilege escalation. A `become` keyword in the playbook still decides for its own play, block or task. See [Privilege escalation](/hosts/become/).
+  Run tasks with privilege escalation. A `become` keyword in the playbook still decides for its own play, block or task. See [Privilege escalation](/hosts/connections/#become).
 </Option>
 
 <Option name="--become-user" arg="USER" default="root" config="[privilege_escalation] become_user" env="ANSIBLE_BECOME_USER">
@@ -155,7 +155,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 ## Run and output
 
 <Option name="--force-handlers" default="false" config="[defaults] force_handlers" env="ANSIBLE_FORCE_HANDLERS">
-  Run notified handlers even on hosts that failed. A `force_handlers` keyword on the play takes priority. See [Handlers](/playbooks/handlers/).
+  Run notified handlers even on hosts that failed. A `force_handlers` keyword on the play takes priority. See [Handlers](/playbooks/blocks/#handlers).
 </Option>
 
 <Option name="-C, --check" default="false">
@@ -175,7 +175,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 </Option>
 
 <Option name="--facts" arg="auto|python|native" default="auto">
-  Where gathered facts come from. `auto` uses the agent's native `setup` when every fact the plays can read is one it produces, and ansible-core's `setup` module otherwise. `python` always runs the Python module, to compare against. `native` always asks the agent's collector, and facts it does not produce are then undefined. On a host other than Debian or Ubuntu the native collector hands the task back to the Python module whatever this option says. See [Facts](/variables/facts/#native-facts).
+  Where gathered facts come from. `auto` uses the agent's native `setup` when every fact the plays can read is one it produces, and ansible-core's `setup` module otherwise. `python` always runs the Python module, to compare against. `native` always asks the agent's collector, and facts it does not produce are then undefined. On a host other than Debian or Ubuntu the native collector hands the task back to the Python module whatever this option says. See [Facts](/variables/precedence/#native-facts).
 </Option>
 
 <Option name="--profile">

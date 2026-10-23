@@ -1,7 +1,9 @@
 ---
-title: Delegation and run_once
-description: Running a task once for a batch, or on a different host from the one it is for.
+title: Delegation, meta tasks and environment
+description: Running a task once for a batch or on another host, what each meta action does, and how environment and no_log shape a task.
 ---
+
+This page answers how to run a task somewhere other than where the play is working, how to steer the run itself with `meta`, and how to set environment variables or hide output for a task.
 
 ## run_once
 
@@ -44,6 +46,74 @@ A controller-side module such as `set_fact` or `debug` always runs on the contro
 
 `delegate_to` and `delegate_facts` can be written on a block and on a task, not on a play, which is where Ansible accepts them too. The two keywords combine: a `run_once` task with a `delegate_to` runs once, on the delegate.
 
+## Meta tasks
+
+`meta` asks the engine for something instead of running a module. Every action Ansible 2.19 has runs here, and each one prints a `TASK [meta]` banner. An action Ansible does not have prints the banner, then fails with `invalid meta action requested: <action>` and an `Origin` block, with exit 1, even when its `when` is false. A meta task adds nothing to the recap: its `skipping:` line is not counted either.
+
+| Action | What it does | Whose `when` counts |
+|---|---|---|
+| `flush_handlers` | Runs the handlers the host has been told about, where the task stands. | Each host's own. |
+| `noop` | Nothing. | Ignored, with a warning. |
+| `end_host` | The host leaves the play. No more tasks, no `always` sections, no handlers. | Each host's own. |
+| `end_role` | The host skips the rest of the role it is in, an `always` section of the role included. | Each host's own. |
+| `end_batch` | The batch ends for every host, and the next batch starts. | The first host's. |
+| `end_play` | The play ends for every host, with whatever batches are left. | The first host's. |
+| `clear_facts` | Forgets the facts modules gathered, on every host of the batch. Facts from `set_fact` stay. | The first host's. |
+| `clear_host_errors` | Forgives the failures and the unreachable hosts of the batch. See below. | The first host's. |
+| `refresh_inventory` | Reads every inventory source again. See below. | Ignored, with a warning. |
+| `reset_connection` | Closes the host's connection, and the shared `ssh` connection with it. The next task opens both again. | Ignored, with a warning. |
+
+"The first host" is the first host of the batch that is still in the play, in inventory order. The actions that read its `when` run once and print one banner. The others run for each host and print one banner per host that is still in the play.
+
+`end_role` outside a role stops the run before it starts, with exit 4 and ansible-core's message.
+
+### Hosts that leave
+
+A host that ends with `end_host`, `end_batch` or `end_play` has not failed, and the recap shows it as it stood. Inside a `rescue`, the failure it rescued counts as rescued and the host stays out of the exit code. A host that had already failed keeps its failure. Later plays run on the host again.
+
+### Forgiving errors
+
+`clear_host_errors` takes the failures of the batch off the exit code. The recap keeps its counts, so a host can show `failed=1` in a run that exits 0.
+
+- A host that failed does not come back to the play it failed in. It is back in the plays after it.
+- A host that went unreachable comes back. It picks the play up where it stopped, and runs the steps it missed after every other host is done. If it is unreachable again, it counts again.
+- A host that was unreachable in an earlier play also comes back, from the first task of the play that cleared. It is unreachable again in the plays after, and the exit code says 4 either way.
+
+### Refreshing the inventory
+
+`refresh_inventory` reads every inventory source again, in the order of `-i`. `groups` and `hostvars` change at once. A host the sources gained joins from the next play, and a host they lost leaves the play where it stands, without failing. Hosts and groups made by `add_host` and `group_by` stay. If the sources cannot be read any more, the inventory is empty from then on, as in Ansible: every host leaves, and the next plays match nothing.
+
+Facts and `set_fact` values stay as they were. See [Inventories](/hosts/inventories/).
+
+## environment
+
+`environment` sets variables for the process a module runs in.
+
+```yaml
+- hosts: web
+  environment:
+    http_proxy: http://proxy.internal:3128
+  tasks:
+    - name: Fetch the release
+      command: curl -fsSLO https://example.com/app.tar.gz
+      environment:
+        CURL_CA_BUNDLE: /etc/ssl/certs/internal.pem
+```
+
+Layers are merged key by key, each one over the previous: the play first, then each enclosing block from the outside in, then the task. Each layer is rendered with the variables of the current loop item.
+
+Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true` becomes `"True"` and `null` becomes `"None"`. An undefined variable inside `environment` fails the task.
+
+## no_log
+
+`no_log: true` replaces the task's output with the censored line `ansible-playbook` prints, on every line it would have shown and at every verbosity level. That covers the `ok:` and `changed:` lines, `fatal:`, `UNREACHABLE!`, each loop item's line, and `debug` output. A loop item's label becomes `(censored due to no_log)`.
+
+The `[ERROR]:` block printed above a failure keeps its prefix, such as `Task failed: Action failed:`, and shows `<error censored due to no log>` in place of the message. Here Volant differs from `ansible-playbook` 2.19.12, which censors only an unreachable host's reason and prints a failed task's message in full, so a secret in a `fail` message reaches the terminal.
+
+`no_log` can be a template. Each host renders it when the task runs. In a loop, one item that hides hides every item, where ansible-core hides each item by its own value.
+
+The task banner and the task's name are not hidden. The registered variable and the recap keep the real result, so a later task can still read it.
+
 ## Differences from Ansible
 
 - `delegate_to` is rendered once per task, not once per loop item. One batch is one message to one agent over one connection, and a per-item delegate would split a loop across connections.
@@ -51,3 +121,5 @@ A controller-side module such as `set_fact` or `debug` always runs on the contro
 - When the host elected to run a `run_once` task cannot be reached, the waiting hosts leave the play and the run ends there. Ansible prints one more empty play banner. Neither engine elects another host, and the exit code is the same 4.
 - `run_once` combined with `delegate_facts` stores the facts on the delegate, which keeps `delegate_facts` meaning one thing. Ansible's behavior here was not measured.
 - `become_user: "{{ item }}"` fails the task, where Ansible escalates per item. Escalation is settled once per batch, for the same reason as the delegate.
+- An `environment` value that is not a mapping is skipped with a warning that names the value. Ansible prints the whole stack of layers it sat in instead.
+- That warning is not censored by `no_log`. Ansible does not censor its warning either, so this matches ansible-core, but keep it in mind before you put a secret in an `environment` that might not be a mapping.

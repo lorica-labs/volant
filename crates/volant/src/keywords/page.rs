@@ -84,7 +84,7 @@ pub(super) fn render(partial: &[(&str, &str)]) -> String {
          A keyword inside a file that only a dynamic `include_tasks` or `include_role` names is \
          checked when a host reaches that statement: if it is not supported yet, the statement \
          fails for that host, a `rescue` around it can catch the failure, and nothing in the file \
-         runs. See [Includes and imports](/playbooks/includes/).\n\n\
+         runs. See [Includes and imports](/playbooks/roles/#dynamic-includes).\n\n\
          A keyword that takes a boolean or a number may be written as a template: `become`, \
          `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable`, `delegate_facts`, \
          `timeout`, `async` and `poll`. It is rendered for each host when its task runs, once the \

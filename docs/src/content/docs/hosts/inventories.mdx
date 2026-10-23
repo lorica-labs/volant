@@ -1,7 +1,9 @@
 ---
-title: Inventories and host patterns
-description: The inventory format Volant reads, where group and host variables come from, and the host-pattern grammar.
+title: Inventories and the fact cache
+description: The inventory format Volant reads, where group and host variables come from, the host-pattern grammar, and how facts are kept between runs.
 ---
+
+This page answers where your hosts come from, how a pattern picks some of them, and how to keep their facts between runs. Your existing inventory files, `group_vars` and `host_vars` are read as they are.
 
 Volant reads inventories the way ansible-core does: one or more sources, each parsed by the first enabled plugin that accepts it. A static run (INI, YAML, TOML, a host list) starts no Python.
 
@@ -37,7 +39,7 @@ A source that no plugin reads is skipped with a warning, as in Ansible. `-vvv` p
 
 A script prints its inventory as JSON, in the format `ansible-inventory --list` writes. `constructed` and `generator` build groups and hosts from templates.
 
-A collection's inventory plugin (a cloud provider, for instance) runs inside ansible-core, through the [Python helper](/internals/python/). The helper starts only when such a source is present.
+A collection's inventory plugin (a cloud provider, for instance) runs inside ansible-core, through a Python process that Volant starts only when such a source is present, see [the warm Python path](/internals/python/).
 
 Set `always_show_stderr` in `[inventory_plugin_script]` to control what happens to a script's standard error. It is on by default: what a script writes there shows as an `[ERROR]:` line, even when the script succeeds.
 
@@ -80,7 +82,7 @@ A name that is both a host and a group means the host. Volant warns once per run
 
 ## Refreshing
 
-`meta: refresh_inventory` reads every source again, see [Meta tasks](/playbooks/meta/#refreshing-the-inventory).
+`meta: refresh_inventory` reads every source again, see [Delegation, meta tasks and environment](/playbooks/delegation/#refreshing-the-inventory).
 
 ## Host patterns
 
@@ -110,3 +112,49 @@ How a pattern is cut into terms:
 Terms are not applied in the order you write them. Plain terms come first, then `&` terms, then `!` terms, which is what Ansible does. A pattern made only of `!` or `&` terms starts from `all`.
 
 `--limit` follows the same grammar. Each term that matches no host prints `Could not match supplied host pattern, ignoring: <term>` and the run keeps the hosts the other terms matched. A limit that matches no host at all fails with `Specified inventory, host pattern and/or --limit leaves us with no hosts to target.` and exit code 1.
+
+## The fact cache
+
+By default facts live in memory and are gone when the run ends. With `fact_caching = jsonfile`, Volant writes each host's facts to a file and reads them back on the next run, in the file format ansible-core 2.19 uses. A cache written by one tool is read by the other.
+
+```ini title="ansible.cfg"
+[defaults]
+gathering = smart
+fact_caching = jsonfile
+fact_caching_connection = /var/cache/volant/facts
+fact_caching_timeout = 3600
+```
+
+### Fact cache settings
+
+| Setting | Environment | Meaning |
+|---|---|---|
+| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory` (the default, per run) or `jsonfile`. `ansible.builtin.memory` and `ansible.builtin.jsonfile` work too. |
+| `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | The directory that holds the files. `jsonfile` needs it; without it the run keeps facts in memory. |
+| `fact_caching_timeout` | `ANSIBLE_CACHE_PLUGIN_TIMEOUT` | Seconds a file stays fresh. Default 86400. `0` never expires. |
+| `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | Put in front of each file name. Empty by default. |
+| `gathering` | `ANSIBLE_GATHERING` | `implicit` (default), `explicit` or `smart`. |
+
+Each host has one file, named `<prefix>s1_<host>`.
+
+Any other cache plugin, such as `redis` or `yaml`, ends the run with exit code 4 and the message `fact cache plugin '<name>' (from '<origin>') is not supported yet; use 'memory' or 'jsonfile'`.
+
+### Gathering
+
+- `implicit` gathers facts in every play that does not turn it off.
+- `explicit` gathers only in plays that set `gather_facts: true`.
+- `smart` gathers only for hosts that have no fresh entry in the cache.
+
+Cached facts are loaded at the start of the run, so tasks see them even when a play does not gather.
+
+### set_fact
+
+`set_fact` with `cacheable: true` also writes the value to the host's cache entry, and the next run reads it back.
+
+### Flushing
+
+`--flush-cache` removes the entries of the hosts in the inventory before the run. Files of other hosts stay.
+
+### Fact cache errors
+
+A cache directory that cannot be created, or a missing `fact_caching_connection` (`Required config '_uri' for 'jsonfile' cache plugin not provided.`), warns and the run goes on with the in-memory cache. A file that is not valid JSON is removed and stops the run, with ansible-core's message: `The cache file <path> was corrupt, or did not otherwise contain valid data. It has been removed, so you can re-run your command now.`

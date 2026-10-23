@@ -5,7 +5,7 @@ description: The words this documentation uses in a precise sense.
 
 ### Action plugin
 
-Code of ansible-core that runs on the controller and decides what to send to a host for a module such as `copy` or `package`. Volant runs eight of them in Rust and the rest through the bridge. See [Action plugins](/reference/action-plugins/).
+Code of ansible-core that runs on the controller and decides what to send to a host for a module such as `copy` or `package`. Volant runs eight of them in Rust and the rest through the bridge. See [Action plugins](/internals/action-plugins/).
 
 ### Agent
 
@@ -17,7 +17,7 @@ The tasks one host runs in a row before it next waits for the others. By default
 
 ### Bridge
 
-The road an action plugin takes when Volant has no Rust version of it: the plugin's own Python from ansible-core runs in the controller's helper, and the controller answers what it asks for. See [On the bridge](/reference/action-plugins/#on-the-bridge).
+The road an action plugin takes when Volant has no Rust version of it: the plugin's own Python from ansible-core runs in the controller's helper, and the controller answers what it asks for. See [On the bridge](/internals/action-plugins/#on-the-bridge).
 
 ### Controller
 
@@ -25,7 +25,7 @@ The machine you run `volant` on, and the `volant` program itself. It reads playb
 
 ### Flush point
 
-A step where notified handlers run. Every play has three, and `meta: flush_handlers` adds more. See [Handlers](/playbooks/handlers/).
+A step where notified handlers run. Every play has three, and `meta: flush_handlers` adds more. See [Handlers](/playbooks/blocks/#handlers).
 
 ### Link
 
@@ -41,7 +41,7 @@ A Rust version of a module that the agent carries. It answers a task itself when
 
 ### Pre-flight
 
-The check that names, before any connection, everything this release does not support yet, and stops the run. See [What is not supported yet](/playbooks/preflight/).
+The check that names, before any connection, everything this release does not support yet, and stops the run. See [What is not supported yet](/internals/preflight/).
 
 ### The reference
 
@@ -49,7 +49,7 @@ ansible-core 2.19.12, the release whose behavior Volant reproduces. A difference
 
 ### Splice point
 
-A step whose followers are only known while the play runs: a handler flush, or a dynamic `include_tasks` or `include_role`. The new steps are inserted there. See [Includes and imports](/playbooks/includes/).
+A step whose followers are only known while the play runs: a handler flush, or a dynamic `include_tasks` or `include_role`. The new steps are inserted there. See [Includes and imports](/playbooks/roles/#imports-and-includes).
 
 ### Step
 

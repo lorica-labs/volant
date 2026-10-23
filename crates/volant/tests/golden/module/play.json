@@ -1,5 +1,6 @@
 [
  {
+  "name": "stat",
   "hosts": "localhost",
   "gather_facts": false,
   "connection": "local",
@@ -64,7 +65,22 @@
        "get_attributes": false
       },
       "register": "last"
-     },
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "file",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "file-absent-missing",
       "file": {
@@ -91,7 +107,7 @@
       "when": "after.stat.isreg | default(false)"
      },
      {
-      "name": "setup-10",
+      "name": "setup-3",
       "file": {
        "path": "<golden-tmp>/d0",
        "state": "directory"
@@ -432,7 +448,22 @@
        "src": "<golden-tmp>/a"
       },
       "when": "after.stat.isreg | default(false)"
-     },
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "copy",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "copy-module-created",
       "copy": {
@@ -570,6 +601,73 @@
       },
       "when": "after.stat.isreg | default(false)"
      },
+     {
+      "name": "copy-module-checksum",
+      "copy": {
+       "content": "k\n",
+       "dest": "<golden-tmp>/k.txt",
+       "checksum": "0000"
+      },
+      "register": "last",
+      "ignore_errors": true
+     },
+     {
+      "name": "after-stat-copy-module-checksum",
+      "stat": {
+       "path": "<golden-tmp>/k.txt",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-checksum",
+      "slurp": {
+       "src": "<golden-tmp>/k.txt"
+      },
+      "when": "after.stat.isreg | default(false)"
+     },
+     {
+      "name": "copy-module-dest-link",
+      "copy": {
+       "content": "one\n",
+       "dest": "<golden-tmp>/l"
+      },
+      "register": "last"
+     },
+     {
+      "name": "after-stat-copy-module-dest-link",
+      "stat": {
+       "path": "<golden-tmp>/l",
+       "get_checksum": false,
+       "get_mime": false,
+       "get_attributes": false
+      },
+      "register": "after"
+     },
+     {
+      "name": "after-content-copy-module-dest-link",
+      "slurp": {
+       "src": "<golden-tmp>/l"
+      },
+      "when": "after.stat.isreg | default(false)"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "lineinfile",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "lineinfile-missing",
       "lineinfile": {
@@ -973,7 +1071,7 @@
       "when": "after.stat.isreg | default(false)"
      },
      {
-      "name": "setup-112",
+      "name": "setup-46",
       "copy": {
        "content": "a=1\nx=1\na=2\nx=2\nz=0\n",
        "dest": "<golden-tmp>/m.conf",
@@ -1031,7 +1129,22 @@
        "src": "<golden-tmp>/m.conf"
       },
       "when": "after.stat.isreg | default(false)"
-     },
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "systemd",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "systemd-started-same",
       "systemd": {
@@ -1075,7 +1188,7 @@
       "become": true
      },
      {
-      "name": "setup-124",
+      "name": "setup-5",
       "copy": {
        "content": "[Unit]\nDescription=Volant golden throwaway unit\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n",
        "dest": "/etc/systemd/system/volant-golden.service",
@@ -1161,7 +1274,7 @@
       }
      },
      {
-      "name": "setup-137",
+      "name": "setup-18",
       "copy": {
        "content": "[Unit]\nDescription=Volant golden throwaway unit, edited\n\n[Service]\nExecStart=/bin/sleep infinity\nExecReload=/bin/true\n\n[Install]\nWantedBy=multi-user.target\n",
        "dest": "/etc/systemd/system/volant-golden.service",
@@ -1233,7 +1346,30 @@
      {
       "name": "after-unit-systemd-unit-disabled-same",
       "command": "systemctl show volant-golden -p ActiveState -p UnitFileState -p NeedDaemonReload -p Description"
-     },
+     }
+    ],
+    "always": [
+     {
+      "name": "cleanup-unit",
+      "shell": "systemctl disable --now volant-golden.service; rm -f /etc/systemd/system/volant-golden.service; systemctl daemon-reload",
+      "become": true,
+      "ignore_errors": true
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "apt",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "apt-present-installed",
       "apt": {
@@ -1327,7 +1463,33 @@
       },
       "register": "last",
       "become": true
-     },
+     }
+    ],
+    "always": [
+     {
+      "name": "cleanup-package",
+      "apt": {
+       "name": "hello",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "facts",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "package-facts",
       "package_facts": {
@@ -1341,7 +1503,22 @@
       "service_facts": {},
       "register": "last",
       "become": true
-     },
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "setup",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "setup-pkg-mgr",
       "setup": {
@@ -1374,59 +1551,22 @@
        ]
       },
       "register": "last"
-     },
-     {
-      "name": "copy-module-checksum",
-      "copy": {
-       "content": "k\n",
-       "dest": "<golden-tmp>/k.txt",
-       "checksum": "0000"
-      },
-      "register": "last",
-      "ignore_errors": true
-     },
-     {
-      "name": "after-stat-copy-module-checksum",
-      "stat": {
-       "path": "<golden-tmp>/k.txt",
-       "get_checksum": false,
-       "get_mime": false,
-       "get_attributes": false
-      },
-      "register": "after"
-     },
-     {
-      "name": "after-content-copy-module-checksum",
-      "slurp": {
-       "src": "<golden-tmp>/k.txt"
-      },
-      "when": "after.stat.isreg | default(false)"
-     },
-     {
-      "name": "copy-module-dest-link",
-      "copy": {
-       "content": "one\n",
-       "dest": "<golden-tmp>/l"
-      },
-      "register": "last"
-     },
-     {
-      "name": "after-stat-copy-module-dest-link",
-      "stat": {
-       "path": "<golden-tmp>/l",
-       "get_checksum": false,
-       "get_mime": false,
-       "get_attributes": false
-      },
-      "register": "after"
-     },
-     {
-      "name": "after-content-copy-module-dest-link",
-      "slurp": {
-       "src": "<golden-tmp>/l"
-      },
-      "when": "after.stat.isreg | default(false)"
-     },
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "accounts",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
       "name": "cleanup-user-before",
       "user": {
@@ -1787,16 +1927,87 @@
       },
       "register": "last",
       "become": true
+     }
+    ],
+    "always": [
+     {
+      "name": "cleanup-user",
+      "user": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
      },
      {
-      "name": "setup-205",
+      "name": "cleanup-user-named-group",
+      "user": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-group",
+      "group": {
+       "name": "volantgrp",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-user-group",
+      "group": {
+       "name": "volantshape",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-home",
+      "file": {
+       "path": "/nonexistent-volantshape",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     },
+     {
+      "name": "cleanup-home-moved",
+      "file": {
+       "path": "/nonexistent-volantshape-moved",
+       "state": "absent"
+      },
+      "become": true,
+      "ignore_errors": true
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "python",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
+     {
+      "name": "setup-0",
       "file": {
        "path": "/tmp/volant15-golden",
        "state": "absent"
       }
      },
      {
-      "name": "setup-206",
+      "name": "setup-1",
       "file": {
        "path": "/tmp/volant15-golden",
        "state": "directory",
@@ -1804,29 +2015,14 @@
       }
      },
      {
-      "name": "setup-207",
-      "file": {
-       "path": "/tmp/volant16-golden",
-       "state": "absent"
-      }
-     },
-     {
-      "name": "setup-208",
-      "file": {
-       "path": "/tmp/volant16-golden",
-       "state": "directory",
-       "mode": "0755"
-      }
-     },
-     {
-      "name": "setup-209",
+      "name": "setup-2",
       "file": {
        "path": "/tmp/volant16-golden-collection",
        "state": "absent"
       }
      },
      {
-      "name": "setup-210",
+      "name": "setup-3",
       "file": {
        "path": "/tmp/volant16-golden-collection",
        "state": "directory",
@@ -1834,7 +2030,7 @@
       }
      },
      {
-      "name": "setup-211",
+      "name": "setup-4",
       "copy": {
        "content": "golden stat fixture\n",
        "dest": "/tmp/volant15-golden/golden-stat-target",
@@ -1870,6 +2066,58 @@
        "create": true
       },
       "register": "last"
+     },
+     {
+      "name": "collection-sysctl",
+      "ansible.posix.sysctl": {
+       "name": "net.ipv4.ip_forward",
+       "value": "1",
+       "sysctl_file": "/tmp/volant16-golden-collection/sysctl.conf",
+       "sysctl_set": false,
+       "reload": false
+      },
+      "register": "last"
+     },
+     {
+      "name": "collection-ini-file",
+      "community.general.ini_file": {
+       "path": "/tmp/volant16-golden-collection/test.ini",
+       "section": "golden",
+       "option": "color",
+       "value": "blue",
+       "mode": "0644"
+      },
+      "register": "last"
+     }
+    ]
+   }
+  ]
+ },
+ {
+  "name": "actions",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
+     {
+      "name": "setup-0",
+      "file": {
+       "path": "/tmp/volant16-golden",
+       "state": "absent"
+      }
+     },
+     {
+      "name": "setup-1",
+      "file": {
+       "path": "/tmp/volant16-golden",
+       "state": "directory",
+       "mode": "0755"
+      }
      },
      {
       "name": "action-copy-new",
@@ -1908,7 +2156,7 @@
       "register": "last"
      },
      {
-      "name": "setup-220",
+      "name": "setup-6",
       "file": {
        "path": "/tmp/volant16-golden/dir",
        "state": "directory",
@@ -1985,25 +2233,7 @@
       }
      },
      {
-      "name": "action-package-present",
-      "package": {
-       "name": "bash",
-       "state": "present"
-      },
-      "register": "last",
-      "become": true
-     },
-     {
-      "name": "action-service-started",
-      "service": {
-       "name": "systemd-journald",
-       "state": "started"
-      },
-      "register": "last",
-      "become": true
-     },
-     {
-      "name": "setup-229",
+      "name": "setup-13",
       "file": {
        "path": "/tmp/volant16-golden/unpacked",
        "state": "directory",
@@ -2026,99 +2256,39 @@
        "creates": "/tmp/volant16-golden/unpacked/inside.txt"
       },
       "register": "last"
-     },
-     {
-      "name": "collection-sysctl",
-      "ansible.posix.sysctl": {
-       "name": "net.ipv4.ip_forward",
-       "value": "1",
-       "sysctl_file": "/tmp/volant16-golden-collection/sysctl.conf",
-       "sysctl_set": false,
-       "reload": false
-      },
-      "register": "last"
-     },
-     {
-      "name": "collection-ini-file",
-      "community.general.ini_file": {
-       "path": "/tmp/volant16-golden-collection/test.ini",
-       "section": "golden",
-       "option": "color",
-       "value": "blue",
-       "mode": "0644"
-      },
-      "register": "last"
      }
-    ],
-    "always": [
+    ]
+   }
+  ]
+ },
+ {
+  "name": "actions-host",
+  "hosts": "localhost",
+  "gather_facts": false,
+  "connection": "local",
+  "vars": {
+   "ansible_python_interpreter": "/usr/bin/python3"
+  },
+  "tasks": [
+   {
+    "block": [
      {
-      "name": "cleanup-user",
-      "user": {
-       "name": "volantshape",
-       "state": "absent"
+      "name": "action-package-present",
+      "package": {
+       "name": "bash",
+       "state": "present"
       },
-      "become": true,
-      "ignore_errors": true
+      "register": "last",
+      "become": true
      },
      {
-      "name": "cleanup-user-named-group",
-      "user": {
-       "name": "volantgrp",
-       "state": "absent"
+      "name": "action-service-started",
+      "service": {
+       "name": "systemd-journald",
+       "state": "started"
       },
-      "become": true,
-      "ignore_errors": true
-     },
-     {
-      "name": "cleanup-group",
-      "group": {
-       "name": "volantgrp",
-       "state": "absent"
-      },
-      "become": true,
-      "ignore_errors": true
-     },
-     {
-      "name": "cleanup-user-group",
-      "group": {
-       "name": "volantshape",
-       "state": "absent"
-      },
-      "become": true,
-      "ignore_errors": true
-     },
-     {
-      "name": "cleanup-home",
-      "file": {
-       "path": "/nonexistent-volantshape",
-       "state": "absent"
-      },
-      "become": true,
-      "ignore_errors": true
-     },
-     {
-      "name": "cleanup-home-moved",
-      "file": {
-       "path": "/nonexistent-volantshape-moved",
-       "state": "absent"
-      },
-      "become": true,
-      "ignore_errors": true
-     },
-     {
-      "name": "cleanup-unit",
-      "shell": "systemctl disable --now volant-golden.service; rm -f /etc/systemd/system/volant-golden.service; systemctl daemon-reload",
-      "become": true,
-      "ignore_errors": true
-     },
-     {
-      "name": "cleanup-package",
-      "apt": {
-       "name": "hello",
-       "state": "absent"
-      },
-      "become": true,
-      "ignore_errors": true
+      "register": "last",
+      "become": true
      }
     ]
    }

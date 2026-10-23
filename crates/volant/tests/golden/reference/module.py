@@ -1,9 +1,13 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
 """The `module` kind: one play of module cases on localhost, recorded in `module/`.
 
-The cases run in one play, in the order below, each one meeting the state the previous ones left.
-`module/<case>.json` is a case's result, `module/index.json` says how each is compared and which
-path an enabled native has to take, and `module/play.json` is the play that ran.
+The cases are grouped by the state they change, and each group is one play, run from the fixture
+alone: its cases run in the order below, each one meeting the state the previous ones of the group
+left. `module/<case>.json` is a case's result, `module/index.json` says how each is compared, which
+path an enabled native has to take and its group, `module/play.json` holds the plays that ran, and
+`module/groups.json` says what each group needs of the machine and whether it changes the machine
+(an account, a unit, a package) or only its own directory. `generate.py module:<case or group>`
+records the named cases alone; their group still runs whole.
 
 An index entry's `compare` is `exact` (key by key, `invocation` kept: a native produces it too),
 `live` (against a reference run made next to the native one, the recording giving only the shape)
@@ -219,12 +223,25 @@ def _installed(package):
     return query.stdout == "installed"
 
 
-def record():
+def _reset_fixture(t):
+    """NATIVE_TMP as every group starts from it: explicit modes throughout, `stat-dir` reports the
+    directory's and a file a case creates without a mode (`copy-module-remote-src`) gets one from
+    the umask."""
+    shutil.rmtree(t, ignore_errors=True)
+    os.makedirs(t)
+    os.chmod(t, 0o755)
+    with open(f"{t}/f.txt", "w", encoding="utf-8") as f:
+        f.write("hello\n")
+    os.chmod(f"{t}/f.txt", 0o644)
+    os.symlink("f.txt", f"{t}/l")
+
+
+def record(only=()):
     with native_lock():
-        _record()
+        _record(only)
 
 
-def _record():
+def _record(only):
     t = NATIVE_TMP
     sudo = _succeeds("sudo", "-n", "true")
     cron = sudo and _succeeds("systemctl", "is-active", "cron") and _succeeds("systemctl", "is-enabled", "cron")
@@ -239,7 +256,12 @@ def _record():
         (socket.gethostname(), redact.HOST),
     ]
 
+    # The cases of one group share a play and the state its earlier cases leave; groups share
+    # nothing but the machine. `meta` is what a group needs of the machine and whether it changes it.
+    groups = {}
+    meta = {}
     tasks = []
+    current = None
     index = {}
     # Case name -> the result key naming its backup, or None, for every case recording `_after`.
     read_back = {}
@@ -250,6 +272,13 @@ def _record():
     unit_back = set()
     # The cases whose recording keeps the facts' names and none of their values.
     facts_shape = set()
+
+    def group(name, needs=(), host=False):
+        """Starts, or goes back to, the group the following cases and setup tasks belong to."""
+        nonlocal tasks, current
+        current = name
+        tasks = groups.setdefault(name, [])
+        meta[name] = {"host": host, "needs": list(needs)}
 
     def case(
         name,
@@ -308,6 +337,7 @@ def _record():
             "patterns": patterns,
             "unordered": [],
             "branch": branch,
+            "group": current,
         }
 
     def setup(module, args, become=False):
@@ -324,6 +354,7 @@ def _record():
     def failed(msg):
         return {"changed": False, "failed": True, "msg": msg}
 
+    group("stat")
     for name, args in [
         ("stat-file", {"path": f"{t}/f.txt"}),
         ("stat-dir", {"path": t}),
@@ -335,6 +366,7 @@ def _record():
     ]:
         case(name, "stat", args, same, volatile=() if name == "stat-missing" else STAT_VOLATILE)
 
+    group("file")
     case("file-absent-missing", "file", {"path": f"{t}/gone", "state": "absent"}, same)
     setup("file", {"path": f"{t}/d0", "state": "directory"})
     case("file-absent-present", "file", {"path": f"{t}/d0", "state": "absent"}, changed)
@@ -379,6 +411,7 @@ def _record():
         "recurse",
     )
 
+    group("copy")
     # `content` reaches the module as a file the reference writes on the controller under a random
     # name, which the invocation quotes.
     staged = ["invocation.module_args._original_basename"]
@@ -413,6 +446,7 @@ def _record():
         "remote_src",
     )
 
+    group("lineinfile")
     conf = f"{t}/l.conf"
     added = {"changed": True, "msg": "line added"}
     replaced = {"changed": True, "msg": "line replaced"}
@@ -479,6 +513,7 @@ def _record():
         "set, memory, limits, pids and times are the machine's; compared with a reference run on "
         "the same host"
     )
+    group("systemd", ("sudo", "systemd", "cron"), host=True)
     if cron:
         case(
             "systemd-started-same",
@@ -552,6 +587,7 @@ def _record():
     # So that what `disabled` did is seen by a case of its own.
     unit_case("systemd-unit-disabled-same", {"enabled": False}, same)
 
+    group("apt", ("sudo", "apt", "hello"), host=True)
     cache_time = ["cache_update_time"]
     fresh = {"changed": False, "cache_updated": False}
     case("apt-present-installed", "apt", {"name": "bash", "state": "present"}, fresh, volatile=cache_time, become=True)
@@ -608,8 +644,10 @@ def _record():
         become=True,
         output=True,
     )
+    group("facts", ("sudo", "systemd", "apt"), host=True)
     case("package-facts", "package_facts", {"manager": "auto"}, same, compare="live", become=True)
     case("service-facts", "service_facts", {}, same, compare="live", become=True)
+    group("setup", ("apt",))
     case("setup-pkg-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_pkg_mgr"]}, same)
     case("setup-service-mgr", "setup", {"gather_subset": ["!all"], "filter": ["ansible_service_mgr"]}, same)
     # The `min` facts, which the native answers. They are the machine's (its name, id, addresses,
@@ -627,6 +665,7 @@ def _record():
     )
     facts_shape.add("setup-min")
 
+    group("copy")
     # Two more `copy` cases, last so that no task name before them moves: a `checksum` the staged
     # file does not have, and the fixture's link `l` as `dest`, which is replaced by a file of its
     # own while `f.txt` keeps its content. The `stat-link-*` cases are the only others to read `l`.
@@ -645,6 +684,7 @@ def _record():
     # Accounts first: `groupdel` refuses a group that is still an account's primary one. The
     # account `user-same-name-group` names after the group, and the user group
     # `user-created-home` gets, go too.
+    group("accounts", ("sudo",), host=True)
     removal = [
         {"name": f"cleanup-{name}", module: {"name": who, "state": "absent"}, "become": True}
         for name, module, who in (
@@ -763,9 +803,13 @@ def _record():
                 by_type=list(by_type), may_be_null=list(may_be_null), known=list(known), required=list(required)
             )
 
-    for directory in (PYTHON_TMP, ACTION_TMP, COLLECTION_TMP):
-        setup("file", {"path": directory, "state": "absent"})
-        setup("file", {"path": directory, "state": "directory", "mode": "0755"})
+    def fresh_directories(*directories):
+        for directory in directories:
+            setup("file", {"path": directory, "state": "absent"})
+            setup("file", {"path": directory, "state": "directory", "mode": "0755"})
+
+    group("python", ("collections",))
+    fresh_directories(PYTHON_TMP, COLLECTION_TMP)
     setup("copy", {"content": STAT_TARGET_CONTENT, "dest": STAT_TARGET, "mode": "0644"})
     # Compared by kind: they move between runs, filesystems or machines (`version` is `null` where
     # the filesystem has no inode generation, as on a tmpfs `/tmp`).
@@ -786,6 +830,8 @@ def _record():
     # `src` is the reference's deleted controller temporary file, which Volant never writes
     # (`known`: an entry that stops differing fails the comparison).
     action_rules = {"by_type": ["cache_update_time", "status"]}
+    group("actions")
+    fresh_directories(ACTION_TMP)
     hello, motd, bundle = _ensure_action_fixtures()
     dest_dir = f"{ACTION_TMP}/dir"
     unpacked_dir = f"{ACTION_TMP}/unpacked"
@@ -817,6 +863,7 @@ def _record():
         {"src": motd, "dest": f"{ACTION_TMP}/motd-lstrip", "mode": "0644", "lstrip_blocks": True},
         changed,
         template_vars, **action_rules)
+    group("actions-host", ("sudo", "apt", "systemd"), host=True)
     shape("action-package-present", "package", {"name": "bash", "state": "present"}, same, become=True, **action_rules)
     shape(
         "action-service-started",
@@ -827,6 +874,7 @@ def _record():
         required=[f"status.{key}" for key in ("Id", "LoadState", "ActiveState", "SubState")],
         **action_rules,
     )
+    group("actions")
     setup("file", {"path": unpacked_dir, "state": "directory", "mode": "0775"})
     shape("action-unarchive-local", "unarchive", {"src": bundle, "dest": unpacked_dir}, changed, **action_rules)
     shape(
@@ -837,6 +885,7 @@ def _record():
 
     # `sysctl_file` alone, with `sysctl_set` and `reload` false: no kernel effect. `ini_file` is a
     # module of another collection, so the pair also shows the union carrying two collections.
+    group("python", ("collections",))
     shape(
         "collection-sysctl",
         "ansible.posix.sysctl",
@@ -856,62 +905,82 @@ def _record():
         {"changed": True, "msg": "section and option added"},
     )
 
-    block = {"block": tasks}
+    # What each group removes in `always`, which runs even when a case fails.
+    cleanups = {}
     if sudo:
         package_cleanup = {"name": "cleanup-package", "apt": {"name": NATIVE_PACKAGE, "state": "absent"}, "become": True}
-        block["always"] = [dict(task, ignore_errors=True) for task in removal + [unit_cleanup, package_cleanup]]
+        cleanups = {"accounts": removal, "systemd": [unit_cleanup], "apt": [package_cleanup]}
     # The interpreter named in the play, as a playbook pins it, so the recording, the replay under
     # Volant and the reference's own replay all run the same one: left to discovery, both engines
     # take the first of python3.13, python3.12, ... that the host has, which on a runner with
     # python3.12 is `/usr/bin/python3.12` and shows in `ansible_python.executable`.
-    play = [{
-        "hosts": "localhost",
-        "gather_facts": False,
-        "connection": "local",
-        "vars": {"ansible_python_interpreter": "/usr/bin/python3"},
-        "tasks": [block],
-    }]
+    plays = []
+    for name, group_tasks in groups.items():
+        if not group_tasks:
+            meta.pop(name)
+            continue
+        block = {"block": group_tasks}
+        if name in cleanups:
+            block["always"] = [dict(task, ignore_errors=True) for task in cleanups[name]]
+        plays.append({
+            "name": name,
+            "hosts": "localhost",
+            "gather_facts": False,
+            "connection": "local",
+            "vars": {"ansible_python_interpreter": "/usr/bin/python3"},
+            "tasks": [block],
+        })
+
+    # The cases to record: all of them, or those a name on the command line gives (a case, or a
+    # group for all its cases). A case that is not recorded keeps its recording and its index entry,
+    # but its group still runs whole when another of its cases is asked for: a case meets the state
+    # the earlier ones of its group left.
+    asked = set(only)
+    unknown = asked - set(index) - set(meta)
+    if unknown:
+        raise Failed(f"no module case or group named {', '.join(sorted(unknown))}")
+    cases = {name for name, spec in index.items() if not asked or name in asked or spec["group"] in asked}
+    to_run = [play["name"] for play in plays if any(index[name]["group"] == play["name"] for name in cases)]
     if sudo and _installed(NATIVE_PACKAGE):
         raise Failed(
             f"{NATIVE_PACKAGE} is installed on this machine, and the play installs and removes it: "
             "remove it by hand if an interrupted run left it, or record elsewhere"
         )
-    shutil.rmtree(t, ignore_errors=True)
-    os.makedirs(t)
-    # Explicit modes throughout: `stat-dir` reports the directory's, and a file a case creates
-    # without a mode (`copy-module-remote-src`) gets one from the umask.
-    os.chmod(t, 0o755)
-    with open(f"{t}/f.txt", "w", encoding="utf-8") as f:
-        f.write("hello\n")
-    os.chmod(f"{t}/f.txt", 0o644)
-    os.symlink("f.txt", f"{t}/l")
-    umask = os.umask(0o022)
-    try:
-        # The playbook lives outside NATIVE_TMP: `stat-dir` reports that directory's link count,
-        # which should depend on the fixture alone.
-        with scratch() as tmp:
-            playbook = os.path.join(tmp, "natives.yml")
-            # JSON, which is YAML: safe_dump would write an argument dict two cases share as an
-            # anchor and an alias.
-            with open(playbook, "w", encoding="utf-8") as f:
-                json.dump(play, f, indent=1)
-            # callback_plugins/golden_json.py, which reference_modules.rs also loads: `ansible.builtin.json`
-            # is `ansible.posix`'s in ansible-core 2.19, and the replay must not need it.
-            result = run(["ansible-playbook", "-i", "localhost,", playbook], extra_env={"ANSIBLE_STDOUT_CALLBACK": "golden_json"})
-    finally:
-        os.umask(umask)
-    if sudo:
-        accounts = [("passwd", NATIVE_USER), ("passwd", NATIVE_GROUP), ("group", NATIVE_GROUP), ("group", NATIVE_USER)]
-        left = [f"{db} {who}" for db, who in accounts if _succeeds("getent", db, who)]
-        left += [NATIVE_UNIT_FILE] * os.path.exists(NATIVE_UNIT_FILE) + [NATIVE_PACKAGE] * _installed(NATIVE_PACKAGE)
-        left += [home for home in (NATIVE_HOME, NATIVE_HOME_MOVED) if os.path.exists(home)]
-        if left:
-            raise Failed(f"still on this machine: {', '.join(left)}; remove by hand")
-    found = outcomes(json_report(result, "the module cases"))
+    found = {}
+    for play in plays:
+        if play["name"] not in to_run:
+            continue
+        _reset_fixture(t)
+        umask = os.umask(0o022)
+        try:
+            # The playbook lives outside NATIVE_TMP: `stat-dir` reports that directory's link count,
+            # which should depend on the fixture alone.
+            with scratch() as tmp:
+                playbook = os.path.join(tmp, "natives.yml")
+                # JSON, which is YAML: safe_dump would write an argument dict two cases share as an
+                # anchor and an alias.
+                with open(playbook, "w", encoding="utf-8") as f:
+                    json.dump([play], f, indent=1)
+                # callback_plugins/golden_json.py, which reference_modules.rs also loads:
+                # `ansible.builtin.json` is `ansible.posix`'s in ansible-core 2.19, and the replay
+                # must not need it.
+                result = run(["ansible-playbook", "-i", "localhost,", playbook], extra_env={"ANSIBLE_STDOUT_CALLBACK": "golden_json"})
+        finally:
+            os.umask(umask)
+        if sudo:
+            accounts = [("passwd", NATIVE_USER), ("passwd", NATIVE_GROUP), ("group", NATIVE_GROUP), ("group", NATIVE_USER)]
+            left = [f"{db} {who}" for db, who in accounts if _succeeds("getent", db, who)]
+            left += [NATIVE_UNIT_FILE] * os.path.exists(NATIVE_UNIT_FILE) + [NATIVE_PACKAGE] * _installed(NATIVE_PACKAGE)
+            left += [home for home in (NATIVE_HOME, NATIVE_HOME_MOVED) if os.path.exists(home)]
+            if left:
+                raise Failed(f"still on this machine after the {play['name']} cases: {', '.join(left)}; remove by hand")
+        found.update(outcomes(json_report(result, f"the {play['name']} cases")))
 
     results = {}
     wrong = []
     for name, spec in index.items():
+        if name not in cases:
+            continue
         if spec["compare"] == "shape":
             result = dict(found[name])
             result.pop("invocation", None)
@@ -978,13 +1047,25 @@ def _record():
     if wrong:
         raise Failed("\n  ".join(["cases that did not land on the branch their name claims:", *wrong]))
 
+    if asked:
+        # The entries of the cases kept as they are, with what an earlier record derived from their
+        # results (the volatile and unordered paths of a `status`).
+        with open(os.path.join(DESTINATION, "index.json"), encoding="utf-8") as f:
+            recorded = json.load(f)
+        for name in index.keys() - cases:
+            if name not in recorded:
+                raise Failed(f"{name} has no recording to keep: record the whole kind first")
+            index[name] = recorded[name]
     for name, result in results.items():
         write_json(os.path.join(DESTINATION, f"{name}.json"), result)
     write_json(os.path.join(DESTINATION, "index.json"), index)
-    # The play itself, which reference_modules.rs replays under Volant: the setup tasks, the read-backs and
-    # the order the cases meet each other's state in are nowhere else.
-    write_json(os.path.join(DESTINATION, "play.json"), redact.in_strings(play, to_placeholder), sort_keys=False, indent=1)
-    for stale in sorted(set(os.listdir(DESTINATION)) - {f"{name}.json" for name in index} - {"index.json", "play.json"}):
-        os.remove(os.path.join(DESTINATION, stale))
-        print(f"removed module/{stale}: this run did not record it", file=sys.stderr)
-    print(f"module goldens recorded: {len(index)} cases")
+    # The plays themselves, which reference_modules.rs replays under Volant: the setup tasks, the
+    # read-backs and the order the cases of a group meet each other's state in are nowhere else.
+    write_json(os.path.join(DESTINATION, "play.json"), redact.in_strings(plays, to_placeholder), sort_keys=False, indent=1)
+    write_json(os.path.join(DESTINATION, "groups.json"), meta)
+    if not asked:
+        kept = {f"{name}.json" for name in index} | {"index.json", "play.json", "groups.json"}
+        for stale in sorted(set(os.listdir(DESTINATION)) - kept):
+            os.remove(os.path.join(DESTINATION, stale))
+            print(f"removed module/{stale}: this run did not record it", file=sys.stderr)
+    print(f"module goldens recorded: {len(cases)} of {len(index)} cases")

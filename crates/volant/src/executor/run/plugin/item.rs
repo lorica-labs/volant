@@ -18,7 +18,7 @@ use crate::executor::run::async_job::async_dir;
 use crate::executor::run::batch::send_batch;
 use crate::executor::run::blob::{PUT_FILE_WAIT, blob_preflight, put_file_within};
 use crate::executor::run::channel::{AgentChannel, Relink};
-use crate::executor::run::interpreter::{sub_task, unreachable_ending};
+use crate::executor::run::interpreter::{mark_unsent, sub_task, unreachable_ending};
 use crate::executor::run::judge::timed_out;
 
 /// One item of a task an action plugin backs, run to its end.
@@ -75,6 +75,9 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
     };
     let timeout_result = || TaskResult::timed_out(limit.unwrap_or(0));
     let mut last = None;
+    // Whether a module went to the host: a plugin that ends before one, with at most a `raw`
+    // command of its own, did no discovery.
+    let mut sent = false;
     // Tries in the reconnection in hand, which the pause before the next one grows with: the
     // plugin asks again after a try that failed and after a probe it was not satisfied with, and
     // the reference's loop counts both as failures.
@@ -123,6 +126,7 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                             (put_answer(put), true)
                         }
                         Step::Run(sub) => {
+                            sent |= sub.module != "raw";
                             let built = match sub_task(task, item, &sub, union, interpreters, asked)
                             {
                                 Ok(built) => bounded(built),
@@ -180,7 +184,12 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             step => step,
         };
         let (sub, dropping, job) = match step {
-            Step::Done(result) => return unreachable_ending(result),
+            Step::Done(mut result) => {
+                if !sent {
+                    mark_unsent(&mut result);
+                }
+                return unreachable_ending(result);
+            }
             Step::Wait(ready) => {
                 let mut watcher = stop.clone();
                 let stopped = async move {
@@ -219,9 +228,18 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                 last = Some(put_answer(put));
                 continue;
             }
-            Step::Run(sub) => (sub, false, None),
-            Step::RunDropping(sub) => (sub, true, None),
-            Step::RunJob { sub, limit } => (sub, false, Some(limit)),
+            Step::Run(sub) => {
+                sent |= sub.module != "raw";
+                (sub, false, None)
+            }
+            Step::RunDropping(sub) => {
+                sent |= sub.module != "raw";
+                (sub, true, None)
+            }
+            Step::RunJob { sub, limit } => {
+                sent |= sub.module != "raw";
+                (sub, false, Some(limit))
+            }
             Step::Plain(_) => {
                 return Ok(TaskResult::failed_with(
                     "the action plugin asked for a step as the connection user twice over",
@@ -233,6 +251,7 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                 timeout,
                 attempt,
             } => {
+                sent = true;
                 if wait_or_stop(capped(wait), stop, stop_broken)
                     .await
                     .is_none()

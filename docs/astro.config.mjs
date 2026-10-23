@@ -6,13 +6,17 @@ import starlightChangelogs from 'starlight-changelogs';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import starlightScrollToTop from 'starlight-scroll-to-top';
+import { readFileSync } from 'node:fs';
 
 const repo = 'https://github.com/lorica-labs/volant';
+// The header shows the release the documentation describes, read from the workspace manifest.
+const version = readFileSync(new URL('../Cargo.toml', import.meta.url), 'utf8').match(/^version = "(.+)"$/m)[1];
 
 export default defineConfig({
   site: 'https://volant.sh',
   // The overview used to live here; old links land on the home page.
   redirects: { '/start/why': '/' },
+  vite: { define: { __VOLANT_VERSION__: JSON.stringify(version) } },
   integrations: [
     // Mermaid has to come before Starlight so its code fences are claimed first. The colors come
     // from the site's own tokens in custom.css, so one render serves both light and dark.
@@ -61,7 +65,9 @@ export default defineConfig({
       },
       components: {
         Head: './src/components/Head.astro',
+        EditLink: './src/components/EditLink.astro',
         Header: './src/components/Header.astro',
+        PageTitle: './src/components/PageTitle.astro',
         Sidebar: './src/components/Sidebar.astro',
       },
       plugins: [
@@ -86,7 +92,6 @@ export default defineConfig({
         },
         {
           label: 'Playbooks',
-          collapsed: true,
           items: [
             { label: 'How a play runs', slug: 'playbooks/how-a-play-runs' },
             { label: 'Roles', slug: 'playbooks/roles' },
@@ -105,7 +110,6 @@ export default defineConfig({
         },
         {
           label: 'Variables',
-          collapsed: true,
           items: [
             { label: 'Precedence', slug: 'variables/precedence' },
             { label: 'Templating', slug: 'variables/templating' },
@@ -117,7 +121,6 @@ export default defineConfig({
         },
         {
           label: 'Hosts and connections',
-          collapsed: true,
           items: [
             { label: 'Inventories and patterns', slug: 'hosts/inventories' },
             { label: 'The fact cache', slug: 'hosts/fact-cache' },
@@ -128,7 +131,6 @@ export default defineConfig({
         },
         {
           label: 'Reference',
-          collapsed: true,
           items: [
             { label: 'Command line', slug: 'reference/cli' },
             { label: 'Configuration', slug: 'reference/configuration' },
@@ -143,7 +145,6 @@ export default defineConfig({
         },
         {
           label: 'Under the hood',
-          collapsed: true,
           items: [
             { label: 'Architecture', slug: 'internals/architecture' },
             { label: 'The warm Python path', slug: 'internals/python' },
@@ -152,7 +153,6 @@ export default defineConfig({
         },
         {
           label: 'Project',
-          collapsed: true,
           items: [
             { label: 'Roadmap', slug: 'project/roadmap' },
             { label: 'Performance', slug: 'project/performance' },

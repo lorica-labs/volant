@@ -4591,7 +4591,7 @@ async fn a_reboot_that_cannot_start_says_why() {
             Value::Object(result.0),
             json!({"changed": false, "elapsed": 0, "failed": true,
                 "msg": "Running reboot with local connection would reboot the control node.",
-                "rebooted": false})
+                "rebooted": false, "_volant_unsent": true})
         );
         assert!(agent.sent.is_empty(), "{:?}", agent.sent);
     }

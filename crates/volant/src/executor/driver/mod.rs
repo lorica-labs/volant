@@ -2279,10 +2279,9 @@ pub(super) async fn drive_host(
                     _ => None,
                 };
                 // The first result that reached the host: a skipped item ran nothing.
-                let first = results
-                    .iter()
-                    .zip(items)
-                    .position(|(_, item)| item.skipped.is_none());
+                let first = results.iter().zip(items).position(|(done, item)| {
+                    item.skipped.is_none() && !super::run::unsent(&done.1)
+                });
                 let discovered = match (due, first) {
                     (Some((warns, path)), Some(i)) => {
                         // Measured on ansible-core 2.19.12: a delegated task returns and keeps the

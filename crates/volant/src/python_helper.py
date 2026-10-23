@@ -654,7 +654,31 @@ def plain(value):
         }
     if isinstance(value, (collections.abc.Iterable)):
         return [plain(item) for item in value]
+    shown = summary_shown(value)
+    if shown is not None:
+        return plain(shown)
     raise RuntimeError("a value of type %s cannot be returned" % type(value).__name__)
+
+
+def summary_shown(value):
+    """A warning or a deprecation of ansible-core 2.19 as a registered result holds it: the
+    warning's brief message, the deprecation's mapping; None for any other value."""
+    from ansible._internal._templating import _transform
+    from ansible.module_utils._internal import _messages
+
+    if isinstance(value, _messages.DeprecationSummary):
+        shown = _transform.deprecation_summary(value)
+        deprecator = shown.get("deprecator")
+        if deprecator is not None:
+            kind = deprecator.type
+            shown["deprecator"] = {
+                "resolved_name": deprecator.resolved_name,
+                "type": getattr(kind, "value", kind),
+            }
+        return shown
+    if isinstance(value, _messages.WarningSummary):
+        return _transform.warning_summary(value)
+    return None
 
 
 def marked(value):
@@ -946,8 +970,11 @@ def shim():
         return SHIM
     from ansible._internal._errors import _captured
     from ansible.errors import AnsibleConnectionFailure, AnsibleError
+    from ansible.module_utils.common.json import Direction, get_module_decoder
     from ansible.plugins.action import ActionBase
     from ansible.utils.display import Display
+
+    decoder = get_module_decoder("legacy", Direction.MODULE_TO_CONTROLLER)
 
     class Unsupported(AnsibleError, AttributeError):
         """A member the stand-in lacks. An AttributeError as well, so that a probe such as
@@ -1058,8 +1085,10 @@ def shim():
         result = answered(self._connection._ask("module", **fields))
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
-        # What `_parse_returned_data` makes of a module's `exception`: the error summary a
-        # plugin such as `gather_facts` reads off a failed result.
+        # As `_parse_returned_data` reads a module's output: what the module wrote as a tagged
+        # object (its warnings and deprecations) is that object again, and its `exception` is the
+        # error summary a plugin such as `gather_facts` reads off a failed result.
+        result = json.loads(json.dumps(result), cls=decoder)
         _captured.AnsibleModuleCapturedError.normalize_result_exception(result)
         return result
 
@@ -1106,26 +1135,70 @@ def shim():
     return SHIM
 
 
+def trusted_as_template(value):
+    """`value` with each string trusted as a template, as the reference trusts what an inventory
+    or a play wrote."""
+    from ansible.template import trust_as_template
+
+    if isinstance(value, str):
+        return trust_as_template(value)
+    if isinstance(value, dict):
+        return {k: trusted_as_template(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [trusted_as_template(item) for item in value]
+    return value
+
+
 class LazyHostVars(collections.abc.Mapping):
-    """`hostvars` for an action plugin: the hosts the controller sent, and any other one asked
-    of the controller the first time a plugin reads it."""
+    """`hostvars` for an action plugin, as ansible-core's `HostVars` answers it: a host's
+    variables asked of the controller the first time a plugin reads them, and handed out as the
+    reference's `HostVarsVars`, which renders a variable when it is read, in that host's context.
+    A host no layer above holds a value from a managed host for has its strings trusted as
+    templates; any other host's variables are data and never rendered. A host the controller does
+    not know is the reference's undefined `hostvars[...]`."""
 
-    def __init__(self, ident, known, names):
+    def __init__(self, ident, names, loader):
         self._ident = ident
-        self._known = dict(known)
-        self._names = list(dict.fromkeys(list(self._known) + list(names)))
+        self._names = list(dict.fromkeys(names))
+        self._loader = loader
+        self._asked = {}
 
-    def __getitem__(self, host):
-        if host not in self._known:
+    def _variables(self, host):
+        if not isinstance(host, str):
+            return None
+        if host not in self._asked:
+            from ansible.errors import AnsibleError
+
             reply = ask(self._ident, "hostvar", host=host)
             if "error" in reply:
-                from ansible.errors import AnsibleError
-
                 raise AnsibleError(str(reply["error"]))
-            if reply.get("value") is None:
-                raise KeyError(host)
-            self._known[host] = reply["value"]
-        return self._known[host]
+            value = reply.get("value")
+            if value is not None and not (
+                isinstance(value, dict)
+                and isinstance(value.get("vars"), dict)
+                and isinstance(value.get("trusted"), bool)
+            ):
+                raise AnsibleError(
+                    "the controller answered the variables of %s in a shape it should not" % host
+                )
+            if value is not None and value["trusted"]:
+                value = trusted_as_template(value["vars"])
+            elif value is not None:
+                value = value["vars"]
+            self._asked[host] = value
+        return self._asked[host]
+
+    def __getitem__(self, host):
+        from ansible._internal._templating import _jinja_bits
+        from ansible.vars.hostvars import HostVarsVars
+
+        variables = self._variables(host)
+        if variables is None:
+            return _jinja_bits._undef("hostvars[%r]" % (host,))
+        return HostVarsVars(variables, loader=self._loader, host=host)
+
+    def __contains__(self, host):
+        return self._variables(host) is not None
 
     def __iter__(self):
         return iter(self._names)
@@ -1134,11 +1207,73 @@ class LazyHostVars(collections.abc.Mapping):
         return len(self._names)
 
 
+def result_compat(result, warning_ctx):
+    """`TaskExecutor._apply_task_result_compat` of ansible-core 2.19.12: the warnings and
+    deprecations a result carries, captured beside the ones raised through `Display`. Written out
+    because `ansible.executor.task_executor` imports `ansible.cli`, which exits on a non-blocking
+    stderr, as the helper's is under an ssh control master."""
+    from ansible.module_utils._internal import _messages
+    from ansible.module_utils.datatag import deprecator_from_collection_name
+    from ansible.utils.display import Display
+
+    display = Display()
+    if warnings := result.get("warnings"):
+        if isinstance(warnings, list):
+            for warning in warnings:
+                if not isinstance(warning, _messages.WarningSummary):
+                    warning = _messages.WarningSummary(event=_messages.Event(msg=str(warning)))
+                warning_ctx.capture(warning)
+        else:
+            display.warning(f"Task result `warnings` was {type(warnings)} instead of {list}.")
+    if deprecations := result.get("deprecations"):
+        if isinstance(deprecations, list):
+            for deprecation in deprecations:
+                if not isinstance(deprecation, _messages.DeprecationSummary):
+                    try:
+                        collection_name = deprecation.pop("collection_name", ...)
+                        if collection_name is not ...:
+                            deprecation.update(
+                                deprecator=deprecator_from_collection_name(collection_name)
+                            )
+                        deprecation = _messages.DeprecationSummary(
+                            event=_messages.Event(msg=deprecation.pop("msg")), **deprecation
+                        )
+                    except Exception as ex:
+                        display.error_as_warning(
+                            "Task result `deprecations` contained an invalid item.", exception=ex
+                        )
+                warning_ctx.capture(deprecation)
+        else:
+            display.warning(
+                f"Task result `deprecations` was {type(deprecations)} instead of {list}."
+            )
+
+
+def captured_messages(result, warning_ctx):
+    """What `TaskExecutor._execute` leaves of the warnings and deprecations of a task: the ones
+    the plugin raised through `Display` and the ones its result carried, each once, in the shape
+    a registered result holds them. A deprecation is shown on stderr as the reference's callback
+    shows it, since nothing on the controller draws one from a result."""
+    from ansible.utils.display import Display
+
+    result.pop("warnings", None)
+    result.pop("deprecations", None)
+    warnings = [summary_shown(w) for w in warning_ctx.get_warnings()]
+    if warnings:
+        result["warnings"] = warnings
+    deprecations = warning_ctx.get_deprecation_warnings()
+    for summary in deprecations:
+        Display()._deprecated(summary)
+    if deprecations:
+        result["deprecations"] = [summary_shown(d) for d in deprecations]
+
+
 def run_action(ident, request):
     """One task's action plugin, run as ansible-core's `TaskExecutor` runs it: the plugin
     `action_loader` finds for `name`, given the task, the play context and the stand-in
     connection, then `run(task_vars=…)` and `cleanup()`. A failure of the plugin is its task's
     failed result, shaped by ansible-core; only a request it cannot even start is an error."""
+    from ansible._internal import _display_utils
     from ansible._internal._errors import _error_utils
     from ansible.errors import AnsibleError, AnsibleTaskError
     from ansible.parsing.dataloader import DataLoader
@@ -1163,78 +1298,83 @@ def run_action(ident, request):
     task_vars = dict(request.get("task_vars") or {})
     search_path = task_vars.pop("_volant_search_path", None)
     ssh_options = task_vars.pop("_volant_ssh_options", None) or {}
-    task = None
-    try:
-        context = PlayContext()
-        for key, value in (request.get("play_context") or {}).items():
-            if key not in PlayContext.fattributes:
-                raise AnsibleError("the play context field %s is not supported yet" % key)
-            setattr(context, key, value)
-        shell_type = task_vars.get("ansible_shell_type") or "sh"
-        shell = plugin_loader.shell_loader.get(shell_type)
-        if shell is None:
-            raise AnsibleError("the shell plugin %s is not supported yet" % shell_type)
-        shell.set_options(var_options=task_vars)
-        # What ansible-core's own `_execute_module` reads to build a module that runs here.
-        task_vars.setdefault("ansible_playbook_python", sys.executable)
-        groups = task_vars.get("groups")
-        names = groups.get("all", []) if isinstance(groups, dict) else []
-        known = task_vars.get("hostvars")
-        task_vars["hostvars"] = LazyHostVars(ident, known if isinstance(known, dict) else {}, names)
-        loader = DataLoader()
-        anchor = task_vars.get("playbook_dir")
-        if isinstance(anchor, str) and anchor:
-            loader.set_basedir(anchor)
-        templar = Templar(loader=loader, variables=task_vars)
-        fields["action"] = name
-        # A play of its own: `post_validate` reads the play's action groups, which hold nothing
-        # here since no module_defaults reach the plugin.
-        task = Task.load(fields, block=Block(play=Play()), loader=loader)
-        task.post_validate(templar=templar._engine)
-        if search_path:
-            # The role and file directories the controller compiled the task in, which the
-            # plugin's `_find_needle` reads off the task as the reference's role-bound task gives.
-            task.get_search_path = lambda: list(search_path)
-        action = plugin_loader.action_loader.get(
-            name,
-            task=task,
-            connection=parts["Link"](ident, shell, context, ssh_options),
-            play_context=context,
-            loader=loader,
-            templar=templar,
-            shared_loader_obj=plugin_loader,
-        )
-        if action is None:
-            raise AnsibleError("the handler '%s' was not found" % name)
+    # What the plugin says through `Display` is kept for its result, as `TaskExecutor._execute`
+    # keeps it, rather than printed here.
+    with _display_utils.DeferredWarningContext(variables=task_vars) as warning_ctx:
+        task = None
         try:
-            result = action.run(task_vars=task_vars)
-            if isinstance(result, dict):
-                # What `TaskExecutor._execute` fills in on a result that came back, and a key
-                # only this helper may set, which the plugin's own data cannot carry.
-                for key in [key for key in result if str(key).startswith("_volant_")]:
-                    del result[key]
+            context = PlayContext()
+            for key, value in (request.get("play_context") or {}).items():
+                if key not in PlayContext.fattributes:
+                    raise AnsibleError("the play context field %s is not supported yet" % key)
+                setattr(context, key, value)
+            shell_type = task_vars.get("ansible_shell_type") or "sh"
+            shell = plugin_loader.shell_loader.get(shell_type)
+            if shell is None:
+                raise AnsibleError("the shell plugin %s is not supported yet" % shell_type)
+            shell.set_options(var_options=task_vars)
+            # What ansible-core's own `_execute_module` reads to build a module that runs here.
+            task_vars.setdefault("ansible_playbook_python", sys.executable)
+            groups = task_vars.get("groups")
+            names = groups.get("all", []) if isinstance(groups, dict) else []
+            loader = DataLoader()
+            anchor = task_vars.get("playbook_dir")
+            if isinstance(anchor, str) and anchor:
+                loader.set_basedir(anchor)
+            task_vars["hostvars"] = LazyHostVars(ident, names, loader)
+            templar = Templar(loader=loader, variables=task_vars)
+            fields["action"] = name
+            # A play of its own: `post_validate` reads the play's action groups, which hold nothing
+            # here since no module_defaults reach the plugin.
+            task = Task.load(fields, block=Block(play=Play()), loader=loader)
+            task.post_validate(templar=templar._engine)
+            if search_path:
+                # The role and file directories the controller compiled the task in, which the
+                # plugin's `_find_needle` reads off the task as the reference's role-bound task gives.
+                task.get_search_path = lambda: list(search_path)
+            action = plugin_loader.action_loader.get(
+                name,
+                task=task,
+                connection=parts["Link"](ident, shell, context, ssh_options),
+                play_context=context,
+                loader=loader,
+                templar=templar,
+                shared_loader_obj=plugin_loader,
+            )
+            if action is None:
+                raise AnsibleError("the handler '%s' was not found" % name)
+            try:
+                result = action.run(task_vars=task_vars)
+                if isinstance(result, dict):
+                    # What `TaskExecutor._execute` fills in on a result that came back, and a key
+                    # only this helper may set, which the plugin's own data cannot carry.
+                    for key in [key for key in result if str(key).startswith("_volant_")]:
+                        del result[key]
+                    result.setdefault("changed", False)
+                    result_compat(result, warning_ctx)
+            finally:
+                action.cleanup()
+        except Exception as failure:
+            # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a
+            # connection failure is unreachable, `AnsibleActionSkip` skipped, `AnsibleActionFail`
+            # its own result, and anything else a failure under the task's error.
+            try:
+                raise AnsibleTaskError(obj=task.get_ds() if task is not None else None) from failure
+            except AnsibleTaskError as wrapped:
+                result = _error_utils.result_dict_from_exception(wrapped, accept_result_contribution=True)
                 result.setdefault("changed", False)
-        finally:
-            action.cleanup()
-    except Exception as failure:
-        # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a
-        # connection failure is unreachable, `AnsibleActionSkip` skipped, `AnsibleActionFail`
-        # its own result, and anything else a failure under the task's error.
-        try:
-            raise AnsibleTaskError(obj=task.get_ds() if task is not None else None) from failure
-        except AnsibleTaskError as wrapped:
-            result = _error_utils.result_dict_from_exception(wrapped, accept_result_contribution=True)
-            result.setdefault("changed", False)
-            # Raised, so the result never goes through the part of `_execute` that adds `failed`.
-            from ansible.errors import AnsibleActionSkip
+                # Raised, so the result never goes through the part of `_execute` that adds `failed`.
+                from ansible.errors import AnsibleActionSkip
 
-            if isinstance(failure, AnsibleActionSkip):
-                result["_volant_raised_skip"] = True
-        # The summary object carries the traceback text only when ansible-core is set to keep it.
-        summary = result.pop("exception", None)
-        traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
-        if traceback:
-            result["exception"] = traceback
+                if isinstance(failure, AnsibleActionSkip):
+                    result["_volant_raised_skip"] = True
+            # The summary object carries the traceback text only when ansible-core is set to keep it.
+            summary = result.pop("exception", None)
+            traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
+            if traceback:
+                result["exception"] = traceback
+    if isinstance(result, dict):
+        captured_messages(result, warning_ctx)
     return {"value": plain(result)}
 
 

@@ -136,7 +136,7 @@ pub(in crate::executor) fn silent_discovery<V: crate::vars::HostSettings + ?Size
 /// A result the executor raised itself (an `until` it could not evaluate) carries none: the
 /// reference's holds the message and `changed: false` alone.
 pub(in crate::executor) fn stamp_discovery(result: &mut TaskResult, interpreter: &str) {
-    if result.0.contains_key(super::retry::RAISED_KEY) {
+    if unsent(result) || result.0.contains_key(super::retry::RAISED_KEY) {
         return;
     }
     let facts = result
@@ -146,6 +146,21 @@ pub(in crate::executor) fn stamp_discovery(result: &mut TaskResult, interpreter:
     if let Value::Object(facts) = facts {
         facts.insert(DISCOVERED_INTERPRETER.into(), json!(interpreter));
     }
+}
+
+/// Marks the result of a task that failed before any module was sent to the host, such as a
+/// source missing on the controller: the reference's holds `changed: false` and the message, and
+/// the host's interpreter was never looked for. Dropped with the other `_volant_` keys.
+const UNSENT_KEY: &str = "_volant_unsent";
+
+pub(in crate::executor) fn mark_unsent(result: &mut TaskResult) {
+    result.0.entry("changed").or_insert(Value::Bool(false));
+    result.0.insert(UNSENT_KEY.into(), Value::Bool(true));
+}
+
+/// Whether [`mark_unsent`] marked the result.
+pub(in crate::executor) fn unsent(result: &TaskResult) -> bool {
+    result.0.contains_key(UNSENT_KEY)
 }
 
 /// The warning for an interpreter found rather than named, as a task registers it.

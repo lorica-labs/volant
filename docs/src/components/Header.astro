@@ -25,6 +25,7 @@ const current = links.findLast((link) => path.startsWith(link.section))?.label;
 <div class="header">
   <div class="title-wrapper sl-flex">
     <SiteTitle />
+    <a class="version" href={`${base}/changelog/`} title="Release notes">v{__VOLANT_VERSION__}</a>
     <nav class="header-links" aria-label="Main">
       {
         links.map((link) => (
@@ -73,6 +74,28 @@ const current = links.findLast((link) => path.startsWith(link.section))?.label;
     content: '';
     height: 1.5rem;
     border-inline-end: 1px solid var(--v-hairline-strong);
+  }
+
+  .version {
+    flex: none;
+    margin-inline-start: -1rem;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--v-hairline-strong);
+    border-radius: 999px;
+    color: var(--sl-color-gray-3);
+    font-family: var(--sl-font-mono);
+    font-size: var(--sl-text-2xs, 0.72rem);
+    text-decoration: none;
+    transition: color 0.25s var(--v-ease), border-color 0.25s var(--v-ease);
+  }
+  .version:hover {
+    color: var(--sl-color-white);
+    border-color: var(--sl-color-gray-4);
+  }
+  @media (max-width: 50rem) {
+    .version {
+      display: none;
+    }
   }
 
   .header-links {

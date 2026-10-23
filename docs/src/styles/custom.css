@@ -141,10 +141,31 @@ site-search button[data-open-modal]:hover {
   --sl-icon-size: 1rem !important;
   color: var(--sl-color-gray-4);
 }
+/* Top-level groups stay open: their label is a heading, not a toggle. Nested groups still fold. */
+.sidebar-content .top-level > li > details > summary {
+  pointer-events: none;
+}
+.sidebar-content .top-level > li > details > summary .caret {
+  display: none;
+}
+.sidebar-content .top-level > li > details > summary .group-label .large {
+  color: var(--sl-color-gray-3);
+}
 .sidebar-content .top-level > li + li {
-  margin-top: 0.75rem;
+  margin-top: 1rem;
+}
+/* A thin scrollbar that only shows its thumb. */
+.sidebar-pane,
+.sidebar-content {
+  scrollbar-width: thin;
+  scrollbar-color: var(--sl-color-gray-5) transparent;
 }
 .sidebar-content details ul {
+  margin-inline-start: 0;
+  padding-inline-start: 0;
+  border-inline-start: 0;
+}
+.sidebar-content .top-level > li > details > ul > li {
   margin-inline-start: 0;
   padding-inline-start: 0;
   border-inline-start: 0;

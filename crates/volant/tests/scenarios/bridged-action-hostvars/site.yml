@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - acme.probe.probe:
+        what: hostvars
+      register: r
+    - debug:
+        var: r
+    - import_role:
+        name: outer
+    - acme.probe.oldprobe:
+        what: redirect
+      register: r
+    - debug:
+        var: r

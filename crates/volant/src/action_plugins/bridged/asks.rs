@@ -3,7 +3,7 @@
 
 use std::time::{Duration, Instant};
 
-use serde_json::Value;
+use serde_json::{Value, json};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
@@ -150,11 +150,17 @@ impl Bridged {
                     Pending::RemoveTmp(path),
                 ))
             }
-            Ask::HostVar { host } => Err(Reply::Value(
-                self.hostvars
-                    .get(&host)
-                    .map_or(Value::Null, |entry| crate::vars::settled(entry).into_owned()),
-            )),
+            // The helper renders a variable when the plugin reads it, so it is told whether the
+            // host holds anything a managed host sent: such a host's variables are only data.
+            Ask::HostVar { host } => Err(Reply::Value(self.hostvars.get(&host).map_or(
+                Value::Null,
+                |entry| {
+                    json!({
+                        "vars": crate::vars::settled(entry).into_owned(),
+                        "trusted": !self.untrusted_hosts.iter().any(|hosts| hosts.contains(&host)),
+                    })
+                },
+            ))),
         }
     }
 

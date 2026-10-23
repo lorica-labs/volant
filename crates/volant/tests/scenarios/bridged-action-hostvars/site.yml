@@ -6,7 +6,7 @@
       register: r
     - debug:
         var: r
-    - include_role:
+    - import_role:
         name: outer
     - acme.probe.oldprobe:
         what: redirect

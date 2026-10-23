@@ -1,2 +1,6 @@
 - include_role:
     name: inner
+- name: a named include of inner
+  include_role:
+    name: inner
+  when: false

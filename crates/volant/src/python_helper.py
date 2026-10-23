@@ -648,7 +648,31 @@ def plain(value):
         }
     if isinstance(value, (collections.abc.Iterable)):
         return [plain(item) for item in value]
+    shown = summary_shown(value)
+    if shown is not None:
+        return plain(shown)
     raise RuntimeError("a value of type %s cannot be returned" % type(value).__name__)
+
+
+def summary_shown(value):
+    """A warning or a deprecation of ansible-core 2.19 as a registered result holds it: the
+    warning's brief message, the deprecation's mapping; None for any other value."""
+    from ansible._internal._templating import _transform
+    from ansible.module_utils._internal import _messages
+
+    if isinstance(value, _messages.DeprecationSummary):
+        shown = _transform.deprecation_summary(value)
+        deprecator = shown.get("deprecator")
+        if deprecator is not None:
+            kind = deprecator.type
+            shown["deprecator"] = {
+                "resolved_name": deprecator.resolved_name,
+                "type": getattr(kind, "value", kind),
+            }
+        return shown
+    if isinstance(value, _messages.WarningSummary):
+        return _transform.warning_summary(value)
+    return None
 
 
 def marked(value):
@@ -942,8 +966,11 @@ def shim():
     if SHIM:
         return SHIM
     from ansible.errors import AnsibleConnectionFailure, AnsibleError
+    from ansible.module_utils.common.json import Direction, get_module_decoder
     from ansible.plugins.action import ActionBase
     from ansible.utils.display import Display
+
+    decoder = get_module_decoder("legacy", Direction.MODULE_TO_CONTROLLER)
 
     class Unsupported(AnsibleError, AttributeError):
         """A member the stand-in lacks. An AttributeError as well, so that a probe such as
@@ -1051,6 +1078,9 @@ def shim():
         result = answered(self._connection._ask("module", name=name, args=args, files=[]))
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
+        # As `_parse_returned_data` reads a module's output: what the module wrote as a tagged
+        # object (its warnings and deprecations) is that object again.
+        result = json.loads(json.dumps(result), cls=decoder)
         if wrap_async and getattr(self._task, "_volant_own_async", 0):
             # The task's own `async`: the controller started the module as a job of the host's
             # agent and answered with its first status, which the plugin hands back as it is.
@@ -1213,28 +1243,18 @@ def captured_messages(result, warning_ctx):
     the plugin raised through `Display` and the ones its result carried, each once, in the shape
     a registered result holds them. A deprecation is shown on stderr as the reference's callback
     shows it, since nothing on the controller draws one from a result."""
-    from ansible._internal._templating import _transform
     from ansible.utils.display import Display
 
     result.pop("warnings", None)
     result.pop("deprecations", None)
-    warnings = [_transform.warning_summary(w) for w in warning_ctx.get_warnings()]
+    warnings = [summary_shown(w) for w in warning_ctx.get_warnings()]
     if warnings:
         result["warnings"] = warnings
-    deprecations = []
-    for summary in warning_ctx.get_deprecation_warnings():
+    deprecations = warning_ctx.get_deprecation_warnings()
+    for summary in deprecations:
         Display()._deprecated(summary)
-        shown = _transform.deprecation_summary(summary)
-        deprecator = shown.get("deprecator")
-        if deprecator is not None:
-            kind = deprecator.type
-            shown["deprecator"] = {
-                "resolved_name": deprecator.resolved_name,
-                "type": getattr(kind, "value", kind),
-            }
-        deprecations.append(shown)
     if deprecations:
-        result["deprecations"] = deprecations
+        result["deprecations"] = [summary_shown(d) for d in deprecations]
 
 
 def run_action(ident, request):

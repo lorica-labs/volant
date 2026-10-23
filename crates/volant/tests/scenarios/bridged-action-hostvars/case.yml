@@ -1,6 +1,6 @@
 # A collection's action plugin reading another host's variables through `hostvars`, each rendered
 # when read in that host's context, and the warnings it raises kept in its registered result. Also
-# a plugin in a role reached by `include_role` looking up a file of the parent role, and a plugin
-# reached through a `meta/runtime.yml` redirect.
+# a plugin in a role reached by `include_role` finding a file of the role that includes it, and the
+# module a plugin reached through a `meta/runtime.yml` redirect runs when it names none.
 args: [-i, inv.ini, site.yml]
 needs: [ansible-core]

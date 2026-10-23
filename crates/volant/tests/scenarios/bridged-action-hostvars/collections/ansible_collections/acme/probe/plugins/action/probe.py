@@ -39,6 +39,5 @@ class ActionModule(ActionBase):
             except AnsibleError as failure:
                 result["not_found"] = str(failure)
         elif what == "redirect":
-            result["action"] = self._task.action
-            result["module"] = self._execute_module(task_vars=task_vars)
+            result.update(self._execute_module(task_vars=task_vars))
         return result

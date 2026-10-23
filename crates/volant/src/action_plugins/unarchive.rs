@@ -118,6 +118,30 @@ impl Unarchive {
         })
     }
 
+    /// The controller file `src` names, or the refusal. The reference looks for it before it asks
+    /// the host anything, so a missing one fails with no module sent.
+    fn locate(&self) -> Result<std::path::PathBuf, TaskResult> {
+        let src = self.args.get("src").and_then(Value::as_str).unwrap_or("");
+        check_host_named(
+            self.host_named_paths,
+            &self.untrusted,
+            "src",
+            src,
+            "files",
+            &self.origin,
+            &self.playbook_dir,
+        )
+        .map_err(TaskResult::failed_with)?;
+        let searched = search_paths(&self.origin, &self.playbook_dir, "files", src);
+        searched
+            .iter()
+            .find(|p| p.exists())
+            .cloned()
+            .ok_or_else(|| {
+                TaskResult::failed_with(format!("Task failed: {}", not_found(src, &searched)))
+            })
+    }
+
     /// The source read locally and staged, or `remote_src` handed the task's `src` as it is.
     fn source_and_send(&mut self) -> Step {
         let mut args = self.args.clone();
@@ -127,25 +151,12 @@ impl Unarchive {
             self.state = State::Module;
             return Sub::run("unarchive", args);
         }
-        let src = self.args.get("src").and_then(Value::as_str).unwrap_or("");
-        if let Err(msg) = check_host_named(
-            self.host_named_paths,
-            &self.untrusted,
-            "src",
-            src,
-            "files",
-            &self.origin,
-            &self.playbook_dir,
-        ) {
-            return Step::Done(TaskResult::failed_with(msg));
-        }
-        let searched = search_paths(&self.origin, &self.playbook_dir, "files", src);
-        let Some(found) = searched.iter().find(|p| p.exists()) else {
-            return Step::Done(TaskResult::failed_with(format!(
-                "Task failed: {}\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
-                not_found(src, &searched)
-            )));
+        let found = match self.locate() {
+            Ok(found) => found,
+            Err(failure) => return Step::Done(failure),
         };
+        let found = &found;
+        let src = self.args.get("src").and_then(Value::as_str).unwrap_or("");
         // Named, as `copy` names it, rather than left to the read's own `Is a directory`.
         if found.is_dir() {
             return Step::Done(TaskResult::failed_with(format!(
@@ -209,6 +220,11 @@ impl Plugin for Unarchive {
     fn next(&mut self, last: Option<TaskResult>) -> Step {
         match self.state {
             State::Start => {
+                if !self.remote_src
+                    && let Err(failure) = self.locate()
+                {
+                    return Step::Done(failure);
+                }
                 if let Some(creates) = self.creates.clone() {
                     self.state = State::Creates;
                     // Existence only: no sum, no size, the way a shell "does this exist" would

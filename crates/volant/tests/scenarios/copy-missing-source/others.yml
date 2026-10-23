@@ -1,0 +1,5 @@
+- hosts: work
+  gather_facts: false
+  tasks:
+    - unarchive: {src: nofile.tar.gz, dest: /tmp}
+      ignore_errors: true

@@ -140,16 +140,9 @@ fn a_source_a_host_named_is_never_read() {
         task_args.insert("src".into(), json!(named.display().to_string()));
         task_args.insert("dest".into(), json!(dir.join("dest").display().to_string()));
         let mut plugin = start_in(&task_args, &untrusted, &dir);
-        run(plugin.as_mut(), None);
-        let result = done(
-            plugin.as_mut(),
-            json!({"stat": {"exists": true, "isdir": true}}),
-        );
         assert_eq!(
-            result["msg"],
-            json!(
-                "the 'src' of this task was named by a managed host, and a controller file a host chose is never sent"
-            ),
+            refused(plugin.as_mut()),
+            "the 'src' of this task was named by a managed host, and a controller file a host chose is never sent",
             "{}",
             named.display()
         );
@@ -183,13 +176,16 @@ fn a_source_a_host_named_is_read_as_the_mode_says(
     );
     let untrusted: BTreeSet<String> = ["src".to_string()].into();
     let mut plugin = start_mode(mode, &task_args, &untrusted, &play);
-    run(plugin.as_mut(), None);
-    let step = plugin.next(Some(TaskResult(
-        json!({"stat": {"exists": true, "isdir": true}})
-            .as_object()
-            .unwrap()
-            .clone(),
-    )));
+    // The source is looked for before the host is asked anything, so a refusal comes first.
+    let step = match plugin.next(None) {
+        Step::Run(_) => plugin.next(Some(TaskResult(
+            json!({"stat": {"exists": true, "isdir": true}})
+                .as_object()
+                .unwrap()
+                .clone(),
+        ))),
+        other => other,
+    };
     match (step, read) {
         (Step::Run(sub), true) => assert_eq!(sub.module, "unarchive"),
         (Step::Done(result), false) => {
@@ -223,14 +219,19 @@ fn the_remote_source_is_read_as_ansible_core_reads_it(#[case] extra: Value, #[ca
     task_args.extend(extra.as_object().unwrap().clone());
     let untrusted: BTreeSet<String> = ["src".to_string()].into();
     let mut plugin = start_mode(HostNamedPaths::Contained, &task_args, &untrusted, &dir);
-    let first = run(plugin.as_mut(), None);
-    assert_eq!(first.module, "stat");
-    let step = plugin.next(Some(TaskResult(
-        json!({"stat": {"exists": true, "isdir": true}})
-            .as_object()
-            .unwrap()
-            .clone(),
-    )));
+    // A source on the controller is looked for first, and refused before the host is asked.
+    let step = match plugin.next(None) {
+        Step::Run(first) => {
+            assert_eq!(first.module, "stat");
+            plugin.next(Some(TaskResult(
+                json!({"stat": {"exists": true, "isdir": true}})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
+            )))
+        }
+        other => other,
+    };
     match (step, remote) {
         (Step::Run(sub), true) => {
             assert_eq!(sub.module, "unarchive");
@@ -498,11 +499,7 @@ fn a_missing_source_names_where_it_looked() {
     let mut task_args = args(&dir, json!({}));
     task_args.insert("src".into(), json!("nope.tar.gz"));
     let mut plugin = start_plain(&task_args, &dir);
-    run(plugin.as_mut(), None);
-    let result = done(
-        plugin.as_mut(),
-        json!({"stat": {"exists": true, "isdir": true}}),
-    );
+    let msg = refused(plugin.as_mut());
     let searched = search_paths(
         &Origin {
             file_dir: dir.clone(),
@@ -513,10 +510,7 @@ fn a_missing_source_names_where_it_looked() {
         "nope.tar.gz",
     );
     assert_eq!(
-        result["msg"],
-        json!(format!(
-            "Task failed: {}\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
-            not_found("nope.tar.gz", &searched)
-        ))
+        msg,
+        format!("Task failed: {}", not_found("nope.tar.gz", &searched))
     );
 }

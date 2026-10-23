@@ -121,15 +121,90 @@ site-search button[data-open-modal]:hover {
   border-color: var(--sl-color-gray-4);
 }
 
+/* Sidebar: groups read as small labels, pages as a flat list, the current page tinted with the
+   accent. No tree lines: the labels already say where a page belongs. */
+.sidebar-content summary {
+  padding-block: 0.25rem;
+}
+.sidebar-content .group-label .large {
+  color: var(--sl-color-gray-3);
+  font-family: var(--sl-font-mono);
+  font-size: var(--sl-text-2xs, 0.72rem);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.sidebar-content summary:hover .group-label .large {
+  color: var(--sl-color-white);
+}
+.sidebar-content summary .caret {
+  --sl-icon-size: 1rem !important;
+  color: var(--sl-color-gray-4);
+}
+.sidebar-content .top-level > li + li {
+  margin-top: 0.75rem;
+}
+.sidebar-content details ul {
+  margin-inline-start: 0;
+  padding-inline-start: 0;
+  border-inline-start: 0;
+}
 .sidebar-content a {
+  padding: 0.35rem 0.65rem;
   border-radius: 0.5rem;
+  color: var(--sl-color-gray-2);
+  font-size: var(--sl-text-sm);
   transition: color 0.25s var(--v-ease), background-color 0.25s var(--v-ease);
+}
+.sidebar-content a:hover {
+  color: var(--sl-color-white);
+  background-color: var(--v-shell);
 }
 .sidebar-content a[aria-current='page'],
 .sidebar-content a[aria-current='page']:hover,
 .sidebar-content a[aria-current='page']:focus {
   color: var(--sl-color-text-accent);
-  background-color: var(--sl-color-accent-low);
+  background-color: color-mix(in srgb, var(--sl-color-accent) 14%, transparent);
+  font-weight: 560;
+}
+
+/* On this page: a hairline rail, the section in view marked with the accent. */
+starlight-toc h2 {
+  color: var(--sl-color-gray-3);
+  font-family: var(--sl-font-mono);
+  font-size: var(--sl-text-2xs, 0.72rem);
+  font-weight: 500;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+starlight-toc ul ul {
+  border: 0;
+}
+starlight-toc a {
+  border-inline-start: 1px solid var(--v-hairline-strong);
+  color: var(--sl-color-gray-3);
+  transition: color 0.2s var(--v-ease), border-color 0.2s var(--v-ease);
+}
+starlight-toc a:hover {
+  color: var(--sl-color-white);
+}
+starlight-toc a[aria-current='true'] {
+  border-inline-start-color: var(--sl-color-accent);
+  color: var(--sl-color-white);
+}
+
+/* Steps: numbered discs joined by a hairline. */
+.sl-steps > li::before {
+  border: 0 !important;
+  background: var(--sl-color-gray-6);
+  box-shadow: inset 0 0 0 1px var(--v-hairline-strong);
+  color: var(--sl-color-white);
+  font-family: var(--sl-font-mono);
+  font-weight: 500;
+}
+.sl-steps > li::after {
+  background: var(--v-hairline-strong);
+  width: 1px;
 }
 
 .pagination-links a {

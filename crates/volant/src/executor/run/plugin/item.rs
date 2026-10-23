@@ -4,6 +4,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 use tokio::sync::watch;
+use volant_protocol::modules::CHECK_MODE_ARG;
 use volant_protocol::{BatchOutcome, Task, TaskResult};
 
 use crate::executor::CANCEL_GRACE;
@@ -97,7 +98,88 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             .await;
             return Ok(timeout_result());
         }
-        let (sub, dropping, job) = match plugin.next(last.take()) {
+        let step = match plugin.next(last.take()) {
+            // Over the task's own link when it does not escalate; otherwise over the host's link
+            // as the connection user, whose failure is the plugin's to see.
+            Step::Plain(inner) => match relink.take_plain().await {
+                Ok(None) => *inner,
+                Ok(Some(mut plain)) => {
+                    let (answer, alive) = match *inner {
+                        Step::PutFile {
+                            bytes,
+                            remote,
+                            mode,
+                        } => {
+                            let put = put_file_within(
+                                &mut plain,
+                                host,
+                                &bytes,
+                                &remote,
+                                mode,
+                                logs,
+                                capped(PUT_FILE_WAIT),
+                            )
+                            .await;
+                            (put_answer(put), true)
+                        }
+                        Step::Run(sub) => {
+                            let built = match sub_task(task, item, &sub, union, interpreters, asked)
+                            {
+                                Ok(built) => bounded(built),
+                                Err(failure) => {
+                                    relink.put_plain(plain, true);
+                                    return Ok(failure);
+                                }
+                            };
+                            *batch_id += 1;
+                            let (mut flat, ended) = send_batch(
+                                &mut plain,
+                                host,
+                                *batch_id,
+                                vec![built],
+                                stop,
+                                stop_broken,
+                                logs,
+                            )
+                            .await;
+                            match (ended, flat.pop().flatten()) {
+                                (
+                                    Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. }),
+                                    Some(result),
+                                ) => (result, true),
+                                (Ok(BatchOutcome::Cancelled { at }), _) => {
+                                    relink.put_plain(plain, true);
+                                    return Err(Ok(BatchOutcome::Cancelled { at }));
+                                }
+                                // The reference's connection raises its failure; the next step
+                                // opens a fresh link.
+                                (ended, _) => (
+                                    gone(&ended.err().unwrap_or_else(|| {
+                                        "the agent ended the command without its result".to_string()
+                                    })),
+                                    false,
+                                ),
+                            }
+                        }
+                        other => (
+                            TaskResult::failed_with(format!(
+                                "the controller cannot run {other:?} as the connection user"
+                            )),
+                            true,
+                        ),
+                    };
+                    relink.put_plain(plain, alive);
+                    last = Some(answer);
+                    continue;
+                }
+                Err(why) => {
+                    last = Some(gone(&why));
+                    continue;
+                }
+            },
+            step => step,
+        };
+        let (sub, dropping, job) = match step {
             Step::Done(result) => return unreachable_ending(result),
             Step::Wait(ready) => {
                 let mut watcher = stop.clone();
@@ -134,70 +216,17 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                     capped(PUT_FILE_WAIT),
                 )
                 .await;
-                last = Some(match put {
-                    Ok(changed) => {
-                        let mut done = Map::new();
-                        done.insert("changed".into(), Value::Bool(changed));
-                        TaskResult(done)
-                    }
-                    Err(why) => TaskResult::failed_with(why),
-                });
+                last = Some(put_answer(put));
                 continue;
             }
             Step::Run(sub) => (sub, false, None),
             Step::RunDropping(sub) => (sub, true, None),
             Step::RunJob { sub, limit } => (sub, false, Some(limit)),
-            // Over the task's own link when it does not escalate; otherwise over the host's
-            // link as the connection user, whose failure is the plugin's to see.
-            Step::RunPlain(sub) => match relink.take_plain().await {
-                Ok(None) => (sub, false, None),
-                Ok(Some(mut plain)) => {
-                    let built = match sub_task(task, item, &sub, union, interpreters, asked) {
-                        Ok(built) => bounded(built),
-                        Err(failure) => {
-                            relink.put_plain(plain, true);
-                            return Ok(failure);
-                        }
-                    };
-                    *batch_id += 1;
-                    let (mut flat, ended) = send_batch(
-                        &mut plain,
-                        host,
-                        *batch_id,
-                        vec![built],
-                        stop,
-                        stop_broken,
-                        logs,
-                    )
-                    .await;
-                    match (ended, flat.pop().flatten()) {
-                        (
-                            Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. }),
-                            Some(result),
-                        ) => {
-                            relink.put_plain(plain, true);
-                            last = Some(result);
-                        }
-                        (Ok(BatchOutcome::Cancelled { at }), _) => {
-                            relink.put_plain(plain, true);
-                            return Err(Ok(BatchOutcome::Cancelled { at }));
-                        }
-                        // The reference's `exec_command` raises the connection's failure; the
-                        // next command opens a fresh link.
-                        (ended, _) => {
-                            relink.put_plain(plain, false);
-                            last = Some(gone(&ended.err().unwrap_or_else(|| {
-                                "the agent ended the command without its result".to_string()
-                            })));
-                        }
-                    }
-                    continue;
-                }
-                Err(why) => {
-                    last = Some(gone(&why));
-                    continue;
-                }
-            },
+            Step::Plain(_) => {
+                return Ok(TaskResult::failed_with(
+                    "the action plugin asked for a step as the connection user twice over",
+                ));
+            }
             Step::Reconnect {
                 probe,
                 wait,
@@ -324,13 +353,15 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
         };
         tries = None;
         let built = match sub_task(task, item, &sub, union, interpreters, asked) {
-            Ok(built) if job.is_some() => Task {
-                job: job.map(|limit| volant_protocol::AsyncJob {
+            Ok(mut built) if job.is_some() => {
+                let check_mode = built.args.remove(CHECK_MODE_ARG).is_some();
+                built.job = job.map(|limit| volant_protocol::AsyncJob {
                     limit,
                     dir: async_dir(&item.vars),
-                }),
-                ..built
-            },
+                    check_mode,
+                });
+                built
+            }
             Ok(built) => built,
             // The ping of a host that was down from the start: the plugin's own loop goes on to
             // reconnect, and names the interpreter once the host answers.
@@ -401,5 +432,17 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             });
         }
         last = Some(result);
+    }
+}
+
+/// What a file put hands the plugin: `changed`, or the failure naming why the file is not there.
+fn put_answer(put: Result<bool, String>) -> TaskResult {
+    match put {
+        Ok(changed) => {
+            let mut done = Map::new();
+            done.insert("changed".into(), Value::Bool(changed));
+            TaskResult(done)
+        }
+        Err(why) => TaskResult::failed_with(why),
     }
 }

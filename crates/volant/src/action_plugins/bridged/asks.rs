@@ -13,6 +13,11 @@ use super::helpers::{command_reply, failure_or, plain_path, raw};
 use super::{Bridged, Pending};
 use crate::bridge::{Ask, BridgeError, Reply, TmpOp};
 
+/// `step` as the connection user, as the reference's connection does what a plugin asks of it.
+fn plain(step: Step) -> Step {
+    Step::Plain(Box::new(step))
+}
+
 impl Bridged {
     /// The step an ask becomes, or the reply it gets without one.
     #[expect(clippy::too_many_lines)]
@@ -95,12 +100,7 @@ impl Bridged {
                 let mut args = raw(cmd);
                 // With no stdin and `sudoable`, the reference sends the command through `ssh -tt`.
                 if !sudoable {
-                    let sub = Sub {
-                        module: "raw",
-                        args,
-                        files: Vec::new(),
-                    };
-                    return Ok((Step::RunPlain(sub), Pending::Command));
+                    return Ok((plain(Sub::run("raw", args)), Pending::Command));
                 }
                 args.insert("_volant_tty".into(), Value::Bool(true));
                 Ok((Sub::run("raw", args), Pending::Command))
@@ -118,11 +118,11 @@ impl Bridged {
                 let bytes = std::fs::read(&local)
                     .map_err(|err| Reply::Error(format!("could not read {shown}: {err}")))?;
                 Ok((
-                    Step::PutFile {
+                    plain(Step::PutFile {
                         bytes,
                         remote,
                         mode,
-                    },
+                    }),
                     Pending::PutFile,
                 ))
             }
@@ -133,10 +133,10 @@ impl Bridged {
                 "a temporary directory made as the user {user} is not supported yet"
             ))),
             Ask::Tmp(TmpOp::Make { remote_user: None }) => Ok((
-                Sub::run(
+                plain(Sub::run(
                     "raw",
                     raw("umask 77 && mkdir -p ~/.ansible/tmp && mktemp -d ~/.ansible/tmp/ansible-tmp-XXXXXXXXXX".into()),
-                ),
+                )),
                 Pending::MakeTmp,
             )),
             Ask::Tmp(TmpOp::Remove { path }) => {
@@ -145,7 +145,10 @@ impl Bridged {
                         "the temporary directory {path} was not made for this action"
                     )));
                 }
-                Ok((Sub::run("raw", raw(format!("rm -f -r '{path}'"))), Pending::RemoveTmp(path)))
+                Ok((
+                    plain(Sub::run("raw", raw(format!("rm -f -r '{path}'")))),
+                    Pending::RemoveTmp(path),
+                ))
             }
             Ask::HostVar { host } => Err(Reply::Value(
                 self.hostvars
@@ -233,6 +236,11 @@ impl Bridged {
             }
             Err(err) => TaskResult::failed_with(err.to_string()),
         }
+    }
+
+    /// One removal of a directory left behind, as the connection user that made it.
+    pub(super) fn sweep_step(path: &str) -> Step {
+        plain(Step::Run(Self::sweep(path)))
     }
 
     /// One removal of a directory left behind, as a sub-task.

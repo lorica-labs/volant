@@ -250,7 +250,10 @@ fn a_command_that_must_not_escalate_runs_as_the_connection_user(
     };
     let (sub, plain) = match plugin.step_for(ask) {
         Ok((Step::Run(sub), Pending::Command)) => (sub, false),
-        Ok((Step::RunPlain(sub), Pending::Command)) => (sub, true),
+        Ok((Step::Plain(step), Pending::Command)) => match *step {
+            Step::Run(sub) => (sub, true),
+            other => panic!("the command should run as the connection user: {other:?}"),
+        },
         _ => panic!("the command should become a sub-task"),
     };
     assert_eq!(sub.module, "raw");

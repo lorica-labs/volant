@@ -245,9 +245,11 @@ pub(crate) enum Step {
     /// One more module, started as a job of the host with `limit` seconds of `async`, as a
     /// plugin's `wrap_async` starts it. The job's first status comes back on the next call.
     RunJob { sub: Sub, limit: u64 },
-    /// One more module as the connection user, over a link that does not escalate: a command the
-    /// plugin sends with `sudoable=False`. The same as `Run` on a task that does not escalate.
-    RunPlain(Sub),
+    /// A `Run` or a `PutFile` as the connection user, over a link that does not escalate: what a
+    /// plugin does through its connection rather than as the task's user, as the reference's
+    /// connection does it (a `sudoable=False` command, its temporary directory, a file put). Over
+    /// the task's own link when the task does not escalate.
+    Plain(Box<Step>),
     /// The host is expected to have gone away: after `wait`, the host's links are dropped - its
     /// own and any escalated one kept for it - and one try is made at a fresh link, never taking
     /// more than `timeout`, with `attempt` as the connection's own setup timeout. `probe` runs

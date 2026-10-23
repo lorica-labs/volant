@@ -25,9 +25,6 @@ use super::pymethods::format::to_str;
 use super::truthy;
 use super::{add_filter, add_test, add_text_filter};
 
-/// How the reference opens the failure of a vaulted value it cannot read.
-pub(super) const UNDECRYPTABLE: &str = "Attempt to use undecryptable variable: ";
-
 #[expect(clippy::too_many_lines)]
 pub fn register(
     env: &mut Environment<'static>,
@@ -47,10 +44,7 @@ pub fn register(
     // nothing renders is never read, so one that cannot be decrypted raises nothing until used.
     env.add_filter("volant_vault", |state: &State, ciphertext: String| {
         let plain = crate::vault::reveal(&ciphertext).map_err(|reason| {
-            super::bridged::raise(format!(
-                "{UNDECRYPTABLE}{}",
-                crate::vault::sentence(&reason)
-            ))
+            super::bridged::raise(crate::vault::undecryptable(&ciphertext, &reason))
         })?;
         super::lookups::taint(state);
         Ok::<_, Error>(plain)
@@ -95,12 +89,19 @@ pub fn register(
         },
     );
     // `NAME is vault_encrypted` is rewritten to carry the name (see `route_calls`): the
-    // reference tells a vaulted variable by a tag this engine does not carry.
-    add_test(env, "vault_encrypted", |value: Value| {
+    // reference tells a vaulted variable by a tag this engine does not carry. The answer is the
+    // current host's: the names are kept per host.
+    add_test(env, "vault_encrypted", |state: &State, value: Value| {
+        let host = state.lookup("inventory_hostname");
         value
             .as_str()
             .and_then(|s| s.strip_prefix(super::VAULT_NAME))
-            .is_some_and(crate::vault::is_name)
+            .is_some_and(|name| {
+                crate::vault::is_name(
+                    host.as_ref().and_then(Value::as_str).unwrap_or_default(),
+                    name,
+                )
+            })
     });
     add_test(env, "vaulted_file", |path: String| {
         std::fs::File::open(&path)

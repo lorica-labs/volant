@@ -1,0 +1,8 @@
+# A !vault value no secret opens fails the task that reads it, with the value's own origin.
+runs:
+  - args: [-i, inv, var.yml]
+  - args: [-i, inv, --vault-password-file, pw_wrong, var.yml]
+  - args: [-i, inv, msg.yml]
+  - args: [-i, inv, --vault-password-file, pw_wrong, msg.yml]
+  - args: [-i, inv, --vault-password-file, pw_right, var.yml]
+needs: ["ansible-core"]

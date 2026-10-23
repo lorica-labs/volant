@@ -80,21 +80,37 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
         .split('\'')
         .next()?;
     let origin = |name: &str| task.value_origins.get(name);
-    let resolved = crate::render::cause(resolving, origin(&format!("args.{key}")), None);
+    // A vaulted value no secret opens is a third link, at the value: the argument's own link
+    // ends at `Error rendering template.`.
+    let (resolving, vaulted) = match resolving.split_once(": Error rendering template: ") {
+        Some((before, reason)) if reason.starts_with(crate::vault::UNDECRYPTABLE) => (
+            format!("{before}: Error rendering template."),
+            Some(crate::render::cause(
+                reason,
+                crate::vault::failure_origin(reason).as_ref(),
+                None,
+            )),
+        ),
+        _ => (resolving.to_string(), None),
+    };
+    let resolved = crate::render::cause(&resolving, origin(&format!("args.{key}")), None);
     // A task with no name of its own starts where its action does, and the reference puts the
     // two links in one: the block opens with the finalization's sentence.
     // A syntax error is the head of the block itself, not a link behind it: measured on
     // ansible-core 2.19.12, `No filter named` prints one `caused by`, the value.
-    if resolving.contains(crate::template::NO_FILTER)
+    let mut chain = if resolving.contains(crate::template::NO_FILTER)
         || (task.origin.is_some() && task.origin.as_ref() == origin("action"))
     {
-        return Some(Value::Array(vec![
+        vec![
             crate::render::lead(&format!("Task failed: {head}")),
             resolved,
-        ]));
-    }
-    Some(Value::Array(vec![
-        crate::render::cause(&head, origin("action"), None),
-        resolved,
-    ]))
+        ]
+    } else {
+        vec![
+            crate::render::cause(&head, origin("action"), None),
+            resolved,
+        ]
+    };
+    chain.extend(vaulted);
+    Some(Value::Array(chain))
 }

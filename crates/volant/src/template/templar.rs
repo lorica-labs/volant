@@ -15,7 +15,6 @@ use crate::bridge::{Bridge, PluginKind};
 use super::bridged;
 use super::context::{Vars, begin, context_of, deferred, is_literal, take_failure};
 use super::env::{environment, holds_undefined, truthy, type_name};
-use super::filters;
 use super::missing::named;
 use super::vm::{
     TemplateReads, convert_error, eval_expr, keep_literal, single_expression, template_reads,
@@ -303,7 +302,7 @@ impl Templar {
                         || err.0.starts_with(super::NO_FILTER)
                     {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
-                    } else if err.0.starts_with(filters::UNDECRYPTABLE) {
+                    } else if err.0.starts_with(crate::vault::UNDECRYPTABLE) {
                         TemplateError(format!(
                             "{RESOLVING}'{key}': Error rendering template: {}",
                             err.0

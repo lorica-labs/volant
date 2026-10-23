@@ -13,6 +13,7 @@ use crate::python::Union;
 
 use super::attempts::wait_or_stop;
 use super::sweep::{sweep_abandoned, sweep_staged};
+use crate::executor::run::async_job::async_dir;
 use crate::executor::run::batch::send_batch;
 use crate::executor::run::blob::{PUT_FILE_WAIT, blob_preflight, put_file_within};
 use crate::executor::run::channel::{AgentChannel, Relink};
@@ -96,7 +97,7 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             .await;
             return Ok(timeout_result());
         }
-        let (sub, dropping) = match plugin.next(last.take()) {
+        let (sub, dropping, job) = match plugin.next(last.take()) {
             Step::Done(result) => return unreachable_ending(result),
             Step::Wait(ready) => {
                 let mut watcher = stop.clone();
@@ -143,8 +144,60 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                 });
                 continue;
             }
-            Step::Run(sub) => (sub, false),
-            Step::RunDropping(sub) => (sub, true),
+            Step::Run(sub) => (sub, false, None),
+            Step::RunDropping(sub) => (sub, true, None),
+            Step::RunJob { sub, limit } => (sub, false, Some(limit)),
+            // Over the task's own link when it does not escalate; otherwise over the host's
+            // link as the connection user, whose failure is the plugin's to see.
+            Step::RunPlain(sub) => match relink.take_plain().await {
+                Ok(None) => (sub, false, None),
+                Ok(Some(mut plain)) => {
+                    let built = match sub_task(task, item, &sub, union, interpreters, asked) {
+                        Ok(built) => bounded(built),
+                        Err(failure) => {
+                            relink.put_plain(plain, true);
+                            return Ok(failure);
+                        }
+                    };
+                    *batch_id += 1;
+                    let (mut flat, ended) = send_batch(
+                        &mut plain,
+                        host,
+                        *batch_id,
+                        vec![built],
+                        stop,
+                        stop_broken,
+                        logs,
+                    )
+                    .await;
+                    match (ended, flat.pop().flatten()) {
+                        (
+                            Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. }),
+                            Some(result),
+                        ) => {
+                            relink.put_plain(plain, true);
+                            last = Some(result);
+                        }
+                        (Ok(BatchOutcome::Cancelled { at }), _) => {
+                            relink.put_plain(plain, true);
+                            return Err(Ok(BatchOutcome::Cancelled { at }));
+                        }
+                        // The reference's `exec_command` raises the connection's failure; the
+                        // next command opens a fresh link.
+                        (ended, _) => {
+                            relink.put_plain(plain, false);
+                            last = Some(gone(&ended.err().unwrap_or_else(|| {
+                                "the agent ended the command without its result".to_string()
+                            })));
+                        }
+                    }
+                    continue;
+                }
+                Err(why) => {
+                    last = Some(gone(&why));
+                    continue;
+                }
+            },
             Step::Reconnect {
                 probe,
                 wait,
@@ -271,6 +324,13 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
         };
         tries = None;
         let built = match sub_task(task, item, &sub, union, interpreters, asked) {
+            Ok(built) if job.is_some() => Task {
+                job: job.map(|limit| volant_protocol::AsyncJob {
+                    limit,
+                    dir: async_dir(&item.vars),
+                }),
+                ..built
+            },
             Ok(built) => built,
             // The ping of a host that was down from the start: the plugin's own loop goes on to
             // reconnect, and names the interpreter once the host answers.

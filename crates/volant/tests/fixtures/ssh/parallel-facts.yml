@@ -1,0 +1,11 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    ansible_facts_parallel: true
+    ansible_facts_modules: [setup, ansible.builtin.setup]
+  tasks:
+    - name: Gather in parallel
+      ansible.builtin.gather_facts:
+        gather_subset: ["!all"]
+        fact_path: "{{ fact_dir }}"
+        gather_timeout: "{{ gather_timeout | default(omit) }}"

@@ -242,6 +242,12 @@ pub(crate) enum Step {
     /// call, or, when the link went before it answered, [`gone`] naming why: a `shutdown` that
     /// took the connection down with it has done what it was asked.
     RunDropping(Sub),
+    /// One more module, started as a job of the host with `limit` seconds of `async`, as a
+    /// plugin's `wrap_async` starts it. The job's first status comes back on the next call.
+    RunJob { sub: Sub, limit: u64 },
+    /// One more module as the connection user, over a link that does not escalate: a command the
+    /// plugin sends with `sudoable=False`. The same as `Run` on a task that does not escalate.
+    RunPlain(Sub),
     /// The host is expected to have gone away: after `wait`, the host's links are dropped - its
     /// own and any escalated one kept for it - and one try is made at a fresh link, never taking
     /// more than `timeout`, with `attempt` as the connection's own setup timeout. `probe` runs

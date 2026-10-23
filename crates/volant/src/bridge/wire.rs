@@ -11,11 +11,13 @@ use serde_json::{Value, json};
 #[derive(Debug, Clone, PartialEq)]
 pub enum Ask {
     /// Run a module the controller's way. `files` pairs an argument with the controller file it
-    /// stages.
+    /// stages. `job` is the async limit of a module the plugin wraps as a job (`wrap_async`): the
+    /// module starts as a job of the host and the reply is its first status.
     Module {
         name: String,
         args: Value,
         files: Vec<(String, PathBuf)>,
+        job: Option<u64>,
     },
     /// `Connection.exec_command`: a command line, already wrapped in its shell.
     Command {
@@ -91,6 +93,10 @@ impl Ask {
                         })
                         .collect::<Result<_, _>>()?,
                     Some(_) => return Err("the staged files are not a list".into()),
+                },
+                job: match ask.get("job") {
+                    None | Some(Value::Null) => None,
+                    Some(limit) => Some(limit.as_u64().ok_or("the async limit is not a number")?),
                 },
             },
             Some("command") => Ask::Command {

@@ -68,6 +68,17 @@ pub(in crate::executor) trait Relink<C> {
     fn pause(&self, failed: u32) -> Duration {
         Duration::from_secs(1 << failed.saturating_sub(1).min(4)).min(Duration::from_secs(12))
     }
+
+    /// The host's link as the connection user, for a command a plugin sends with
+    /// `sudoable=False`, taken out of the kept links or opened when none is kept; `None` when the
+    /// task does not escalate, so that its own link is that one.
+    async fn take_plain(&mut self) -> Result<Option<C>, String> {
+        Ok(None)
+    }
+
+    /// Hands back the link [`Relink::take_plain`] gave: kept for the next command when `alive`,
+    /// closed otherwise, so that the next command opens a fresh one.
+    fn put_plain(&mut self, _link: C, _alive: bool) {}
 }
 
 /// [`Relink`] for the driver's links: `key` is the one the batch runs on, taken out of `links`
@@ -110,6 +121,44 @@ impl Relink<AgentLink> for Relinker<'_> {
         let old = std::mem::replace(link, fresh);
         tokio::spawn(old.shutdown());
         Ok(())
+    }
+
+    async fn take_plain(&mut self) -> Result<Option<AgentLink>, String> {
+        if self.escalation.is_none() {
+            return Ok(None);
+        }
+        let key = self.plain_key();
+        // A kept one is used as it is: the task's own link, which rides the same connection,
+        // has just been checked, and one that fails is closed rather than kept.
+        if let Some(kept) = self.links.remove(&key) {
+            return Ok(Some(kept));
+        }
+        let fresh = connect(&key.transport, self.agents, self.defaults, None)
+            .await
+            .map_err(|e| e.to_string())?;
+        self.checked.insert(key.clone(), self.reboots.of(&key.host));
+        Ok(Some(fresh))
+    }
+
+    fn put_plain(&mut self, link: AgentLink, alive: bool) {
+        let key = self.plain_key();
+        if alive {
+            self.links.insert(key, link);
+        } else {
+            self.checked.remove(&key);
+            tokio::spawn(link.shutdown());
+        }
+    }
+}
+
+impl Relinker<'_> {
+    /// The key of the host's link under the connection user, which no escalation is filed under.
+    fn plain_key(&self) -> LinkKey {
+        LinkKey {
+            become_user: None,
+            become_program: None,
+            ..self.key.clone()
+        }
     }
 }
 

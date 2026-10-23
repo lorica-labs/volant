@@ -18,7 +18,12 @@ impl Bridged {
     #[expect(clippy::too_many_lines)]
     pub(super) fn step_for(&mut self, ask: Ask) -> Result<(Step, Pending), Reply> {
         match ask {
-            Ask::Module { name, args, files } => {
+            Ask::Module {
+                name,
+                args,
+                files,
+                job,
+            } => {
                 if !files.is_empty() {
                     return Err(Reply::Error(
                         "a module staging controller files is not supported yet in an action plugin"
@@ -26,18 +31,22 @@ impl Bridged {
                     ));
                 }
                 let short = short_name(&name);
+                let builtin = !name.contains('.')
+                    || name.starts_with("ansible.builtin.")
+                    || name.starts_with("ansible.legacy.");
                 // A collection plugin's module is named whole; a builtin one by its short name.
+                // `async_status` is the agent's own, which any plugin polls the jobs it started
+                // with.
                 let module = self
                     .modules
                     .iter()
                     .find(|m| **m == name)
                     .or_else(|| {
-                        (!name.contains('.')
-                            || name.starts_with("ansible.builtin.")
-                            || name.starts_with("ansible.legacy."))
-                        .then(|| self.modules.iter().find(|m| **m == short))
-                        .flatten()
+                        builtin
+                            .then(|| self.modules.iter().find(|m| **m == short))
+                            .flatten()
                     })
+                    .or_else(|| (builtin && short == "async_status").then_some(&"async_status"))
                     .ok_or_else(|| {
                     Reply::Error(format!(
                         "the module '{name}' is not supported yet in the action plugin '{}'",
@@ -55,8 +64,9 @@ impl Bridged {
                 // The ping of a host that is rebooting is the plugin's to retry: a link that
                 // goes under it is an error the plugin sees, as the reference's connection
                 // failure is, and the next ask is made over a fresh link.
-                let step = match (self.name, self.stale) {
-                    ("wait_for_connection", true) => Step::Reconnect {
+                let step = match (self.name, self.stale, job) {
+                    (_, _, Some(limit)) => Step::RunJob { sub, limit },
+                    ("wait_for_connection", true, None) => Step::Reconnect {
                         timeout: Duration::from_secs(60).min(
                             self.deadline.saturating_duration_since(Instant::now()),
                         ),
@@ -64,14 +74,14 @@ impl Bridged {
                         wait: Duration::ZERO,
                         attempt: Some(self.connect_timeout),
                     },
-                    ("wait_for_connection", false) => Step::RunDropping(sub),
+                    ("wait_for_connection", false, None) => Step::RunDropping(sub),
                     _ => Step::Run(sub),
                 };
                 Ok((step, Pending::Module))
             }
-            // The command goes over the task's link, which is the escalated one when the task
-            // escalates. A `sudoable=False` command (the plugin's housekeeping) also goes over
-            // it: there is no unescalated link inside the plugin loop.
+            // A `sudoable` command goes over the task's link, which is the escalated one when the
+            // task escalates. A `sudoable=False` one (the plugin's housekeeping) runs as the
+            // connection user, over a link that does not escalate.
             Ask::Command {
                 cmd,
                 stdin,
@@ -84,9 +94,15 @@ impl Bridged {
                 }
                 let mut args = raw(cmd);
                 // With no stdin and `sudoable`, the reference sends the command through `ssh -tt`.
-                if sudoable {
-                    args.insert("_volant_tty".into(), Value::Bool(true));
+                if !sudoable {
+                    let sub = Sub {
+                        module: "raw",
+                        args,
+                        files: Vec::new(),
+                    };
+                    return Ok((Step::RunPlain(sub), Pending::Command));
                 }
+                args.insert("_volant_tty".into(), Value::Bool(true));
                 Ok((Sub::run("raw", args), Pending::Command))
             }
             Ask::PutFile {

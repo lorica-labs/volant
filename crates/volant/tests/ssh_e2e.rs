@@ -1186,6 +1186,92 @@ fn ssh_a_bridged_plugin_puts_its_file_and_runs_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A command a plugin sends with `sudoable=False` runs as the connection user under `become`, and
+/// a `sudoable` one as the escalated user, as ansible-core 2.19.12 runs them.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_a_command_that_must_not_escalate_runs_as_the_connection_user() {
+    assert_passwordless_sudo("the play escalates to root");
+    let dir = tmp("sudoable");
+    let inv = inventory(&dir, &[("box", "")]);
+    let out = volant_within(
+        &["playbook", "-i", &inv, &fixture("ssh/sudoable/whoami.yml")],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(&format!("\"msg\": \"root {}\"", user())),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// `gather_facts` with `ansible_facts_parallel` starts its two `setup` runs as jobs of the host
+/// and polls them, so their fact scripts run at the same time. `setup` keeps `gather_timeout`
+/// for itself, so its job's limit is 0, which `async_wrapper` stops at five seconds: a script
+/// that sleeps past that is stopped there and the module fails.
+#[rstest]
+#[case::parallel(2, Some(0), "ok: [box]")]
+#[case::hung(60, Some(2), "\"msg\": \"Timeout exceeded\"")]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_gather_facts_runs_its_modules_as_jobs(
+    #[case] sleep: u32,
+    #[case] code: Option<i32>,
+    #[case] says: &str,
+) {
+    let dir = tmp(&format!("parallelfacts{sleep}"));
+    let inv = inventory(&dir, &[("box", "")]);
+    let facts = dir.join("facts");
+    write_executable(
+        &facts.join("slow.fact"),
+        &format!(
+            "#!/bin/sh
+date +%s.%N >> {d}/starts
+sleep {sleep}
+date +%s.%N >> {d}/ends
+echo '{{}}'
+",
+            d = dir.display()
+        ),
+    );
+    // Well short of the hung script's sleep: a job nobody stops fails the run here.
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &inv,
+            "-e",
+            &format!("fact_dir={}", facts.display()),
+            &fixture("ssh/parallel-facts.yml"),
+        ],
+        Duration::from_secs(40),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), code, "{text}");
+    assert!(text.contains(says), "{text}");
+    let stamps = |name: &str| -> Vec<f64> {
+        std::fs::read_to_string(dir.join(name))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| line.parse().unwrap())
+            .collect()
+    };
+    let (starts, ends) = (stamps("starts"), stamps("ends"));
+    assert_eq!(starts.len(), 2, "{text}");
+    if code == Some(0) {
+        // Each started before the other ended.
+        let last_start = starts.iter().copied().fold(f64::MIN, f64::max);
+        let first_end = ends.iter().copied().fold(f64::MAX, f64::min);
+        assert_eq!(ends.len(), 2, "{text}");
+        assert!(
+            last_start < first_end,
+            "the jobs ran one after the other: started {starts:?}, ended {ends:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Over ssh, `raw` and the command `script` runs go through a terminal: stderr merged into
 /// stdout with CR LF, and the session's closing line on stderr. Only its form is asserted.
 #[test]

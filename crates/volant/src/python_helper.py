@@ -19,7 +19,6 @@ import collections.abc
 import datetime
 import importlib.util
 import io
-import itertools
 import json
 import os
 import re
@@ -642,6 +641,13 @@ def plain(value):
             raise RuntimeError("the result holds bytes that are not UTF-8: %s" % failure)
     if isinstance(value, (datetime.date, datetime.time)):
         return value.isoformat()
+    messages = sys.modules.get("ansible.module_utils._internal._messages")
+    if messages is not None and isinstance(value, messages.ErrorSummary):
+        # A module's error kept in a result, as ansible-core renders it there: its traceback
+        # when tracebacks are on, `(traceback unavailable)` otherwise.
+        from ansible._internal._templating._transform import error_summary
+
+        return error_summary(value)
     if isinstance(value, collections.abc.Mapping):
         return {
             str.__str__(k) if isinstance(k, str) else str(k): plain(v) for k, v in value.items()
@@ -821,9 +827,6 @@ def ask(ident, op, **fields):
 
 
 SHIM = {}
-# The results of the jobs `wrap_async` started, by (request id, job id), until polled.
-JOBS = {}
-JOB_IDS = itertools.count(1)
 
 
 def shim():
@@ -833,6 +836,7 @@ def shim():
     """
     if SHIM:
         return SHIM
+    from ansible._internal._errors import _captured
     from ansible.errors import AnsibleConnectionFailure, AnsibleError
     from ansible.plugins.action import ActionBase
     from ansible.utils.display import Display
@@ -931,59 +935,25 @@ def shim():
         # and `task_vars` shape the module's upload and interpreter, which the controller owns.
         name = self._task.action if module_name is None else module_name
         args = plain(self._task.args if module_args is None else module_args)
-        ident = self._connection._ident
-        if name.rsplit(".", 1)[-1] == "async_status" and not wrap_async:
-            return poll(ident, args)
         # What `_update_module_args` adds: the name the module's own messages call it by.
         args = dict(args, _ansible_module_name=name)
         if ignore_unknown_opts:
             # The module drops what it does not declare, as it does for the reference.
             args["_ansible_ignore_unknown_opts"] = True
-        started = time.monotonic()
-        result = answered(self._connection._ask("module", name=name, args=args, files=[]))
+        fields = {"name": name, "args": args, "files": []}
+        if wrap_async:
+            # Started as a job of the host with the task's `async_val` as its limit, which
+            # `gather_facts` sets before each module it runs in parallel: the controller answers
+            # with the job's first status, and the plugin polls `async_status` as it would the
+            # reference's `async_wrapper`.
+            fields["job"] = int(self._task.async_val or 0)
+        result = answered(self._connection._ask("module", **fields))
         if not isinstance(result, dict):
             raise AnsibleError("the controller answered the module %s with %r" % (name, result))
-        if wrap_async and getattr(self._task, "_volant_own_async", 0):
-            # The task's own `async`: the controller started the module as a job of the host's
-            # agent and answered with its first status, which the plugin hands back as it is.
-            return result
-        if wrap_async:
-            # A job the plugin itself starts and polls (`gather_facts`). The module runs to its
-            # end before the job is handed back, so parallel jobs run one after the other, and
-            # the async limit is judged afterwards: a module that ran past it is replaced by
-            # async_wrapper's timeout result.
-            limit = int(self._task.async_val or 0)
-            if limit and time.monotonic() - started > limit:
-                result = {"msg": "Timeout exceeded", "failed": True}
-            jid = "j%s.%d" % (ident, next(JOB_IDS))
-            JOBS[(ident, jid)] = result
-            return {
-                "started": 1,
-                "finished": 0,
-                "ansible_job_id": jid,
-                "results_file": "/volant-async/%s" % jid,
-                "_ansible_suppress_tmpdir_delete": True,
-            }
+        # What `_parse_returned_data` makes of a module's `exception`: the error summary a
+        # plugin such as `gather_facts` reads off a failed result.
+        _captured.AnsibleModuleCapturedError.normalize_result_exception(result)
         return result
-
-    def poll(ident, args):
-        jid = args.get("jid")
-        mode = args.get("mode", "status")
-        if mode not in ("status", "cleanup"):
-            raise Unsupported("async_status mode %s is not supported yet" % mode)
-        result = JOBS.get((ident, jid))
-        if result is None:
-            return {
-                "failed": True,
-                "msg": "could not find job",
-                "ansible_job_id": jid,
-                "started": 1,
-                "finished": 1,
-            }
-        if mode == "cleanup":
-            del JOBS[(ident, jid)]
-            return {"ansible_job_id": jid, "erased": "/volant-async/%s" % jid}
-        return dict(result, started=1, finished=1, ansible_job_id=jid)
 
     def make_tmp_path(self, remote_user=None):
         path = answered(self._connection._ask("tmp", action="make", remote_user=remote_user))
@@ -1113,9 +1083,6 @@ def run_action(ident, request):
         # here since no module_defaults reach the plugin.
         task = Task.load(fields, block=Block(play=Play()), loader=loader)
         task.post_validate(templar=templar._engine)
-        # The task's own `async`, kept apart from `async_val`, which `gather_facts` overwrites
-        # with its timeout before each wrapped call.
-        task._volant_own_async = int(task.async_val or 0)
         if search_path:
             # The role and file directories the controller compiled the task in, which the
             # plugin's `_find_needle` reads off the task as the reference's role-bound task gives.
@@ -1141,8 +1108,6 @@ def run_action(ident, request):
                 result.setdefault("changed", False)
         finally:
             action.cleanup()
-            for key in [key for key in JOBS if key[0] == ident]:
-                del JOBS[key]
     except Exception as failure:
         # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a
         # connection failure is unreachable, `AnsibleActionSkip` skipped, `AnsibleActionFail`

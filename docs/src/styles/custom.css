@@ -287,7 +287,23 @@ starlight-toc a[aria-current='true'] {
 .sl-markdown-content table code {
   white-space: nowrap;
 }
-/* On narrow screens a wide table scrolls inside its own frame instead of widening the page. */
+/* A table of six columns or more is set tighter, and scrolls inside its own frame if it still does
+   not fit, instead of running under the table of contents. */
+.sl-markdown-content table:not(.kw-grid):has(tr > :nth-child(6)) {
+  display: block;
+  overflow-x: auto;
+  font-size: var(--sl-text-xs);
+  font-variant-numeric: tabular-nums;
+}
+.sl-markdown-content table:not(.kw-grid):has(tr > :nth-child(6)) :is(th, td) {
+  padding: 0.5rem 0.6rem;
+}
+/* A long collection name may wrap instead of setting the width of the whole column. */
+.sl-markdown-content table:not(.kw-grid):has(tr > :nth-child(6)) td:first-child code {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+/* On narrow screens every wide table does the same. */
 @media (max-width: 50rem) {
   .sl-markdown-content table:not(.kw-grid) {
     display: block;

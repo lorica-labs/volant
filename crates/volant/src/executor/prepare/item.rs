@@ -107,6 +107,16 @@ pub(in crate::executor) fn is_loop_lookup_failure(err: &TemplateError) -> bool {
     err.0.starts_with("The lookup plugin '") && err.0.contains("' failed: ")
 }
 
+/// A lookup that fails in a `when` is `Task failed: <plugin sentence>`, unlike a `with_` loop's
+/// lookup, which the reference shows with no task around it, see [`is_loop_lookup_failure`].
+pub(super) fn in_condition(err: TemplateError) -> TemplateError {
+    if is_loop_lookup_failure(&err) {
+        TemplateError(format!("Task failed: {}", err.0))
+    } else {
+        err
+    }
+}
+
 /// The result of a task that dies before it runs, worded as [`failure_text`] words it.
 pub(in crate::executor) fn failed_result(err: &TemplateError) -> TaskResult {
     let mut result = TaskResult::failed_with(failure_text(err));

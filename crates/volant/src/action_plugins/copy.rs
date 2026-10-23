@@ -97,6 +97,11 @@ pub(super) fn failing(msg: String) -> Box<dyn Plugin> {
     Box::new(Then(Some(Step::Done(TaskResult::failed_with(msg)))))
 }
 
+/// A plugin that fails the item with `result` before the host is asked anything.
+pub(super) fn failing_with(result: TaskResult) -> Box<dyn Plugin> {
+    Box::new(Then(Some(Step::Done(result))))
+}
+
 /// The source bytes, `None` for a `remote_src` the host copies by itself, or the refusal.
 fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     let args = ctx.args;

@@ -184,6 +184,9 @@ pub(super) fn named_undefined(raw: &Value, err: TemplateError) -> TemplateError 
 /// then the value at where it was written.
 pub(in crate::executor) fn undefined_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let sentence = message.strip_prefix("Task failed: ")?;
+    if let Some(causes) = condition_causes(task, sentence) {
+        return Some(causes);
+    }
     let template = task.loop_items.as_ref()?.as_str()?;
     (undefined_name(template, UNDEFINED.into()) == sentence).then(|| {
         serde_json::json!([crate::render::cause(
@@ -239,4 +242,16 @@ pub(super) fn flatten_once(list: Vec<Value>) -> Vec<Value> {
             other => vec![other],
         })
         .collect()
+}
+
+/// The chain of a task whose `when` raised a lookup's failure, see `in_condition`: the sentence
+/// at where the condition was written.
+fn condition_causes(task: &PlayTask, sentence: &str) -> Option<Value> {
+    (!task.when.is_empty() && sentence.starts_with("The lookup plugin '")).then(|| {
+        serde_json::json!([crate::render::cause(
+            sentence,
+            task.value_origins.get("when"),
+            None
+        )])
+    })
 }

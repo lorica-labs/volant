@@ -39,7 +39,9 @@ use vars::{Named, delegate_host_vars, merged_vars, resolved};
 use carry::Carry;
 use connect::{connect_for, delegate_for};
 use escalation::{become_for, remove_omit};
-use item::{check_gather_subset, environment_for, flag_for, ignore_errors_for, notify_for};
+use item::{
+    check_gather_subset, environment_for, flag_for, ignore_errors_for, in_condition, notify_for,
+};
 pub(in crate::executor) use loops::undefined_causes;
 use loops::{LoopOptions, loop_list, loop_options, named_undefined, with_lookup_items};
 
@@ -226,7 +228,7 @@ pub(super) fn prepare(
             // A conditional that cannot be evaluated yields to a kept loop error, as there.
             let holds = templar
                 .condition(condition, &vars)
-                .map_err(|e| loop_error.clone().unwrap_or(e))?;
+                .map_err(|e| loop_error.clone().unwrap_or_else(|| in_condition(e)))?;
             if !holds {
                 let mut r = Map::new();
                 r.insert("changed".into(), json!(false));

@@ -642,6 +642,21 @@
 - {bridge: true, template: "{{ lookup('community.general.dependent', {'a': [1, 2]}, wantlist=True) }}"}
 - {bridge: true, template: "{{ lookup('community.general.flattened', [1, [2, [3]]], wantlist=True) }}"}
 - {bridge: true, template: "{{ lookup('community.general.random_string', length=8) | length }}"}
+- bridge: true
+  template: "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}"
+  vars: {example_a: {x: 1}, example_b: {y: 2}}
+- bridge: true
+  template: "{{ lookup('community.general.merge_variables', '^example_[ab]$', pattern_type='regex') }}"
+  vars: {example_a: {x: 1}, example_b: {y: 2}, example_c: {z: 3}}
+- bridge: true
+  template: "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix', initial_value={'w': 0}) }}"
+  vars: {example_a: {x: 1}, example_b: {y: 2}}
+- bridge: true
+  template: "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}"
+  vars: {example_a: {x: "{{ 1 + 1 }}"}, example_b: {y: 2}}
+- bridge: true
+  template: "{{ lookup('community.general.merge_variables', 'example_', pattern_type='prefix') }}"
+  vars: {example_a: [1], example_b: [2]}
 - {bridge: true, template: "{{ r is finished }}", vars: {r: {finished: 1}}}
 - {bridge: true, template: "{{ r is started }}", vars: {r: {started: 1}}}
 - {bridge: true, template: "{{ r is reachable }}", vars: {r: {unreachable: false}}}

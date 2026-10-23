@@ -134,6 +134,16 @@ pub(super) fn register(
     }
 }
 
+/// What every lookup is sent, whatever it reads.
+const BASE_VARS: [&str; 6] = [
+    "ansible_search_path",
+    "role_path",
+    "playbook_dir",
+    "inventory_hostname",
+    "group_names",
+    "omit",
+];
+
 /// `lookup(name, terms..., kwargs)` in the helper, with the variables ansible-core's own lookups
 /// read off their templar. `wantlist` and `errors` travel with the call and the plugin shapes
 /// its own answer. What a lookup returns is data, as `lookup('file')`'s is.
@@ -150,17 +160,36 @@ pub(super) fn lookup(
         keywords.push((key.to_string(), kwargs.get::<Value>(key)?));
     }
     let (args, kwargs) = sendable(kind, name, terms, keywords)?;
+    let needs = bridge
+        .lookup_needs(name)
+        .map_err(|err| failed(kind, name, err))?;
     let mut vars = Map::new();
-    for key in [
-        "ansible_search_path",
-        "role_path",
-        "playbook_dir",
-        "inventory_hostname",
-        "group_names",
-        "omit",
-    ] {
+    let mut read = |key: &str| -> Result<(), Error> {
         if let Some(value) = state.lookup(key).filter(|v| !v.is_undefined()) {
             vars.insert(key.to_string(), to_json(kind, name, &value)?);
+        }
+        Ok(())
+    };
+    for key in BASE_VARS
+        .iter()
+        .copied()
+        .chain(needs.names.iter().map(String::as_str))
+    {
+        read(key)?;
+    }
+    if needs.all {
+        // A plugin that lists the variables gets every one the host has. One that cannot be
+        // sent (an object only Jinja holds) or rendered is left out, as the plugin cannot read it.
+        let names: Vec<String> = state
+            .lookup(super::CONTEXT_KEY)
+            .and_then(|root| root.try_iter().ok())
+            .into_iter()
+            .flatten()
+            .filter_map(|n| n.as_str().map(str::to_string))
+            .filter(|n| !n.starts_with("__volant_") && n != "volant_version" && n != "hostvars")
+            .collect();
+        for key in &names {
+            let _ = read(key);
         }
     }
     super::lookups::taint(state);

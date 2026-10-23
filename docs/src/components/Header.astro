@@ -1,0 +1,154 @@
+---
+// The header of the product site: the mark, the main sections next to it, search, then the theme
+// and social links with an install button. Starlight's layout grid is kept so the search box still
+// lines up with the content column.
+import config from 'virtual:starlight/user-config';
+import LanguageSelect from 'virtual:starlight/components/LanguageSelect';
+import Search from 'virtual:starlight/components/Search';
+import SiteTitle from 'virtual:starlight/components/SiteTitle';
+import SocialIcons from 'virtual:starlight/components/SocialIcons';
+import ThemeSelect from 'virtual:starlight/components/ThemeSelect';
+
+const shouldRenderSearch =
+  config.pagefind || config.components.Search !== '@astrojs/starlight/components/Search.astro';
+
+const base = import.meta.env.BASE_URL.replace(/\/$/, '');
+const links = [
+  { label: 'Docs', href: `${base}/`, section: '/' },
+  { label: 'Reference', href: `${base}/reference/cli/`, section: '/reference/' },
+  { label: 'Changelog', href: `${base}/changelog/`, section: '/changelog/' },
+];
+const path = Astro.url.pathname.slice(base.length);
+const current = links.findLast((link) => path.startsWith(link.section))?.label;
+---
+
+<div class="header">
+  <div class="title-wrapper sl-flex">
+    <SiteTitle />
+    <nav class="header-links" aria-label="Main">
+      {
+        links.map((link) => (
+          <a href={link.href} aria-current={link.label === current ? 'page' : undefined}>
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+  </div>
+  <div class="sl-flex print:hidden">
+    {shouldRenderSearch && <Search />}
+  </div>
+  <div class="sl-hidden md:sl-flex print:hidden right-group">
+    <div class="sl-flex social-icons">
+      <SocialIcons />
+    </div>
+    <ThemeSelect />
+    <LanguageSelect />
+    <a class="header-cta" href={`${base}/start/installation/`}>Install</a>
+  </div>
+</div>
+
+<style>
+  .header {
+    display: flex;
+    gap: var(--sl-nav-gap);
+    justify-content: space-between;
+    align-items: center;
+    height: 100%;
+  }
+  .title-wrapper {
+    overflow: clip;
+    padding: 0.25rem;
+    margin: -0.25rem;
+    min-width: 0;
+    align-items: center;
+    gap: 1.75rem;
+  }
+  .right-group,
+  .social-icons {
+    gap: 1rem;
+    align-items: center;
+  }
+  .social-icons::after {
+    content: '';
+    height: 1.5rem;
+    border-inline-end: 1px solid var(--v-hairline-strong);
+  }
+
+  .header-links {
+    display: flex;
+    gap: 0.25rem;
+  }
+  .header-links a {
+    padding: 0.45rem 0.7rem;
+    border-radius: 0.5rem;
+    color: var(--sl-color-gray-2);
+    font-size: var(--sl-text-sm);
+    font-weight: 500;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: color 0.2s var(--v-ease), background-color 0.2s var(--v-ease);
+  }
+  .header-links a:hover {
+    color: var(--sl-color-white);
+    background: var(--v-shell);
+  }
+  .header-links a[aria-current='page'] {
+    color: var(--sl-color-white);
+    background: var(--v-shell);
+    box-shadow: inset 0 0 0 1px var(--v-hairline);
+  }
+
+  .header-cta {
+    display: inline-flex;
+    align-items: center;
+    height: 2.25rem;
+    padding: 0 0.9rem;
+    border-radius: 0.5rem;
+    background: var(--sl-color-accent);
+    color: var(--sl-color-black);
+    font-size: var(--sl-text-sm);
+    font-weight: 600;
+    text-decoration: none;
+    white-space: nowrap;
+    transition: filter 0.2s var(--v-ease), transform 0.2s var(--v-ease);
+  }
+  .header-cta:hover {
+    filter: brightness(1.08);
+  }
+  .header-cta:active {
+    transform: translateY(1px);
+  }
+
+  /* On narrow screens the same sections live in the sidebar menu. */
+  @media (max-width: 60rem) {
+    .header-links {
+      display: none;
+    }
+  }
+
+  @media (min-width: 50rem) {
+    :global(:root[data-has-sidebar]) {
+      --__sidebar-pad: calc(2 * var(--sl-nav-pad-x));
+    }
+    :global(:root:not([data-has-toc])) {
+      --__toc-width: 0rem;
+    }
+    .header {
+      --__sidebar-width: max(0rem, var(--sl-content-inline-start, 0rem) - var(--sl-nav-pad-x));
+      --__main-column-fr: calc(
+        (
+            100% + var(--__sidebar-pad, 0rem) - var(--__toc-width, var(--sl-sidebar-width)) -
+              (2 * var(--__toc-width, var(--sl-nav-pad-x))) - var(--sl-content-inline-start, 0rem) -
+              var(--sl-content-width)
+          ) / 2
+      );
+      display: grid;
+      grid-template-columns:
+        minmax(calc(var(--__sidebar-width) + max(0rem, var(--__main-column-fr) - var(--sl-nav-gap))), auto)
+        1fr
+        auto;
+      align-content: center;
+    }
+  }
+</style>

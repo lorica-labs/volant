@@ -1,0 +1,2 @@
+bad: "{{ nope }}"
+looked_up: "{{ lookup('ansible.builtin.vars', 'w') }}"

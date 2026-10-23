@@ -6,6 +6,8 @@
 use std::collections::HashMap;
 use std::fmt;
 use std::path::Path;
+
+use crate::playbook::Origin;
 use std::sync::{Arc, LazyLock, Mutex, RwLock};
 
 mod format;
@@ -108,16 +110,66 @@ pub fn sentence(reason: &str) -> String {
     }
 }
 
-/// The names of the variables that held a `!vault` value, for `NAME is vault_encrypted`.
-/// Kept by name for the whole run, not per host.
-static NAMES: LazyLock<Mutex<std::collections::BTreeSet<String>>> = LazyLock::new(Mutex::default);
+/// How the reference opens the failure of a vaulted value it cannot read.
+pub const UNDECRYPTABLE: &str = "Attempt to use undecryptable variable: ";
 
-pub fn note_name(name: &str) {
-    NAMES.lock().expect("names lock").insert(name.to_string());
+/// The variables of each host that hold a `!vault` value, for `NAME is vault_encrypted`: the
+/// reference tags the value, so the answer differs from one host to the next.
+static NAMES: LazyLock<Mutex<HashMap<String, Vec<String>>>> = LazyLock::new(Mutex::default);
+
+/// Records which variables of `host` hold a `!vault` value, in place of what was recorded for it
+/// before: the variables just resolved are the ones a test reads next.
+pub fn set_names(host: &str, names: Vec<String>) {
+    let mut all = NAMES.lock().expect("names lock");
+    if names.is_empty() {
+        all.remove(host);
+    } else {
+        all.insert(host.to_string(), names);
+    }
 }
 
-pub fn is_name(name: &str) -> bool {
-    NAMES.lock().expect("names lock").contains(name)
+pub fn is_name(host: &str, name: &str) -> bool {
+    NAMES
+        .lock()
+        .expect("names lock")
+        .get(host)
+        .is_some_and(|names| names.iter().any(|n| n == name))
+}
+
+/// Where each `!vault` value of the files this run loaded is written, by its ciphertext.
+static WRITTEN_AT: LazyLock<Mutex<HashMap<String, Origin>>> = LazyLock::new(Mutex::default);
+
+/// Where each undecryptable-value failure came from, by its message. Two different values that
+/// fail with one message share the entry the later failure wrote.
+static FAILED_AT: LazyLock<Mutex<HashMap<String, Origin>>> = LazyLock::new(Mutex::default);
+
+pub fn note_origin(ciphertext: &str, origin: Origin) {
+    WRITTEN_AT
+        .lock()
+        .expect("origins lock")
+        .insert(ciphertext.to_string(), origin);
+}
+
+/// The message of a vaulted value that cannot be read, remembering where that value is written
+/// so [`failure_origin`] can say.
+pub fn undecryptable(ciphertext: &str, reason: &str) -> String {
+    let message = format!("{UNDECRYPTABLE}{}", sentence(reason));
+    if let Some(origin) = WRITTEN_AT.lock().expect("origins lock").get(ciphertext) {
+        FAILED_AT
+            .lock()
+            .expect("origins lock")
+            .insert(message.clone(), origin.clone());
+    }
+    message
+}
+
+/// Where the value whose failure `message` words is written.
+pub fn failure_origin(message: &str) -> Option<Origin> {
+    FAILED_AT
+        .lock()
+        .expect("origins lock")
+        .get(message)
+        .cloned()
 }
 
 /// A text file, decrypted first when it is vaulted: every file the reference reads through its

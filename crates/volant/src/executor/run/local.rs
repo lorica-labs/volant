@@ -329,6 +329,30 @@ fn local_result(
                 }
                 match templar.evaluate(var, &item.vars) {
                     Ok(v) => r.insert(var.to_string(), v),
+                    // A vaulted value no secret opens is not an undefined name: it fails the
+                    // task, at the value, the value's own place after the expression's.
+                    Err(e) if e.0.starts_with(crate::vault::UNDECRYPTABLE) => {
+                        let head =
+                            "Error while resolving `var` expression: Error rendering expression";
+                        let mut failed =
+                            TaskResult::failed_with(format!("Task failed: {head}: {}", e.0));
+                        failed.0.insert(
+                            crate::render::CHAIN_KEY.into(),
+                            json!([
+                                crate::render::cause(
+                                    &format!("{head}."),
+                                    task.value_origins.get("var"),
+                                    None
+                                ),
+                                crate::render::cause(
+                                    &e.0,
+                                    crate::vault::failure_origin(&e.0).as_ref(),
+                                    None
+                                ),
+                            ]),
+                        );
+                        return failed;
+                    }
                     Err(e) => r.insert(
                         var.to_string(),
                         Value::String(format!("VARIABLE IS NOT DEFINED!: {e}")),

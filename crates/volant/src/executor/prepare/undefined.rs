@@ -96,9 +96,22 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
         .split('\'')
         .next()?;
     let origin = |name: &str| task.value_origins.get(name);
+    // A vaulted value no secret opens is a third link, at the value: the argument's own link
+    // ends at `Error rendering template.`.
+    let (resolving, vaulted) = match resolving.split_once(": Error rendering template: ") {
+        Some((before, reason)) if reason.starts_with(crate::vault::UNDECRYPTABLE) => (
+            format!("{before}: Error rendering template."),
+            Some(crate::render::cause(
+                reason,
+                crate::vault::failure_origin(reason).as_ref(),
+                None,
+            )),
+        ),
+        _ => (resolving.to_string(), None),
+    };
     // A plugin that failed on an exception of its own is a block of its sentence, then one bare
     // block per cause.
-    let (resolving, behind) = split_plugin_failure(resolving);
+    let (resolving, behind) = split_plugin_failure(&resolving);
     let resolved = crate::render::cause(&resolving, origin(&format!("args.{key}")), None);
     // A task with no name of its own starts where its action does, and the reference puts the
     // two links in one: the block opens with the finalization's sentence.
@@ -117,6 +130,7 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
             resolved,
         ]
     };
+    chain.extend(vaulted);
     chain.extend(behind);
     Some(Value::Array(chain))
 }

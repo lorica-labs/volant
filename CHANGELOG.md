@@ -6,6 +6,35 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.10](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) - 2026-10-23
+
+### Added
+
+- *(runtime)* print and check the SHA-256 of a packed runtime ([#769](https://github.com/lorica-labs/volant/pull/769))
+- *(become)* run su over a local connection ([#755](https://github.com/lorica-labs/volant/pull/755))
+- *(config)* read force_color, nocolor and deprecation_warnings ([#752](https://github.com/lorica-labs/volant/pull/752))
+- *(ssh)* read usetty and ANSIBLE_SSH_USETTY ([#753](https://github.com/lorica-labs/volant/pull/753))
+
+### Fixed
+
+- *(copy)* print the hint line for a missing source ([#773](https://github.com/lorica-labs/volant/pull/773))
+- *(bridge)* run plugin jobs in parallel and escalate only when asked ([#776](https://github.com/lorica-labs/volant/pull/776))
+- *(vault)* fail on an undecryptable value as ansible-core does ([#774](https://github.com/lorica-labs/volant/pull/774))
+- *(bridge)* give bridged lookups the play's variables ([#775](https://github.com/lorica-labs/volant/pull/775))
+- *(template)* chain a raising filter, bridge import_playbook ([#770](https://github.com/lorica-labs/volant/pull/770))
+- *(lookups)* chain a lookup failure in when or a template ([#768](https://github.com/lorica-labs/volant/pull/768))
+- *(executor)* fail a bad meta, action or role task when reached ([#761](https://github.com/lorica-labs/volant/pull/761))
+- *(render)* print skipped, no_log and add_host results as ansible-core ([#757](https://github.com/lorica-labs/volant/pull/757))
+- *(lookups)* fail native lookups with their own message ([#764](https://github.com/lorica-labs/volant/pull/764))
+- *(cli)* match the implicit Gathering Facts with --start-at-task ([#765](https://github.com/lorica-labs/volant/pull/765))
+- *(inventory)* word constructed and generator errors as ansible-core ([#766](https://github.com/lorica-labs/volant/pull/766))
+- *(preflight)* report a missing collection as ansible-core does ([#763](https://github.com/lorica-labs/volant/pull/763))
+- *(template)* word and chain an undefined variable as ansible-core ([#754](https://github.com/lorica-labs/volant/pull/754))
+- *(agent)* keep a replaced file's owner and bound PutFile ([#756](https://github.com/lorica-labs/volant/pull/756))
+- *(inventory)* reject an invalid regex pattern as ansible-core does ([#759](https://github.com/lorica-labs/volant/pull/759))
+- *(template)* hide volant_unsafe and accept !unsafe on a mapping key ([#758](https://github.com/lorica-labs/volant/pull/758))
+- *(executor)* render a loop item's fields when the loop reaches it ([#760](https://github.com/lorica-labs/volant/pull/760))
+
 ## [0.1.0-alpha.9](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.8...v0.1.0-alpha.9) - 2026-10-21
 
 ### Added

@@ -1,0 +1,1 @@
+- import_playbook: "{{ {'a': 'sub.yml'} | community.general.json_query('a') }}"

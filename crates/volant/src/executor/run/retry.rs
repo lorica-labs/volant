@@ -207,7 +207,7 @@ pub(in crate::executor) fn local_timed_out(seconds: u64) -> TaskResult {
 
 /// Marks a result [`raised`] built, which carries nothing a module would add, such as the
 /// interpreter the host was found to use. Dropped with the other `_volant_` keys.
-pub(in crate::executor) const RAISED_KEY: &str = "_volant_raised";
+pub(crate) const RAISED_KEY: &str = "_volant_raised";
 
 /// A failure the executor raised rather than a module returned: `changed: false` and the message,
 /// measured on ansible-core 2.19.12, and the causes its error block chains, if any.

@@ -63,7 +63,7 @@ pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
     }
 }
 
-/// A lookup that failed while the template rendered: the plugin raised it from inside the
+/// A lookup, filter or test that failed while the template rendered: the plugin raised it from inside the
 /// action, so the task says `Task failed: ` and the sentence, `changed: false`, and the error
 /// block chains the sentence again at the template file.
 fn lookup_failure(text: &str, file: &std::path::Path) -> TaskResult {
@@ -72,12 +72,23 @@ fn lookup_failure(text: &str, file: &std::path::Path) -> TaskResult {
         line: 0,
         col: 0,
     };
+    // A plugin that failed on an exception of its own has causes behind its sentence.
+    let (head, behind) = crate::bridge::split_failure(text);
+    let mut chain = vec![crate::render::cause(&head, Some(&at), None)];
+    chain.extend(
+        behind
+            .iter()
+            .map(|block| crate::render::cause(block, None, None)),
+    );
     let mut failed = TaskResult::failed_with(format!("Task failed: {text}"));
     failed.0.insert("changed".into(), Value::Bool(false));
-    failed.0.insert(
-        crate::render::CHAIN_KEY.into(),
-        Value::Array(vec![crate::render::cause(text, Some(&at), None)]),
-    );
+    // Nothing ran on the host, so no interpreter was discovered.
+    failed
+        .0
+        .insert(crate::executor::RAISED_KEY.into(), Value::Bool(true));
+    failed
+        .0
+        .insert(crate::render::CHAIN_KEY.into(), Value::Array(chain));
     failed
 }
 
@@ -242,7 +253,7 @@ fn rendered(
         .templar
         .render_file(&text, Vars::from(&vars), &options)
         .map_err(|err| {
-            if err.0.starts_with("The lookup plugin '") {
+            if err.0.starts_with("The ") && crate::template::is_plugin_failure(&err.0) {
                 *lookup_in = Some(found.clone());
                 err.0
             } else {

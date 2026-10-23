@@ -19,7 +19,7 @@ mod report;
 mod run;
 mod state;
 
-pub(crate) use run::{RAISED_SKIP, drop_internal_keys};
+pub(crate) use run::{RAISED_KEY, RAISED_SKIP, drop_internal_keys};
 
 use std::collections::HashMap;
 use std::path::PathBuf;

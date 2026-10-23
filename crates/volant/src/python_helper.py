@@ -863,7 +863,45 @@ def call(request):
         # package, and its name is what 2.19 keeps stable.
         if type(failure).__name__ == "AnsibleTemplatePluginNotFoundError":
             return {"error": missing}
-        return {"error": {"kind": "plugin", "message": str(failure)}}
+        error = {"kind": "plugin", "message": str(failure)}
+        chain = blocks(failure)
+        if len(chain) > 1:
+            error["chain"] = chain
+        return {"error": error}
+
+
+def blocks(failure):
+    """The messages of the blocks ansible-core prints for `failure`, one per `<<< caused by >>>`:
+    a cause that adds no source context or help text, and has no chain of another kind, is part of
+    the block it explains (`_event_formatting.format_event_verbose_message`). An empty list when
+    this ansible-core's private events are not the ones read here."""
+    try:
+        from ansible._internal._errors._error_factory import ControllerEventFactory
+        from ansible.module_utils._internal._event_utils import deduplicate_message_parts
+
+        event = ControllerEventFactory.from_exception(failure, False)
+        out = []
+        while event:
+            messages = [event.msg]
+            chain = event.chain
+            while chain and chain.follow:
+                cause = chain.event
+                if cause.events:
+                    break
+                if (cause.formatted_source_context or cause.help_text) and (
+                    cause.formatted_source_context != event.formatted_source_context
+                    or cause.help_text != event.help_text
+                ):
+                    break
+                if cause.chain and chain.msg_reason != cause.chain.msg_reason:
+                    break
+                messages.append(cause.msg)
+                chain = cause.chain
+            out.append(deduplicate_message_parts(messages))
+            event = chain.event if chain and chain.follow else None
+        return out
+    except Exception:
+        return []
 
 
 # The pipes `main` reads requests from and writes frames to: an action plugin's questions to the

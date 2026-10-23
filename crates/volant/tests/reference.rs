@@ -914,7 +914,7 @@ fn every_recording_is_indexed() {
                 .to_string_lossy()
                 .into_owned()
         })
-        .filter(|file| file != "index.json" && file != "play.json")
+        .filter(|file| !["index.json", "play.json", "groups.json"].contains(&file.as_str()))
         .collect();
     for file in &recorded {
         if !file

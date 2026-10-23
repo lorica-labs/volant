@@ -123,8 +123,23 @@ fn outcome(mut reply: Value) -> Result<Value, BridgeError> {
             .and_then(Value::as_str)
             .unwrap_or("no message")
             .to_string();
+        let chain: Vec<String> = error
+            .get("chain")
+            .and_then(Value::as_array)
+            .map(|blocks| {
+                blocks
+                    .iter()
+                    .filter_map(|block| block.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default();
         return Err(match error.get("kind").and_then(Value::as_str) {
-            Some("plugin") => BridgeError::Plugin(message),
+            Some("plugin") => {
+                if chain.len() > 1 {
+                    super::wire::remember_chain(&message, chain);
+                }
+                BridgeError::Plugin(message)
+            }
             Some("not_found") => BridgeError::NotFound(message),
             other => BridgeError::Helper(format!(
                 "the Python helper reported an error of kind {other:?}: {message}"

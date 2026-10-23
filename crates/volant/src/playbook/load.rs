@@ -2,12 +2,15 @@
 //! Loading a playbook or a task file from disk.
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use anyhow::{Context, anyhow, bail};
 use saphyr::{Scalar, Yaml};
 use serde_json::{Map, Value};
 
+use crate::bridge::Bridge;
 use crate::keywords::BLOCK_SECTIONS;
+use crate::template::Templar;
 
 use super::fields::parse_handlers;
 use super::import::Import;
@@ -28,7 +31,39 @@ use super::task::{parse_block, parse_task};
 /// lists exactly as it does in the reference, while the run still stops before it can apply
 /// half of itself.
 pub fn load(path: &Path) -> anyhow::Result<Playbook> {
-    read(path, 0).map_err(|err| crate::stats::Refusal::or(4, err))
+    load_rendering(path, &Rendering::default())
+}
+
+/// [`load`], with the engine and the variables an `import_playbook` name renders against: the
+/// run's helper, so a collection filter works there, and `-e`.
+///
+/// # Errors
+/// As [`load`].
+pub fn load_rendering(path: &Path, rendering: &Rendering<'_>) -> anyhow::Result<Playbook> {
+    read(path, 0, rendering).map_err(|err| crate::stats::Refusal::or(4, err))
+}
+
+/// What the name of an `import_playbook` is rendered with.
+pub struct Rendering<'a> {
+    templar: Templar,
+    vars: &'a Map<String, Value>,
+}
+
+impl<'a> Rendering<'a> {
+    #[must_use]
+    pub fn new(bridge: Option<Arc<Bridge>>, vars: &'a Map<String, Value>) -> Self {
+        Self {
+            templar: Templar::with_bridge(PathBuf::from("."), bridge),
+            vars,
+        }
+    }
+}
+
+impl Default for Rendering<'static> {
+    fn default() -> Self {
+        static NONE: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
+        Self::new(None, &NONE)
+    }
 }
 
 /// How deep `import_playbook` may nest before the run is refused. A file importing itself would
@@ -36,14 +71,20 @@ pub fn load(path: &Path) -> anyhow::Result<Playbook> {
 /// which file to look at.
 const IMPORT_DEPTH: usize = 32;
 
-fn read(path: &Path, depth: usize) -> anyhow::Result<Playbook> {
+fn read(path: &Path, depth: usize, rendering: &Rendering<'_>) -> anyhow::Result<Playbook> {
     // Exit 1 for a file that is not there, measured, and not the 4 a file that is there and
     // makes no sense gets. It carries its own code so the blanket [`load`] wraps the parse in
     // cannot take it.
     let text = crate::vault::read_to_string(path).map_err(|err| {
         crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
     })?;
-    parse_at(&text, &path.display().to_string(), &base_dir(path), depth)
+    parse_at(
+        &text,
+        &path.display().to_string(),
+        &base_dir(path),
+        depth,
+        rendering,
+    )
 }
 
 /// A playbook's own directory, absolute where the filesystem allows it: `group_vars/`,
@@ -59,7 +100,13 @@ pub(crate) fn base_dir(path: &Path) -> PathBuf {
 }
 
 pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
-    parse_at(text, source, &base_dir(Path::new(source)), 0)
+    parse_at(
+        text,
+        source,
+        &base_dir(Path::new(source)),
+        0,
+        &Rendering::default(),
+    )
 }
 
 /// One playbook, with every `import_playbook` entry replaced in place by the plays of the file
@@ -70,7 +117,13 @@ pub fn parse(text: &str, source: &str) -> anyhow::Result<Playbook> {
 /// they are written. Each imported play keeps the directory of the file it came from, so its
 /// roles and its `vars_files` are looked for beside that file and not beside the playbook the
 /// operator typed.
-fn parse_at(text: &str, source: &str, dir: &Path, depth: usize) -> anyhow::Result<Playbook> {
+fn parse_at(
+    text: &str,
+    source: &str,
+    dir: &Path,
+    depth: usize,
+    rendering: &Rendering<'_>,
+) -> anyhow::Result<Playbook> {
     let (docs, origins) = crate::yaml::load_with_origins(text, source)?;
     let _origins = OriginScope::enter(source, origins);
     let Some(Yaml::Sequence(entries)) = docs.first() else {
@@ -78,7 +131,7 @@ fn parse_at(text: &str, source: &str, dir: &Path, depth: usize) -> anyhow::Resul
     };
     let mut plays = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
-        match imported_playbook(entry)? {
+        match imported_playbook(entry, rendering)? {
             Some(name) => {
                 if depth >= IMPORT_DEPTH {
                     bail!("{source}: 'import_playbook' nests deeper than {IMPORT_DEPTH} levels");
@@ -91,7 +144,7 @@ fn parse_at(text: &str, source: &str, dir: &Path, depth: usize) -> anyhow::Resul
                 };
                 let import =
                     Import::read(entry).with_context(|| format!("{source}: play {}", i + 1))?;
-                let mut imported = read(&path, depth + 1)
+                let mut imported = read(&path, depth + 1, rendering)
                     .with_context(|| format!("{source}: import_playbook {name}"))?
                     .plays;
                 for play in &mut imported {
@@ -108,11 +161,12 @@ fn parse_at(text: &str, source: &str, dir: &Path, depth: usize) -> anyhow::Resul
 
 /// The file an `import_playbook` entry names, rendered.
 ///
-/// The reference renders the value with no variables at all - measured, `{{ 'sub' }}.yml` works
-/// and `{{ nosuchvar }}.yml` refuses the load with `Error processing keyword 'import_playbook':
-/// 'nosuchvar' is undefined`, exit 4. Nothing has an inventory yet at this point, so a name that
-/// depends on a host could not be answered anyway.
-fn imported_playbook(entry: &Yaml) -> anyhow::Result<Option<String>> {
+/// The reference renders the value with the extra vars and nothing else - measured, `{{ 'sub'
+/// }}.yml` and `{{ which }}.yml` with `-e which=sub.yml` work, and `{{ nosuchvar }}.yml` refuses
+/// the load with `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`, exit 4.
+/// Nothing has an inventory yet at this point, so a name that depends on a host could not be
+/// answered anyway.
+fn imported_playbook(entry: &Yaml, rendering: &Rendering<'_>) -> anyhow::Result<Option<String>> {
     let Some(map) = entry.as_mapping() else {
         return Ok(None);
     };
@@ -129,12 +183,12 @@ fn imported_playbook(entry: &Yaml) -> anyhow::Result<Option<String>> {
     let raw = value
         .as_str()
         .ok_or_else(|| anyhow!("'import_playbook' takes a file name"))?;
-    if !crate::template::Templar::is_template(raw) {
+    if !Templar::is_template(raw) {
         return Ok(Some(raw.to_string()));
     }
-    let templar = crate::template::Templar::new(PathBuf::from("."));
-    let rendered = templar
-        .render(raw, &Map::new())
+    let rendered = rendering
+        .templar
+        .render(raw, rendering.vars)
         .map_err(|err| anyhow!("Error processing keyword 'import_playbook': {}", err.0))?;
     match rendered {
         Value::String(name) => Ok(Some(name)),

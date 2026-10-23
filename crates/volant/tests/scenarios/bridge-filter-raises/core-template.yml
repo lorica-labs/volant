@@ -1,0 +1,6 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - template:
+        src: core.j2
+        dest: "{{ playbook_dir }}/out-core.txt"

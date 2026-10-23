@@ -5,6 +5,7 @@ use super::builder::{
 use super::reach::modules_to_build;
 use super::union_build::{gathering_only, no_builder, union_from};
 use super::*;
+use crate::runtime::resolve::current;
 use crate::testing::scratch;
 use rstest::rstest;
 use serde_json::{Map, Value};
@@ -555,9 +556,11 @@ fn the_controller_resolves_what_its_collections_hold() {
 /// `VOLANT_PYTHON`, then the active virtualenv, then `python3` on `PATH`.
 #[test]
 fn the_controller_interpreter_follows_one_visible_order() {
-    assert_eq!(candidates(Some("/opt/py"), Some("/venv"))[0], "/opt/py");
-    assert_eq!(candidates(None, Some("/venv"))[0], "/venv/bin/python");
-    assert_eq!(candidates(None, None), vec!["python3".to_string()]);
+    let first = |explicit, venv| current(explicit, venv)[0].python.clone();
+    assert_eq!(first(Some("/opt/py"), Some("/venv")), "/opt/py");
+    assert_eq!(first(None, Some("/venv")), "/venv/bin/python");
+    assert_eq!(current(None, None).len(), 1);
+    assert_eq!(first(None, None), "python3");
 }
 
 /// An interpreter without ansible-core is refused before connecting; a gather-only run is told it can stop gathering.
@@ -588,7 +591,10 @@ fn an_interpreter_without_ansible_core_is_refused_in_words_that_help() {
 fn an_explicit_interpreter_stands_alone_and_a_bare_one_is_probed() {
     {
         assert_eq!(
-            candidates(Some("/nowhere/python"), Some("/venv")),
+            current(Some("/nowhere/python"), Some("/venv"))
+                .into_iter()
+                .map(|candidate| candidate.python)
+                .collect::<Vec<_>>(),
             vec!["/nowhere/python".to_string()]
         );
         let err = start_from(Some("/nowhere/python"), None, true)

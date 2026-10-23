@@ -12,18 +12,6 @@ use super::reach::module_path;
 use super::types::{HELPER, ModuleFacts, Natives, Resolved, Union, payload_key};
 use crate::runtime::resolve;
 
-/// The interpreters to try, in the order they are tried: [`crate::runtime::resolve`]'s order.
-///
-/// An explicit `VOLANT_PYTHON` is the only candidate when it is set: falling back from it to
-/// `python3` would answer a path that does not exist, or has no ansible-core, by quietly
-/// running something else.
-pub(crate) fn candidates(explicit: Option<&str>, virtual_env: Option<&str>) -> Vec<String> {
-    resolve::current(explicit, virtual_env)
-        .into_iter()
-        .map(|candidate| candidate.python)
-        .collect()
-}
-
 /// The sentence the pre-flight prints when no candidate has ansible-core, naming what was
 /// tried and the one variable that changes the answer.
 pub(super) fn refusal_for(tried: &str) -> String {
@@ -213,7 +201,10 @@ pub(super) fn find_python(
     virtual_env: Option<&str>,
     install: bool,
 ) -> anyhow::Result<String> {
-    let tried = candidates(explicit, virtual_env);
+    let tried: Vec<String> = resolve::current(explicit, virtual_env)
+        .into_iter()
+        .map(|candidate| candidate.python)
+        .collect();
     let found = tried.iter().find(|python| resolve::has_ansible(python));
     if let Some(python) = found {
         return Ok(python.clone());

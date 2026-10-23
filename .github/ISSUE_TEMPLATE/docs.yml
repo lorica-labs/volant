@@ -1,0 +1,19 @@
+name: Documentation problem
+description: A page on volant.sh is wrong, out of date or hard to follow
+labels: ["type/docs", "area/docs", "status/needs-triage"]
+body:
+  - type: input
+    id: page
+    attributes:
+      label: Page
+      description: The address of the page
+      placeholder: https://volant.sh/start/quickstart/
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: What is wrong or missing
+      description: Quote the sentence when you can, and say what you expected to read.
+    validations:
+      required: true

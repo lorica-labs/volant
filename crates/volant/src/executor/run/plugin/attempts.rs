@@ -249,6 +249,7 @@ pub(in crate::executor) fn protocol_task(
         job: (task.async_val > 0).then(|| volant_protocol::AsyncJob {
             limit: task.async_val,
             dir: async_dir(&item.vars),
+            check_mode: false,
         }),
     }
 }

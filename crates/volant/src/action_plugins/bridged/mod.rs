@@ -360,7 +360,7 @@ impl Plugin for Bridged {
         if self.ending.is_some() {
             if let Some(path) = self.tmps.pop() {
                 self.pending = Some(Pending::Sweep);
-                return Step::Run(Self::sweep(&path));
+                return Self::sweep_step(&path);
             }
             return Step::Done(self.ending.take().unwrap_or_else(|| lost(self.name)));
         }
@@ -384,7 +384,7 @@ impl Plugin for Bridged {
                     if let Some(path) = self.tmps.pop() {
                         self.ending = Some(result);
                         self.pending = Some(Pending::Sweep);
-                        return Step::Run(Self::sweep(&path));
+                        return Self::sweep_step(&path);
                     }
                     return Step::Done(result);
                 }

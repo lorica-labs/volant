@@ -318,6 +318,7 @@ fn sub_job(
     runs_as_job.then(|| volant_protocol::AsyncJob {
         limit: task.async_val,
         dir: super::async_job::async_dir(&item.vars),
+        check_mode: false,
     })
 }
 

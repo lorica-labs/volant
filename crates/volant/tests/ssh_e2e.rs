@@ -330,6 +330,7 @@ fn ssh_an_agent_directory_made_by_another_account_is_not_run() {
     let dir = tmp("planted");
     let inv = inventory(&dir, &[("box", "")]);
     std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
+    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o1777)).unwrap();
     let triple = volant::transport::triple_for(std::env::consts::ARCH)
         .expect("this architecture has an agent triple");
@@ -643,6 +644,7 @@ fn ssh_become_over_ssh() {
     // does not exist yet is made by the first account that needs it, root here, and is then
     // closed to the other, so this test makes it first, as it is on a host that has been set up.
     std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
+    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
     let out = volant(&["playbook", "-i", &inv, &fixture("become.yml")]);
     let text = both(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
@@ -1186,6 +1188,98 @@ fn ssh_a_bridged_plugin_puts_its_file_and_runs_it() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// A command a plugin sends with `sudoable=False` runs as the connection user under `become`, and
+/// a `sudoable` one as the escalated user, as ansible-core 2.19.12 runs them.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_a_command_that_must_not_escalate_runs_as_the_connection_user() {
+    assert_passwordless_sudo("the play escalates to root");
+    let dir = tmp("sudoable");
+    let inv = inventory(&dir, &[("box", "")]);
+    // The connection user's own, as on a host it has logged in to before: the escalated link
+    // would otherwise make it as root, and the plain link could not put its agent there.
+    std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
+    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
+    let local = private_local_tmp(&dir);
+    let out = volant_env_within(
+        &["playbook", "-i", &inv, &fixture("ssh/sudoable/whoami.yml")],
+        &[("ANSIBLE_LOCAL_TEMP", &local)],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(
+        text.contains(&format!("\"msg\": \"root {}\"", user())),
+        "{text}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// Parallel `gather_facts` runs both `setup` jobs at once; with a limit of 0 (`setup` keeps
+/// `gather_timeout`), `async_wrapper` stops a job at five seconds.
+#[rstest]
+#[case::parallel(2, Some(0), "ok: [box]")]
+#[case::hung(60, Some(2), "\"msg\": \"Timeout exceeded\"")]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_gather_facts_runs_its_modules_as_jobs(
+    #[case] sleep: u32,
+    #[case] code: Option<i32>,
+    #[case] says: &str,
+) {
+    let dir = tmp(&format!("parallelfacts{sleep}"));
+    let inv = inventory(&dir, &[("box", "")]);
+    let facts = dir.join("facts");
+    write_executable(
+        &facts.join("slow.fact"),
+        &format!(
+            "#!/bin/sh
+date +%s.%N >> {d}/starts
+sleep {sleep}
+date +%s.%N >> {d}/ends
+echo '{{}}'
+",
+            d = dir.display()
+        ),
+    );
+    // Well short of the hung script's sleep: a job nobody stops fails the run here.
+    let local = private_local_tmp(&dir);
+    let out = volant_env_within(
+        &[
+            "playbook",
+            "-i",
+            &inv,
+            "-e",
+            &format!("fact_dir={}", facts.display()),
+            &fixture("ssh/parallel-facts.yml"),
+        ],
+        &[("ANSIBLE_LOCAL_TEMP", &local)],
+        Duration::from_secs(40),
+    );
+    let text = both(&out);
+    assert_eq!(out.status.code(), code, "{text}");
+    assert!(text.contains(says), "{text}");
+    let stamps = |name: &str| -> Vec<f64> {
+        std::fs::read_to_string(dir.join(name))
+            .unwrap_or_default()
+            .lines()
+            .map(|line| line.parse().unwrap())
+            .collect()
+    };
+    let (starts, ends) = (stamps("starts"), stamps("ends"));
+    assert_eq!(starts.len(), 2, "{text}");
+    if code == Some(0) {
+        // Each started before the other ended.
+        let last_start = starts.iter().copied().fold(f64::MIN, f64::max);
+        let first_end = ends.iter().copied().fold(f64::MAX, f64::min);
+        assert_eq!(ends.len(), 2, "{text}");
+        assert!(
+            last_start < first_end,
+            "the jobs ran one after the other: started {starts:?}, ended {ends:?}"
+        );
+    }
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Over ssh, `raw` and the command `script` runs go through a terminal: stderr merged into
 /// stdout with CR LF, and the session's closing line on stderr. Only its form is asserted.
 #[test]
@@ -1376,6 +1470,14 @@ fn assert_passwordless_sudo(why: &str) {
         "{why}, and 'sudo -n true' failed: {}",
         String::from_utf8_lossy(&sudo.stderr)
     );
+}
+
+/// A controller-side temporary directory of the test's own for ansible-core in the helper, so its
+/// `ansible-local-*` directory never shows in the `~/.ansible/tmp` another test counts.
+fn private_local_tmp(dir: &Path) -> String {
+    let local = dir.join("local");
+    std::fs::create_dir_all(&local).unwrap();
+    local.display().to_string()
 }
 
 /// [`volant`], ended at a deadline. A plugin is several sub-tasks over one link, and a sub-task

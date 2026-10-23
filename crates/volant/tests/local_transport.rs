@@ -250,6 +250,7 @@ async fn an_async_job_outlives_the_link_that_started_it() {
             job: Some(volant_protocol::AsyncJob {
                 limit: 60,
                 dir: dir.clone(),
+                check_mode: false,
             }),
             ..Task::default()
         },

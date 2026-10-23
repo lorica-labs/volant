@@ -1,0 +1,13 @@
+# A filter that raises, in a task argument, in `when` and in a template file: a Python exception
+# chains behind the plugin's sentence, a plugin's own error is part of it.
+needs: ["ansible-core"]
+runs:
+  - args: [-i, inv.ini, py-arg.yml]
+  - args: [-i, inv.ini, py-when.yml]
+  - args: [-i, inv.ini, py-template.yml]
+  - args: [-i, inv.ini, filter-arg.yml]
+  - args: [-i, inv.ini, filter-when.yml]
+  - args: [-i, inv.ini, filter-template.yml]
+  - args: [-i, inv.ini, core-arg.yml]
+  - args: [-i, inv.ini, core-when.yml]
+  - args: [-i, inv.ini, core-template.yml]

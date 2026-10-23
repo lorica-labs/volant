@@ -10,15 +10,17 @@
 //! result again.
 
 use std::collections::BTreeSet;
+use std::path::Path;
 
 use serde_json::{Map, Value};
 
-use super::copy::{CopyOf, copy_bytes, failing, local_mode};
+use super::copy::{CopyOf, copy_bytes, done, failing, local_mode};
 use super::files::{check_host_named, not_found, search_paths};
 use super::{Context, Plugin};
 use crate::executor::as_bool_value;
 use crate::template::{FileRender, Syntax, Vars};
 use crate::vars::HostVars;
+use volant_protocol::TaskResult;
 
 mod encoding;
 use encoding::encode;
@@ -54,8 +56,63 @@ const TEMPLATE_ONLY: &[&str] = &[
 pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
     match rendered(&ctx) {
         Ok(of) => copy_bytes(of),
-        Err(msg) => failing(msg),
+        Err(Failed::Said(msg)) => failing(msg),
+        Err(Failed::Chained(result)) => done(*result),
     }
+}
+
+/// Why `rendered` gave no copy: a sentence, or a plugin's failure with the chain the reference
+/// prints for it.
+enum Failed {
+    Said(String),
+    Chained(Box<TaskResult>),
+}
+
+impl From<String> for Failed {
+    fn from(msg: String) -> Self {
+        Failed::Said(msg)
+    }
+}
+
+impl From<&str> for Failed {
+    fn from(msg: &str) -> Self {
+        Failed::Said(msg.to_string())
+    }
+}
+
+/// The failure of a template that calls a filter, test or lookup that raised, measured on
+/// ansible-core 2.19.12: `changed: false`, the plugin's sentence under `Task failed: `, and in
+/// the error block the sentence at the template file with no line, then the causes behind it.
+fn plugin_failed(file: &Path, sentence: &str) -> Failed {
+    let (head, behind) = crate::bridge::split_failure(sentence);
+    let at = crate::playbook::Origin {
+        path: file.display().to_string().into(),
+        line: 0,
+        col: 0,
+    };
+    let mut chain = vec![
+        crate::render::lead("Task failed."),
+        crate::render::cause(&head, Some(&at), None),
+    ];
+    chain.extend(
+        behind
+            .iter()
+            .map(|block| crate::render::cause(block, None, None)),
+    );
+    let mut result = TaskResult::failed_with(crate::render::task_failed(sentence));
+    result.0.insert("changed".into(), Value::Bool(false));
+    // Nothing ran on the host, so no interpreter was discovered.
+    result
+        .0
+        .insert(crate::executor::RAISED_KEY.into(), Value::Bool(true));
+    result.0.insert(
+        crate::render::ERROR_KEY.into(),
+        Value::from(crate::render::task_failed(sentence)),
+    );
+    result
+        .0
+        .insert(crate::render::CHAIN_KEY.into(), Value::Array(chain));
+    Failed::Chained(Box::new(result))
 }
 
 /// A string argument, `None` when absent or null. The reference turns anything else into a
@@ -146,7 +203,7 @@ fn template_vars(
 }
 
 /// The rendered template and the arguments `copy` gets, or the task's failure.
-fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
+fn rendered(ctx: &Context<'_>) -> Result<CopyOf, Failed> {
     let args = ctx.args;
     // The reference's checks, in its order and in its words.
     if string_arg(args, "state").is_some() {
@@ -171,7 +228,8 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
     {
         return Err(format!(
             "the '{name}' of this task was named by a managed host, and a delimiter a host chose is never used"
-        ));
+        )
+        .into());
     }
     let syntax = syntax_of(args)?;
     let encoding = string_arg(args, "output_encoding").filter(|e| !e.is_empty());
@@ -186,7 +244,7 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
     )?;
     let searched = search_paths(ctx.origin, ctx.playbook_dir, "templates", &src);
     let Some(found) = searched.iter().find(|p| p.exists()) else {
-        return Err(not_found(&src, &searched));
+        return Err(not_found(&src, &searched).into());
     };
     let mut bytes = std::fs::read(found)
         .map_err(|err| format!("could not read src={}: {err}", found.display()))?;
@@ -215,7 +273,13 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
     let out = ctx
         .templar
         .render_file(&text, Vars::from(&vars), &options)
-        .map_err(|err| format!("could not render {src}: {err}"))?;
+        .map_err(|err| {
+            if err.0.starts_with("The ") && crate::template::is_plugin_failure(&err.0) {
+                plugin_failed(found, &err.0)
+            } else {
+                format!("could not render {src}: {err}").into()
+            }
+        })?;
     let bytes = encode(&out, encoding.as_deref().unwrap_or("utf-8"))?;
 
     let mut args: Map<String, Value> = args

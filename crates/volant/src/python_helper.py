@@ -1238,6 +1238,48 @@ class LazyHostVars(collections.abc.Mapping):
         return len(self._names)
 
 
+def result_compat(result, warning_ctx):
+    """`TaskExecutor._apply_task_result_compat` of ansible-core 2.19.12: the warnings and
+    deprecations a result carries, captured beside the ones raised through `Display`. Written out
+    because `ansible.executor.task_executor` imports `ansible.cli`, which exits on a non-blocking
+    stderr, as the helper's is under an ssh control master."""
+    from ansible.module_utils._internal import _messages
+    from ansible.module_utils.datatag import deprecator_from_collection_name
+    from ansible.utils.display import Display
+
+    display = Display()
+    if warnings := result.get("warnings"):
+        if isinstance(warnings, list):
+            for warning in warnings:
+                if not isinstance(warning, _messages.WarningSummary):
+                    warning = _messages.WarningSummary(event=_messages.Event(msg=str(warning)))
+                warning_ctx.capture(warning)
+        else:
+            display.warning(f"Task result `warnings` was {type(warnings)} instead of {list}.")
+    if deprecations := result.get("deprecations"):
+        if isinstance(deprecations, list):
+            for deprecation in deprecations:
+                if not isinstance(deprecation, _messages.DeprecationSummary):
+                    try:
+                        collection_name = deprecation.pop("collection_name", ...)
+                        if collection_name is not ...:
+                            deprecation.update(
+                                deprecator=deprecator_from_collection_name(collection_name)
+                            )
+                        deprecation = _messages.DeprecationSummary(
+                            event=_messages.Event(msg=deprecation.pop("msg")), **deprecation
+                        )
+                    except Exception as ex:
+                        display.error_as_warning(
+                            "Task result `deprecations` contained an invalid item.", exception=ex
+                        )
+                warning_ctx.capture(deprecation)
+        else:
+            display.warning(
+                f"Task result `deprecations` was {type(deprecations)} instead of {list}."
+            )
+
+
 def captured_messages(result, warning_ctx):
     """What `TaskExecutor._execute` leaves of the warnings and deprecations of a task: the ones
     the plugin raised through `Display` and the ones its result carried, each once, in the shape
@@ -1265,7 +1307,6 @@ def run_action(ident, request):
     from ansible._internal import _display_utils
     from ansible._internal._errors import _error_utils
     from ansible.errors import AnsibleError, AnsibleTaskError
-    from ansible.executor.task_executor import TaskExecutor
     from ansible.parsing.dataloader import DataLoader
     from ansible.playbook.block import Block
     from ansible.playbook.play import Play
@@ -1344,7 +1385,7 @@ def run_action(ident, request):
                     for key in [key for key in result if str(key).startswith("_volant_")]:
                         del result[key]
                     result.setdefault("changed", False)
-                    TaskExecutor._apply_task_result_compat(result, warning_ctx)
+                    result_compat(result, warning_ctx)
             finally:
                 action.cleanup()
                 for key in [key for key in JOBS if key[0] == ident]:

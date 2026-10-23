@@ -40,7 +40,11 @@ pub(in crate::executor) fn conditional_causes(task: &PlayTask, message: &str) ->
         )]));
     }
     // A plugin's own failure stands as the condition's error, with the causes it has behind it.
-    if sentence.starts_with("The ") && crate::template::is_plugin_failure(sentence) {
+    // (a `with_` loop's lookup has no task around it, so it is not this chain)
+    if (message.starts_with("Task failed: ") || !sentence.starts_with("The lookup plugin '"))
+        && sentence.starts_with("The ")
+        && crate::template::is_plugin_failure(sentence)
+    {
         let (sentence, behind) = split_plugin_failure(sentence);
         let mut chain = vec![crate::render::cause(
             &sentence,

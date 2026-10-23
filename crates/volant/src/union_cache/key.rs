@@ -49,9 +49,9 @@ pub fn interpreter_without_running(
     explicit: Option<&str>,
     virtual_env: Option<&str>,
 ) -> Option<InterpreterId> {
-    let path = crate::python::candidates(explicit, virtual_env)
+    let path = crate::runtime::resolve::current(explicit, virtual_env)
         .iter()
-        .find_map(|candidate| located(candidate))?;
+        .find_map(|candidate| located(&candidate.python))?;
     let mut head = [0u8; 2];
     let mut file = fs::File::open(&path).ok()?;
     if io::Read::read_exact(&mut file, &mut head).is_err() || head == *b"#!" {

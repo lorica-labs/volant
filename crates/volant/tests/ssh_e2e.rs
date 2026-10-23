@@ -330,6 +330,7 @@ fn ssh_an_agent_directory_made_by_another_account_is_not_run() {
     let dir = tmp("planted");
     let inv = inventory(&dir, &[("box", "")]);
     std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
+    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
     std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o1777)).unwrap();
     let triple = volant::transport::triple_for(std::env::consts::ARCH)
         .expect("this architecture has an agent triple");
@@ -643,6 +644,7 @@ fn ssh_become_over_ssh() {
     // does not exist yet is made by the first account that needs it, root here, and is then
     // closed to the other, so this test makes it first, as it is on a host that has been set up.
     std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
+    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
     let out = volant(&["playbook", "-i", &inv, &fixture("become.yml")]);
     let text = both(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
@@ -1194,6 +1196,10 @@ fn ssh_a_command_that_must_not_escalate_runs_as_the_connection_user() {
     assert_passwordless_sudo("the play escalates to root");
     let dir = tmp("sudoable");
     let inv = inventory(&dir, &[("box", "")]);
+    // The connection user's own, as on a host it has logged in to before: the escalated link
+    // would otherwise make it as root, and the plain link could not put its agent there.
+    std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
+    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
     let out = volant_within(
         &["playbook", "-i", &inv, &fixture("ssh/sudoable/whoami.yml")],
         Duration::from_secs(120),
@@ -1207,10 +1213,8 @@ fn ssh_a_command_that_must_not_escalate_runs_as_the_connection_user() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// `gather_facts` with `ansible_facts_parallel` starts its two `setup` runs as jobs of the host
-/// and polls them, so their fact scripts run at the same time. `setup` keeps `gather_timeout`
-/// for itself, so its job's limit is 0, which `async_wrapper` stops at five seconds: a script
-/// that sleeps past that is stopped there and the module fails.
+/// Parallel `gather_facts` runs both `setup` jobs at once; with a limit of 0 (`setup` keeps
+/// `gather_timeout`), `async_wrapper` stops a job at five seconds.
 #[rstest]
 #[case::parallel(2, Some(0), "ok: [box]")]
 #[case::hung(60, Some(2), "\"msg\": \"Timeout exceeded\"")]

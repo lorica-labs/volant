@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - add_host:
+        name: fresh
+        ansible_connection: local
+    - add_host:
+        name: h2
+    - add_host:
+        name: h2
+        groups: extra

@@ -1,0 +1,7 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: msg=x
+      when: false
+    - command: echo hi
+      when: false

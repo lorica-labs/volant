@@ -3,7 +3,7 @@ title: Meta tasks
 description: What each meta action does, which host's condition counts, and how a forgiven host comes back.
 ---
 
-`meta` asks the engine for something instead of running a module. Every action Ansible 2.19 has runs here, and each one prints a `TASK [meta]` banner. A meta task adds nothing to the recap: its `skipping:` line is not counted either.
+`meta` asks the engine for something instead of running a module. Every action Ansible 2.19 has runs here, and each one prints a `TASK [meta]` banner. An action Ansible does not have prints the banner, then fails with `invalid meta action requested: <action>` and an `Origin` block, with exit 1, even when its `when` is false. A meta task adds nothing to the recap: its `skipping:` line is not counted either.
 
 | Action | What it does | Whose `when` counts |
 |---|---|---|

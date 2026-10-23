@@ -5,9 +5,10 @@ description: An opt-in setting that lets each host run ahead through tasks that 
 
 import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
 import HostTimeline from '../../../components/HostTimeline.astro';
-import BarChart from '../../../components/BarChart.astro';
 
 By default Volant runs a play the way Ansible's `linear` strategy does: the hosts of a batch meet in front of every task. That guarantee lets a playbook depend on things its tasks never mention. One host can write a file another host reads later, or restart a service another host connects to. None of that shows in the text of a task, so the only safe assumption is that any task may depend on the one before it, on every host.
+
+This page covers the default `linear` strategy. Under `strategy: free` and `host_pinned` each host runs at its own pace, `run_once`, `any_errors_fatal` and `max_fail_percentage` are ignored with a warning, and a `pause` or `add_host` task stops the run. The hosts meet only at the `meta` tasks that act on the whole batch (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` and `refresh_inventory`), at handlers and at dynamic includes, whatever `batching` says. See [Other strategies](/playbooks/how-a-play-runs/#other-strategies).
 
 ## What batching changes
 
@@ -22,6 +23,8 @@ With `batching` on, a host carries on through its tasks instead of waiting at ea
 - the end of the play
 
 A synchronization point holds on both sides: no host runs past it until every host has finished the step before it.
+
+While a fact that the playbook wrote during the run is still a template, every step is a synchronization point again.
 
 A few more things end a batch without making every host wait: a task that registers a result, a module that can return facts (`set_fact`, `setup`, `package_facts`, any module from a collection or a role's `library/`), and a task that calls a lookup. The tasks after them are rendered only once they have run.
 
@@ -65,25 +68,8 @@ Ansible ignores sections it does not know. Measured on ansible-core 2.19.12 with
 
 ## What it saves
 
-Measured with Volant 0.1.0-alpha.5 on one Linux machine:
-
-<BarChart
-  title="Wall clock, 200 hosts, 20 tasks"
-  subtitle="Local connections, <code>-f 50</code>, release build, median of three runs. Shorter is faster."
-  unit="s"
-  series={[{ name: 'Default' }, { name: 'batching = true', accent: true }]}
-  rows={[
-    { label: 'No task reads another host', values: [1.28, 0.53] },
-    { label: 'Every task reads hostvars', values: [1.28, 1.25] },
-  ]}
-/>
-
-In the second row every task is a synchronization point under either setting, so the numbers match. The first row is what the default costs: a playbook with nothing to synchronize takes 2.4 times as long when every task is a meeting point.
-
-Both runs use local connections, so the gap is pure coordination. Over SSH each task also pays a network round trip, and the ratio then depends on your own latency.
+Measured with Volant 0.1.0-alpha.5 on one Linux machine, with 200 hosts, 20 tasks, local connections and `-f 50`: a play in which no task reads another host takes 1.28 s by default and 0.53 s with `batching = true`, 2.4 times as fast. When every task reads `hostvars`, both settings take about 1.3 s, since every task is a synchronization point either way. Over SSH each task also pays a network round trip, so your own ratio depends on your latency. These figures have not been measured again since alpha.5.
 
 ## Why it is not a playbook keyword
 
-Ansible has no such keyword, and a playbook you run with Volant must stay a playbook you can run with `ansible-playbook`. A keyword would either break the file for Ansible or be ignored by it, and then the same playbook would mean two different things depending on who ran it.
-
-Batching describes the machine you run from, not the automation you wrote, so that is where the setting lives. [Decision record 0005](/decisions/0005-fork-permits-span-host-local-batches/) records the rule behind it.
+Ansible has no such keyword, and a playbook run with Volant must stay a playbook that `ansible-playbook` runs the same way. Batching describes the machine you run from, so the setting lives in `ansible.cfg`. [Decision record 0005](/decisions/0005-fork-permits-span-host-local-batches/) records the rule behind it.

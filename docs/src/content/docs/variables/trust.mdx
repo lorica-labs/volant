@@ -20,6 +20,8 @@ This is a security boundary. If you find a way for host data to be evaluated as 
 | `set_fact` values | inventory variables |
 | `lookup('file')`, `lookup('pipe')`, `lookup('env')`, `lookup('template')` | `vars_files` and `include_vars` |
 
+`!unsafe` marks a value of the playbook as data. It is accepted on a value and on a mapping key, in a play, in `group_vars`, in an extra-vars file and in a YAML inventory. The filter that the YAML loader uses for the mark is hidden from playbooks: calling it fails with `No filter named 'volant_unsafe'`.
+
 ## What changes for an untrusted value
 
 An untrusted value renders once. If the result looks like a template again, it stays as text and is not rendered a second time, which is what Ansible does:
@@ -45,11 +47,9 @@ Conditions follow the same rule. A `when: "{{ ... }}"` that renders to a string 
 
 A `lookup('template')` result is data too. A template holding `{{ '{{ 1 + 1 }}' }}` gives the text `{{ 1 + 1 }}`, not `2`, under both engines.
 
-A `delegate_to` that renders from a host value names a host with that text, whatever it holds. The text is the delegate's `inventory_hostname` and `inventory_hostname_short`, and nothing renders it, even when a variable of your task puts braces next to it. A name that holds braces is text too, wherever it came from, and so is the name of a delegate that is not a host of the inventory, such as one `add_host` made. Over ssh the task fails with `UNREACHABLE` and prints the text, as in ansible-core. A delegate that connects locally runs as usual.
+A `delegate_to` that renders from a host value names a host with that text, whatever it holds. The text is the delegate's `inventory_hostname` and `inventory_hostname_short`, and nothing renders it, even when a variable of your task puts braces next to it. The same holds for a name that holds braces wherever it came from, and for a delegate that is not a host of the inventory, such as one `add_host` made. Over ssh the task fails with `UNREACHABLE` and prints the text, as in ansible-core. A delegate that connects locally runs as usual.
 
-The `src` of `copy`, `template`, `script`, `unarchive` and `assemble` is read as the reference reads it by default, and `[volant] host_named_paths` can restrict a `src` whose render read a managed host to the `files` and `templates` directories of the task (`contained`) or refuse it (`refuse`). See [Action plugins](/reference/action-plugins/#a-source-file-a-managed-host-named).
-
-The `dest` of `fetch` is a path the controller writes. By default `fetch` writes it as ansible-core does, even when its render read a managed host. Such a host can then choose where the controller writes the file, with the rights of the user who runs the playbook, and a loop variable named `inventory_hostname` that a host set picks the directory below `dest` in the same way. The protection is off by default. To turn it on, set `[volant] host_named_dest_dirs` to the directories such a `dest` may use, or set `host_named_paths` to `contained` or `refuse`, which refuses every such `dest` unless that list is set too. With the protection on, `fetch` refuses a `dest` a host named unless its resolved path lies strictly inside a directory of the list. A symbolic link below `dest` is refused in every mode. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named).
+A path that a managed host names is a separate case, because the controller reads or writes it. By default the `src` of `copy`, `template`, `script`, `unarchive` and `assemble` and the `dest` of `fetch` behave as in ansible-core. Two settings tighten them: [`host_named_paths` for a source file](/reference/action-plugins/#a-source-file-a-managed-host-named) and [`host_named_dest_dirs` for a `dest`](/reference/action-plugins/#a-dest-a-managed-host-named).
 
 ## How fine-grained it is
 

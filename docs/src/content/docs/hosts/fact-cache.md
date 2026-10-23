@@ -17,13 +17,15 @@ fact_caching_timeout = 3600
 
 | Setting | Environment | Meaning |
 |---|---|---|
-| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory` (the default, per run) or `jsonfile`. |
-| `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | The directory that holds the files. Required for `jsonfile`. |
+| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory` (the default, per run) or `jsonfile`. `ansible.builtin.memory` and `ansible.builtin.jsonfile` work too. |
+| `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | The directory that holds the files. `jsonfile` needs it; without it the run keeps facts in memory. |
 | `fact_caching_timeout` | `ANSIBLE_CACHE_PLUGIN_TIMEOUT` | Seconds a file stays fresh. Default 86400. `0` never expires. |
-| `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | Put in front of each file name. |
+| `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | Put in front of each file name. Empty by default. |
 | `gathering` | `ANSIBLE_GATHERING` | `implicit` (default), `explicit` or `smart`. |
 
 Each host has one file, named `<prefix>s1_<host>`.
+
+Any other cache plugin, such as `redis` or `yaml`, ends the run with exit code 4 and the message `fact cache plugin '<name>' (from '<origin>') is not supported yet; use 'memory' or 'jsonfile'`.
 
 ## Gathering
 
@@ -43,4 +45,4 @@ Cached facts are loaded at the start of the run, so tasks see them even when a p
 
 ## Errors
 
-A cache directory that cannot be created, or a missing `fact_caching_connection`, warns and the run goes on with the in-memory cache. A file that is not valid JSON is removed and stops the run, with ansible-core's message: `The cache file <path> was corrupt, or did not otherwise contain valid data. It has been removed, so you can re-run your command now.`
+A cache directory that cannot be created, or a missing `fact_caching_connection` (`Required config '_uri' for 'jsonfile' cache plugin not provided.`), warns and the run goes on with the in-memory cache. A file that is not valid JSON is removed and stops the run, with ansible-core's message: `The cache file <path> was corrupt, or did not otherwise contain valid data. It has been removed, so you can re-run your command now.`

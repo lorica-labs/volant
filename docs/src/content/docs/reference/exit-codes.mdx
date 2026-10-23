@@ -18,15 +18,27 @@ Volant exits with the codes `ansible-playbook` uses, so scripts and CI jobs writ
 </Option>
 
 <Option name="2" id="code-2">
-  At least one host failed, or a setting was rejected, such as an escalation method this release does not support yet.
+  At least one host failed, or the run asked for an escalation method this release does not support yet.
 </Option>
 
 <Option name="4" id="code-4">
   At least one host was unreachable, or the playbook stopped before the run: it does not parse, or it uses something this release does not support yet.
 </Option>
 
+<Option name="5" id="code-5">
+  A setting has a value it cannot take, such as `forks = many`, an unknown word for `gathering`, `runtime` or `host_named_paths`, or an `order` keyword the play does not know. The message names the key and the value.
+</Option>
+
 <Option name="6" id="code-6">
   Some hosts failed and some were unreachable: 2 and 4 combined.
+</Option>
+
+<Option name="99" id="code-99">
+  Ctrl-C or SIGTERM stopped the run. Running batches are cancelled, the recap prints, and Volant exits with 99, as `ansible-playbook` does.
+</Option>
+
+<Option name="250" id="code-250">
+  `--step` found no terminal on standard input. Volant stops before it touches a host.
 </Option>
 
 ## After a run

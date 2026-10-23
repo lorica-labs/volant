@@ -84,7 +84,7 @@ It stops instead of guessing. Most of what this release does not support yet is 
 
 It targets Linux over SSH first. The controller runs on Linux or macOS and drives Linux hosts. Windows and network devices come later.
 
-It collects no telemetry and makes no network call other than the ones your playbook asks for.
+It collects no telemetry. Apart from the calls your playbook asks for, its only network use is the download of its [managed runtime](/reference/runtime/), which happens once and only when a run needs it.
 
 ## How it compares to Ansible
 

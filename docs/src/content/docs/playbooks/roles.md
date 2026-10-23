@@ -15,7 +15,7 @@ A role is static composition. Volant reads its directory while the play compiles
 
 A relative `roles_path` entry is read against the directory of `ansible.cfg`, or against the working directory when it comes from `ANSIBLE_ROLES_PATH`. Every entry is made absolute, with `.` and `..` removed, before it is used. A role's `ansible_search_path` and the `included:` lines show that path, as ansible-core does.
 
-A three-part name such as `acme.demo.hello` is also looked for under `<collections path>/ansible_collections/acme/demo/roles/hello`.
+A three-part name such as `acme.demo.hello` is also looked for under `ansible_collections/acme/demo/roles/hello`, first in a `collections/` directory beside the playbook, then in each `collections_path` entry.
 
 A role nobody can find stops the run with exit code 1, and the message lists every path that was tried.
 
@@ -69,7 +69,7 @@ An `import_role` with `public: false` keeps them to itself, and an `include_role
 ## Differences from Ansible
 
 - A role name containing a `.` is tried as a path before it is tried as a collection role, so a role directory with a dot in its name stays reachable.
-- `collections_path` from `ansible.cfg` and `ANSIBLE_COLLECTIONS_PATH` are read the same way as `roles_path`. That behavior was not measured against the reference.
+- `collections_path` from `ansible.cfg` and `ANSIBLE_COLLECTIONS_PATH` are read the same way as `roles_path`. That behavior was not measured against the reference. The `collections/` directory beside the playbook was.
 - A missing `import_tasks` file is reported with the reference's first two sentences but not its third, which names a Python error number for a module that was never called.
 - `import_playbook` written as a task is rejected before the play starts instead of failing under a play banner. The exit code is the same 2.
 - A file that imports itself is rejected with exit code 1 and a message of its own. Ansible recurses until the interpreter gives up, at exit code 250 with a long traceback.

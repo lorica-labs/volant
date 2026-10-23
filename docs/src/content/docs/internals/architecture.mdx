@@ -37,21 +37,21 @@ Volant is two programs and a protocol. The controller runs on your machine and d
 
 The controller, `crates/volant`, reads `ansible.cfg`, the inventory, the playbooks and the roles. It resolves variables, renders every template, and compiles each play into a flat list of steps before it connects anywhere. The [pre-flight](/playbooks/preflight/) then stops on anything this release does not support yet.
 
-The executor starts one driver per host, bounded by `forks`. A driver walks its host through the steps, renders each task with that host's variables, sends it to the agent and judges the result: `register`, `changed_when`, `failed_when`, handlers. A coordinator keeps the drivers in step at synchronization points and owns everything that reaches the terminal.
+The executor starts one driver per host, bounded by `forks`. The `linear` strategy keeps the drivers in step. Under `free` and `host_pinned` each driver runs at its own pace, and `debug` is `linear` with a debugger after a failed task. A driver walks its host through the steps, renders each task with that host's variables, sends it to the agent and judges the result: `register`, `changed_when`, `failed_when`, handlers. A coordinator holds the drivers at synchronization points and owns everything that reaches the terminal.
 
-For Python modules, the controller asks a helper process running ansible-core to build the module payloads, and keeps the result in a cache between runs. Before the first connection it also reads the whole run to decide whether the agent may gather facts natively. See [The warm Python path](/internals/python/).
+For Python modules, the controller asks a helper process running ansible-core to build the module payloads, and keeps the result in a cache between runs. The same helper runs the filters, tests and lookups that have no Rust version, the inventory plugins of collections, and the action plugins that Volant bridges, which run their jobs in parallel. Before the first connection it also reads the whole run to decide whether the agent may gather facts natively. See [The warm Python path](/internals/python/).
 
 All the `ssh` runs for one inventory host share one OpenSSH connection, see [Connections and the agent](/hosts/connections/#one-connection-per-host).
 
 ## The agent
 
-The agent, `crates/volant-agent`, is a static binary of a few hundred kilobytes, uploaded once per host and cached. It receives batches of tasks, runs them, and streams results back as they finish. It runs `command`, `shell` and `raw` itself. It also carries native versions of `setup`, `stat`, `file`, `apt`, `systemd`, `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` and `group`, which answer a task when its arguments allow and hand it back otherwise. The warm Python server runs everything else, see [Native modules](/internals/python/#native-modules). It knows nothing about playbooks, variables or escalation.
+The agent, `crates/volant-agent`, is a static binary, uploaded once per host and cached. Its release archive is about 1.2 MB. It receives batches of tasks, runs them, and streams results back as they finish. It runs `command`, `shell` and `raw` itself. It also carries native versions of `setup`, `stat`, `file`, `apt`, `systemd`, `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` and `group`, which answer a task when its arguments allow and hand it back otherwise. The warm Python server runs everything else, see [Native modules](/internals/python/#native-modules). It also starts background jobs for tasks with `async`, and `async_status` reads them back. With `ansible_connection: local` the agent is a child process of the controller and no `ssh` runs. It knows nothing about playbooks, variables or escalation.
 
 ## The protocol
 
-`crates/volant-protocol` defines the frames and messages both programs share. The controller starts the agent over `ssh` and speaks the protocol over that process's standard input and output for the rest of the run. Frames are JSON, except that a blob of modules or a staged file follows its announcement as raw bytes, compressed with deflate, since protocol version 6. Changing a message means bumping `PROTOCOL_VERSION`, and the agent's version is part of its cache path, so a controller never talks to an agent from another release.
+`crates/volant-protocol` defines the frames and messages both programs share. The controller starts the agent over `ssh` and speaks the protocol over that process's standard input and output for the rest of the run. Frames are JSON, except that a blob of modules or a staged file follows its announcement as raw bytes, deflated when that is shorter, since protocol version 6. The current version is 8. Changing a message means bumping `PROTOCOL_VERSION`, and the agent's version is part of its cache path, so a controller never talks to an agent from another release.
 
-A frame is at most 64 MiB, because `slurp` and `fetch` send a file as one string inside a result. A result is bounded by what it holds as well as by its size. It may hold at most 500,000 values (strings, numbers, arrays, objects and object keys) and 64 levels of nesting, and `stdout` and `stderr` may split into at most 500,000 lines together, or one line for every 32 bytes of output when that is more. A result over a bound fails that task for that host alone, with a message that gives the limit and the count. A message that is not a result may be 1 MiB at most.
+A frame is at most 64 MiB, because `slurp` and `fetch` send a file as one string inside a result. A result is bounded by what it holds as well: at most 500,000 values, 64 levels of nesting, and 500,000 lines of `stdout` and `stderr` together (or one line for every 32 bytes of output when that is more). A result over a bound fails that task for that host alone, with a message that gives the limit and the count. Any other message is at most 1 MiB.
 
 ## A run, end to end
 
@@ -76,6 +76,6 @@ sequenceDiagram
 
 Each choice that changes what users see is recorded, with its reasoning, as a decision record:
 
-<LinkCard title="Decision records" description="Why GPL, why ansible-core 2.19, how become and batching work, why the Python path uses one archive per run, and why common modules run natively." href="/decisions/" />
+<LinkCard title="Decision records" description="Why GPL and which crates are permissive, why ansible-core 2.19, how become and batching work, why the Python path uses one archive per run, how action plugins run, and why common modules run natively." href="/decisions/" />
 
 <LinkCard title="Code map" description="Where each part of the engine lives in the source tree, for contributors." href="https://github.com/lorica-labs/volant/blob/main/ARCHITECTURE.md" />

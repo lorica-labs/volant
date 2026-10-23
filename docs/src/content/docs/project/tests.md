@@ -27,13 +27,20 @@ A scenario is a directory under `crates/volant/tests/scenarios`:
 3. Run `just golden scenario`. It writes `expected.json` in the directory.
 4. Run `touch crates/volant/tests/reference.rs` and then the tests. The list of scenarios is fixed when that file compiles, so a new directory is not seen until it is rebuilt.
 
-Each run of Volant happens in a fresh copy of the directory, with `--forks 1` unless the case says otherwise. The test compares the exit code and the complete standard output, with timings masked. Four more keys are available in `case.yml`:
+Each run of Volant happens in a fresh copy of the directory, with `--forks 1` unless the case says otherwise. The test compares the exit code and the complete standard output, with timings masked. Besides `args` and `runs`, `case.yml` takes five more keys:
 
+- `modes` lists `check`, `check-diff` and `diff`. Each run then happens once more per mode, with `--check`, `--check --diff` or `--diff` added, in that fixed order, and every run is recorded.
 - `env` sets environment variables for the run.
 - `forks` raises the number of forks above one. Hosts may then print in a different order, so list the lines whose order may differ in `unordered`, as regular expressions. `unordered` without `forks` is refused.
 - `needs` names what the machine must have: `ansible-core`, `sudo` or `systemd`. A case whose needs are not met is skipped, except when `VOLANT_PYTHON` is set, which turns the skip into a failure.
 - `links` maps a path to the target of a link that each copy gets at that path. Use it for a link that git or cargo cannot hold, such as a link to a file that does not exist: `cargo package` refuses a tracked link like that.
 
+## The parity matrix
+
+`crates/volant/tests/parity.rs` compares every name that ansible-core 2.19.12 and the collections of the pinned `ansible` package know (keywords, modules, filters, tests, lookups and the other plugin kinds) with what the engine does with it. `just parity-reference` regenerates the reference side, `crates/volant/tests/parity/reference.json`. The [Parity](/reference/parity/), [Keywords](/reference/keywords/) and [Modules](/reference/modules/) pages are generated from the engine's own tables by `just docs-parity`, `just docs-keywords` and `just docs-modules`, and a test fails when one of them is out of date.
+
 ## Run them
+
+`just check-touched` is the check to run before a pull request. It formats, runs clippy and the file-size ratchet, runs the tests of the modules the branch changes, and checks spelling. `just check-local` does the same with every test. CI runs every test.
 
 `just test` runs everything that needs no host. `just test-reference` runs the module recordings against the machine you are on, which needs ansible-core, sudo and systemd. `just ssh-test` is what the `ssh` job runs: it starts from an sshd on localhost and covers the end-to-end tests too. Prefer a scenario or a table row in an existing test to a new test function.

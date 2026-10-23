@@ -22,10 +22,13 @@ Every password is tried on every vaulted value, whatever its label.
 - Inline `!vault` values in a playbook or a vars file. They load as ciphertext and decrypt when a template reads them. A decrypted value keeps the trust the reference gives it.
 - Whole vaulted files: `vars_files`, `include_vars`, `group_vars` and `host_vars` files. A vaulted file that cannot be read fails with the reference's message.
 - The `vault` and `unvault` filters, the `vault_encrypted` and `vaulted_file` tests, and the `unvault` lookup.
+- A vaulted `src` of `copy`, `template` and `script`, and a vaulted archive of `unarchive`. The run decrypts it into a private temporary directory before the plugin reads it. `decrypt: false` on `copy` or `unarchive` keeps the ciphertext.
+
+A `!vault` value that no secret opens fails the task that reads it, with the three blocks ansible-core prints. `debug: var=x` exits 2, with the cause at the line where the value is written. `is vault_encrypted` answers for the variables of the current host.
 
 ## Secrets stay on the controller
 
-A vault password lives in memory in the controller process. It is never written to a command line, to the environment of a child process, to a log, to a result or to the agent link. The connection and escalation passwords follow the same rule. `-k`, `--connection-password-file` and the `ansible_password` variable hand the SSH password to `ssh` through `SSH_ASKPASS` from a file in a private directory (mode 0700, named after the process, under `XDG_RUNTIME_DIR` when that is private, else the temporary directory). That needs OpenSSH 8.4 or later. The run removes the directory when it ends, when it stops on SIGINT or SIGTERM, and before it dies of SIGHUP, which ends it with code 129 as it ends ansible-playbook (a SIGHUP ignored at start, as under `nohup`, stays ignored). `SIGKILL` and the out-of-memory killer cannot be handled: they leave the directory, and the next run of the same user removes it once no process holds the lock the run took on the directory. `ssh` closes inherited descriptors before it starts its askpass program, so the password cannot travel on one.
+A vault password lives in memory in the controller process. It is never written to a command line, to the environment of a child process, to a log, to a result or to the agent link. The connection and escalation passwords follow the same rule, and [Connections](/hosts/connections/#connection-types) says how the SSH password reaches `ssh`.
 
 Filters, tests and lookups that run in the Python helper never see the vault password. The vault ones run in the controller process for that reason. See [Filters, tests and lookups in Python](/variables/python-helper/).
 
@@ -33,7 +36,8 @@ A value that came back from a managed host is never decrypted with the run's sec
 
 ## Known gaps
 
-- A vaulted `src` for `script` is not decrypted.
-- A vaulted `src` for `unarchive` is not decrypted.
+- The `salt` and `wrap_object` arguments of the `vault` filter are refused as not supported yet.
+- A `!vault` value written in a play's own `vars:` prints no `Origin:` line when no secret opens it.
+- A `set_fact` of a bare `{{ x }}` that holds a vaulted value loses the vault tag, so `is vault_encrypted` answers false on the fact where ansible-core answers true.
 
 The [command line page](/reference/cli/#vault) has the options.

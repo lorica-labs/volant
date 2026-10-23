@@ -57,3 +57,17 @@ Volant now runs the play in 40 percent of the pipelined reference's time. A pass
 The per-task average still includes real work. `apt` spends about 755 ms talking to `dpkg`, and gathering facts is the most expensive task in the play. The warm path removes the overhead around a module, not the module's own work.
 
 Keeping the link costs something. While the permit carried the link with it, `forks` also bounded how many escalated connections a run held open. Now a run can hold two links per host, so at three file descriptors a link, a controller limited to 1024 descriptors reaches its ceiling at about 169 escalating hosts rather than about 330.
+
+## Update, 2026-10-24
+
+The measurement above stops at the first result, which was a loss: Volant took 30.2 s against 20.02 s for the pipelined reference. Twenty-one tasks without escalation cost Volant 17 ms each against 437 ms for the reference, so the warm path was working. The same tasks under `become: true` cost 897 ms each against 464 ms. A host that reached a synchronization point gave back its fork permit and shut down its escalated link in the same step, and a play of Python tasks reaches one at nearly every task, so each escalated task paid for a new `ssh` session, a new `sudo` and a new handshake. One run opened 44 sessions on the host where a run without escalation opened 4.
+
+The fix ([#178](https://github.com/lorica-labs/volant/pull/178), 2026-09-22) keeps the escalated link across a synchronization point and gives back only the permit, which another host is waiting for. Measured again on the same host with the same method:
+
+| Run | Wall clock | Per task |
+|---|---|---|
+| Volant, link closed at each point | 30.51 s | 872 ms |
+| Volant, link kept | 7.90 s | 226 ms |
+| ansible-core, `pipelining = True` | 19.72 s | 564 ms |
+
+Volant then runs the play in 40 percent of the pipelined reference's time, and a pass opens 3 `ssh` sessions on the host instead of 58. The first row matches the first measurement within one percent, so the gain comes from the fix and not from a change in the machine.

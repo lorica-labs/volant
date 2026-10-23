@@ -8,7 +8,7 @@ import BarChart from '../../../components/BarChart.astro';
 
 Volant is measured on two real workloads, each run by a recipe in the repository. Every figure on this page comes from those recipes.
 
-On four Ansible Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) applied to two Ubuntu 24.04 hosts that had already converged, Volant finishes in 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s, a ratio of 49.97. On the official k3s-ansible `site.yml`, against an installed cluster, Volant takes 23.477 s and the reference 50.519 s, a ratio of 2.15. Measured on 2026-09-27 with `just bench` and `just bench-k3s`, which reproduce these figures.
+On four Ansible Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) applied to two Ubuntu 24.04 hosts that had already converged, Volant finishes in 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s, a ratio of 49.97. On the official k3s-ansible `site.yml`, against an installed cluster, Volant takes 23.477 s and the reference 50.519 s, a ratio of 2.15. Measured on 2026-09-27 with `just bench` and `just bench-k3s`, which reproduce these figures. They have not been measured again since.
 
 <BarChart
   title="Two workloads, two converged hosts"
@@ -62,22 +62,22 @@ Every timed Volant pass also writes its profile through `VOLANT_PROFILE_JSON`, u
 
 ## Where the time went
 
-The *before* column is the same workload measured on 2026-09-24 with the Volant of that day, on the same machines. The *after* column is the median pass of 2026-09-27. Times are per host.
+Times are per host, from the median pass of 2026-09-27. The same workloads measured on 2026-09-24, before the native modules, took 12.66 s for the roles (reference 26.23 s) and 37.53 s for k3s (reference 50.19 s). [Decision record 0008](/decisions/0008-native-modules-and-speed/) has the profile of that day.
 
 ### Four Galaxy roles
 
-| Step | 2026-09-24 | 2026-09-27 |
-|---|---|---|
-| Building the Python module union on the controller | 3,799 ms | 15.3 ms, read from the cache |
-| `apt`, 8 tasks, packages installed, cache fresh | 5,495 ms | 38.4 ms, native |
-| `setup`, gathering facts | 1,094 ms | 47.6 ms, native |
-| `systemd`, 3 tasks | 730 ms | 52.4 ms, native |
-| `file` ×8, `lineinfile` ×8, `stat` ×5 | 725 ms | 52.8 ms, native |
-| Opening the connections | 555 ms | 172.6 ms |
-| Preparing tasks on the controller | 181 ms | 25.0 ms |
-| Frames and blobs on the wire | 30 ms | 27.1 ms |
-| Waiting for the other host at each task | 124 ms | 10.6 ms |
-| **Wall clock, two hosts** | **12.66 s** (reference 26.23 s) | **0.529 s** (reference 26.435 s) |
+| Step | Time |
+|---|---|
+| Building the Python module union on the controller | 15.3 ms, read from the cache |
+| `apt`, 8 tasks, packages installed, cache fresh | 38.4 ms, native |
+| `setup`, gathering facts | 47.6 ms, native |
+| `systemd`, 3 tasks | 52.4 ms, native |
+| `file` ×8, `lineinfile` ×8, `stat` ×5 | 52.8 ms, native |
+| Opening the connections | 172.6 ms |
+| Preparing tasks on the controller | 25.0 ms |
+| Frames and blobs on the wire | 27.1 ms |
+| Waiting for the other host at each task | 10.6 ms |
+| Wall clock, two hosts | 0.529 s (reference 26.435 s) |
 
 All 66 module tasks of the median pass, 33 per host, were answered by a native module. None was handed back, so no Python server started on either host.
 
@@ -85,18 +85,18 @@ All 66 module tasks of the median pass, 33 per host, were answered by a native m
 
 Where the two hosts differ, the figures are the server's.
 
-| Step | 2026-09-24 | 2026-09-27 |
-|---|---|---|
-| Building the Python module union, collections included | 5,700 ms | 30.6 ms, read from the cache |
-| Restarting the k3s service, server and agent | 8,500 + 4,990 ms | 8,269 + 4,763 ms, native `systemd` |
-| `service_facts` | 3,280 ms | 2,485 ms, native |
-| `package_facts` | 2,100 ms | 168 ms, native |
-| `apt: name=policycoreutils update_cache=true` | 1,910 ms | 2,205 ms, handed back to Python |
-| Gathering facts | 1,790 ms | 55 ms, native |
-| Preparing tasks on the controller | 1,976 ms | 185 ms |
-| Opening the connections | 1,131 ms | 350 ms |
-| Waiting for the other host at each task (agent) | 370 ms | 253 ms |
-| **Wall clock, two hosts** | **37.53 s** (reference 50.19 s) | **23.477 s** (reference 50.519 s) |
+| Step | Time |
+|---|---|
+| Building the Python module union, collections included | 30.6 ms, read from the cache |
+| Restarting the k3s service, server and agent | 8,269 + 4,763 ms, native `systemd` |
+| `service_facts` | 2,485 ms, native |
+| `package_facts` | 168 ms, native |
+| `apt: name=policycoreutils update_cache=true` | 2,205 ms, handed back to Python |
+| Gathering facts | 55 ms, native |
+| Preparing tasks on the controller | 185 ms |
+| Opening the connections | 350 ms |
+| Waiting for the other host at each task (agent) | 253 ms |
+| Wall clock, two hosts | 23.477 s (reference 50.519 s) |
 
 In the median pass, 28 tasks ran natively, 11 were handed back to the Python module, and 5 ran a module with no native version (`ansible.posix.sysctl` and `wait_for`).
 

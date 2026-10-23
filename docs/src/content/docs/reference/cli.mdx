@@ -54,12 +54,24 @@ Where an option has an `ansible.cfg` key or an environment variable, the entry n
   The private key `ssh` authenticates with, passed as `ssh -i`.
 </Option>
 
+<Option name="--ssh-common-args" arg="ARGS">
+  Arguments added to every `ssh` command line. Volant splits them into words as a shell would, and an unbalanced quote stops the run before it starts. The host variable `ansible_ssh_common_args` replaces this value for that host.
+</Option>
+
+<Option name="--ssh-extra-args" arg="ARGS">
+  Arguments added to the `ssh` command line after the common ones. The host variable `ansible_ssh_extra_args` replaces this value for that host.
+</Option>
+
 <Option name="-T, --timeout" arg="SECONDS" default="10" config="[defaults] timeout" env="ANSIBLE_TIMEOUT">
   How long to wait for a connection, passed to `ssh` as `ConnectTimeout`.
 </Option>
 
 <Option name="-f, --forks" arg="N" default="5" config="[defaults] forks" env="ANSIBLE_FORKS">
   How many hosts a play works on at once. Zero or a value that is not a number is rejected before the run starts.
+</Option>
+
+<Option name="-M, --module-path" arg="PATH">
+  Directories searched for modules before the configured ones. Colon-separated and repeatable. A later `-M` goes in front of an earlier one.
 </Option>
 
 ## Variables and tags
@@ -110,7 +122,7 @@ These options read the playbooks and stop. They never connect to a host and neve
   The escalation method: `sudo` or `su`. Other methods stop the run before it starts.
 </Option>
 
-<Option name="-k, --ask-pass">
+<Option name="-k, --ask-pass" id="ask-pass">
   Ask for the SSH password on the terminal, with echo turned off. `ssh` gets it through `SSH_ASKPASS`, so it needs OpenSSH 8.4 or later. The password is in no command line, no environment sent to the host and no log. After `-k`, an empty answer to the `-K` prompt reuses the SSH password, as in `ansible-playbook`.
 </Option>
 
@@ -128,7 +140,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 
 ## Vault
 
-<Option name="-J, --ask-vault-pass">
+<Option name="-J, --ask-vault-pass, --ask-vault-password">
   Ask for the vault password on the terminal, with echo turned off.
 </Option>
 
@@ -155,11 +167,11 @@ These options read the playbooks and stop. They never connect to a host and neve
 </Option>
 
 <Option name="-v" id="verbose">
-  Show module results for successful tasks too. Repeatable, like Ansible's `-vvv`. A result carries its `invocation` key, the arguments the module received, only from `-vvv` on. At `-vvvv` the run also prints every option it was given, the plugins it loads and the `ssh` commands it runs. `--scp-extra-args` and `--sftp-extra-args` are shown but have no effect, because Volant moves files over the agent link and runs neither `scp` nor `sftp`.
+  Show module results for successful tasks too. Repeatable, like Ansible's `-vvv`. A result carries its `invocation` key, the arguments the module received, only from `-vvv` on. At `-vvvv` the run also prints every option it was given, the plugins it loads and the `ssh` commands it runs.
 </Option>
 
-<Option name="--no-color">
-  Print without colors.
+<Option name="--no-color" config="[defaults] nocolor" env="ANSIBLE_NOCOLOR">
+  Print without colors. The option beats `force_color` (`ANSIBLE_FORCE_COLOR`), which beats `nocolor`. See [Configuration](/reference/configuration/#defaults-force-color).
 </Option>
 
 <Option name="--facts" arg="auto|python|native" default="auto">
@@ -175,7 +187,7 @@ These options read the playbooks and stop. They never connect to a host and neve
 Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 
 <Option name="VOLANT_PYTHON" arg="PATH">
-  The Python interpreter the controller uses to build module payloads. It needs `ansible-core`. When set, Volant uses it alone and installs nothing. When unset, Volant tries the managed runtime, then the active virtual environment, then `python3` on your `PATH`.
+  The Python interpreter the controller uses to build module payloads. It needs `ansible-core`. When set, Volant uses it alone and installs nothing. [Which interpreter a run uses](/reference/runtime/#which-interpreter-a-run-uses) gives the full order.
 </Option>
 
 <Option name="VOLANT_RUNTIME" arg="auto|managed|system" config="[volant] runtime">
@@ -191,11 +203,11 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 </Option>
 
 <Option name="VOLANT_HOST_NAMED_PATHS" arg="allow|contained|refuse" config="[volant] host_named_paths">
-  What a task does with a controller `src` that a managed host named. With `contained` or `refuse`, it also limits a `fetch` `dest` that a host named. See [A source file a managed host named](/reference/action-plugins/#a-source-file-a-managed-host-named).
+  How a controller `src` that a managed host named is treated. See [`host_named_paths`](/reference/configuration/#volant-host-named-paths).
 </Option>
 
 <Option name="VOLANT_HOST_NAMED_DEST_DIRS" arg="/dir:/other" config="[volant] host_named_dest_dirs">
-  The controller directories a `fetch` may write under when a managed host named its `dest`. Unset, a `fetch` writes such a `dest` as ansible-core does. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named).
+  The controller directories a `fetch` may write under when a managed host named its `dest`. See [`host_named_dest_dirs`](/reference/configuration/#volant-host-named-dest-dirs).
 </Option>
 
 <Option name="VOLANT_NATIVE_MODULES" arg="0" config="[volant] native_modules">
@@ -240,6 +252,6 @@ volant runtime remove [ID | --all]
 
 ## Not there yet
 
-Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/reference/parity/#ansible-playbook-option) lists the rest.
+Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/reference/parity/#ansible-playbook-option) lists each option with its status.
 
 `volant` has two subcommands, `playbook` and `runtime`. The other Ansible tools have no counterpart yet: `ansible` for ad-hoc commands, `ansible-inventory`, `ansible-vault`, `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.

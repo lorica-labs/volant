@@ -19,7 +19,7 @@ A dynamic include is resolved per host, because its file name can depend on that
 
 An `import_tasks` path is looked for next to the importing file first, then in the role's own `tasks/` directory.
 
-`import_playbook` splices the other file's plays where the statement stands, and each imported play keeps the directory of the file it came from. Its file name renders with no variables at all, so `{{ 'sub' }}.yml` works and `{{ nosuchvar }}.yml` does not.
+`import_playbook` splices the other file's plays where the statement stands, and each imported play keeps the directory of the file it came from. Its file name renders with the `-e` variables and through the [Python helper](/variables/python-helper/), so `{{ which }}.yml` works with `-e which=sub.yml`, and so does a name built with `lookup('env', ...)` or a collection filter. Nothing has an inventory yet, so a name cannot depend on a host. A name that reads an undefined variable stops the load with exit 4: `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`.
 
 Three keywords of the `import_playbook` entry reach every play of the file:
 
@@ -37,7 +37,7 @@ What the layers around the statement say does reach the included tasks: the play
 
 ### Putting keywords on what an include brings in
 
-`apply:` on `include_tasks` and `include_role` puts keywords on every task the statement brings in, and on the handlers of an included role. It takes the keywords of a block: `tags`, `when`, `vars`, `become`, `environment`, `ignore_errors`, `delegate_to` and the rest. `apply` is for the include statements only. `import_tasks` and `import_role` already pass the keywords you write on them, and they refuse `apply`.
+`apply:` on `include_tasks` and `include_role` puts keywords on every task the statement brings in, and on the handlers of an included role. It takes the keywords of a block: `tags`, `when`, `vars`, `become`, `environment`, `ignore_errors`, `delegate_to` and the rest. The imports refuse `apply`, since they already pass the keywords you write on them.
 
 ```yaml
 - include_tasks:
@@ -54,9 +54,9 @@ A key of `apply` that a block does not have stops the run with exit code 4 when 
 
 ### Role options
 
-By default an `include_role` keeps the `defaults` and `vars` of its role to the role. With `public: true` they are visible to everything that runs after the statement, as if the role were in `roles:`, and to the other hosts too, because ansible-core keeps the list of public roles in the play and not in the host. A task that ran before the statement read nothing of it. A `when: false` include lends nothing.
+With `public: true`, the `defaults` and `vars` of an `include_role` are visible to everything that runs after the statement, and to the other hosts too, because ansible-core keeps the list of public roles in the play and not in the host. A task that ran before the statement reads nothing of it, and a `when: false` include lends nothing.
 
-An `include_role` runs its role again each time unless it says `allow_duplicates: false`. Then the statement shows its `included:` line and runs nothing for a host that has already had an identical role brought in. Two statements are identical when they name the same role, the same files and the same `vars:`, and for a loop the same item under the same loop variable. `rolespec_validate: false` leaves out the argument-spec check.
+With `allow_duplicates: false`, the statement shows its `included:` line and runs nothing for a host that has already had an identical role brought in. Two statements are identical when they name the same role, the same files and the same `vars:`, and for a loop the same item under the same loop variable. `rolespec_validate: false` leaves out the argument-spec check.
 
 Each option of the four statements, as read by Volant and by ansible-core 2.19.12:
 
@@ -84,7 +84,7 @@ An included task lands in the block and section where the statement was written,
 
 Volant checks what an include brings in before it runs. By then the hosts are connected and earlier tasks have run, so a module or keyword this release does not support yet can no longer stop the whole run. It fails the include statement for the host that reached it instead, nothing in the file runs, and a `rescue` around the statement can catch it.
 
-The Python modules an included file names are found earlier. The union of Python modules is built before the first connection from every task and handler file of the roles in play, so a module named only in `setup-{{ ansible_os_family }}.yml` is already on the host when the include runs. A file under a role's `tasks/` or `handlers/` that does not parse stops the run before anything connects. See [The warm Python path](/internals/python/#how-it-works).
+The Python modules an included file names are found earlier. The union of Python modules is built before the first connection from every task and handler file of the roles in play, so a module named only in `setup-{{ ansible_os_family }}.yml` is already on the host when the include runs. A file under a role's `tasks/` or `handlers/` that does not parse stops the run before anything connects, for `roles:` and `import_role`. For an `include_role` the pre-run scan does not read the role: earlier plays and tasks run, then the run ends with exit 4 after the statement's banner, and a `when: false` on the include hides the failure. See [The warm Python path](/internals/python/#how-it-works).
 
 A `notify` in an included file that names no handler ends the run with exit code 1 and the pre-flight's sentence, as ansible-core does. No `ignore_errors` or `rescue` can catch it. See [Handlers](/playbooks/handlers/#differences-from-ansible).
 
@@ -126,5 +126,3 @@ A statement 32 levels deep is rejected. One counter covers role nesting, `import
 - `allow_duplicates: false` on an `import_role` compares the statements while the play compiles, and so a `when` on the earlier statement does not change the result for a host.
 - `include_vars: file=x.yml name=ns` is read as one raw argument rather than split into `key=value` pairs, the same limitation `import_tasks` has.
 - What `include_vars` produces sits one level above where Ansible puts it. You only notice with a name that a `set_fact` also wrote: Ansible lets the `set_fact` win in either order, and here the later write wins.
-- The text of a YAML syntax error in a file that `include_vars` reads is the parser's own, not ansible-core's `YAML parsing failed: ...`. The shape of the failure is the same.
-- A failing `include_vars` has `"failed": true` in its result.

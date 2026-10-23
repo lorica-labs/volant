@@ -8,7 +8,7 @@ sidebar:
 
 | Status | Date |
 |---|---|
-| accepted | 2026-09-05 |
+| accepted; the scope is narrowed by [ADR 0009](/decisions/0009-interface-crates-mit-or-apache/), which licenses crates that describe a public interface MIT OR Apache-2.0 | 2026-09-05 |
 
 ## Context
 
@@ -29,3 +29,7 @@ The whole repository is licensed GPL-3.0-or-later, the license of Ansible and of
 ## Update, 2026-09-22
 
 The context above describes the project when this decision was taken. Since [ADR 0006](/decisions/0006-warm-python-path/), Volant ships ansible-core's `module_utils` to managed hosts, and the controller calls ansible-core through a helper process rather than an embedded interpreter. The reasoning for the license is unchanged.
+
+## Update, 2026-10-24
+
+[Decision 0009](/decisions/0009-interface-crates-mit-or-apache/) keeps the engine under GPL-3.0-or-later and licenses the crates that only describe a public interface MIT OR Apache-2.0. It also keeps `volant-agent` and `volant-protocol` under GPL-3.0-or-later, so the possible relicensing of the agent crate named in the consequences above is not planned.

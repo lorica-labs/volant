@@ -58,7 +58,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="enable_task_debugger" id="defaults-enable-task-debugger" default="false" env="ANSIBLE_ENABLE_TASK_DEBUGGER">
-  Open the [debugger](/playbooks/how-a-play-runs/#other-strategies) after every failed or unreachable task.
+  Open the [debugger](/playbooks/how-a-play-runs/#the-debugger) after every failed or unreachable task.
 </Option>
 
 <Option name="show_task_path_on_failure" id="defaults-show-task-path-on-failure" default="false" env="ANSIBLE_SHOW_TASK_PATH_ON_FAILURE">
@@ -85,12 +85,24 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Run notified handlers even on hosts that failed.
 </Option>
 
+<Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
+  Print the statistics that `set_stats` collected after the recap.
+</Option>
+
+<Option name="vault_password_file" id="defaults-vault-password-file" flag="--vault-password-file" env="ANSIBLE_VAULT_PASSWORD_FILE">
+  A file holding the vault password, or an executable that prints it. The environment variable replaces the file's value, and the command line adds to whichever won. See [Vault](/variables/vault/).
+</Option>
+
+<Option name="vault_identity_list" id="defaults-vault-identity-list" flag="--vault-id" env="ANSIBLE_VAULT_IDENTITY_LIST">
+  Comma-separated vault identities, each written `label@source` where the source is a file, an executable or `prompt`. The environment variable replaces the file's list, and the command line adds to whichever won.
+</Option>
+
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">
   Where roles are looked for, after `<playbook_dir>/roles` and before `<playbook_dir>` itself. See [Roles](/playbooks/roles/#finding-a-role).
 </Option>
 
 <Option name="collections_path" id="defaults-collections-path" default="~/.ansible/collections:/usr/share/ansible/collections" env="ANSIBLE_COLLECTIONS_PATH">
-  Where a three-part role name such as `acme.demo.hello` is looked for. A collection's modules are found by the controller's ansible-core, in the paths it is configured with: see [Modules from collections](/internals/python/#modules-from-collections).
+  Also read as `collections_paths`, and from `ANSIBLE_COLLECTIONS_PATHS`, which wins over `ANSIBLE_COLLECTIONS_PATH`. Where a three-part role name such as `acme.demo.hello` is looked for. A collection's modules are found by the controller's ansible-core, in the paths it is configured with: see [Modules from collections](/internals/python/#modules-from-collections).
 </Option>
 
 <Option name="gathering" id="defaults-gathering" default="implicit" env="ANSIBLE_GATHERING">
@@ -119,12 +131,12 @@ A file that exists but cannot be read is skipped, and the run continues with the
   The inventory plugins to try, in order. See [the plugin chain](/hosts/inventories/#the-plugin-chain).
 </Option>
 
-<Option name="ignore_extensions" id="inventory-ignore-extensions" env="ANSIBLE_INVENTORY_IGNORE">
-  File extensions skipped when a directory is read.
+<Option name="ignore_extensions" id="inventory-ignore-extensions" default=".pyc, .pyo, .swp, .bak, ~, .rpm, .md, .txt, .rst, .orig, .cfg, .retry" env="ANSIBLE_INVENTORY_IGNORE">
+  File extensions skipped when a directory is read. A value replaces the default list. `[defaults] inventory_ignore_extensions` is read too.
 </Option>
 
 <Option name="ignore_patterns" id="inventory-ignore-patterns" env="ANSIBLE_INVENTORY_IGNORE_REGEX">
-  Regular expressions for file names skipped when a directory is read.
+  Regular expressions for file names skipped when a directory is read. `[defaults] inventory_ignore_patterns` is read too.
 </Option>
 
 <Option name="unparsed_is_failed" id="inventory-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_UNPARSED_FAILED">
@@ -133,6 +145,12 @@ A file that exists but cannot be read is skipped, and the run continues with the
 
 <Option name="any_unparsed_is_failed" id="inventory-any-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED">
   Fail the run at the first source no plugin could read.
+</Option>
+
+## [inventory_plugin_script]
+
+<Option name="always_show_stderr" id="inventory-plugin-script-always-show-stderr" default="true" env="ANSIBLE_INVENTORY_PLUGIN_SCRIPT_STDERR">
+  Show what a successful inventory script wrote on standard error as an `[ERROR]:` line. With `false`, only the standard error of a script that fails is shown.
 </Option>
 
 ## [privilege_escalation]
@@ -146,7 +164,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="become_method" id="privilege-escalation-become-method" default="sudo" flag="--become-method" env="ANSIBLE_BECOME_METHOD">
-  The escalation method: `sudo` or `su`. `su` needs an `ssh` connection, because it reads its password from a terminal.
+  The escalation method: `sudo` or `su`. Other methods stop the run before it starts.
 </Option>
 
 <Option name="become_exe" id="privilege-escalation-become-exe" env="ANSIBLE_BECOME_EXE">
@@ -194,9 +212,9 @@ Ansible ignores this section, so one `ansible.cfg` can carry it and still drive 
 </Option>
 
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">
-  What `template`, `copy`, `script`, `unarchive` and `assemble` do with a controller `src` that a managed host named, through a gathered fact or a registered result. `allow` reads the file as ansible-core does: a managed host can choose which readable controller file a task sends to it. `contained` reads it only when the file is in the `files` or `templates` directory of the role, the playbook or the task's own directory, and fails the task for any other name. Key names are matched exactly and a key Volant does not know is ignored, as in the rest of this section, so a misspelled `host_named_paths` leaves the default `allow`. `refuse` fails the task for every such name. Any other word stops the run with exit code 5. A `fetch` whose `dest` a host named is written under `allow`, as ansible-core writes it. Under `contained` and `refuse` it is written only inside the directories of `host_named_dest_dirs`, and none when that key is unset: see `host_named_dest_dirs`. See [A source file a managed host named](/reference/action-plugins/#a-source-file-a-managed-host-named).
+  Sets what `template`, `copy`, `script`, `unarchive` and `assemble` do with a controller `src` that a managed host named, and where a `fetch` may write a `dest` that a host named: `allow`, `contained` or `refuse`. The default is `allow`, which behaves as ansible-core does, and any other word stops the run with exit code 5. See [A source file a managed host named](/reference/action-plugins/#a-source-file-a-managed-host-named) for what each word does.
 </Option>
 
 <Option name="host_named_dest_dirs" id="volant-host-named-dest-dirs" default="unset" env="VOLANT_HOST_NAMED_DEST_DIRS">
-  A colon-separated list of absolute controller directories under which `fetch` writes when a managed host named its `dest`, through a registered result or a fact. Unset, the default, `fetch` writes such a `dest` as ansible-core does, unless `host_named_paths` is `contained` or `refuse`. Set, the list limits every such `dest`, and an empty value refuses them all. Each entry must be absolute, with no `~` and no `..`, and must not be `/`; anything else stops the run with exit code 5 and names the key, the value and the entry. A `dest` that the playbook wrote is not held to the list. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named).
+  A colon-separated list of absolute controller directories under which `fetch` may write a `dest` that a managed host named. An entry that is relative, uses `~` or `..`, or is `/` stops the run with exit code 5. See [A dest a managed host named](/reference/action-plugins/#a-dest-a-managed-host-named) for the rules.
 </Option>

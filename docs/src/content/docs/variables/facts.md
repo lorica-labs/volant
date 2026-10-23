@@ -3,7 +3,7 @@ title: Facts
 description: How Volant gathers facts, the two names each fact is readable under, and how they are cached.
 ---
 
-A play gathers facts unless it sets `gather_facts: false`. Volant either runs ansible-core's own `setup` module on the [warm Python path](/internals/python/), or lets the agent collect the facts natively when the playbook provably reads nothing else, see [Native facts](#native-facts).
+A play gathers facts unless it sets `gather_facts: false`. With `gathering = explicit` in `ansible.cfg`, only a play that writes `gather_facts` gathers. With `smart`, a host that has fresh facts in the [fact cache](/hosts/fact-cache/) is skipped. A `gather_facts` template renders once, when the play starts. Volant either runs ansible-core's own `setup` module on the [warm Python path](/internals/python/), or lets the agent collect the facts natively when the playbook provably reads nothing else, see [Native facts](#native-facts).
 
 ```yaml
 - hosts: web

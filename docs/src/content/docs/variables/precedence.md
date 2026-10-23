@@ -44,7 +44,8 @@ A fixed set of magic variables sits on top of every host's view and always wins:
 | `playbook_dir`, `inventory_dir`, `inventory_file` | Paths of the current run. |
 | `omit` | The placeholder that drops a module argument. |
 | `ansible_playbook_python` | The Python interpreter that runs ansible-core for Volant. Found when a template reads it, and undefined when none is found. |
-| `ansible_check_mode`, `ansible_diff_mode` | Always false in this release. |
+| `ansible_check_mode`, `ansible_diff_mode` | Whether the run has `--check` and `--diff`. A play's or a task's own `check_mode` or `diff` keyword does not change them. |
+| `ansible_run_tags`, `ansible_skip_tags` | The tags the run selects and skips, see [Tags and listings](/playbooks/tags/#ansible_run_tags-and-ansible_skip_tags). |
 | `ansible_forks` | The current `forks` value. |
 | `ansible_version` | The reference release Volant reproduces, see [decision record 0003](/decisions/0003-ansible-version-reports-the-reference-release/). |
 | `volant_version` | Volant's own version. Test `volant_version is defined` to tell the two engines apart. |

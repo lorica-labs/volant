@@ -147,7 +147,7 @@ Rejected before the host is asked anything: an argument outside the reference's 
 
 ## On the bridge
 
-`add_host`, `assemble`, `async_status`, `gather_facts`, `group_by`, `script`, `set_stats`, `uri` and `wait_for_connection` run ansible-core's own action plugin in the helper, and so does every action plugin a collection ships (the plugins that need a Windows host or another connection type excepted; the [parity](/reference/parity/) page counts them). `copy` and `unarchive` take the same road for the two shapes the Rust plugins refuse: `copy` of a directory, and `unarchive` with a `~` in `dest` or `creates`. Under `host_named_paths = refuse`, a `src` a managed host named never takes it: the Rust plugin's refusal stands.
+`add_host`, `assemble`, `gather_facts`, `group_by`, `script`, `set_stats`, `uri` and `wait_for_connection` run ansible-core's own action plugin in the helper, and so does every action plugin a collection ships (the plugins that need a Windows host or another connection type excepted; the [parity](/reference/parity/) page counts them). `copy` and `unarchive` take the same road for the two shapes the Rust plugins refuse: `copy` of a directory, and `unarchive` with a `~` in `dest` or `creates`. Under `host_named_paths = refuse`, a `src` a managed host named never takes it: the Rust plugin's refusal stands. `async_status` is not a bridged plugin: the agent runs it, and a bridged plugin polls its jobs through it.
 
 The plugin asks for what it needs and the controller answers: run this module, run this command, read a variable, make a temporary directory, put this file. Every answer is bounded by the task's `timeout:`. A plugin that never returns, or a helper that dies, fails that task and not the run; a temporary directory the plugin left on the host is removed. `add_host`, `group_by` and `set_stats` need no host and run without a connection. What they return is applied by the executor: new hosts and groups for the next tasks, and the custom stats printed after the recap. A value of `add_host` rendered from a fact stays data: it is kept as a fact of the new host, never as an inventory variable. So does a host name or a group name of `add_host` or `group_by` that was built from text a managed host wrote. So does any host name or group name that holds `{`, whether the inventory files, a dynamic inventory source, `meta: refresh_inventory`, `add_host` or `group_by` gave it: `groups`, `hostvars`, `group_names`, the host lists of a play and `inventory_hostname` show it as text, as ansible-core does. Once one such name exists, every read of the lists that carry it is data. Reading one host through `hostvars[name]` is data only for that host, so a nested template of another host still renders.
 
@@ -158,10 +158,10 @@ The helper stands in for the controller's connection, so some things the referen
 - A module that is not UTF-8 text where the shim reads it as text.
 - The task keywords `action`, `local_action` and `module_defaults` inside the helper: the controller merged the defaults already.
 
-Three behaviours differ from the reference on purpose:
+Two parts of the helper's connection follow the reference:
 
-- `wrap_async` is emulated. The module runs to its end when the plugin asks for it, and `async_status` then answers that the job finished. Parallel jobs run one after the other. A job's `async:` limit is judged after the module ran, as `Timeout exceeded`; the module is not interrupted.
-- A command a plugin sends with `sudoable=False` runs on the task's own link, so under `become` it runs escalated.
+- `wrap_async` starts a real job on the agent. Jobs run side by side, and a job that outlives its `async:` limit is killed and ends with `Timeout exceeded`.
+- A command a plugin sends with `sudoable=False`, the plugin's temporary directory and the files it puts run as the connection user, over a second link that does not escalate. Under `become`, only `sudoable` commands and modules run escalated.
 
 ### A plugin that makes its own connection
 
@@ -176,7 +176,6 @@ The plugin reads the link's key and user (the host variable, `--private-key`, `-
 - A skipped bridged result carries `"failed": false`.
 - The warnings a plugin writes with `display` go to the helper's standard error, not to the task's output; so does ansible-core's `Error loading plugin` warning for an unknown collection name.
 - A module that `runtime.yml` routes to a differently named action plugin runs under the task's own name.
-- `fact_diff` prints no diff, because `diff` is not supported yet.
 - `ansible_play_hosts_all` does not grow for a host added inside a `serial` play, and a delegated `add_host` or `group_by` applies to the task's own host.
 
 ## A source file a managed host named

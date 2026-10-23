@@ -46,12 +46,26 @@ pub(crate) fn search_paths(
     out
 }
 
-/// The reference's refusal when none of the [`search_paths`] is there.
+/// The reference's refusal when none of the [`search_paths`] is there, which ends with the hint
+/// about `remote_src`. An absolute name is not searched for, so the list is left out.
 pub(crate) fn not_found(name: &str, searched: &[PathBuf]) -> String {
+    let hint = "If you are using a module and expect the file to exist on the remote, see the remote_src option";
+    if Path::new(name).is_absolute() {
+        return format!(
+            "Could not find or access '{name}' on the Ansible Controller.
+{hint}"
+        );
+    }
     let searched: Vec<String> = searched.iter().map(|p| p.display().to_string()).collect();
     format!(
-        "Could not find or access '{name}'\nSearched in:\n\t{} on the Ansible Controller.",
-        searched.join("\n\t")
+        "Could not find or access '{name}'
+Searched in:
+	{} on the Ansible Controller.
+{hint}",
+        searched.join(
+            "
+	"
+        )
     )
 }
 

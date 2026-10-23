@@ -16,7 +16,7 @@ use super::sweep::{sweep_abandoned, sweep_staged};
 use crate::executor::run::batch::send_batch;
 use crate::executor::run::blob::{PUT_FILE_WAIT, blob_preflight, put_file_within};
 use crate::executor::run::channel::{AgentChannel, Relink};
-use crate::executor::run::interpreter::{sub_task, unreachable_ending};
+use crate::executor::run::interpreter::{mark_unsent, sub_task, unreachable_ending};
 use crate::executor::run::judge::timed_out;
 
 /// One item of a task an action plugin backs, run to its end.
@@ -73,6 +73,9 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
     };
     let timeout_result = || TaskResult::timed_out(limit.unwrap_or(0));
     let mut last = None;
+    // Whether a module went to the host: a plugin that ends before one, with at most a `raw`
+    // command of its own, did no discovery.
+    let mut sent = false;
     // Tries in the reconnection in hand, which the pause before the next one grows with: the
     // plugin asks again after a try that failed and after a probe it was not satisfied with, and
     // the reference's loop counts both as failures.
@@ -97,7 +100,12 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             return Ok(timeout_result());
         }
         let (sub, dropping) = match plugin.next(last.take()) {
-            Step::Done(result) => return unreachable_ending(result),
+            Step::Done(mut result) => {
+                if !sent {
+                    mark_unsent(&mut result);
+                }
+                return unreachable_ending(result);
+            }
             Step::Wait(ready) => {
                 let mut watcher = stop.clone();
                 let stopped = async move {
@@ -143,14 +151,21 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                 });
                 continue;
             }
-            Step::Run(sub) => (sub, false),
-            Step::RunDropping(sub) => (sub, true),
+            Step::Run(sub) => {
+                sent |= sub.module != "raw";
+                (sub, false)
+            }
+            Step::RunDropping(sub) => {
+                sent |= sub.module != "raw";
+                (sub, true)
+            }
             Step::Reconnect {
                 probe,
                 wait,
                 timeout,
                 attempt,
             } => {
+                sent = true;
                 if wait_or_stop(capped(wait), stop, stop_broken)
                     .await
                     .is_none()

@@ -250,7 +250,7 @@ ci-local:
 remote +recipe:
     git describe --always --dirty > .volant-describe
     { git diff --name-only origin/main...HEAD -- crates; git diff --name-only HEAD -- crates; git ls-files --others --exclude-standard -- crates; } > .volant-changed
-    git ls-files -z --cached --others --exclude-standard > .volant-files; printf '.volant-describe\0.volant-changed\0.volant-files\0' >> .volant-files
+    comm -z -23 <(git ls-files -z --cached --others --exclude-standard | LC_ALL=C sort -zu) <(git ls-files -z --deleted | LC_ALL=C sort -zu) > .volant-files; printf '.volant-describe\0.volant-changed\0.volant-files\0' >> .volant-files
     set -o pipefail; dir="${VOLANT_REMOTE_DIR:-volant}"; prune='cd "$1" && find . -path ./target -prune -o -type f -print0 | sed -z "s|^\./||" | LC_ALL=C sort -z | LC_ALL=C comm -z -23 - <(LC_ALL=C sort -z .volant-files) | grep -zv -e "^\.volant-describe\$" -e "^\.volant-changed\$" -e "^\.volant-files\$" | xargs -0 -r rm -f --; find . -mindepth 1 -type d -empty -not -path ./target -not -path "./target/*" -delete'; tar -C . --null --files-from=.volant-files -czf - | ssh "$VOLANT_DEV_HOST" "mkdir -p '$dir' && tar -xzf - -C '$dir' && bash -c '$prune' _ '$dir'"
     dir="${VOLANT_REMOTE_DIR:-volant}"; ssh "$VOLANT_DEV_HOST" ". ~/.profile && cd '$dir' && just {{recipe}}"
 

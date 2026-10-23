@@ -11,6 +11,10 @@ A name needs the helper when Volant has no Rust version of it. The [parity page]
 
 A name with a Rust version never reaches the helper, whatever it is called. `ansible.utils.ipwrap` stays in Rust.
 
+A name in an `import_playbook` line goes through the helper too, rendered with the variables of `-e`.
+
+A bridged plugin that raises a Python exception fails with ansible-core's chain: the plugin's sentence in one block, the exception's message in the next.
+
 A play that uses only Rust filters, tests and lookups never starts Python for templating. The helper starts on the first bridged call and then serves the rest of the run.
 
 A bridged plugin also needs what it imports. `json_query` needs `jmespath` and `ipaddr` needs `netaddr`, and a collection's plugin needs that collection, all installed for the interpreter the helper runs under. Without them the task fails with the plugin's own message.

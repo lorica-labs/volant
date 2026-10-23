@@ -162,10 +162,15 @@ async fn run_all(
         out.warning(warning, false);
     }
     let compiling = std::time::Instant::now();
+    // An `import_playbook` name renders against `-e`; a malformed one is reported where `-e` is
+    // read for the run.
+    let load_extra = crate::vars::parse_extra_vars(&args.extra_vars, &std::env::current_dir()?)
+        .unwrap_or_default();
+    let rendering = playbook::Rendering::new(Some(Arc::clone(&bridge)), &load_extra);
     let mut playbooks = args
         .playbooks
         .iter()
-        .map(|p| playbook::load(p))
+        .map(|p| playbook::load_rendering(p, &rendering))
         .collect::<anyhow::Result<Vec<_>>>()?;
     // `--check` and `--diff` are each play's default: its own keyword wins, and every block,
     // role, task and handler under it inherits whichever applies, as in the reference.

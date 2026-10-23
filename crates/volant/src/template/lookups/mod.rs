@@ -62,7 +62,7 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf, bridge: Optio
                     Value::from(())
                 });
             }
-            Err(err) => return Err(err),
+            Err(err) => return Err(failed(&name, err)),
         };
         Ok(if wantlist {
             Value::from(results)
@@ -93,6 +93,19 @@ pub(super) fn taint(state: &State) {
     {
         sink.taint();
     }
+}
+
+/// A native lookup's failure as the reference words it: `The lookup plugin '<name>' failed:
+/// <reason>`. An undefined read and a message already worded in full (see [`super::bridged::raise`])
+/// stay as they are.
+fn failed(name: &str, err: Error) -> Error {
+    if err.kind() == ErrorKind::UndefinedError || super::bridged::said(&err).is_some() {
+        return err;
+    }
+    super::bridged::raise(format!(
+        "The lookup plugin '{name}' failed: {}",
+        err.detail().unwrap_or_default()
+    ))
 }
 
 fn invalid(msg: impl Into<String>) -> Error {
@@ -174,11 +187,15 @@ fn lookup(
                 Value::from(std::env::var(&term_text).unwrap_or_default())
             }
             "file" | "ansible.builtin.file" => {
-                let path = found_file(state, &term_text, base_dir)?;
+                let Some(path) = found_file(state, &term_text, base_dir) else {
+                    return Err(invalid(format!(
+                        "Unable to access the file '{term_text}': File not found. Use -vvvvv to see paths searched."
+                    )));
+                };
                 let text = std::fs::read_to_string(&path).map_err(|e| {
                     invalid(format!(
-                        "could not locate file in lookup: {}: {e}",
-                        path.display()
+                        "Unable to access the file '{term_text}': {}",
+                        read_failure(&path, &e)
                     ))
                 })?;
                 taint();
@@ -187,13 +204,13 @@ fn lookup(
             // The file as it reads once decrypted, a plain one as it is, and no newline dropped:
             // measured, `lookup('unvault', 'f.txt')` of `txt_secret\n` keeps the newline.
             "unvault" | "ansible.builtin.unvault" => {
-                let path = found_file(state, &term_text, base_dir)?;
-                let bytes = std::fs::read(&path).map_err(|e| {
-                    invalid(format!(
-                        "could not locate file in lookup: {}: {e}",
-                        path.display()
-                    ))
-                })?;
+                let Some(path) = found_file(state, &term_text, base_dir) else {
+                    return Err(invalid(format!(
+                        "Unable to find file matching \"{term_text}\""
+                    )));
+                };
+                let bytes = std::fs::read(&path)
+                    .map_err(|e| invalid(format!("could not read {}: {e}", path.display())))?;
                 let bytes = if crate::vault::is_encrypted(&bytes) {
                     crate::vault::decrypt(&bytes, &crate::vault::run_secrets())
                         .map_err(|e| invalid(e.0))?
@@ -208,8 +225,10 @@ fn lookup(
                 _ => match &default_value {
                     Some(d) => d.clone(),
                     None => {
-                        return Err(invalid(format!(
-                            "No variable found with this name: {term_text}"
+                        // The reference raises an undefined-variable error here, with no
+                        // `The lookup plugin` part.
+                        return Err(super::bridged::raise(format!(
+                            "No variable named '{term_text}' was found."
                         )));
                     }
                 },
@@ -239,8 +258,8 @@ fn lookup(
             // never `2`, exactly as `lookup('file')` does.
             "template" | "ansible.builtin.template" => {
                 let path = find_template(state, &term_text, base_dir)?;
-                let text = std::fs::read_to_string(&path)
-                    .map_err(|e| invalid(format!("template lookup: {}: {e}", path.display())))?;
+                let text =
+                    std::fs::read_to_string(&path).map_err(|e| invalid(read_failure(&path, &e)))?;
                 taint();
                 render_template(
                     state,
@@ -260,12 +279,23 @@ fn lookup(
 }
 
 /// `find_file_in_search_path`: each entry's `files/<term>`, then its `<term>`.
-fn found_file(state: &State, term: &str, base_dir: &Path) -> Result<PathBuf, Error> {
+fn found_file(state: &State, term: &str, base_dir: &Path) -> Option<PathBuf> {
     let search = search_path(state, base_dir);
     relative_stack(&search, Some("files"), term)
         .into_iter()
-        .find(|p| p.is_file())
-        .ok_or_else(|| invalid(format!("could not locate file in lookup: {term}")))
+        .find(|p| p.exists())
+}
+
+/// A file that could not be read, as the reference's loader words it: the path, then Python's
+/// `[Errno N] reason: 'path'`.
+fn read_failure(path: &Path, err: &std::io::Error) -> String {
+    let path = path.display();
+    let os = err
+        .raw_os_error()
+        .map_or_else(String::new, |n| format!("[Errno {n}] "));
+    let reason = err.to_string();
+    let reason = reason.split(" (os error").next().unwrap_or(&reason);
+    format!("An error occurred while trying to read the file '{path}': {os}{reason}: '{path}'")
 }
 
 /// The shape a plugin's list takes through `lookup()` without `wantlist=True`, read from

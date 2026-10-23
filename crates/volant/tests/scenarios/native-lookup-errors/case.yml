@@ -1,0 +1,9 @@
+# A native lookup that fails prints the reference's plugin failure inside the two-level chain.
+runs:
+  - args: [-i, inv.ini, file.yml]
+  - args: [-i, inv.ini, unvault.yml]
+  - args: [-i, inv.ini, vars.yml]
+  - args: [-i, inv.ini, pipe.yml]
+  - args: [-i, inv.ini, template.yml]
+  - args: [-i, inv.ini, first_found.yml]
+needs: ["ansible-core"]

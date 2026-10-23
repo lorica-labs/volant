@@ -1,0 +1,10 @@
+# Native lookups with `errors`, a directory as the term,
+# a file that cannot be read.
+runs:
+  - args: [-i, inv.ini, ignore.yml]
+  - args: [-i, inv.ini, dir1.yml]
+  - args: [-i, inv.ini, dir2.yml]
+  - args: [-i, inv.ini, dir3.yml]
+  - args: [-i, inv.ini, dir4.yml]
+  - args: [-i, inv.ini, unreadable.yml]
+needs: ["ansible-core"]

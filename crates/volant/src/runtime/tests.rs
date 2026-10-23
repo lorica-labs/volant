@@ -403,3 +403,35 @@ fn the_runtimes_commands_do_not_import_from_the_working_directory() {
         .expect("python3 is on PATH wherever these tests run");
     assert!(status.success(), "{status:?}");
 }
+
+/// A file is checked against the hash given before it is unpacked: a match and no hash pass, a
+/// changed byte or a different hash is refused showing both.
+#[rstest]
+#[case::match_given(false, true, None)]
+#[case::no_hash_given(false, false, None)]
+#[case::byte_flipped(true, true, Some("does not match the given hash (expected sha256 "))]
+fn a_pack_is_checked_against_its_hash(
+    #[case] flip: bool,
+    #[case] give: bool,
+    #[case] refusal: Option<&str>,
+) {
+    let dir = scratch();
+    let file = dir.path().join("runtime.tar.gz");
+    fs::write(&file, b"packed bytes").unwrap();
+    let hash = sha256_of(&file).unwrap();
+    if flip {
+        fs::write(&file, b"packed bytez").unwrap();
+    }
+    let result = pack::verify(&file, give.then_some(hash.as_str()));
+    match refusal {
+        None => assert_eq!(result.unwrap(), hash),
+        Some(refusal) => {
+            let e = result.unwrap_err();
+            assert!(e.contains(refusal) && e.contains(&hash), "{e}");
+            assert!(
+                e.contains(&format!("found {}", sha256_of(&file).unwrap())),
+                "{e}"
+            );
+        }
+    }
+}

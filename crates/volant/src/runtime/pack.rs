@@ -6,14 +6,15 @@ use std::fs;
 use std::path::Path;
 use std::process::Command;
 
-use super::fetch::run;
+use super::fetch::{run, sha256_of};
 use super::install::{self, Installed, Lock, RECORD, WAIT, lock_path, partial_prefix, probe};
 use super::manifest::Manifest;
 use super::{INSTEAD, host_triple};
 
 /// Packs the installed runtime into `file`, a gzip tar holding one directory named like the
 /// runtime. Written beside `file` and renamed, so a failed pack leaves nothing at `file`.
-pub(crate) fn pack(runtimes: &Path, manifest: &Manifest, file: &Path) -> Result<(), String> {
+/// Returns the SHA-256 of the file written.
+pub(crate) fn pack(runtimes: &Path, manifest: &Manifest, file: &Path) -> Result<String, String> {
     let id = manifest.id();
     if install::installed(runtimes, &id).is_none() {
         return Err(format!(
@@ -46,7 +47,22 @@ pub(crate) fn pack(runtimes: &Path, manifest: &Manifest, file: &Path) -> Result<
     fs::rename(&partial, file).map_err(|e| {
         _ = fs::remove_file(&partial);
         format!("cannot write {}: {e}", file.display())
-    })
+    })?;
+    sha256_of(file).map_err(|e| format!("cannot read {} back: {e}", file.display()))
+}
+
+/// The SHA-256 of `file`, refused when `expected` is given and differs. Run before the file is
+/// unpacked.
+pub(crate) fn verify(file: &Path, expected: Option<&str>) -> Result<String, String> {
+    let found = sha256_of(file).map_err(|e| format!("cannot read {}: {e}", file.display()))?;
+    match expected {
+        Some(want) if !want.trim().eq_ignore_ascii_case(&found) => Err(format!(
+            "{} does not match the given hash (expected sha256 {}, found {found})",
+            file.display(),
+            want.trim()
+        )),
+        _ => Ok(found),
+    }
 }
 
 fn tar_error(e: &std::io::Error, verb: &str) -> String {
@@ -81,8 +97,8 @@ fn check_record(record: &str, host: &str, ansible_core: &str) -> Result<(), Stri
 }
 
 /// Installs the runtime `manifest` pins from a file `pack` made, with no network. The file is
-/// unpacked into a directory of its own, checked, and only then renamed into place. It is not
-/// hash-checked as a download is: it is as trusted as the file you copied.
+/// unpacked into a directory of its own, checked, and only then renamed into place. The caller
+/// checks its hash with `verify` first.
 pub(crate) fn install_from(
     runtimes: &Path,
     manifest: &Manifest,

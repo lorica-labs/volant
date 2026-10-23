@@ -15,8 +15,8 @@ pub use deferred::Deferred;
 pub use fields::Debugger;
 pub use keywords::{BECOME_METHODS, Flag, META, is_meta};
 pub(crate) use keywords::{
-    possibly_all_template, print_deprecation, python_repr, set_deprecation_warnings,
-    stray_raw_params,
+    names_no_action, possibly_all_template, print_deprecation, python_repr,
+    set_deprecation_warnings, stray_raw_params,
 };
 pub(crate) use load::{TaskFileRefused, base_dir, parse_handlers_file, parse_tasks_file};
 pub use load::{load, parse};

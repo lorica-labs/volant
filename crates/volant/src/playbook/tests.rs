@@ -436,6 +436,7 @@ fn an_unbalanced_command_line_fails_the_load(#[case] line: &str) {
 #[case::args_beside("action: command\n      args: {cmd: hostname}", "command", &[("cmd", "hostname")], None)]
 #[case::local("local_action: command hostname", "command", &[("_raw_params", "hostname")], Some("localhost"))]
 #[case::local_mapping("local_action: {module: command, cmd: hostname}", "command", &[("cmd", "hostname")], Some("localhost"))]
+#[case::module_equals("action: module=command cmd=hostname", "module=command", &[], None)]
 #[case::local_beats_delegate("local_action: command hostname\n      delegate_to: h1", "command", &[("_raw_params", "hostname")], Some("localhost"))]
 fn an_action_statement_names_the_module_in_its_value(
     #[case] line: &str,
@@ -461,10 +462,6 @@ fn an_action_statement_names_the_module_in_its_value(
 
 /// The statements the reference refuses, in its words.
 #[rstest]
-#[case::module_equals(
-    "action: module=command cmd=hostname",
-    "Cannot resolve 'module=command' to an action or module."
-)]
 #[case::no_module("action: {cmd: hostname}", "no module/action detected in task.")]
 #[case::empty("action: ''", "no module/action detected in task.")]
 #[case::two_modules(

@@ -1,6 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::*;
-use crate::compile::META_ACTIONS;
 use crate::playbook::parse;
 use crate::stats::error_code;
 use rstest::rstest;
@@ -358,24 +357,23 @@ fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
     );
 }
 
-/// Every `meta` action the reference has is accepted, and an unknown one stops the run.
-#[test]
-fn meta_actions_are_accepted_and_unknown_ones_refused() {
-    let play =
-        |action: &str| format!("- hosts: all\n  tasks:\n    - name: M\n      meta: {action}\n");
-    for action in META_ACTIONS {
-        let pb = parse(&play(action), "x.yml").expect("the loader takes every action");
-        assert!(check(&pb).is_ok(), "{action} runs");
-    }
-    // Measured on ansible-core 2.19.12: `invalid meta action requested: nosuchaction`,
-    // exit 1 - not the 4 an unloadable playbook gets.
-    let pb = parse(&play("nosuchaction"), "x.yml").unwrap();
-    let err = check(&pb).unwrap_err();
-    assert_eq!(error_code(&err), 1, "{err:#}");
-    assert!(
-        format!("{err:#}").contains("invalid meta action requested: nosuchaction"),
-        "{err:#}"
-    );
+/// A `meta` action is never refused before the run: an unknown one fails when the task is reached.
+#[rstest]
+#[case::known("end_play")]
+#[case::unknown("nosuchaction")]
+fn a_meta_action_passes_the_preflight(#[case] action: &str) {
+    let pb = parse(
+        &format!(
+            "- hosts: all
+  tasks:
+    - name: M
+      meta: {action}
+"
+        ),
+        "x.yml",
+    )
+    .expect("the loader takes every action");
+    assert!(check(&pb).is_ok(), "{action}");
 }
 
 /// `end_role` written where no role is stops the run at exit 4, as the reference stops

@@ -138,7 +138,15 @@ pub(crate) fn expand_include(
         IncludeTarget::Role(entry) => {
             // A fresh `seen` list, as for `import_role`: measured, an `include_role` runs its role
             // again even when the play's `roles:` list has already run it. Its own dependencies
-            // still deduplicate against each other.
+            // still deduplicate against each other. The role the statement is written in heads the
+            // roles the included one is searched after, as `Task.get_search_path` walks them.
+            builder.parent_roles = parent
+                .origin
+                .role_dir
+                .iter()
+                .chain(&parent.origin.parent_roles)
+                .cloned()
+                .collect();
             builder.role(entry, &inherited, &mut Vec::new(), None, parent.section)?;
         }
     }

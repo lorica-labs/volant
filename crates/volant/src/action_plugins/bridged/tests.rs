@@ -184,6 +184,7 @@ fn a_ping_that_lost_its_link_is_retried_over_a_new_one() {
         name: "wait_for_connection",
         modules: &["ping"],
         hostvars: Arc::default(),
+        untrusted_hosts: Default::default(),
         asks,
         replies: Some(replies),
         ready: Arc::new(Notify::new()),
@@ -231,6 +232,7 @@ fn a_command_that_must_not_escalate_runs_as_the_connection_user(
         name: "script",
         modules: &[],
         hostvars: Arc::default(),
+        untrusted_hosts: Default::default(),
         asks,
         replies: Some(replies),
         ready: Arc::new(Notify::new()),
@@ -352,6 +354,7 @@ fn a_wrapped_module_starts_as_a_job(
         name: "gather_facts",
         modules: &["setup"],
         hostvars: Arc::default(),
+        untrusted_hosts: Default::default(),
         asks,
         replies: Some(replies),
         ready: Arc::new(Notify::new()),
@@ -379,4 +382,43 @@ fn a_wrapped_module_starts_as_a_job(
         ),
     };
     assert_eq!((sub.module, started), (module, limit));
+}
+
+/// Another host's variables travel with whether the helper may render them: never for a host
+/// holding a value a managed host sent, through either host's view.
+#[rstest::rstest]
+#[case::trusted("h2", json!({"vars": {"v": "{{ w }}"}, "trusted": true}))]
+#[case::from_a_host("h3", json!({"vars": {"v": "{{ w }}"}, "trusted": false}))]
+#[case::seen_by_the_running_host("h4", json!({"vars": {"v": "{{ w }}"}, "trusted": false}))]
+#[case::unknown("nowhere", Value::Null)]
+fn another_host_s_variables_say_whether_they_render(#[case] host: &str, #[case] reply: Value) {
+    let (_, asks) = channel();
+    let (replies, _) = channel();
+    let entry = json!({"v": "{{ w }}"});
+    let hostvars = ["h2", "h3", "h4"].map(|h| (h.to_string(), entry.clone()));
+    let mut plugin = Bridged {
+        name: "probe",
+        modules: &[],
+        hostvars: Arc::new(hostvars.into_iter().collect()),
+        untrusted_hosts: [
+            Arc::new(["h3".to_string()].into()),
+            Arc::new(["h4".to_string()].into()),
+        ],
+        asks,
+        replies: Some(replies),
+        ready: Arc::new(Notify::new()),
+        pending: None,
+        tmps: Vec::new(),
+        _vault_src: None,
+        ending: None,
+        timeout: None,
+        deadline: Instant::now() + Duration::from_secs(600),
+        stale: false,
+        connect_timeout: Duration::from_secs(5),
+    };
+    let ask = Ask::HostVar { host: host.into() };
+    let Err(answer) = plugin.step_for(ask) else {
+        panic!("the controller should answer without the host");
+    };
+    assert_eq!(answer, Reply::Value(reply));
 }

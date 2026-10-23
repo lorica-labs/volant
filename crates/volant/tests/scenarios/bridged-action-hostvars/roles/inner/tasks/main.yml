@@ -1,0 +1,5 @@
+- acme.probe.probe:
+    what: needle
+  register: r
+- debug:
+    var: r

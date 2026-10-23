@@ -301,18 +301,20 @@ pub(super) fn task_name(
         Some(name) => name.clone(),
         None => render_name(step, host, plan, live, &state.templar, &state.vars),
     };
-    let name = match (&step.kind, step.task.named) {
-        (StepKind::Include(IncludeKind::Role), false) => {
-            let role = ["name", "role"]
-                .iter()
-                .find_map(|key| step.task.args.get(*key).and_then(|v| v.as_str()));
-            match role {
-                Some(role) => format!("{name} : {role}"),
-                None => name,
-            }
+    // `IncludeRole.get_name` is `self.name or "action : role"`: unlike a task's, it never opens
+    // with the name of the role the statement is written in.
+    if matches!(step.kind, StepKind::Include(IncludeKind::Role)) {
+        if step.task.named {
+            return name;
         }
-        _ => name,
-    };
+        let role = ["name", "role"]
+            .iter()
+            .find_map(|key| step.task.args.get(*key).and_then(|v| v.as_str()));
+        return match role {
+            Some(role) => format!("{name} : {role}"),
+            None => name,
+        };
+    }
     match step.role.and_then(|i| plan.steps().roles.get(i).cloned()) {
         Some(role) => format!("{} : {name}", role.name),
         None => name,

@@ -8,24 +8,28 @@
   --sl-font: 'Geist Variable', system-ui, sans-serif;
   --sl-font-mono: 'Geist Mono Variable', ui-monospace, monospace;
 
-  --sl-color-accent-low: #0b2e2b;
-  --sl-color-accent: #14b8a6;
-  --sl-color-accent-high: #99f6e4;
-  --sl-color-white: #ffffff;
-  --sl-color-gray-1: #e6edf0;
-  --sl-color-gray-2: #c0cbd0;
-  --sl-color-gray-3: #8b9aa1;
-  --sl-color-gray-4: #56666d;
-  --sl-color-gray-5: #36444a;
-  --sl-color-gray-6: #1f2a2f;
-  --sl-color-black: #12191c;
+  /* The same palette as the product site: near-black ground, cool grays, teal from the mark. */
+  --sl-color-accent-low: #0a2b28;
+  --sl-color-accent: #19b6a6;
+  --sl-color-accent-high: #9af0e4;
+  --sl-color-white: #eef1f3;
+  --sl-color-gray-1: #dfe4e7;
+  --sl-color-gray-2: #b3bcc3;
+  --sl-color-gray-3: #7c868e;
+  --sl-color-gray-4: #4f585f;
+  --sl-color-gray-5: #2b3237;
+  --sl-color-gray-6: #171b1f;
+  --sl-color-black: #0b0d0f;
+  --sl-color-bg-nav: #0b0d0f;
+  --sl-color-bg-sidebar: #0b0d0f;
+  --sl-nav-height: 4rem;
 
   /* Hairlines are translucent so they sit on any surface without reading as a gray box. */
   --v-hairline: rgb(255 255 255 / 0.08);
   --v-hairline-strong: rgb(255 255 255 / 0.14);
   /* A figure sits in a thin shell, with a slightly raised core inside it. */
   --v-shell: rgb(255 255 255 / 0.025);
-  --v-core: #151d21;
+  --v-core: #111417;
   --v-core-highlight: inset 0 1px 0 rgb(255 255 255 / 0.04);
   --v-soft-shadow: 0 1px 2px rgb(0 0 0 / 0.2), 0 12px 32px -12px rgb(0 0 0 / 0.45);
   --v-radius: 1rem;
@@ -46,6 +50,8 @@
   --sl-color-gray-6: #e6edf0;
   --sl-color-gray-7: #f4f7f8;
   --sl-color-black: #ffffff;
+  --sl-color-bg-nav: #ffffff;
+  --sl-color-bg-sidebar: #ffffff;
 
   --v-hairline: rgb(18 25 28 / 0.08);
   --v-hairline-strong: rgb(18 25 28 / 0.14);

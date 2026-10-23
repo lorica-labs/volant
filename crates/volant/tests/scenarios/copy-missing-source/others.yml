@@ -1,0 +1,7 @@
+- hosts: work
+  gather_facts: false
+  tasks:
+    - unarchive: {src: nofile.tar.gz, dest: /tmp}
+      ignore_errors: true
+    - copy: {content: x, dest: /nonexistent-dir/volant/x}
+      ignore_errors: true

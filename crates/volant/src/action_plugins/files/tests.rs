@@ -38,7 +38,8 @@ fn a_file_is_searched_where_the_reference_searches() {
     );
     assert_eq!(
         not_found("a.txt", &search_paths(&play, pb, "files", "a.txt")),
-        "Could not find or access 'a.txt'\nSearched in:\n\t/pb/files/a.txt\n\t/pb/a.txt\n\t/pb/files/a.txt\n\t/pb/a.txt on the Ansible Controller."
+        "Could not find or access 'a.txt'\nSearched in:\n\t/pb/files/a.txt\n\t/pb/a.txt\n\t/pb/files/a.txt\n\t/pb/a.txt on the Ansible Controller.
+If you are using a module and expect the file to exist on the remote, see the remote_src option"
     );
 }
 

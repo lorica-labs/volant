@@ -1,0 +1,4 @@
+- hosts: work
+  gather_facts: false
+  tasks:
+    - copy: {src: /nonexistent/nofile.txt, dest: /tmp/volant-copy-missing}

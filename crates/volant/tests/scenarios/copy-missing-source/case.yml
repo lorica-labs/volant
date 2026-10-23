@@ -1,0 +1,6 @@
+# A copy or unarchive with a missing controller source ends with the remote_src hint and no discovered interpreter; a copy that fails after its module ran keeps it. Measured: a template with a missing src carries none either.
+needs: [ansible-core]
+runs:
+  - args: [-i, hosts.ini, relative.yml]
+  - args: [-i, hosts.ini, absolute.yml]
+  - args: [-i, hosts.ini, others.yml]

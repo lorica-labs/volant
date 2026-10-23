@@ -515,7 +515,7 @@ fn a_missing_source_names_where_it_looked() {
     assert_eq!(
         result["msg"],
         json!(format!(
-            "Task failed: {}\nIf you are using a module and expect the file to exist on the remote, see the remote_src option",
+            "Task failed: {}",
             not_found("nope.tar.gz", &searched)
         ))
     );

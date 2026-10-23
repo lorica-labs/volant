@@ -13,12 +13,13 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::copy::{CopyOf, copy_bytes, failing, local_mode};
+use super::copy::{CopyOf, copy_bytes, failing, failing_with, local_mode};
 use super::files::{check_host_named, not_found, search_paths};
 use super::{Context, Plugin};
 use crate::executor::as_bool_value;
 use crate::template::{FileRender, Syntax, Vars};
 use crate::vars::HostVars;
+use volant_protocol::TaskResult;
 
 mod encoding;
 use encoding::encode;
@@ -52,10 +53,32 @@ const TEMPLATE_ONLY: &[&str] = &[
 ];
 
 pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
-    match rendered(&ctx) {
+    let mut lookup_in = None;
+    match rendered(&ctx, &mut lookup_in) {
         Ok(of) => copy_bytes(of),
-        Err(msg) => failing(msg),
+        Err(msg) => match lookup_in {
+            Some(file) => failing_with(lookup_failure(&msg, &file)),
+            None => failing(msg),
+        },
     }
+}
+
+/// A lookup that failed while the template rendered: the plugin raised it from inside the
+/// action, so the task says `Task failed: ` and the sentence, `changed: false`, and the error
+/// block chains the sentence again at the template file.
+fn lookup_failure(text: &str, file: &std::path::Path) -> TaskResult {
+    let at = crate::playbook::Origin {
+        path: file.display().to_string().into(),
+        line: 0,
+        col: 0,
+    };
+    let mut failed = TaskResult::failed_with(format!("Task failed: {text}"));
+    failed.0.insert("changed".into(), Value::Bool(false));
+    failed.0.insert(
+        crate::render::CHAIN_KEY.into(),
+        Value::Array(vec![crate::render::cause(text, Some(&at), None)]),
+    );
+    failed
 }
 
 /// A string argument, `None` when absent or null. The reference turns anything else into a
@@ -146,7 +169,10 @@ fn template_vars(
 }
 
 /// The rendered template and the arguments `copy` gets, or the task's failure.
-fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
+fn rendered(
+    ctx: &Context<'_>,
+    lookup_in: &mut Option<std::path::PathBuf>,
+) -> Result<CopyOf, String> {
     let args = ctx.args;
     // The reference's checks, in its order and in its words.
     if string_arg(args, "state").is_some() {
@@ -215,7 +241,14 @@ fn rendered(ctx: &Context<'_>) -> Result<CopyOf, String> {
     let out = ctx
         .templar
         .render_file(&text, Vars::from(&vars), &options)
-        .map_err(|err| format!("could not render {src}: {err}"))?;
+        .map_err(|err| {
+            if err.0.starts_with("The lookup plugin '") {
+                *lookup_in = Some(found.clone());
+                err.0
+            } else {
+                format!("could not render {src}: {err}")
+            }
+        })?;
     let bytes = encode(&out, encoding.as_deref().unwrap_or("utf-8"))?;
 
     let mut args: Map<String, Value> = args

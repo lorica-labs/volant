@@ -189,3 +189,47 @@ fn a_two_document_inventory_is_refused_in_the_reference_words() {
         );
     }
 }
+
+/// `-vvvv` names the characters of each group name the generator leaves as it is.
+#[test]
+fn the_generator_says_which_characters_it_does_not_replace() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("gen.yml");
+    std::fs::write(
+        &file,
+        "plugin: generator
+hosts:
+  name: h
+  parents:
+    - name: a.b-group
+    - name: c-group
+    - name: ok
+layers:
+  x: [1]
+",
+    )
+    .unwrap();
+    let loaded = load_sources(
+        &[Source::new(&file.to_string_lossy())],
+        &PluginConfig::default(),
+    );
+    let lines: Vec<&Note> = loaded
+        .notes
+        .iter()
+        .filter(|n| matches!(n, Note::Verbose(4, _)))
+        .collect();
+    assert_eq!(
+        lines,
+        [
+            &Note::Verbose(
+                4,
+                "Not replacing invalid character(s) \"{'.', '-'}\" in group name (a.b-group)"
+                    .into()
+            ),
+            &Note::Verbose(
+                4,
+                "Not replacing invalid character(s) \"{'-'}\" in group name (c-group)".into()
+            ),
+        ]
+    );
+}

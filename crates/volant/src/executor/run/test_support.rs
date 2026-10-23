@@ -31,6 +31,7 @@ pub(super) fn local_item(args: Value) -> Item {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     }
 }
@@ -65,6 +66,8 @@ pub(super) struct FakeAgent {
     pub(super) busy: Option<Box<Busy>>,
     /// Whether the link was given up on.
     pub(super) abandoned: bool,
+    /// Whether writing a `PutFile` never returns, as a link whose peer stopped reading.
+    pub(super) put_ask_hangs: bool,
     /// How many times the closing line of a terminal was asked for.
     pub(super) close_asked: usize,
 }
@@ -124,6 +127,7 @@ impl FakeAgent {
             transfer_takes: Duration::ZERO,
             busy: None,
             abandoned: false,
+            put_ask_hangs: false,
             close_asked: 0,
         }
     }
@@ -148,6 +152,9 @@ impl AgentChannel for FakeAgent {
 
     async fn ask(&mut self, msg: &ToAgent) -> std::io::Result<()> {
         self.sent.push(msg.clone());
+        if self.put_ask_hangs && matches!(msg, ToAgent::PutFile { .. }) {
+            std::future::pending::<()>().await;
+        }
         if let (Some(busy), ToAgent::RunBatch { id, .. }) = (&mut self.busy, msg) {
             if busy.running.is_some() {
                 busy.dropped.push(*id);
@@ -329,6 +336,7 @@ pub(super) fn bare_item() -> Item {
         diff: None,
         skipped: None,
         set_fact_names: std::sync::OnceLock::new(),
+        label_error: None,
         notify: Vec::new(),
     }
 }

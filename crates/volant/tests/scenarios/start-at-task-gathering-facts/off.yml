@@ -1,0 +1,4 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - debug: msg=one

@@ -1,0 +1,9 @@
+- hosts: l
+  gather_facts: false
+  become: true
+  become_method: su
+  become_user: root
+  vars:
+    ansible_become_password: wrong
+  tasks:
+    - ping:

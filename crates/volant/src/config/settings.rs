@@ -1,6 +1,38 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! One setting at a time: integers, switches and the few values with a closed set of names.
 
+/// `[volant] host_named_paths`: what a `template`, `copy`, `script`, `unarchive` or `assemble`
+/// task does with a controller `src` that a managed host named, through a gathered fact or a
+/// registered result.
+///
+/// Measured on ansible-core 2.19.12: the reference reads whatever readable controller file such a
+/// name points at and sends it, or its rendering, to the host. `Allow` does the same. The two
+/// other modes tighten it. A `fetch` whose `dest` a host named follows the same word: see
+/// `host_named_dest_dirs`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum HostNamedPaths {
+    /// The reference's behaviour: the file is looked up and sent.
+    #[default]
+    Allow,
+    /// The file is sent only when its path stays inside the directories where the author keeps
+    /// the files of the task: the playbook's, the role's and the ones the reference searches.
+    Contained,
+    /// The name is refused before any path is looked up.
+    Refuse,
+}
+
+impl HostNamedPaths {
+    /// The mode a word names.
+    pub fn parse(word: &str) -> Option<Self> {
+        match word {
+            "allow" => Some(Self::Allow),
+            "contained" => Some(Self::Contained),
+            "refuse" => Some(Self::Refuse),
+            _ => None,
+        }
+    }
+}
+
 /// An integer setting, or the reference's own refusal for one that is not an integer.
 ///
 /// Measured against ansible-core 2.19.12 on the development machine: `forks = many` in
@@ -70,8 +102,8 @@ pub(super) fn runtime_mode(value: &str, origin: &str) -> anyhow::Result<crate::r
 }
 
 /// `[volant] host_named_paths`: one of its three words, refused otherwise.
-pub(super) fn host_named_paths(value: &str, origin: &str) -> anyhow::Result<super::HostNamedPaths> {
-    super::HostNamedPaths::parse(value.trim()).ok_or_else(|| {
+pub(super) fn host_named_paths(value: &str, origin: &str) -> anyhow::Result<HostNamedPaths> {
+    HostNamedPaths::parse(value.trim()).ok_or_else(|| {
         crate::stats::Refusal::at(
             5,
             format!(

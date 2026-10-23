@@ -76,3 +76,28 @@ fn a_relative_path_and_a_missing_directory_are_refused() {
     assert_eq!(err.to_string(), "the path is not absolute");
     assert!(put(&staged, &dir.path().join("no/such/out"), None).is_err());
 }
+
+/// Another account's file keeps its owner, group and mode; skipped when the test cannot chown.
+#[test]
+fn a_replaced_file_keeps_its_owner_group_and_mode() {
+    use std::os::unix::fs::MetadataExt;
+    if unsafe { libc::geteuid() } != 0 {
+        eprintln!("skipped: chown to another account needs root");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let staged = dir.path().join("staged");
+    let at = dir.path().join("out");
+    fs::write(&staged, b"new").unwrap();
+    fs::write(&at, b"old").unwrap();
+    std::os::unix::fs::chown(&at, Some(1234), Some(4321)).unwrap();
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o640)).unwrap();
+    let before = fs::metadata(&at).unwrap();
+    assert!(put(&staged, &at, None).unwrap());
+    let after = fs::metadata(&at).unwrap();
+    assert_eq!(fs::read(&at).unwrap(), b"new");
+    assert_eq!((after.uid(), after.gid()), (1234, 4321));
+    assert_eq!(mode(&at), 0o640);
+    assert_eq!(after.mtime(), before.mtime());
+    assert_eq!(after.mtime_nsec(), before.mtime_nsec());
+}

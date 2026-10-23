@@ -61,6 +61,9 @@ pub(super) fn resolve_limit(
         return Ok(None);
     };
     let resolution = inventory.resolve(pattern);
+    if let Some(bad) = &resolution.invalid {
+        anyhow::bail!("Invalid host list pattern: {bad}");
+    }
     // A `--limit` naming a host that is not there is a warning and not a refusal, the way it is
     // in a play's own `hosts`: measured, `-l web1,web-typo` warns `Could not match supplied host
     // pattern, ignoring: web-typo` and then runs on `web1`. Losing it meant a mistyped name
@@ -200,6 +203,9 @@ pub(super) fn play_hosts(
     ordered: bool,
 ) -> anyhow::Result<Vec<Host>> {
     let resolution = inventory.resolve(&play.hosts);
+    if let Some(bad) = &resolution.invalid {
+        anyhow::bail!("Invalid host list pattern: {bad}");
+    }
     for warning in &resolution.warnings {
         if warned.insert(warning.clone()) {
             out.warning(warning, false);

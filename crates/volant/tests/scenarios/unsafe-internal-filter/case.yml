@@ -1,0 +1,3 @@
+# The loader's own filters are not a playbook's: a call fails as an unknown filter, as in the
+# reference.
+args: [-i, inv.ini, site.yml]

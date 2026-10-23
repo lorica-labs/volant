@@ -129,6 +129,8 @@
 - {template: "{{ s | from_yaml }}", vars: {s: "a: &n 010\nb: *n"}}
 - {template: "{{ s | from_yaml }}", vars: {s: "a: &n \"5\"\nb: *n"}}
 - {template: "{{ s | from_yaml }}", vars: {s: "a: &n |\n  x\n  y\nb: *n"}}
+- {template: "{{ s | from_yaml }}", vars: {s: "!unsafe a: 1"}}
+- {template: "{{ s | from_yaml }}", vars: {s: "a: !unsafe '{{ x }}'"}}
 - {template: "{{ s | from_yaml }}", vars: {s: "a: !!str 5"}}
 - {template: "{{ s | from_yaml }}", vars: {s: "a: !!int \"5\""}}
 - {template: "{{ s | from_yaml }}", vars: {s: "a: !!float 5"}}

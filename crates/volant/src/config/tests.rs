@@ -776,3 +776,50 @@ fn volant_host_named_dest_dirs_in_the_environment_sets_the_list() {
     unsafe { std::env::remove_var("VOLANT_HOST_NAMED_DEST_DIRS") };
     assert_eq!(Config::load().unwrap().host_named_dest_dirs, None);
 }
+
+/// Colour follows ansible-core 2.19.12: `--no-color`, then `force_color`, then `nocolor`; and
+/// `deprecation_warnings` reads like any switch.
+#[rstest::rstest]
+#[case::default("", false, anstream::ColorChoice::Auto)]
+#[case::force("force_color = true", false, anstream::ColorChoice::Always)]
+#[case::nocolor("nocolor = 1", false, anstream::ColorChoice::Never)]
+#[case::force_beats_nocolor(
+    "force_color = yes\nnocolor = yes",
+    false,
+    anstream::ColorChoice::Always
+)]
+#[case::flag_beats_force("force_color = yes", true, anstream::ColorChoice::Never)]
+fn colour_settings_choose_as_the_reference_does(
+    #[case] lines: &str,
+    #[case] flag: bool,
+    #[case] want: anstream::ColorChoice,
+) {
+    let config = cfg(&format!("[defaults]\n{lines}\n"), ".");
+    assert_eq!(config.color_choice(flag), want);
+}
+
+#[test]
+fn deprecation_warnings_are_on_unless_the_file_turns_them_off() {
+    assert!(Config::default().deprecation_warnings);
+    assert!(!cfg("[defaults]\ndeprecation_warnings = False\n", ".").deprecation_warnings);
+    assert!(
+        parse(
+            "[defaults]\nnocolor = maybe\n",
+            Path::new("."),
+            "ansible.cfg"
+        )
+        .is_err()
+    );
+}
+
+/// `[ssh_connection] usetty` is on without a line, and reads like the reference's callback
+/// options: an unknown word is off.
+#[rstest::rstest]
+#[case("", true)]
+#[case("[ssh_connection]\nusetty = False\n", false)]
+#[case("[ssh_connection]\nusetty = true\n", true)]
+#[case("[ssh_connection]\nusetty = maybe\n", false)]
+#[case("[defaults]\nusetty = False\n", true)]
+fn the_ssh_terminal_setting_is_read_from_its_section(#[case] text: &str, #[case] on: bool) {
+    assert_eq!(cfg(text, ".").ssh_usetty, on);
+}

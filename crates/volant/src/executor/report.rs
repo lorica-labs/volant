@@ -141,7 +141,7 @@ pub(super) async fn report_task(
             first_failure = Some(r.clone());
         }
         let label = labels.get(i).cloned().flatten();
-        let error = r.failed().then(|| {
+        let error = (r.failed() && !r.0.contains_key(crate::render::NO_BLOCK_KEY)).then(|| {
             let mut block = ErrorBlock::of(r, task.origin.as_ref(), censored);
             if task.origin.is_none() && !censored {
                 block.unknown = generated_source(task);

@@ -57,21 +57,12 @@ impl Renderer {
         ) else {
             return;
         };
-        match bridge.diff_text(diff) {
+        match bridge.diff_text(diff, self.color) {
             Ok(text) if text.is_empty() => {}
             Ok(text) => {
-                let painted: String = text
-                    .split_inclusive('\n')
-                    .map(|line| match line.as_bytes().first() {
-                        Some(b'+') => self.paint(OK, line),
-                        Some(b'-') => self.paint(FAILED, line),
-                        Some(b'@') if line.starts_with("@@") => self.paint(SKIPPED, line),
-                        _ => line.to_string(),
-                    })
-                    .collect();
                 // Measured: the block ends with one blank line, which `_get_diff` already put there.
-                let end = if painted.ends_with('\n') { "" } else { "\n" };
-                let _ = write!(self.out, "{painted}{end}");
+                let end = if text.ends_with('\n') { "" } else { "\n" };
+                let _ = write!(self.out, "{text}{end}");
             }
             Err(err) => self.warning(&format!("the diff could not be rendered: {err}"), false),
         }

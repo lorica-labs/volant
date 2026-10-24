@@ -1,5 +1,5 @@
 ---
-sourceHash: 8b2c1bcae897
+sourceHash: b9d47fe3c8ae
 title: volant adhoc
 description: 在每台匹配模式的主机上运行一个模块，选项和输出与 ansible 一致。
 ---
@@ -32,7 +32,7 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 其余选项的含义与 `volant playbook` 相同，包括 `--flush-cache` 和 `-M`。`-f 1` 一次运行一台主机，按 inventory 的顺序。
 
-匹配不到任何主机的模式会在标准错误输出 `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` 和 `[WARNING]: No hosts matched, nothing to do`，退出码为 0。`-l` 没有留下任何主机时，会输出它自己的警告和 `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`，退出码为 1，是否带 `--list-hosts` 都一样。完全没有主机的 inventory 只警告一次，不运行任何东西。没有 inventory 时，隐式的 `localhost` 是唯一存在的主机，只有点名它的模式才能匹配。不带 `-a` 运行 `command`、`shell` 或 `raw` 会以 `[ERROR]: No argument passed to command module` 和退出码 5 停止。
+匹配不到任何主机的模式会在标准错误输出 `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` 和 `[WARNING]: No hosts matched, nothing to do`，退出码为 0。`-l` 没有留下任何主机时，会输出 `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`，退出码为 1，是否带 `--list-hosts` 都一样。只有 `-l` 的模式本身匹配不到任何主机时，前面才会多一条无法匹配该模式的警告。完全没有主机的 inventory 只警告一次，不运行任何东西。没有 inventory 时，隐式的 `localhost` 是唯一存在的主机，只有点名它的模式才能匹配。不带 `-a` 运行 `command`、`shell` 或 `raw` 会以 `[ERROR]: No argument passed to command module` 和退出码 5 停止。
 
 用法错误的退出码为 2。标准错误先输出 `ansible` 的 `usage:` 块，再输出 `ansible: error: ` 和原因。缺少模式，或 `-f` 不是数字时，后面还会跟 `ansible` 的完整帮助；`-f` 小于 1 时则没有。
 

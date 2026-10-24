@@ -1,5 +1,5 @@
 ---
-sourceHash: 8b2c1bcae897
+sourceHash: b9d47fe3c8ae
 title: volant adhoc
 description: Ejecuta un módulo en cada host que coincide con un patrón, con las opciones y la salida de ansible.
 ---
@@ -32,7 +32,7 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 Las demás opciones significan lo mismo que para `volant playbook`, incluidas `--flush-cache` y `-M`. `-f 1` ejecuta un host cada vez, en el orden del inventario.
 
-Un patrón que no designa ningún host imprime `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` y `[WARNING]: No hosts matched, nothing to do` en la salida de error estándar, y termina con 0. Un `-l` que no deja ningún host imprime su propio aviso y `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`, y termina con 1, con o sin `--list-hosts`. Un inventario sin ningún host avisa una vez y no ejecuta nada. Sin inventario, el `localhost` implícito es el único host que existe, y solo lo designa un patrón que lo nombre. Un `command`, `shell` o `raw` sin `-a` se detiene con `[ERROR]: No argument passed to command module` y el código de salida 5.
+Un patrón que no designa ningún host imprime `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` y `[WARNING]: No hosts matched, nothing to do` en la salida de error estándar, y termina con 0. Un `-l` que no deja ningún host imprime `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.` y termina con 1, con o sin `--list-hosts`. Un aviso de que el patrón de `-l` no se pudo resolver va antes solo cuando ese patrón no designa ningún host. Un inventario sin ningún host avisa una vez y no ejecuta nada. Sin inventario, el `localhost` implícito es el único host que existe, y solo lo designa un patrón que lo nombre. Un `command`, `shell` o `raw` sin `-a` se detiene con `[ERROR]: No argument passed to command module` y el código de salida 5.
 
 Un error de uso termina con 2. La salida de error estándar lleva el bloque `usage:` de `ansible`, luego `ansible: error: ` y el motivo. Tras un patrón que falta o un `-f` que no es un número sigue la ayuda completa de `ansible`; tras un `-f` menor que 1, no.
 

@@ -52,3 +52,52 @@ pub fn usage_error(err: &clap::Error) -> Option<i32> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::HELP;
+    use crate::cli::AdhocArgs;
+    use clap::CommandFactory;
+
+    /// Options of the reference that `volant adhoc` does not take yet.
+    const NOT_YET: [&str; 8] = [
+        "--background",
+        "--check",
+        "--diff",
+        "--one-line",
+        "--poll",
+        "--task-timeout",
+        "--tree",
+        "--version",
+    ];
+
+    #[test]
+    fn every_option_of_the_help_is_an_argument_or_not_yet_one() {
+        let mut command = AdhocArgs::command();
+        command.build();
+        let mut known: Vec<String> = Vec::new();
+        for arg in command.get_arguments() {
+            known.extend(arg.get_long().map(|l| format!("--{l}")));
+            known.extend(
+                arg.get_all_aliases()
+                    .into_iter()
+                    .flatten()
+                    .map(|a| format!("--{a}")),
+            );
+        }
+        let listed: Vec<&str> = HELP
+            .lines()
+            .filter(|line| line.starts_with("  -"))
+            .flat_map(|line| line.trim().split(", "))
+            .filter_map(|word| word.split(' ').next())
+            .filter(|word| word.starts_with("--"))
+            .collect();
+        assert!(listed.len() > 30, "the help lists its options: {listed:?}");
+        for option in listed {
+            assert!(
+                known.iter().any(|k| k == option) || NOT_YET.contains(&option),
+                "{option} is in the help and neither an argument nor on the not-yet list"
+            );
+        }
+    }
+}

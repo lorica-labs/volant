@@ -1,5 +1,5 @@
 ---
-sourceHash: 8b2c1bcae897
+sourceHash: b9d47fe3c8ae
 title: volant adhoc
 description: Exécute un module sur chaque hôte qui correspond à un motif, avec les options et la sortie d'ansible.
 ---
@@ -32,7 +32,7 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 Les autres options ont le sens qu'elles ont pour `volant playbook`, `--flush-cache` et `-M` compris. `-f 1` exécute un hôte à la fois, dans l'ordre de l'inventaire.
 
-Un motif qui ne désigne aucun hôte affiche `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` et `[WARNING]: No hosts matched, nothing to do` sur l'erreur standard, et sort avec 0. Un `-l` qui ne laisse aucun hôte affiche son propre avertissement puis `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`, et sort avec 1, avec ou sans `--list-hosts`. Un inventaire sans aucun hôte avertit une fois et n'exécute rien. Sans inventaire, le `localhost` implicite est le seul hôte qui existe, et seul un motif qui le nomme le désigne. Un `command`, `shell` ou `raw` lancé sans `-a` s'arrête avec `[ERROR]: No argument passed to command module` et le code de sortie 5.
+Un motif qui ne désigne aucun hôte affiche `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` et `[WARNING]: No hosts matched, nothing to do` sur l'erreur standard, et sort avec 0. Un `-l` qui ne laisse aucun hôte affiche `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.` et sort avec 1, avec ou sans `--list-hosts`. Un avertissement disant que le motif de `-l` n'a pu être résolu vient avant, seulement quand ce motif ne désigne aucun hôte. Un inventaire sans aucun hôte avertit une fois et n'exécute rien. Sans inventaire, le `localhost` implicite est le seul hôte qui existe, et seul un motif qui le nomme le désigne. Un `command`, `shell` ou `raw` lancé sans `-a` s'arrête avec `[ERROR]: No argument passed to command module` et le code de sortie 5.
 
 Une erreur d'usage sort avec 2. L'erreur standard porte le bloc `usage:` d'`ansible`, puis `ansible: error: ` et la raison. Un motif manquant ou un `-f` qui n'est pas un nombre est suivi de l'aide complète d'`ansible` ; un `-f` inférieur à 1 ne l'est pas.
 

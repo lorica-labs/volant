@@ -24,3 +24,4 @@ runs:
   - args: [localhost]
   - args: [all, -i, inv.ini]
   - args: [web, -i, inv.ini, -m, shell]
+  - args: [all, -i, nosuch.ini, -m, ping, --list-hosts, -l, x]

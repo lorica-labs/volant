@@ -10,8 +10,10 @@ volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
 volant config [ARGS...]
+volant console [ARGS...]
 volant doc [ARGS...]
 volant galaxy [ARGS...]
+volant pull [ARGS...]
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
@@ -19,11 +21,11 @@ volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-Each other command has its own page: [`volant adhoc`](/docs/reference/cli/adhoc/), [`volant config`](/docs/reference/cli/config/), [`volant doc`](/docs/reference/cli/doc/), [`volant galaxy`](/docs/reference/cli/galaxy/), [`volant inventory`](/docs/reference/cli/inventory/), [`volant runtime`](/docs/reference/cli/runtime/), [`volant shims`](/docs/reference/cli/shims/), [`volant vault`](/docs/reference/cli/vault/). This page covers `volant playbook`.
+Each other command has its own page: [`volant adhoc`](/docs/reference/cli/adhoc/), [`volant config`](/docs/reference/cli/config/), [`volant console`](/docs/reference/cli/console/), [`volant doc`](/docs/reference/cli/doc/), [`volant galaxy`](/docs/reference/cli/galaxy/), [`volant pull`](/docs/reference/cli/pull/), [`volant inventory`](/docs/reference/cli/inventory/), [`volant runtime`](/docs/reference/cli/runtime/), [`volant shims`](/docs/reference/cli/shims/), [`volant vault`](/docs/reference/cli/vault/). This page covers `volant playbook`.
 
 `volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know. Playbooks given together run in order, and each one prints its own recap.
 
-On Linux and macOS the `volant` binary also dispatches on the name it was started as (the file name of `argv[0]`). Started as `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy` or `ansible-inventory`, through a symlink or a hard link, it behaves as `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy` or `volant inventory` with the same arguments, output and exit codes. Started as `ansible`, it behaves as `volant adhoc`. A usage error exits with 2 and names the program as started. Any other name keeps the usual `volant` behaviour.
+On Linux and macOS the `volant` binary also dispatches on the name it was started as (the file name of `argv[0]`). Started as `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-console`, `ansible-pull` or `ansible-inventory`, through a symlink or a hard link, it behaves as `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy`, `volant console`, `volant pull` or `volant inventory` with the same arguments, output and exit codes. Started as `ansible`, it behaves as `volant adhoc`. `volant doc`, `config`, `galaxy`, `console` and `pull` run ansible-core's own tools from Volant's Python runtime; the only difference in their output is the path `volant pull` shows for `ansible-pull` on its second line, see [`volant pull`](/docs/reference/cli/pull/). A usage error exits with 2 and names the program as started. Any other name keeps the usual `volant` behaviour.
 
 Where an option has an `ansible.cfg` key or an environment variable, the entry names it. The option wins over both; [Configuration](/docs/reference/configuration/) explains the order.
 
@@ -239,4 +241,4 @@ Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extr
 
 `volant adhoc` does not have `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` or `-t` yet.
 
-`volant` has the subcommands `playbook`, `adhoc`, `inventory`, `runtime`, `shims` and `vault`. The other Ansible tools have no counterpart yet: `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.
+`volant` has the subcommands `playbook`, `adhoc`, `inventory`, `runtime`, `shims`, `vault`, `doc`, `config`, `galaxy`, `console` and `pull`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.

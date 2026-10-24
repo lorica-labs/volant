@@ -39,7 +39,15 @@ fn start(tool: &str, args: &[OsString]) -> anyhow::Result<i32> {
     // started as the playbook helper starts it.
     let managed =
         resolve::managed().is_some_and(|done| done.python.display().to_string() == python);
-    let mut command = command(&python, managed, tool, &started_as(), args);
+    // `ansible-pull` starts `ansible` and `ansible-playbook` beside its own path: Volant's links.
+    let argv0 = if tool == "pull" {
+        super::pull_links::dir()
+            .map_err(anyhow::Error::msg)?
+            .join("ansible-pull")
+    } else {
+        started_as()
+    };
+    let mut command = command(&python, managed, tool, &argv0, args);
     if let Some(paths) = collections::helper_env() {
         command.env("ANSIBLE_COLLECTIONS_PATH", paths);
     }

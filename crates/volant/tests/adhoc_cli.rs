@@ -758,3 +758,53 @@ h1 | FAILED! => {\"changed\": false,\"msg\": \"Task failed: Cannot resolve 'nosu
     );
     assert_eq!(text(&out.stderr), deprecations(&["-o"], ""));
 }
+
+/// A host name that is not one plain file name gets no file and a warning, and the file of a
+/// valid one replaces a link planted at its place instead of following it.
+#[rstest]
+#[case::parent("../esc", false)]
+#[case::absolute("/tmp/volant-tree-abs-never", false)]
+#[case::dotted("h1.example.com", true)]
+fn the_tree_file_of_an_odd_host_name(#[case] host: &str, #[case] written: bool) {
+    let base = tree_dir("odd");
+    let dir = base.join("out");
+    std::fs::create_dir_all(&dir).unwrap();
+    let inventory = format!("{host},");
+    let path = dir.display().to_string();
+    let out = adhoc(
+        &[
+            host, "-i", &inventory, "-c", "local", "-m", "debug", "-a", "msg=x", "-t", &path,
+        ],
+        &[],
+    );
+    let stderr = text(&out.stderr);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let outside = base.join("esc").exists() || Path::new("/tmp/volant-tree-abs-never").exists();
+    assert!(!outside, "a file was written outside the directory");
+    assert_eq!(dir.join(host).is_file(), written, "{host}");
+    assert_eq!(stderr.contains("Unable to write to"), !written, "{stderr}");
+    let _ = std::fs::remove_dir_all(&base);
+}
+
+#[test]
+fn a_planted_link_is_replaced_and_the_file_is_private() {
+    use std::os::unix::fs::PermissionsExt;
+    let base = tree_dir("link");
+    std::fs::create_dir_all(&base).unwrap();
+    let target = base.join("target");
+    std::fs::write(&target, "keep").unwrap();
+    std::os::unix::fs::symlink(&target, base.join("h1")).unwrap();
+    let path = base.display().to_string();
+    let out = adhoc(
+        &[
+            "h1", "-i", "inv.ini", "-m", "debug", "-a", "msg=x", "-t", &path,
+        ],
+        &[],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(std::fs::read_to_string(&target).unwrap(), "keep");
+    let file = base.join("h1");
+    assert!(!file.symlink_metadata().unwrap().file_type().is_symlink());
+    assert_eq!(file.metadata().unwrap().permissions().mode() & 0o777, 0o600);
+    let _ = std::fs::remove_dir_all(&base);
+}

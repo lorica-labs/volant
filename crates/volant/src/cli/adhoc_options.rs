@@ -40,6 +40,7 @@ pub(super) fn deprecated_options(args: &AdhocArgs, argv: &[OsString]) -> Vec<Str
             .get_arguments()
             .any(|a| a.get_short() == Some(c) && a.get_action().takes_values())
     };
+    // A value that looks like an option (`-a -o`) is counted too: the reference refuses such a line.
     let mut found: Vec<&str> = Vec::new();
     for arg in argv.iter().filter_map(|arg| arg.to_str()) {
         if arg == "--" {

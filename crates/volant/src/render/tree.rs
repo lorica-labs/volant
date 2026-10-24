@@ -40,19 +40,56 @@ impl Renderer {
             );
             return;
         }
+        // The reference joins the name as it is, so `../x` and `/abs` write outside the
+        // directory. This release writes only a file named by one plain path component.
+        let plain = !host.is_empty() && host != "." && host != ".." && !host.contains(['/', '\0']);
         let path = dir.join(host);
-        if let Err(err) = std::fs::write(&path, text) {
-            self.warning(
-                &format!(
-                    "Unable to write to {}'s file: {}: b{}",
-                    repr(host),
+        let written = if plain {
+            write_replacing(&dir, &path, &text)
+        } else {
+            Err(std::io::Error::other("the name is not a single file name"))
+        };
+        if let Err(err) = written {
+            let why = if plain {
+                format!(
+                    "{}: b{}",
                     errno_text(&err),
                     repr(&path.display().to_string())
-                ),
+                )
+            } else {
+                err.to_string()
+            };
+            self.warning(
+                &format!("Unable to write to {}'s file: {why}", repr(host)),
                 false,
             );
         }
     }
+}
+
+/// `text` in a new private file of `dir`, renamed over `path`: a link planted at `path` is
+/// replaced and never followed.
+fn write_replacing(
+    dir: &std::path::Path,
+    path: &std::path::Path,
+    text: &str,
+) -> std::io::Result<()> {
+    use std::io::Write as _;
+    static COUNT: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+    let n = COUNT.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+    let temp = dir.join(format!(".volant-tree-{}-{n}", std::process::id()));
+    let mut options = std::fs::OpenOptions::new();
+    options.write(true).create_new(true);
+    #[cfg(unix)]
+    std::os::unix::fs::OpenOptionsExt::mode(&mut options, 0o600);
+    let result = options
+        .open(&temp)
+        .and_then(|mut file| file.write_all(text.as_bytes()))
+        .and_then(|()| std::fs::rename(&temp, path));
+    if result.is_err() {
+        let _ = std::fs::remove_file(&temp);
+    }
+    result
 }
 
 /// `[Errno 2] No such file or directory`, as Python words an `OSError`.

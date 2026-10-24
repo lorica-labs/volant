@@ -213,10 +213,44 @@ impl Scan {
         Some(out.into_iter().map(|prefix| prefix + rest).collect())
     }
 
-    /// What one `{{ }}` of a file name renders to.
+    /// What one `{{ }}` of a file name renders to: what `e` renders to, and the literal of a
+    /// trailing `default` filter.
     pub(super) fn segment(&self, e: &str, task: &PlayTask, depth: usize) -> Option<Vec<String>> {
+        let (e, default) = match strip_default(e) {
+            Some((head, d)) => (head, Some(literal(d)?)),
+            None => (e, None),
+        };
+        let mut out = self.rendered(e, task, depth, default.is_some())?;
+        out.extend(default.map(str::to_string));
+        Some(out)
+    }
+
+    /// What `e` renders to; with `defaulted`, a loop item lacking the attribute `e` reads renders
+    /// to the default alone.
+    fn rendered(
+        &self,
+        e: &str,
+        task: &PlayTask,
+        depth: usize,
+        defaulted: bool,
+    ) -> Option<Vec<String>> {
         if e == task.loop_var {
             return self.items(task, depth);
+        }
+        let attr = e
+            .strip_prefix(task.loop_var.as_str())
+            .and_then(|rest| rest.strip_prefix('.'))
+            .filter(|a| !a.is_empty() && a.bytes().all(is_word));
+        if let Some(attr) = attr {
+            let mut out = Vec::new();
+            for item in self.loop_values(task)? {
+                match item.get(attr) {
+                    Some(Value::String(s)) => out.extend(self.names(s, task, depth + 1)?),
+                    None if defaulted && item.is_object() => {}
+                    _ => return None,
+                }
+            }
+            return Some(out);
         }
         let base = name_kept(e);
         let fact = base
@@ -260,16 +294,25 @@ impl Scan {
         }
     }
 
-    /// The names a loop item stands for: a literal list's strings, or the strings of every list a
-    /// bare variable is given.
+    /// The names a loop item stands for: the strings among [`Scan::loop_values`].
     pub(super) fn items(&self, task: &PlayTask, depth: usize) -> Option<Vec<String>> {
+        let mut out = Vec::new();
+        for item in self.loop_values(task)? {
+            out.extend(self.names(item.as_str()?, task, depth + 1)?);
+        }
+        Some(out)
+    }
+
+    /// Every value a loop item can take: a literal list's items, or the items of every list a
+    /// variable is given (`"{{ pools }}"`, `"{{ pools | default([], true) }}"`).
+    pub(super) fn loop_values<'a>(&'a self, task: &'a PlayTask) -> Option<Vec<&'a Value>> {
         if task.loop_with.is_some() {
             return None;
         }
         let lists: Vec<&Vec<Value>> = match task.loop_items.as_ref()? {
             Value::Array(items) => vec![items],
             Value::String(s) => self
-                .values(bare_variable(s)?)?
+                .values(loop_variable(s)?)?
                 .iter()
                 .map(Value::as_array)
                 .collect::<Option<_>>()?,
@@ -277,12 +320,9 @@ impl Scan {
         };
         let mut out = Vec::new();
         for item in lists.into_iter().flatten() {
-            let strings: Vec<&Value> = match item {
-                Value::Array(inner) if task.with_items => inner.iter().collect(),
-                other => vec![other],
-            };
-            for s in strings {
-                out.extend(self.names(s.as_str()?, task, depth + 1)?);
+            match item {
+                Value::Array(inner) if task.with_items => out.extend(inner),
+                other => out.push(other),
             }
         }
         Some(out)
@@ -296,7 +336,7 @@ impl Scan {
         }
         match &task.loop_items {
             Some(Value::Array(items)) => items.is_empty(),
-            Some(Value::String(s)) => bare_variable(s)
+            Some(Value::String(s)) => loop_variable(s)
                 .and_then(|name| self.values(name))
                 .is_some_and(|values| {
                     !values.is_empty()
@@ -355,4 +395,31 @@ fn first_found_lookup(name: &str) -> Option<&str> {
     let var = var.trim();
     let first_found = literal(plugin).map(short_name) == Some("first_found");
     (first_found && !var.is_empty() && var.bytes().all(is_word)).then_some(var)
+}
+
+/// The variable a loop string names: `{{ name }}`, or `{{ name | default([]) }}` (with or without
+/// `true`), whose default adds no item.
+fn loop_variable(s: &str) -> Option<&str> {
+    let e = s.trim().strip_prefix("{{")?.strip_suffix("}}")?.trim();
+    let name = match strip_default(e) {
+        Some((head, "[]")) => head,
+        Some(_) => return None,
+        None => e,
+    };
+    (!name.is_empty() && name.bytes().all(is_word)).then_some(name)
+}
+
+/// `head` and `d` of `head | default(d)` or `head | default(d, true)` (or `d(...)`).
+fn strip_default(e: &str) -> Option<(&str, &str)> {
+    let (head, filter) = e.rsplit_once('|')?;
+    let filter = filter.trim();
+    let args = filter
+        .strip_prefix("default(")
+        .or_else(|| filter.strip_prefix("d("))?
+        .strip_suffix(')')?;
+    let d = match args.rsplit_once(',') {
+        Some((d, flag)) if matches!(flag.trim(), "true" | "True" | "false" | "False") => d,
+        _ => args,
+    };
+    Some((head.trim_end(), d.trim()))
 }

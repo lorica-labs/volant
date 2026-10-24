@@ -634,3 +634,32 @@ fn include_vars_follows_first_found() {
     let unknown = looped.replace("{{ db_daemon }}", "{{ db_daemon | basename }}");
     assert!(matches!(role(&unknown), FactsRead::All(_)));
 }
+
+/// A `template` `src` from a loop item's attribute and its default reads every template it can
+/// name (geerlingguy.php); an item lacking the attribute, with no default, reads every fact.
+#[test]
+fn a_template_from_a_loop_item_attribute_is_followed() {
+    let role = |src: &str| {
+        let tree = Tree::new();
+        tree.file("site.yml", "- hosts: all\n  roles:\n    - php\n")
+            .file(
+                "roles/php/defaults/main.yml",
+                "pools:\n  - name: www\n  - name: api\n    pool_template: api.j2\n",
+            )
+            .file(
+                "roles/php/tasks/main.yml",
+                &format!(
+                    "- template:\n    src: \"{src}\"\n    dest: /etc/x\n  loop: \"{{{{ pools | default([], true) }}}}\"\n"
+                ),
+            )
+            .file("roles/php/templates/www.conf.j2", "x\n")
+            .file("templates/api.j2", "{{ ansible_lsb }}\n");
+        tree.read("h1\n")
+    };
+    let read = role("{{ item.pool_template | default('www.conf.j2', true) }}");
+    assert!(keys(&read).contains("lsb"), "{read:?}");
+    assert!(matches!(
+        role("{{ item.pool_template }}"),
+        FactsRead::All(_)
+    ));
+}

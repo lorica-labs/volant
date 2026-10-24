@@ -225,12 +225,12 @@ fn a_module_s_later_children_take_its_spec_from_the_server() {
 /// Each environment gets a server started with it, so imports ahead run under the task's environment.
 #[test]
 #[cfg(target_os = "linux")]
-fn each_environment_gets_a_server_started_with_it() {
+fn each_startup_environment_gets_a_server_started_with_it() {
     let root = scratch();
     let tmp = root.path().to_str().unwrap().to_string();
     let payload = cached_payload(
         root.path(),
-        "\n    import os\n    with open(\"/proc/%d/environ\" % os.getppid(), \"rb\") as fh:\n        seen = [v for v in fh.read().decode().split(\"\\0\") if v.startswith(\"VOLANT_ENV_PROBE=\")]\n    print(json.dumps({\"parent\": os.getppid(), \"seen\": seen}))\n",
+        "\n    import os\n    with open(\"/proc/%d/environ\" % os.getppid(), \"rb\") as fh:\n        seen = [v for v in fh.read().decode().split(\"\\0\") if v.startswith(\"PYTHONVOLANTPROBE=\")]\n    print(json.dumps({\"parent\": os.getppid(), \"seen\": seen}))\n",
     );
     batch_started();
     let task = |value: Option<&str>| {
@@ -241,7 +241,7 @@ fn each_environment_gets_a_server_started_with_it() {
         if let Some(value) = value {
             context
                 .environment
-                .insert("VOLANT_ENV_PROBE".into(), value.into());
+                .insert("PYTHONVOLANTPROBE".into(), value.into());
         }
         let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
         assert!(!result.failed(), "{:?}", result.0);
@@ -253,8 +253,8 @@ fn each_environment_gets_a_server_started_with_it() {
     let b = task(Some("b"));
     let none_again = task(None);
     assert_eq!(none.0["seen"], json!([]));
-    assert_eq!(a.0["seen"], json!(["VOLANT_ENV_PROBE=a"]));
-    assert_eq!(b.0["seen"], json!(["VOLANT_ENV_PROBE=b"]));
+    assert_eq!(a.0["seen"], json!(["PYTHONVOLANTPROBE=a"]));
+    assert_eq!(b.0["seen"], json!(["PYTHONVOLANTPROBE=b"]));
     assert_eq!(none_again.0["seen"], json!([]));
     assert_eq!(
         a_again.0["parent"], a.0["parent"],
@@ -265,6 +265,51 @@ fn each_environment_gets_a_server_started_with_it() {
         !Path::new(&format!("/proc/{}", a.0["parent"])).exists(),
         "the server for `a` outlived the one for `b`"
     );
+}
+
+/// A variable no interpreter reads as it starts (`PGOPTIONS`, a proxy) shares the server of the
+/// tasks around it: the module sees it, the server never had it, and the next task does not see it.
+#[test]
+#[cfg(target_os = "linux")]
+fn a_task_variable_read_after_startup_shares_the_server() {
+    let root = scratch();
+    let tmp = root.path().to_str().unwrap().to_string();
+    let payload = cached_payload(
+        root.path(),
+        "\n    import os\n    with open(\"/proc/%d/environ\" % os.getppid(), \"rb\") as fh:\n        parent = [v for v in fh.read().decode().split(\"\\0\") if v.startswith(\"PGOPTIONS=\")]\n    print(json.dumps({\"parent\": os.getppid(), \"in_parent\": parent, \"seen\": os.environ.get(\"PGOPTIONS\")}))\n",
+    );
+    batch_started();
+    let task = |value: Option<&str>| {
+        let mut context = Context {
+            remote_tmp: tmp.clone(),
+            ..Context::default()
+        };
+        if let Some(value) = value {
+            context.environment.insert("PGOPTIONS".into(), value.into());
+        }
+        let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
+        assert!(!result.failed(), "{:?}", result.0);
+        result
+    };
+    let none = task(None);
+    let with = task(Some("-c x=1"));
+    let after = task(None);
+    assert_eq!(with.0["seen"], json!("-c x=1"));
+    assert_eq!(
+        with.0["in_parent"],
+        json!([]),
+        "the server was started with the variable"
+    );
+    assert_eq!(
+        after.0["seen"],
+        json!(null),
+        "the variable outlived its task"
+    );
+    assert_eq!(
+        with.0["parent"], none.0["parent"],
+        "a server of its own for the variable"
+    );
+    assert_eq!(after.0["parent"], none.0["parent"]);
 }
 
 /// A package outside the payload, served by another finder or setting itself up as it loads, is
@@ -1862,10 +1907,10 @@ fn the_payload_s_compiled_code_is_kept_for_the_next_server() {
             remote_tmp: tmp.clone(),
             ..Context::default()
         };
-        // Each value is a server of its own.
+        // Each value is a server of its own: a `PYTHON*` variable is read as the interpreter starts.
         context
             .environment
-            .insert("VOLANT_CACHE_PROBE".into(), value.into());
+            .insert("PYTHONVOLANTCACHEPROBE".into(), value.into());
         let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
         assert!(!result.failed(), "{:?}", result.0);
         result

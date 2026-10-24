@@ -137,8 +137,8 @@ pub(in crate::executor) fn merged_vars(
         role_defaults: role.defaults.clone(),
         role_vars: role.vars.clone(),
         role_params,
-        play_hosts: live.play_hosts_left.clone(),
-        batch_hosts: live.live_hosts.clone(),
+        play_hosts: live.play_hosts_left.to_vec(),
+        batch_hosts: live.live_hosts.to_vec(),
         all_play_hosts: plan.all_play_hosts.clone(),
     };
     let mut vars = {

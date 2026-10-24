@@ -16,6 +16,8 @@ volant --version
 
 `volant playbook` nimmt dieselben Optionen wie `ansible-playbook`, soweit sie dort existieren. `volant-playbook` ist dasselbe Programm unter einem Namen, der dem vertrauten ähnelt. Playbooks, die zusammen angegeben werden, laufen der Reihe nach, und jedes gibt seinen eigenen Recap aus.
 
+Unter Linux und macOS richtet sich die `volant`-Binärdatei auch nach dem Namen, unter dem sie gestartet wurde (dem Dateinamen von `argv[0]`). Als `ansible-playbook` oder `ansible-vault` gestartet, über einen symbolischen oder einen harten Link, verhält sie sich wie `volant playbook` oder `volant vault`, mit denselben Argumenten, derselben Ausgabe und denselben Exit-Codes. Ein Aufruffehler endet mit 2 und nennt das Programm unter dem gestarteten Namen. Jeder andere Name behält das übliche `volant`-Verhalten.
+
 Hat eine Option einen Schlüssel in der `ansible.cfg` oder eine Umgebungsvariable, nennt der Eintrag sie. Die Option gewinnt gegen beide; [Konfiguration](/de/docs/reference/configuration/) erklärt die Reihenfolge.
 
 ## Hosts und Verbindungen
@@ -271,6 +273,40 @@ volant vault view [FILE...] [OPTIONS]
 <Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
   Die Vault-ID, die `encrypt` verwendet. Sie ist erforderlich, wenn mehr als eine `--vault-id` angegeben wird.
 </Option>
+
+## Der Befehl shims
+
+`volant shims` verknüpft die Programmnamen von ansible-core mit `volant`, sodass `ansible-vault` und die anderen Volant starten. Nichts legt diese Links an, solange Sie den Befehl nicht ausführen. Er funktioniert unter Linux und macOS.
+
+```sh
+volant shims install [--dir DIR] [--force] [NAME...]
+volant shims remove [--dir DIR] [NAME...]
+```
+
+`NAME` ist einer von `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` und `ansible-vault`. Ohne Angabe nimmt der Befehl alle neun.
+
+<Option name="--dir" arg="DIR">
+  Das Verzeichnis der Links. Standard: `$VOLANT_BIN_DIR`, dann `~/.local/bin`. Ein fehlendes Verzeichnis ist ein Fehler: `ERROR! DIR is not a directory`, Exit-Code 1.
+</Option>
+
+<Option name="install --force" arg="">
+  Ersetzt eine Datei oder einen Link dieses Namens, die kein Volant-Link sind.
+</Option>
+
+Ein Shim ist ein symbolischer Link. Sein Ziel ist der relative Name `volant`, wenn `DIR` einen Eintrag namens `volant` enthält, sodass ein Update dieses Links die Shims mitnimmt. Sonst ist es der absolute Pfad der laufenden Binärdatei.
+
+`install` gibt eine Zeile pro Name aus:
+
+| Zeile | Bedeutung |
+|---|---|
+| `ansible-vault: installed` | Der Link wurde angelegt. |
+| `ansible-vault: already installed` | Der Link existiert und zeigt auf `volant`. Nichts hat sich geändert. |
+| `ansible-vault: replaced` | `--force` hat eine andere Datei oder einen anderen Link ersetzt. |
+| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | Nichts wurde angelegt, und der Exit-Code ist 1. |
+
+Liegt eine andere ausführbare Datei dieses Namens im `PATH`, hängt eine Zeile, die einen Link angelegt hat, einen zweiten Satz an: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH` oder `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`. Ist `DIR` gar nicht im `PATH`, endet sie mit `DIR is not in PATH`.
+
+`remove` löscht nur symbolische Links, deren Ziel eine Datei namens `volant` ist, und gibt `ansible-vault: removed`, `ansible-vault: not installed` oder `ansible-vault: not a Volant link, left alone` aus. Die letzte setzt den Exit-Code auf 1.
 
 ## Noch nicht vorhanden
 

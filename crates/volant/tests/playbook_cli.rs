@@ -4736,7 +4736,7 @@ name = vol
             (
                 _,
                 "remote_user" | "port" | "connection" | "action" | "local_action" | "become_method"
-                | "become_exe" | "become_flags",
+                | "become_exe" | "become_flags" | "ignore_unreachable",
             ) => Some(ssh_dir.as_path()),
             (_, "gather_facts") => Some(no_ansible.as_path()),
             _ => None,
@@ -4765,7 +4765,10 @@ name = vol
             .expect("the probe's inventory is written");
             args.extend(["-i", inventory.as_str()]);
         }
-        // Nothing listens on port 1: the second host is the unreachable one, and refuses at once.
+        // The second host is the unreachable one: the `ssh` on `PATH` is the stub that fails the
+        // way a refused connection does, so the row never waits on the machine's network stack.
+        // On macOS runners the real `ssh` to a closed loopback port sometimes did not return
+        // within the probe's deadline, and what this row proves is the keyword, not the network.
         if probe.kw == "ignore_unreachable" {
             std::fs::write(
                 &inventory,

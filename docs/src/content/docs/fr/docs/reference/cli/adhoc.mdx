@@ -1,5 +1,5 @@
 ---
-sourceHash: 162269910b1f
+sourceHash: fa2a29fe1a31
 title: volant adhoc
 description: Exécute un module sur chaque hôte qui correspond à un motif, avec les options et la sortie d'ansible.
 ---
@@ -12,7 +12,7 @@ import Option from '../../../../../../components/Option.astro';
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
              [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
-             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
+             [-C] [-D] [-o] [-t DIR] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -29,6 +29,14 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-D, --diff">
   Affiche, avant son résultat, les différences qu'une tâche apporte aux fichiers et aux modèles. Avec `-C`, le fichier n'est pas modifié.
+</Option>
+
+<Option name="-o, --one-line">
+  Affiche une ligne par hôte, comme le fait le callback `oneline` d'ansible. ansible-core 2.19.12 déprécie cette option et avertit sur l'erreur standard ; voir plus bas.
+</Option>
+
+<Option name="-t, --tree" arg="DIR">
+  Écrit aussi le résultat de chaque hôte dans un fichier de `DIR` nommé d'après l'hôte, comme le fait le callback `tree` d'ansible. ansible-core 2.19.12 déprécie cette option et avertit sur l'erreur standard ; voir plus bas.
 </Option>
 
 <Option name="-B, --background" arg="SECONDS">
@@ -65,6 +73,25 @@ Chaque hôte affiche un résultat, comme le fait le callback `minimal` d'ansible
 
 Le code de sortie est 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, et 4 quand un hôte n'a pas pu être joint, qu'il y ait ou non des hôtes en échec. `ANSIBLE_STDOUT_CALLBACK` ne change pas la sortie. Avec `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, ou `callback_result_format = yaml` sous `[defaults]` dans `ansible.cfg`, un résultat de forme JSON est affiché en YAML à la place, sur les lignes après `=>`, indenté de quatre espaces. Une chaîne avec des sauts de ligne devient un bloc littéral. Toute autre valeur, la valeur vide comprise, arrête la commande avec le code de sortie 5.
 
-`-vv` ouvre par le bloc qu'affiche `--version`, puis `Using PATH as config file` (ou `No config file found; using defaults`), et les lignes `Skipping callback 'default', as we already have a stdout callback.` et `Skipping callback 'oneline', as we already have a stdout callback.`. `-vvv` et plus ajoutent les lignes des plugins d'inventaire et celles qu'affiche `volant playbook` ; les lignes `ESTABLISH LOCAL CONNECTION` et `EXEC` de la référence décrivent son envoi de module, que Volant ne fait pas, elles ne sont donc pas affichées.
+## Une ligne par hôte
+
+Avec `-o`, un résultat de `command`, `shell` ou `raw` est `h1 | CHANGED | rc=0 | (stdout) hi`, ses sauts de ligne écrits `\n`, suivi de `(stderr) text` quand il y en a. Tout autre résultat est `h1 | SUCCESS => ` et le résultat en JSON sur une ligne, clés triées et séparées par `,` sans espace après. Un résultat qui demande la forme indentée, comme `debug`, ou tout résultat à `-vvv`, garde ses quatre espaces, sauts de ligne retirés. Un hôte en échec affiche les deux mêmes sortes de ligne, avec `FAILED`, et pour une commande la forme commande vient d'abord, puis la ligne `FAILED!`. Quand l'échec porte une exception, une ligne `An exception occurred during task execution. To see the full traceback, use -vvv. The error was: ...` vient en premier ; à `-vvv` elle contient le texte complet. Un hôte injoignable affiche `h1 | UNREACHABLE!: ` et son message. `-o` n'affiche ni bloc `[ERROR]`, ni avertissements d'un résultat, ni diff, et ne lit pas `callback_result_format`. Les codes de sortie sont les mêmes que sans lui.
+
+Avec `-t DIR`, la sortie ne change pas. `DIR` est créé à l'arrivée du premier résultat, `~` est développé, et un chemin relatif part du répertoire de travail. Chaque résultat qui n'est pas ignoré est écrit dans `DIR/HOST` en JSON sur une ligne, clés triées, sans saut de ligne final, par-dessus ce que le résultat précédent de l'hôte a laissé ; un hôte injoignable a aussi un fichier. Un résultat de `debug`, et tout résultat à `-vvv`, est écrit indenté. Un répertoire qui ne peut pas être créé, ou un fichier qui ne peut pas être écrit, affiche un `[WARNING]` et l'exécution continue. Un `$` dans `DIR`, ou un `~` suivi d'un nom d'utilisateur, arrête la commande avec le code de sortie 4 et dit que ce n'est pas encore pris en charge.
+
+Les deux options affichent ces lignes sur l'erreur standard avant le premier résultat, dans cet ordre : le `[WARNING]` qui dit comment désactiver les avertissements de dépréciation, un `[DEPRECATION WARNING]` par option, écrit et ordonné comme la ligne de commande l'a donné (`-o` et `-t` dans un même groupe d'options courtes comptent pour deux), les avertissements du motif d'hôte, puis un `[DEPRECATION WARNING]` pour le callback `oneline` et un pour le callback `tree`. Une exécution qui se termine avant le chargement des callbacks (`--list-hosts`, un `-l` qui ne laisse aucun hôte) n'affiche que les deux premiers groupes. `deprecation_warnings = False` ou `ANSIBLE_DEPRECATION_WARNINGS=false` les fait tous taire. À `-vv`, `-o` met `minimal` de côté, là où la sortie par défaut met `oneline` de côté ; à `-vvvv`, `-t` ajoute une ligne pour le callback `tree`.
+
+## Les actions qui ne sont pas des modules
+
+`set_fact` affiche ses `ansible_facts` comme tout résultat de module. `meta` avec `noop`, `flush_handlers`, `clear_facts`, `refresh_inventory`, `reset_connection` ou `end_host` n'affiche rien et sort avec 0. Ces différences avec ansible-core 2.19.12 subsistent :
+
+- `meta -a end_play` termine ansible-core par une exception inattendue et le code de sortie 250. Volant n'affiche rien et sort avec 0.
+- `meta` avec une action inconnue, ou sans `-a`, s'arrête avec le code de sortie 1 comme la référence, mais son bloc `[ERROR]` ne se termine pas par la ligne vide qu'affiche la référence, et sans `-a` il nomme l'argument autrement.
+- `include_role` et `include_tasks` affichent dans la référence un bloc `SUCCESS` avec `include_args` avant le bloc `FAILED!`. Volant n'affiche que le bloc `FAILED!`. Les codes de sortie concordent : 2 pour ces deux-là, 1 pour `import_role` et `import_tasks`, et le texte de `[ERROR]` diffère.
+- `group_by` signale `SUCCESS` avec `"changed": false` là où la référence signale `CHANGED`.
+
+## Sortie verbeuse
+
+`-vv` ouvre par le bloc qu'affiche `--version`, puis `Using PATH as config file` (ou `No config file found; using defaults`), et les lignes `Skipping callback 'default', as we already have a stdout callback.` et `Skipping callback 'oneline', as we already have a stdout callback.` (`minimal` au lieu de `oneline` avec `-o`). `-vvv` et plus ajoutent les lignes des plugins d'inventaire et celles qu'affiche `volant playbook` ; les lignes `ESTABLISH LOCAL CONNECTION` et `EXEC` de la référence décrivent son envoi de module, que Volant ne fait pas, elles ne sont donc pas affichées.
 
 Un `-B`, `-P` ou `--task-timeout` négatif, et `-C` avec `-B`, arrêtent la commande avec le code de sortie 4 et disent ce qui n'est pas encore pris en charge. `-B`, `-P` et `--task-timeout` prennent un nombre entier ; toute autre valeur est une erreur d'usage.

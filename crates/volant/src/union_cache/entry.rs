@@ -124,7 +124,9 @@ fn parse(
     let entry = Entry {
         union: Union {
             hash: hash.to_string(),
-            zip_b64: volant_protocol::encoding::b64_encode(zip),
+            // Left empty: `open` keeps the frame the agent is sent, raw or deflated, so nothing
+            // reads the zip back out of this. Encoding it was 8 % of a converged run's controller.
+            zip_b64: String::new(),
             modules,
             refused,
             natives: crate::python::Natives::default(),

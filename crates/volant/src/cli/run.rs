@@ -443,7 +443,9 @@ async fn run_all(
     let (stop_tx, stop_rx) = watch::channel(false);
     let abort = Arc::new(Abort::new(stop_tx));
     spawn_signal_watcher(Arc::clone(&abort));
-    crate::askpass::remove_stale();
+    // Off the run's own path: it reads every entry of the temporary directory, measured at 9 ms
+    // of a 0.1 s run on a machine with nine thousand of them, and nothing below waits for it.
+    std::thread::spawn(crate::askpass::remove_stale);
     // Held to the end of the run: the directory with the files the `ssh` calls ask for a
     // password, those of a host variable's passwords too, is removed when it drops.
     let _askpass = crate::askpass::install(connection_password.as_deref())?;

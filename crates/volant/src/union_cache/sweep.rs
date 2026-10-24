@@ -99,22 +99,67 @@ fn written_here(name: &str) -> bool {
 /// still in use but older than that is rebuilt once. A link is never followed, and a file this
 /// cache did not name is never touched.
 pub(super) fn sweep(dir: &Path, now: SystemTime) {
+    sweep_within(dir, now, MAX_BYTES);
+}
+
+/// How much the cache keeps before it removes its oldest entries, whatever their age. Measured on
+/// a development machine whose test runs each built a union of their own: 59 105 files, 15 GB,
+/// that only the month-old rule would ever have removed. An entry is a few megabytes.
+const MAX_BYTES: u64 = 1 << 30;
+
+/// [`sweep`], then, while the entries left hold more than `max_bytes`, the oldest entry whole:
+/// its manifest, zip and deflated form go together, so no half of an entry outlives the rest.
+/// An entry is as old as the newest of its files.
+pub(super) fn sweep_within(dir: &Path, now: SystemTime, max_bytes: u64) {
     let Some(limit) = now.checked_sub(STALE) else {
         return;
     };
     let Ok(files) = fs::read_dir(dir) else {
         return;
     };
+    let mut entries: std::collections::BTreeMap<
+        String,
+        (SystemTime, u64, Vec<std::path::PathBuf>),
+    > = std::collections::BTreeMap::new();
     for file in files.flatten() {
-        if !file.file_name().to_str().is_some_and(written_here) {
+        let Some(name) = file
+            .file_name()
+            .to_str()
+            .filter(|n| written_here(n))
+            .map(str::to_string)
+        else {
+            continue;
+        };
+        // `DirEntry::metadata` does not follow a link, and a link is not a file.
+        let Some(meta) = file.metadata().ok().filter(fs::Metadata::is_file) else {
+            continue;
+        };
+        let Ok(modified) = meta.modified() else {
+            continue;
+        };
+        if modified < limit {
+            let _ = fs::remove_file(file.path());
             continue;
         }
-        // `DirEntry::metadata` does not follow a link, and a link is not a file.
-        let old = file.metadata().is_ok_and(|meta| {
-            meta.is_file() && meta.modified().is_ok_and(|modified| modified < limit)
-        });
-        if old {
-            let _ = fs::remove_file(file.path());
+        let entry = entries.entry(name[..64].to_string()).or_insert((
+            SystemTime::UNIX_EPOCH,
+            0,
+            Vec::new(),
+        ));
+        entry.0 = entry.0.max(modified);
+        entry.1 += meta.len();
+        entry.2.push(file.path());
+    }
+    let mut total: u64 = entries.values().map(|e| e.1).sum();
+    let mut oldest: Vec<_> = entries.into_values().collect();
+    oldest.sort_by_key(|e| e.0);
+    for (_, size, paths) in oldest {
+        if total <= max_bytes {
+            break;
         }
+        for path in paths {
+            let _ = fs::remove_file(path);
+        }
+        total -= size;
     }
 }

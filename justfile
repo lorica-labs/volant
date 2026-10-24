@@ -615,6 +615,303 @@ proof-roles-reset:
       echo reset
     '
 
+# Build the image the corpus runs use, only when its Containerfile changed: the sha256 of the file
+# is the image's `volant.corpus.sha` label.
+_corpus-image:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    file=crates/volant/tests/fixtures/corpus/Containerfile
+    sha="$(sha256sum "$file" | cut -d' ' -f1)"
+    have="$(docker image inspect volant-corpus:24.04 --format '{{{{ index .Config.Labels "volant.corpus.sha" }}' 2>/dev/null || true)"
+    [ "$have" = "$sha" ] || docker build -q -t volant-corpus:24.04 --label "volant.corpus.sha=$sha" - < "$file"
+
+# Remove every corpus container and network, and every installed corpus source.
+corpus-clean:
+    #!/usr/bin/env bash
+    docker ps -aq --filter name=volant-corpus- | xargs -r docker rm -f > /dev/null
+    docker network ls -q --filter name=volant-corpus- | xargs -r docker network rm > /dev/null
+    rm -rf target/corpus/*/src
+
+# Run the community playbooks of crates/volant/tests/fixtures/corpus/corpus.yml (or the one named)
+# under the reference and under Volant (never in CI). Each entry gets a first and a second pass
+# per engine on fresh systemd containers here, then, for `where: both`, a warm-up and `runs` timed
+# passes per engine on VOLANT_TARGET_HOST (and VOLANT_SECOND_HOST for two-host entries) under the
+# `bench` lock. Logs and `result.json` land in target/corpus/<name>/; the `corpus` test then
+# compares the logs. An entry that cannot be installed, fails under the reference or times out
+# (30 minutes a pass) is `error` in its `result.json`; the others still run and the recipe exits
+# non-zero at the end.
+#
+# The containers, the network and the published ports carry this run's stamp, so two runs never
+# collide; a `trap` removes them on exit and Ctrl-C, and the next run removes any left over for
+# more than two hours.
+corpus name="" runs="3": _corpus-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    fixtures="$PWD/crates/volant/tests/fixtures/corpus"
+    root="$PWD/target/corpus"
+    manifest="$fixtures/corpus.yml"
+    core="$(uv tool dir)/ansible-core/bin"
+    py="$core/python"
+    mkdir -p "$root"
+
+    avail_kb="$(df --output=avail -k "$root" | tail -n1 | tr -d ' ')"
+    if [ "$avail_kb" -lt 5242880 ]; then
+      echo "corpus: $((avail_kb / 1024)) MB free under target/, 5120 MB needed (short by $(((5242880 - avail_kb) / 1024)) MB)"
+      exit 1
+    fi
+    names="$("$py" -c 'import sys,yaml; print("\n".join(e["name"] for e in yaml.safe_load(open(sys.argv[1])) if not sys.argv[2] or e["name"] == sys.argv[2]))' "$manifest" "{{name}}")"
+    [ -n "$names" ] || { echo "corpus: no entry named '{{name}}' in corpus.yml"; exit 1; }
+
+    stamp="$(date -u +%m%d%H%M%S)-$$"
+    cleanup() {
+      docker ps -aq --filter "name=volant-corpus-$stamp-" | xargs -r docker rm -f > /dev/null 2>&1 || true
+      docker network ls -q --filter "name=volant-corpus-$stamp-" | xargs -r docker network rm > /dev/null 2>&1 || true
+    }
+    trap cleanup EXIT
+    trap 'exit 130' INT TERM
+
+    # What an earlier run killed without its trap left behind, older than two hours.
+    sweep() {
+      local now id created
+      now="$(date +%s)"
+      for id in $(docker ps -aq --filter name=volant-corpus-); do
+        created="$(date -d "$(docker inspect -f '{{{{.Created}}' "$id" | sed 's/\.[0-9]*//; s/ UTC$//')" +%s 2>/dev/null || echo "$now")"
+        if [ $((now - created)) -gt 7200 ]; then docker rm -f "$id" > /dev/null 2>&1 || true; fi
+      done
+      for id in $(docker network ls -q --filter name=volant-corpus-); do
+        created="$(date -d "$(docker network inspect -f '{{{{.Created}}' "$id" | sed 's/\.[0-9]*//; s/ UTC$//')" +%s 2>/dev/null || echo "$now")"
+        if [ $((now - created)) -gt 7200 ]; then docker network rm "$id" > /dev/null 2>&1 || true; fi
+      done
+    }
+    sweep
+
+    just agent-musl
+    cargo build --release -p volant
+
+    idle() {
+      while pgrep -x cargo > /dev/null || pgrep -x rustc > /dev/null || pgrep -x cargo-nextest > /dev/null || pgrep -f bin/ansible-playbook > /dev/null; do
+        sleep 5
+      done
+      awk '{print "load " $1}' /proc/loadavg
+    }
+    describe() {
+      local d
+      d="$(git describe --always --dirty 2>/dev/null)" && { printf '%s' "$d"; return 0; }
+      if [ -f .volant-describe ]; then
+        printf '%s' "$(cat .volant-describe)"
+        return 0
+      fi
+      echo "no git metadata and no .volant-describe (sync with 'just remote' first): cannot name the measured tree" >&2
+      return 1
+    }
+    volant_version="$(describe)" || exit 1
+    reference_version="$("$core/ansible-playbook" --version | head -1)"
+
+    err=""
+    fail() { err="$1"; return 1; }
+    field() { "$py" -c 'import json,sys; v = json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$dir/entry.json" "$1"; }
+    first_error() { grep -h -m1 -E 'fatal:|ERROR|rror' "$@" 2>/dev/null || tail -n1 "$1" 2>/dev/null || true; }
+    record() { printf '%s %s\n' "$1" "$2" >> "$dir/times.tsv"; }
+
+    # Install one pinned source under src/, unless the installed version or sha already matches.
+    install_source() {
+      local kind="$1" a="$2" b="$3" src="$dir/src" log="$dir/install.log"
+      mkdir -p "$src"
+      case "$kind" in
+        role)
+          if grep -qx "version: $b" "$src/roles/$a/meta/.galaxy_install_info" 2>/dev/null; then
+            echo "role $a $b already installed"
+          else
+            echo "installing role $a $b"
+            "$core/ansible-galaxy" role install --force "$a,$b" -p "$src/roles" > "$log" 2>&1 || fail "role $a $b: $(first_error "$log")" || return 1
+          fi ;;
+        collection)
+          if grep -q "\"version\": \"$b\"" "$src/collections/ansible_collections/${a/.//}/MANIFEST.json" 2>/dev/null; then
+            echo "collection $a $b already installed"
+          else
+            echo "installing collection $a $b"
+            "$core/ansible-galaxy" collection install --force "$a:$b" -p "$src/collections" > "$log" 2>&1 || fail "collection $a $b: $(first_error "$log")" || return 1
+          fi ;;
+        git)
+          if [ "$(git -C "$src/repo" rev-parse HEAD 2>/dev/null || true)" = "$b" ]; then
+            echo "git $b already checked out"
+          else
+            echo "fetching $a at $b"
+            rm -rf "$src/repo"; mkdir -p "$src/repo"
+            { git -C "$src/repo" init -q && git -C "$src/repo" remote add origin "$a" \
+              && git -C "$src/repo" fetch -q --depth 1 origin "$b" && git -C "$src/repo" checkout -q FETCH_HEAD; } > "$log" 2>&1 \
+              || fail "git $b: $(first_error "$log")" || return 1
+          fi ;;
+        *) fail "unknown source kind $kind" ;;
+      esac
+    }
+
+    # write_ini <file> <host line>...: one [corpus] group, plus [lb] and [web] for two hosts.
+    write_ini() {
+      local out="$1"; shift
+      { printf '[corpus]\n'; printf '%s\n' "$@"
+        if [ $# -gt 1 ]; then printf '[lb]\n%s\n[web]\n%s\n' "${1%% *}" "${2%% *}"; fi
+      } > "$out"
+    }
+
+    start_nodes() {
+      local engine="$1" count="$2" net="volant-corpus-$stamp-$1" i c port ok
+      local lines=()
+      docker network create "$net" > /dev/null || fail "docker network create $net failed" || return 1
+      for i in $(seq 1 "$count"); do
+        c="volant-corpus-$stamp-$engine-node$i"
+        docker run -d --privileged --cgroupns=host -v /sys/fs/cgroup:/sys/fs/cgroup:rw --hostname "node$i" \
+          --network "$net" -p 127.0.0.1::22 --name "$c" volant-corpus:24.04 > /dev/null \
+          || fail "docker run $c failed" || return 1
+        docker exec -i "$c" sh -c 'install -d -m 700 -o corpus -g corpus /home/corpus/.ssh && cat > /home/corpus/.ssh/authorized_keys && chown corpus:corpus /home/corpus/.ssh/authorized_keys && chmod 600 /home/corpus/.ssh/authorized_keys' \
+          < "$dir/key.pub" || fail "installing the key in $c failed" || return 1
+        port="$(docker port "$c" 22/tcp | head -n1 | sed 's/.*://')"
+        ok=false
+        for _ in $(seq 1 60); do
+          if ssh -i "$dir/key" -p "$port" -o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes -o ConnectTimeout=3 -o LogLevel=ERROR corpus@127.0.0.1 true 2>/dev/null; then ok=true; break; fi
+          sleep 1
+        done
+        [ "$ok" = true ] || fail "$c did not accept ssh within 60 s" || return 1
+        lines+=("node$i ansible_host=127.0.0.1 ansible_port=$port ansible_user=corpus ansible_python_interpreter=/usr/bin/python3 ansible_ssh_private_key_file=$dir/key ansible_ssh_common_args='-o StrictHostKeyChecking=no -o UserKnownHostsFile=/dev/null -o IdentitiesOnly=yes'")
+      done
+      write_ini "$dir/$engine.ini" "${lines[@]}"
+    }
+    drop_nodes() {
+      docker ps -aq --filter "name=volant-corpus-$stamp-$1-" | xargs -r docker rm -f > /dev/null 2>&1 || true
+      docker network rm "volant-corpus-$stamp-$1" > /dev/null 2>&1 || true
+    }
+
+    # run_pass <engine> <label> <inventory> [env assignment]...: one playbook run under `timeout
+    # 30m`, its seconds, exit code and logs kept in the entry's directory.
+    run_pass() {
+      local engine="$1" label="$2" ini="$3" log="$dir/$1-$2.log" rc start end; shift 3
+      local -a cmd
+      if [ "$engine" = reference ]; then
+        cmd=(env ANSIBLE_PIPELINING=True ANSIBLE_HOST_KEY_CHECKING=False "$@" timeout 30m "$core/ansible-playbook")
+      else
+        cmd=(env VOLANT_PYTHON="$py" VOLANT_AGENT_DIR="$PWD/target/agents" "$@" timeout 30m ./target/release/volant playbook)
+      fi
+      idle > /dev/null
+      start="$(date +%s.%N)"
+      if "${cmd[@]}" -i "$ini" "$playbook" -e "@$dir/vars.json" -v > "$log" 2> "$dir/$engine-$label.err"; then rc=0; else rc=$?; fi
+      end="$(date +%s.%N)"
+      echo "$rc" > "$dir/$engine-$label.rc"
+      record "$engine.$label" "$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')"
+      if [ "$rc" -eq 124 ]; then fail "$engine $label pass timed out after 30 minutes"; return 1; fi
+      if [ "$engine" = reference ] && [ "$rc" -ne 0 ]; then
+        fail "reference $label pass exited $rc: $(first_error "$log" "$dir/$engine-$label.err")"; return 1
+      fi
+    }
+
+    engine_passes() {
+      local engine="$1" status=0
+      { start_nodes "$engine" "$hosts" && run_pass "$engine" first "$dir/$engine.ini" && run_pass "$engine" second "$dir/$engine.ini"; } || status=1
+      drop_nodes "$engine"
+      return $status
+    }
+
+    converged() {
+      [ -n "${VOLANT_TARGET_HOST:-}" ] || fail "VOLANT_TARGET_HOST is not set" || return 1
+      local lines=("$VOLANT_TARGET_HOST ansible_host=$VOLANT_TARGET_HOST ansible_python_interpreter=/usr/bin/python3") i engine status=0
+      if [ "$hosts" -gt 1 ]; then
+        [ -n "${VOLANT_SECOND_HOST:-}" ] || fail "VOLANT_SECOND_HOST is not set" || return 1
+        lines+=("$VOLANT_SECOND_HOST ansible_host=$VOLANT_SECOND_HOST ansible_python_interpreter=/usr/bin/python3")
+      fi
+      write_ini "$dir/converged.ini" "${lines[@]}"
+      exec 200>"${XDG_RUNTIME_DIR:-/tmp}/volant-bench.lock"
+      if ! flock -n 200; then echo "waiting for another bench to release the lock"; flock 200; fi
+      run_pass volant converged-warmup "$dir/converged.ini" VOLANT_PROFILE_JSON="$dir/volant-converged-warmup.jsonl" || status=1
+      [ "$status" -ne 0 ] || run_pass reference converged-warmup "$dir/converged.ini" || status=1
+      for engine in volant reference; do
+        for i in $(seq 1 "{{runs}}"); do
+          [ "$status" -ne 0 ] && break
+          if [ "$engine" = volant ]; then
+            run_pass volant "converged-$i" "$dir/converged.ini" VOLANT_PROFILE_JSON="$dir/volant-converged-$i.jsonl" || status=1
+          else
+            run_pass reference "converged-$i" "$dir/converged.ini" || status=1
+          fi
+        done
+      done
+      flock -u 200
+      return $status
+    }
+
+    run_entry() {
+      err=""
+      dir="$root/$1"
+      mkdir -p "$dir"
+      rm -f "$dir"/*.log "$dir"/*.err "$dir"/*.rc "$dir"/*.jsonl "$dir"/*.ini "$dir/times.tsv" "$dir/body-diff.txt" "$dir/result.json"
+      "$py" -c 'import json,sys,yaml; print(json.dumps([e for e in yaml.safe_load(open(sys.argv[1])) if e["name"] == sys.argv[2]][0]))' "$manifest" "$1" > "$dir/entry.json" \
+        || fail "corpus.yml does not parse" || return 1
+      skip="$(field skip_reason)"
+      if [ -n "$skip" ]; then status=skipped; err="$skip"; return 0; fi
+      hosts="$(field hosts)"; where="$(field where)"
+      "$py" -c '
+    import json, sys
+    e = json.load(open(sys.argv[1])); s = e["source"]
+    if "galaxy_role" in s: print("role", s["galaxy_role"], s["version"], sep="\t")
+    elif "galaxy_collection" in s: print("collection", s["galaxy_collection"], s["version"], sep="\t")
+    elif "git" in s: print("git", s["git"], s["sha"], sep="\t")
+    else: sys.exit("source names none of galaxy_role, galaxy_collection, git")
+    for r in e.get("roles") or []: print("role", r["name"], r["version"], sep="\t")
+    for c in e.get("collections") or []: print("collection", c["name"], c["version"], sep="\t")
+    json.dump(e.get("vars") or {}, open(sys.argv[2], "w"))
+    ' "$dir/entry.json" "$dir/vars.json" > "$dir/sources.tsv" || fail "the source of $1 is malformed in corpus.yml" || return 1
+      local kind a b
+      while IFS=$'\t' read -r kind a b; do install_source "$kind" "$a" "$b" || return 1; done < "$dir/sources.tsv"
+      playbook="$(field playbook)"
+      case "$playbook" in repo:*) playbook="$dir/src/repo/${playbook#repo:}" ;; *) playbook="$fixtures/$playbook" ;; esac
+      [ -f "$playbook" ] || fail "playbook $playbook not found" || return 1
+      export ANSIBLE_ROLES_PATH="$dir/src/roles" ANSIBLE_COLLECTIONS_PATH="$dir/src/collections"
+      generate="$(field generate)"
+      if [ -n "$generate" ]; then (cd "$dir" && bash -c "$generate") > "$dir/generate.log" 2>&1 || fail "generate failed: $(first_error "$dir/generate.log")" || return 1; fi
+      rm -f "$dir/key" "$dir/key.pub"
+      ssh-keygen -q -t ed25519 -N '' -f "$dir/key" || fail "ssh-keygen failed" || return 1
+      engine_passes reference || return 1
+      engine_passes volant || return 1
+      if [ "$where" = both ]; then converged || return 1; fi
+    }
+
+    write_result() {
+      "$py" -c '
+    import collections, datetime, json, sys
+    d, name, status, err, volant_version, reference_version = sys.argv[1:7]
+    t = collections.defaultdict(list)
+    try:
+        for line in open(d + "/times.tsv"):
+            k, v = line.split(); t[k].append(float(v))
+    except FileNotFoundError:
+        pass
+    def one(k): return (t.get(k) or [None])[0]
+    def pair(p): return {"reference_s": one("reference." + p), "volant_s": one("volant." + p)}
+    def median(v): v = sorted(v); n = len(v); return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
+    def timed(engine): return [x[0] for k, x in sorted(t.items()) if k.startswith(engine + ".converged-") and not k.endswith("warmup")]
+    ref, vol = timed("reference"), timed("volant")
+    conv = None
+    if ref and vol and status != "error":
+        r, v = median(ref), median(vol)
+        conv = {"reference": ref, "volant": vol, "reference_median": r, "volant_median": v, "ratio": round(r / v, 2) if v else None}
+    json.dump({"name": name, "status": status, "error": err or None, "first": pair("first"), "second": pair("second"),
+               "converged": conv, "volant_version": volant_version, "reference_version": reference_version,
+               "date": datetime.datetime.now(datetime.timezone.utc).strftime("%Y-%m-%dT%H%MZ")},
+              open(d + "/result.json", "w"), indent=2)
+    ' "$dir" "$1" "$2" "$3" "$volant_version" "$reference_version"
+    }
+
+    exit_code=0
+    for entry in $names; do
+      echo "== corpus: $entry"
+      status=ok
+      run_entry "$entry" || status=error
+      write_result "$entry" "$status" "$err"
+      case "$status" in
+        error) echo "corpus: $entry: $err"; exit_code=1 ;;
+        skipped) echo "corpus: $entry skipped: $err" ;;
+        *) VOLANT_CORPUS="$entry" VOLANT_CORPUS_DIR="$root" cargo nextest run -p volant --test corpus --run-ignored only || exit_code=1 ;;
+      esac
+    done
+    exit $exit_code
+
 # Time the four pinned Galaxy roles under both engines and print the ratio the public speed claim
 # cites. Builds once, installs the roles the same way `proof-roles` does, then runs one uncounted
 # warm-up pass per engine (filling Volant's payload cache and the host's own caches) followed by

@@ -1,5 +1,5 @@
 ---
-sourceHash: bced5151937a
+sourceHash: bffc802c3c07
 title: Inventarios y caché de facts
 description: El formato de inventario que lee Volant, de dónde salen las variables de grupo y de host, la gramática de los patrones de hosts y cómo se conservan los facts entre ejecuciones.
 ---
@@ -80,6 +80,10 @@ Volant lee `group_vars/` y `host_vars/` junto a cada fuente y después junto al 
 Cuando un host está en varios grupos, gana el grupo más profundo. Entre grupos de la misma profundidad decide `ansible_group_priority` (gana el valor más alto) y después el nombre del grupo.
 
 Un nombre que es a la vez un host y un grupo significa el host. Volant avisa una vez por ejecución cuando un inventario contiene un nombre así, sea cual sea el patrón de la ejecución, porque Ansible lo detecta al cargar el inventario.
+
+## Imprimir un inventario
+
+`volant inventory --list` imprime como JSON lo que Volant leyó de las fuentes, y `volant inventory --host NAME` imprime las variables de un host, ambos byte a byte como `ansible-inventory`. Consulta [el comando inventory](/es/docs/reference/cli/#el-comando-inventory).
 
 ## Actualizar el inventario
 

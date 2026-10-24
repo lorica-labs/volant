@@ -273,6 +273,14 @@ impl VarStore {
         vars
     }
 
+    /// What `ansible-inventory` prints for a host: the inventory-level variables, `group_vars` and
+    /// `host_vars` files included, with the extra variables on top.
+    pub fn listed_vars(&self, host: &str) -> Map<String, Value> {
+        let mut vars = self.host_base(host);
+        extend(&mut vars, &self.extra);
+        vars
+    }
+
     /// Inventory-level sources for one host, without play, facts, extra or magic variables.
     /// This is what other hosts see through `hostvars`.
     fn host_base(&self, host: &str) -> Map<String, Value> {

@@ -256,8 +256,14 @@
   },
   "sources": {
     "advanced_host_list": {
+      "cli_only": false,
       "env": {
         "ANSIBLE_INVENTORY_ENABLED": "advanced_host_list,host_list"
+      },
+      "host": {
+        "name": "dba",
+        "rc": 0,
+        "stdout": "{\n    \"ansible_port\": 2222\n}\n"
       },
       "hosts": [
         "web1",
@@ -295,7 +301,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"dba\": {\n                \"ansible_port\": 2222\n            },\n            \"dbb\": {\n                \"ansible_port\": 2222\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"web1\",\n            \"web2\",\n            \"web3\",\n            \"dba\",\n            \"dbb\",\n            \"x:y\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "web[1:3],db[a:b]:2222,x:y,"
@@ -303,9 +311,11 @@
       "stderr": ""
     },
     "advanced_host_list_only": {
+      "cli_only": false,
       "env": {
         "ANSIBLE_INVENTORY_ENABLED": "advanced_host_list"
       },
+      "host": null,
       "hosts": [
         "web1",
         "web2",
@@ -329,7 +339,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"web1\",\n            \"web2\",\n            \"web3\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "web[1:3],"
@@ -337,12 +349,16 @@
       "stderr": ""
     },
     "any_unparsed_failed": {
+      "cli_only": false,
       "env": {
         "ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED": "1"
       },
+      "host": null,
       "hosts": [],
       "list": null,
+      "list_stdout": "",
       "needs": [],
+      "nosuch": null,
       "rc": 1,
       "sources": [
         "bad.ini",
@@ -351,7 +367,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[ERROR]: Completely failed to parse inventory source <golden-tmp>/bad.ini\n"
     },
     "auto_no_plugin": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -364,7 +382,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "auto_no_plugin.yml"
@@ -372,7 +392,9 @@
       "stderr": "[WARNING]: Skipping 'foo' as this is not a valid group definition\n"
     },
     "auto_plugin_int": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -385,7 +407,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "auto_plugin_int.yml"
@@ -393,7 +417,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: unsupported type <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nunsupported type <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/auto_plugin_int.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/auto_plugin_int.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/auto_plugin_int.yml\n\n[WARNING]: Unable to parse <golden-tmp>/auto_plugin_int.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "auto_unknown": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -406,9 +432,11 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [
         "ansible-core"
       ],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "auto_unknown.yml"
@@ -416,7 +444,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: inventory config '<golden-tmp>/auto_unknown.yml' specifies unknown plugin 'nosuch.plugin'\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\ninventory config '<golden-tmp>/auto_unknown.yml' specifies unknown plugin 'nosuch.plugin'\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/auto_unknown.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/auto_unknown.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/auto_unknown.yml\n\n[WARNING]: Unable to parse <golden-tmp>/auto_unknown.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "bad": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -429,7 +459,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "bad.ini"
@@ -437,7 +469,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "bad_then_good": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h1",
         "h2",
@@ -477,7 +515,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "bad.ini",
@@ -486,7 +526,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n"
     },
     "collection_plugin_fails": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -499,9 +541,11 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [
         "ansible-core"
       ],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "icinga2.yml"
@@ -509,7 +553,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Required config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nRequired config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/icinga2.yml\n\n[WARNING]: Unable to parse <golden-tmp>/icinga2.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "collection_plugin_fails_then_ini": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h1",
         "h2",
@@ -549,9 +599,11 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [
         "ansible-core"
       ],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "icinga2.yml",
@@ -560,7 +612,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Required config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nRequired config 'url' for 'ansible_collections.community.general.plugins.inventory.icinga2' inventory plugin not provided.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/icinga2.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/icinga2.yml\n\n[WARNING]: Unable to parse <golden-tmp>/icinga2.yml as an inventory source\n"
     },
     "colon": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -573,7 +627,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "colon.ini"
@@ -581,7 +637,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/colon.ini\n\n[WARNING]: Unable to parse <golden-tmp>/colon.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "constructed": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"c_os\": \"DEBIAN\",\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -716,7 +778,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"c_os\": {\n                    \"__ansible_unsafe\": \"DEBIAN\"\n                },\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"c_gv\": \"gval\",\n                \"c_os\": {\n                    \"__ansible_unsafe\": \"DEBIAN\"\n                },\n                \"c_ver\": 13,\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"c_gv\": \"gval\",\n                \"c_os\": {\n                    \"__ansible_unsafe\": \"REDHAT\"\n                },\n                \"c_ver\": 10,\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"is_deb\",\n            \"os_Debian\",\n            \"Debian\",\n            \"tag_a\",\n            \"tag_b\",\n            \"lead_Debian\",\n            \"os_RedHat\",\n            \"RedHat\",\n            \"role_unset\",\n            \"lead_RedHat\",\n            \"dd__k_v_\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"dd__k_v_\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"is_deb\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"lead_Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"lead_RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"os_Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"os_RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"role_unset\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"tag_a\": {\n        \"hosts\": [\n            \"w1\"\n        ]\n    },\n    \"tag_b\": {\n        \"hosts\": [\n            \"w1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -725,7 +789,13 @@
       "stderr": ""
     },
     "constructed_collection_filter": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -793,9 +863,11 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"c_sorted\": [\n                    {\n                        \"__ansible_unsafe\": \"3\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"12\"\n                    }\n                ],\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"c_sorted\": [\n                    {\n                        \"__ansible_unsafe\": \"3\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"9\"\n                    }\n                ],\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [
         "ansible-core"
       ],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -804,7 +876,13 @@
       "stderr": ""
     },
     "constructed_compose_int": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -856,7 +934,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -865,7 +945,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_compose_int.yml': Could not set x for host w1: Expressions must be <class 'str'>, got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>.\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_compose_int.yml'.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_compose_int.yml'>\n\n<<< caused by >>>\n\nCould not set x for host w1: Expressions must be <class 'str'>, got <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>.\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_compose_int.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_compose_int.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_compose_int.yml as an inventory source\n"
     },
     "constructed_compose_int_lax": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -917,7 +1003,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -926,7 +1014,13 @@
       "stderr": ""
     },
     "constructed_dict": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": {\n        \"a\": \"x\",\n        \"b\": \"\"\n    },\n    \"ll\": [\n        \"p\",\n        \"\",\n        \"q\"\n    ],\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1130,7 +1224,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": {\n                    \"a\": {\n                        \"__ansible_unsafe\": \"x\"\n                    },\n                    \"b\": {\n                        \"__ansible_unsafe\": \"\"\n                    }\n                },\n                \"ll\": [\n                    {\n                        \"__ansible_unsafe\": \"p\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"q\"\n                    }\n                ],\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"dd\": {\n                    \"a\": {\n                        \"__ansible_unsafe\": \"x\"\n                    },\n                    \"b\": {\n                        \"__ansible_unsafe\": \"\"\n                    }\n                },\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"ll\": [\n                    {\n                        \"__ansible_unsafe\": \"p\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"q\"\n                    }\n                ],\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"dd\": {\n                    \"a\": {\n                        \"__ansible_unsafe\": \"x\"\n                    },\n                    \"b\": {\n                        \"__ansible_unsafe\": \"\"\n                    }\n                },\n                \"gv\": \"gval\",\n                \"ll\": [\n                    {\n                        \"__ansible_unsafe\": \"p\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"q\"\n                    }\n                ],\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"d_a_x\",\n            \"d_b_\",\n            \"e_a_x\",\n            \"e_b_DV\",\n            \"f_a_x\",\n            \"f_b\",\n            \"l_p\",\n            \"l_LD\",\n            \"l_q\",\n            \"m_p\",\n            \"m_\",\n            \"m_q\"\n        ]\n    },\n    \"d_a_x\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"d_b_\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"e_a_x\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"e_b_DV\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"f_a_x\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"f_b\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"l_LD\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"l_p\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"l_q\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"m_\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"m_p\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"m_q\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1139,7 +1235,13 @@
       "stderr": ""
     },
     "constructed_int_key": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1191,7 +1293,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1200,7 +1304,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_int_key.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_int_key.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_int_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_int_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_int_key.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_int_key.yml as an inventory source\n"
     },
     "constructed_int_key_computed": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1252,7 +1362,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1261,7 +1373,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_int_key_computed.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_int_key_computed.yml': Invalid group name format, expected a string or a list of them or dictionary, got: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_int_key_computed.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_int_key_computed.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_int_key_computed.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_int_key_computed.yml as an inventory source\n"
     },
     "constructed_keyed_10": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1313,7 +1431,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1322,7 +1442,13 @@
       "stderr": ""
     },
     "constructed_keyed_11": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1387,7 +1513,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"x_Debian\",\n            \"x_RedHat\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    },\n    \"x_Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"x_RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1396,7 +1524,13 @@
       "stderr": ""
     },
     "constructed_keyed_3": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1461,7 +1595,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"P__Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"P__RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"P__Debian\",\n            \"P__RedHat\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1470,7 +1606,13 @@
       "stderr": ""
     },
     "constructed_keyed_8": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1522,7 +1664,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1531,7 +1675,13 @@
       "stderr": ""
     },
     "constructed_keyed_9": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1583,7 +1733,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1592,7 +1744,13 @@
       "stderr": ""
     },
     "constructed_keyed_parent": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1662,7 +1820,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"oses\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"os_Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"os_RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"oses\": {\n        \"children\": [\n            \"os_Debian\",\n            \"os_RedHat\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1671,7 +1831,13 @@
       "stderr": ""
     },
     "constructed_mutex": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1723,7 +1889,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1732,7 +1900,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_mutex.yml': parameters are mutually exclusive for keyed groups: default_value|trailing_separator\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_mutex.yml': parameters are mutually exclusive for keyed groups: default_value|trailing_separator\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_mutex.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_mutex.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_mutex.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_mutex.yml as an inventory source\n"
     },
     "constructed_no_hosts": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -1745,7 +1915,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed.yml"
@@ -1753,7 +1925,13 @@
       "stderr": ""
     },
     "constructed_passthrough": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\",\n    \"p_cond\": \"Debian\",\n    \"p_default\": \"Debian\",\n    \"p_dict\": {\n        \"a\": \"Debian\"\n    },\n    \"p_host_default\": \"Debian\",\n    \"p_list\": [\n        \"Debian\"\n    ],\n    \"p_paren\": \"Debian\",\n    \"p_string\": \"Debian\",\n    \"u_concat\": \"Debianx\",\n    \"u_literal\": \"lit\",\n    \"u_name\": \"d1\",\n    \"u_short\": \"d1\",\n    \"u_upper\": \"DEBIAN\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1883,7 +2061,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\",\n                \"p_cond\": \"Debian\",\n                \"p_default\": \"Debian\",\n                \"p_dict\": {\n                    \"a\": \"Debian\"\n                },\n                \"p_host_default\": \"Debian\",\n                \"p_list\": [\n                    \"Debian\"\n                ],\n                \"p_paren\": \"Debian\",\n                \"p_string\": \"Debian\",\n                \"u_concat\": {\n                    \"__ansible_unsafe\": \"Debianx\"\n                },\n                \"u_literal\": {\n                    \"__ansible_unsafe\": \"lit\"\n                },\n                \"u_name\": {\n                    \"__ansible_unsafe\": \"d1\"\n                },\n                \"u_short\": {\n                    \"__ansible_unsafe\": \"d1\"\n                },\n                \"u_upper\": {\n                    \"__ansible_unsafe\": \"DEBIAN\"\n                }\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"p_cond\": \"Debian\",\n                \"p_default\": \"Debian\",\n                \"p_dict\": {\n                    \"a\": \"Debian\"\n                },\n                \"p_host_default\": \"web1.example.com\",\n                \"p_list\": [\n                    \"Debian\"\n                ],\n                \"p_paren\": \"Debian\",\n                \"p_string\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"u_concat\": {\n                    \"__ansible_unsafe\": \"Debianx\"\n                },\n                \"u_literal\": {\n                    \"__ansible_unsafe\": \"lit\"\n                },\n                \"u_name\": {\n                    \"__ansible_unsafe\": \"w1\"\n                },\n                \"u_short\": {\n                    \"__ansible_unsafe\": \"w1\"\n                },\n                \"u_upper\": {\n                    \"__ansible_unsafe\": \"DEBIAN\"\n                },\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"p_cond\": \"RedHat\",\n                \"p_default\": \"RedHat\",\n                \"p_dict\": {\n                    \"a\": \"RedHat\"\n                },\n                \"p_host_default\": \"RedHat\",\n                \"p_list\": [\n                    \"RedHat\"\n                ],\n                \"p_paren\": \"RedHat\",\n                \"p_string\": \"RedHat\",\n                \"role\": \"\",\n                \"u_concat\": {\n                    \"__ansible_unsafe\": \"RedHatx\"\n                },\n                \"u_literal\": {\n                    \"__ansible_unsafe\": \"lit\"\n                },\n                \"u_name\": {\n                    \"__ansible_unsafe\": \"w2\"\n                },\n                \"u_short\": {\n                    \"__ansible_unsafe\": \"w2\"\n                },\n                \"u_upper\": {\n                    \"__ansible_unsafe\": \"REDHAT\"\n                },\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1892,7 +2072,13 @@
       "stderr": ""
     },
     "constructed_plugin_only": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -1944,7 +2130,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -1953,7 +2141,13 @@
       "stderr": ""
     },
     "constructed_separators": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -2031,7 +2225,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"P__Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"P__RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"_Debian\": {\n        \"hosts\": [\n            \"w1\",\n            \"d1\"\n        ]\n    },\n    \"_RedHat\": {\n        \"hosts\": [\n            \"w2\"\n        ]\n    },\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"_Debian\",\n            \"P__Debian\",\n            \"_RedHat\",\n            \"P__RedHat\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -2040,7 +2236,13 @@
       "stderr": ""
     },
     "constructed_strict": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -2092,7 +2294,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -2101,7 +2305,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_strict.yml': Could not set c_bad for host w1: 'nosuch' is undefined\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_strict.yml'.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_strict.yml'>\n\n<<< caused by >>>\n\nCould not set c_bad for host w1: 'nosuch' is undefined\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_strict.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_strict.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_strict.yml as an inventory source\n"
     },
     "constructed_undefined_call": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"dd\": \"{k:v}\",\n    \"os\": \"Debian\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -2153,7 +2363,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"dd\": \"{k:v}\",\n                \"os\": \"Debian\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"web1.example.com\",\n                \"empty\": \"\",\n                \"gv\": \"gval\",\n                \"os\": \"Debian\",\n                \"taglist\": [\n                    \"a\",\n                    \"b\"\n                ],\n                \"ver\": 12\n            },\n            \"w2\": {\n                \"gv\": \"gval\",\n                \"os\": \"RedHat\",\n                \"role\": \"\",\n                \"ver\": 9\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "constructed_base.ini",
@@ -2162,7 +2374,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: Failed to parse '<golden-tmp>/constructed_undefined_call.yml': Could not set y for host w1: 'nope' is undefined\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nFailed to parse '<golden-tmp>/constructed_undefined_call.yml'.\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/constructed_undefined_call.yml'>\n\n<<< caused by >>>\n\nCould not set y for host w1: 'nope' is undefined\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/constructed_undefined_call.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/constructed_undefined_call.yml\n\n[WARNING]: Unable to parse <golden-tmp>/constructed_undefined_call.yml as an inventory source\n"
     },
     "directory": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "common",
+        "rc": 0,
+        "stdout": "{\n    \"x\": 2,\n    \"y\": 2\n}\n"
+      },
       "hosts": [
         "d1",
         "common",
@@ -2207,7 +2425,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"common\": {\n                \"x\": 2,\n                \"y\": 2\n            },\n            \"d1\": {\n                \"x\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"dbg\",\n            \"subg\"\n        ]\n    },\n    \"dbg\": {\n        \"hosts\": [\n            \"d2\"\n        ]\n    },\n    \"subg\": {\n        \"hosts\": [\n            \"s1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"d1\",\n            \"common\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "dir"
@@ -2215,7 +2435,9 @@
       "stderr": ""
     },
     "empty_dir": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -2228,7 +2450,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "empty"
@@ -2236,7 +2460,9 @@
       "stderr": "[WARNING]: Unable to parse <golden-tmp>/empty as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "generator": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": null,
       "list": {
         "_meta": {
@@ -2392,7 +2618,9 @@
           ]
         }
       },
+      "list_stdout": null,
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "generator.yml"
@@ -2400,7 +2628,9 @@
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "generator_invalid_chars": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": null,
       "list": {
         "_meta": {
@@ -2425,7 +2655,9 @@
           ]
         }
       },
+      "list_stdout": null,
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "generator_invalid_chars.yml"
@@ -2433,7 +2665,9 @@
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "generator_non_ascii": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": null,
       "list": {
         "_meta": {
@@ -2458,7 +2692,9 @@
           ]
         }
       },
+      "list_stdout": null,
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "generator_non_ascii.yml"
@@ -2466,7 +2702,13 @@
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "generator_priority": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "p-h",
+        "rc": 0,
+        "stdout": "{\n    \"v\": \"x\"\n}\n"
+      },
       "hosts": [
         "p-h",
         "q-h"
@@ -2508,7 +2750,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"p-h\": {\n                \"v\": \"x\"\n            },\n            \"q-h\": {\n                \"v\": \"x\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"p-g\",\n            \"shared\",\n            \"q-g\"\n        ]\n    },\n    \"p-g\": {\n        \"hosts\": [\n            \"p-h\"\n        ]\n    },\n    \"q-g\": {\n        \"hosts\": [\n            \"q-h\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"p-h\",\n            \"q-h\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "generator_priority.yml"
@@ -2516,7 +2760,9 @@
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "generator_then_constructed": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": null,
       "list": {
         "_meta": {
@@ -2672,7 +2918,9 @@
           ]
         }
       },
+      "list_stdout": null,
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "generator.yml",
@@ -2681,7 +2929,9 @@
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "generator_undefined": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -2694,7 +2944,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "generator_undefined.yml"
@@ -2702,7 +2954,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: 'nope' is undefined\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\n'nope' is undefined\nOrigin: <golden-tmp>/generator_undefined.yml:6:13\n\n4   name: \"{{ layer }}-host\"\n5   parents:\n6     - name: \"{{ nope }}-g\"\n              ^ column 13\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/generator_undefined.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/generator_undefined.yml\n\n[WARNING]: Unable to parse <golden-tmp>/generator_undefined.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "host_list": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "::1",
+        "rc": 0,
+        "stdout": "{\n    \"ansible_port\": 22\n}\n"
+      },
       "hosts": [
         "a",
         "b",
@@ -2735,7 +2993,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"::1\": {\n                \"ansible_port\": 22\n            },\n            \"a\": {\n                \"ansible_port\": 2222\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"a\",\n            \"b\",\n            \"::1\",\n            \"b:x\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "a:2222,,b,[::1]:22,b:x,"
@@ -2743,7 +3003,9 @@
       "stderr": ""
     },
     "host_list_ranges": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "web[1:3]"
       ],
@@ -2763,7 +3025,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"web[1:3]\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "web[1:3],"
@@ -2771,7 +3035,13 @@
       "stderr": ""
     },
     "host_list_then_file": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h9",
         "h1",
@@ -2817,7 +3087,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"h9\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "h1,h9,",
@@ -2826,7 +3098,13 @@
       "stderr": ""
     },
     "ini_then_yaml": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "123",
+        "rc": 0,
+        "stdout": "{\n    \"av\": \"from_all\",\n    \"nested\": {\n        \"a\": [\n            1,\n            2\n        ],\n        \"b\": {\n            \"c\": \"d\"\n        }\n    },\n    \"shared\": \"host\",\n    \"x\": 1\n}\n"
+      },
       "hosts": [
         "loose",
         "w1",
@@ -3124,7 +3402,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"123\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"host\",\n                \"x\": 1\n            },\n            \"::1\": {\n                \"ansible_port\": 22,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"both\": {\n                \"av\": \"from_all\",\n                \"extra\": true,\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"d1\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"d2\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"dba\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbb\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbc\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"loose\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"n1\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n10\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n4\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n7\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"new_ini\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"w\": {\n                \"ansible_port\": 2200,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"w1\": {\n                \"av\": \"from_all\",\n                \"from_ini\": 1,\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web01\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web02\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web03\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"children\": [\n            \"sub\"\n        ],\n        \"hosts\": [\n            \"d1\",\n            \"both\",\n            \"w\",\n            \"::1\"\n        ]\n    },\n    \"sub\": {\n        \"hosts\": [\n            \"d2\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"loose\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"new_ini\",\n            \"web01\",\n            \"web02\",\n            \"web03\",\n            \"dba\",\n            \"dbb\",\n            \"dbc\",\n            \"n1\",\n            \"n4\",\n            \"n7\",\n            \"n10\",\n            \"both\",\n            \"123\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "base.ini",
@@ -3133,7 +3413,9 @@
       "stderr": ""
     },
     "late_children": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "h1",
         "h2"
@@ -3166,7 +3448,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"a\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\"\n        ]\n    },\n    \"b\": {\n        \"hosts\": [\n            \"h2\"\n        ]\n    },\n    \"web\": {\n        \"children\": [\n            \"a\",\n            \"b\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "late_children.ini"
@@ -3174,7 +3458,9 @@
       "stderr": ""
     },
     "missing": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3187,7 +3473,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "missing.ini"
@@ -3195,8 +3483,14 @@
       "stderr": "[WARNING]: Unable to parse <golden-tmp>/missing.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "nmap": {
+      "cli_only": false,
       "env": {
         "PATH": "$COPY/fakebin:$PATH"
+      },
+      "host": {
+        "name": "db1.example",
+        "rc": 0,
+        "stdout": "{\n    \"ip\": \"192.0.2.11\",\n    \"name\": \"db1.example\"\n}\n"
       },
       "hosts": [
         "web1.example",
@@ -3252,9 +3546,11 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"db1.example\": {\n                \"ip\": {\n                    \"__ansible_unsafe\": \"192.0.2.11\"\n                },\n                \"name\": {\n                    \"__ansible_unsafe\": \"db1.example\"\n                }\n            },\n            \"web1.example\": {\n                \"ip\": {\n                    \"__ansible_unsafe\": \"192.0.2.10\"\n                },\n                \"name\": {\n                    \"__ansible_unsafe\": \"web1.example\"\n                },\n                \"ports\": [\n                    {\n                        \"port\": {\n                            \"__ansible_unsafe\": \"22\"\n                        },\n                        \"protocol\": {\n                            \"__ansible_unsafe\": \"tcp\"\n                        },\n                        \"service\": {\n                            \"__ansible_unsafe\": \"ssh\"\n                        },\n                        \"state\": {\n                            \"__ansible_unsafe\": \"open\"\n                        }\n                    }\n                ]\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"web1.example\",\n            \"db1.example\"\n        ]\n    }\n}\n",
       "needs": [
         "ansible-core"
       ],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "nmap.yml"
@@ -3262,8 +3558,14 @@
       "stderr": "[WARNING]: Found variable using reserved name 'name'.\nOrigin: <unknown>\n\nname\n\n"
     },
     "nmap_then_ini": {
+      "cli_only": false,
       "env": {
         "PATH": "$COPY/fakebin:$PATH"
+      },
+      "host": {
+        "name": "db1.example",
+        "rc": 0,
+        "stdout": "{\n    \"ip\": \"192.0.2.11\",\n    \"name\": \"db1.example\"\n}\n"
       },
       "hosts": [
         "web1.example",
@@ -3344,9 +3646,11 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"db1.example\": {\n                \"ip\": {\n                    \"__ansible_unsafe\": \"192.0.2.11\"\n                },\n                \"name\": {\n                    \"__ansible_unsafe\": \"db1.example\"\n                }\n            },\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            },\n            \"web1.example\": {\n                \"ip\": {\n                    \"__ansible_unsafe\": \"192.0.2.10\"\n                },\n                \"name\": {\n                    \"__ansible_unsafe\": \"web1.example\"\n                },\n                \"ports\": [\n                    {\n                        \"port\": {\n                            \"__ansible_unsafe\": \"22\"\n                        },\n                        \"protocol\": {\n                            \"__ansible_unsafe\": \"tcp\"\n                        },\n                        \"service\": {\n                            \"__ansible_unsafe\": \"ssh\"\n                        },\n                        \"state\": {\n                            \"__ansible_unsafe\": \"open\"\n                        }\n                    }\n                ]\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"web1.example\",\n            \"db1.example\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [
         "ansible-core"
       ],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "nmap.yml",
@@ -3355,7 +3659,9 @@
       "stderr": "[WARNING]: Found variable using reserved name 'name'.\nOrigin: <unknown>\n\nname\n\n"
     },
     "partial": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3368,7 +3674,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "partial.ini"
@@ -3376,7 +3684,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "partial_quote": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3389,7 +3699,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "partial_quote.ini"
@@ -3397,7 +3709,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Error parsing host definition 'h1 x=\"unterminated': No closing quotation\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory.\nOrigin: <golden-tmp>/partial_quote.ini\n\n<<< caused by >>>\n\nError parsing host definition 'h1 x=\"unterminated': No closing quotation\n\n[WARNING]: Unable to parse <golden-tmp>/partial_quote.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "partial_second_group": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3410,7 +3724,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "partial_second_group.ini"
@@ -3418,7 +3734,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Error parsing host definition 'h2 x=\"unterminated': No closing quotation\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory.\nOrigin: <golden-tmp>/partial_second_group.ini\n\n<<< caused by >>>\n\nError parsing host definition 'h2 x=\"unterminated': No closing quotation\n\n[WARNING]: Unable to parse <golden-tmp>/partial_second_group.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "partial_then_good": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h0",
         "h1",
@@ -3465,7 +3787,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"g\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"g\": {\n        \"hosts\": [\n            \"h0\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "partial.ini",
@@ -3474,7 +3798,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: junk\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: junk\nOrigin: <golden-tmp>/partial.ini\n\n[WARNING]: Unable to parse <golden-tmp>/partial.ini as an inventory source\n"
     },
     "priority": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"c\": 1,\n    \"x\": \"child\",\n    \"y\": \"a\"\n}\n"
+      },
       "hosts": [
         "h1"
       ],
@@ -3518,7 +3848,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"c\": 1,\n                \"x\": \"child\",\n                \"y\": \"a\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"a\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"parent\",\n            \"a\",\n            \"b\"\n        ]\n    },\n    \"b\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    },\n    \"child\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    },\n    \"parent\": {\n        \"children\": [\n            \"child\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "priority.ini"
@@ -3526,7 +3858,13 @@
       "stderr": ""
     },
     "ranges": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "::1",
+        "rc": 0,
+        "stdout": "{\n    \"ansible_port\": 22,\n    \"role\": \"loopback\",\n    \"tier\": \"front\"\n}\n"
+      },
       "hosts": [
         "web01",
         "web02",
@@ -3609,7 +3947,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"::1\": {\n                \"ansible_port\": 22,\n                \"role\": \"loopback\",\n                \"tier\": \"front\"\n            },\n            \"dba\": {\n                \"ansible_port\": 2222,\n                \"tier\": \"front\"\n            },\n            \"dbb\": {\n                \"ansible_port\": 2222,\n                \"tier\": \"front\"\n            },\n            \"dbc\": {\n                \"ansible_port\": 2222,\n                \"tier\": \"front\"\n            },\n            \"n1\": {\n                \"tier\": \"front\"\n            },\n            \"n10\": {\n                \"tier\": \"front\"\n            },\n            \"n4\": {\n                \"tier\": \"front\"\n            },\n            \"n7\": {\n                \"tier\": \"front\"\n            },\n            \"web01\": {\n                \"ansible_host\": \"10.0.0.9\",\n                \"tier\": \"front\"\n            },\n            \"web02\": {\n                \"ansible_host\": \"10.0.0.9\",\n                \"tier\": \"front\"\n            },\n            \"web03\": {\n                \"ansible_host\": \"10.0.0.9\",\n                \"tier\": \"front\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"web01\",\n            \"web02\",\n            \"web03\",\n            \"dba\",\n            \"dbb\",\n            \"dbc\",\n            \"n1\",\n            \"n4\",\n            \"n7\",\n            \"n10\",\n            \"::1\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "ranges.ini"
@@ -3617,7 +3957,9 @@
       "stderr": ""
     },
     "script_badjson": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3630,7 +3972,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_badjson.sh"
@@ -3638,7 +3982,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Unable to get JSON decoder for inventory script result: Value could not be parsed as JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nUnable to get JSON decoder for inventory script result: Value could not be parsed as JSON: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_badjson.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {bad json\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {bad json\nOrigin: <golden-tmp>/script_badjson.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_badjson.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_empty": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3651,7 +3997,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_empty.sh"
@@ -3659,7 +4007,9 @@
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_empty.sh'>\n\n"
     },
     "script_fail": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3672,7 +4022,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_fail.sh"
@@ -3680,7 +4032,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Inventory script returned non-zero exit code 3.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nInventory script returned non-zero exit code 3.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_fail.sh'>\n\nStandard error from inventory script:\noops\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: oops\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: oops\nOrigin: <golden-tmp>/script_fail.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_fail.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_failed_then_ini": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h1",
         "h2",
@@ -3720,7 +4078,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_fail.sh",
@@ -3729,7 +4089,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Inventory script returned non-zero exit code 3.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nInventory script returned non-zero exit code 3.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_fail.sh'>\n\nStandard error from inventory script:\noops\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: oops\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: oops\nOrigin: <golden-tmp>/script_fail.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_fail.sh as an inventory source\n"
     },
     "script_host_bad": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3742,7 +4104,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_host_bad.sh"
@@ -3750,7 +4114,9 @@
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_host_bad.sh'>\n\n[WARNING]: Failed to parse inventory with 'script' plugin: Inventory script result for host 'h1' could not be parsed as JSON: JSON parsing failed: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nInventory script result for host 'h1' could not be parsed as JSON.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_host_bad.sh'>\n\n<<< caused by >>>\n\nJSON parsing failed: Expecting property name enclosed in double quotes: line 1 column 2 (char 1)\nOrigin: <inventory script output from '<golden-tmp>/script_host_bad.sh'> for host 'h1':1:2\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: $1\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: $1\nOrigin: <golden-tmp>/script_host_bad.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_host_bad.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_host_empty": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "h1"
       ],
@@ -3771,7 +4137,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"g\"\n        ]\n    },\n    \"g\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_host_empty.sh"
@@ -3779,7 +4147,9 @@
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_host_empty.sh'>\n\n"
     },
     "script_hosts_str": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3792,7 +4162,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_hosts_str.sh"
@@ -3800,7 +4172,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains 'g.hosts' which is 'str' instead of 'list'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains 'g.hosts' which is 'str' instead of 'list'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_hosts_str.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":\"h1\"}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":\"h1\"}}\nOrigin: <golden-tmp>/script_hosts_str.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_hosts_str.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_hostvars_late": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3813,7 +4187,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_hostvars_late.sh"
@@ -3821,7 +4197,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_hostvars_late.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\nOrigin: <golden-tmp>/script_hostvars_late.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_hostvars_late.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_hostvars_late_then_ini": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h1",
         "h2",
@@ -3867,7 +4249,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"a\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"a\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_hostvars_late.sh",
@@ -3876,7 +4260,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_hostvars_late.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"a\":{\"hosts\":[\"h1\"]},\"_meta\":{},\"b\":{\"hosts\":[\"h2\"]}}\nOrigin: <golden-tmp>/script_hostvars_late.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_hostvars_late.sh as an inventory source\n"
     },
     "script_list": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -3889,7 +4275,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_list.sh"
@@ -3897,7 +4285,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Unable to get JSON decoder for inventory script result: Value is 'list' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nUnable to get JSON decoder for inventory script result: Value is 'list' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_list.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: [1,2]\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: [1,2]\nOrigin: <golden-tmp>/script_list.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_list.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_malformed": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "m",
+        "rc": 0,
+        "stdout": "{\n    \"m\": {\n        \"x\": 1\n    },\n    \"x\": 1\n}\n"
+      },
       "hosts": [
         "m"
       ],
@@ -3925,7 +4319,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"m\": {\n                \"m\": {\n                    \"x\": 1\n                },\n                \"x\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"m\"\n        ]\n    },\n    \"m\": {\n        \"hosts\": [\n            \"m\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_malformed.sh"
@@ -3933,7 +4329,13 @@
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Treating malformed group 'm' as the sole host of that group. Variables provided in this manner cannot be templated. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_malformed.sh'>\n\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_malformed.sh'>\n\n[WARNING]: Found both group and host with same name: m\n"
     },
     "script_meta": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"gv\": \"g\",\n    \"v\": 1\n}\n"
+      },
       "hosts": [
         "h1",
         "h2",
@@ -3984,7 +4386,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"gv\": \"g\",\n                \"v\": 1\n            },\n            \"h2\": {\n                \"gv\": \"g\",\n                \"v\": 2\n            },\n            \"h3\": {\n                \"gv\": \"g\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"g\",\n            \"ungr\"\n        ]\n    },\n    \"c\": {\n        \"hosts\": [\n            \"h3\"\n        ]\n    },\n    \"g\": {\n        \"children\": [\n            \"c\"\n        ],\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    },\n    \"ungr\": {\n        \"hosts\": [\n            \"h4\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_meta.sh"
@@ -3992,7 +4396,9 @@
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Group 'c' was converted to 'dict' from 'list'. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_meta.sh'>\n\n"
     },
     "script_meta_int": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4005,7 +4411,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_meta_int.sh"
@@ -4013,7 +4421,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Unable to get JSON decoder for inventory script result: Value contains '_meta' which is 'int' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nUnable to get JSON decoder for inventory script result: Value contains '_meta' which is 'int' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_meta_int.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":[\"h1\"]},\"_meta\":1}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"hosts\":[\"h1\"]},\"_meta\":1}\nOrigin: <golden-tmp>/script_meta_int.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_meta_int.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_noexec": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4026,7 +4436,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_noexec.sh"
@@ -4034,7 +4446,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: executable\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: executable\nOrigin: <golden-tmp>/script_noexec.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_noexec.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_nohv": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4047,7 +4461,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_nohv.sh"
@@ -4055,7 +4471,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains '_meta.hostvars' which is 'NoneType' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_nohv.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"_meta\":{}, \"g\":{\"hosts\":[\"h1\"]}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"_meta\":{}, \"g\":{\"hosts\":[\"h1\"]}}\nOrigin: <golden-tmp>/script_nohv.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_nohv.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "script_nometa": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"gv\": \"g\",\n    \"hv\": \"h1\"\n}\n"
+      },
       "hosts": [
         "h1",
         "h2"
@@ -4087,7 +4509,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"gv\": \"g\",\n                \"hv\": \"h1\"\n            },\n            \"h2\": {\n                \"gv\": \"g\",\n                \"hv\": \"h2\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"g\"\n        ]\n    },\n    \"g\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_nometa.sh"
@@ -4095,7 +4519,9 @@
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Inventory scripts should always provide 'meta.hostvars'. Host variables will be collected by running the inventory script with the '--host' option for each host. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_nometa.sh'>\n\n"
     },
     "script_order": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "h1",
         "h2"
@@ -4123,7 +4549,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"zed\",\n            \"alpha\"\n        ]\n    },\n    \"alpha\": {\n        \"hosts\": [\n            \"h2\"\n        ]\n    },\n    \"zed\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_order.sh"
@@ -4131,7 +4559,13 @@
       "stderr": ""
     },
     "script_then_ini": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"gv\": \"g\",\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h1",
         "h2",
@@ -4199,7 +4633,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"gv\": \"g\",\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"gv\": \"g\",\n                \"v\": 2,\n                \"wv\": \"one\"\n            },\n            \"h3\": {\n                \"gv\": \"g\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"g\",\n            \"ungr\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"c\": {\n        \"hosts\": [\n            \"h3\"\n        ]\n    },\n    \"g\": {\n        \"children\": [\n            \"c\"\n        ],\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"ungr\": {\n        \"hosts\": [\n            \"h4\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_meta.sh",
@@ -4208,7 +4644,9 @@
       "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Group 'c' was converted to 'dict' from 'list'. This feature will be removed from inventory plugin 'script' in ansible-core version 2.23.\nOrigin: <inventory script output from '<golden-tmp>/script_meta.sh'>\n\n"
     },
     "script_vars_list": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4221,15 +4659,132 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "script_vars_list.sh"
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'script' plugin: Value contains 'g.vars' which is 'list' instead of 'dict'.\n\nFailed to parse inventory with 'script' plugin.\n\n<<< caused by >>>\n\nValue contains 'g.vars' which is 'list' instead of 'dict'.\nOrigin: <inventory plugin 'script' with source '<golden-tmp>/script_vars_list.sh'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"vars\":[1]}}\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Expected key=value host variable assignment, got: {\"g\":{\"vars\":[1]}}\nOrigin: <golden-tmp>/script_vars_list.sh\n\n[WARNING]: Unable to parse <golden-tmp>/script_vars_list.sh as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
-    "toml": {
+    "spec_example": {
+      "cli_only": true,
       "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"ansible_user\": \"hugo\",\n    \"dns\": \"1.1.1.1\",\n    \"env\": \"production\",\n    \"list\": [\n        1,\n        2\n    ],\n    \"role\": \"primary\"\n}\n"
+      },
+      "hosts": [
+        "w1",
+        "w2",
+        "w3",
+        "w4",
+        "d1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "d1": {
+              "ansible_user": "hugo",
+              "dns": "1.1.1.1",
+              "env": "production",
+              "list": [
+                1,
+                2
+              ],
+              "role": "primary"
+            },
+            "w1": {
+              "ansible_host": "10.0.0.1",
+              "dns": "1.1.1.1",
+              "env": "production",
+              "http_port": 80,
+              "list": [
+                1,
+                2
+              ],
+              "tier": "front"
+            },
+            "w2": {
+              "dns": "1.1.1.1",
+              "env": "production",
+              "http_port": 8080,
+              "list": [
+                1,
+                2
+              ],
+              "tier": "front"
+            },
+            "w3": {
+              "dns": "1.1.1.1",
+              "env": "production",
+              "list": [
+                1,
+                2
+              ],
+              "tier": "front"
+            },
+            "w4": {
+              "dns": "1.1.1.1",
+              "env": "production",
+              "list": [
+                1,
+                2
+              ],
+              "tier": "front"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "prod"
+          ]
+        },
+        "db": {
+          "hosts": [
+            "d1"
+          ]
+        },
+        "prod": {
+          "children": [
+            "web",
+            "db"
+          ]
+        },
+        "web": {
+          "hosts": [
+            "w1",
+            "w2",
+            "w3",
+            "w4"
+          ]
+        }
+      },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"ansible_user\": \"hugo\",\n                \"dns\": \"1.1.1.1\",\n                \"env\": \"production\",\n                \"list\": [\n                    1,\n                    2\n                ],\n                \"role\": \"primary\"\n            },\n            \"w1\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"dns\": \"1.1.1.1\",\n                \"env\": \"production\",\n                \"http_port\": 80,\n                \"list\": [\n                    1,\n                    2\n                ],\n                \"tier\": \"front\"\n            },\n            \"w2\": {\n                \"dns\": \"1.1.1.1\",\n                \"env\": \"production\",\n                \"http_port\": 8080,\n                \"list\": [\n                    1,\n                    2\n                ],\n                \"tier\": \"front\"\n            },\n            \"w3\": {\n                \"dns\": \"1.1.1.1\",\n                \"env\": \"production\",\n                \"list\": [\n                    1,\n                    2\n                ],\n                \"tier\": \"front\"\n            },\n            \"w4\": {\n                \"dns\": \"1.1.1.1\",\n                \"env\": \"production\",\n                \"list\": [\n                    1,\n                    2\n                ],\n                \"tier\": \"front\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"prod\"\n        ]\n    },\n    \"db\": {\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"prod\": {\n        \"children\": [\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"w3\",\n            \"w4\"\n        ]\n    }\n}\n",
+      "needs": [],
+      "nosuch": {
+        "rc": 5,
+        "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nosuch\n[ERROR]: You must pass a single valid host to --host parameter\n",
+        "stdout": ""
+      },
+      "rc": 0,
+      "sources": [
+        "spec/hosts.ini"
+      ],
+      "stderr": ""
+    },
+    "toml": {
+      "cli_only": false,
+      "env": {},
+      "host": {
+        "name": "d1",
+        "rc": 0,
+        "stdout": "{\n    \"av\": \"a\"\n}\n"
+      },
       "hosts": [
         "w1",
         "w2",
@@ -4319,7 +4874,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"d1\": {\n                \"av\": \"a\"\n            },\n            \"d2\": {\n                \"av\": \"a\"\n            },\n            \"w1\": {\n                \"av\": \"a\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"x\": 1\n            },\n            \"w2\": {\n                \"ansible_port\": 2200,\n                \"av\": \"a\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"x\": 1\n            },\n            \"w3\": {\n                \"ansible_port\": 2200,\n                \"av\": \"a\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"x\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"solo\"\n        ]\n    },\n    \"db\": {\n        \"children\": [\n            \"sub\"\n        ],\n        \"hosts\": [\n            \"d1\"\n        ]\n    },\n    \"sub\": {\n        \"hosts\": [\n            \"d2\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"w3\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "basic.toml"
@@ -4327,7 +4884,9 @@
       "stderr": "[WARNING]: Skipping unexpected key \"lonely\" in group \"solo\", only \"vars\", \"children\" and \"hosts\" are valid\n"
     },
     "toml_children_table": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4340,7 +4899,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "bad_children.toml"
@@ -4348,7 +4909,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Invalid \"children\" entry for \"db\" group, requires a list, found \"<class 'dict'>\" instead.\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nInvalid \"children\" entry for \"db\" group, requires a list, found \"<class 'dict'>\" instead.\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/bad_children.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/bad_children.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "toml_empty": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4361,7 +4924,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "empty.toml"
@@ -4369,7 +4934,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Parsed empty TOML file\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nParsed empty TOML file\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/empty.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/empty.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "toml_hosts_list": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4382,7 +4949,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "bad_hosts.toml"
@@ -4390,7 +4959,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Invalid \"hosts\" entry for \"web\" group, requires a dict, found \"<class 'list'>\" instead.\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nInvalid \"hosts\" entry for \"web\" group, requires a dict, found \"<class 'list'>\" instead.\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/bad_hosts.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/bad_hosts.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "toml_plugin": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4403,7 +4974,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "plugin.toml"
@@ -4411,7 +4984,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'toml' plugin: Plugin configuration TOML file, not TOML inventory\n\nFailed to parse inventory with 'toml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration TOML file, not TOML inventory\nOrigin: <inventory plugin 'toml' with source '<golden-tmp>/plugin.toml'>\n\n[WARNING]: Unable to parse <golden-tmp>/plugin.toml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "toml_then_yaml": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "123",
+        "rc": 0,
+        "stdout": "{\n    \"av\": \"from_all\",\n    \"nested\": {\n        \"a\": [\n            1,\n            2\n        ],\n        \"b\": {\n            \"c\": \"d\"\n        }\n    },\n    \"shared\": \"host\",\n    \"x\": 1\n}\n"
+      },
       "hosts": [
         "loose",
         "w1",
@@ -4727,7 +5306,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"123\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"host\",\n                \"x\": 1\n            },\n            \"::1\": {\n                \"ansible_port\": 22,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"both\": {\n                \"av\": \"from_all\",\n                \"extra\": true,\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"d1\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"d2\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"dba\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbb\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbc\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"loose\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"n1\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n10\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n4\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n7\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"w\": {\n                \"ansible_port\": 2200,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"w1\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"w2\": {\n                \"ansible_port\": 2200,\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"w3\": {\n                \"ansible_port\": 2200,\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web01\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web02\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web03\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\",\n            \"solo\"\n        ]\n    },\n    \"db\": {\n        \"children\": [\n            \"sub\"\n        ],\n        \"hosts\": [\n            \"d1\",\n            \"both\",\n            \"w\",\n            \"::1\"\n        ]\n    },\n    \"sub\": {\n        \"hosts\": [\n            \"d2\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"loose\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"w1\",\n            \"w2\",\n            \"w3\",\n            \"web01\",\n            \"web02\",\n            \"web03\",\n            \"dba\",\n            \"dbb\",\n            \"dbc\",\n            \"n1\",\n            \"n4\",\n            \"n7\",\n            \"n10\",\n            \"both\",\n            \"123\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "basic.toml",
@@ -4736,7 +5317,13 @@
       "stderr": "[WARNING]: Skipping unexpected key \"lonely\" in group \"solo\", only \"vars\", \"children\" and \"hosts\" are valid\n"
     },
     "two_sources": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"only_two\": 1,\n    \"v\": \"two_h1\",\n    \"wv\": \"two\"\n}\n"
+      },
       "hosts": [
         "h1",
         "h2",
@@ -4784,7 +5371,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"only_two\": 1,\n                \"v\": \"two_h1\",\n                \"wv\": \"two\"\n            },\n            \"h2\": {\n                \"wv\": \"two\"\n            },\n            \"h4\": {\n                \"wv\": \"two\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\",\n            \"h5\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\",\n            \"h4\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "one.ini",
@@ -4793,7 +5382,13 @@
       "stderr": ""
     },
     "two_sources_reversed": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"only_two\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
+      },
       "hosts": [
         "h5",
         "h1",
@@ -4841,7 +5436,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"only_two\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            },\n            \"h4\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"shared\",\n            \"web\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h5\",\n            \"h1\",\n            \"h3\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h4\",\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "two.ini",
@@ -4850,7 +5447,9 @@
       "stderr": ""
     },
     "undefined_child": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4863,7 +5462,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "undefined_child.ini"
@@ -4871,7 +5472,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Section [web:children] includes undefined group 'zz'.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Section [web:children] includes undefined group 'zz'.\nOrigin: <golden-tmp>/undefined_child.ini\n\n[WARNING]: Unable to parse <golden-tmp>/undefined_child.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "undefined_vars": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -4884,7 +5487,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "undefined_vars.ini"
@@ -4892,12 +5497,16 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Section [x:vars] not valid for undefined group 'x'.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Section [x:vars] not valid for undefined group 'x'.\nOrigin: <golden-tmp>/undefined_vars.ini\n\n[WARNING]: Unable to parse <golden-tmp>/undefined_vars.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "unparsed_failed": {
+      "cli_only": false,
       "env": {
         "ANSIBLE_INVENTORY_UNPARSED_FAILED": "1"
       },
+      "host": null,
       "hosts": [],
       "list": null,
+      "list_stdout": "",
       "needs": [],
+      "nosuch": null,
       "rc": 1,
       "sources": [
         "bad.ini"
@@ -4905,8 +5514,14 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n[ERROR]: No inventory was parsed, please check your configuration and options.\n"
     },
     "unparsed_failed_one_good": {
+      "cli_only": false,
       "env": {
         "ANSIBLE_INVENTORY_UNPARSED_FAILED": "1"
+      },
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"only_one\": 1,\n    \"v\": \"one_h1\",\n    \"wv\": \"one\"\n}\n"
       },
       "hosts": [
         "h1",
@@ -4947,7 +5562,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"only_one\": 1,\n                \"v\": \"one_h1\",\n                \"wv\": \"one\"\n            },\n            \"h2\": {\n                \"wv\": \"one\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"shared\"\n        ]\n    },\n    \"shared\": {\n        \"hosts\": [\n            \"h3\",\n            \"h1\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"h1\",\n            \"h2\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "bad.ini",
@@ -4955,8 +5572,65 @@
       ],
       "stderr": "[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: not enough values to unpack (expected 3, got 2)\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: not enough values to unpack (expected 3, got 2)\nOrigin: <golden-tmp>/bad.ini\n\n[WARNING]: Unable to parse <golden-tmp>/bad.ini as an inventory source\n"
     },
-    "yaml": {
+    "values": {
+      "cli_only": true,
       "env": {},
+      "host": {
+        "name": "v1",
+        "rc": 0,
+        "stdout": "{\n    \"flag\": true,\n    \"nothing\": null,\n    \"ratio\": 1.5,\n    \"secret\": {\n        \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\\n3637386233643036363065386662666666383435343030660a\\n\"\n    },\n    \"tpl\": \"{{ inventory_hostname }}-x\",\n    \"uni\": \"café ü\"\n}\n"
+      },
+      "hosts": [
+        "v1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "v1": {
+              "flag": true,
+              "nothing": null,
+              "ratio": 1.5,
+              "secret": {
+                "__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\n3637386233643036363065386662666666383435343030660a\n"
+              },
+              "tpl": "{{ inventory_hostname }}-x",
+              "uni": "café ü"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "v1"
+          ]
+        }
+      },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"v1\": {\n                \"flag\": true,\n                \"nothing\": null,\n                \"ratio\": 1.5,\n                \"secret\": {\n                    \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\\n3637386233643036363065386662666666383435343030660a\\n\"\n                },\n                \"tpl\": \"{{ inventory_hostname }}-x\",\n                \"uni\": \"café ü\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"v1\"\n        ]\n    }\n}\n",
+      "needs": [],
+      "nosuch": {
+        "rc": 5,
+        "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nosuch\n[ERROR]: You must pass a single valid host to --host parameter\n",
+        "stdout": ""
+      },
+      "rc": 0,
+      "sources": [
+        "values.yml"
+      ],
+      "stderr": ""
+    },
+    "yaml": {
+      "cli_only": false,
+      "env": {},
+      "host": {
+        "name": "123",
+        "rc": 0,
+        "stdout": "{\n    \"av\": \"from_all\",\n    \"nested\": {\n        \"a\": [\n            1,\n            2\n        ],\n        \"b\": {\n            \"c\": \"d\"\n        }\n    },\n    \"shared\": \"host\",\n    \"x\": 1\n}\n"
+      },
       "hosts": [
         "loose",
         "web01",
@@ -5221,7 +5895,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"123\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"host\",\n                \"x\": 1\n            },\n            \"::1\": {\n                \"ansible_port\": 22,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"both\": {\n                \"av\": \"from_all\",\n                \"extra\": true,\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"d1\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"d2\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"dba\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbb\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbc\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"loose\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"n1\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n10\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n4\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n7\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"w\": {\n                \"ansible_port\": 2200,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"web01\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web02\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web03\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"children\": [\n            \"sub\"\n        ],\n        \"hosts\": [\n            \"d1\",\n            \"both\",\n            \"w\",\n            \"::1\"\n        ]\n    },\n    \"sub\": {\n        \"hosts\": [\n            \"d2\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"loose\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"web01\",\n            \"web02\",\n            \"web03\",\n            \"dba\",\n            \"dbb\",\n            \"dbc\",\n            \"n1\",\n            \"n4\",\n            \"n7\",\n            \"n10\",\n            \"both\",\n            \"123\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "basic.yml"
@@ -5229,7 +5905,9 @@
       "stderr": ""
     },
     "yaml_cycle": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -5242,7 +5920,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_cycle.yml"
@@ -5250,7 +5930,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_cycle.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_cycle.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Adding group 'b' as child to 'a' creates a recursive dependency loop.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nAdding group 'b' as child to 'a' creates a recursive dependency loop.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_cycle.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_cycle.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_empty_map": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "{}"
       ],
@@ -5270,7 +5952,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"{}\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_empty_map.yml"
@@ -5278,7 +5962,9 @@
       "stderr": ""
     },
     "yaml_empty_sections": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "web1"
       ],
@@ -5302,7 +5988,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"s\"\n        ]\n    },\n    \"s\": {\n        \"children\": [\n            \"g\"\n        ],\n        \"hosts\": [\n            \"web1\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "empty_sections.yml"
@@ -5310,7 +5998,9 @@
       "stderr": ""
     },
     "yaml_int_host": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -5323,7 +6013,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_int_host.yml"
@@ -5331,7 +6023,13 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_int_host.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_int_host.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_int_host.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Host pattern 456 must be a string. Enclose integers/floats in quotation marks.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nHost pattern 456 must be a string. Enclose integers/floats in quotation marks.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_int_host.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_int_host.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_int_host.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_late_children": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "e1",
+        "rc": 0,
+        "stdout": "{\n    \"v\": 1\n}\n"
+      },
       "hosts": [
         "e1"
       ],
@@ -5361,7 +6059,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"e1\": {\n                \"v\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"late\"\n        ]\n    },\n    \"early\": {\n        \"hosts\": [\n            \"e1\"\n        ]\n    },\n    \"late\": {\n        \"children\": [\n            \"early\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "children.yml"
@@ -5369,7 +6069,9 @@
       "stderr": ""
     },
     "yaml_list_hosts": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -5382,7 +6084,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_list_hosts.yml"
@@ -5390,7 +6094,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_list_hosts.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_list_hosts.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_list_hosts.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Invalid \"hosts\" entry for \"g\" group, requires a dictionary, found \"<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>\" instead.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nInvalid \"hosts\" entry for \"g\" group, requires a dictionary, found \"<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'>\" instead.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_list_hosts.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'g:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_list_hosts.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_list_hosts.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_non_ascii": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "h1"
       ],
@@ -5411,7 +6117,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"g-é\"\n        ]\n    },\n    \"g-é\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_non_ascii.yml"
@@ -5419,7 +6127,9 @@
       "stderr": "[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n"
     },
     "yaml_odd": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [
         "a",
         "b",
@@ -5454,7 +6164,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"g\",\n            \"web-1\"\n        ]\n    },\n    \"g\": {\n        \"children\": [\n            \"k\"\n        ],\n        \"hosts\": [\n            \"a\",\n            \"b\",\n            \"c\"\n        ]\n    },\n    \"web-1\": {\n        \"hosts\": [\n            \"d\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "odd.yml"
@@ -5462,7 +6174,9 @@
       "stderr": "[WARNING]: Skipping unexpected key (foo) in group (g), only \"vars\", \"children\" and \"hosts\" are valid\n[WARNING]: Skipping key (zz) in group (g) as it is not a mapping, it is a <class 'ansible.module_utils._internal._datatag._AnsibleTaggedInt'>\n[WARNING]: Invalid characters were found in group names but not replaced, use -vvvv to see details\n[WARNING]: Skipping 'bad_group' as this is not a valid group definition\n"
     },
     "yaml_own_child": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -5475,7 +6189,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_own_child.yml"
@@ -5483,7 +6199,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_own_child.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_own_child.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_own_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: can't add group to itself\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\ncan't add group to itself\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_own_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_own_child.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_own_child.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_plugin_key": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -5496,7 +6214,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_plugin_key.yml"
@@ -5504,7 +6224,9 @@
       "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: inventory config '<golden-tmp>/yaml_plugin_key.yml' specifies unknown plugin 'x'\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\ninventory config '<golden-tmp>/yaml_plugin_key.yml' specifies unknown plugin 'x'\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_plugin_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Plugin configuration YAML file, not YAML inventory\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nPlugin configuration YAML file, not YAML inventory\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_plugin_key.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'plugin:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_plugin_key.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_plugin_key.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_skipped_child": {
+      "cli_only": false,
       "env": {},
+      "host": null,
       "hosts": [],
       "list": {
         "_meta": {
@@ -5517,7 +6239,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "yaml_skipped_child.yml"
@@ -5525,7 +6249,13 @@
       "stderr": "[WARNING]: Skipping 'm' as this is not a valid group definition\n[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/yaml_skipped_child.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/yaml_skipped_child.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/yaml_skipped_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: m is not a known host nor group\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nm is not a known host nor group\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/yaml_skipped_child.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'a:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/yaml_skipped_child.yml\n\n[WARNING]: Unable to parse <golden-tmp>/yaml_skipped_child.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
     },
     "yaml_then_ini": {
+      "cli_only": false,
       "env": {},
+      "host": {
+        "name": "123",
+        "rc": 0,
+        "stdout": "{\n    \"av\": \"from_all\",\n    \"nested\": {\n        \"a\": [\n            1,\n            2\n        ],\n        \"b\": {\n            \"c\": \"d\"\n        }\n    },\n    \"shared\": \"host\",\n    \"x\": 1\n}\n"
+      },
       "hosts": [
         "loose",
         "web01",
@@ -5823,7 +6553,9 @@
           ]
         }
       },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"123\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"host\",\n                \"x\": 1\n            },\n            \"::1\": {\n                \"ansible_port\": 22,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"both\": {\n                \"av\": \"from_all\",\n                \"extra\": true,\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"d1\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"d2\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"dba\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbb\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"dbc\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"loose\": {\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"n1\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n10\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n4\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"n7\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"new_ini\": {\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"w\": {\n                \"ansible_port\": 2200,\n                \"av\": \"from_all\",\n                \"shared\": \"all\"\n            },\n            \"w1\": {\n                \"av\": \"from_all\",\n                \"from_ini\": 1,\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web01\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web02\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            },\n            \"web03\": {\n                \"ansible_host\": \"10.0.0.1\",\n                \"av\": \"from_all\",\n                \"nested\": {\n                    \"a\": [\n                        1,\n                        2\n                    ],\n                    \"b\": {\n                        \"c\": \"d\"\n                    }\n                },\n                \"shared\": \"web\",\n                \"x\": 1\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"db\": {\n        \"children\": [\n            \"sub\"\n        ],\n        \"hosts\": [\n            \"d1\",\n            \"both\",\n            \"w\",\n            \"::1\"\n        ]\n    },\n    \"sub\": {\n        \"hosts\": [\n            \"d2\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"loose\"\n        ]\n    },\n    \"web\": {\n        \"hosts\": [\n            \"web01\",\n            \"web02\",\n            \"web03\",\n            \"dba\",\n            \"dbb\",\n            \"dbc\",\n            \"n1\",\n            \"n4\",\n            \"n7\",\n            \"n10\",\n            \"both\",\n            \"123\",\n            \"w1\",\n            \"new_ini\"\n        ]\n    }\n}\n",
       "needs": [],
+      "nosuch": null,
       "rc": 0,
       "sources": [
         "basic.yml",

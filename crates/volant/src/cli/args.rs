@@ -13,7 +13,7 @@ pub struct PlaybookArgs {
     #[arg(required_unless_present = "version", value_name = "PLAYBOOK")]
     pub playbooks: Vec<PathBuf>,
     #[command(flatten)]
-    pub hosts: InventoryArgs,
+    pub hosts: HostsArgs,
     /// Extra variables: `key=value` pairs, inline JSON or YAML, or `@file`. Repeatable.
     #[arg(short = 'e', long = "extra-vars", value_name = "VARS")]
     pub extra_vars: Vec<String>,
@@ -91,7 +91,7 @@ pub struct PlaybookArgs {
 
 /// The inventory a run reads and the subset of it the run is narrowed to.
 #[derive(Args, Debug, Default, Clone)]
-pub struct InventoryArgs {
+pub struct HostsArgs {
     /// Inventory source: a file, a directory, or a comma-separated host list. Repeatable; the
     /// sources are merged in order.
     #[arg(
@@ -224,7 +224,7 @@ pub struct AdhocArgs {
     )]
     pub module_args: String,
     #[command(flatten)]
-    pub hosts: InventoryArgs,
+    pub hosts: HostsArgs,
     /// Extra variables: `key=value` pairs, inline JSON or YAML, or `@file`. Repeatable.
     #[arg(short = 'e', long = "extra-vars", value_name = "VARS")]
     pub extra_vars: Vec<String>,

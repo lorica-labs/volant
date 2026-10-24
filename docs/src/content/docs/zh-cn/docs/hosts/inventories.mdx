@@ -1,5 +1,5 @@
 ---
-sourceHash: bced5151937a
+sourceHash: bffc802c3c07
 title: Inventory 与 facts 缓存
 description: Volant 读取的 inventory 格式、组变量和主机变量的来源、主机模式的语法，以及 facts 如何在多次运行之间保留。
 ---
@@ -80,6 +80,10 @@ Volant 会读取每个来源旁边的 `group_vars/` 和 `host_vars/`，然后是
 当一台主机属于多个组时，层级更深的组优先。同一层级的组之间由 `ansible_group_priority` 决定（值越大越优先），然后是组名。
 
 既是主机又是组的名字按主机处理。只要 inventory 中包含这样的名字，Volant 每次运行都会警告一次，不论本次运行使用什么模式，因为 Ansible 在加载 inventory 时就会检测到它。
+
+## 打印 inventory
+
+`volant inventory --list` 以 JSON 打印 Volant 从各来源读到的内容，`volant inventory --host NAME` 打印一台主机的变量，两者的字节都与 `ansible-inventory` 一致。见 [inventory 命令](/zh-cn/docs/reference/cli/#inventory-命令)。
 
 ## 刷新
 

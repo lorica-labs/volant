@@ -64,7 +64,7 @@ pub(super) fn set_up(
         eprintln!("ERROR! The number of processes (--forks) must be >= 1");
         return Ok(Err(2));
     }
-    let sources = inventory_sources(args, &config);
+    let sources = inventory_sources(&args.hosts.inventory, &config);
     let bridge = Bridge::late();
     let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {

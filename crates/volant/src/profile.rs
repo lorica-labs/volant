@@ -271,6 +271,11 @@ struct Inner {
 #[derive(Debug, Default)]
 pub struct Profile(Mutex<Inner>);
 
+/// The file `VOLANT_PROFILE_JSON` names, when it names one.
+pub fn json_path() -> Option<std::ffi::OsString> {
+    std::env::var_os("VOLANT_PROFILE_JSON").filter(|p| !p.is_empty())
+}
+
 /// Microseconds since `start`.
 pub fn micros(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX)
@@ -295,6 +300,12 @@ fn shown(value: Option<u64>) -> String {
 }
 
 impl Profile {
+    /// A run's profile, its counting started over: see [`track_repeats`].
+    pub fn started(track: bool) -> Self {
+        track_repeats(track);
+        Self::default()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.0
             .lock()

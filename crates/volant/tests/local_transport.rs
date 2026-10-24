@@ -50,7 +50,7 @@ fn agents() -> AgentSource {
 }
 
 fn local_host() -> Host {
-    let mut vars = BTreeMap::new();
+    let mut vars = serde_json::Map::new();
     vars.insert("ansible_connection".to_string(), json!("local"));
     Host {
         name: "localhost".to_string(),

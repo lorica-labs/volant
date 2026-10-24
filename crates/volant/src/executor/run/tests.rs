@@ -4306,7 +4306,7 @@ async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
     }
     let source = source.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
 
-    let mut vars = BTreeMap::new();
+    let mut vars = serde_json::Map::new();
     vars.insert("ansible_connection".to_string(), json!("local"));
     let host = crate::inventory::Host {
         name: "localhost".to_string(),

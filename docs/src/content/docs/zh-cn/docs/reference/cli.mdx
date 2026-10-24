@@ -1,5 +1,5 @@
 ---
-sourceHash: 26c0ba36bd76
+sourceHash: e9d95d95a105
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -10,10 +10,14 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
+volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
-volant vault <encrypt|decrypt|view>
+volant shims <install|remove>
+volant vault <encrypt|decrypt|view|create|edit|rekey>
 volant --version
 ```
+
+其他每个命令都有自己的页面：[`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)、[`volant inventory`](/zh-cn/docs/reference/cli/inventory/)、[`volant runtime`](/zh-cn/docs/reference/cli/runtime/)、[`volant shims`](/zh-cn/docs/reference/cli/shims/)、[`volant vault`](/zh-cn/docs/reference/cli/vault/)。本页介绍 `volant playbook`。
 
 `volant playbook` 接受与 `ansible-playbook` 相同的选项（对于存在的那些）。`volant-playbook` 是同一个程序，名字读起来就像你熟悉的那个。一起给出的多个 playbook 按顺序运行，每个都会打印自己的汇总。
 
@@ -226,155 +230,6 @@ Volant 读取上面提到的 `ANSIBLE_*` 变量，以及它自己的几个变量
 <Option name="VOLANT_PROFILE_JSON" arg="FILE">
   把这次运行的 profile 写入这个文件，每行一个 JSON 对象：先是每个 agent 报告的原生模块，然后是各个阶段，再是每个 task 一行，包含它的模块、路径、交还原因和以微秒为单位的耗时。无论运行结果如何都会写入，文件无法写入时只会打印一条警告。
 </Option>
-
-## adhoc 命令
-
-`volant adhoc` 就是 `ansible`：它在每台匹配模式的主机上运行一个模块。
-
-```sh
-volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
-             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
-```
-
-<Option name="-m, --module-name" arg="MODULE">
-  要运行的模块。默认：`command`。
-</Option>
-
-<Option name="-a, --args" arg="ARGS">
-  模块的参数：`key=value` 形式的词，或者当值以 `{` 开头、以 `}` 结尾时的 JSON 对象。对于 `command`、`shell`、`raw` 和 `script`，不属于模块选项的词组成命令行。参数会用每台主机的变量和 `-e` 作为模板渲染。以 `{` 开头、以 `}` 结尾但不是有效 JSON 的值，会使命令以退出码 250 停止；引号未闭合则以退出码 4 停止。
-</Option>
-
-其余选项的含义与 `volant playbook` 相同。`-f 1` 一次运行一台主机，按 inventory 的顺序。
-
-每台主机打印一个结果，与 ansible 的 `minimal` callback 的打印方式一致。`command`、`shell` 或 `raw` 的结果是 `h1 | CHANGED | rc=0 >>`，然后是它的 stdout、stderr 和 `msg`，之间不加任何内容。其他任何结果是 `h1 | SUCCESS => `，后面跟着 JSON 形式的结果，缩进四个空格，键已排序。状态有 `SUCCESS`、`CHANGED`、`FAILED`（命令形式）、`FAILED!`（JSON 形式）、`SKIPPED` 和 `UNREACHABLE!`。在失败或不可达的结果之前，标准输出会带有 playbook 打印的同一个 `[ERROR]` 块。它的 `Origin:` 是 `<adhoc 'MODULE' task>`，后面是 ansible 所展示的任务，截断到 120 个字符。
-
-当每台主机都成功或被跳过时，退出码为 0；有主机失败时为 2；有主机无法到达时为 4，不论是否同时有失败的主机。`ANSIBLE_STDOUT_CALLBACK` 不会改变输出。设置 `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`，或在 `ansible.cfg` 的 `[defaults]` 下设置 `callback_result_format = yaml` 时，JSON 形式的结果改为以 YAML 打印，位于 `=>` 之后的行中，缩进四个空格。含换行的字符串会变成字面量块。其他任何值（包括空值）都会使命令以退出码 5 停止。`-vv` 及以上会被拒绝，退出码为 4。
-
-## runtime 命令
-
-`volant runtime` 管理 Volant 为自己安装的 Python 和 ansible-core。每一步做什么，见[托管运行时](/zh-cn/docs/reference/runtime/)。
-
-```sh
-volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
-volant runtime pack FILE
-volant runtime status
-volant runtime path
-volant runtime remove [ID | --all]
-```
-
-<Option name="install --collections" arg="NAME_OR_FILE...">
-  同时把 collection 安装到运行时中。每个值是一个名字，可以带版本（`community.general:13.4.0`），或是以 `.yml` 或 `.yaml` 结尾的 requirements 文件。
-</Option>
-
-<Option name="install --from" arg="FILE">
-  从 `volant runtime pack` 写出的文件安装，不下载任何东西。平台必须匹配。它会在一行 `sha256` 中打印该文件的 SHA-256。
-</Option>
-
-<Option name="install --sha256" arg="HASH">
-  与 `--from` 一起使用时，如果文件的 SHA-256 与 `HASH` 不同，就在解包前拒绝该文件。错误中会显示两个哈希值，退出码为 1。
-</Option>
-
-<Option name="remove --all">
-  删除所有运行时，而不只是当前的那个。
-</Option>
-
-## vault 命令
-
-`volant vault` 的作用与 `ansible-vault encrypt`、`decrypt`、`view`、`create`、`edit` 和 `rekey` 相同，处理同样的文件，消息和退出码也一样。`encrypt_string` 暂时还没有。详情见 [Vault](/zh-cn/docs/variables/vault/#加密和查看文件) 和 [Vault](/zh-cn/docs/variables/vault/#创建编辑和更换文件密钥)。
-
-```sh
-volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
-volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
-volant vault view [FILE...] [OPTIONS]
-volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
-volant vault edit FILE... [OPTIONS]
-volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
-```
-
-`OPTIONS` 指 `--vault-id`、`--vault-password-file`（也可写作 `--vault-pass-file`）、`-J`/`--ask-vault-pass` 和 `-v`，见上文 [Vault](#vault)。一个都不给，也没有 `vault_password_file` 设置时，命令会询问密码。
-
-<Option name="--output" arg="FILE">
-  把结果写到该处，源文件保持不变。`-` 表示标准输出。使用它时只接受一个输入文件，否则退出码为 5。
-</Option>
-
-<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  `encrypt`、`create` 和 `rekey` 使用的 vault id。给出多个 `--vault-id` 时，`encrypt` 和 `create` 必须指定它。`edit` 接受它但忽略它：文件保留自己的标签。
-</Option>
-
-<Option name="--skip-tty-check">
-  即使标准输出不是终端，`create` 也会打开编辑器。不给它时，`create` 以退出码 5 拒绝。
-</Option>
-
-<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
-  `rekey` 的新密钥。二者给出其一。都不给时，`rekey` 会询问。
-</Option>
-
-## shims 命令
-
-`volant shims` 把 ansible-core 的程序名链接到 `volant`，这样 `ansible-vault` 等命令启动的就是 Volant。除非你运行它，否则不会创建这些链接。它适用于 Linux 和 macOS。
-
-```sh
-volant shims install [--dir DIR] [--force] [NAME...]
-volant shims remove [--dir DIR] [NAME...]
-```
-
-`NAME` 是 `ansible`、`ansible-config`、`ansible-console`、`ansible-doc`、`ansible-galaxy`、`ansible-inventory`、`ansible-playbook`、`ansible-pull` 和 `ansible-vault` 之一。不给出时，命令处理全部九个。
-
-<Option name="--dir" arg="DIR">
-  放置链接的目录。默认：`$VOLANT_BIN_DIR`，然后是 `~/.local/bin`。目录不存在是错误：`ERROR! DIR is not a directory`，退出码为 1。
-</Option>
-
-<Option name="install --force" arg="">
-  替换同名但不是 Volant 链接的文件或链接。
-</Option>
-
-shim 是符号链接。当 `DIR` 里有一个名为 `volant` 的条目时，它的目标是相对名字 `volant`，所以升级那个链接时 shim 会跟着更新。否则目标是正在运行的二进制文件的绝对路径。
-
-`install` 为每个名字打印一行：
-
-| 行 | 含义 |
-|---|---|
-| `ansible-vault: installed` | 已创建链接。 |
-| `ansible-vault: already installed` | 链接已存在并指向 `volant`。没有任何改动。 |
-| `ansible-vault: replaced` | `--force` 替换了另一个文件或链接。 |
-| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | 没有创建任何东西，退出码为 1。 |
-
-当 `PATH` 中还有同名的其他可执行文件时，创建了链接的那一行会再加一句：`note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`，或 `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`。如果 `DIR` 根本不在 `PATH` 中，则以 `DIR is not in PATH` 结尾。
-
-`remove` 只删除目标是名为 `volant` 的文件的符号链接，并打印 `ansible-vault: removed`、`ansible-vault: not installed` 或 `ansible-vault: not a Volant link, left alone`。最后一种会使退出码为 1。
-
-## inventory 命令
-
-`volant inventory` 以 JSON 打印 inventory，与 `ansible-inventory` 一样。以 `ansible-inventory` 的名字启动时（见 [shims 命令](#shims-命令)），行为相同。
-
-```
-volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
-```
-
-`--list`、`--host` 和 `--graph` 必须恰好给出一个。`--graph`、`--yaml`、`--toml`、`--export` 和 `--vars` 暂时还没有：`--graph` 会被点名拒绝，其余的是未知选项。
-
-<Option name="--list" arg="">
-  打印每台主机及其变量（已合并 `group_vars` 和 `host_vars` 文件以及所属组的变量），然后是各个组及其 `hosts` 和 `children`。键按字母顺序排序，缩进为四个空格，非 ASCII 文本按原样写出。属于数据的字符串打印为 `{"__ansible_unsafe": "..."}`，`!vault` 值打印为 `{"__ansible_vault": "..."}`；不会解密任何内容。
-</Option>
-
-<Option name="--host" arg="HOST">
-  打印一台主机的变量。`HOST` 是主机模式，必须恰好匹配一台主机，否则命令打印 `You must pass a single valid host to --host parameter` 并以退出码 5 结束。`--limit` 不适用。
-</Option>
-
-<Option name="-l, --limit" arg="SUBSET">
-  与 `--list` 一起使用时，只保留匹配该模式的主机。组仍然保留，连同其子组。没有匹配任何内容的模式会发出警告，并打印一个没有主机的 inventory。
-</Option>
-
-<Option name="-e, --extra-vars" arg="VARS">
-  额外变量，加到每台主机上，优先于其他所有层。
-</Option>
-
-<Option name="--output" arg="FILE">
-  把文档写入 `FILE`，不打印任何内容。文件内容与标准输出相同，只是少了最后的换行。
-</Option>
-
-`-i`、`-v` 和 vault 选项的用法与 `volant playbook` 相同。没有选择动作时，命令打印 `No action selected, at least one of --host, --graph or --list needs to be specified.`；给出两个动作时打印 `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`；两者都以退出码 5 结束。
 
 ## 尚未支持
 

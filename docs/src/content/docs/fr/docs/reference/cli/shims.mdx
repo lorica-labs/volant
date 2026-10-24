@@ -1,0 +1,39 @@
+---
+sourceHash: 7b80d85667ae
+title: volant shims
+description: Lie les noms des programmes d'ansible-core à volant, et supprime ces liens.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant shims` lie les noms des programmes d'ansible-core à `volant`, de sorte qu'`ansible-vault` et les autres lancent Volant. Rien ne crée ces liens tant que vous ne lancez pas la commande. Elle fonctionne sous Linux et macOS.
+
+```sh
+volant shims install [--dir DIR] [--force] [NAME...]
+volant shims remove [--dir DIR] [NAME...]
+```
+
+`NAME` est l'un de `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` et `ansible-vault`. Sans nom, la commande prend les neuf.
+
+<Option name="--dir" arg="DIR">
+  Le répertoire des liens. Par défaut : `$VOLANT_BIN_DIR`, puis `~/.local/bin`. Un répertoire absent est une erreur : `ERROR! DIR is not a directory`, code de sortie 1.
+</Option>
+
+<Option name="install --force" arg="">
+  Remplace un fichier ou un lien de ce nom qui n'est pas un lien Volant.
+</Option>
+
+Un shim est un lien symbolique. Sa cible est le nom relatif `volant` quand `DIR` contient une entrée appelée `volant`, de sorte que mettre ce lien à jour entraîne les shims avec lui. Sinon, c'est le chemin absolu du binaire en cours d'exécution.
+
+`install` affiche une ligne par nom :
+
+| Ligne | Signification |
+|---|---|
+| `ansible-vault: installed` | Le lien a été créé. |
+| `ansible-vault: already installed` | Le lien existe et pointe vers `volant`. Rien n'a changé. |
+| `ansible-vault: replaced` | `--force` a remplacé un autre fichier ou lien. |
+| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | Rien n'a été créé, et le code de sortie est 1. |
+
+Quand un autre exécutable de ce nom se trouve dans le `PATH`, une ligne qui a créé un lien ajoute une seconde phrase : `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`, ou `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`. Si `DIR` n'est pas du tout dans le `PATH`, elle se termine par `DIR is not in PATH`.
+
+`remove` ne supprime que les liens symboliques dont la cible est un fichier appelé `volant`, et affiche `ansible-vault: removed`, `ansible-vault: not installed` ou `ansible-vault: not a Volant link, left alone`. La dernière met le code de sortie à 1.

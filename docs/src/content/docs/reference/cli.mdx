@@ -273,6 +273,40 @@ volant vault view [FILE...] [OPTIONS]
   The vault id `encrypt` uses. It is required when more than one `--vault-id` is given.
 </Option>
 
+## The shims command
+
+`volant shims` links the ansible-core program names to `volant`, so `ansible-vault` and the others start Volant. Nothing creates these links unless you run it. It works on Linux and macOS.
+
+```sh
+volant shims install [--dir DIR] [--force] [NAME...]
+volant shims remove [--dir DIR] [NAME...]
+```
+
+`NAME` is one of `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` and `ansible-vault`. With none given, the command takes all nine.
+
+<Option name="--dir" arg="DIR">
+  The directory of the links. Default: `$VOLANT_BIN_DIR`, then `~/.local/bin`. A missing directory is an error: `ERROR! DIR is not a directory`, exit code 1.
+</Option>
+
+<Option name="install --force" arg="">
+  Replace a file or link of that name that is not a Volant link.
+</Option>
+
+A shim is a symbolic link. Its target is the relative name `volant` when `DIR` holds an entry called `volant`, so upgrading that link carries the shims along. Otherwise it is the absolute path of the running binary.
+
+`install` prints one line per name:
+
+| Line | Meaning |
+|---|---|
+| `ansible-vault: installed` | The link was created. |
+| `ansible-vault: already installed` | The link exists and points at `volant`. Nothing changed. |
+| `ansible-vault: replaced` | `--force` replaced another file or link. |
+| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | Nothing was created, and the exit code is 1. |
+
+When another executable of that name is on `PATH`, a line that created a link adds a second sentence: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`, or `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`. If `DIR` is not on `PATH` at all, it ends with `DIR is not in PATH`.
+
+`remove` deletes only symbolic links whose target is a file called `volant`, and prints `ansible-vault: removed`, `ansible-vault: not installed`, or `ansible-vault: not a Volant link, left alone`. The last one makes the exit code 1.
+
 ## Not there yet
 
 Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/reference/parity/#ansible-playbook-option) lists each option with its status.

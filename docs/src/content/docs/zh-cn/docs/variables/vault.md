@@ -1,5 +1,5 @@
 ---
-sourceHash: aaa01d3d7aed
+sourceHash: 72cf8b339b72
 title: Vault
 description: Volant 如何读取 Ansible Vault 数据，从哪里获取密码，以及为什么密码永远不会离开控制节点进程。
 ---
@@ -42,9 +42,19 @@ vault 密码以内存形式存在于控制节点进程中。它永远不会被�
 - `encrypt` 把每个文件替换为它的 vault 文本，`decrypt` 则替换为明文。两者都把结果留成 `0600` 权限，且不打印任何内容；在终端上，它们会在标准错误输出写出 `Encryption successful` 或 `Decryption successful`。没有结尾换行的文件，还原后同样没有。
 - 默认 id 的头部是 `$ANSIBLE_VAULT;1.1;AES256`，其他 id 是 `$ANSIBLE_VAULT;1.2;AES256;LABEL`。`--vault-id LABEL@SOURCE` 设置标签。给出多个 `--vault-id` 时，由 `--encrypt-vault-id`（或 `vault_encrypt_identity`、`ANSIBLE_VAULT_ENCRYPT_IDENTITY`）选出用于加密的那个；不给的话，命令以退出码 5 结束。
 - `--output FILE` 写到该处并保持源文件不变，`--output -` 写到标准输出，不给文件名或给 `-` 则读取标准输入。
-- `view` 打印每个文件的明文。在终端上它经过 `ANSIBLE_PAGER`、`PAGER` 或 `less`；`ansible.cfg` 对分页器没有影响。
+- `view` 打印每个文件的明文。在终端上它经过分页器：先看 `PAGER`，再看 `ANSIBLE_PAGER`，再看 `[defaults] pager`，最后是 `less`。
 - 没有任何密码来源时，命令会询问密码。`encrypt` 会问两次，分别是 `New Vault password: ` 和 `Confirm New Vault password: `。
 - `-v` 打印正在使用的配置文件，`-vv` 打印版本。`-vvvv` 的额外几行不会打印。
+
+## 创建、编辑和更换文件密钥
+
+`volant vault create`、`edit` 和 `rekey` 处理的文件与 `ansible-vault` 相同。
+
+- `create` 接受一个文件名。除非标准输出是终端或给出了 `--skip-tty-check`，否则它以退出码 5 拒绝；文件已存在时以退出码 1 拒绝。缺失的目录会被创建，并给出警告。编辑器可以把文件留空：结果是一个有效的 vault 文件，内容是空文本。
+- `edit` 解密每个文件，打开编辑器，并用打开该文件的密钥和它原有的标签加密结果。文本没有变化时，不会重写文件。被修改的文件保持原有权限。
+- 编辑器取自 `EDITOR`，否则 `ANSIBLE_EDITOR`，否则 `[defaults] editor`，否则 `vi`，按 shell 的方式拆分成词，再加上文件名。与 ansible-vault 一样，不检查它的退出状态。
+- 编辑器操作的是 `ANSIBLE_LOCAL_TEMP`（`[defaults] local_tmp`，否则 `~/.ansible/tmp`）下私有目录中权限为 `0600` 的副本。无论以何种方式退出，包括编辑器失败以及 SIGTERM 或 SIGHUP，副本都会被覆盖并删除。Ctrl-C 会交给编辑器。
+- `rekey` 用旧密钥解密每个文件，再用新密钥写回，保持其权限。新密钥来自 `--new-vault-password-file`、`--new-vault-id LABEL@SOURCE`，或提示 `New Vault password: ` 和 `Confirm New Vault password: `。无论标准输出是什么，它都在标准错误输出打印 `Rekey successful`。
 
 ## 已知缺口
 

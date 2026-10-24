@@ -53,12 +53,35 @@ impl Sandbox {
             .env_remove("ANSIBLE_VAULT_IDENTITY_LIST")
             .env_remove("ANSIBLE_VAULT_ENCRYPT_IDENTITY")
             .env_remove("ANSIBLE_PAGER")
+            .env_remove("ANSIBLE_EDITOR")
+            .env_remove("EDITOR")
+            .env_remove("ANSIBLE_HOME")
+            .env("ANSIBLE_LOCAL_TEMP", self.dir.join("scratch"))
             .env_remove("PAGER");
         command
     }
 
     fn run(&self, args: &[&str], stdin: Option<&[u8]>) -> Output {
         process::run_within(&mut self.command(args), DEADLINE, stdin)
+    }
+
+    /// An executable script of the sandbox.
+    fn script(&self, name: &str, body: &str) -> String {
+        let path = self.dir.join(name);
+        std::fs::write(&path, format!("#!/bin/sh\n{body}\n")).expect("a script");
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).expect("its mode");
+        path.display().to_string()
+    }
+
+    /// Whatever the editor's temporary directory still holds: nothing, after any run.
+    fn left_behind(&self) -> Vec<String> {
+        std::fs::read_dir(self.dir.join("scratch"))
+            .map(|entries| {
+                entries
+                    .map(|e| e.expect("an entry").path().display().to_string())
+                    .collect()
+            })
+            .unwrap_or_default()
     }
 
     fn read(&self, name: &str) -> Vec<u8> {
@@ -590,4 +613,437 @@ fn no_subcommand_is_a_usage_error(#[case] name: &str, #[case] want: &str) {
         (String::new(), want.to_string())
     );
     assert_eq!(out.status.code(), Some(2));
+}
+
+const PW: &[&str] = &["--vault-password-file", "pw"];
+
+impl Sandbox {
+    /// Runs `args` with `editor` as the editor.
+    fn edit_with(&self, editor: &str, args: &[&str]) -> Output {
+        let mut command = self.command(args);
+        command.env("EDITOR", editor);
+        process::run_within(&mut command, DEADLINE, None)
+    }
+}
+
+#[test]
+fn create_writes_what_the_editor_leaves_encrypted() {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("ed.sh", "echo hello > \"$1\"");
+    let args = ["create", "sub/new.yml", "--skip-tty-check", PW[0], PW[1]];
+    let out = sandbox.edit_with(&editor, &args);
+    assert_eq!(
+        (text(&out.stdout), text(&out.stderr)),
+        (
+            String::new(),
+            "[WARNING]: sub does not exist, creating...\n".into()
+        )
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        sandbox
+            .read("sub/new.yml")
+            .starts_with(b"$ANSIBLE_VAULT;1.1;AES256\n")
+    );
+    assert_eq!(sandbox.mode("sub/new.yml"), 0o600);
+    let out = sandbox.run(&["view", "sub/new.yml", PW[0], PW[1]], None);
+    assert_eq!(text(&out.stdout), "hello\n\n");
+    assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+}
+
+#[test]
+fn create_with_an_editor_that_writes_nothing_gives_an_empty_vault_text() {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("nop.sh", "exit 0");
+    let out = sandbox.edit_with(
+        &editor,
+        &["create", "empty", "--skip-tty-check", PW[0], PW[1]],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let out = sandbox.run(&["view", "empty", PW[0], PW[1]], None);
+    assert_eq!(text(&out.stdout), "\n");
+}
+
+#[test]
+fn the_editor_line_is_split_like_a_shell_line_and_the_last_environment_name_wins() {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("args.sh", "printf '%s' \"$1\" > \"$2\"");
+    let mut command = sandbox.command(&["create", "flag", "--skip-tty-check", PW[0], PW[1]]);
+    command
+        .env("ANSIBLE_EDITOR", "false")
+        .env("EDITOR", format!("{editor} --flag"));
+    let out = process::run_within(&mut command, DEADLINE, None);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let out = sandbox.run(&["view", "flag", PW[0], PW[1]], None);
+    assert_eq!(text(&out.stdout), "--flag\n");
+}
+
+#[rstest]
+#[case::exists(&["create", "plain", "--skip-tty-check"], "[ERROR]: plain exists, please use 'edit' instead\n", 1)]
+#[case::two_files(&["create", "a", "b", "--skip-tty-check"], "[ERROR]: ansible-vault create can take only one filename argument\n", 5)]
+#[case::no_terminal(&["create", "fresh"], "[ERROR]: not a tty, editor cannot be opened\n", 5)]
+#[case::edit_plain(&["edit", "plain"], "[ERROR]: Input is not vault encrypted data. for {dir}/plain\n", 1)]
+#[case::edit_missing(&["edit", "nosuch"], "[ERROR]: Unable to read source file ({dir}/nosuch): [Errno 2] No such file or directory: '{dir}/nosuch'\n", 1)]
+#[case::edit_wrong_password(&["edit", "vaulted", "--vault-password-file", "bad"], "[ERROR]: Decryption failed (no vault secrets were found that could decrypt). for {dir}/vaulted\n", 1)]
+#[case::rekey_plain(&["rekey", "plain", "--new-vault-password-file", "bad"], "[ERROR]: Input is not vault encrypted data. for {dir}/plain\n", 1)]
+#[case::rekey_missing(&["rekey", "nosuch", "--new-vault-password-file", "bad"], "[ERROR]: Unexpected Exception, this is probably a bug: [Errno 2] No such file or directory: '{dir}/nosuch'\n", 250)]
+#[case::rekey_unknown_encrypt_id(&["rekey", "vaulted", "--new-vault-id", "a@bad", "--encrypt-vault-id", "zz"], "[ERROR]: Did not find a match for --encrypt-vault-id=zz in the known vault-ids ['a']\n", 1)]
+fn a_refusal_of_the_editing_commands_is_worded_as_the_reference_words_it(
+    #[case] args: &[&str],
+    #[case] want: &str,
+    #[case] code: i32,
+) {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("must-not-run.sh", "touch ran");
+    let mut all: Vec<&str> = args.to_vec();
+    if !all.contains(&"--vault-password-file") {
+        all.extend(PW);
+    }
+    let out = sandbox.edit_with(&editor, &all);
+    assert_eq!(text(&out.stdout), "");
+    assert_eq!(
+        text(&out.stderr),
+        want.replace("{dir}", &sandbox.dir.display().to_string())
+    );
+    assert_eq!(out.status.code(), Some(code));
+    assert!(!sandbox.dir.join("ran").exists(), "the editor ran");
+    assert!(!sandbox.dir.join("fresh").exists());
+    assert_eq!(sandbox.read("plain"), b"plain\n");
+    assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+}
+
+#[test]
+fn a_missing_editor_is_named_and_leaves_nothing() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.edit_with(
+        "no-such-editor-here",
+        &["create", "fresh", "--skip-tty-check", PW[0], PW[1]],
+    );
+    let stderr = text(&out.stderr);
+    assert!(
+        stderr.starts_with("[ERROR]: Unable to execute the command \"no-such-editor-here ")
+            && stderr.ends_with("\": [Errno 2] No such file or directory: 'no-such-editor-here'\n"),
+        "{stderr}"
+    );
+    assert_eq!(out.status.code(), Some(1));
+    assert!(!sandbox.dir.join("fresh").exists());
+    assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+}
+
+/// An editor that changes the text, one that does not, and one that fails: the file keeps its
+/// mode, and its label, and is not rewritten when nothing changed.
+#[test]
+fn edit_rewrites_only_what_changed_and_keeps_the_mode_and_the_label() {
+    let sandbox = Sandbox::new();
+    let change = sandbox.script("change.sh", "echo changed > \"$1\"");
+    let same = sandbox.script("same.sh", "exit 0");
+    let fail = sandbox.script("fail.sh", "exit 3");
+    std::fs::write(sandbox.dir.join("l.yml"), "one").expect("a file");
+    let labelled = ["--vault-id", "lbl@pw"];
+    let out = sandbox.run(&["encrypt", "l.yml", labelled[0], labelled[1]], None);
+    assert_eq!(out.status.code(), Some(0));
+    std::fs::set_permissions(
+        sandbox.dir.join("l.yml"),
+        std::fs::Permissions::from_mode(0o640),
+    )
+    .expect("its mode");
+    let before = sandbox.read("l.yml");
+
+    for editor in [&same, &fail] {
+        let out = sandbox.edit_with(editor, &["edit", "l.yml", labelled[0], labelled[1]]);
+        assert_eq!(
+            (text(&out.stdout), text(&out.stderr)),
+            (String::new(), String::new())
+        );
+        assert_eq!(out.status.code(), Some(0));
+        assert_eq!(
+            sandbox.read("l.yml"),
+            before,
+            "unchanged text, unchanged file"
+        );
+        assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+    }
+
+    let out = sandbox.edit_with(&change, &["edit", "l.yml", labelled[0], labelled[1]]);
+    assert_eq!(
+        (text(&out.stdout), text(&out.stderr)),
+        (String::new(), String::new())
+    );
+    assert_ne!(sandbox.read("l.yml"), before);
+    assert!(
+        sandbox
+            .read("l.yml")
+            .starts_with(b"$ANSIBLE_VAULT;1.2;AES256;lbl\n")
+    );
+    assert_eq!(sandbox.mode("l.yml"), 0o640);
+    let out = sandbox.run(&["view", "l.yml", "--vault-id", "other@pw"], None);
+    assert_eq!(text(&out.stdout), "changed\n\n");
+    assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+}
+
+/// To a password and to a label: the header, the mode, the message on standard error with
+/// standard output redirected, and the text under the new secret.
+#[rstest]
+#[case::to_a_password(&["--new-vault-password-file", "pw2"], &["--vault-password-file", "pw2"], "$ANSIBLE_VAULT;1.1;AES256")]
+#[case::to_a_label(&["--new-vault-id", "lbl@pw2"], &["--vault-id", "lbl@pw2"], "$ANSIBLE_VAULT;1.2;AES256;lbl")]
+fn rekey_changes_the_secret_and_nothing_else(
+    #[case] new: &[&str],
+    #[case] then: &[&str],
+    #[case] header: &str,
+) {
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.dir.join("pw2"), "pw2\n").expect("a password");
+    std::fs::set_permissions(
+        sandbox.dir.join("vaulted"),
+        std::fs::Permissions::from_mode(0o640),
+    )
+    .expect("its mode");
+    let mut args = vec!["rekey", "vaulted", PW[0], PW[1]];
+    args.extend(new);
+    let out = sandbox.run(&args, None);
+    assert_eq!(
+        (text(&out.stdout), text(&out.stderr)),
+        (String::new(), "Rekey successful\n".into())
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert!(
+        sandbox
+            .read("vaulted")
+            .starts_with(format!("{header}\n").as_bytes())
+    );
+    assert_eq!(sandbox.mode("vaulted"), 0o640);
+    let mut view = vec!["view", "vaulted"];
+    view.extend(then);
+    assert_eq!(text(&sandbox.run(&view, None).stdout), "secret\n\n");
+    let old = sandbox.run(&["view", "vaulted", PW[0], PW[1]], None);
+    assert_eq!(old.status.code(), Some(1));
+}
+
+#[test]
+fn rekey_with_two_new_ids_takes_the_last_given() {
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.dir.join("pw2"), "pw2\n").expect("a password");
+    let out = sandbox.run(
+        &[
+            "rekey",
+            "vaulted",
+            PW[0],
+            PW[1],
+            "--new-vault-id",
+            "a@pw",
+            "--new-vault-id",
+            "b@pw2",
+        ],
+        None,
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(
+        sandbox
+            .read("vaulted")
+            .starts_with(b"$ANSIBLE_VAULT;1.2;AES256;b\n")
+    );
+}
+
+#[test]
+fn the_two_new_secret_options_exclude_each_other() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run(
+        &[
+            "rekey",
+            "vaulted",
+            PW[0],
+            PW[1],
+            "--new-vault-id",
+            "a@pw",
+            "--new-vault-password-file",
+            "pw",
+        ],
+        None,
+    );
+    assert_eq!(out.status.code(), Some(2));
+}
+
+#[test]
+fn rekey_without_a_new_secret_asks_for_one_and_changes_nothing_when_refused() {
+    let sandbox = Sandbox::new();
+    let before = sandbox.read("vaulted");
+    let out = sandbox.run(&["rekey", "vaulted", PW[0], PW[1]], Some(b""));
+    assert!(text(&out.stderr).ends_with(
+        "[WARNING]: Error in vault password prompt (default): EOFError (ctrl-d) on prompt for (default)\n[ERROR]: EOFError (ctrl-d) on prompt for (default)\n"
+    ));
+    assert_eq!(out.status.code(), Some(1));
+    assert_eq!(sandbox.read("vaulted"), before);
+}
+
+/// A terminated edit stops the editor and leaves no plaintext: the copy is private while it
+/// exists and gone afterwards.
+#[test]
+fn a_terminated_edit_leaves_no_temporary_file() {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("hang.sh", "echo \"$1\" > started; exec sleep 60");
+    let mut command = sandbox.command(&["edit", "vaulted", PW[0], PW[1]]);
+    command.env("EDITOR", &editor).stderr(Stdio::piped());
+    let child = command.spawn().expect("volant starts");
+    let started = sandbox.dir.join("started");
+    let begin = std::time::Instant::now();
+    while std::fs::read_to_string(&started).map_or(true, |s| !s.ends_with('\n')) {
+        assert!(begin.elapsed() < DEADLINE, "the editor never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    let scratch = PathBuf::from(std::fs::read_to_string(&started).expect("its path").trim());
+    let mode = |path: &Path| {
+        std::fs::metadata(path)
+            .expect("it exists")
+            .permissions()
+            .mode()
+            & 0o777
+    };
+    assert_eq!(mode(&scratch), 0o600);
+    assert_eq!(mode(scratch.parent().expect("its directory")), 0o700);
+    assert_eq!(
+        std::fs::read_to_string(&scratch).expect("the copy"),
+        "secret\n"
+    );
+    let pid = libc::pid_t::try_from(child.id()).expect("a pid");
+    // SAFETY: the pid is our own child's.
+    assert_eq!(unsafe { libc::kill(pid, libc::SIGTERM) }, 0);
+    let (code, _, _) = finish(child);
+    assert_eq!(code, 128 + libc::SIGTERM);
+    assert!(!scratch.exists());
+    assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+    assert!(sandbox.read("vaulted").starts_with(b"$ANSIBLE_VAULT"));
+}
+
+/// Standard output on a terminal is what `create` asks for.
+#[test]
+fn create_runs_the_editor_when_standard_output_is_a_terminal() {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("ed.sh", "echo hello > \"$1\"");
+    let (master, slave) = terminal();
+    let keep = slave.try_clone().expect("the slave end is duplicated");
+    let mut command = sandbox.command(&["create", "fresh", PW[0], PW[1]]);
+    command
+        .env("EDITOR", &editor)
+        .stdout(Stdio::from(slave))
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("volant starts");
+    drop(command);
+    let (code, stderr, _) = finish(child);
+    assert_eq!((code, stderr.as_str()), (0, ""));
+    assert_eq!(screen(&master), "");
+    drop(keep);
+    assert!(
+        sandbox
+            .read("fresh")
+            .starts_with(b"$ANSIBLE_VAULT;1.1;AES256\n")
+    );
+}
+
+/// A file one tool rekeys is read by the other under the new secret.
+#[test]
+fn a_file_one_tool_rekeys_the_other_reads_under_the_new_secret() {
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let sandbox = Sandbox::new();
+    std::fs::write(sandbox.dir.join("pw2"), "pw2\n").expect("a password");
+    reference(
+        &python,
+        &sandbox,
+        &[
+            "rekey",
+            "vaulted",
+            PW[0],
+            PW[1],
+            "--new-vault-password-file",
+            "pw2",
+        ],
+    );
+    let out = sandbox.run(&["view", "vaulted", "--vault-password-file", "pw2"], None);
+    assert_eq!(text(&out.stdout), "secret\n\n");
+    let out = sandbox.run(
+        &[
+            "rekey",
+            "vaulted",
+            "--vault-password-file",
+            "pw2",
+            "--new-vault-id",
+            "lbl@pw",
+        ],
+        None,
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    reference(
+        &python,
+        &sandbox,
+        &["decrypt", "vaulted", "--vault-id", "lbl@pw"],
+    );
+    assert_eq!(sandbox.read("vaulted"), b"secret\n");
+}
+
+/// A request to stop sent to the whole process group, as a closed terminal does: the editor dies
+/// with the command, and the file is left as it was with no copy behind.
+#[rstest]
+#[case::hangup(libc::SIGHUP)]
+#[case::terminate(libc::SIGTERM)]
+fn a_signal_to_the_process_group_stops_an_edit_without_writing(#[case] signal: i32) {
+    use std::os::unix::process::CommandExt as _;
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script(
+        "hang.sh",
+        "echo \"$1\" > started; echo changed > \"$1\"; exec sleep 60",
+    );
+    let before = sandbox.read("vaulted");
+    let mut command = sandbox.command(&["edit", "vaulted", PW[0], PW[1]]);
+    command
+        .env("EDITOR", &editor)
+        .stderr(Stdio::piped())
+        .process_group(0);
+    let child = command.spawn().expect("volant starts");
+    let started = sandbox.dir.join("started");
+    let begin = std::time::Instant::now();
+    while std::fs::read_to_string(&started).map_or(true, |s| !s.ends_with('\n')) {
+        assert!(begin.elapsed() < DEADLINE, "the editor never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // The editor has changed its copy by now: that is what must not be written.
+    std::thread::sleep(Duration::from_millis(200));
+    let pgid = libc::pid_t::try_from(child.id()).expect("a pid");
+    // SAFETY: the group is our child's own, made by `process_group(0)`.
+    assert_eq!(unsafe { libc::kill(-pgid, signal) }, 0);
+    let (code, _, _) = finish(child);
+    assert_eq!(code, 128 + signal);
+    assert_eq!(sandbox.read("vaulted"), before);
+    assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+}
+
+#[test]
+fn the_editor_comes_from_the_configuration_without_its_inline_comment() {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("ed.sh", "echo hello > \"$1\"");
+    std::fs::write(
+        sandbox.dir.join("ansible.cfg"),
+        format!("[defaults]\neditor = {editor} ; the usual one\n"),
+    )
+    .expect("a config");
+    let out = sandbox.run(&["create", "fresh", "--skip-tty-check", PW[0], PW[1]], None);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(sandbox.read("fresh").starts_with(b"$ANSIBLE_VAULT"));
+}
+
+#[test]
+fn create_refuses_a_directory_and_works_without_home() {
+    let sandbox = Sandbox::new();
+    std::fs::create_dir(sandbox.dir.join("adir")).expect("a directory");
+    let editor = sandbox.script("ed.sh", "echo hello > \"$1\"");
+    let out = sandbox.edit_with(
+        &editor,
+        &["create", "adir", "--skip-tty-check", PW[0], PW[1]],
+    );
+    assert_eq!(text(&out.stderr), "[ERROR]: adir is a directory\n");
+    assert_eq!(out.status.code(), Some(1));
+    let mut command = sandbox.command(&["create", "fresh", "--skip-tty-check", PW[0], PW[1]]);
+    command.env("EDITOR", &editor).env_remove("HOME");
+    let out = process::run_within(&mut command, DEADLINE, None);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
 }

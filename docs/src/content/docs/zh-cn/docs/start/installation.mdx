@@ -1,5 +1,5 @@
 ---
-sourceHash: 3fc9a949d509
+sourceHash: 005064a69a67
 title: 安装
 description: 用一条命令安装 Volant，了解控制节点和主机各自需要什么，以及如何保持更新。
 ---
@@ -30,17 +30,29 @@ volant --version
 
 ### 选项
 
-脚本读取三个环境变量：
+脚本读取四个环境变量，并接受一个选项 `--shims`，它的作用与 `VOLANT_SHIMS=1` 相同：
 
 | 变量 | 默认值 | 作用 |
 |---|---|---|
 | `VOLANT_VERSION` | 最新发布版本 | 要安装的版本，例如 `v0.1.0-alpha.10`。 |
 | `VOLANT_HOME` | `~/.local/share/volant` | 各版本解压到哪里。 |
 | `VOLANT_BIN_DIR` | `~/.local/bin` | `volant` 和 `volant-playbook` 的链接放在哪里。 |
+| `VOLANT_SHIMS` | 未设置 | 设为 `1` 时，同时链接 `ansible-*` 这些名字。见下文。 |
 
 ```sh
 curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.10 sh
 ```
+
+### 保留你的 ansible 命令行
+
+加上 `--shims` 后，脚本还会把 ansible-core 的九个程序名链接到 `volant`，让现有的命令行继续可用：`ansible`、`ansible-config`、`ansible-console`、`ansible-doc`、`ansible-galaxy`、`ansible-inventory`、`ansible-playbook`、`ansible-pull` 和 `ansible-vault`。
+
+```sh
+curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
+curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
+```
+
+脚本默认从不安装它们。它运行 [`volant shims install`](/zh-cn/docs/reference/cli/#shims-命令)，对不是它创建的文件或链接不做改动，并在 `PATH` 中真正的 Ansible 被遮蔽或仍然排在前面时给出提示。如果某个名字无法链接，脚本会打印 `some ansible-* names were not linked, see above`，仍以 0 退出，因为 Volant 已经安装好了。
 
 ## 你会得到什么
 
@@ -93,7 +105,7 @@ scratch 镜像里没有 `ssh`、没有 Python、没有 shell，也没有 `/etc/p
 
     对于在 Python 中运行的模块，Volant 使用带有 `ansible-core` 的 Python 3。找不到时，它会下载自己的一份（大约 155 MB），按固定的哈希校验每个文件，并保存在 `~/.local/share/volant/runtime` 下。发生这种情况的那次运行会打印一行提示。如果你已经有这样的 Python，Volant 可以使用它：[运行使用哪个解释器](/zh-cn/docs/reference/runtime/#运行使用哪个解释器)给出了查找顺序。另见[托管运行时](/zh-cn/docs/reference/runtime/)。
 
-    Volant 没有 `vault`、`galaxy`、`inventory` 或 `doc` 命令。要使用 `ansible-vault` 和 ansible-core 的其他工具，请自行安装 ansible-core。
+    Volant 有 `volant vault encrypt|decrypt|view|create|edit|rekey` 和 `volant inventory`，但没有 `galaxy`、`doc` 或 `config` 命令。要使用 `ansible-galaxy`、`ansible-doc`、`ansible-config` 和 `ansible-vault encrypt_string`，请自行安装 ansible-core。
 
     如果一个 playbook 只包含 `command`、`shell`、`raw` 和在控制节点上运行的模块，并且设置了 `gather_facts: false`，那它完全不需要 Python。
   </TabItem>
@@ -149,6 +161,7 @@ scratch 镜像里没有 `ssh`、没有 Python、没有 shell，也没有 `/etc/p
 
 ```sh
 volant runtime remove --all
+volant shims remove
 rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook ~/.cache/volant
 ssh web1 'rm -rf ~/.ansible/tmp/volant-*'
 ```

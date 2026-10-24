@@ -57,7 +57,8 @@ impl Scan {
 
     pub(super) fn key(&mut self, key: &str) {
         let key = key.split('.').next().unwrap_or(key);
-        if !OTHER_MODULES_KEYS.contains(&key) {
+        // `getent` writes `getent_<database>`.
+        if !OTHER_MODULES_KEYS.contains(&key) && !key.starts_with("getent_") {
             self.keys.insert(key.to_string());
         }
     }

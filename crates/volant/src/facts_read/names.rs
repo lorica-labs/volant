@@ -25,26 +25,45 @@ impl Scan {
             Wanted::Tasks => ("include_tasks", "tasks"),
         };
         let unknown = || format!("{label} {}", p.name);
-        if p.task.loop_with.as_deref().map(short_name) == Some("first_found") {
-            // `include_tasks: "{{ item }}"` over `with_first_found`: whichever file is found
-            // first, in a role's `files/`, the role, its `tasks/` or the playbook's directory.
-            let bare = bare_variable(&p.name) == Some(p.task.loop_var.as_str());
-            if !matches!(p.wanted, Wanted::Tasks) || !bare {
-                return Err(unknown());
+        let looped = p.task.loop_with.as_deref().map(short_name) == Some("first_found");
+        let lookup = first_found_lookup(&p.name);
+        if looped || lookup.is_some() {
+            // `"{{ item }}"` over `with_first_found`, or `"{{ lookup('first_found', params) }}"`:
+            // whichever file is found first, in a role's `files/` (or the subdirectory of the
+            // action: `vars/`, `templates/`), the role, its `tasks/` or the playbook's directory.
+            let terms = match lookup {
+                Some(var) => self.first_found_variable(var, &p.task, 0),
+                None if bare_variable(&p.name) == Some(p.task.loop_var.as_str()) => p
+                    .task
+                    .loop_items
+                    .as_ref()
+                    .and_then(|items| self.first_found_names(items, &p.task, 0)),
+                None => None,
             }
-            let terms = self.first_found_terms(&p.task).ok_or_else(unknown)?;
+            .ok_or_else(unknown)?;
             let mut bases: Vec<PathBuf> = Vec::new();
             if let Some(role) = &p.origin.role_dir {
                 bases.extend([role.clone(), role.join("tasks")]);
             }
             bases.extend([p.origin.file_dir.clone(), self.base.clone()]);
+            let dirs: &[&str] = match p.wanted {
+                Wanted::Tasks => &["files"],
+                _ => &["files", sub],
+            };
             let mut candidates = Vec::new();
             for term in &terms {
                 for base in &bases {
-                    candidates.extend([base.join("files").join(term), base.join(term)]);
+                    candidates.extend(dirs.iter().map(|dir| base.join(dir).join(term)));
+                    candidates.push(base.join(term));
                 }
             }
-            return self.all_read(&candidates, label);
+            if matches!(p.wanted, Wanted::Tasks) {
+                return self.all_read(&candidates, label);
+            }
+            for found in candidates.iter().flat_map(|path| glob(path)) {
+                self.file(&found);
+            }
+            return Ok(());
         }
         let names = self.names(&p.name, &p.task, 0).ok_or_else(unknown)?;
         for name in names {
@@ -90,14 +109,67 @@ impl Scan {
         Ok(())
     }
 
-    /// The file name terms of a `with_first_found` loop, as patterns.
-    pub(super) fn first_found_terms(&self, task: &PlayTask) -> Option<Vec<String>> {
-        let Some(Value::Array(terms)) = &task.loop_items else {
+    /// The file names a `first_found` term can stand for, as patterns: a name, split at `,`, `;`
+    /// and `:` as the lookup splits it, a list of terms, a mapping of `files` under `paths`, or
+    /// a bare variable given any of those.
+    pub(super) fn first_found_names(
+        &self,
+        term: &Value,
+        task: &PlayTask,
+        depth: usize,
+    ) -> Option<Vec<String>> {
+        if depth > 2 {
             return None;
-        };
+        }
+        match term {
+            Value::String(s) => match bare_variable(s) {
+                Some(var) if var != task.loop_var => self.first_found_variable(var, task, depth),
+                _ => Some(
+                    self.names(s, task, 1)?
+                        .iter()
+                        .flat_map(|name| name.split([',', ';', ':']))
+                        .filter(|name| !name.is_empty())
+                        .map(str::to_string)
+                        .collect(),
+                ),
+            },
+            Value::Array(terms) => {
+                let mut out = Vec::new();
+                for term in terms {
+                    out.extend(self.first_found_names(term, task, depth)?);
+                }
+                Some(out)
+            }
+            Value::Object(map) => {
+                let list = |key: &str| match map.get(key) {
+                    Some(value) => self.first_found_names(value, task, depth + 1),
+                    None => Some(Vec::new()),
+                };
+                let (files, paths) = (list("files")?, list("paths")?);
+                if paths.is_empty() {
+                    return Some(files);
+                }
+                Some(
+                    paths
+                        .iter()
+                        .flat_map(|path| files.iter().map(move |file| format!("{path}/{file}")))
+                        .collect(),
+                )
+            }
+            _ => None,
+        }
+    }
+
+    /// The file names every value of the variable `var` stands for as a `first_found` term.
+    fn first_found_variable(
+        &self,
+        var: &str,
+        task: &PlayTask,
+        depth: usize,
+    ) -> Option<Vec<String>> {
         let mut out = Vec::new();
-        for term in terms {
-            out.extend(self.names(term.as_str()?, task, 1)?);
+        for value in self.values(var)? {
+            out.extend(self.first_found_names(value, task, depth + 1)?);
         }
         Some(out)
     }
@@ -162,14 +234,20 @@ impl Scan {
         if let Some(key) = fact {
             return NAME_FACTS.contains(&key).then(|| vec![ANY.to_string()]);
         }
-        self.values(e)?
-            .iter()
-            .map(|v| {
-                v.as_str()
-                    .filter(|s| !Templar::is_template(s) && !s.contains(ANY))
-                    .map(str::to_string)
-            })
-            .collect()
+        // A value that is another bare variable (`mysql_daemon: "{{ __mysql_daemon }}"`) stands
+        // for that variable's values.
+        let mut out = Vec::new();
+        for value in self.values(e)? {
+            let s = value.as_str()?;
+            match bare_variable(s) {
+                Some(var) if depth < 2 && var != task.loop_var => {
+                    out.extend(self.segment(var, task, depth + 1)?);
+                }
+                _ if Templar::is_template(s) || s.contains(ANY) => return None,
+                _ => out.push(s.to_string()),
+            }
+        }
+        Some(out)
     }
 
     /// Every value the variable `name` is given, when all of them are known.
@@ -263,4 +341,18 @@ fn split_index(e: &str) -> Option<&str> {
     }
     let (head, sep) = call.strip_suffix(')')?.rsplit_once(".split(")?;
     literal(sep).map(|_| head)
+}
+
+/// The variable passed to the `first_found` lookup when `name` is `{{ lookup('first_found', var) }}`
+/// (or `query`, `q`) and nothing else.
+fn first_found_lookup(name: &str) -> Option<&str> {
+    let e = name.trim().strip_prefix("{{")?.strip_suffix("}}")?.trim();
+    let args = ["lookup(", "query(", "q("]
+        .iter()
+        .find_map(|call| e.strip_prefix(call))?
+        .strip_suffix(')')?;
+    let (plugin, var) = args.split_once(',')?;
+    let var = var.trim();
+    let first_found = literal(plugin).map(short_name) == Some("first_found");
+    (first_found && !var.is_empty() && var.bytes().all(is_word)).then_some(var)
 }

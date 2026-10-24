@@ -8,7 +8,7 @@ use anyhow::bail;
 use serde_json::{Map, Value};
 
 use crate::playbook::{Play, PlayTask};
-use crate::roles::{RoleEntry, RoleSearch, RoleVars};
+use crate::roles::{RoleEntry, RoleKind, RoleSearch, RoleVars};
 use crate::template::Templar;
 
 use super::builder::{Builder, Seen};
@@ -312,7 +312,14 @@ pub(crate) fn compile(
     mark = builder.steps.len();
     let mut seen: Seen = Vec::new();
     for entry in &play.roles {
-        builder.role(entry, &empty, &mut seen, None, Section::Body)?;
+        builder.role(
+            entry,
+            &empty,
+            &mut seen,
+            None,
+            Section::Body,
+            RoleKind::Entry,
+        )?;
     }
     builder.items(&play.tasks, &empty, None, Section::Body, None)?;
     builder.flush_point(mark);

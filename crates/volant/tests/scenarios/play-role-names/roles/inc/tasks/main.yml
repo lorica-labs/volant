@@ -1,0 +1,3 @@
+- name: in inc
+  debug:
+    msg: "{{ role_names }}"

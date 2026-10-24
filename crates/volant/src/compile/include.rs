@@ -147,7 +147,14 @@ pub(crate) fn expand_include(
                 .chain(&parent.origin.parent_roles)
                 .cloned()
                 .collect();
-            builder.role(entry, &inherited, &mut Vec::new(), None, parent.section)?;
+            builder.role(
+                entry,
+                &inherited,
+                &mut Vec::new(),
+                None,
+                parent.section,
+                crate::roles::RoleKind::Include,
+            )?;
         }
     }
     let mut steps = builder.steps;

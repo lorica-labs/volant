@@ -20,7 +20,7 @@ use crate::playbook::{HandlerTask, PlayTask, TaskOrBlock};
 use crate::stats::Refusal;
 
 mod instance;
-pub use instance::{OwnVars, RoleVars, identity};
+pub use instance::{OwnVars, RoleKind, RoleVars, identity};
 
 /// Which file of each of a role's directories to read. `main` everywhere unless the entry that
 /// named the role said otherwise, which is what `tasks_from` and its three siblings do.

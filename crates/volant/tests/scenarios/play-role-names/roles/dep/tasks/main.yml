@@ -1,0 +1,3 @@
+- name: in dep
+  debug:
+    msg: "{{ ansible_dependent_role_names }}"

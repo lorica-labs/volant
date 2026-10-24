@@ -1,0 +1,3 @@
+- name: in entry
+  debug:
+    msg: "{{ ansible_play_role_names }}"

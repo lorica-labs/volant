@@ -426,6 +426,10 @@ fn standard_output_on_a_terminal_changes_what_is_said(
 ) {
     let sandbox = Sandbox::new();
     let (master, slave) = terminal();
+    // Our own copy of the slave end, open until the screen is read: where the last slave
+    // descriptor closing discards what the master has not read (macOS), the child exiting first
+    // would otherwise leave nothing to read.
+    let keep = slave.try_clone().expect("the slave end is duplicated");
     let mut command = sandbox.command(args);
     // A pager that is not `less`, and that proves the text went through it.
     command
@@ -438,6 +442,7 @@ fn standard_output_on_a_terminal_changes_what_is_said(
     assert_eq!(code, 0, "{stderr}");
     assert_eq!(stderr, said);
     assert_eq!(screen(&master), shown);
+    drop(keep);
 }
 
 #[test]

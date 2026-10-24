@@ -630,7 +630,7 @@ corpus-clean:
     #!/usr/bin/env bash
     docker ps -aq --filter name=volant-corpus- | xargs -r docker rm -f > /dev/null
     docker network ls -q --filter name=volant-corpus- | xargs -r docker network rm > /dev/null
-    rm -rf target/corpus/*/src
+    rm -rf target/corpus/*/src target/corpus/*/collection-tag
 
 # Run the community playbooks of crates/volant/tests/fixtures/corpus/corpus.yml (or the one named)
 # under the reference and under Volant (never in CI). Each entry gets a first and a second pass
@@ -711,6 +711,7 @@ corpus name="" runs="3": _corpus-image
     fail() { err="$1"; return 1; }
     field() { "$py" -c 'import json,sys; v = json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$dir/entry.json" "$1"; }
     first_error() { { grep -h -m1 -E '^(fatal:|\[ERROR\]|ERROR)' "$@" 2>/dev/null || tail -qn1 "$@" 2>/dev/null; } | head -n1 | cut -c1-300; }
+    recap() { sed -n '/PLAY RECAP/,$p' "$1" | tail -n +2 | tr -s ' ' | sort; }
     record() { printf '%s %s\n' "$1" "$2" >> "$dir/times.tsv"; }
 
     # Install one pinned source under src/, unless the installed version or sha already matches.
@@ -787,14 +788,15 @@ corpus name="" runs="3": _corpus-image
     }
 
     # run_pass <engine> <label> <inventory> [env assignment]...: one playbook run under `timeout
-    # 30m`, its seconds, exit code and logs kept in the entry's directory.
+    # 30m` (killed 60 s after the TERM if it ignores it; `--foreground` keeps it in the terminal's process
+    # group, so Ctrl-C reaches it), its seconds, exit code and logs kept in the entry's directory.
     run_pass() {
       local engine="$1" label="$2" ini="$3" log="$dir/$1-$2.log" rc start end; shift 3
       local -a cmd
       if [ "$engine" = reference ]; then
-        cmd=(env ANSIBLE_PIPELINING=True ANSIBLE_HOST_KEY_CHECKING=False "$@" timeout 30m "$core/ansible-playbook")
+        cmd=(env ANSIBLE_PIPELINING=True ANSIBLE_HOST_KEY_CHECKING=False "$@" timeout --foreground -k 60 30m "$core/ansible-playbook")
       else
-        cmd=(env VOLANT_PYTHON="$py" VOLANT_AGENT_DIR="$PWD/target/agents" "$@" timeout 30m ./target/release/volant playbook)
+        cmd=(env VOLANT_PYTHON="$py" VOLANT_AGENT_DIR="$PWD/target/agents" "$@" timeout --foreground -k 60 30m ./target/release/volant playbook)
       fi
       idle > /dev/null
       start="$(date +%s.%N)"
@@ -803,8 +805,9 @@ corpus name="" runs="3": _corpus-image
       echo "$rc" > "$dir/$engine-$label.rc"
       record "$engine.$label" "$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')"
       if [ "$rc" -eq 124 ]; then fail "$engine $label pass timed out after 30 minutes"; return 1; fi
-      if [ "$engine" = reference ] && [ "$rc" -ne 0 ]; then
-        fail "reference $label pass exited $rc: $(first_error "$log" "$dir/$engine-$label.err")"; return 1
+      if [ "$rc" -eq 137 ]; then fail "$engine $label pass ignored the timeout and was killed"; return 1; fi
+      if [ "$rc" -ne 0 ] && { [ "$engine" = reference ] || [[ "$label" == converged-* ]]; }; then
+        fail "$engine $label pass exited $rc: $(first_error "$log" "$dir/$engine-$label.err")"; return 1
       fi
     }
 
@@ -838,7 +841,14 @@ corpus name="" runs="3": _corpus-image
         done
       done
       flock -u 200
-      return $status
+      [ "$status" -eq 0 ] || return 1
+      # Every timed pass must have done the work the first one did, as bench checks.
+      local first="$dir/volant-converged-1.log" log n
+      for log in "$dir"/volant-converged-[0-9]*.log "$dir"/reference-converged-[0-9]*.log; do
+        n="$(recap "$log" | grep -c .)"
+        [ "$n" -eq "$hosts" ] || fail "$log has $n host line(s) in its PLAY RECAP, expected $hosts" || return 1
+        diff <(recap "$first") <(recap "$log") > "$dir/recap.diff" || fail "PLAY RECAP of $log differs from the first converged pass: $(grep -m1 '^[<>]' "$dir/recap.diff")" || return 1
+      done
     }
 
     run_entry() {
@@ -851,6 +861,8 @@ corpus name="" runs="3": _corpus-image
       skip="$(field skip_reason)"
       if [ -n "$skip" ]; then status=skipped; err="$skip"; return 0; fi
       hosts="$(field hosts)"; where="$(field where)"
+      case "$hosts" in 1|2) ;; *) fail "hosts must be 1 or 2, got '$hosts'" || return 1 ;; esac
+      case "$where" in container|both|local) ;; *) fail "where must be container, both or local, got '$where'" || return 1 ;; esac
       "$py" -c '
     import json, sys
     e = json.load(open(sys.argv[1])); s = e["source"]

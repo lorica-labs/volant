@@ -15,8 +15,32 @@ mod compare;
 #[path = "../../volant-agent/tests/setup_exits/mod.rs"]
 mod setup_exits;
 
-/// Status (`ok`, `changed`, `fatal`) and body of each result line, by (task banner, host).
-type Results = BTreeMap<(String, String), (String, Value)>;
+/// Status (`ok`, `changed`, `fatal`, `skipping`) and body of each result line, by (task banner,
+/// host, position among that host's results for the task, so each loop item has its own).
+type Results = BTreeMap<(String, String, usize), (String, Value)>;
+
+/// Keys that differ between two correct runs wherever they appear in a result body.
+const VOLATILE: &[&str] = &[
+    "invocation",
+    "start",
+    "end",
+    "delta",
+    "atime",
+    "mtime",
+    "ctime",
+    "inode",
+    "dev",
+    "elapsed",
+    "cache_update_time",
+    "ActiveEnterTimestamp",
+    "ActiveEnterTimestampMonotonic",
+    "InactiveExitTimestamp",
+    "InactiveExitTimestampMonotonic",
+    "ExecMainStartTimestamp",
+    "ExecMainStartTimestampMonotonic",
+    "InvocationID",
+    "MainPID",
+];
 
 /// Like `compare::results_by_task`, but one entry per host instead of the last host's.
 fn results_by_host(log: &str) -> Results {
@@ -28,7 +52,7 @@ fn results_by_host(log: &str) -> Results {
             && let Some(end) = rest.find(']')
         {
             task = rest[..end].to_string();
-        } else if let Some(status) = ["ok", "changed", "fatal"]
+        } else if let Some(status) = ["ok", "changed", "fatal", "skipping"]
             .into_iter()
             .find(|s| line.strip_prefix(s).is_some_and(|r| r.starts_with(": [")))
             && let Some((head, json)) = line.split_once(" => ")
@@ -38,7 +62,7 @@ fn results_by_host(log: &str) -> Results {
                 .and_then(|(_, r)| r.split_once(']'))
                 .map_or("", |(h, _)| h);
             let json = match json.strip_prefix("(item=") {
-                Some(rest) => rest.split_once(") => ").map_or(json, |(_, body)| body),
+                Some(rest) => rest.split_once(" => ").map_or(json, |(_, body)| body),
                 None => json,
             };
             let mut body = json.to_string();
@@ -51,11 +75,16 @@ fn results_by_host(log: &str) -> Results {
                     }
                 }
             }
-            let value = serde_json::from_str(&body).unwrap_or_else(|e| {
-                panic!("task {task}: a result body that is not JSON ({e}): {body}")
-            });
+            let value = serde_json::from_str(&body)
+                .unwrap_or_else(|e| Value::from(format!("not JSON ({e}): {body}")));
+            let seen = results
+                .range(
+                    (task.clone(), host.to_string(), 0)
+                        ..=(task.clone(), host.to_string(), usize::MAX),
+                )
+                .count();
             results.insert(
-                (task.clone(), host.to_string()),
+                (task.clone(), host.to_string(), seen),
                 (status.to_string(), value),
             );
         }
@@ -76,12 +105,42 @@ fn recap(log: &str) -> Vec<String> {
     lines
 }
 
-fn without_volatile(body: &Value, volatile: &[&str]) -> Value {
-    let mut body = body.clone();
-    if let Some(map) = body.as_object_mut() {
-        map.retain(|k, _| k != "invocation" && !volatile.contains(&k.as_str()));
+fn without_volatile(body: &mut Value, volatile: &[&str]) {
+    match body {
+        Value::Object(map) => {
+            map.retain(|k, _| !VOLATILE.contains(&k.as_str()) && !volatile.contains(&k.as_str()));
+            map.values_mut().for_each(|v| without_volatile(v, volatile));
+        }
+        Value::Array(items) => items.iter_mut().for_each(|v| without_volatile(v, volatile)),
+        _ => {}
     }
-    body
+}
+
+/// The leaf paths where two bodies differ, with both values.
+fn leaf_diffs(path: &str, a: &Value, b: &Value, out: &mut Vec<String>) {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let keys: BTreeSet<_> = x.keys().chain(y.keys()).collect();
+            for key in keys {
+                let path = format!("{path}.{key}");
+                match (x.get(key), y.get(key)) {
+                    (Some(p), Some(q)) => leaf_diffs(&path, p, q, out),
+                    (p, q) => out.push(format!("{path}: {} | {}", show(p), show(q))),
+                }
+            }
+        }
+        (Value::Array(x), Value::Array(y)) if x.len() == y.len() => {
+            for (i, (p, q)) in x.iter().zip(y).enumerate() {
+                leaf_diffs(&format!("{path}[{i}]"), p, q, out);
+            }
+        }
+        _ if !compare::same(a, b) => out.push(format!("{path}: {a} | {b}")),
+        _ => {}
+    }
+}
+
+fn show(value: Option<&Value>) -> String {
+    value.map_or_else(|| "(absent)".to_string(), ToString::to_string)
 }
 
 #[test]
@@ -122,6 +181,9 @@ fn corpus_entry() {
             ));
         }
         let recaps = (recap(&reference), recap(&volant));
+        if recaps.0.is_empty() || recaps.1.is_empty() {
+            strict.push(format!("{pass} pass: a log with no PLAY RECAP"));
+        }
         if recaps.0 != recaps.1 {
             strict.push(format!(
                 "{pass} pass: PLAY RECAP differs: {:?} (reference) against {:?} (volant)",
@@ -141,25 +203,29 @@ fn corpus_entry() {
         let (want, got) = (results_by_host(&reference), results_by_host(&volant));
         let keys: BTreeSet<_> = want.keys().chain(got.keys()).collect();
         for key in keys {
-            let (task, host) = key;
+            let (task, host, item) = key;
             match (want.get(key), got.get(key)) {
                 (Some((a, _)), Some((b, _))) if a != b => strict.push(format!(
-                    "{pass} pass: task [{task}] on {host}: {a} (reference) against {b} (volant)"
+                    "{pass} pass: task [{task}] on {host} (result {item}): {a} (reference) against {b} (volant)"
                 )),
                 (Some((_, a)), Some((_, b))) => {
-                    let (a, b) = (without_volatile(a, &volatile), without_volatile(b, &volatile));
-                    if !compare::same(&a, &b) {
-                        let _ = writeln!(
-                            body_diff,
-                            "{pass} pass: task [{task}] on {host}\n  reference: {a}\n  volant:    {b}"
-                        );
+                    let (mut a, mut b) = (a.clone(), b.clone());
+                    without_volatile(&mut a, &volatile);
+                    without_volatile(&mut b, &volatile);
+                    let mut leaves = Vec::new();
+                    leaf_diffs("", &a, &b, &mut leaves);
+                    if !leaves.is_empty() {
+                        let _ = writeln!(body_diff, "{pass} pass: task [{task}] on {host} (result {item})");
+                        for leaf in leaves {
+                            let _ = writeln!(body_diff, "  {leaf}");
+                        }
                     }
                 }
                 (Some(_), None) => strict.push(format!(
-                    "{pass} pass: task [{task}] on {host}: a result in the reference, none in volant"
+                    "{pass} pass: task [{task}] on {host} (result {item}): a result in the reference, none in volant"
                 )),
                 _ => strict.push(format!(
-                    "{pass} pass: task [{task}] on {host}: a result in volant, none in the reference"
+                    "{pass} pass: task [{task}] on {host} (result {item}): a result in volant, none in the reference"
                 )),
             }
         }

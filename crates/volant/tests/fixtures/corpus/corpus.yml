@@ -15,6 +15,11 @@
   hosts: 1
   where: both
   vars: {}
-  volatile: []
+  # What `systemd` reports about a unit that differs between any two runs.
+  volatile: [StateChangeTimestamp, Requires, StateChangeTimestampMonotonic, MemoryAvailable, ExecMainPID,
+             ExecMainExitTimestamp, ExecMainExitTimestampMonotonic, ControlGroupId, CPUUsageNSec,
+             ConditionTimestamp, ConditionTimestampMonotonic, AssertTimestamp, AssertTimestampMonotonic,
+             InactiveEnterTimestamp, InactiveEnterTimestampMonotonic, ActiveExitTimestamp,
+             ActiveExitTimestampMonotonic, ExecStart, ExecStartEx, After, Before]
   generate: null
   skip_reason: null

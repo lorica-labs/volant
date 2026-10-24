@@ -1,12 +1,12 @@
 ---
-sourceHash: a8879d1f5dc4
+sourceHash: d9ea9949d3e7
 title: volant vault
 description: 加密、解密、查看、创建、编辑并更换 vault 文件的密钥，消息和退出码与 ansible-vault 相同。
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant vault` 的作用与 `ansible-vault encrypt`、`decrypt`、`view`、`create`、`edit` 和 `rekey` 相同，处理同样的文件，消息和退出码也一样。`encrypt_string` 暂时还没有。详情见 [Vault](/zh-cn/docs/variables/vault/#加密和查看文件) 和 [Vault](/zh-cn/docs/variables/vault/#创建编辑和更换文件密钥)。
+`volant vault` 的作用与 `ansible-vault encrypt`、`decrypt`、`view`、`create`、`edit`、`rekey` 和 `encrypt_string` 相同，处理同样的文件，消息和退出码也一样。详情见 [加密和查看文件](/zh-cn/docs/variables/vault/#加密和查看文件)、[创建、编辑和更换文件密钥](/zh-cn/docs/variables/vault/#创建编辑和更换文件密钥) 和 [加密字符串](/zh-cn/docs/variables/vault/#加密字符串)。
 
 ```sh
 volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
@@ -15,6 +15,7 @@ volant vault view [FILE...] [OPTIONS]
 volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
 volant vault edit FILE... [OPTIONS]
 volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
+volant vault encrypt_string [-n NAME]... [-p] [--show-input] [--stdin-name NAME] [--output FILE] [--encrypt-vault-id ID] [OPTIONS] [STRING...]
 ```
 
 `OPTIONS` 指 `--vault-id`、`--vault-password-file`（也可写作 `--vault-pass-file`）、`-J`/`--ask-vault-pass` 和 `-v`，见 [Vault](/zh-cn/docs/reference/cli/#vault)。一个都不给，也没有 `vault_password_file` 设置时，命令会询问密码。
@@ -29,6 +30,18 @@ volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] 
 
 <Option name="--skip-tty-check">
   即使标准输出不是终端，`create` 也会打开编辑器。不给它时，`create` 以退出码 5 拒绝。
+</Option>
+
+<Option name="-n, --name" arg="NAME">
+  用于 `encrypt_string`：位于同一位置的字符串的变量名。可以重复使用。
+</Option>
+
+<Option name="--stdin-name" arg="NAME">
+  用于 `encrypt_string`：以这个变量名加密标准输入。
+</Option>
+
+<Option name="-p, --prompt, --show-input">
+  用于 `encrypt_string`：在终端上询问名称和字符串。除非给出 `--show-input`，否则不会回显字符串。
 </Option>
 
 <Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">

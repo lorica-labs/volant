@@ -1,5 +1,5 @@
 ---
-sourceHash: e9d95d95a105
+sourceHash: c35040af6ced
 title: Ligne de commande
 description: Chaque commande et option que Volant accepte, regroupées selon ce qu'elles changent, et les options d'ansible-playbook qu'il n'a pas encore.
 ---
@@ -13,7 +13,7 @@ volant adhoc [OPTIONS] <PATTERN>
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
-volant vault <encrypt|decrypt|view|create|edit|rekey>
+volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
@@ -21,7 +21,7 @@ Chaque autre commande a sa propre page : [`volant adhoc`](/fr/docs/reference/cl
 
 `volant playbook` accepte les mêmes options qu'`ansible-playbook`, pour celles qui existent. `volant-playbook` est le même programme sous un nom qui ressemble à celui que vous connaissez. Les playbooks donnés ensemble s'exécutent dans l'ordre, et chacun affiche son propre récapitulatif.
 
-Sous Linux et macOS, le binaire `volant` choisit aussi son comportement d'après le nom sous lequel il a été lancé (le nom de fichier de `argv[0]`). Lancé comme `ansible-playbook` ou `ansible-vault`, par un lien symbolique ou un lien physique, il se comporte comme `volant playbook` ou `volant vault`, avec les mêmes arguments, la même sortie et les mêmes codes de sortie. Lancé comme `ansible`, il se comporte comme `volant adhoc`. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé. Tout autre nom garde le comportement habituel de `volant`.
+Sous Linux et macOS, le binaire `volant` choisit aussi son comportement d'après le nom sous lequel il a été lancé (le nom de fichier de `argv[0]`). Lancé comme `ansible-playbook`, `ansible-vault` ou `ansible-inventory`, par un lien symbolique ou un lien physique, il se comporte comme `volant playbook`, `volant vault` ou `volant inventory`, avec les mêmes arguments, la même sortie et les mêmes codes de sortie. Lancé comme `ansible`, il se comporte comme `volant adhoc`. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé. Tout autre nom garde le comportement habituel de `volant`.
 
 Quand une option a une clé d'`ansible.cfg` ou une variable d'environnement, l'entrée la nomme. L'option l'emporte sur les deux ; [Configuration](/fr/docs/reference/configuration/) explique l'ordre.
 

@@ -1,12 +1,12 @@
 ---
-sourceHash: a8879d1f5dc4
+sourceHash: d9ea9949d3e7
 title: volant vault
 description: Cifra, descifra, muestra, crea, edita y vuelve a cifrar archivos de vault, con los mensajes y los códigos de salida de ansible-vault.
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant vault` hace lo que hacen `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit` y `rekey`, sobre los mismos archivos, con los mismos mensajes y los mismos códigos de salida. `encrypt_string` todavía no existe. [Vault](/es/docs/variables/vault/#cifrar-y-ver-archivos) y [Vault](/es/docs/variables/vault/#crear-editar-y-recifrar-archivos) dan los detalles.
+`volant vault` hace lo que hacen `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit`, `rekey` y `encrypt_string`, sobre los mismos archivos, con los mismos mensajes y los mismos códigos de salida. [Cifrar y ver archivos](/es/docs/variables/vault/#cifrar-y-ver-archivos), [crear, editar y recifrar archivos](/es/docs/variables/vault/#crear-editar-y-recifrar-archivos) y [cifrar cadenas](/es/docs/variables/vault/#cifrar-cadenas) dan los detalles.
 
 ```sh
 volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
@@ -15,6 +15,7 @@ volant vault view [FILE...] [OPTIONS]
 volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
 volant vault edit FILE... [OPTIONS]
 volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
+volant vault encrypt_string [-n NAME]... [-p] [--show-input] [--stdin-name NAME] [--output FILE] [--encrypt-vault-id ID] [OPTIONS] [STRING...]
 ```
 
 `OPTIONS` son `--vault-id`, `--vault-password-file` (también `--vault-pass-file`), `-J`/`--ask-vault-pass` y `-v`, descritas en [Vault](/es/docs/reference/cli/#vault). Sin ninguna de ellas, y sin el ajuste `vault_password_file`, el comando pide la contraseña.
@@ -29,6 +30,18 @@ volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] 
 
 <Option name="--skip-tty-check">
   `create` abre el editor aunque la salida estándar no sea un terminal. Sin ella, `create` se niega con el código de salida 5.
+</Option>
+
+<Option name="-n, --name" arg="NAME">
+  Para `encrypt_string`: el nombre de variable de la cadena que ocupa el mismo lugar. Repetible.
+</Option>
+
+<Option name="--stdin-name" arg="NAME">
+  Para `encrypt_string`: cifra la entrada estándar, con este nombre de variable.
+</Option>
+
+<Option name="-p, --prompt, --show-input">
+  Para `encrypt_string`: pide un nombre y la cadena en el terminal. La cadena no se muestra al escribirla salvo que se dé `--show-input`.
 </Option>
 
 <Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">

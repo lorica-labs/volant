@@ -132,6 +132,37 @@ pub enum VaultCommand {
         #[arg(value_name = "file_name")]
         files: Vec<String>,
     },
+    /// Encrypt strings into `!vault |` blocks to paste into a vars file.
+    #[command(name = "encrypt_string")]
+    EncryptString {
+        #[command(flatten)]
+        common: Common,
+        /// Write the blocks here instead of standard output.
+        #[arg(long, value_name = "OUTPUT_FILE", overrides_with = "output")]
+        output: Option<String>,
+        /// The vault id to encrypt with, required when more than one is given.
+        #[arg(
+            long,
+            value_name = "ENCRYPT_VAULT_ID",
+            overrides_with = "encrypt_vault_id"
+        )]
+        encrypt_vault_id: Option<String>,
+        /// Ask for the string, and a name, on the terminal.
+        #[arg(short, long)]
+        prompt: bool,
+        /// With --prompt, show what is typed.
+        #[arg(long)]
+        show_input: bool,
+        /// The variable name for the string at the same place; repeatable.
+        #[arg(short, long = "name", value_name = "NAME")]
+        names: Vec<String>,
+        /// The variable name for the text read from standard input.
+        #[arg(long, value_name = "STDIN_NAME", overrides_with = "stdin_name")]
+        stdin_name: Option<String>,
+        /// The strings; none, or `-`, reads standard input.
+        #[arg(value_name = "string_to_encrypt")]
+        strings: Vec<String>,
+    },
     /// Print the plaintext of encrypted files, through the pager on a terminal.
     View {
         #[command(flatten)]

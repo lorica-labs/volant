@@ -8,6 +8,7 @@ use std::path::Path;
 use super::announce::{config_line, version_line};
 pub use super::vault_args::{VaultArgs, VaultCommand};
 use super::vault_edit as edit;
+use super::vault_string as string;
 use crate::vault::{self, Request, Secrets};
 
 /// A message for `[ERROR]:` and the exit code it ends the command with.
@@ -89,6 +90,12 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
         | VaultCommand::Edit { common, files, .. }
         | VaultCommand::Rekey { common, files, .. }
         | VaultCommand::View { common, files } => (common, None, files),
+        VaultCommand::EncryptString {
+            common,
+            output,
+            strings,
+            ..
+        } => (common, output.as_deref(), strings),
     };
     if let Some(id) = common.vault_id.iter().find(|id| id.contains(';')) {
         return Err(bad_option(format!(
@@ -99,6 +106,17 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
         return Err(bad_option(
             "At most one input file may be used with the --output option",
         ));
+    }
+    if let VaultCommand::EncryptString {
+        prompt,
+        show_input,
+        names,
+        stdin_name,
+        strings,
+        ..
+    } = &command
+    {
+        job_of(*prompt, *show_input, names, stdin_name.as_ref(), strings).check()?;
     }
     if common.verbose >= 2 {
         println!("{}", version_line());
@@ -117,7 +135,9 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
     });
     let encrypting = matches!(
         command,
-        VaultCommand::Encrypt { .. } | VaultCommand::Create { .. }
+        VaultCommand::Encrypt { .. }
+            | VaultCommand::Create { .. }
+            | VaultCommand::EncryptString { .. }
     );
     let labelled = vault::load_labelled(
         &Request {
@@ -162,6 +182,20 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
             let (label, secret) = encrypt_secret(&labelled, wanted.as_deref())?;
             edit::create(&files, label, secret, skip_tty_check)?;
         }
+        VaultCommand::EncryptString {
+            encrypt_vault_id,
+            prompt,
+            show_input,
+            names,
+            stdin_name,
+            strings,
+            ..
+        } => {
+            let wanted = encrypt_vault_id.or(config.vault_encrypt_identity);
+            let (label, secret) = encrypt_secret(&labelled, wanted.as_deref())?;
+            let job = job_of(prompt, show_input, &names, stdin_name.as_ref(), &strings);
+            string::run(&job, label, secret, output.as_deref())?;
+        }
         VaultCommand::Edit { files, .. } => edit::edit(&files, &labelled)?,
         VaultCommand::Rekey {
             encrypt_vault_id,
@@ -204,6 +238,22 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
         }
     }
     Ok(())
+}
+
+fn job_of(
+    prompt: bool,
+    show_input: bool,
+    names: &[String],
+    stdin_name: Option<&String>,
+    strings: &[String],
+) -> string::Job {
+    string::Job {
+        prompt,
+        show_input,
+        names: names.to_vec(),
+        stdin_name: stdin_name.cloned(),
+        strings: strings.to_vec(),
+    }
 }
 
 /// The files to work on: standard input when none is named.

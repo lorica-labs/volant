@@ -1,5 +1,5 @@
 ---
-sourceHash: e9d95d95a105
+sourceHash: c35040af6ced
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -13,7 +13,7 @@ volant adhoc [OPTIONS] <PATTERN>
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
-volant vault <encrypt|decrypt|view|create|edit|rekey>
+volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
@@ -21,7 +21,7 @@ volant --version
 
 `volant playbook` 接受与 `ansible-playbook` 相同的选项（对于存在的那些）。`volant-playbook` 是同一个程序，名字读起来就像你熟悉的那个。一起给出的多个 playbook 按顺序运行，每个都会打印自己的汇总。
 
-在 Linux 和 macOS 上，`volant` 二进制文件还会根据启动时使用的名字（`argv[0]` 的文件名）来决定行为。以 `ansible-playbook` 或 `ansible-vault` 的名字启动时，无论通过符号链接还是硬链接，它的行为都等同于 `volant playbook` 或 `volant vault`，参数、输出和退出码都相同。以 `ansible` 的名字启动时，它的行为等同于 `volant adhoc`。用法错误以 2 退出，并按启动时的名字称呼该程序。其他任何名字都保持 `volant` 的常规行为。
+在 Linux 和 macOS 上，`volant` 二进制文件还会根据启动时使用的名字（`argv[0]` 的文件名）来决定行为。以 `ansible-playbook`、`ansible-vault` 或 `ansible-inventory` 的名字启动时，无论通过符号链接还是硬链接，它的行为都等同于 `volant playbook`、`volant vault` 或 `volant inventory`，参数、输出和退出码都相同。以 `ansible` 的名字启动时，它的行为等同于 `volant adhoc`。用法错误以 2 退出，并按启动时的名字称呼该程序。其他任何名字都保持 `volant` 的常规行为。
 
 如果某个选项有对应的 `ansible.cfg` 键或环境变量，条目中会写明。选项优先于两者；顺序见[配置](/zh-cn/docs/reference/configuration/)。
 

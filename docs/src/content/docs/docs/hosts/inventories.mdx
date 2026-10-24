@@ -32,6 +32,7 @@ The `[inventory]` section of `ansible.cfg` controls how a source is matched:
 - `ignore_extensions` and `ignore_patterns` skip files in directories.
 - `unparsed_is_failed` fails the run when no source could be read at all.
 - `any_unparsed_is_failed` fails the run at the first source no plugin could read.
+- `export` makes `volant inventory` keep each variable where it is set, as `--export` does.
 
 A source that no plugin reads is skipped with a warning, as in Ansible. `-vvv` prints which plugin took each source, and which ones declined it.
 

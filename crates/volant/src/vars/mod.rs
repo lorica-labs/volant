@@ -15,6 +15,7 @@ mod store;
 pub(crate) use host_vars::PENDING_PYTHON;
 pub use host_vars::{HostSettings, HostVars, host_setting, omit_token, settled, settled_all};
 pub use include_dir::{Chain, Failure, Scan, include_dir, join_path, read_failure};
+pub use layers::ListedOrigin;
 pub use load::{
     VaultFile, include_vars_paths, load_vars_file, parse_extra_vars, read_vars_document,
 };

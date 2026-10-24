@@ -1,5 +1,5 @@
 ---
-sourceHash: dc0a39319bb0
+sourceHash: f541f96267bc
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -162,6 +162,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="any_unparsed_is_failed" id="inventory-any-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED">
   在遇到第一个没有任何插件能读取的来源时就让运行失败。
+</Option>
+
+<Option name="export" id="inventory-export" default="false" env="ANSIBLE_INVENTORY_EXPORT">
+  让 `volant inventory` 把每个变量保留在它被设置的地方，与 `--export` 的作用相同。`--export` 只对一次运行开启它；命令行上没有任何选项能把它关掉，与 `ansible-inventory` 一样。见 [inventory 命令](/zh-cn/docs/reference/cli/inventory/)。
 </Option>
 
 ## [inventory_plugin_script]

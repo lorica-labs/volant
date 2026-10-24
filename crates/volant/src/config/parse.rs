@@ -114,6 +114,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 plugins.any_unparsed_is_failed =
                     boolean("INVENTORY_ANY_UNPARSED_IS_FAILED", origin, value.trim())?;
             }
+            ("inventory", "export") => {
+                plugins.export = boolean("INVENTORY_EXPORT", origin, value.trim())?;
+            }
             ("inventory_plugin_script", "always_show_stderr") => {
                 plugins.script_stderr = boolean("always_show_stderr", origin, value.trim())?;
             }

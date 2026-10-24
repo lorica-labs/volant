@@ -163,6 +163,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Fail the run at the first source no plugin could read.
 </Option>
 
+<Option name="export" id="inventory-export" default="false" env="ANSIBLE_INVENTORY_EXPORT">
+  Make `volant inventory` keep each variable where it is set, as `--export` does. `--export` turns it on for one run; nothing turns it off from the command line, as in `ansible-inventory`. See [the inventory command](/docs/reference/cli/inventory/).
+</Option>
+
 ## [inventory_plugin_script]
 
 <Option name="always_show_stderr" id="inventory-plugin-script-always-show-stderr" default="true" env="ANSIBLE_INVENTORY_PLUGIN_SCRIPT_STDERR">

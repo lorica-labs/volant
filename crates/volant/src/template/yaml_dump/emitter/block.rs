@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Literal block scalars, which only the callbacks' dumper writes.
+//! Literal block scalars, which the callbacks' dumper and the inventory's `!vault` write.
 
 use super::super::scalar::is_break;
 use super::Emitter;

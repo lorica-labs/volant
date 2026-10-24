@@ -1,18 +1,18 @@
 ---
-sourceHash: 2c4ece9bf821
+sourceHash: a95d7480c0e1
 title: volant inventory
-description: Imprime un inventario como JSON, igual que ansible-inventory.
+description: Imprime un inventario como JSON o YAML, igual que ansible-inventory.
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant inventory` imprime un inventario como JSON, igual que `ansible-inventory`. Iniciado con el nombre `ansible-inventory` (consulta [el comando shims](/es/docs/reference/cli/shims/)), se comporta igual.
+`volant inventory` imprime un inventario como JSON o YAML, igual que `ansible-inventory`. Iniciado con el nombre `ansible-inventory` (consulta [el comando shims](/es/docs/reference/cli/shims/)), se comporta igual.
 
 ```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y] [--export] [--output FILE] [-v]
 ```
 
-Se requiere exactamente una de `--list`, `--host` y `--graph`. `--yaml`, `--toml` y `--export` todavía no existen y son opciones desconocidas.
+Se requiere exactamente una de `--list`, `--host` y `--graph`. `--toml` todavía no existe y es una opción desconocida.
 
 <Option name="--list" arg="">
   Imprime cada host con sus variables, con los archivos `group_vars` y `host_vars` y las variables de sus grupos ya incorporados, y luego los grupos con sus `hosts` y `children`. Las claves van ordenadas, la sangría es de cuatro espacios y el texto no ASCII se escribe tal cual. Una cadena que es un dato se imprime como `{"__ansible_unsafe": "..."}` y un valor `!vault` como `{"__ansible_vault": "..."}`; no se descifra nada.
@@ -30,6 +30,31 @@ Se requiere exactamente una de `--list`, `--host` y `--graph`. `--yaml`, `--toml
   Con `--graph`, añade líneas `{name = value}` bajo cada host (sus variables ya combinadas) y cada grupo (las suyas, incluidos los archivos `group_vars`), ordenadas por nombre y escritas con el `str()` de Python. Los valores `!vault` se descifran, así que esto necesita la contraseña de vault, y el texto `!unsafe` se imprime tal cual. Las demás acciones ignoran `--vars`.
 </Option>
 
+<Option name="-y, --yaml" arg="">
+  Imprime `--list` y `--host` como YAML, byte a byte como `ansible-inventory`. `--list` se convierte en un inventario que se puede volver a leer: cada grupo bajo los `children` de su padre, con sus `hosts` y sus variables, claves ordenadas. Un host se escribe con sus variables la primera vez que el recorrido lo alcanza y como `{}` después, un grupo ya escrito es `{}`, y un grupo vacío se omite. Un valor `!vault` se escribe como `!vault |` y su texto cifrado, sin descifrarlo. El texto `!unsafe` se escribe como texto plano. `--graph` ignora `--yaml`.
+
+  Cuando varios hosts reciben una variable del mismo grupo, del mismo archivo `group_vars` o de `-e`, la referencia guarda un solo valor para todos, y PyYAML lo escribe una vez con un ancla (`&id001`) y luego como alias (`*id001`). Volant escribe las mismas anclas con los mismos números. PyYAML numera un valor cuando lo encuentra por segunda vez, así que `id001` no siempre es la primera ancla del archivo. Solo las listas y los mapeos reciben anclas.
+
+  ```yaml
+  all:
+    children:
+      prod:
+        children:
+          web:
+            hosts:
+              w1:
+                list: &id001
+                - 1
+                - 2
+              w2:
+                list: *id001
+  ```
+</Option>
+
+<Option name="--export" arg="">
+  Mantiene cada variable donde se define en lugar de combinar las variables de grupo en cada host. `--list` da a cada grupo una entrada `vars` con sus propias variables y sus archivos `group_vars`. Cada host conserva solo lo que fijan su línea de inventario y sus archivos `host_vars`; las variables adicionales se omiten. Con `--yaml` no se comparte ningún valor, así que no aparecen anclas. Con `--host` solo se imprimen las variables propias de ese host. `export = true` en la sección `[inventory]` de `ansible.cfg`, o `ANSIBLE_INVENTORY_EXPORT`, lo activa por defecto. Con `--graph --vars`, las líneas de un host muestran solo sus propias variables.
+</Option>
+
 <Option name="-l, --limit" arg="SUBSET">
   Con `--list`, conserva solo los hosts que coinciden con el patrón. Los grupos se quedan, con sus hijos. Un patrón que no coincide con nada avisa e imprime un inventario sin hosts.
 </Option>
@@ -39,7 +64,7 @@ Se requiere exactamente una de `--list`, `--host` y `--graph`. `--yaml`, `--toml
 </Option>
 
 <Option name="--output" arg="FILE">
-  Escribe el documento en `FILE` y no imprime nada. El archivo contiene lo que habría salido por la salida estándar, sin el último salto de línea.
+  Escribe el documento en `FILE` y no imprime nada. El archivo contiene lo que habría salido por la salida estándar. Un documento JSON no tiene salto de línea final; un documento YAML conserva el suyo.
 </Option>
 
 `-i`, `-v` y las opciones de vault funcionan como en `volant playbook`. Sin una acción elegida, el comando imprime `No action selected, at least one of --host, --graph or --list needs to be specified.`, y con dos imprime `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; ambos salen con el código 5.

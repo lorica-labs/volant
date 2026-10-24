@@ -7,6 +7,7 @@ use volant_protocol::TaskResult;
 
 use super::args::AdhocArgs;
 use super::run::{Plays, drive};
+use crate::config::Config;
 use crate::inventory::Host;
 use crate::playbook::{self, Origin, Playbook, TaskOrBlock};
 use crate::render::{Cause, Dump, ErrorBlock, Renderer, task_failed};
@@ -21,14 +22,6 @@ pub fn adhoc(args: AdhocArgs) -> i32 {
         eprintln!("ERROR! -vv and above are not supported yet for ad hoc commands");
         return 4;
     }
-    if let Some(format) = std::env::var_os("ANSIBLE_CALLBACK_RESULT_FORMAT").filter(|f| f != "json")
-    {
-        eprintln!(
-            "ERROR! ANSIBLE_CALLBACK_RESULT_FORMAT={} is not supported yet for ad hoc commands; only json is",
-            format.to_string_lossy()
-        );
-        return 4;
-    }
     let adhoc = match Adhoc::new(&args.pattern, &args.module_name, &args.module_args) {
         Ok(adhoc) => adhoc,
         Err((code, message)) => {
@@ -40,6 +33,25 @@ pub fn adhoc(args: AdhocArgs) -> i32 {
     // Measured: a run with failed and unreachable hosts exits 4. The reference's strategy returns
     // `RUN_UNREACHABLE_HOSTS` before it looks at the failed ones, where a playbook's codes add up.
     if code == 6 { 4 } else { code }
+}
+
+/// The `minimal` callback's `result_format` option, checked against its choices when the
+/// callback loads: `Err` is the exit code of a value it refuses, already said. An empty value is
+/// not a choice either (measured: exit 5).
+pub(super) fn result_format(config: &Config, out: &mut Renderer) -> Result<(), i32> {
+    match config.callback_result_format.as_deref() {
+        None | Some("json") => Ok(()),
+        Some("yaml") => {
+            out.set_result_yaml();
+            Ok(())
+        }
+        Some(other) => {
+            eprintln!(
+                "[ERROR]: Invalid value '{other}' for config 'result_format' for 'minimal' callback plugin. Valid values are: json, yaml"
+            );
+            Err(5)
+        }
+    }
 }
 
 /// The one task `_play_ds` builds from `-m` and `-a`, and the hosts it runs on.

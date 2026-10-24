@@ -84,6 +84,9 @@ pub struct Config {
     /// `task path:` line before the `fatal:` line of a failed task below `-vv`, where the
     /// reference prints it for no task. Off by default, as in the reference.
     pub show_task_path_on_failure: bool,
+    /// `[defaults] callback_result_format` or `ANSIBLE_CALLBACK_RESULT_FORMAT`, as written: how
+    /// the `minimal` callback of `volant adhoc` dumps a result. Checked where it is used.
+    pub callback_result_format: Option<String>,
     /// `[defaults] force_color` or `ANSIBLE_FORCE_COLOR`: colour the output even when it is not a
     /// terminal. It wins over `nocolor` and `NO_COLOR`, as measured on ansible-core 2.19.12;
     /// only `--no-color` wins over it.
@@ -184,6 +187,7 @@ impl Default for Config {
             localhost_warning: true,
             show_custom_stats: false,
             show_task_path_on_failure: false,
+            callback_result_format: None,
             force_color: false,
             nocolor: false,
             deprecation_warnings: true,
@@ -347,6 +351,9 @@ impl Config {
             config.ssh_usetty = callback_flag(&flag);
         }
         // Set and empty still wins, and a word the reference does not know reads as false.
+        if let Ok(format) = std::env::var("ANSIBLE_CALLBACK_RESULT_FORMAT") {
+            config.callback_result_format = Some(format);
+        }
         if let Ok(flag) = std::env::var("ANSIBLE_SHOW_TASK_PATH_ON_FAILURE") {
             config.show_task_path_on_failure = callback_flag(&flag);
         }

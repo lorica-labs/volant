@@ -247,7 +247,7 @@ The other options mean what they mean for `volant playbook`. `-f 1` runs one hos
 
 Each host prints one result, the way ansible's `minimal` callback prints it. A `command`, `shell` or `raw` result is `h1 | CHANGED | rc=0 >>`, then its stdout, stderr and `msg` joined with nothing between. Any other result is `h1 | SUCCESS => ` followed by the result as JSON, indented four spaces, keys sorted. The statuses are `SUCCESS`, `CHANGED`, `FAILED` (command form), `FAILED!` (JSON form), `SKIPPED` and `UNREACHABLE!`. Before a failed or unreachable result, standard output carries the same `[ERROR]` block a playbook prints. Its `Origin:` is `<adhoc 'MODULE' task>`, followed by the task as ansible shows it, cut down to 120 characters.
 
-The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. `-vv` and above, and `ANSIBLE_CALLBACK_RESULT_FORMAT` set to anything but `json`, are refused with exit code 4.
+The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. With `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, or `callback_result_format = yaml` under `[defaults]` in `ansible.cfg`, a JSON-form result is printed as YAML instead, on the lines after `=>`, indented four spaces. A string with line breaks becomes a literal block. Any other value, the empty one included, stops the command with exit code 5. `-vv` and above are refused with exit code 4.
 
 ## The runtime command
 

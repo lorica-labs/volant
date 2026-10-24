@@ -13,3 +13,6 @@ runs:
   - args: [h1, -i, inv.ini, -m, nosuchmodule]
   - args: [web, -i, inv.ini, -m, nosuchmodule]
   - args: [all, -i, inv.ini, -a, "false"]
+  - args: [h1, -i, inv.ini, -a, false restart some-long-service-name-for-the-cut-test-here-and-more]
+  - args: [h1, -i, inv.ini, -m, ping, -a, "{}"]
+  - args: [h1, -i, inv.ini, -m, ping, -a, ' {"data": "j"}']

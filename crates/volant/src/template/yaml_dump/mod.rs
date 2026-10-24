@@ -18,7 +18,20 @@ use super::add_filter;
 mod emitter;
 mod scalar;
 
-use emitter::dump;
+use emitter::{dump, emit};
+
+/// A task result as the callbacks dump it with `result_format = yaml` (`_dump_results`): block
+/// style, four-space indent, keys sorted, and a string with a line break as a literal block.
+pub(crate) fn callback_yaml(value: &serde_json::Value) -> String {
+    emit(
+        &super::bigint::to_template(value),
+        4,
+        None,
+        Some(false),
+        true,
+        true,
+    )
+}
 
 pub fn register(env: &mut Environment<'static>) {
     // `to_yaml` keeps PyYAML's default flow style (`None`: a collection of scalars inline),

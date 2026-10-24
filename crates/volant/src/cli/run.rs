@@ -113,6 +113,11 @@ async fn run_all(
         Err(code) => return Ok(code),
     };
     let show_custom_stats = config.show_custom_stats;
+    if let Plays::Adhoc(_) = plays
+        && let Err(code) = super::adhoc::result_format(&config, out)
+    {
+        return Ok(code);
+    }
     announce_callbacks(out);
     let dump = if out.verbose_at(4) {
         options_dump(args, &config, forks)

@@ -11,14 +11,16 @@ use crate::stats::{CustomStats, Stats};
 mod error;
 mod recap_json;
 mod result;
+mod shorten;
 
 pub(crate) use error::source_context;
 pub use error::{
     AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, cause,
-    concat_message, lead, shorten, task_failed,
+    concat_message, lead, task_failed,
 };
 pub(crate) use recap_json::ansible_json;
 use recap_json::dumps_indented;
+pub use shorten::shorten;
 
 /// How a task's result lines are cleaned before they are shown. Whether a body goes on the line
 /// at verbosity 0 is the result's own [`VERBOSE_ALWAYS`], not the task's.
@@ -56,6 +58,8 @@ pub struct Renderer {
     /// The action of the one task `volant adhoc` runs, when the output is the `minimal`
     /// callback's rather than the default one's.
     minimal: Option<String>,
+    /// `result_format = yaml`: a result is dumped as YAML rather than JSON.
+    yaml: bool,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -103,6 +107,7 @@ impl Renderer {
             diffs: None,
             path_on_failure: false,
             minimal: None,
+            yaml: false,
         }
     }
 
@@ -125,6 +130,7 @@ impl Renderer {
             diffs: None,
             path_on_failure: false,
             minimal: None,
+            yaml: false,
         }
     }
 
@@ -138,6 +144,11 @@ impl Renderer {
     /// the module of the run's one task, which picks the command form or the JSON form of a line.
     pub fn set_minimal(&mut self, action: &str) {
         self.minimal = Some(action.to_string());
+    }
+
+    /// Dumps results as YAML: the callbacks' `result_format = yaml`.
+    pub fn set_result_yaml(&mut self) {
+        self.yaml = true;
     }
 
     /// Serves the diffs of the results this renderer prints.

@@ -301,10 +301,7 @@ impl Renderer {
                 let line = if command && !result.0.contains_key("ansible_job_id") {
                     command_text(host, state, &body)
                 } else {
-                    format!(
-                        "{host} | {state} => {}",
-                        ansible_json_indented(&serde_json::Value::Object(body), 0)
-                    )
+                    format!("{host} | {state} => {}", self.minimal_dump(body))
                 };
                 (style, line)
             }
@@ -312,15 +309,56 @@ impl Renderer {
                 let line = if command && !result.0.contains_key("module_stderr") {
                     command_text(host, "FAILED", &body)
                 } else {
-                    format!(
-                        "{host} | FAILED! => {}",
-                        ansible_json_indented(&serde_json::Value::Object(body), 0)
-                    )
+                    format!("{host} | FAILED! => {}", self.minimal_dump(body))
                 };
                 (FAILED, line)
             }
         };
         let _ = writeln!(self.out, "{}", self.paint(style, &line));
+    }
+}
+
+impl Renderer {
+    /// `_dump_results(result, indent=4)`: JSON with sorted keys, or with `result_format = yaml`
+    /// a line break and the YAML dump indented by four (`textwrap.indent`), `stdout_lines` and
+    /// `stderr_lines` written `<omitted>` beside their text. The trailing line break is the
+    /// line's own.
+    pub(super) fn minimal_dump(
+        &self,
+        mut body: serde_json::Map<String, serde_json::Value>,
+    ) -> String {
+        if !self.yaml {
+            return ansible_json_indented(&serde_json::Value::Object(body), 0);
+        }
+        for (text, lines) in [("stdout", "stdout_lines"), ("stderr", "stderr_lines")] {
+            if body.contains_key(text) && body.contains_key(lines) {
+                body.insert(lines.into(), "<omitted>".into());
+            }
+        }
+        let dumped = crate::template::callback_yaml(&serde_json::Value::Object(body));
+        let mut out = String::from("\n");
+        // `str.splitlines(keepends=True)`'s boundaries; a line of whitespace only gets no prefix.
+        let breaks = |c: char| {
+            matches!(
+                c,
+                '\n' | '\r'
+                    | '\x0b'
+                    | '\x0c'
+                    | '\x1c'
+                    | '\x1d'
+                    | '\x1e'
+                    | '\u{85}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+            )
+        };
+        for line in dumped.split_inclusive(breaks) {
+            if !line.trim().is_empty() {
+                out.push_str("    ");
+            }
+            out.push_str(line);
+        }
+        out.strip_suffix('\n').map(str::to_string).unwrap_or(out)
     }
 }
 

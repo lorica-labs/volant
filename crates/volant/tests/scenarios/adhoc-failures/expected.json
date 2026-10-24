@@ -38,5 +38,17 @@
   {
     "code": 2,
     "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\nh2 | FAILED | rc=1 >>\nnon-zero return code\nh3 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false restart some-long-service-name-for-the-cut-test-here-and- [...]\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Action 'ansible.builtin.ping' does not support raw params.\n\nTask failed.\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {'_raw_params': '{}'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\n<<< caused by >>>\n\nAction 'ansible.builtin.ping' does not support raw params.\nOrigin: <CLI option '-m'>\n\nping\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Action 'ansible.builtin.ping' does not support raw params.\"\n}\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Action 'ansible.builtin.ping' does not support raw params.\n\nTask failed.\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {'_raw_params': '{\"data\": \"j\"}'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\n<<< caused by >>>\n\nAction 'ansible.builtin.ping' does not support raw params.\nOrigin: <CLI option '-m'>\n\nping\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Action 'ansible.builtin.ping' does not support raw params.\"\n}\n"
   }
 ]

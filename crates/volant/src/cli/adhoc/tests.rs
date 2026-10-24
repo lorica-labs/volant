@@ -13,6 +13,17 @@ use rstest::rstest;
 #[case::json("ping", r#"{"data": "j", "a": 1}"#, r#"{"data": "j", "a": 1}"#)]
 #[case::empty_json_is_words("ping", "{}", r#"{"_raw_params": "{}"}"#)]
 #[case::nothing("ping", "", "{}")]
+// Measured: `-a` is not stripped before the JSON test, so a space in front makes it words.
+#[case::spaced_json_is_words(
+    "ping",
+    r#" {"data": "j"}"#,
+    r#"{"_raw_params": "{\"data\": \"j\"}"}"#
+)]
+#[case::trailing_space_is_words(
+    "ping",
+    r#"{"data": "j"} "#,
+    r#"{"_raw_params": "{\"data\": \"j\"} "}"#
+)]
 fn module_args_read_as_play_ds_reads_them(
     #[case] module: &str,
     #[case] raw: &str,

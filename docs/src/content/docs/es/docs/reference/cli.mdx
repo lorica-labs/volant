@@ -1,5 +1,5 @@
 ---
-sourceHash: d021dcc2ad95
+sourceHash: 26c0ba36bd76
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -281,12 +281,15 @@ volant runtime remove [ID | --all]
 
 ## El comando vault
 
-`volant vault` hace lo que hacen `ansible-vault encrypt`, `decrypt` y `view`, sobre los mismos archivos, con los mismos mensajes y los mismos códigos de salida. `create`, `edit`, `rekey` y `encrypt_string` todavía no existen. [Vault](/es/docs/variables/vault/#cifrar-y-ver-archivos) da los detalles.
+`volant vault` hace lo que hacen `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit` y `rekey`, sobre los mismos archivos, con los mismos mensajes y los mismos códigos de salida. `encrypt_string` todavía no existe. [Vault](/es/docs/variables/vault/#cifrar-y-ver-archivos) y [Vault](/es/docs/variables/vault/#crear-editar-y-recifrar-archivos) dan los detalles.
 
 ```sh
 volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
 volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
 volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
 ```
 
 `OPTIONS` son `--vault-id`, `--vault-password-file` (también `--vault-pass-file`), `-J`/`--ask-vault-pass` y `-v`, descritas antes en [Vault](#vault). Sin ninguna de ellas, y sin el ajuste `vault_password_file`, el comando pide la contraseña.
@@ -296,7 +299,15 @@ volant vault view [FILE...] [OPTIONS]
 </Option>
 
 <Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  El id de vault que usa `encrypt`. Es obligatorio cuando se da más de un `--vault-id`.
+  El id de vault que usan `encrypt`, `create` y `rekey`. `encrypt` y `create` lo exigen cuando se da más de un `--vault-id`. `edit` lo acepta y lo ignora: un archivo conserva su propia etiqueta.
+</Option>
+
+<Option name="--skip-tty-check">
+  `create` abre el editor aunque la salida estándar no sea un terminal. Sin ella, `create` se niega con el código de salida 5.
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  El nuevo secreto para `rekey`. Da uno de los dos. Sin ninguno, `rekey` lo pide.
 </Option>
 
 ## El comando shims

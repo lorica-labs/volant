@@ -1,5 +1,5 @@
 ---
-sourceHash: 78c5934b9fa8
+sourceHash: dc0a39319bb0
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -100,6 +100,18 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 
 <Option name="vault_encrypt_identity" id="defaults-vault-encrypt-identity" flag="--encrypt-vault-id" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
   Die Vault-ID, die `volant vault encrypt` verwendet, wenn `--encrypt-vault-id` nicht angegeben ist. Siehe [Vault](/de/docs/variables/vault/#dateien-verschlüsseln-und-anzeigen).
+</Option>
+
+<Option name="editor" id="defaults-editor" env="ANSIBLE_EDITOR, EDITOR">
+  Der Editor, den `volant vault create` und `edit` starten. Die zuletzt gesetzte Variable gewinnt, dann die Datei, dann `vi`. Siehe [Vault](/de/docs/variables/vault/#dateien-anlegen-bearbeiten-und-neu-verschlüsseln).
+</Option>
+
+<Option name="local_tmp" id="defaults-local-tmp" default="~/.ansible/tmp" env="ANSIBLE_LOCAL_TEMP">
+  Wo `volant vault create` und `edit` die private Kopie aufbewahren, an der der Editor arbeitet.
+</Option>
+
+<Option name="pager" id="defaults-pager" default="less" env="ANSIBLE_PAGER, PAGER">
+  Das Programm, durch das `volant vault view` in einem Terminal die Ausgabe leitet. Die zuletzt gesetzte Variable gewinnt, dann die Datei.
 </Option>
 
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">

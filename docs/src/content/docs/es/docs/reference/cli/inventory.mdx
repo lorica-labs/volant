@@ -1,5 +1,5 @@
 ---
-sourceHash: 6d14f54b6ce6
+sourceHash: 2c4ece9bf821
 title: volant inventory
 description: Imprime un inventario como JSON, igual que ansible-inventory.
 ---
@@ -9,10 +9,10 @@ import Option from '../../../../../../components/Option.astro';
 `volant inventory` imprime un inventario como JSON, igual que `ansible-inventory`. Iniciado con el nombre `ansible-inventory` (consulta [el comando shims](/es/docs/reference/cli/shims/)), se comporta igual.
 
 ```
-volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [--output FILE] [-v]
 ```
 
-Se requiere exactamente una de `--list`, `--host` y `--graph`. `--graph`, `--yaml`, `--toml`, `--export` y `--vars` todavía no existen: `--graph` se rechaza por su nombre y las demás son opciones desconocidas.
+Se requiere exactamente una de `--list`, `--host` y `--graph`. `--yaml`, `--toml` y `--export` todavía no existen y son opciones desconocidas.
 
 <Option name="--list" arg="">
   Imprime cada host con sus variables, con los archivos `group_vars` y `host_vars` y las variables de sus grupos ya incorporados, y luego los grupos con sus `hosts` y `children`. Las claves van ordenadas, la sangría es de cuatro espacios y el texto no ASCII se escribe tal cual. Una cadena que es un dato se imprime como `{"__ansible_unsafe": "..."}` y un valor `!vault` como `{"__ansible_vault": "..."}`; no se descifra nada.
@@ -20,6 +20,14 @@ Se requiere exactamente una de `--list`, `--host` y `--graph`. `--graph`, `--yam
 
 <Option name="--host" arg="HOST">
   Imprime las variables de un host. `HOST` es un patrón de hosts que debe coincidir con exactamente un host; si no, el comando imprime `You must pass a single valid host to --host parameter` y sale con el código 5. `--limit` no se aplica.
+</Option>
+
+<Option name="--graph" arg="[GROUP]">
+  Imprime los grupos como un árbol: `@name:` para un grupo, nombres sueltos para los hosts, los hijos de un grupo antes que sus hosts, cada nivel con sangría de `  |`. Con el nombre de un grupo, imprime solo ese subárbol. Un nombre que no es un grupo imprime `Pattern must be valid group name when using --graph` y sale con el código 5. `--limit` no se aplica.
+</Option>
+
+<Option name="--vars" arg="">
+  Con `--graph`, añade líneas `{name = value}` bajo cada host (sus variables ya combinadas) y cada grupo (las suyas, incluidos los archivos `group_vars`), ordenadas por nombre y escritas con el `str()` de Python. Los valores `!vault` se descifran, así que esto necesita la contraseña de vault, y el texto `!unsafe` se imprime tal cual. Las demás acciones ignoran `--vars`.
 </Option>
 
 <Option name="-l, --limit" arg="SUBSET">

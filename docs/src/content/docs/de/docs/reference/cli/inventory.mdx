@@ -1,5 +1,5 @@
 ---
-sourceHash: 6d14f54b6ce6
+sourceHash: 2c4ece9bf821
 title: volant inventory
 description: Gibt ein Inventory als JSON aus, so wie es ansible-inventory tut.
 ---
@@ -9,10 +9,10 @@ import Option from '../../../../../../components/Option.astro';
 `volant inventory` gibt ein Inventory als JSON aus, so wie es `ansible-inventory` tut. Unter dem Namen `ansible-inventory` gestartet (siehe [der Befehl shims](/de/docs/reference/cli/shims/)), verhält er sich genauso.
 
 ```
-volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [--output FILE] [-v]
 ```
 
-Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--graph`, `--yaml`, `--toml`, `--export` und `--vars` gibt es noch nicht: `--graph` wird mit Namen abgelehnt, die anderen sind unbekannte Optionen.
+Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--yaml`, `--toml` und `--export` gibt es noch nicht und sind unbekannte Optionen.
 
 <Option name="--list" arg="">
   Gibt jeden Host mit seinen Variablen aus, einschließlich der Dateien `group_vars` und `host_vars` und der Variablen seiner Gruppen, dann die Gruppen mit ihren `hosts` und `children`. Die Schlüssel sind sortiert, die Einrückung beträgt vier Leerzeichen, und Nicht-ASCII-Text wird unverändert geschrieben. Ein String, der Daten ist, wird als `{"__ansible_unsafe": "..."}` ausgegeben und ein `!vault`-Wert als `{"__ansible_vault": "..."}`; nichts wird entschlüsselt.
@@ -20,6 +20,14 @@ Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--gr
 
 <Option name="--host" arg="HOST">
   Gibt die Variablen eines Hosts aus. `HOST` ist ein Host-Muster, das genau einen Host treffen muss, sonst gibt der Befehl `You must pass a single valid host to --host parameter` aus und endet mit Exit-Code 5. `--limit` gilt nicht.
+</Option>
+
+<Option name="--graph" arg="[GROUP]">
+  Gibt die Gruppen als Baum aus: `@name:` für eine Gruppe, reine Namen für Hosts, die Kinder einer Gruppe vor ihren Hosts, jede Ebene um `  |` eingerückt. Mit einem Gruppennamen wird nur dieser Teilbaum ausgegeben. Ein Name, der keine Gruppe ist, gibt `Pattern must be valid group name when using --graph` aus und endet mit Exit-Code 5. `--limit` gilt nicht.
+</Option>
+
+<Option name="--vars" arg="">
+  Fügt mit `--graph` Zeilen `{name = value}` unter jedem Host (seine zusammengeführten Variablen) und jeder Gruppe (ihre eigenen, einschließlich der Dateien `group_vars`) hinzu, nach Namen sortiert und mit `str()` von Python geschrieben. `!vault`-Werte werden entschlüsselt, dafür ist das Vault-Passwort nötig, und `!unsafe`-Text wird unverändert ausgegeben. Die anderen Aktionen ignorieren `--vars`.
 </Option>
 
 <Option name="-l, --limit" arg="SUBSET">

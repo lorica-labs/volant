@@ -2,7 +2,7 @@
 // The steering wheel of the logo as a turning 3D figure drawn in characters, like a terminal would
 // draw it. Decoration only: hidden from assistive technology, still under reduced motion, and paused
 // whenever it is off screen or the tab is hidden.
-const { cols = 92, rows = 46 } = Astro.props as { cols?: number; rows?: number };
+const { cols = 120, rows = 60 } = Astro.props as { cols?: number; rows?: number };
 ---
 
 <div class="ascii-wheel" aria-hidden="true" data-cols={cols} data-rows={rows}>
@@ -18,10 +18,10 @@ const { cols = 92, rows = 46 } = Astro.props as { cols?: number; rows?: number }
     const tau = Math.PI * 2;
     // Rim: a torus around the z axis.
     const tube = 0.11;
-    for (let i = 0; i < 200; i++) {
-      const u = (i / 200) * tau;
-      for (let j = 0; j < 22; j++) {
-        const v = (j / 22) * tau;
+    for (let i = 0; i < 280; i++) {
+      const u = (i / 280) * tau;
+      for (let j = 0; j < 26; j++) {
+        const v = (j / 26) * tau;
         const nx = Math.cos(v) * Math.cos(u);
         const ny = Math.cos(v) * Math.sin(u);
         const nz = Math.sin(v);
@@ -34,10 +34,10 @@ const { cols = 92, rows = 46 } = Astro.props as { cols?: number; rows?: number }
       const a = (degrees * Math.PI) / 180;
       const dx = Math.cos(a);
       const dy = Math.sin(a);
-      for (let i = 0; i <= 34; i++) {
-        const t = 0.2 + (i / 34) * 0.72;
-        for (let j = 0; j < 12; j++) {
-          const w = (j / 12) * tau;
+      for (let i = 0; i <= 48; i++) {
+        const t = 0.2 + (i / 48) * 0.72;
+        for (let j = 0; j < 14; j++) {
+          const w = (j / 14) * tau;
           // Across the spoke: the in-plane perpendicular and the z axis.
           const px = -dy * Math.cos(w);
           const py = dx * Math.cos(w);
@@ -89,10 +89,13 @@ const { cols = 92, rows = 46 } = Astro.props as { cols?: number; rows?: number }
     fit();
     new ResizeObserver(fit).observe(root);
 
-    // Spin is the wheel turning; tilt shows it in depth, and follows the pointer a little.
+    // Spin is the wheel turning. It stands almost upright, tilted just enough to show its depth,
+    // and leans a little toward the pointer.
+    const restX = 0.32;
+    const restY = -0.18;
     let spin = 0.6;
-    let tiltX = 0.9;
-    let tiltY = -0.35;
+    let tiltX = restX;
+    let tiltY = restY;
     let aimX = tiltX;
     let aimY = tiltY;
 
@@ -138,26 +141,28 @@ const { cols = 92, rows = 46 } = Astro.props as { cols?: number; rows?: number }
     const area = root.closest<HTMLElement>('[data-wheel-area]') ?? root;
     area.addEventListener('pointermove', (event) => {
       const box = area.getBoundingClientRect();
-      aimY = -0.35 + ((event.clientX - box.left) / box.width - 0.5) * 0.6;
-      aimX = 0.9 + ((event.clientY - box.top) / box.height - 0.5) * 0.4;
+      aimY = restY + ((event.clientX - box.left) / box.width - 0.5) * 0.35;
+      aimX = restX + ((event.clientY - box.top) / box.height - 0.5) * 0.25;
     });
 
     let visible = false;
     let frame = 0;
     let last = 0;
+    // Every frame, with the turn driven by elapsed time, so the motion stays even whatever the
+    // frame rate; the tilt eases toward its aim at the same rate.
     const tick = (now: number) => {
       frame = requestAnimationFrame(tick);
-      // About 30 frames a second is enough for characters.
-      if (now - last < 33) return;
-      const step = Math.min(now - last, 100) / 1000;
+      const step = last ? Math.min(now - last, 50) / 1000 : 0;
       last = now;
-      spin += step * 0.55;
-      tiltX += (aimX - tiltX) * 0.05;
-      tiltY += (aimY - tiltY) * 0.05;
+      spin += step * 0.45;
+      const ease = 1 - Math.exp(-step * 3);
+      tiltX += (aimX - tiltX) * ease;
+      tiltY += (aimY - tiltY) * ease;
       draw();
     };
     const run = () => {
       cancelAnimationFrame(frame);
+      last = 0;
       if (visible && !document.hidden) frame = requestAnimationFrame(tick);
     };
     new IntersectionObserver(([entry]) => {

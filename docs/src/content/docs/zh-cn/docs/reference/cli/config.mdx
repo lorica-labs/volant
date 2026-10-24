@@ -1,0 +1,25 @@
+---
+sourceHash: 925f05333589
+title: volant config
+description: 用 ansible-config 显示、列出、验证和初始化配置，它在 Volant 的 Python 运行时中运行。
+---
+
+`volant config` 用 Volant 为 playbook 运行选择的解释器运行 ansible-core 2.19.12 的 `ansible-config`，所以不装 ansible-core 也能工作。它打印脚本打印的内容，并以相同的退出码结束。
+
+```sh
+volant config [ARGS...]
+```
+
+每个参数都原样交给 `ansible-config`，包括 `-h` 和 `--version`。例如 `volant config dump --only-changed`、`volant config list`、`volant config view`、`volant config validate -c ansible.cfg` 和 `volant config init`。
+
+解释器、环境变量、终端、退出码和 `--version` 的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。`ansible-config` 会按通常的规则自己找到 `ansible.cfg`，所以不需要传任何东西。
+
+## `[volant]` 小节
+
+`[volant]` 是 Volant 自己的小节，ansible-core 不认识它。`volant config` 不显示它的设置：`volant runtime status` 才会。`volant config validate` 报告这个小节的方式与 `ansible-config validate` 相同：
+
+```
+[ERROR]: Found unknown section 'volant' in '<dir>/ansible.cfg.
+```
+
+ansible-core 的消息里同样缺少文件名后面的引号，退出码为 1。见[配置](/zh-cn/docs/reference/configuration/#volant)。

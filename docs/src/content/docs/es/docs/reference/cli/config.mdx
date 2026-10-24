@@ -1,0 +1,25 @@
+---
+sourceHash: 925f05333589
+title: volant config
+description: Muestra, lista, valida e inicializa la configuración con ansible-config, ejecutado desde el runtime de Python de Volant.
+---
+
+`volant config` ejecuta el `ansible-config` de ansible-core 2.19.12 con el intérprete que Volant elige para una ejecución de playbook, así que funciona sin ansible-core instalado. Imprime lo que imprime el script y sale con el mismo código.
+
+```sh
+volant config [ARGS...]
+```
+
+Cada argumento va a `ansible-config` sin cambios, incluidos `-h` y `--version`. Por ejemplo `volant config dump --only-changed`, `volant config list`, `volant config view`, `volant config validate -c ansible.cfg` y `volant config init`.
+
+El intérprete, el entorno, el terminal, el código de salida y `--version` funcionan como en [`volant doc`](/es/docs/reference/cli/doc/). `ansible-config` encuentra `ansible.cfg` por sí mismo, con las reglas habituales, así que no hay que pasarle nada.
+
+## La sección `[volant]`
+
+`[volant]` es la sección propia de Volant, que ansible-core no conoce. `volant config` no muestra sus ajustes: `volant runtime status` sí. `volant config validate` informa de la sección como lo hace `ansible-config validate`:
+
+```
+[ERROR]: Found unknown section 'volant' in '<dir>/ansible.cfg.
+```
+
+La comilla después del nombre del archivo también falta en el mensaje de ansible-core, y el código de salida es 1. Consulta [Configuración](/es/docs/reference/configuration/#volant).

@@ -1,0 +1,114 @@
+---
+sourceHash: 55087c289ed8
+title: 为什么选择 Volant
+description: Volant 是什么，速度从哪里来，以及它做出了哪些承诺。
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import Flow from '../../../../components/Flow.astro';
+import BarChart from '../../../../components/BarChart.astro';
+
+Volant 面向在 Linux 主机上运行 Ansible playbook、并希望运行得更快的人。它直接读取你已有的 playbook、role 和 inventory，格式就是 Ansible 自己的格式，并通过 SSH 运行它们。你不需要转换任何东西，同样的文件仍然可以交给 `ansible-playbook` 使用。
+
+这个名字来自法语：*volant* 的意思是方向盘。你用它来驾驭你的基础设施。
+
+<Aside type="caution" title="Pre-alpha">
+Volant 已经能端到端运行真实的 playbook，但还不能运行所有 playbook。请先在测试主机上试用，再用于生产主机。目前不支持的内容，大部分会在连接任何主机之前就被指出来，少数缺口则不会有任何提示。请先阅读[我的 playbook 能运行吗？](/zh-cn/docs/start/compatibility/)，按那里的方法检查。
+</Aside>
+
+```sh
+curl -fsSL https://volant.sh/install.sh | sh
+volant playbook -i inventory.ini site.yml
+```
+
+接下来请看[安装](/zh-cn/docs/start/installation/)和[快速上手](/zh-cn/docs/start/quickstart/)。你不需要安装 Ansible。
+
+## Ansible 的时间花在哪里
+
+对每台主机上的每个 task，`ansible-playbook` 都要构建一个模块载荷，通过 SSH 发送过去，再在主机上启动一个全新的 Python 解释器来运行它。Pipelining 省去了临时文件，但每个 task 仍然要付出启动新解释器和重新导入一轮依赖的代价。
+
+Volant 把这些开销在一次运行中只付一次：
+
+- 一个叫 agent 的小程序在第一次运行时上传到每台主机，并缓存在那里。之后的运行直接复用。
+- 控制节点在整个运行期间为每台主机保持一条 SSH 连接，并在这条连接上以流的方式发送 task。
+- Python 模块只向主机传送一次，打包成一个归档。主机上的 Python 服务进程把共享代码加载一次，再为每个 task fork 出一个子进程。
+- 对 `apt`、`systemd`、`file` 和收集 facts 这类常见模块，只要 task 的参数允许，agent 就用 Rust 直接应答；其余情况交给 Python 模块处理。
+
+<Flow
+  lanes={[
+    {
+      label: 'ansible-playbook',
+      note: '每个 task、每台主机都要经过',
+      steps: [
+        { text: '构建载荷', kind: 'muted' },
+        { text: '打开 ssh', kind: 'muted' },
+        { text: '启动 Python', kind: 'muted' },
+        { text: '导入 module_utils', kind: 'muted' },
+        { text: '运行模块' },
+      ],
+    },
+    {
+      label: 'Volant',
+      note: '运行开始之后，每个 task 只需',
+      steps: [
+        { text: '通过已打开的连接发送', kind: 'key' },
+        { text: 'fork 已就绪的 Python 服务进程', kind: 'key' },
+        { text: '运行模块' },
+      ],
+    },
+  ]}
+/>
+
+## 实测数据
+
+这些数字来自两个真实工作负载，目标是两台 Ubuntu 24.04 主机。第一个工作负载把四个已发布的 Galaxy role（`geerlingguy.security`、`nginx`、`git` 和 `pip`）应用到已经收敛的主机上。第二个是官方的 k3s-ansible playbook，对着一个已安装的集群运行。每个数字都是三轮的中位数，于 2026-09-27 用 `just bench` 和 `just bench-k3s` 测得，两个引擎每一轮都以同样的汇总结束。对比用的是 ansible-core 2.19.12，并设置了 `pipelining = True`。
+
+<BarChart
+  title="两个工作负载，两台已收敛的主机"
+  subtitle="三轮的中位数，2026-09-27。越短越快。"
+  unit="s"
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12, pipelining' }, { name: 'Volant', accent: true }]}
+  rows={[
+    { label: '四个 Galaxy role', values: [26.435, 0.529] },
+    { label: 'k3s-ansible', values: [50.519, 23.477] },
+  ]}
+/>
+
+真正干活的 task，花多少时间还是花多少时间。Volant 在 k3s 上的大部分时间，都花在重启 k3s 服务、运行它的安装脚本以及 playbook 要求的其他命令上，这些在两个引擎下的开销是一样的。
+
+<Aside type="note">
+这些数字只描述两个 playbook 在两台主机上的表现。你自己的结果取决于网络延迟、task 做的事情，以及同时驱动的主机数量。[性能页面](/zh-cn/docs/project/performance/)给出了完整配置、复现这些数字的命令，以及时间逐步花在哪里。
+</Aside>
+
+## Volant 的承诺
+
+你的文件仍然是你的。Volant 读取 Ansible 的 YAML，遵循它的变量优先级和模板规则，所以没有新的格式需要学习。
+
+它宁可停下，也不去猜。这个版本尚不支持的内容，大部分会在第一次连接之前就被指出来，所以运行很少会在悄悄跳过你要求的事情之后还报告成功。[已知缺口](/zh-cn/docs/start/compatibility/#已知缺口)是例外。这个检查叫作[预检](/zh-cn/docs/internals/preflight/)。
+
+它首先面向通过 SSH 管理的 Linux。控制节点可以运行在 Linux 或 macOS 上，驱动的是 Linux 主机。Windows 和网络设备会在以后支持。
+
+## Volant 会在你的机器上留下什么
+
+在控制节点上，也就是你运行 `volant` 的那台机器：
+
+- 安装脚本把每个版本放在 `~/.local/share/volant` 下，并把 `volant` 和 `volant-playbook` 链接到 `~/.local/bin`。
+- 托管运行时是一个私有的 Python 3，带有 ansible-core。Volant 在某次运行第一次需要 Python、又找不到可用的 Python 时下载它。它位于 `~/.local/share/volant/runtime`（macOS 上是 `~/Library/Application Support/volant/runtime`），大约占 155 MB。[托管运行时](/zh-cn/docs/reference/runtime/)说明了如何跳过或删除它。
+- 缓存放在 `~/.cache/volant` 下：它上传的 agent，以及它构建的 Python 模块包。
+
+在每台受管主机上：
+
+- 缓存的 agent，一个大约 1.2 MB 的小型可执行文件，位于 `~/.ansible/tmp/volant-agent-<version>-<uid>/`。使用 `become` 的 task 还会在它所提权到的账户的主目录里缓存第二份。
+- 紧挨着它的 `volant-blobs-<version>-<uid>` 目录存放发送到主机的 Python 模块。只有运行用到过 Python 模块后才会有它。
+- 如果你使用 `async`，`~/.ansible_async` 存放 `async` task 的状态文件。
+
+要清除主机上的缓存，删除 `~/.ansible/tmp` 里的 `volant-*` 目录即可（见[回到 ansible-playbook](/zh-cn/docs/start/troubleshooting/#回到-ansible-playbook)）。
+
+Volant 从不发送遥测数据。除了 playbook 要求的调用之外，它唯一的网络使用就是在运行需要时一次性下载托管运行时。
+
+## 与 Ansible 相比
+
+Volant 复现的是 [ansible-core 2.19](/zh-cn/docs/decisions/0002-ansible-core-2-19-as-reference/)。与 ansible-core 不同的地方就是 bug，除非某个页面把它列在“与 Ansible 的差异”下，作为有意的选择。
+
+有些功能还没有：自定义的 action、callback 和 vars 插件，以及[已知缺口](/zh-cn/docs/start/compatibility/#已知缺口)。[路线图](/zh-cn/docs/project/roadmap/)说明了接下来会做什么。

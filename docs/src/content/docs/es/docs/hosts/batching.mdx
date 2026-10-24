@@ -1,0 +1,78 @@
+---
+sourceHash: 65506ddc8a04
+title: Procesamiento por lotes entre hosts
+description: Un ajuste opcional que permite a cada host adelantarse por las tareas que no dependen de los demás.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../../components/HostTimeline.astro';
+
+El procesamiento por lotes permite que cada host se adelante por las tareas que no dependen de otros hosts, de modo que un play sobre muchos hosts termina antes. Es opcional: está desactivado salvo que lo actives.
+
+Por defecto Volant ejecuta un play como lo hace la estrategia `linear` de Ansible: los hosts de un lote se encuentran delante de cada tarea. Esa garantía permite que un playbook dependa de cosas que sus tareas nunca mencionan. Un host puede escribir un archivo que otro lee más tarde, o reiniciar un servicio al que otro se conecta. Nada de eso aparece en el texto de una tarea, así que la única suposición segura es que cualquier tarea puede depender de la anterior, en todos los hosts.
+
+Esta página trata la estrategia `linear` por defecto. Con `strategy: free` y `host_pinned` cada host avanza a su propio ritmo, `run_once`, `any_errors_fatal` y `max_fail_percentage` se ignoran con un aviso, y una tarea `pause` o `add_host` detiene la ejecución. Los hosts solo se encuentran en las tareas `meta` que actúan sobre todo el lote (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` y `refresh_inventory`), en los handlers y en los includes dinámicos, diga lo que diga `batching`. Consulta [Otras estrategias](/es/docs/playbooks/how-a-play-runs/#otras-estrategias).
+
+## Qué cambia el procesamiento por lotes
+
+Con `batching` activado, un host sigue adelante con sus tareas en lugar de esperar en cada una, y solo se detiene en un punto de sincronización:
+
+- una tarea `run_once` o `pause`
+- una tarea cuyo texto nombra el estado de otro host mediante `hostvars`, `ansible_play_hosts` o `ansible_play_batch`
+- una tarea que lee uno de esos nombres de forma indirecta: mediante el cuerpo de una plantilla cuyo `src` es fijo, o mediante una variable cuya definición lee a otro host, por muchas variables que tenga la cadena
+- una tarea delegada, porque el host sobre el que actúa puede no haber llegado todavía
+- una tarea que lee un archivo del controlador después de una tarea que pudo escribir uno, como un `fetch`
+- un punto donde un include o un flush de handlers añade pasos al play
+- el final del play
+
+Un punto de sincronización se mantiene a ambos lados: ningún host pasa de él hasta que todos han terminado el paso anterior.
+
+Mientras un fact que el playbook escribió durante la ejecución sigue siendo una plantilla, todos los pasos vuelven a ser puntos de sincronización.
+
+Otras cosas terminan un lote sin hacer esperar a todos los hosts: una tarea que registra un resultado, un módulo que puede devolver facts (`set_fact`, `setup`, `package_facts`, cualquier módulo de una colección o del `library/` de un rol) y una tarea que llama a un lookup. Las tareas posteriores se renderizan solo cuando estas se han ejecutado.
+
+<HostTimeline />
+
+Cambia el orden en que se ejecutan las tareas, no lo que hacen. El recap es el mismo en ambos casos. Lo que puede diferir es una dependencia que el texto no muestra: con el procesamiento por lotes activado, un host puede llegar a la tarea cinco antes de que otro haya ejecutado la tarea uno.
+
+## Lo que no puede ver
+
+El procesamiento por lotes decide a partir del texto del playbook. Una dependencia que el texto nunca expresa no tiene marca, y nada espera por ella:
+
+- un servicio de red que otro host todavía está instalando: `wait_for: host=db1 port=5432`, una llamada `uri`, `psql -h db1`, cualquier cliente que nombre un host de forma literal;
+- un archivo en un host nombrado de forma literal, un sistema de archivos compartido, o una base de datos o una cola donde se encuentran las tareas de dos hosts;
+- cualquier cosa que una tarea `shell` o `command` haga a otra máquina.
+
+Una lectura calculada como `vars[name]` o `lookup('vars', name)` conserva el punto de sincronización, porque el texto no puede decir qué host lee. Con ansible-core, y con el comportamiento por defecto de Volant, cada tarea es un punto de sincronización, así que estos órdenes se cumplen sin que nadie los escriba. Activa el procesamiento por lotes solo en plays cuyos hosts no dependan unos de otros de estas formas.
+
+## Activarlo
+
+Está desactivado salvo que lo pidas.
+
+<Tabs>
+  <TabItem label="ansible.cfg">
+    ```ini
+    [volant]
+    batching = true
+    ```
+  </TabItem>
+  <TabItem label="Entorno">
+    ```sh
+    VOLANT_BATCHING=1 volant playbook -i inventory.ini site.yml
+    ```
+  </TabItem>
+</Tabs>
+
+Ansible ignora las secciones que no conoce. Medido en ansible-core 2.19.12 con el bloque anterior: `ansible-playbook` ejecuta el play y sale con 0 sin ningún aviso, y `ansible-config dump` no muestra la sección. Un mismo `ansible.cfg` puede llevar `[volant]` y seguir sirviendo a ambos motores.
+
+<Aside type="caution">
+`ansible-config validate` sí lo nota: rechaza el archivo con `Found unknown section 'volant'` y sale con 1. Si validas un `ansible.cfg` compartido, define la opción mediante el entorno.
+</Aside>
+
+## Cuánto ahorra
+
+Medido con Volant 0.1.0-alpha.5 en una máquina Linux, con 200 hosts, 20 tareas, conexiones locales y `-f 50`: un play en el que ninguna tarea lee a otro host tarda 1.28 s por defecto y 0.53 s con `batching = true`, 2.4 veces más rápido. Cuando todas las tareas leen `hostvars`, ambos ajustes tardan unos 1.3 s, porque cada tarea es un punto de sincronización en los dos casos. Por SSH cada tarea paga además un viaje de ida y vuelta por la red, así que tu propia proporción depende de tu latencia. Estas cifras no se han vuelto a medir desde alpha.5.
+
+## Por qué no es una palabra clave del playbook
+
+Ansible no tiene una palabra clave así, y un playbook ejecutado con Volant debe seguir siendo un playbook que `ansible-playbook` ejecuta igual. El procesamiento por lotes describe la máquina desde la que ejecutas, así que el ajuste vive en `ansible.cfg`. El [registro de decisión 0005](/es/docs/decisions/0005-fork-permits-span-host-local-batches/) recoge la regla que hay detrás.

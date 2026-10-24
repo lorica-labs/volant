@@ -1,0 +1,204 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import { releases } from '../../lib/roadmap';
+import { repo } from '../../nav';
+import { html, localePaths, localize, strings } from '../../i18n';
+
+export const getStaticPaths = localePaths;
+
+const code = Astro.params.lang ?? 'en';
+const t = strings(code);
+const c = t.community;
+
+const ways = [
+  { id: 'failed', href: localize(code, '/docs/start/troubleshooting/') },
+  { id: 'difference', href: `${repo}/issues/new?template=compat.yml` },
+  { id: 'issue', href: `${repo}/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22` },
+  { id: 'ask', href: `${repo}/discussions` },
+  { id: 'docs', href: localize(code, '/docs/') },
+] as const;
+
+const setup = `cargo install cargo-binstall
+cargo binstall just
+just setup        # ${c.setupHooks}
+just check        # ${c.setupCheck}`;
+---
+
+<SiteLayout code={code} title={t.nav.community} description={c.description}>
+  <section class="wrap page-head">
+    <h1>{c.heading}</h1>
+    <p>{c.lede}</p>
+  </section>
+
+  <section class="section">
+    <div class="wrap ways">
+      {
+        ways.map((way) => (
+          <a class="way panel reveal" href={way.href}>
+            <div class="core">
+              <h2>{c.ways[way.id].title}</h2>
+              <p>{c.ways[way.id].text}</p>
+              <span class="action">
+                {c.ways[way.id].action}
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+              </span>
+            </div>
+          </a>
+        ))
+      }
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap two">
+      <div class="section-head reveal">
+        <h2>{c.setupTitle}</h2>
+        <p>{c.setupText}</p>
+        <p><a class="text-link" href={`${repo}/blob/main/CONTRIBUTING.md`}>{c.setupLink}</a></p>
+      </div>
+      <div class="panel reveal"><pre class="code core">{setup}</pre></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <h2>{c.nextTitle}</h2>
+        <p>{c.nextText}</p>
+      </div>
+      <ol class="releases">
+        {
+          releases.map((release) => (
+            <li class="reveal">
+              <a class="mono" href={release.milestone}>{release.version}</a>
+              <p>{release.brings}</p>
+            </li>
+          ))
+        }
+      </ol>
+      <p class="more reveal"><a class="text-link" href={localize(code, '/docs/project/roadmap/')}>{c.nextLink}</a></p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap facts">
+      <div class="reveal">
+        <h2>{c.license}</h2>
+        <p set:html={html(code, c.licenseText)} />
+      </div>
+      <div class="reveal">
+        <h2>{c.security}</h2>
+        <p set:html={html(code, c.securityText, { repo })} />
+      </div>
+      <div class="reveal">
+        <h2>{c.support}</h2>
+        <p set:html={html(code, c.supportText, { repo })} />
+      </div>
+      <div class="reveal">
+        <h2>{c.decisions}</h2>
+        <p set:html={html(code, c.decisionsText)} />
+      </div>
+    </div>
+  </section>
+</SiteLayout>
+
+<style>
+  .ways {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .way {
+    transition: border-color 0.3s var(--ease);
+  }
+  /* The most common reason to come here gets the full width. */
+  .way:first-child {
+    grid-column: 1 / -1;
+  }
+  .way:hover {
+    border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  }
+  .way .core {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1.75rem;
+  }
+  .way h2 {
+    font-size: 1.25rem;
+  }
+  .way p {
+    color: var(--fg-2);
+  }
+  .action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    color: var(--brand-hi);
+    font-weight: 560;
+  }
+  .action svg {
+    transition: transform 0.3s var(--ease);
+  }
+  .way:hover .action svg {
+    transform: translateX(3px);
+  }
+  .two {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: center;
+  }
+  .two .section-head p + p {
+    margin-top: 1rem;
+  }
+  .releases {
+    display: grid;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .releases li {
+    display: grid;
+    grid-template-columns: 10rem minmax(0, 1fr);
+    gap: 1.5rem;
+    padding-block: 1rem;
+    border-top: 1px solid var(--line);
+  }
+  .releases a {
+    color: var(--brand-hi);
+    font-size: 0.9rem;
+  }
+  .releases p {
+    color: var(--fg-2);
+  }
+  .more {
+    margin-top: 1.5rem;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    gap: 2rem;
+  }
+  .facts h2 {
+    font-size: 1.15rem;
+  }
+  .facts p {
+    margin-top: 0.6rem;
+    color: var(--fg-2);
+  }
+  @media (max-width: 60rem) {
+    .ways,
+    .two,
+    .facts {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 36rem) {
+    .releases li {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.25rem;
+    }
+  }
+</style>

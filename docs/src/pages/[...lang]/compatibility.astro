@@ -1,0 +1,329 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import Lookup from '../../components/site/Lookup.astro';
+import { categories, category, collections, core, later, partly, running, total } from '../../lib/parity';
+import { fill, html, localeOf, localePaths, strings } from '../../i18n';
+
+export const getStaticPaths = localePaths;
+
+const code = Astro.params.lang ?? 'en';
+const t = strings(code);
+const c = t.compatibility;
+const num = (n: number) => n.toLocaleString(localeOf(code).lang);
+
+// The category names are the support matrix's own, and stay as it prints them.
+const groups = [
+  { title: c.groups.language, names: ['keyword (play)', 'keyword (block)', 'keyword (task)', 'keyword (loop_control)', 'meta action', 'YAML tag'] },
+  { title: c.groups.modules, names: ['module', 'action plugin', 'filter', 'test', 'lookup'] },
+  { title: c.groups.hosts, names: ['ansible-playbook option', 'inventory', 'connection', 'become', 'strategy', 'shell', 'vars', 'cache', 'callback'] },
+  { title: c.groups.collections, names: categories.filter((c) => c.name.startsWith('collection')).map((c) => c.name) },
+].map((group) => ({ ...group, rows: group.names.map(category) }));
+
+const share = (n: number, of: number) => `${Math.floor((n / of) * 1000) / 10}%`;
+const label = (name: string) => name.replace(/^collection /, '');
+
+const steps = [
+  ['read', 'volant playbook -i inventory.ini site.yml --syntax-check'],
+  ['list', 'volant playbook -i inventory.ini site.yml --list-tasks'],
+  ['limit', 'volant playbook -i inventory.ini site.yml --limit test1'],
+] as const;
+---
+
+<SiteLayout code={code} title={t.nav.compatibility} description={c.description}>
+  <section class="wrap page-head">
+    <h1>{c.heading}</h1>
+    <p>{c.lede}</p>
+    <div class="totals">
+      <div>
+        <b class="mono">{share(running(core), total(core))}</b>
+        <span>{fill(c.coreRuns, { runs: running(core), total: total(core), partial: partly(core) })}</span>
+      </div>
+      <div>
+        <b class="mono">{share(running(collections), total(collections))}</b>
+        <span>
+          {fill(c.collectionsRun, { runs: num(running(collections)), total: num(total(collections)), later: num(later(collections)) })}
+        </span>
+      </div>
+    </div>
+    <div class="head-lookup"><Lookup code={code} id="compat-lookup" /></div>
+    <p class="also" set:html={html(code, c.also)} />
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="legend">
+        <span><i class="runs"></i>{c.runs}</span>
+        <span><i class="partial"></i>{c.partialLegend}</span>
+        <span><i class="later"></i>{c.laterLegend}</span>
+        <span>{c.source}</span>
+      </div>
+      <div class="groups">
+        {
+          groups.map((group) => (
+            <section class="group panel reveal">
+              <div class="core">
+                <h2 class="flap" data-flap={group.title}>{group.title}</h2>
+                {group.rows.map((c) => {
+                  const all = c.runs + c.partial + c.notYet + c.later;
+                  return (
+                    <div class="row">
+                      <span class="name">{label(c.name)}</span>
+                      <span class="bar" aria-hidden="true">
+                        {c.runs > 0 && <i class="runs" style={`flex-grow: ${c.runs}`} />}
+                        {c.partial > 0 && <i class="partial" style={`flex-grow: ${c.partial}`} />}
+                        {c.later + c.notYet > 0 && <i class="later" style={`flex-grow: ${c.later + c.notYet}`} />}
+                      </span>
+                      <span class="count mono">
+                        {num(c.runs)}/{num(all)}
+                        {c.partial > 0 && <em>{fill(t.compatibility.partial, { n: c.partial })}</em>}
+                        {c.later + c.notYet > 0 && <em>{fill(t.compatibility.later, { n: num(c.later + c.notYet) })}</em>}
+                      </span>
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <h2>{c.checkTitle}</h2>
+        <p>{c.checkText}</p>
+      </div>
+      <ol class="steps">
+        {
+          steps.map(([id, command]) => (
+            <li class="reveal">
+              <h3>{c.steps[id].title}</h3>
+              <pre class="code panel"><code class="core">{command}</code></pre>
+              <p>{c.steps[id].note}</p>
+            </li>
+          ))
+        }
+      </ol>
+      <p class="more reveal" id="known-gaps-note" set:html={html(code, c.gaps)} />
+    </div>
+  </section>
+</SiteLayout>
+
+<script>
+  // Each group title arrives like a split-flap departure board: its letters run through the
+  // alphabet and settle on the real word, left to right.
+  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  const flap = (el: HTMLElement) => {
+    const word = el.dataset.flap!;
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = now - start;
+      let done = true;
+      el.textContent = [...word]
+        .map((ch, i) => {
+          if (ch === ' ' || t > 260 + i * 28) return ch;
+          done = false;
+          return glyphs[Math.floor(Math.random() * glyphs.length)];
+        })
+        .join('');
+      if (!done) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const seen = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          seen.unobserve(entry.target);
+          flap(entry.target as HTMLElement);
+        }
+      },
+      { threshold: 0.6 },
+    );
+    document.querySelectorAll<HTMLElement>('.flap').forEach((el) => seen.observe(el));
+  }
+</script>
+
+<style>
+  .totals {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1.5rem 3.5rem;
+    margin-top: 2.5rem;
+  }
+  .totals div {
+    display: grid;
+    gap: 0.3rem;
+    max-width: 22rem;
+  }
+  .totals b {
+    color: var(--brand-hi);
+    font-size: clamp(2.6rem, 5vw, 3.6rem);
+    font-weight: 560;
+    letter-spacing: -0.04em;
+    line-height: 1;
+  }
+  .totals span {
+    color: var(--fg-3);
+    font-size: 0.925rem;
+  }
+  .head-lookup {
+    margin-top: 2.5rem;
+  }
+  .also {
+    margin-top: 1rem;
+    color: var(--fg-2);
+    font-size: 0.925rem;
+  }
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem 1.75rem;
+    color: var(--fg-2);
+    font-size: 0.85rem;
+  }
+  .legend span {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+  }
+  .legend i {
+    width: 0.85rem;
+    height: 0.85rem;
+    border-radius: 3px;
+  }
+  .runs {
+    background: var(--brand);
+  }
+  .partial {
+    background: var(--state-changed);
+  }
+  /* What comes later is hatched, so it reads as not there yet without a colour of its own. */
+  .later {
+    background: repeating-linear-gradient(135deg, var(--fg-3) 0 2px, transparent 2px 5px);
+    box-shadow: inset 0 0 0 1px var(--fg-4);
+  }
+  .groups {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 1.5rem;
+  }
+  .group .core {
+    display: grid;
+    align-content: start;
+    gap: 0.6rem;
+    padding: 1.5rem;
+  }
+  .group h2 {
+    margin-bottom: 0.5rem;
+    color: var(--brand-hi);
+    font-family: var(--f-mono);
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: uppercase;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: 10.5rem minmax(0, 1fr) 8.5rem;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+  }
+  .name {
+    color: var(--fg-2);
+  }
+  .bar {
+    display: flex;
+    gap: 2px;
+    height: 0.6rem;
+  }
+  /* Each segment grows by its count, so the segments and the gaps between them fill the track
+     exactly and every bar ends at the same place. */
+  .bar i {
+    flex: 0 1 0;
+    min-width: 3px;
+    border-radius: 2px;
+  }
+  .count {
+    display: grid;
+    justify-items: end;
+    color: var(--fg);
+    text-align: end;
+  }
+  .count em {
+    color: var(--fg-3);
+    font-size: 0.75rem;
+    font-style: normal;
+  }
+  .steps {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 1.5rem;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+  .steps li {
+    counter-increment: step;
+    display: grid;
+    align-content: start;
+    gap: 0.8rem;
+  }
+  .steps h3 {
+    font-size: 1.05rem;
+  }
+  .steps h3::before {
+    content: counter(step);
+    display: inline-grid;
+    place-items: center;
+    width: 1.6rem;
+    height: 1.6rem;
+    margin-inline-end: 0.6rem;
+    border-radius: 999px;
+    background: var(--bg-3);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+    font: 500 0.8rem var(--f-mono);
+  }
+  .steps pre {
+    padding: 0.375rem;
+  }
+  .steps pre code {
+    display: block;
+    padding: 0.8rem 1rem;
+    overflow-x: auto;
+    background: var(--bg-2);
+    box-shadow: none;
+    font-size: 0.78rem;
+    white-space: nowrap;
+  }
+  .steps p {
+    color: var(--fg-2);
+    font-size: 0.925rem;
+  }
+  .more {
+    margin-top: 2rem;
+    color: var(--fg-2);
+  }
+  @media (max-width: 60rem) {
+    .groups,
+    .steps {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 36rem) {
+    .row {
+      grid-template-columns: minmax(0, 1fr) 6.5rem;
+    }
+    .bar {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+  }
+</style>

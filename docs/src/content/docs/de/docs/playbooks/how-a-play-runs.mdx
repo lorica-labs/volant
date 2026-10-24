@@ -1,0 +1,127 @@
+---
+sourceHash: 72a9c6ae320c
+title: Plays ausführen
+description: In welcher Reihenfolge Hosts und Tasks laufen, wie Strategien, Serial-Batches, der Debugger, Async-Tasks und Prompts das ändern und wann ein Lauf endet.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../../components/HostTimeline.astro';
+
+Diese Seite beantwortet eine Frage: In welcher Reihenfolge laufen Ihre Hosts und Tasks, und was ändert diese Reihenfolge? Sie behandelt die Standardstrategie `linear`, `serial`-Batches, die anderen Strategien, den Debugger, Async-Tasks und Prompts. [Keywords](/de/docs/reference/keywords/) sagt, welche Keywords dieses Release akzeptiert. Wo Volant sich anders verhält als ansible-core 2.19.12, steht das im letzten Abschnitt.
+
+## Hosts bewegen sich gemeinsam
+
+Standardmäßig folgt Volant der Strategie `linear` von Ansible: Die Hosts eines Plays treffen sich vor jedem Task. Kein Host beginnt Task zwei, bevor jeder Host Task eins beendet hat, und die Ausgabe kommt in Task-Reihenfolge, weil der Lauf in Task-Reihenfolge stattfindet.
+
+<HostTimeline only="linear" />
+
+[Host-übergreifendes Batching](/de/docs/hosts/batching/) ist eine Einstellung zum Zuschalten, mit der jeder Host durch Tasks vorauslaufen kann, die nicht von den anderen abhängen.
+
+### Die Hosts eines Plays als Template
+
+`hosts` kann ein Template sein, etwa `{{ groups['servers'] | first }}` oder `{{ target | default('all') }}`. Es wird gerendert, wenn das Play startet, und sieht daher, was die Plays davor mit `add_host`, `set_fact` und `meta: refresh_inventory` getan haben. Ein Play ohne `name` wird nach dem gerenderten Muster benannt.
+
+Beim Rendern gibt es keinen Host, es liest also nur, was vor jedem Host existiert:
+
+| Das Rendern liest | Das Rendern liest nicht |
+|---|---|
+| `groups`, die Extra-Variablen und die magischen Variablen, die keinen Host brauchen | Inventory-Variablen und `group_vars`-Dateien |
+| die `vars:` und `vars_files` des Plays und die Variablen, die Rollen exportieren | Facts und `inventory_hostname` |
+
+`hostvars` existiert erst, nachdem ein Play gelaufen ist. `ansible_play_hosts_all` listet jeden Host des Inventorys auf, eingegrenzt durch `--limit`.
+
+| Das Template wird gerendert zu | Was geschieht |
+|---|---|
+| einem String | Ein Muster. |
+| einer Liste | Eine Liste von Mustern. |
+| einer leeren Liste | Das Play trifft auf keinen Host und wird übersprungen. |
+| einer undefinierten Variable, einem leeren String oder einem Wert, der kein String ist | Der Lauf bricht mit Exit 4 vor dem Banner ab. |
+
+`--limit` grenzt die gerenderten Hosts anschließend ein. `--list-hosts`, `--list-tasks` und `--syntax-check` rendern genauso, ohne dass ein Play dahintersteht.
+
+Text, den ein Host zurückgeschickt hat, sind Daten und werden nie ausgewertet. Ein registriertes Ergebnis, das `{{ ... }}` enthält, ist ein Muster aus seinen eigenen Wörtern. Das gilt auch für einen Host oder eine Gruppe, die `add_host` oder `group_by` während des Laufs erzeugt hat: Sobald der Lauf eine erzeugt hat, wird ein `hosts`, das `groups`, `hostvars` oder `ansible_play_hosts_all` liest, zu Daten gerendert. Text, der nur Klammern enthält, etwa `{{ '{{' }}x`, ist ebenfalls ein Muster aus seinen eigenen Wörtern. Variablen, die einander nennen, werden bis zu hundert Verweise tief aufgelöst, und ein Ring bricht den Lauf mit Exit 4 ab.
+
+### Andere Strategien
+
+`strategy: free` lässt jeden Host das Play in seinem eigenen Tempo durchlaufen. Ein Banner wird ausgegeben, sobald sich der Task gegenüber dem ändert, zu dem die letzte Zeile gehörte, die Ausgabe folgt also den Hosts, nicht der Task-Liste. Hosts treffen sich weiterhin bei den `meta`-Tasks, die auf den ganzen Batch wirken (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` und `refresh_inventory`), bei Handlern und bei dynamischen Includes.
+
+`strategy: host_pinned` ist `free`, wobei ein Host von seinem ersten bis zu seinem letzten Task an einen Fork gebunden bleibt, sodass `-f 1` die Hosts nacheinander ausführt. Bei weniger Forks als Hosts laufen die Hosts in Wellen: Die Ergebnisse stimmen mit ansible-core überein, Zeitverhalten und Zeilenreihenfolge können abweichen.
+
+Unter beiden Strategien werden `max_fail_percentage`, `any_errors_fatal` und `run_once` wie in ansible-core mit einer Warnung ignoriert, sodass ein `run_once`-Task für jeden Host läuft. Ein `run_once`-Task, der fehlschlägt, lässt nur seinen eigenen Host fehlschlagen. Ein `pause`- oder `add_host`-Task bricht den Lauf mit einem Fehler ab.
+
+`strategy: debug` ist `linear` mit dem [Debugger](#der-debugger) nach einem fehlgeschlagenen Task.
+
+`order` legt die Reihenfolge fest, in der die Hosts eines Plays laufen: `inventory`, `reverse_inventory`, `sorted`, `reverse_sorted` oder `shuffle`. `throttle` begrenzt einen Task auf so viele Hosts gleichzeitig. Es wird für jeden Task als Template ausgewertet und als Zahl gelesen.
+
+### Keywords als Templates
+
+Das `timeout` eines Plays ist das Standard-`timeout` seiner Tasks. `timeout`, `async`, `poll` und die Booleans `become`, `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable` und `delegate_facts` dürfen Templates sein. Jeder Host rendert sie, wenn sein Task läuft, wie bei `throttle`. Zwei davon werden anders gelesen:
+
+- Ein `run_once`-Template wird nacheinander für jeden Host des Batches gerendert. Der erste Host, für den es wahr ist, führt den Task aus. Ein Template, das im Batch unterschiedlich antwortet, beendet den Lauf mit Exit 4. Unter `free` und `host_pinned` wird das Template ignoriert, ohne die Warnung, die ein literales `run_once` auslöst.
+- Ein `any_errors_fatal`-Template zählt als wahr, was immer es ergibt, wie in ansible-core.
+
+Siehe die [Keyword-Referenz](/de/docs/reference/keywords/).
+
+## Serial-Batches
+
+`serial` teilt die Hosts eines Plays in Batches auf, in Inventory-Reihenfolge, und spielt jeden Batch nacheinander ab. Jeder Batch bekommt sein eigenes Banner, seine eigenen Handler-Flushes und seine eigene `run_once`-Wahl.
+
+```yaml
+- hosts: web
+  serial:
+    - 1       # one canary first
+    - "25%"   # then a quarter of the hosts at a time
+  tasks:
+    - command: /opt/app/upgrade.sh
+```
+
+| Wert | Bedeutung |
+|---|---|
+| Eine Zahl | So viele Hosts pro Batch. |
+| Ein String, der auf `%` endet | Ein Anteil an der gesamten Hostliste, nicht an dem, was übrig ist. Abgeschnitten statt gerundet, und nie weniger als ein Host. |
+| Eine Liste | Eine Größe pro Batch. Das letzte Element wiederholt sich, wenn die Liste aufgebraucht ist. |
+| `0`, `-1`, `[]` oder mehr als die Hostanzahl | Ein Batch mit jedem Host. |
+
+### Wann der Lauf endet
+
+Der Lauf endet beim ersten Batch, der aktive Hosts hatte und alle verloren hat, und genau dort endet auch Ansible. Der Exit-Code ist 2, wenn sie fehlgeschlagen sind, und 4, wenn alle nicht mehr erreichbar wurden.
+
+Ein Batch, dessen Hosts bereits in einem früheren Play fehlgeschlagen waren, zählt nicht dazu. Er gibt sein Banner aus, und der Lauf geht weiter.
+
+Innerhalb eines Batches bezeichnen `ansible_play_batch` und das veraltete `play_hosts` den Batch, während `ansible_play_hosts` das ganze Play bezeichnet. `vars_files` wird für jeden Batch neu gerendert und gelesen.
+
+## Der Debugger
+
+Der Debugger-Prompt öffnet sich nach einem fehlgeschlagenen Task. Drei Einstellungen schalten ihn ein:
+
+- `strategy: debug` ist `linear` mit dem Prompt nach einem fehlgeschlagenen Task.
+- Das Keyword `debugger` an einem Play, einem Block oder einem Task nimmt `always`, `never`, `on_failed`, `on_unreachable` oder `on_skipped`. Ein ungültiger Wert lässt den Task fehlschlagen, wenn er läuft.
+- `enable_task_debugger` in `ansible.cfg` oder `ANSIBLE_ENABLE_TASK_DEBUGGER` öffnet ihn nach jedem fehlgeschlagenen oder nicht erreichbaren Task.
+
+Der Prompt kennt `p` und `pprint` zum Ausgeben eines Werts, `u` zum Aktualisieren der Argumente des Tasks, `h` für die Hilfe, `r`, um den Task erneut auszuführen, `c` zum Fortfahren und `q` zum Beenden. `p` und eine Zeile, die kein Befehl ist, werten eine Teilmenge von Python aus: Namen, Literale, Indexzugriffe, Attribute, Zuweisungen und die Aufrufe, die der Prompt braucht. Eine Änderung an `task_vars` erreicht eine Wiederholung nur über `u`.
+
+Der Prompt liest die Standardeingabe, von einem Terminal oder einer Pipe. Am Ende der Eingabe oder nach `q` gibt er `User interrupted execution` aus, und der Lauf endet wie in ansible-core mit Exit-Code 99.
+
+## Async-Tasks
+
+`async: <seconds>` startet den Task als Job auf dem Host, und `poll: <seconds>` wartet darauf. `poll: 0` kehrt sofort mit einer `ansible_job_id` zurück, die `async_status` später liest.
+
+Der Job läuft weiter, wenn die Verbindung abbricht, schreibt seine Statusdatei atomar in das Async-Verzeichnis und wird zusammen mit seiner Prozessgruppe beendet, wenn `async` abläuft. `async_status` mit `mode: cleanup` entfernt nur die Datei dieses Jobs.
+
+Eine Action, die ansible-core unter `async` ausführt, läuft hier ebenfalls. Jede andere Action schlägt zur Laufzeit auf jedem Host mit `This action (<name>) does not support async.` fehl. Das Async-Verzeichnis ist `ansible_async_dir`, sonst `ANSIBLE_ASYNC_DIR`, sonst `async_dir` in `ansible.cfg`, sonst `~/.ansible_async`.
+
+## vars_prompt und module_defaults
+
+`vars_prompt` fragt beim Start des Plays nach jeder Variable, es sei denn, `-e` hat sie bereits geliefert. Ist die Standardeingabe kein Terminal, nimmt es den `default`, warnt einmal und wartet nie.
+
+`module_defaults` füllt fehlende Argumente eines Moduls aus dem Play, dem Block oder dem Task, für den eigenen Namen des Moduls und für seine Gruppe, etwa `group/aws`. `collections` löst Kurznamen so auf, wie ansible-core es tut.
+
+## Unterschiede zu Ansible
+
+- Ein `serial`, das keine Zahl ist, etwa `serial: abc` oder `"50% "` mit einem Leerzeichen am Ende, wird mit Exit-Code 4 und der Meldung von ansible-core abgelehnt. Ansible stürzt mit Exit-Code 250 ab, mit dem Ansible einen Bug in sich selbst meldet, statt ein Playbook abzulehnen.
+- Eine undefinierte Variable in `serial` wird mit dem Präfix von ansible-core und der eigenen Meldung von Volant gemeldet, mit demselben Exit-Code 4.
+- `play_hosts` enthält, was Ansible dort ablegt, aber Volant gibt dafür keine Veraltet-Warnung aus.
+
+<Aside type="tip">
+Wie die Engine diese Reihenfolge aufbaut und ausführt, steht unter [Wie ein Play kompiliert wird](/de/docs/internals/architecture/#wie-ein-play-kompiliert-wird) und [Ein Lauf von Anfang bis Ende](/de/docs/internals/architecture/#ein-lauf-von-anfang-bis-ende).
+</Aside>

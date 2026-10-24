@@ -5,7 +5,7 @@ body:
   - type: markdown
     attributes:
       value: |
-        Volant reproduces ansible-core 2.19. A difference that is not listed under *Differences from Ansible* in the [documentation](https://volant.sh/) is a bug, and this is the place to report it. A playbook that Volant refuses by name before the first connection is not a gap: see [Will my playbook run?](https://volant.sh/start/compatibility/).
+        Volant reproduces ansible-core 2.19. A difference that is not listed under *Differences from Ansible* in the [documentation](https://volant.sh/docs/) is a bug, and this is the place to report it. A playbook that Volant refuses by name before the first connection is not a gap: see [Will my playbook run?](https://volant.sh/docs/start/compatibility/).
   - type: input
     id: volant
     attributes:

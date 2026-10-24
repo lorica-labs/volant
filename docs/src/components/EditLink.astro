@@ -1,8 +1,10 @@
 ---
 // Starlight's edit link, plus a link that opens a documentation issue with the page filled in.
 import Default from '@astrojs/starlight/components/EditLink.astro';
+import { strings } from '../i18n';
 
-const { editUrl } = Astro.locals.starlightRoute;
+const { editUrl, locale } = Astro.locals.starlightRoute;
+const t = strings(locale ?? 'en');
 const repo = 'https://github.com/lorica-labs/volant';
 const page = new URL(Astro.url.pathname, Astro.site).href;
 const report = `${repo}/issues/new?template=docs.yml&page=${encodeURIComponent(page)}`;
@@ -17,7 +19,7 @@ const report = `${repo}/issues/new?template=docs.yml&page=${encodeURIComponent(p
           stroke-width="1.75" stroke-linecap="round" stroke-linejoin="round">
           <path d="M12 8v4m0 4h.01M10.3 3.9 1.8 18a2 2 0 0 0 1.7 3h17a2 2 0 0 0 1.7-3L13.7 3.9a2 2 0 0 0-3.4 0z" />
         </svg>
-        Report a problem with this page
+        {t.docs.report}
       </a>
     </div>
   )

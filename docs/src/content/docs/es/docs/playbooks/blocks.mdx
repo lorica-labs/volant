@@ -1,0 +1,118 @@
+---
+sourceHash: dd334ed7fa20
+title: Bloques y handlers
+description: Cómo viaja un fallo por los bloques, qué hacen rescue y always, y cuándo se ejecutan los handlers.
+---
+
+Esta página responde a dos preguntas: qué le pasa a un host cuando una tarea falla dentro de un bloque, y cuándo se ejecuta realmente un handler que has notificado. Un bloque agrupa tareas para que `rescue` pueda capturar su fallo y `always` pueda ejecutarse pase lo que pase. Las palabras clave del bloque se aplican a todas las tareas de dentro.
+
+```yaml
+- block:
+    - name: Deploy the new release
+      command: /opt/app/deploy.sh
+  rescue:
+    - name: Roll back
+      command: /opt/app/rollback.sh
+    - debug:
+        msg: "{{ ansible_failed_task.name }} failed: {{ ansible_failed_result.msg | default('') }}"
+  always:
+    - name: Clear the maintenance flag
+      command: rm -f /srv/app/MAINTENANCE
+```
+
+## Cuando falla una tarea
+
+El host mira hacia fuera desde la tarea fallida en busca de un bloque envolvente que tenga un `rescue` no vacío.
+
+| Un bloque envolvente tiene rescue | Qué ocurre |
+|---|---|
+| Sí | El host ejecuta el rescue más cercano. Se cuenta como `rescued` en el recap y permanece en el play. |
+| No | El host ejecuta el `always` de cada bloque envolvente, del más interno al más externo, y después abandona el play. |
+
+Dentro de ese rescue se definen dos facts en el host: `ansible_failed_task`, la tarea tal como se escribió, y `ansible_failed_result`, el resultado que falló. Ambos siguen siendo legibles después del bloque y en los plays posteriores.
+
+Solo un fallo que nadie rescató saca a un host del conjunto de hosts vivos.
+
+Un fallo dentro de un `rescue` no lo captura el mismo bloque. Pasa al siguiente rescue más externo.
+
+## always
+
+`always` se ejecuta tanto si el cuerpo tuvo éxito, falló o fue rescatado. Al salir de un fallo sin rescatar también se ejecuta, empezando por el bloque más interno.
+
+Un fallo dentro de un `always` termina esa sección: el resto se omite, y el host sigue hacia fuera ejecutando el `always` de cada bloque que aún lo envuelve.
+
+## Lo que nunca se rescata
+
+- Un host que nunca entró en un rescue omite todas las tareas que hay dentro, incluido un punto de flush y los handlers que van detrás.
+- Un host al que no se puede llegar abandona el play, salvo que `ignore_unreachable` cubra la tarea. No queda nada en lo que ejecutar un rescue.
+- Cuando falla una tarea `run_once`, los hosts que la esperaban abandonan el play, incluso si un rescue mantiene al host que la ejecutó.
+
+## Hacer fallar a más de un host
+
+- `any_errors_fatal`, en un play, un bloque o una tarea: cuando una tarea falla en un host o no puede llegar a él, todos los hosts del lote fallan en esa tarea una vez que todos la han ejecutado. Un `rescue` alrededor de la tarea se ejecuta en todos los hosts. Solo el host que falló se cuenta como `rescued` en el recap.
+- `max_fail_percentage`, en un play: después de cada tarea, si ha fallado más de esa proporción del lote, la ejecución se detiene. `NO MORE HOSTS LEFT` se imprime dos veces, como lo imprime Ansible, y no se ejecuta ningún play posterior. Un lote que pierde exactamente esa proporción continúa.
+- `ignore_unreachable`, en un play, un bloque o una tarea: un host al que no se puede llegar imprime su error y `...ignoring`, permanece en el play y se cuenta como `ok` e `ignored`. El `ignore_errors` de un play cubre los fallos y no cubre un host inalcanzable.
+
+## Handlers
+
+Un handler se ejecuta en un punto de flush, una sola vez, sin importar cuántas tareas lo notificaron. Un punto de flush es un lugar del play donde Volant ejecuta los handlers notificados hasta ese momento.
+
+```yaml
+tasks:
+  - name: Update the nginx configuration
+    lineinfile:
+      path: /etc/nginx/nginx.conf
+      regexp: '^worker_processes'
+      line: 'worker_processes auto;'
+    notify: restart nginx
+
+handlers:
+  - name: restart nginx
+    systemd_service:
+      name: nginx
+      state: restarted
+```
+
+### Puntos de flush
+
+Cada play tiene tres puntos de flush automáticos: después de `pre_tasks`, después de los roles y `tasks`, y después de `post_tasks`. `meta: flush_handlers` añade uno donde lo escribas, con el banner `TASK [meta]` que Ansible imprime allí. Consulta [Delegación, tareas meta y environment](/es/docs/playbooks/delegation/#tareas-meta).
+
+Un punto de flush dentro de un archivo de `include_tasks` se ejecuta solo para los hosts cuya propia sentencia incluyó ese archivo. Los demás hosts informan del paso, no ejecutan ningún handler allí y conservan sus notificaciones para el siguiente flush al que lleguen.
+
+### Cómo encuentra notify un handler
+
+`notify` nombra un handler. El nombre llega al primer handler cuyo `name` coincide, y a todos los handlers que lo enumeran en `listen`. Esta asimetría viene de Ansible, y es la razón por la que un rol aplicado tres veces aporta un handler y no tres.
+
+Los handlers se ejecutan en el orden en que están definidos, no en el orden en que fueron notificados. Un rol nombrado en `roles:` o por `import_role` pone sus handlers delante de los del play. Un rol traído por `include_role` los pone detrás, como en Ansible.
+
+Una tarea solo notifica cuando informa `changed`. En un bucle decide el resultado global, así que basta con un elemento cambiado. Cuando se ha ejecutado un flush, las notificaciones se borran, de modo que un handler no se vuelve a ejecutar en el siguiente flush a menos que algo lo notifique de nuevo.
+
+### Palabras clave del play
+
+Un handler de la lista `handlers:` del play toma las palabras clave de tarea del play igual que una tarea, y igual que un handler de un rol. Esto cubre `no_log`, `environment`, `ignore_errors`, `ignore_unreachable`, `any_errors_fatal`, `run_once`, `timeout`, `throttle`, `debugger`, `connection`, `port`, `remote_user`, las palabras clave de `become`, `check_mode`, `diff`, `module_defaults` y `collections`. Una palabra clave que el propio handler define gana. Un play con `no_log: true` oculta también los resultados de sus handlers.
+
+### Cuando un handler falla
+
+Un handler que falla saca al host como cualquier otra tarea que falla, y detiene los handlers siguientes del mismo flush. Un flush escrito dentro de un bloque pertenece a ese bloque, así que un handler que falla allí lo captura el `rescue` del bloque.
+
+### force_handlers
+
+Por defecto, un host que falló no ejecuta los handlers para los que fue notificado. Cualquiera de estas opciones hace que los ejecute:
+
+- `force_handlers: true` en el play
+- `force_handlers = true` en la sección `[defaults]` de `ansible.cfg`
+- `--force-handlers` en la línea de comandos
+
+La palabra clave del play tiene prioridad sobre las otras dos. Con `force_handlers`, un host que falló recorre el resto del play, informa de cada tarea y ejecuta los handlers para los que fue notificado. El recap sigue contando el fallo.
+
+Los handlers no aparecen en ningún listado, ni tampoco los tres puntos de flush automáticos.
+
+## Diferencias con Ansible
+
+- En `ansible_failed_task`, una palabra clave que esta versión no ejecuta se lee como `null` en lugar del valor por defecto de ansible-core. Un valor por defecto como `connection: "ssh"` describiría algo que Volant no respeta.
+- `ansible_failed_task` tiene una clave por palabra clave y omite las seis que ansible-core se reserva (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`, `loop_with`). Sus `args` contienen lo que escribió el playbook, sin las diecinueve claves `_ansible_*` que añade ansible-core.
+- Un host cuyo `ansible_connection` nombra un transporte que esta versión no tiene se informa como inalcanzable, así que un rescue no lo captura. Ansible lo trata como un fallo de tarea normal y lo rescata.
+- Un `notify` y el `name` de un handler pueden ser plantillas. Se renderizan para cada host cuando la tarea informa `changed`, y una plantilla que se renderiza como lista notifica todos los nombres que contiene. `listen` es siempre el texto literal. Un `notify` que no se puede renderizar hace fallar la tarea antes de ejecutarla, como en Ansible, y un rescue o `ignore_errors` pueden absorber ese fallo. En un bucle, Volant hace fallar toda la tarea donde Ansible hace fallar el elemento.
+- Un `notify` que no nombra ningún handler termina la ejecución con el código de salida 1 y el mensaje `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`, como en Ansible: tras el banner de la tarea, sin recap. Solo ocurre cuando la tarea informa `changed` sin fallar, y ningún `ignore_errors` ni `rescue` puede capturarlo.
+- Un bloque dentro de una lista `handlers:` se rechaza. Un flush no tiene dónde poner el `rescue` de un bloque.
+- Un valor de `force_handlers` que no es verdadero ni falso deja el ajuste sin cambios. Ansible lo lee como falso.

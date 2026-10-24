@@ -1,0 +1,58 @@
+---
+sourceHash: ad41e1075baf
+title: "Les plugins d'action s'exécutent comme une suite de sous-tâches pilotée par le contrôleur"
+description: "Fiche de décision 0007."
+sidebar:
+  label: "0007 · Plugins d'action"
+  order: 7
+---
+
+import BarChart from '../../../../../components/BarChart.astro';
+
+| Statut | Date |
+|---|---|
+| accepté | 2026-09-23 |
+
+## Contexte
+
+`copy`, `package`, `service`, `template` et `unarchive` ne sont pas, dans la référence, de simples modules qu'un hôte exécute sur une charge utile envoyée par le contrôleur. `plugins/action/copy.py` exécute d'abord `stat` sur l'hôte et décide d'après sa réponse s'il faut exécuter `file` ou déposer la source et exécuter `copy`. `plugins/action/package.py` et `plugins/action/service.py` lisent un fact (le gestionnaire de paquets de l'hôte, son système d'init) et ne savent qu'ensuite quel module exécuter ; quand le fact n'est pas déjà collecté, ils exécutent eux-mêmes un `setup` filtré pour l'obtenir. `template` lit et rend un fichier sur le contrôleur avant que quoi que ce soit atteigne l'hôte. Dans chaque cas, ce que nomme le playbook n'est pas ce qu'une charge utile de module peut exécuter seule : la décision que la référence prend entre un aller-retour avec l'hôte et le suivant fait partie de la tâche.
+
+Deux formes étaient possibles pour reproduire cela. Une charge utile de module pouvait être réécrite pour prendre cette décision elle-même, sur l'hôte, dans le processus qui exécute déjà `stat` ou lit le fact : déplacer la logique de `copy.py` ou de `package.py` dans la partie Python de l'agent. Ou bien le rôle du plugin d'action pouvait s'exécuter comme un second module, envoyé et exécuté sur l'hôte à la place du processus du contrôleur qu'utilise la référence. Les deux auraient écarté le contrôleur d'une boucle où la référence le garde elle-même : la référence décide entre deux sous-tâches sur le contrôleur, en Python, en lisant le résultat de chaque sous-tâche avant de choisir la suivante.
+
+## Décision
+
+Chacun des cinq s'exécute comme une petite machine à états sur le contrôleur : on lui demande la sous-tâche suivante, on lui remet le résultat de la précédente, jusqu'à ce qu'il ait le résultat de la tâche elle-même. Chaque sous-tâche est un module ordinaire de l'union de l'exécution, envoyé seul sur le lien que la tâche a déjà et relu par le même chemin que tout autre résultat de module. Rien de l'envoi, des arguments ou de la gestion des fichiers d'une sous-tâche ne vit sur l'hôte ; l'hôte n'exécute jamais que des modules qu'il sait déjà exécuter.
+
+`copy` est le plugin qui rend explicite la forme en deux appels : `stat` d'abord, puis soit `file`, soit un `copy` avec dépôt, exactement comme le fait `plugins/action/copy.py`. `package` et `service` rendent explicite la dépendance à un fact : le module qui s'exécute n'est pas fixé tant que le gestionnaire de paquets ou le système d'init de l'hôte n'est pas connu, collecté par un `setup` filtré quand ce n'est pas déjà un fact. `template` et `unarchive` lisent tous deux un fichier sur le contrôleur avant l'envoi d'une sous-tâche, `template` toujours et `unarchive` sauf si `remote_src` dit que le fichier est déjà sur l'hôte.
+
+## Conséquences
+
+- Un fichier dont une sous-tâche a besoin voyage vers l'hôte une seule fois, déposé dans un répertoire privé à la connexion qui l'a envoyé, et est consommé par cette seule tâche : lu par le module, puis supprimé, quoi que le module en ait fait. Voir [Plugins d'action](/fr/docs/internals/action-plugins/#ce-qui-reste-sur-lhôte).
+- `package` et `service` placent dans l'union de l'exécution tous les modules backend vers lesquels ils peuvent aiguiller, et non le seul dont l'hôte aura besoin, car rien n'est connu de l'hôte avant l'arrivée des facts et rien n'est construit ensuite. Mesuré sur le constructeur de charges utiles d'ansible-core 2.19.12, cela représente environ 170 KB de plus envoyés une fois par lien que ne coûteraient `apt` et `systemd_service` seuls.
+- Un `src` dont le rendu a lu un hôte géré est lu comme la référence le lit, sauf si `[volant] host_named_paths` vaut `contained` ou `refuse`. C'est un paramètre de sécurité, non une limite : mesuré contre la référence, un `copy` (ou `template`, ou `unarchive`) dont le `src` est une valeur enregistrée envoie à l'hôte le fichier du contrôleur que cette valeur nomme, si bien qu'un hôte qui contrôle la sortie d'une commande ou un fact contrôle quel fichier de l'opérateur il reçoit. `refuse` rejette un tel `src` avant qu'il soit cherché, pour `copy`, `template` et `unarchive` sans distinction. Voir [Plugins d'action](/fr/docs/internals/action-plugins/#un-fichier-source-nommé-par-un-hôte-géré).
+
+## Résultats
+
+Mesuré le 2026-09-23 avec quatre rôles d'Ansible Galaxy, exécutés tels que publiés : `geerlingguy.security` 3.0.2, `geerlingguy.nginx` 3.3.1, `geerlingguy.git` 3.0.1 et `geerlingguy.pip` 3.1.2, dans un seul play avec `become: true` et les facts collectés (`just proof-roles`). Les hôtes gérés sont deux machines sous Ubuntu 24.04. La référence est ansible-core 2.19.12.
+
+`just proof-roles-reset` a supprimé les paquets et les fichiers que les rôles installent : les deux moteurs sont donc partis du même état. Leurs premières passes se sont terminées sur le même récapitulatif, `ok=30 changed=8 skipped=28`, et leurs secondes passes sur `ok=28 changed=0 skipped=28`.
+
+Chaque temps est la médiane de trois passes contre des hôtes sur lesquels les rôles avaient déjà convergé, avec un build de release de Volant. Une passe montre 56 tâches par hôte.
+
+<BarChart
+  title="Quatre rôles Galaxy, un hôte convergé"
+  subtitle="56 tâches, <code>become: true</code>, facts collectés, médiane de trois passes. Plus court, c'est plus rapide."
+  unit="s"
+  decimals={2}
+  rows={[
+    { label: 'ansible-core, sans pipelining', value: 33.5, note: '34.52 s contre deux hôtes' },
+    { label: 'ansible-core, avec pipelining', value: 25.7, note: '26.34 s contre deux hôtes' },
+    { label: 'Volant', value: 12.49, highlight: true, note: '12.64 s contre deux hôtes' },
+  ]}
+/>
+
+Contre deux hôtes, les valeurs sont 34.52 s, 26.34 s et 12.64 s. Volant prend 49 % du temps de la référence avec pipelining sur un hôte et 48 % sur deux. Le contrôleur construit l'union une fois par exécution. À la première passe contre deux hôtes, elle a atterri dans le cache de chaque hôte, et la seconde passe a laissé le fichier en cache intact.
+
+## Mise à jour, 2026-10-24
+
+Les cinq plugins nommés ci-dessus sont maintenant huit. `dnf` et `fetch` ont été ajoutés le 2026-09-23 ([#213](https://github.com/lorica-labs/volant/pull/213), [#215](https://github.com/lorica-labs/volant/pull/215)) et `reboot` le 2026-09-24 ([#219](https://github.com/lorica-labs/volant/pull/219)). Chacun s'exécute comme le même genre de machine à états sur le contrôleur. [Plugins d'action](/fr/docs/internals/action-plugins/) les décrit tous les huit. Les plugins d'ansible-core et des collections qui n'ont pas de version Rust s'exécutent dans l'assistant Python, et depuis le 2026-10-24 ([#776](https://github.com/lorica-labs/volant/pull/776)) les jobs de ces plugins relayés par le pont s'exécutent en parallèle et n'élèvent les privilèges que si la tâche le demande.

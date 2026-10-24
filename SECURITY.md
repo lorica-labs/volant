@@ -24,4 +24,4 @@ The same reasoning covers:
 - an argument a host controls reaching a shell;
 - a host changing its own connection settings, such as its address, user or SSH arguments, through the facts a module returns.
 
-A path on the controller that a host names, such as the `src` of a `copy` or the `dest` of a `fetch`, is used by default as ansible-core uses it. That is not a vulnerability. For a run where a host is less trusted than the person who runs the playbook, `[volant] host_named_paths` and `host_named_dest_dirs` limit it: see [Trusted and untrusted values](https://volant.sh/variables/trust/).
+A path on the controller that a host names, such as the `src` of a `copy` or the `dest` of a `fetch`, is used by default as ansible-core uses it. That is not a vulnerability. For a run where a host is less trusted than the person who runs the playbook, `[volant] host_named_paths` and `host_named_dest_dirs` limit it: see [Trusted and untrusted values](https://volant.sh/docs/variables/templating/#values-from-hosts-are-never-templated).

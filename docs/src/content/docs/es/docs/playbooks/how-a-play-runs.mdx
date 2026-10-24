@@ -1,0 +1,127 @@
+---
+sourceHash: 72a9c6ae320c
+title: Ejecución de plays
+description: En qué orden se ejecutan los hosts y las tareas, cómo lo cambian las estrategias, los lotes con serial, el depurador, las tareas asíncronas y los prompts, y cuándo se detiene una ejecución.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../../components/HostTimeline.astro';
+
+Esta página responde a una pregunta: ¿en qué orden se ejecutan tus hosts y tus tareas, y qué cambia ese orden? Cubre la estrategia `linear` por defecto, los lotes con `serial`, las otras estrategias, el depurador, las tareas asíncronas y los prompts. [Palabras clave](/es/docs/reference/keywords/) dice qué palabras clave acepta esta versión. Donde Volant se comporta de forma distinta a ansible-core 2.19.12, la última sección lo indica.
+
+## Los hosts avanzan juntos
+
+Por defecto, Volant sigue la estrategia `linear` de Ansible: los hosts de un play se encuentran delante de cada tarea. Ningún host empieza la segunda tarea hasta que todos los hosts han terminado la primera, y la salida llega en el orden de las tareas porque la ejecución sigue ese orden.
+
+<HostTimeline only="linear" />
+
+El [procesamiento por lotes entre hosts](/es/docs/hosts/batching/) es un ajuste opcional que permite a cada host adelantarse por las tareas que no dependen de los demás.
+
+### Los hosts de un play como plantilla
+
+`hosts` puede ser una plantilla, como `{{ groups['servers'] | first }}` o `{{ target | default('all') }}`. Se renderiza cuando empieza el play, así que ve lo que hicieron los plays anteriores con `add_host`, `set_fact` y `meta: refresh_inventory`. Un play sin `name` toma como nombre el patrón renderizado.
+
+El renderizado no tiene ningún host, así que lee solo lo que existe antes que cualquier host:
+
+| El renderizado lee | El renderizado no lee |
+|---|---|
+| `groups`, las variables extra y las variables mágicas que no necesitan host | las variables del inventario y los archivos `group_vars` |
+| las `vars:` y `vars_files` del play, y las variables que exportan los roles | los facts e `inventory_hostname` |
+
+`hostvars` existe solo después de que un play se haya ejecutado. `ansible_play_hosts_all` enumera todos los hosts del inventario, reducidos por `--limit`.
+
+| La plantilla se renderiza como | Qué ocurre |
+|---|---|
+| una cadena | Un patrón. |
+| una lista | Una lista de patrones. |
+| una lista vacía | El play no coincide con ningún host y se omite. |
+| una variable sin definir, una cadena vacía o un valor que no es una cadena | La ejecución se detiene con el código 4 antes del banner. |
+
+`--limit` reduce después los hosts renderizados. `--list-hosts`, `--list-tasks` y `--syntax-check` renderizan del mismo modo, sin ningún play detrás.
+
+El texto que devuelve un host son datos y nunca se evalúa. Un resultado registrado que contenga `{{ ... }}` es un patrón con sus propias palabras. Lo mismo ocurre con un host o grupo que `add_host` o `group_by` hayan creado durante la ejecución: una vez que la ejecución ha creado uno, un `hosts` que lea `groups`, `hostvars` o `ansible_play_hosts_all` se renderiza como datos. Un texto que solo contiene llaves, como `{{ '{{' }}x`, también es un patrón con sus propias palabras. Las variables que se nombran entre sí se resuelven hasta cien eslabones de profundidad, y un ciclo detiene la ejecución con el código 4.
+
+### Otras estrategias
+
+`strategy: free` deja que cada host recorra el play a su propio ritmo. Se imprime un banner cada vez que la tarea cambia respecto a la de la última línea, así que la salida sigue a los hosts y no la lista de tareas. Los hosts siguen encontrándose en las tareas `meta` que actúan sobre todo el lote (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` y `refresh_inventory`), en los handlers y en los includes dinámicos.
+
+`strategy: host_pinned` es `free` con un host sujeto a un solo fork desde su primera tarea hasta la última, así que `-f 1` ejecuta los hosts uno tras otro. Con menos forks que hosts, los hosts se ejecutan por oleadas: los resultados coinciden con ansible-core, y el tiempo y el orden de las líneas pueden diferir.
+
+Con ambas estrategias, como en ansible-core, `max_fail_percentage`, `any_errors_fatal` y `run_once` se ignoran con un aviso, así que una tarea `run_once` se ejecuta en cada host. Una tarea `run_once` que falla solo hace fallar a su propio host. Una tarea `pause` o `add_host` detiene la ejecución con un error.
+
+`strategy: debug` es `linear` con el [depurador](#el-depurador) tras una tarea fallida.
+
+`order` fija el orden en que se ejecutan los hosts de un play: `inventory`, `reverse_inventory`, `sorted`, `reverse_sorted` o `shuffle`. `throttle` limita una tarea a ese número de hosts a la vez. Se renderiza para cada tarea y se lee como número.
+
+### Palabras clave con plantillas
+
+El `timeout` de un play es el `timeout` por defecto de sus tareas. `timeout`, `async`, `poll` y los booleanos `become`, `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable` y `delegate_facts` pueden ser plantillas. Cada host las renderiza cuando se ejecuta su tarea, igual que con `throttle`. Dos de ellas se leen de forma distinta:
+
+- Una plantilla de `run_once` se renderiza por turnos para cada host del lote. El primer host para el que resulta verdadera ejecuta la tarea. Una plantilla que responde de forma distinta dentro del lote termina la ejecución con el código 4. Con `free` y `host_pinned` la plantilla se ignora, sin el aviso que recibe un `run_once` literal.
+- Una plantilla de `any_errors_fatal` cuenta como verdadera sea cual sea su resultado, como en ansible-core.
+
+Consulta la [referencia de palabras clave](/es/docs/reference/keywords/).
+
+## Lotes con serial
+
+`serial` divide los hosts de un play en lotes, en el orden del inventario, y ejecuta cada lote por turno. Cada lote tiene su propio banner, sus propios flush de handlers y su propia elección de `run_once`.
+
+```yaml
+- hosts: web
+  serial:
+    - 1       # one canary first
+    - "25%"   # then a quarter of the hosts at a time
+  tasks:
+    - command: /opt/app/upgrade.sh
+```
+
+| Valor | Significado |
+|---|---|
+| Un número | Ese número de hosts por lote. |
+| Una cadena que termina en `%` | Una fracción de la lista completa de hosts, no de los que quedan. Se trunca en lugar de redondear, y nunca es menos de un host. |
+| Una lista | Un tamaño por lote. El último elemento se repite cuando se acaba la lista. |
+| `0`, `-1`, `[]`, o más que el número de hosts | Un único lote con todos los hosts. |
+
+### Cuándo se detiene la ejecución
+
+La ejecución se detiene en el primer lote que tuvo hosts vivos y los perdió todos, que es donde también se detiene Ansible. El código de salida es 2 cuando fallaron y 4 cuando todos pasaron a ser inalcanzables.
+
+Un lote cuyos hosts ya habían fallado en un play anterior no cuenta como tal. Imprime su banner y la ejecución continúa.
+
+Dentro de un lote, `ansible_play_batch` y el obsoleto `play_hosts` nombran el lote, mientras que `ansible_play_hosts` nombra todo el play. `vars_files` se renderiza y se vuelve a leer para cada lote.
+
+## El depurador
+
+El prompt del depurador se abre tras una tarea fallida. Tres ajustes lo activan:
+
+- `strategy: debug` es `linear` con el prompt tras una tarea fallida.
+- La palabra clave `debugger`, en un play, un bloque o una tarea, acepta `always`, `never`, `on_failed`, `on_unreachable` u `on_skipped`. Un valor que no es válido hace fallar la tarea cuando se ejecuta.
+- `enable_task_debugger` en `ansible.cfg`, o `ANSIBLE_ENABLE_TASK_DEBUGGER`, lo abre tras cualquier tarea fallida o inalcanzable.
+
+El prompt acepta `p` y `pprint` para imprimir un valor, `u` para actualizar los argumentos de la tarea, `h` para la ayuda, `r` para volver a ejecutar la tarea, `c` para continuar y `q` para salir. `p` y una línea que no es un comando evalúan un subconjunto de Python: nombres, literales, índices, atributos, asignaciones y las llamadas que necesita el prompt. Un cambio en `task_vars` llega a una repetición solo mediante `u`.
+
+El prompt lee la entrada estándar, de un terminal o de una tubería. Al final de la entrada, o tras `q`, imprime `User interrupted execution` y la ejecución termina con el código de salida 99, como en ansible-core.
+
+## Tareas asíncronas
+
+`async: <seconds>` inicia la tarea como un trabajo en el host y `poll: <seconds>` la espera. `poll: 0` devuelve el control de inmediato con un `ansible_job_id` que `async_status` lee más tarde.
+
+El trabajo sigue ejecutándose si la conexión se cae, escribe su archivo de estado de forma atómica en el directorio async y se mata junto con su grupo de procesos cuando se agota `async`. `async_status` con `mode: cleanup` elimina solo el archivo de ese trabajo.
+
+Una acción que ansible-core ejecuta bajo `async` se ejecuta también aquí. Cualquier otra acción falla en tiempo de ejecución en cada host con `This action (<name>) does not support async.` El directorio async es `ansible_async_dir`, si no `ANSIBLE_ASYNC_DIR`, si no `async_dir` en `ansible.cfg`, si no `~/.ansible_async`.
+
+## vars_prompt y module_defaults
+
+`vars_prompt` pregunta por cada variable cuando empieza el play, salvo que `-e` ya la haya dado. Cuando la entrada estándar no es un terminal, toma el `default`, avisa una vez y nunca espera.
+
+`module_defaults` rellena los argumentos que faltan en un módulo a partir del play, el bloque o la tarea, tanto para el nombre del propio módulo como para su grupo, como `group/aws`. `collections` resuelve los nombres cortos como lo hace ansible-core.
+
+## Diferencias con Ansible
+
+- Un `serial` que no es un número, como `serial: abc` o `"50% "` con un espacio al final, se rechaza con el código de salida 4 y el mensaje de ansible-core. Ansible falla con el código de salida 250, que es Ansible informando de un error propio en lugar de rechazar un playbook.
+- Una variable sin definir en `serial` se informa con el prefijo de ansible-core y el mensaje propio de Volant, con el mismo código de salida 4.
+- `play_hosts` contiene lo que Ansible pone ahí, pero Volant no imprime ningún aviso de obsolescencia para él.
+
+<Aside type="tip">
+Para ver cómo construye y ejecuta el motor este orden, consulta [Cómo se compila un play](/es/docs/internals/architecture/#cómo-se-compila-un-play) y [Una ejecución, de principio a fin](/es/docs/internals/architecture/#una-ejecución-de-principio-a-fin).
+</Aside>

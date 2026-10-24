@@ -1,0 +1,276 @@
+---
+import SiteLayout from '../../layouts/SiteLayout.astro';
+import Traces from '../../components/site/Traces.astro';
+import { measuredOn, ratio, workloads } from '../../lib/bench';
+import { fill, html, localePaths, strings } from '../../i18n';
+
+export const getStaticPaths = localePaths;
+
+const code = Astro.params.lang ?? 'en';
+const t = strings(code);
+const p = t.performance;
+
+type Step = keyof typeof p.steps;
+type Kind = keyof typeof p.kinds | '';
+
+// The median pass of the roles workload, per host, from the performance page of the documentation.
+const roles: [Step, number, Kind][] = [
+  ['connect', 172.6, ''],
+  ['files', 52.8, 'native'],
+  ['systemd', 52.4, 'native'],
+  ['setup', 47.6, 'native'],
+  ['apt', 38.4, 'native'],
+  ['wire', 27.1, ''],
+  ['prepare', 25.0, ''],
+  ['moduleSet', 15.3, 'cached'],
+  ['wait', 10.6, ''],
+];
+const k3s: [Step, number, Kind][] = [
+  ['restart', 13032, 'nativeSystemd'],
+  ['serviceFacts', 2485, 'native'],
+  ['aptCache', 2205, 'python'],
+  ['connect', 350, ''],
+  ['wait', 253, ''],
+  ['prepare', 185, ''],
+  ['packageFacts', 168, 'native'],
+  ['facts', 55, 'native'],
+  ['moduleSet', 30.6, 'cached'],
+];
+
+const max = (rows: [Step, number, Kind][]) => Math.max(...rows.map((r) => r[1]));
+const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v} ms`);
+---
+
+<SiteLayout code={code} title={t.nav.performance} description={p.description}>
+  <section class="wrap page-head">
+    <h1>{p.heading}</h1>
+    <p>{fill(p.lede, { date: measuredOn })}</p>
+    <div class="ratios">
+      {
+        workloads.map((w) => (
+          <div>
+            <b class="mono">{ratio(w).toFixed(ratio(w) > 10 ? 0 : 2)}×</b>
+            <span>{fill(p.faster, { workload: p.workloads[w.id].inSentence })}</span>
+          </div>
+        ))
+      }
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <Traces code={code} />
+      <p class="why">{p.ratios}</p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <h2>{p.splitTitle}</h2>
+        <p>{p.splitText}</p>
+      </div>
+      <div class="splits">
+        {
+          [
+            { title: p.workloads.roles.name, total: fill(p.forTwoHosts, { time: '0.529 s' }), rows: roles },
+            { title: p.k3sServer, total: fill(p.forTwoHosts, { time: '23.477 s' }), rows: k3s },
+          ].map((group) => (
+            <figure class="panel reveal">
+              <div class="core split-core">
+                <figcaption>
+                  <b>{group.title}</b>
+                  <span>{group.total}</span>
+                </figcaption>
+                {group.rows.map(([step, value, kind]) => (
+                  <div class="row">
+                    <span class="label">
+                      {p.steps[step]}
+                      {kind && <em>{p.kinds[kind]}</em>}
+                    </span>
+                    <span class="bar">
+                      <i style={`--w: ${(value / max(group.rows)) * 100}%`} class:list={{ native: kind.startsWith('native') }} />
+                    </span>
+                    <span class="value mono">{ms(value)}</span>
+                  </div>
+                ))}
+              </div>
+            </figure>
+          ))
+        }
+      </div>
+      <p class="why reveal" set:html={html(code, p.k3sWork)} />
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap two">
+      <div class="section-head reveal">
+        <h2>{p.configTitle}</h2>
+        <p>{p.configText}</p>
+      </div>
+      <dl class="config reveal">
+        {
+          p.config.map(([name, value]) => (
+            <div>
+              <dt>{name}</dt>
+              <dd>{value}</dd>
+            </div>
+          ))
+        }
+      </dl>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap two">
+      <div class="section-head reveal">
+        <h2>{p.ownTitle}</h2>
+        <p set:html={p.ownProfile} />
+        <p set:html={html(code, p.ownRecipes)} />
+      </div>
+      <div class="panel reveal">
+        <pre class="code core"><span class="c">{p.ownRun}</span>{' '}
+volant playbook -i inventory.ini site.yml <span class="k">--profile</span>
+
+<span class="c">{p.ownBench}</span>{' '}
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench 3</span>{' '}
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench-k3s 3</span></pre>
+      </div>
+    </div>
+    <div class="wrap">
+      <p class="why reveal" set:html={html(code, p.caveat)} />
+    </div>
+  </section>
+</SiteLayout>
+
+<style>
+  .ratios {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 1rem 3.5rem;
+    margin-top: 2.5rem;
+  }
+  .ratios div {
+    display: grid;
+    gap: 0.2rem;
+  }
+  .ratios b {
+    color: var(--brand-hi);
+    font-size: clamp(2.6rem, 5vw, 3.6rem);
+    font-weight: 560;
+    letter-spacing: -0.04em;
+    line-height: 1;
+  }
+  .ratios span {
+    color: var(--fg-3);
+  }
+  .why {
+    max-width: 70ch;
+    margin-top: 1.75rem;
+    color: var(--fg-2);
+  }
+  .splits {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin: 2.5rem 0 0;
+  }
+  .splits figure {
+    margin: 0;
+  }
+  .split-core {
+    display: grid;
+    gap: 0.6rem;
+    padding: 1.5rem;
+  }
+  figcaption {
+    display: flex;
+    justify-content: space-between;
+    gap: 1rem;
+    margin-bottom: 0.5rem;
+  }
+  figcaption span {
+    color: var(--fg-3);
+    font-size: 0.875rem;
+  }
+  .row {
+    display: grid;
+    grid-template-columns: minmax(0, 1.25fr) minmax(0, 1fr) 4.5rem;
+    align-items: center;
+    gap: 0.75rem;
+    font-size: 0.85rem;
+  }
+  .label {
+    color: var(--fg-2);
+  }
+  .label em {
+    margin-inline-start: 0.4rem;
+    color: var(--fg-3);
+    font-style: normal;
+    font-size: 0.75rem;
+  }
+  .bar {
+    height: 0.5rem;
+  }
+  .bar i {
+    display: block;
+    width: var(--w);
+    min-width: 2px;
+    height: 100%;
+    border-radius: 999px;
+    background: var(--fg-4);
+  }
+  .bar i.native {
+    background: var(--brand);
+  }
+  .value {
+    color: var(--fg);
+    text-align: end;
+  }
+  .two {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: start;
+  }
+  .two .section-head p + p {
+    margin-top: 1rem;
+  }
+  .config {
+    margin: 0;
+  }
+  .config div {
+    display: grid;
+    grid-template-columns: 9rem minmax(0, 1fr);
+    gap: 1rem;
+    padding-block: 0.8rem;
+    border-top: 1px solid var(--line);
+  }
+  .config dt {
+    font-weight: 560;
+  }
+  .config dd {
+    margin: 0;
+    color: var(--fg-2);
+  }
+  @media (max-width: 60rem) {
+    .splits,
+    .two {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 36rem) {
+    .row {
+      grid-template-columns: minmax(0, 1fr) 4.5rem;
+    }
+    .bar {
+      grid-column: 1 / -1;
+      grid-row: 2;
+    }
+    .config div {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.2rem;
+    }
+  }
+</style>

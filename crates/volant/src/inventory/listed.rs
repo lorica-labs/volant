@@ -14,16 +14,19 @@ impl Inventory {
         &self,
         name: &str,
         vars_of: &dyn Fn(&str) -> BTreeMap<String, Value>,
+        listing: bool,
     ) -> Option<Value> {
         let mut vars = vars_of(name);
+        // Only `--list` marks the strings a compose computed.
         for ((host, var), computed) in &self.unsafe_vars {
-            if host == name
+            if listing
+                && host == name
                 && let Some(value) = vars.get_mut(var)
             {
                 mark_unsafe(value, computed);
             }
         }
-        (!vars.is_empty()).then(|| show_unsafe(&Value::Object(vars.into_iter().collect())))
+        (!vars.is_empty()).then(|| show_unsafe(&Value::Object(vars.into_iter().collect()), listing))
     }
 
     /// What `ansible-inventory --host` prints for a host: its variables, `{}` when it has none.
@@ -32,7 +35,7 @@ impl Inventory {
         name: &str,
         vars_of: &dyn Fn(&str) -> BTreeMap<String, Value>,
     ) -> Value {
-        self.shown_vars(name, vars_of)
+        self.shown_vars(name, vars_of, false)
             .unwrap_or_else(|| Value::Object(serde_json::Map::new()))
     }
 
@@ -65,7 +68,7 @@ impl Inventory {
         let hostvars: serde_json::Map<String, Value> = self
             .hosts
             .iter()
-            .filter_map(|h| Some((h.name.clone(), self.shown_vars(&h.name, vars_of)?)))
+            .filter_map(|h| Some((h.name.clone(), self.shown_vars(&h.name, vars_of, true)?)))
             .collect();
         out.insert(
             "_meta".into(),

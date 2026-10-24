@@ -4,7 +4,7 @@ all:
       uni: "café ü"
       tpl: "{{ inventory_hostname }}-x"
       flag: true
-      none: null
+      nothing: null
       ratio: 1.5
       secret: !vault |
         $ANSIBLE_VAULT;1.1;AES256

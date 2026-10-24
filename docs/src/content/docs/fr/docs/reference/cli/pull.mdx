@@ -1,0 +1,19 @@
+---
+sourceHash: 5a60f05341da
+title: volant pull
+description: Clone un dépôt et exécute son playbook avec ansible-pull, en utilisant le moteur propre de Volant pour l'exécution.
+---
+
+`volant pull` lance l'`ansible-pull` d'ansible-core 2.19.12 avec l'interpréteur que Volant choisit pour une exécution de playbook : il fonctionne donc sans ansible-core installé.
+
+```sh
+volant pull [ARGS...]
+```
+
+Chaque argument va à `ansible-pull` tel quel : `-U`, `-d`, `-C`, `-f`, `-o`, `--purge`, `-i`, `-e` et les autres sont ceux de l'outil. L'interpréteur, l'environnement, le terminal et le code de sortie fonctionnent comme pour [`volant doc`](/fr/docs/reference/cli/doc/).
+
+`ansible-pull` lance `ansible` pour le checkout et `ansible-playbook` pour l'exécution, depuis le répertoire de son propre chemin. Volant garde un répertoire pour eux, `pull` sous son cache (`$XDG_CACHE_HOME/volant/` ou `~/.cache/volant/`), en mode `0700`, et y lie `ansible` et `ansible-playbook` au binaire `volant` en cours d'exécution. Lancé sous ces noms, `volant` se comporte comme [`volant adhoc`](/fr/docs/reference/cli/adhoc/) et [`volant playbook`](/fr/docs/reference/cli/), si bien que les deux étapes utilisent le moteur de Volant. Les liens sont créés à la première utilisation et remplacés quand le binaire `volant` change de place. L'étape de checkout exécute le module `git`, qui a besoin du Python du runtime et de `git` sur la machine.
+
+La deuxième ligne qu'affiche `ansible-pull` est sa propre ligne de commande. Elle montre `<cache>/volant/pull/ansible-pull` là où `ansible-pull` lancé directement montre le chemin de son script. C'est la seule différence dans la sortie.
+
+`ansible-pull` lit ses deux enfants par des tubes, par petits morceaux : un avertissement de l'un d'eux peut donc être coupé par une sortie écrite au même moment.

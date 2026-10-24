@@ -1,0 +1,19 @@
+---
+sourceHash: 5a60f05341da
+title: volant pull
+description: 用 ansible-pull 克隆仓库并运行其中的 playbook，运行时使用 Volant 自己的引擎。
+---
+
+`volant pull` 用 Volant 为 playbook 运行选择的解释器运行 ansible-core 2.19.12 的 `ansible-pull`，所以不装 ansible-core 也能工作。
+
+```sh
+volant pull [ARGS...]
+```
+
+每个参数都原样交给 `ansible-pull`：`-U`、`-d`、`-C`、`-f`、`-o`、`--purge`、`-i`、`-e` 等都是该工具自己的。解释器、环境变量、终端和退出码的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。
+
+`ansible-pull` 为检出启动 `ansible`，为运行启动 `ansible-playbook`，两者都从它自己路径所在的目录启动。Volant 为它们保留一个目录，即其缓存（`$XDG_CACHE_HOME/volant/` 或 `~/.cache/volant/`）下的 `pull`，权限为 `0700`，并在其中把 `ansible` 和 `ansible-playbook` 链接到正在运行的 `volant` 二进制文件。以这些名字启动时，`volant` 的行为等同于 [`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/) 和 [`volant playbook`](/zh-cn/docs/reference/cli/)，所以两步都使用 Volant 的引擎。链接在第一次使用时创建，在 `volant` 二进制文件移动后被替换。检出步骤运行 `git` 模块，它需要运行时的 Python 和机器上的 `git`。
+
+`ansible-pull` 打印的第二行是它自己的命令行。直接运行 `ansible-pull` 时那里显示它脚本的路径，而这里显示 `<cache>/volant/pull/ansible-pull`。这是输出中唯一的不同。
+
+`ansible-pull` 通过管道分小块读取它的两个子进程，所以其中一个的警告可能被同时写出的输出截断。

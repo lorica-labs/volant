@@ -173,7 +173,15 @@ pub(crate) fn create_private(dir: &Path) -> io::Result<()> {
 pub(crate) fn check_private(dir: &Path) -> io::Result<()> {
     use std::os::unix::fs::MetadataExt;
 
-    let meta = fs::metadata(dir)?;
+    // Not `metadata`: a link planted in place of the directory would be followed to one its
+    // planter chose.
+    let meta = fs::symlink_metadata(dir)?;
+    if meta.file_type().is_symlink() {
+        return Err(io::Error::new(
+            io::ErrorKind::PermissionDenied,
+            "it is a symbolic link, and it has to be a directory only its owner can write",
+        ));
+    }
     // SAFETY: `geteuid` reads the calling process's own credentials and cannot fail.
     let euid = unsafe { libc::geteuid() };
     let mode = meta.mode() & 0o7777;

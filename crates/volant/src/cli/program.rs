@@ -25,10 +25,12 @@ pub fn subcommand_for(program: &OsStr) -> Option<&'static str> {
     match name {
         "ansible" => Some("adhoc"),
         "ansible-config" => Some("config"),
+        "ansible-console" => Some("console"),
         "ansible-doc" => Some("doc"),
         "ansible-galaxy" => Some("galaxy"),
         "ansible-inventory" => Some("inventory"),
         "ansible-playbook" => Some("playbook"),
+        "ansible-pull" => Some("pull"),
         "ansible-vault" => Some("vault"),
         _ => None,
     }
@@ -47,6 +49,8 @@ mod tests {
     #[case("/usr/local/bin/ansible-playbook", Some("playbook"))]
     #[case("ansible-vault", Some("vault"))]
     #[case("ansible-doc", Some("doc"))]
+    #[case("ansible-console", Some("console"))]
+    #[case("ansible-pull", Some("pull"))]
     #[case("ansible-config", Some("config"))]
     #[case("ansible-galaxy", Some("galaxy"))]
     #[case("volant", None)]

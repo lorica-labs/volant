@@ -33,7 +33,7 @@ pub use program::{TOOLS, subcommand_for};
 pub use run::run;
 pub use runtime::{RuntimeCommand, runtime};
 pub use shims::{ShimsCommand, shims};
-pub use tool::{ToolArgs, config, doc, galaxy};
+pub use tool::{ToolArgs, config, console, doc, galaxy, pull};
 pub use vault::{VaultArgs, vault};
 
 #[cfg(test)]

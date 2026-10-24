@@ -6,7 +6,8 @@ case.yml holds `args` (the argv after `ansible-playbook`), or `runs`, a list of 
 whose `expected.json` is then a list in the same order; `modes`, any of `check`, `check-diff`, `diff`: each run is
 recorded again with `--check`, `--check --diff` and `--diff` appended, in that order, after the run
 itself, and `expected.json` is then a list; `env`, extra environment for both engines;
-`forks`, 1 unless said, so that hosts print in the inventory's order under both engines; `needs`,
+`forks`, 1 unless said, so that hosts print in the inventory's order under both engines; `program`,
+`ansible` to run the ad hoc command in place of `ansible-playbook` (Volant's `adhoc`); `needs`,
 any of `ansible-core`, `sudo`, `systemd`; `unordered`, regexes of the lines whose order may differ
 once `forks` is above 1; `links`, a mapping of a path to the target of the link made there in each
 copy, for a link that cannot be tracked, such as one to a file that does not exist. The copy's path reads `<golden-tmp>` in stdout, and a controller temp
@@ -24,7 +25,8 @@ from .redact import TMP
 from .run import EMPTY_CONFIG, Failed, run, scratch, write_json
 
 MODES = {"check": ["--check"], "check-diff": ["--check", "--diff"], "diff": ["--diff"]}
-KEYS = {"args", "runs", "modes", "env", "forks", "needs", "unordered", "links"}
+KEYS = {"args", "runs", "modes", "env", "forks", "program", "needs", "unordered", "links"}
+PROGRAMS = {"ansible-playbook", "ansible"}
 NEEDS = {"ansible-core", "sudo", "systemd"}
 
 # The two things the reference prints out of a Python set, in an order that changes between
@@ -97,6 +99,9 @@ def load(directory):
     forks = case.get("forks", 1)
     if isinstance(forks, bool) or not isinstance(forks, int) or forks < 1:
         raise Failed(f"scenario {name}: `forks` is not a positive integer")
+    program = case.get("program", "ansible-playbook")
+    if program not in PROGRAMS:
+        raise Failed(f"scenario {name}: `program` takes {', '.join(sorted(PROGRAMS))}, not {program!r}")
     needs = case.get("needs") or []
     if not _strings(needs) or set(needs) - NEEDS:
         raise Failed(f"scenario {name}: `needs` takes {', '.join(sorted(NEEDS))}, not {needs!r}")
@@ -117,6 +122,7 @@ def load(directory):
         "runs": runs,
         "env": env,
         "forks": forks,
+        "program": program,
         "needs": needs,
         "links": links,
         "single": "args" in case and not modes,
@@ -150,7 +156,7 @@ def record_one(directory):
                 os.symlink(target, os.path.join(copy, path))
             own = os.path.join(copy, "ansible.cfg")
             config = own if os.path.exists(own) else EMPTY_CONFIG
-            argv = ["ansible-playbook", *one["args"], "--forks", str(case["forks"])]
+            argv = [case["program"], *one["args"], "--forks", str(case["forks"])]
             result = run(argv, cwd=copy, config=config, extra_env=case["env"])
             stdout = VERSION_BLOCK.sub("<golden-version>\n", result.stdout.replace(copy, TMP))
             stdout = ANSIBLE_TMP.sub("<golden-ansible-tmp>", stdout)

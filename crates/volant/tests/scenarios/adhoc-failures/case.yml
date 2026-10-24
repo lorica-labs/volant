@@ -1,0 +1,15 @@
+# A failed ad hoc task: the error block with the task as the reference shows it, shortened past
+# 120 characters, then the result line; one block for every host that fails the same way.
+program: ansible
+needs: [ansible-core]
+runs:
+  - args: [h1, -i, inv.ini, -m, command, -a, "false"]
+  - args: [h1, -i, inv.ini, -a, false xxxxxxxxxx]
+  - args: [h1, -i, inv.ini, -a, false xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
+  - args: [h1, -i, inv.ini, -a, false xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
+  - args: [h1, -i, inv.ini, -a, false xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx]
+  - args: [h1, -i, inv.ini, -a, nonexistentcmd]
+  - args: [h1, -i, inv.ini, -m, ping, -a, foo=bar]
+  - args: [h1, -i, inv.ini, -m, nosuchmodule]
+  - args: [web, -i, inv.ini, -m, nosuchmodule]
+  - args: [all, -i, inv.ini, -a, "false"]

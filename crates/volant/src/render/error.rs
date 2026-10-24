@@ -262,7 +262,7 @@ pub fn shorten(text: &str, width: usize) -> String {
 /// marker under the column: `SourceContext.from_origin` and its `__str__`.
 pub(crate) fn source_context(origin: &crate::playbook::Origin) -> String {
     // A file with no position: the reference names a vaulted file that could not be opened by its
-    // path alone.
+    // path alone. A value no file holds is shown the same way (`Origin::described`).
     if origin.line == 0 {
         return format!("Origin: {}", origin.path);
     }
@@ -400,6 +400,14 @@ impl Renderer {
         } else {
             serde_json::json!({"changed": false, "msg": msg, "unreachable": true})
         };
+        if self.minimal.is_some() {
+            let line = format!(
+                "{host} | UNREACHABLE! => {}",
+                ansible_json_indented(&body, 0)
+            );
+            let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));
+            return;
+        }
         let who = match delegate {
             Some(d) => format!("{host} -> {d}"),
             None => host.to_string(),

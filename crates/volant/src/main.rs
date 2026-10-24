@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
-use volant::cli::{PlaybookArgs, RuntimeCommand, ShimsCommand};
+use volant::cli::{AdhocArgs, PlaybookArgs, RuntimeCommand, ShimsCommand};
 
 /// Fast engine for Ansible playbooks.
 #[derive(Parser)]
@@ -14,6 +14,8 @@ struct Cli {
 enum Command {
     /// Run playbooks, with the arguments of ansible-playbook.
     Playbook(Box<PlaybookArgs>),
+    /// Run one module against the hosts of a pattern, with the arguments of ansible.
+    Adhoc(Box<AdhocArgs>),
     /// Install, show or remove the Python runtime Volant manages for ansible-core.
     #[command(subcommand)]
     Runtime(RuntimeCommand),
@@ -66,6 +68,7 @@ fn main() {
     volant::askpass::answer_if_asked();
     let code = match parse().command {
         Command::Playbook(args) => volant::cli::run(*args),
+        Command::Adhoc(args) => volant::cli::adhoc(*args),
         Command::Runtime(command) => volant::cli::runtime(command),
         Command::Shims(command) => volant::cli::shims(command),
     };

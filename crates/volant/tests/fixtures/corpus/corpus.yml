@@ -79,7 +79,7 @@
   vars: {}
   volatile: []
   generate: null
-  skip_reason: null
+  skip_reason: 'pending issue: ansible_role_name is undefined (first failing task: Create revoked_keys and set permissions to root/600)'
 - name: cis
   source: {git: "https://github.com/ansible-lockdown/UBUNTU24-CIS", sha: 7f7c949f0ae1784e0e7687b3d68f2e8fcdf27b54}
   collections:
@@ -89,11 +89,15 @@
   playbook: repo:site.yml
   hosts: 1
   where: container
-  vars: {system_is_container: true, ubtu24cis_disruption_high: false, setup_audit: false, run_audit: false,
-          ubtu24cis_rule_5_2_4: false}
+  vars:
+    system_is_container: true
+    ubtu24cis_disruption_high: false
+    setup_audit: false
+    run_audit: false
+    ubtu24cis_config_aide: false
   volatile: []
   generate: null
-  skip_reason: 'upstream: Module failed: Path /etc/aide/aide.conf does not exist !'
+  skip_reason: null
 - name: prometheus
   source: {galaxy_collection: prometheus.prometheus, version: 0.30.2}
   collections:

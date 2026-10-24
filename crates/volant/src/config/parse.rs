@@ -150,6 +150,12 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     config.vault_password_file = Some(expand_home(path, base));
                 }
             }
+            "vault_encrypt_identity" => {
+                let id = value.trim();
+                if !id.is_empty() {
+                    config.vault_encrypt_identity = Some(id.to_string());
+                }
+            }
             "vault_identity_list" => config.vault_identity_list = tag_list(value),
             "private_key_file" => {
                 let path = value.trim();

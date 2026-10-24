@@ -19,6 +19,17 @@ pub(super) fn version_line() -> String {
     )
 }
 
+/// The `-v` line about the configuration file.
+pub(super) fn config_line() -> String {
+    match crate::config::locate() {
+        Some(path) => format!(
+            "Using {} as config file",
+            std::path::absolute(&path).unwrap_or(path).display()
+        ),
+        None => "No config file found; using defaults".to_string(),
+    }
+}
+
 /// The lines the reference prints before it reads an inventory: the version at `-vv`, the
 /// configuration file at `-v`, and at `-vvvv` the plugin set-up.
 pub(super) fn announce(out: &mut Renderer) {
@@ -26,14 +37,7 @@ pub(super) fn announce(out: &mut Renderer) {
         out.plain(2, &version_line());
     }
     if out.verbose_at(1) {
-        let absolute = |path: PathBuf| std::path::absolute(&path).unwrap_or(path);
-        out.verbose(
-            1,
-            &match crate::config::locate() {
-                Some(path) => format!("Using {} as config file", absolute(path).display()),
-                None => "No config file found; using defaults".to_string(),
-            },
-        );
+        out.verbose(1, &config_line());
     }
     out.verbose(4, "setting up inventory plugins");
     // The reference's own line, trailing space included: it names the directory its collection

@@ -87,6 +87,7 @@ pub(super) fn loop_list(
     raw: &Value,
     vars: &HostVars,
 ) -> Result<(Vec<Value>, bool), TemplateError> {
+    crate::profile::count(crate::profile::Counter::RenderLoop, 1);
     let (rendered, tainted) = templar.render_value_tainted(raw, vars)?;
     let list = match rendered {
         Value::Array(items) => items,
@@ -131,6 +132,7 @@ pub(super) fn with_lookup_items(
     // A term written as one string is resolved before the lookup sees it (`resolve_to_container`
     // in `_get_loop_items`), so an undefined variable there is an error even for `first_found`.
     let omit_undefined = lookup == "first_found" && !raw.is_string();
+    crate::profile::count(crate::profile::Counter::RenderLoop, 1);
     let terms = render_terms(templar, raw, vars, omit_undefined, &mut tainted)?;
     let terms = match terms {
         Some(Value::Array(terms)) => terms,

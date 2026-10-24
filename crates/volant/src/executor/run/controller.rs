@@ -67,6 +67,7 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
             Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
             other => other.to_string(),
         };
+        crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         match templar.condition(&text, &item.vars) {
             Err(e) => return TaskResult::failed_with(conditional_error(&e)),
             Ok(true) => {}

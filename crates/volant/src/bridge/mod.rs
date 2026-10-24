@@ -179,11 +179,20 @@ impl Bridge {
         kwargs: &Map<String, Value>,
         vars: Option<&Map<String, Value>>,
     ) -> Result<Value, BridgeError> {
-        self.request(
+        let mut guard = self.lock();
+        // Once the helper is this call's: the wait for it is another call's time.
+        let start = Instant::now();
+        let answer = self.exchange(
+            &mut guard,
             kind,
             name,
             json!({"kind": kind.as_str(), "name": name, "args": args, "kwargs": kwargs, "vars": vars}),
-        )
+        );
+        crate::profile::bridge_call(
+            name,
+            u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+        answer
     }
 
     /// The variables the lookup `name` reads, so that a call sends those and not the whole host.
@@ -334,8 +343,18 @@ impl Bridge {
     }
 
     fn request(&self, kind: PluginKind, name: &str, call: Value) -> Result<Value, BridgeError> {
-        let mut guard = self.lock();
-        let (state, next) = &mut *guard;
+        self.exchange(&mut self.lock(), kind, name, call)
+    }
+
+    /// One request and its answer, over the helper `guard` holds.
+    fn exchange(
+        &self,
+        guard: &mut (State, u64),
+        kind: PluginKind,
+        name: &str,
+        call: Value,
+    ) -> Result<Value, BridgeError> {
+        let (state, next) = guard;
         if matches!(state, State::Idle) {
             *state = match (self.start)() {
                 Ok(helper) => State::Running(helper),

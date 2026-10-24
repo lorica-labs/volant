@@ -191,6 +191,7 @@ pub(in crate::executor) fn resolved(mut vars: HostVars, templar: &Templar) -> Ho
     // travel into the resolution below and are left there exactly as they arrived. The set comes
     // back wider than it went in: a `vars:` of the play, of a block or of the task itself built
     // from a registered value is data too, and this resolution is the only place that can tell.
+    crate::profile::count(crate::profile::Counter::RenderVars, 1);
     let (map, untrusted) = templar.resolve_vars_tainted(&vars);
     vars.map = map;
     vars.untrusted = untrusted;

@@ -214,6 +214,7 @@ pub(super) fn prepare(
             }
             // Variables naming the loop variable could not resolve before it was bound. One of
             // them may be built from the item, so this pass widens the set the same way.
+            crate::profile::count(crate::profile::Counter::RenderVars, 1);
             let (resolved, untrusted) = templar.resolve_vars_tainted(&vars);
             vars.map = resolved;
             vars.untrusted = untrusted;
@@ -223,7 +224,24 @@ pub(super) fn prepare(
         // reaches it. Measured on ansible-core 2.19.12: `failed: [h] (item=2)` between two items
         // that ran, then `One or more items failed`; an item behind a `break_when` that ended
         // the loop shows nothing. A task with no item fails as a whole.
-        let fields = match render_fields(task, plan, templar, &vars, &mut loop_error, warnings) {
+        let fields = match render_fields(
+            task,
+            plan,
+            templar,
+            &vars,
+            &fields::Noting {
+                prepare: crate::profile::next_prepare(),
+                host,
+                later_item: index > 0,
+                loop_names: [
+                    task.loop_var.as_str(),
+                    task.index_var.as_deref().unwrap_or_default(),
+                    "ansible_loop",
+                ],
+            },
+            &mut loop_error,
+            warnings,
+        ) {
             Ok(fields) => fields,
             Err(err) if element.is_some() => Fields::failed(item_failure(task, &err)),
             Err(err) => return Err(err),

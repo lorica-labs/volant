@@ -192,7 +192,7 @@ fn graph(
                 .collect(),
         };
         vars.iter()
-            .map(|(name, value)| Ok(format!("{{{name} = {}}}", py_str(&revealed(value)?))))
+            .map(|(name, value)| Ok(format!("{{{name} = {}}}", shown(value)?)))
             .collect()
     };
     let text = match inventory.graph(root, &mut lines) {
@@ -227,35 +227,47 @@ fn graph(
     Ok(0)
 }
 
-/// A value as `--graph --vars` shows it: a `!vault` value decrypted and an `!unsafe` string as its
-/// text. `Err` carries the failure's message, which names where the value is written.
-fn revealed(value: &Value) -> Result<Value, String> {
-    Ok(match value {
-        Value::String(text) => {
-            if let Some(cipher) = crate::yaml::vault_text(text) {
-                let plain = crate::vault::reveal(&cipher)
-                    .map_err(|reason| crate::vault::undecryptable(&cipher, &reason))?;
-                Value::String(plain)
-            } else if let Some(plain) = crate::yaml::unsafe_text(text) {
-                Value::String(plain)
-            } else {
-                value.clone()
-            }
+/// Python's `str()` of a value as `--graph --vars` shows it. A `!vault` value that is the
+/// variable itself is decrypted, with the failure's message when it cannot be; one inside a list
+/// or a mapping is left as the reference's `repr` shows it, `EncryptedString(ciphertext=...)`.
+fn shown(value: &Value) -> Result<String, String> {
+    if let Value::String(text) = value {
+        if let Some(cipher) = crate::yaml::vault_text(text) {
+            return crate::vault::reveal(&cipher)
+                .map_err(|reason| crate::vault::undecryptable(&cipher, &reason));
         }
-        Value::Array(items) => Value::Array(items.iter().map(revealed).collect::<Result<_, _>>()?),
-        Value::Object(map) => Value::Object(
-            map.iter()
-                .map(|(k, v)| Ok::<_, String>((k.clone(), revealed(v)?)))
-                .collect::<Result<_, _>>()?,
-        ),
-        other => other.clone(),
-    })
+        if let Some(plain) = crate::yaml::unsafe_text(text) {
+            return Ok(plain);
+        }
+        return Ok(text.clone());
+    }
+    Ok(nested(value))
 }
 
-/// Python's `str()` of a value.
-fn py_str(value: &Value) -> String {
+/// Python's `repr` of a value inside a container.
+fn nested(value: &Value) -> String {
+    let quoted = |text: &str| crate::playbook::python_repr(&Value::String(text.to_string()));
     match value {
-        Value::String(text) => text.clone(),
+        Value::String(text) => {
+            if let Some(cipher) = crate::yaml::vault_text(text) {
+                format!("EncryptedString(ciphertext={})", quoted(&cipher))
+            } else if let Some(plain) = crate::yaml::unsafe_text(text) {
+                quoted(&plain)
+            } else {
+                quoted(text)
+            }
+        }
+        Value::Array(items) => format!(
+            "[{}]",
+            items.iter().map(nested).collect::<Vec<_>>().join(", ")
+        ),
+        Value::Object(map) => format!(
+            "{{{}}}",
+            map.iter()
+                .map(|(k, v)| format!("{}: {}", quoted(k), nested(v)))
+                .collect::<Vec<_>>()
+                .join(", ")
+        ),
         other => crate::playbook::python_repr(other),
     }
 }
@@ -276,7 +288,10 @@ pub(super) fn load(
             Note::Verbose(level, text) => out.verbose(*level, text),
             Note::Warning(text) => out.warning(text, false),
             Note::Error(text) => eprintln!("[ERROR]: {text}"),
-            Note::Deprecation(text) => crate::playbook::print_deprecation(text),
+            // A source's note ends with the newline the block needs; the printer adds its own.
+            Note::Deprecation(text) => {
+                crate::playbook::print_deprecation(text.strip_suffix('\n').unwrap_or(text));
+            }
         }
     }
     if let Some(fatal) = loaded.error {

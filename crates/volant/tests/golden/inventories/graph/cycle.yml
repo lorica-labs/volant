@@ -1,0 +1,8 @@
+all:
+  children:
+    a:
+      children:
+        b:
+          children:
+            a: {}
+          hosts: {h1: {}}

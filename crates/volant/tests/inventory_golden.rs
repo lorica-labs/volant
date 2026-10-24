@@ -131,7 +131,7 @@ fn the_command_prints_the_bytes_the_reference_printed() {
                 if (code, stdout.as_str()) != wanted {
                     failures.push(format!("{name}: {key} exit {code}\n{stdout}"));
                 }
-                if case["cli_only"] == true && stderr != want["stderr"].as_str().unwrap() {
+                if stderr != want["stderr"].as_str().unwrap() {
                     failures.push(format!("{name}: {key} stderr {stderr:?}"));
                 }
             }

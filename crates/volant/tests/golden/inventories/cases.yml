@@ -106,3 +106,5 @@ yaml_non_ascii: {sources: [yaml_non_ascii.yml]}
 spec_example: {sources: [spec/hosts.ini], cli: true, graph_groups: [web]}
 values: {sources: [values.yml], cli: true}
 graph: {sources: [graph/inv.yml], cli: true, args: [--vault-password-file, graph/pw], graph_groups: [a, all, ungrouped, nosuch, h1]}
+graph_nested: {sources: [graph/nested.yml], cli: true}
+graph_cycle: {sources: [graph/cycle.yml]}

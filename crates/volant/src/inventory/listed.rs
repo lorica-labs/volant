@@ -139,7 +139,8 @@ impl Inventory {
                 .unwrap_or_default()
         };
         for child in children {
-            // A group that is its own ancestor is printed once, where the walk met it first.
+            // The sources refuse a group that would be its own ancestor, as the reference does, so this
+            // only guards the walk.
             if path.contains(&child) {
                 continue;
             }

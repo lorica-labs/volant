@@ -3562,6 +3562,117 @@
       ],
       "stderr": ""
     },
+    "graph_cycle": {
+      "args": [],
+      "cli_only": false,
+      "env": {},
+      "graphs": {
+        "graph": {
+          "rc": 0,
+          "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/graph/cycle.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/graph/cycle.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/graph/cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Adding group 'b' as child to 'a' creates a recursive dependency loop.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nAdding group 'b' as child to 'a' creates a recursive dependency loop.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/graph/cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/graph/cycle.yml\n\n[WARNING]: Unable to parse <golden-tmp>/graph/cycle.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n",
+          "stdout": "@all:\n  |--@ungrouped:\n"
+        },
+        "graph_vars": {
+          "rc": 0,
+          "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/graph/cycle.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/graph/cycle.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/graph/cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Adding group 'b' as child to 'a' creates a recursive dependency loop.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nAdding group 'b' as child to 'a' creates a recursive dependency loop.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/graph/cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/graph/cycle.yml\n\n[WARNING]: Unable to parse <golden-tmp>/graph/cycle.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n",
+          "stdout": "@all:\n  |--@ungrouped:\n"
+        }
+      },
+      "host": null,
+      "hosts": [],
+      "list": {
+        "_meta": {
+          "hostvars": {},
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        }
+      },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    }\n}\n",
+      "needs": [],
+      "nosuch": null,
+      "rc": 0,
+      "sources": [
+        "graph/cycle.yml"
+      ],
+      "stderr": "[WARNING]: Failed to parse inventory with 'auto' plugin: no root 'plugin' key found, '<golden-tmp>/graph/cycle.yml' is not a valid YAML inventory plugin config file\n\nFailed to parse inventory with 'auto' plugin.\n\n<<< caused by >>>\n\nno root 'plugin' key found, '<golden-tmp>/graph/cycle.yml' is not a valid YAML inventory plugin config file\nOrigin: <inventory plugin 'auto' with source '<golden-tmp>/graph/cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'yaml' plugin: Adding group 'b' as child to 'a' creates a recursive dependency loop.\n\nFailed to parse inventory with 'yaml' plugin.\n\n<<< caused by >>>\n\nAdding group 'b' as child to 'a' creates a recursive dependency loop.\nOrigin: <inventory plugin 'yaml' with source '<golden-tmp>/graph/cycle.yml'>\n\n[WARNING]: Failed to parse inventory with 'ini' plugin: Failed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\n\nFailed to parse inventory with 'ini' plugin.\n\n<<< caused by >>>\n\nFailed to parse inventory: Invalid host pattern 'all:' supplied, ending in ':' is not allowed, this character is reserved to provide a port.\nOrigin: <golden-tmp>/graph/cycle.yml\n\n[WARNING]: Unable to parse <golden-tmp>/graph/cycle.yml as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n"
+    },
+    "graph_nested": {
+      "args": [],
+      "cli_only": true,
+      "env": {},
+      "graphs": {
+        "graph": {
+          "rc": 0,
+          "stderr": "",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--h1\n"
+        },
+        "graph_vars": {
+          "rc": 0,
+          "stderr": "",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--h1\n  |  |  |--{dct = {'k': EncryptedString(ciphertext='$ANSIBLE_VAULT;1.1;AES256\\n353337306365643833613234636236\\n303134626564623861306131656532\\n313138633139363263333562646535\\n6564366264623264630a6365656566\\n3762\\n'), 'u': '{{ raw }}'}}\n  |  |  |--{lst = [1, EncryptedString(ciphertext='$ANSIBLE_VAULT;1.1;AES256\\n353337306365643833613234636236\\n303134626564623861306131656532\\n313138633139363263333562646535\\n6564366264623264630a6365656566\\n3762\\n'), '{{ raw }}']}\n"
+        }
+      },
+      "host": {
+        "name": "h1",
+        "rc": 0,
+        "stdout": "{\n    \"dct\": {\n        \"k\": {\n            \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n353337306365643833613234636236\\n303134626564623861306131656532\\n313138633139363263333562646535\\n6564366264623264630a6365656566\\n3762\\n\"\n        },\n        \"u\": \"{{ raw }}\"\n    },\n    \"lst\": [\n        1,\n        {\n            \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n353337306365643833613234636236\\n303134626564623861306131656532\\n313138633139363263333562646535\\n6564366264623264630a6365656566\\n3762\\n\"\n        },\n        \"{{ raw }}\"\n    ]\n}\n"
+      },
+      "hosts": [
+        "h1"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "h1": {
+              "dct": {
+                "k": {
+                  "__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256\n353337306365643833613234636236\n303134626564623861306131656532\n313138633139363263333562646535\n6564366264623264630a6365656566\n3762\n"
+                },
+                "u": {
+                  "__ansible_unsafe": "{{ raw }}"
+                }
+              },
+              "lst": [
+                1,
+                {
+                  "__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256\n353337306365643833613234636236\n303134626564623861306131656532\n313138633139363263333562646535\n6564366264623264630a6365656566\n3762\n"
+                },
+                {
+                  "__ansible_unsafe": "{{ raw }}"
+                }
+              ]
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "h1"
+          ]
+        }
+      },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"h1\": {\n                \"dct\": {\n                    \"k\": {\n                        \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n353337306365643833613234636236\\n303134626564623861306131656532\\n313138633139363263333562646535\\n6564366264623264630a6365656566\\n3762\\n\"\n                    },\n                    \"u\": {\n                        \"__ansible_unsafe\": \"{{ raw }}\"\n                    }\n                },\n                \"lst\": [\n                    1,\n                    {\n                        \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n353337306365643833613234636236\\n303134626564623861306131656532\\n313138633139363263333562646535\\n6564366264623264630a6365656566\\n3762\\n\"\n                    },\n                    {\n                        \"__ansible_unsafe\": \"{{ raw }}\"\n                    }\n                ]\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"h1\"\n        ]\n    }\n}\n",
+      "needs": [],
+      "nosuch": {
+        "rc": 5,
+        "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nosuch\n[ERROR]: You must pass a single valid host to --host parameter\n",
+        "stdout": ""
+      },
+      "rc": 0,
+      "sources": [
+        "graph/nested.yml"
+      ],
+      "stderr": ""
+    },
     "host_list": {
       "args": [],
       "cli_only": false,

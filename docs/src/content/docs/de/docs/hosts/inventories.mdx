@@ -1,5 +1,5 @@
 ---
-sourceHash: e261982fee7c
+sourceHash: fc3f00e1fecb
 title: Inventories und der Fact-Cache
 description: Das Inventory-Format, das Volant liest, woher Gruppen- und Hostvariablen kommen, die Grammatik der Host-Muster und wie Facts zwischen Läufen erhalten bleiben.
 ---
@@ -33,6 +33,7 @@ Der Abschnitt `[inventory]` der `ansible.cfg` steuert, wie eine Quelle zugeordne
 - `ignore_extensions` und `ignore_patterns` überspringen Dateien in Verzeichnissen.
 - `unparsed_is_failed` lässt den Lauf fehlschlagen, wenn gar keine Quelle gelesen werden konnte.
 - `any_unparsed_is_failed` lässt den Lauf bei der ersten Quelle fehlschlagen, die kein Plugin lesen konnte.
+- `export` lässt `volant inventory` jede Variable dort behalten, wo sie gesetzt ist, wie es `--export` tut.
 
 Eine Quelle, die kein Plugin liest, wird wie in Ansible mit einer Warnung übersprungen. `-vvv` zeigt, welches Plugin welche Quelle übernommen hat und welche sie abgelehnt haben.
 

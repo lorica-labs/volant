@@ -1,0 +1,40 @@
+# Values one group, one group_vars file or -e gives several hosts, which the YAML dump writes
+# once under an anchor. `ga` and `gb` are reached in the order that numbers `b` before `a`.
+all:
+  vars:
+    top: [9]
+  children:
+    zz:
+      hosts:
+        h1:
+          own: {k: [1]}
+        h2:
+        h3:
+      vars:
+        conf: {port: 80, opts: [a, b], nested: {deep: [1, 2]}}
+        text: "line1\nline2\n"
+        long: "aaaa bbbb cccc dddd eeee ffff gggg hhhh iiii jjjj kkkk llll mmmm nnnn oooo pppp qqqq"
+        nothing: null
+        empty_list: []
+        empty_map: {}
+        uni: "café ü"
+    ga:
+      hosts:
+        h1:
+        h3:
+      vars:
+        a: [1]
+    gb:
+      hosts:
+        h1:
+        h2:
+      vars:
+        b: [2]
+      children:
+        gc:
+          hosts:
+            h4:
+    gd:
+      children:
+        gc:
+    gempty:

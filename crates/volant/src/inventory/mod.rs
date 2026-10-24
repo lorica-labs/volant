@@ -19,7 +19,7 @@ mod toml;
 mod unsafe_text;
 mod yaml;
 
-pub use listed::GraphItem;
+pub use listed::{GraphItem, VarsOf};
 pub use patterns::Resolution;
 
 use std::collections::{BTreeMap, HashMap, HashSet};

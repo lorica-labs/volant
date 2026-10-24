@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The `inventory` command: what `ansible-inventory --list` and `--host` print.
+//! The `inventory` command: what `ansible-inventory --list`, `--host` and `--graph` print, as
+//! JSON or YAML.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
@@ -12,12 +13,14 @@ use serde_json::Value;
 use super::announce::{announce, inventory_sources};
 use crate::bridge::Bridge;
 use crate::config::Config;
-use crate::inventory::{GraphItem, Inventory, Note, load_sources_with};
+use crate::inventory::{GraphItem, Inventory, Note, VarsOf, load_sources_with};
 use crate::render::Renderer;
 use crate::stats::error_code;
-use crate::vars::VarStore;
+use crate::template::{inventory_yaml, yaml_mapping, yaml_node};
+use crate::vars::{ListedOrigin, VarStore};
 
-/// The arguments of `ansible-inventory` this release reads. `--yaml`, `--toml` and `--export` are not here, so clap refuses them by name.
+/// The arguments of `ansible-inventory` this release reads. `--toml` is not here, so clap refuses
+/// it by name.
 #[derive(Args, Debug)]
 pub struct InventoryArgs {
     /// Print the whole inventory as JSON.
@@ -32,6 +35,13 @@ pub struct InventoryArgs {
     /// With `--graph`, add the variables of every host and group. The other actions ignore it.
     #[arg(long)]
     vars: bool,
+    /// Print `--list` and `--host` as YAML instead of JSON.
+    #[arg(short = 'y', long)]
+    yaml: bool,
+    /// Keep each variable on the host or group that sets it instead of folding the groups'
+    /// variables into every host. `--host` then prints only the host's own variables.
+    #[arg(long)]
+    export: bool,
     /// Inventory source: a file, a directory, or a comma-separated host list. Repeatable; the
     /// sources are merged in order.
     #[arg(
@@ -132,12 +142,26 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
         &base,
         extra,
     )?;
-    let vars_of =
-        |host: &str| -> BTreeMap<String, Value> { store.listed_vars(host).into_iter().collect() };
+    // `[inventory] export` makes `--export` the default, which the flag cannot then turn off.
+    let export = args.export || config.inventory_plugins.export;
     if let Some(group) = &args.graph {
-        return graph(args, group.as_deref().unwrap_or("all"), &loaded, &store);
+        return graph(
+            args,
+            group.as_deref().unwrap_or("all"),
+            &loaded,
+            &store,
+            export,
+        );
     }
-    let document = if let Some(name) = &args.host {
+    let vars_of = |host: &str| -> BTreeMap<String, Value> {
+        let vars = if export {
+            store.exported_vars(host)
+        } else {
+            store.listed_vars(host)
+        };
+        vars.into_iter().collect()
+    };
+    let text = if let Some(name) = &args.host {
         // The reference leaves `--limit` out of `--host`.
         let resolution = loaded.resolve(name);
         if let Some(bad) = &resolution.invalid {
@@ -153,38 +177,123 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
             eprintln!("[ERROR]: You must pass a single valid host to --host parameter");
             return Ok(5);
         };
-        loaded.host_dump(&host.name, &vars_of)
+        if args.yaml {
+            inventory_yaml(&yaml_node(&Value::Object(
+                vars_of(&host.name).into_iter().collect(),
+            )))
+        } else {
+            to_json(&loaded.host_dump(&host.name, &vars_of))?
+        }
     } else {
-        let limited = match &args.limit {
-            Some(pattern) => match limit(&loaded, pattern, &mut out) {
-                Ok(inventory) => inventory,
-                Err(code) => return Ok(code),
-            },
-            None => loaded,
-        };
-        limited.dump_with(&vars_of)
+        match list_text(args, &loaded, &store, export, &vars_of, &mut out)? {
+            Ok(text) => text,
+            Err(code) => return Ok(code),
+        }
     };
-    let text = to_json(&document)?;
     match &args.output {
         // The reference writes the text as it is, without the newline `print` adds.
         Some(path) => std::fs::write(path, text).map_err(|err| write_failure(path, &err))?,
+        // `display` adds a newline to a text that does not end with one.
+        None if text.ends_with('\n') => print!("{text}"),
         None => println!("{text}"),
     }
     Ok(0)
 }
 
-/// `--graph`: the tree to standard output or `--output`. `--limit` and `--yaml` leave it as it is.
+/// What `--list` prints, as JSON or YAML, or the exit code of a `--limit` that failed.
+fn list_text(
+    args: &InventoryArgs,
+    loaded: &Inventory,
+    store: &VarStore,
+    export: bool,
+    vars_of: &VarsOf<'_>,
+    out: &mut Renderer,
+) -> anyhow::Result<Result<String, i32>> {
+    let limited;
+    let shown = match &args.limit {
+        Some(pattern) => match limit(loaded, pattern, out) {
+            Ok(inventory) => {
+                limited = inventory;
+                &limited
+            }
+            Err(code) => return Ok(Err(code)),
+        },
+        None => loaded,
+    };
+    let group_vars = |name: &str| -> BTreeMap<String, Value> {
+        store
+            .listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect())
+            .into_iter()
+            .collect()
+    };
+    Ok(Ok(if args.yaml {
+        inventory_yaml(&yaml_list(shown, store, export, vars_of, &group_vars))
+    } else {
+        let group_vars: &VarsOf<'_> = &group_vars;
+        to_json(&shown.dump_with(vars_of, export.then_some(group_vars)))?
+    }))
+}
+
+/// The document `--list --yaml` dumps. Without `--export`, a variable that one group, one
+/// `group_vars` file or `-e` gives several hosts is one value in the reference, which PyYAML
+/// writes once under an anchor: here it is one node, built the first time it is met.
+fn yaml_list(
+    inventory: &Inventory,
+    store: &VarStore,
+    export: bool,
+    vars_of: &VarsOf<'_>,
+    group_vars: &VarsOf<'_>,
+) -> minijinja::Value {
+    let mut shared: HashMap<(ListedOrigin, String, String), minijinja::Value> = HashMap::new();
+    let mut host_vars = |host: &str| {
+        yaml_mapping(vars_of(host).into_iter().map(|(name, value)| {
+            let key = if export {
+                None
+            } else {
+                match store.listed_origin(host, &name) {
+                    ListedOrigin::Host => None,
+                    ListedOrigin::InventoryGroup => inventory
+                        .group_setting(host, &name)
+                        .map(|group| (ListedOrigin::InventoryGroup, group.to_string())),
+                    origin => Some((origin, String::new())),
+                }
+            };
+            let node = match key {
+                Some((origin, group)) => shared
+                    .entry((origin, group, name.clone()))
+                    .or_insert_with(|| yaml_node(&value))
+                    .clone(),
+                None => yaml_node(&value),
+            };
+            (name, node)
+        }))
+    };
+    let mut groups = |name: &str| {
+        let vars = if export {
+            group_vars(name)
+        } else {
+            BTreeMap::new()
+        };
+        (!vars.is_empty()).then(|| yaml_node(&Value::Object(vars.into_iter().collect())))
+    };
+    inventory.yaml_document(&mut host_vars, &mut groups)
+}
+
+/// `--graph`: the tree to standard output or `--output`. `--limit` and `--yaml` leave it as it is;
+/// with `--export`, a host's lines are its own variables only.
 fn graph(
     args: &InventoryArgs,
     root: &str,
     inventory: &Inventory,
     store: &VarStore,
+    export: bool,
 ) -> anyhow::Result<i32> {
     let mut lines = |item: GraphItem<'_>| -> Result<Vec<String>, String> {
         if !args.vars {
             return Ok(Vec::new());
         }
         let vars: BTreeMap<String, Value> = match item {
+            GraphItem::Host(name) if export => store.exported_vars(name).into_iter().collect(),
             GraphItem::Host(name) => store.listed_vars(name).into_iter().collect(),
             GraphItem::Group(name) => store
                 .listed_group_vars(name, &inventory.group_vars_of(name).into_iter().collect())

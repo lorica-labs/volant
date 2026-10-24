@@ -6,6 +6,8 @@ use minijinja::{Error, ErrorKind, Value};
 
 use super::scalar::{analyze, is_break, is_collection, is_printable, scalar_text};
 
+mod anchors;
+use anchors::Anchors;
 mod block;
 use block::lossy;
 
@@ -37,7 +39,9 @@ pub(super) fn dump(
     };
     let sort_keys = kwargs.get::<Option<bool>>("sort_keys")?.unwrap_or(true);
     kwargs.assert_all_used()?;
-    Ok(emit(value, indent, width, flow_style, sort_keys, false))
+    Ok(emit(
+        value, indent, width, flow_style, sort_keys, false, false,
+    ))
 }
 
 /// The dump of `value` with the settings read. `literal` is the callbacks' dumper
@@ -50,6 +54,7 @@ pub(super) fn emit(
     flow_style: Option<bool>,
     sort_keys: bool,
     literal: bool,
+    inventory: bool,
 ) -> String {
     // PyYAML's own bounds on the two settings: anything outside them is its default.
     let best_indent = if (2..10).contains(&indent) { indent } else { 2 };
@@ -67,7 +72,12 @@ pub(super) fn emit(
         flow_style,
         sort_keys,
         literal,
+        inventory,
+        anchors: Anchors::default(),
     };
+    if inventory {
+        e.anchor_node(value);
+    }
     // The value itself, not its JSON form: JSON has no `inf` or `nan`, and no integer keys.
     e.node(value, false, false);
     // Document end. libyaml writes no `...` after an open-ended plain root scalar.
@@ -95,10 +105,17 @@ struct Emitter {
     flow_style: Option<bool>,
     sort_keys: bool,
     literal: bool,
+    /// `ansible-inventory`'s dumper: anchors for a node reached twice, `!vault` for vaulted
+    /// text, text marked unsafe written as the text.
+    inventory: bool,
+    anchors: Anchors,
 }
 
 impl Emitter {
     fn node(&mut self, v: &Value, mapping: bool, simple_key: bool) {
+        if self.inventory && self.alias(v) {
+            return;
+        }
         match v.kind() {
             ValueKind::Map => {
                 let entries = self.entries(v);
@@ -252,6 +269,12 @@ impl Emitter {
     }
 
     fn scalar(&mut self, v: &Value, simple_key: bool) {
+        if !(self.inventory && self.tagged_scalar(v, simple_key)) {
+            self.scalar_text(v, simple_key);
+        }
+    }
+
+    fn scalar_text(&mut self, v: &Value, simple_key: bool) {
         let (mut text, implicit) = scalar_text(v);
         // `_should_use_block`: Python's line breaks, which leave out `\r`.
         let block = self.literal

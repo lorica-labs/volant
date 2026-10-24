@@ -1,5 +1,5 @@
 ---
-sourceHash: dc0a39319bb0
+sourceHash: f541f96267bc
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -162,6 +162,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 
 <Option name="any_unparsed_is_failed" id="inventory-any-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED">
   Fait échouer l'exécution dès la première source qu'aucun plugin n'a pu lire.
+</Option>
+
+<Option name="export" id="inventory-export" default="false" env="ANSIBLE_INVENTORY_EXPORT">
+  Fait garder à `volant inventory` chaque variable là où elle est définie, comme le fait `--export`. `--export` l'active pour une exécution ; rien ne le désactive depuis la ligne de commande, comme dans `ansible-inventory`. Voir [la commande inventory](/fr/docs/reference/cli/inventory/).
 </Option>
 
 ## [inventory_plugin_script]

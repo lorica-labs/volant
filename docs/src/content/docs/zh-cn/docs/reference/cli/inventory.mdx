@@ -1,18 +1,18 @@
 ---
-sourceHash: 2c4ece9bf821
+sourceHash: a95d7480c0e1
 title: volant inventory
-description: 以 JSON 打印 inventory，与 ansible-inventory 一样。
+description: 以 JSON 或 YAML 打印 inventory，与 ansible-inventory 一样。
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant inventory` 以 JSON 打印 inventory，与 `ansible-inventory` 一样。以 `ansible-inventory` 的名字启动时（见 [shims 命令](/zh-cn/docs/reference/cli/shims/)），行为相同。
+`volant inventory` 以 JSON 或 YAML 打印 inventory，与 `ansible-inventory` 一样。以 `ansible-inventory` 的名字启动时（见 [shims 命令](/zh-cn/docs/reference/cli/shims/)），行为相同。
 
 ```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y] [--export] [--output FILE] [-v]
 ```
 
-`--list`、`--host` 和 `--graph` 必须恰好给出一个。`--yaml`、`--toml` 和 `--export` 暂时还没有，是未知选项。
+`--list`、`--host` 和 `--graph` 必须恰好给出一个。`--toml` 暂时还没有，是未知选项。
 
 <Option name="--list" arg="">
   打印每台主机及其变量（已合并 `group_vars` 和 `host_vars` 文件以及所属组的变量），然后是各个组及其 `hosts` 和 `children`。键按字母顺序排序，缩进为四个空格，非 ASCII 文本按原样写出。属于数据的字符串打印为 `{"__ansible_unsafe": "..."}`，`!vault` 值打印为 `{"__ansible_vault": "..."}`；不会解密任何内容。
@@ -30,6 +30,31 @@ volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUB
   与 `--graph` 一起使用时，在每台主机（其合并后的变量）和每个组（它自己的变量，包括 `group_vars` 文件）下面加上 `{name = value}` 行，按名字排序，用 Python 的 `str()` 写出。`!vault` 值会被解密，所以需要 vault 密码，`!unsafe` 文本按原样打印。其他动作会忽略 `--vars`。
 </Option>
 
+<Option name="-y, --yaml" arg="">
+  把 `--list` 和 `--host` 以 YAML 打印，字节与 `ansible-inventory` 一致。`--list` 成为可以读回的 inventory：每个组位于其父组的 `children` 之下，带有它的 `hosts` 及其变量，键已排序。主机在遍历第一次到达时连同变量写出，之后写作 `{}`；已经写过的组是 `{}`，空组被省略。`!vault` 值写作 `!vault |` 加其密文，不会解密。`!unsafe` 文本按普通文本写出。`--graph` 忽略 `--yaml`。
+
+  当多台主机从同一个组、同一个 `group_vars` 文件或 `-e` 得到同一个变量时，参考实现中它们共用一个值，PyYAML 会先用锚点（`&id001`）写出一次，之后写作别名（`*id001`）。Volant 写出相同的锚点和相同的编号。PyYAML 在第二次遇到某个值时才给它编号，所以 `id001` 不一定是文件中的第一个锚点。只有列表和映射会有锚点。
+
+  ```yaml
+  all:
+    children:
+      prod:
+        children:
+          web:
+            hosts:
+              w1:
+                list: &id001
+                - 1
+                - 2
+              w2:
+                list: *id001
+  ```
+</Option>
+
+<Option name="--export" arg="">
+  让每个变量保留在它被设置的地方，而不是把组变量合并进每台主机。`--list` 给每个组一个 `vars` 条目，包含它自己的变量和它的 `group_vars` 文件。每台主机只保留它的 inventory 行和 `host_vars` 文件所设置的内容；额外变量被省略。与 `--yaml` 一起使用时不共用任何值，所以不会出现锚点。与 `--host` 一起使用时，只打印该主机自己的变量。`ansible.cfg` 的 `[inventory]` 小节中的 `export = true`，或 `ANSIBLE_INVENTORY_EXPORT`，会默认开启它。与 `--graph --vars` 一起使用时，主机的行只显示它自己的变量。
+</Option>
+
 <Option name="-l, --limit" arg="SUBSET">
   与 `--list` 一起使用时，只保留匹配该模式的主机。组仍然保留，连同其子组。没有匹配任何内容的模式会发出警告，并打印一个没有主机的 inventory。
 </Option>
@@ -39,7 +64,7 @@ volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUB
 </Option>
 
 <Option name="--output" arg="FILE">
-  把文档写入 `FILE`，不打印任何内容。文件内容与标准输出相同，只是少了最后的换行。
+  把文档写入 `FILE`，不打印任何内容。文件内容与标准输出相同。JSON 文档末尾没有换行；YAML 文档保留它的最后一个换行。
 </Option>
 
 `-i`、`-v` 和 vault 选项的用法与 `volant playbook` 相同。没有选择动作时，命令打印 `No action selected, at least one of --host, --graph or --list needs to be specified.`；给出两个动作时打印 `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`；两者都以退出码 5 结束。

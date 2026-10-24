@@ -56,8 +56,10 @@ script_hostvars_late: {sources: [script_hostvars_late.sh]}
 script_hostvars_late_then_ini: {sources: [script_hostvars_late.sh, one.ini]}
 script_hosts_str: {sources: [script_hosts_str.sh]}
 script_vars_list: {sources: [script_vars_list.sh]}
-# `no_graph`: the reference keeps the malformed group's body as a variable of the group too.
-script_malformed: {sources: [script_malformed.sh], no_graph: true}
+# `no_graph` and `no_export`: the reference keeps the malformed group's body as a variable of the
+# group too. Its `set_variable` takes a name for a group before a host, so the variables of host
+# `m` land on group `m`, which only `--graph --vars` and `--export` show.
+script_malformed: {sources: [script_malformed.sh], no_graph: true, no_export: true}
 script_host_empty: {sources: [script_host_empty.sh]}
 script_host_bad: {sources: [script_host_bad.sh]}
 constructed: {sources: [constructed_base.ini, constructed.yml]}
@@ -108,3 +110,5 @@ values: {sources: [values.yml], cli: true}
 graph: {sources: [graph/inv.yml], cli: true, args: [--vault-password-file, graph/pw], graph_groups: [a, all, ungrouped, nosuch, h1]}
 graph_nested: {sources: [graph/nested.yml], cli: true}
 graph_cycle: {sources: [graph/cycle.yml]}
+shared: {sources: [shared/inv.yml], cli: true}
+shared_extra: {sources: [shared/inv.yml], cli: true, args: [-e, '{"ex": [5], "top": [8]}']}

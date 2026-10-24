@@ -19,9 +19,44 @@ enum Command {
     Runtime(RuntimeCommand),
 }
 
+/// Parses the command line. Started under an ansible-core program name, the process behaves as
+/// the matching subcommand and its usage errors name the program as started.
+fn parse() -> Cli {
+    #[cfg(unix)]
+    {
+        use clap::{CommandFactory, FromArgMatches};
+        use std::ffi::OsString;
+
+        let mut argv = std::env::args_os();
+        let program = argv.next().unwrap_or_default();
+        if let Some(sub) = volant::cli::subcommand_for(&program) {
+            let started = std::path::Path::new(&program)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+                .unwrap_or_default();
+            let args = [OsString::from("volant"), OsString::from(sub)]
+                .into_iter()
+                .chain(argv);
+            let parsed = Cli::command()
+                .bin_name(started.clone())
+                .try_get_matches_from(args)
+                .and_then(|matches| Cli::from_arg_matches(&matches));
+            return parsed.unwrap_or_else(|err| {
+                if err.use_stderr() {
+                    eprint!("{started}: {}", err.render());
+                } else {
+                    print!("{}", err.render());
+                }
+                std::process::exit(err.exit_code());
+            });
+        }
+    }
+    Cli::parse()
+}
+
 fn main() {
     volant::askpass::answer_if_asked();
-    let code = match Cli::parse().command {
+    let code = match parse().command {
         Command::Playbook(args) => volant::cli::run(*args),
         Command::Runtime(command) => volant::cli::runtime(command),
     };

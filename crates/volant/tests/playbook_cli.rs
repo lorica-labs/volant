@@ -7945,3 +7945,34 @@ fn a_name_a_host_printed_stays_text_on_every_route(#[case] route: &str) {
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
+
+/// Started through a link named `ansible-playbook`, the binary answers as `volant playbook`.
+#[cfg(unix)]
+#[test]
+fn a_link_named_ansible_playbook_behaves_as_the_playbook_subcommand() {
+    let dir = tempfile::tempdir().unwrap();
+    let link = dir.path().join("ansible-playbook");
+    std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_volant"), &link).unwrap();
+    let inventory = fixture("inventory.ini");
+    let site = fixture("site.yml");
+    let run = |mut cmd: Command, extra: &[&str]| {
+        cmd.args(extra)
+            .env("NO_COLOR", "1")
+            .env("VOLANT_RUNTIME", "system")
+            .output()
+            .unwrap()
+    };
+    let by_name = run(Command::new(&link), &["-i", &inventory, &site]);
+    let mut subcommand = Command::new(env!("CARGO_BIN_EXE_volant"));
+    subcommand.arg("playbook");
+    let by_subcommand = run(subcommand, &["-i", &inventory, &site]);
+    assert_eq!(by_name.status.code(), Some(0));
+    assert_eq!(by_name.status.code(), by_subcommand.status.code());
+    assert_eq!(by_name.stdout, by_subcommand.stdout);
+    assert_eq!(by_name.stderr, by_subcommand.stderr);
+
+    let bad = run(Command::new(&link), &["--no-such-option"]);
+    assert_eq!(bad.status.code(), Some(2));
+    let text = String::from_utf8_lossy(&bad.stderr);
+    assert!(text.starts_with("ansible-playbook: error:"), "{text}");
+}

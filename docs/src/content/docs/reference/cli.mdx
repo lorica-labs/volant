@@ -12,7 +12,9 @@ volant runtime <install|pack|status|path|remove>
 volant --version
 ```
 
-`volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know. Playbooks given together run in order, and each one prints its own recap.
+`volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know.
+
+On Linux and macOS the `volant` binary also dispatches on the name it was started as (the file name of `argv[0]`). Started as `ansible-playbook`, through a symlink or a hard link, it behaves as `volant playbook` with the same arguments, output and exit codes. A usage error exits with 2 and names the program as started. Any other name keeps the usual `volant` behaviour. Playbooks given together run in order, and each one prints its own recap.
 
 Where an option has an `ansible.cfg` key or an environment variable, the entry names it. The option wins over both; [Configuration](/reference/configuration/) explains the order.
 

@@ -1577,9 +1577,13 @@ fn blob_caches(dir: &Path) -> Vec<PathBuf> {
 
 /// The name of the one entry a cache holds, asserted to be the union: a payload name, whose bytes
 /// are a zip. A staged file is neither a zip nor, once its connection has ended, anywhere at all.
+/// The code the Python server compiled from the union sits beside it and is not counted.
 fn the_union_in(cache: &Path) -> String {
     let entries = as_root(&["ls", "-A", &cache.display().to_string()]);
-    let entries: Vec<&str> = entries.lines().collect();
+    let entries: Vec<&str> = entries
+        .lines()
+        .filter(|name| !name.ends_with(".code"))
+        .collect();
     assert_eq!(
         entries.len(),
         1,

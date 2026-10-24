@@ -445,6 +445,116 @@ class KnownSpec:
         return self.spec
 
 
+class CodeCache:
+    """The payload's modules compiled, kept in a file beside the payload for the next server.
+
+    The payload is a zip of sources, and zipimport writes no bytecode: measured on `target`, every
+    server start compiled module_utils again, 150 ms of the 320 its imports took. The payload is
+    named by its hash and never changes, so its compiled code is kept per interpreter
+    (`cache_tag`, `optimize`), in a file only this user can write, beside a payload directory only
+    this user can write; anything else, or a file this Python did not write, is not read. The
+    code keeps its file names, so `__file__` and tracebacks name the payload as before.
+    """
+
+    def __init__(self, blob, importer):
+        tag = sys.implementation.cache_tag
+        if sys.flags.optimize:
+            tag += "-O%d" % sys.flags.optimize
+        self.path = "%s.%s.code" % (blob, tag)
+        self.dirty = False
+        self.entries = self.load()
+        cache = self
+
+        class Importer(importer):
+            def compiled(self, fullname):
+                entry = cache.entries.get(fullname)
+                if entry is None:
+                    code, _, modpath = zipimport_module_code(self, fullname)
+                    entry = cache.entries[fullname] = (modpath, code)
+                    cache.dirty = True
+                return entry
+
+            def get_code(self, fullname):
+                return self.compiled(fullname)[1]
+
+            # Python 3.12 builds a spec from the file name, and zipimport compiles the whole
+            # source to give it.
+            def get_filename(self, fullname):
+                return self.compiled(fullname)[0]
+
+        def hook(path):
+            if path == blob or path.startswith(blob + os.sep):
+                return Importer(path)
+            raise ImportError("not the payload", path=path)
+
+        sys.path_hooks.insert(0, hook)
+        sys.path_importer_cache.pop(blob, None)
+
+    @staticmethod
+    def install(blob):
+        """The cache for `blob`, or None when its directory is not this user's alone or this
+        Python's zipimport is not the one it was written against."""
+        import zipimport
+
+        global zipimport_module_code
+        zipimport_module_code = getattr(zipimport, "_get_module_code", None)
+        if zipimport_module_code is None or not private(os.path.dirname(blob) or "."):
+            return None
+        return CodeCache(blob, zipimport.zipimporter)
+
+    def load(self):
+        import marshal
+
+        try:
+            fd = os.open(self.path, os.O_RDONLY | getattr(os, "O_NOFOLLOW", 0))
+        except OSError:
+            return {}
+        with os.fdopen(fd, "rb") as source:
+            if not private_stat(os.fstat(source.fileno())):
+                return {}
+            try:
+                magic, entries = marshal.load(source)
+            except (EOFError, ValueError, TypeError):
+                return {}
+        if magic != importlib.util.MAGIC_NUMBER or not isinstance(entries, dict):
+            return {}
+        return entries
+
+    def save(self):
+        """Writes what this server compiled, once a result is sent: no task waits for it."""
+        import marshal
+
+        if not self.dirty:
+            return
+        tmp = "%s.%d.tmp" % (self.path, os.getpid())
+        try:
+            fd = os.open(tmp, os.O_WRONLY | os.O_CREAT | os.O_EXCL, 0o600)
+            with os.fdopen(fd, "wb") as out:
+                marshal.dump((importlib.util.MAGIC_NUMBER, self.entries), out)
+            os.replace(tmp, self.path)
+            self.dirty = False
+        except (OSError, ValueError):
+            try:
+                os.unlink(tmp)
+            except OSError:
+                pass
+
+
+zipimport_module_code = None
+
+
+def private_stat(st):
+    """Whether `st` is this user's and nobody else can write it."""
+    return st.st_uid == os.geteuid() and not st.st_mode & 0o022
+
+
+def private(path):
+    try:
+        return private_stat(os.stat(path))
+    except OSError:
+        return False
+
+
 def fingerprint(blob):
     """The modification time of every entry on `sys.path`: what Python itself watches to see a
     module appear, and what installing, upgrading or removing a package changes. The payload is
@@ -536,6 +646,7 @@ def run_child(request, blob, loader, basic, spec, out_w, err_w, timing_w, forked
 
 def main():
     blob = sys.argv[1]
+    cache = CodeCache.install(blob)
     sys.path.insert(0, blob)
     from ansible.module_utils._internal._ansiballz import _loader
 
@@ -617,6 +728,9 @@ def main():
             spec = preimport(request["module_fqn"], blob)
             if spec is not None:
                 specs[request["module_fqn"]] = spec
+        if cache is not None:
+            cache.save()
+        if preload:
             write_frame(stdout, {"preloaded": True})
 
 

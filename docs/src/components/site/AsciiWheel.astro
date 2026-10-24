@@ -245,7 +245,7 @@ const { cols = 120, rows = 60, mode = 'hero' } = Astro.props;
     transition: color 1.6s var(--ease);
   }
   .is-lit pre {
-    color: var(--brand);
+    color: color-mix(in srgb, var(--brand) 70%, var(--brand-hi));
   }
   pre :global(.s-ok) {
     color: var(--state-ok);

@@ -13,6 +13,7 @@ export const nav: NavLink[] = [
   { label: 'Performance', href: '/performance/', section: '/performance/' },
   { label: 'Compatibility', href: '/compatibility/', section: '/compatibility/' },
   { label: 'Community', href: '/community/', section: '/community/' },
+  { label: 'Blog', href: '/blog/', section: '/blog/' },
 ];
 
 /** The label of the section `path` belongs to, if any. */

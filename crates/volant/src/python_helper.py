@@ -325,10 +325,13 @@ def copies(entries, root, home_of):
     `ansible_collections/<ns>/<name>/...` under `home_of("<ns>.<name>")`. The package
     `__init__.py` files ansible-core writes itself are let through: `module_common.py`, which
     `track_core` covers, writes `ansible/` and `ansible/module_utils/`, and every collection package
-    down to `plugins/<kind>/` (fewer than six dotted parts, `CollectionModuleUtilLocator`). Anything
-    else - a deeper package `__init__.py` ansible-core copies, a `module_utils` from a configured
-    directory, a module from a `library` path - answers False, and the union is then rebuilt on
-    every run rather than kept on a guess.
+    down to `plugins/<kind>/` (fewer than six dotted parts, `CollectionModuleUtilLocator`). It also
+    writes an empty one for a deeper package directory that has none on disk, a namespace package
+    such as community.general's `module_utils/_mh/`: that directory is recorded, since adding an
+    `__init__.py` to it later moves its mtime. Anything else - a deeper package `__init__.py`
+    ansible-core copies and that changed, a `module_utils` from a configured directory, a module
+    from a `library` path - answers False, and the union is then rebuilt on every run rather than
+    kept on a guess.
     """
     for name, data in entries.items():
         parts = name.split("/")
@@ -340,9 +343,24 @@ def copies(entries, root, home_of):
             path = os.path.join(home, *parts[3:]) if home else None
         if path is not None and copied(path, data):
             continue
-        if not generated(parts):
-            return False
+        if generated(parts):
+            continue
+        if path is not None and namespace_init(path, data):
+            track(os.path.dirname(path))
+            continue
+        return False
     return True
+
+
+def namespace_init(path, data):
+    """Whether `data` at `path` is the empty `__init__.py` module_common.py writes for a package
+    directory that exists without one."""
+    return (
+        data == b""
+        and os.path.basename(path) == "__init__.py"
+        and not os.path.lexists(path)
+        and os.path.isdir(os.path.dirname(path))
+    )
 
 
 def generated(parts):
@@ -1552,7 +1570,18 @@ def check_sources():
             os.path.join(core, "basic.py"),
         ], TRACKED
         assert TRACKED[os.path.join(core, "basic.py")][0] == 5, TRACKED
+        # A package directory with no `__init__.py`, which module_common.py fills with an empty
+        # one: the directory is what an added `__init__.py` would change.
+        namespace = os.path.join(home, "plugins", "module_utils", "_mh")
+        os.makedirs(namespace)
+        TRACKED.clear()
+        assert copies(
+            {"ansible_collections/ns/c/plugins/module_utils/_mh/__init__.py": b""}, site, homes
+        ), TRACKED
+        assert sorted(TRACKED) == [namespace], TRACKED
         for odd in (
+            # The same empty init for a directory that is not there.
+            {"ansible_collections/ns/c/plugins/module_utils/gone/__init__.py": b""},
             {"ansible/module_utils/basic.py": b"other"},
             {"ansible/module_utils/custom.py": b"from a module_utils directory"},
             {"ansible_collections/no/such/plugins/modules/m.py": b"module"},

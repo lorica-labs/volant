@@ -38,7 +38,7 @@ const steps = [
       <div>
         <b class="mono">{share(running(collections), total(collections))}</b>
         <span>
-          of the collections’ modules and plugins: {running(collections).toLocaleString('en')} of
+          of the collections’ modules and plugins: {running(collections).toLocaleString('en')} of{' '}
           {total(collections).toLocaleString('en')}. Most of the {later(collections).toLocaleString('en')} others come
           with Windows and network device support.
         </span>
@@ -71,9 +71,9 @@ const steps = [
                     <div class="row">
                       <span class="name">{label(c.name)}</span>
                       <span class="bar" aria-hidden="true">
-                        <i class="runs" style={`--w: ${(c.runs / all) * 100}%`} />
-                        <i class="partial" style={`--w: ${(c.partial / all) * 100}%`} />
-                        <i class="later" style={`--w: ${((c.later + c.notYet) / all) * 100}%`} />
+                        {c.runs > 0 && <i class="runs" style={`flex-grow: ${c.runs}`} />}
+                        {c.partial > 0 && <i class="partial" style={`flex-grow: ${c.partial}`} />}
+                        {c.later + c.notYet > 0 && <i class="later" style={`flex-grow: ${c.later + c.notYet}`} />}
                       </span>
                       <span class="count mono">
                         {c.runs.toLocaleString('en')}/{all.toLocaleString('en')}
@@ -264,8 +264,11 @@ const steps = [
     gap: 2px;
     height: 0.6rem;
   }
+  /* Each segment grows by its count, so the segments and the gaps between them fill the track
+     exactly and every bar ends at the same place. */
   .bar i {
-    width: var(--w);
+    flex: 0 1 0;
+    min-width: 3px;
     border-radius: 2px;
   }
   .count {

@@ -148,10 +148,23 @@ pre,
   transform: translateX(2px);
 }
 
-/* Sections. */
+/* Sections. Each one carries a soft teal glow from one of its corners, alternating sides down the
+   page, so the dark ground never reads as flat. */
 .section {
+  --glow: color-mix(in srgb, var(--brand) 11%, transparent);
   padding-block: clamp(4.5rem, 9vw, 7rem);
   border-top: 1px solid var(--line);
+  background: radial-gradient(55% 70% at 0% 0%, var(--glow), transparent 72%);
+}
+.section:nth-of-type(even) {
+  background: radial-gradient(55% 70% at 100% 100%, var(--glow), transparent 72%);
+}
+.page-head {
+  position: relative;
+}
+main:has(> .page-head) {
+  background: radial-gradient(70% 38rem at 85% 0%, color-mix(in srgb, var(--brand) 13%, transparent), transparent 75%)
+    no-repeat;
 }
 .section-head {
   max-width: 44rem;

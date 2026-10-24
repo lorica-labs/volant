@@ -306,14 +306,14 @@ fn masked(out: &Output, dest: &Path) -> Vec<String> {
 }
 
 /// `volant pull` against the reference `ansible-pull` of the same interpreter and repository.
-/// Compared: the exit codes, the two header lines of the pull itself (times and the program path
-/// masked; it prints them after its children's output, which it copies unbuffered), the
-/// playbook run from its `PLAY [` line on, and the line of a second pull with `-o`. Not compared:
-/// the checkout's warnings and result. `ansible-pull` copies its children's
-/// standard output and error 10 bytes at a time, so where both hold data at once they cut each
-/// other mid-line, and when that happens depends on timing.
 #[test]
 fn a_pull_prints_what_the_reference_pull_prints() {
+    // Compared: the exit codes, the two header lines of the pull itself (times and the program
+    // path masked; it prints them after its children's output), the playbook run from its
+    // `PLAY [` line on, and the line of a second pull with `-o`. Not compared: the checkout's
+    // warnings and result. `ansible-pull` copies its children's standard output and error 10
+    // bytes at a time, so where both hold data at once they cut each other mid-line, and when
+    // that happens depends on timing.
     let Some(python) = python::reference_python() else {
         return;
     };

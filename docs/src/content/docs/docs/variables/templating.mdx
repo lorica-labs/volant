@@ -1,0 +1,172 @@
+---
+title: Templating
+description: Jinja2 on the controller, strict mode, conditions, the filters, tests and lookups Volant provides, and how template files render.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Your templates work as they do in Ansible, with these exceptions. Volant renders Jinja2 on the controller and adds Ansible's filters, tests and lookups on top.
+
+- Undefined variables are errors, see [Strict by default](#strict-by-default).
+- A filter, test or lookup that Volant does not implement runs in Python, and may need packages installed, see [Filters, tests and lookups that need Python](#filters-tests-and-lookups-that-need-python).
+- A value that came from a managed host is never rendered as a template, see [Values from hosts are never templated](#values-from-hosts-are-never-templated).
+- A few arguments, methods and template-file options are not there yet, see [Not there yet](#not-there-yet) and the [Template language reference](/docs/reference/templates/).
+
+## Strict by default
+
+Templates render in strict mode. An undefined variable is an error, not an empty string, unless you guard it:
+
+```yaml
+- debug:
+    msg: "{{ release | default('latest') }}"
+  when: release is defined or use_latest | bool
+```
+
+A `when` whose value is not a boolean is rejected as well.
+
+An undefined variable or attribute is worded and chained as ansible-core words it: `'nope' is undefined`, or `object of type 'dict' has no attribute 'b'`. In a task argument the message sits under `Finalization of task args for 'module' failed: Error while resolving value for 'arg'`. A read guarded by `default` or `is defined` raises nothing.
+
+## Conditions
+
+`when`, `changed_when`, `failed_when` and `until` take one expression or a list of them. With a list, every expression must hold.
+
+```yaml
+- command: /opt/app/migrate.sh
+  register: migrate
+  changed_when: "'applied' in migrate.stdout"
+  failed_when:
+    - migrate.rc != 0
+    - "'already up to date' not in migrate.stderr"
+```
+
+A condition wrapped in `{{ }}` that renders to a string is evaluated once more as a condition, as ansible-core 2.19 does. With `healthy: "true"` in the play's `vars`, `when: "{{ healthy }}"` runs the task. This second evaluation never happens when the first render read a value from a managed host: the task fails with `Encountered untrusted template or expression.` instead. See [Values from hosts are never templated](#values-from-hosts-are-never-templated).
+
+## Variables that hold templates
+
+A variable whose value is a template is rendered when another template reads it, so a filter or an operator always sees the final value:
+
+```yaml
+vars:
+  host: example.org
+  url: "http://{{ host }}:8080/x"
+  port: "{{ 8080 }}"
+tasks:
+  - debug:
+      msg: "{{ url | length }} {{ port | int + 1 }}"   # 25 8081
+```
+
+This holds in play, block and task `vars`, `group_vars`, role defaults, `vars_files`, `include_vars` and extra vars, and for a list or mapping that holds templates. A member that fails to render raises nothing until something reads it.
+
+A variable that reads a name with no value has none either: `default` and `is defined` see it as undefined. A variable that reads itself, directly or through others, fails with `Recursive loop detected in template: maximum recursion depth exceeded`, also behind `default`, as in ansible-core.
+
+Host data is never rendered. A variable from a managed host, and a variable built from one, stays text. See [Values from hosts are never templated](#values-from-hosts-are-never-templated).
+
+A variable that reads `vars`, or calls `lookup` or `query`, is left as written and renders when a task uses it. `hostvars['other']['name']` gives the raw text of a variable that holds a template.
+
+## What is available
+
+
+
+| Kind | Names |
+|---|---|
+| Filters | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `extract`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
+| Tests | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed` / `change`, `failed` / `failure`, `succeeded` / `success` / `successful`, `skipped` / `skip`, `version` (and `version_compare`) |
+| Lookups | `env`, `file`, `vars`, `varnames`, `pipe`, `first_found`, `fileglob`, `template`, `inventory_hostnames`, `unvault` (and the `query` and `q` call forms) |
+| Globals | `now`, `lipsum` |
+| From `ansible.utils` | the `ansible.utils.ipwrap` filter, under that name only |
+
+Every filter, test and lookup in this list also answers under its `ansible.builtin.*` name, so `{{ data | ansible.builtin.to_json }}` works. A filter, test or lookup that is not in this list runs in Python with ansible-core's own code, see [Filters, tests and lookups that need Python](#filters-tests-and-lookups-that-need-python). That includes the plugins of other collections.
+
+`first_found`, `fileglob` and `template` look for files along `ansible_search_path`. In a role's task that is the role's directory, the directory of the task's file, then the playbook's directory. Outside a role it is the playbook's directory. `role_path` is set in a role's task and is undefined outside one. `fileglob` tries a relative pattern under `files/` of each entry, then in the entry itself, and the first entry with a match wins. It returns files only, sorted, and a single match comes back as a string.
+
+`now()` gives the date and time on the controller, never on a managed host, and `lipsum()` gives random filler text. Their arguments and results are in the [Template language reference](/docs/reference/templates/#date-and-filler-text).
+
+## Filters, tests and lookups that need Python
+
+Volant implements the common filters, tests and lookups itself, in Rust. Every other one that ansible-core 2.19.12 or a collection ships runs in a Python process on the controller, with the plugin's own code, so the result is the one ansible-core gives.
+
+A play that uses only the Rust ones never starts Python for templating. The Python process starts on the first call that needs it and then serves the rest of the run. Starting it takes about 0.55 s, paid once per run, measured with `hash`.
+
+### What needs Python
+
+A name needs Python when Volant has no Rust version of it. The [parity page](/docs/reference/parity/) marks those rows `runs` with the note "through the Python helper; needs the plugin's Python libraries". Examples are the `hash`, `password_hash`, `json_query` and `ipaddr` filters, and the `lines` and `url` lookups.
+
+A name with a Rust version never reaches Python, whatever it is called. `ansible.utils.ipwrap` stays in Rust. The vault filters, tests and lookup never go to Python either: the vault password stays in the controller process. See [Vault](/docs/variables/vault/).
+
+### What to install
+
+The controller needs a Python 3 with `ansible-core`. If it has none, Volant installs its own [managed runtime](/docs/reference/runtime/).
+
+A plugin also needs what it imports. `json_query` needs `jmespath`, `ipaddr` needs `netaddr`, `password_hash` needs `passlib`, and a collection's plugin needs that collection. All of them must be installed for the interpreter Volant runs. The managed runtime holds ansible-core and its dependencies and nothing else, so for these names point `VOLANT_PYTHON` at an environment of your own that has the packages. Without them the task fails with the plugin's own message.
+
+Volant uses `VOLANT_PYTHON` when it is set, and nothing else. Otherwise it tries its managed runtime, then the active virtual environment, then `python3` on your `PATH`, and installs the managed runtime when none works. An interpreter without `ansible-core` is refused by name, and the message says which interpreters were tried. A task that calls a name that needs Python then fails with a message such as `filter 'hash' needs the Python helper, which could not start: …`, followed by the reason, and the run exits non-zero.
+
+[Filters that run in Python](/docs/reference/templates/#filters-that-run-in-python) lists the other failures and what Python receives.
+
+## Values from hosts are never templated
+
+A template you wrote is code. A value a managed host sent back is data, and it never runs as a template on the controller.
+
+- Untrusted values are `register` and module results, gathered facts, `set_fact` values, and the results of `lookup('file')`, `lookup('pipe')`, `lookup('env')` and `lookup('template')`.
+- Trusted values are the ones the playbook carries: play and task `vars`, `--extra-vars`, inventory variables, `vars_files` and `include_vars`. `!unsafe` marks one of them as data.
+- An untrusted value renders once. If the result looks like a template again, it stays text.
+- A condition or a `debug: var:` that would evaluate a host value as an expression fails with `Encountered untrusted template or expression.`
+
+The [Template language reference](/docs/reference/templates/#trusted-and-untrusted-values) has the full rules and examples.
+
+<Aside type="caution">
+This is a security boundary. If you find a way for host data to be evaluated as a template on the controller, report it privately as described in the [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md).
+</Aside>
+
+## Rendering a template file
+
+The `template` module and `lookup('template')` share one render, and it differs from a task argument's render in one way: it renders the file's text **once**. A task argument goes through further passes, which is how a value that still holds `{{ ... }}` after rendering can be read as a template again. A template file does not get that second pass, so a value a managed host contributed lands in the written file as plain text and never runs as a template of its own.
+
+It takes the options the `template` module reads:
+
+| Option | Default | Effect |
+|---|---|---|
+| `trim_blocks` | on | Remove the first newline after a block tag. |
+| `lstrip_blocks` | off | Strip the whitespace before a block tag on its line. |
+| `newline_sequence` | `\n` | Line endings of the written file: `\n`, `\r` or `\r\n`, escaped or literal. |
+| `variable_start_string`, `variable_end_string` | `{{`, `}}` | The marks around an expression. |
+| `block_start_string`, `block_end_string` | `{%`, `%}` | The marks around a statement. |
+| `comment_start_string`, `comment_end_string` | `{#`, `#}` | The marks around a comment. |
+| `output_encoding` | `utf-8` | The encoding of the written file. `template` only. |
+
+`lookup('template')` takes the four variable and comment delimiters and `trim_blocks`, and nothing else.
+
+A custom delimiter replaces the default: with `variable_start_string: '[['`, a `{{` in the file is plain text. The three start strings must differ from each other. A text that holds none of the three start strings is not a template, and is written as it is, line endings included, whatever `newline_sequence` says.
+
+The first line of a template file can override the options. It starts with `#jinja2:` and holds `key: value` pairs, split on commas, with a Python literal as the value:
+
+```jinja
+#jinja2: variable_start_string:'[%', variable_end_string:'%]', trim_blocks: False
+```
+
+The keys are the six delimiters, `trim_blocks`, `lstrip_blocks`, `newline_sequence` and `keep_trailing_newline`. The line wins over the task's options. A wrong key, a wrong type or two equal start strings fails the render with ansible-core's message. The line is removed from the output. A `#jinja2:` that is not at the very start of the file is plain text.
+
+`output_encoding` writes UTF-8, UTF-8 with a signature, Latin-1, ASCII, cp1252, ISO 8859-15, UTF-16 and UTF-32, under the names and aliases Python knows (`latin-1`, `iso8859_1`, `utf_16_le`, `windows-1252`). UTF-16 and UTF-32 without an order write a byte order mark and then little-endian. A character the encoding cannot hold fails the task with Python's message, naming the character and its position. Any other encoding is refused by name.
+
+The file's own trailing newline survives the render. [Action plugins](/docs/internals/action-plugins/#template) covers the rest of what the `template` module does.
+
+How braces that a `raw` block or an expression builds stay literal is in [Literal braces](/docs/reference/templates/#literal-braces).
+
+## Not there yet
+
+These gaps affect the most playbooks. The [Template language reference](/docs/reference/templates/#not-there-yet) lists the rendering, template-file and bytes gaps.
+
+### Filters and tests
+
+- These filter arguments are not supported: the method of `round`, `start` and `attribute` of `sum`, `attribute` of `min` and `max`, `count` of `replace`, `sort_keys` of `to_json`, and `strict` and `version_type` of the `version` test.
+- `b64encode` and `b64decode` accept `encoding` only as `utf-8`. Any other encoding is refused by name.
+- `password_hash`, `json_query` and `ipaddr` need the Python packages `passlib`, `jmespath` and `netaddr`. The managed runtime does not carry them, see [What to install](#what-to-install).
+
+### Integers wider than 128 bits
+
+A module can return such an integer, such as the modulus of an RSA key. Volant keeps every digit in results, variables, `string`, `to_json` and `from_json`. It compares a wide integer with any number by value, in the comparison operators, `min`, `max`, `sort`, `unique` and `list.sort()`.
+
+- The operators `+`, `-`, `*`, `/`, `//`, `%` and `**` and the `abs` and `round` filters refuse a wide operand. A result wider than 128 bits is an error.
+- A YAML integer of more than 4300 digits is refused. So is a text of that size given to `int`, which answers its default, as in Python 3.11 and later.
+
+To do arithmetic on such a value, use a module, or `command` with `python3 -c`, and keep the wide value as text.

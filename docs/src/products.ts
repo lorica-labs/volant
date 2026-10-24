@@ -13,7 +13,7 @@ export const products: Product[] = [
   {
     name: 'Engine',
     description: 'Run Ansible playbooks with Volant',
-    href: '/',
+    href: '/docs/',
     colour: '#19b6a6',
     icon: 'M13 3L5 13.5h6L10 21l8-10.5h-6z',
   },

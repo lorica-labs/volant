@@ -1,0 +1,187 @@
+---
+// The steering wheel of the logo as a turning 3D figure drawn in characters, like a terminal would
+// draw it. Decoration only: hidden from assistive technology, still under reduced motion, and paused
+// whenever it is off screen or the tab is hidden.
+const { cols = 92, rows = 46 } = Astro.props as { cols?: number; rows?: number };
+---
+
+<div class="ascii-wheel" aria-hidden="true" data-cols={cols} data-rows={rows}>
+  <pre></pre>
+</div>
+
+<script>
+  type Point = { x: number; y: number; z: number; nx: number; ny: number; nz: number };
+
+  // The mark, in units of the rim radius: a rim, five spokes and a hub, as in the logo.
+  function wheel(): Point[] {
+    const points: Point[] = [];
+    const tau = Math.PI * 2;
+    // Rim: a torus around the z axis.
+    const tube = 0.11;
+    for (let i = 0; i < 200; i++) {
+      const u = (i / 200) * tau;
+      for (let j = 0; j < 22; j++) {
+        const v = (j / 22) * tau;
+        const nx = Math.cos(v) * Math.cos(u);
+        const ny = Math.cos(v) * Math.sin(u);
+        const nz = Math.sin(v);
+        points.push({ x: Math.cos(u) + tube * nx, y: Math.sin(u) + tube * ny, z: tube * nz, nx, ny, nz });
+      }
+    }
+    // Spokes: cylinders from the hub to the rim, at the angles of the logo.
+    const radius = 0.07;
+    for (const degrees of [9, 81, 153, 225, 297]) {
+      const a = (degrees * Math.PI) / 180;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      for (let i = 0; i <= 34; i++) {
+        const t = 0.2 + (i / 34) * 0.72;
+        for (let j = 0; j < 12; j++) {
+          const w = (j / 12) * tau;
+          // Across the spoke: the in-plane perpendicular and the z axis.
+          const px = -dy * Math.cos(w);
+          const py = dx * Math.cos(w);
+          const pz = Math.sin(w);
+          points.push({ x: dx * t + radius * px, y: dy * t + radius * py, z: radius * pz, nx: px, ny: py, nz: pz });
+        }
+      }
+    }
+    // Hub: a short cylinder with both faces.
+    const hub = 0.24;
+    const half = 0.1;
+    for (let j = 0; j < 48; j++) {
+      const w = (j / 48) * tau;
+      const c = Math.cos(w);
+      const s = Math.sin(w);
+      for (let k = 0; k <= 4; k++) {
+        const z = -half + (k / 4) * 2 * half;
+        points.push({ x: hub * c, y: hub * s, z, nx: c, ny: s, nz: 0 });
+      }
+      for (let k = 1; k <= 8; k++) {
+        const r = (k / 8) * hub;
+        points.push({ x: r * c, y: r * s, z: -half, nx: 0, ny: 0, nz: -1 });
+        points.push({ x: r * c, y: r * s, z: half, nx: 0, ny: 0, nz: 1 });
+      }
+    }
+    return points;
+  }
+
+  const ramp = '.,-~:;=!*#$@';
+  const light = (() => {
+    const l = [-0.45, 0.55, -0.7];
+    const n = Math.hypot(...l);
+    return l.map((v) => v / n);
+  })();
+
+  for (const root of document.querySelectorAll<HTMLElement>('.ascii-wheel')) {
+    const pre = root.querySelector('pre')!;
+    const cols = Number(root.dataset.cols);
+    const rows = Number(root.dataset.rows);
+    const points = wheel();
+    const chars = new Array<string>(cols * rows);
+    const depth = new Float32Array(cols * rows);
+
+    // Characters are about twice as tall as they are wide; the figure is drawn for that.
+    const fit = () => {
+      const size = Math.min(root.clientWidth / (cols * 0.6), root.clientHeight / (rows * 1.2));
+      pre.style.fontSize = `${Math.max(size, 4)}px`;
+    };
+    fit();
+    new ResizeObserver(fit).observe(root);
+
+    // Spin is the wheel turning; tilt shows it in depth, and follows the pointer a little.
+    let spin = 0.6;
+    let tiltX = 0.9;
+    let tiltY = -0.35;
+    let aimX = tiltX;
+    let aimY = tiltY;
+
+    const draw = () => {
+      chars.fill(' ');
+      depth.fill(0);
+      const [ca, sa] = [Math.cos(spin), Math.sin(spin)];
+      const [cb, sb] = [Math.cos(tiltX), Math.sin(tiltX)];
+      const [cc, sc] = [Math.cos(tiltY), Math.sin(tiltY)];
+      const distance = 3.2;
+      const scale = cols * 0.62;
+      for (const p of points) {
+        // Turn around z, then tilt around x, then around y.
+        let x = p.x * ca - p.y * sa;
+        let y = p.x * sa + p.y * ca;
+        let z = p.z;
+        let nx = p.nx * ca - p.ny * sa;
+        let ny = p.nx * sa + p.ny * ca;
+        let nz = p.nz;
+        [y, z] = [y * cb - z * sb, y * sb + z * cb];
+        [ny, nz] = [ny * cb - nz * sb, ny * sb + nz * cb];
+        [x, z] = [x * cc + z * sc, -x * sc + z * cc];
+        [nx, nz] = [nx * cc + nz * sc, -nx * sc + nz * cc];
+        const ooz = 1 / (z + distance);
+        const col = Math.round(cols / 2 + scale * x * ooz);
+        const row = Math.round(rows / 2 - scale * 0.5 * y * ooz);
+        if (col < 0 || col >= cols || row < 0 || row >= rows) continue;
+        const at = row * cols + col;
+        if (ooz <= depth[at]) continue;
+        depth[at] = ooz;
+        const lum = nx * light[0] + ny * light[1] + nz * light[2];
+        chars[at] = ramp[Math.max(0, Math.min(ramp.length - 1, Math.floor(lum * ramp.length)))];
+      }
+      let out = '';
+      for (let r = 0; r < rows; r++) out += chars.slice(r * cols, (r + 1) * cols).join('') + '\n';
+      pre.textContent = out;
+    };
+
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+    draw();
+    if (still.matches) continue;
+
+    const area = root.closest<HTMLElement>('[data-wheel-area]') ?? root;
+    area.addEventListener('pointermove', (event) => {
+      const box = area.getBoundingClientRect();
+      aimY = -0.35 + ((event.clientX - box.left) / box.width - 0.5) * 0.6;
+      aimX = 0.9 + ((event.clientY - box.top) / box.height - 0.5) * 0.4;
+    });
+
+    let visible = false;
+    let frame = 0;
+    let last = 0;
+    const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      // About 30 frames a second is enough for characters.
+      if (now - last < 33) return;
+      const step = Math.min(now - last, 100) / 1000;
+      last = now;
+      spin += step * 0.55;
+      tiltX += (aimX - tiltX) * 0.05;
+      tiltY += (aimY - tiltY) * 0.05;
+      draw();
+    };
+    const run = () => {
+      cancelAnimationFrame(frame);
+      if (visible && !document.hidden) frame = requestAnimationFrame(tick);
+    };
+    new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      run();
+    }).observe(root);
+    document.addEventListener('visibilitychange', run);
+  }
+</script>
+
+<style>
+  .ascii-wheel {
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+  }
+  pre {
+    margin: 0;
+    color: var(--brand);
+    font-family: var(--f-mono);
+    line-height: 1.2;
+    letter-spacing: 0;
+    white-space: pre;
+  }
+</style>

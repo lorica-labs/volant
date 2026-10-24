@@ -1,0 +1,529 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro';
+import AsciiWheel from '../components/site/AsciiWheel.astro';
+import CopyCommand from '../components/site/CopyCommand.astro';
+import Race from '../components/site/Race.astro';
+import Terminal from '../components/site/Terminal.astro';
+import { category, collections, core, running, total } from '../lib/parity';
+import { repo } from '../nav';
+
+const coreShare = Math.floor((running(core) / total(core)) * 1000) / 10;
+const stats = [
+  { value: `${coreShare}%`, label: `of ansible-core's ${total(core)} keywords, options and plugins run today` },
+  { value: `${category('module').runs}`, label: 'ansible-core modules, all of them' },
+  { value: running(collections).toLocaleString('en'), label: 'modules and plugins from the collections of the ansible package run' },
+  { value: `${category('keyword (task)').runs}`, label: 'task keywords, every one ansible-core 2.19 has' },
+];
+
+const run = [
+  { kind: 'cmd' as const, text: 'volant playbook -i inventory.ini site.yml' },
+  { text: '' },
+  { text: 'PLAY [localhost] ***************************************************************' },
+  { text: '' },
+  { text: 'TASK [Who am I?] ***************************************************************' },
+  { kind: 'changed' as const, text: 'changed: [localhost]' },
+  { text: '' },
+  { text: 'PLAY RECAP *********************************************************************' },
+  { text: 'localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0' },
+];
+
+const files = [
+  ['ansible.cfg', 'read from the same places, with the same precedence'],
+  ['Inventories', 'INI, YAML, TOML, scripts and inventory plugins'],
+  ['group_vars and host_vars', 'layered in Ansible’s order'],
+  ['Vault', 'vaulted files and values, --ask-vault-pass and --vault-id'],
+  ['Roles and collections', 'dependencies, argument specs and installed collections'],
+  ['Command line', 'the options of ansible-playbook, including --check and --diff'],
+];
+
+const promises = [
+  ['Your files stay yours', 'No conversion step and no new format. The same files keep working with ansible-playbook.'],
+  ['Refusals come first', 'Most of what this release cannot run is named before the first connection, and nothing runs.'],
+  ['Linux over SSH first', 'Linux hosts over SSH and local connections today. Windows and network devices come later.'],
+  ['No telemetry', 'Volant makes no network call other than the ones your playbook asks for, and the runtime download.'],
+];
+---
+
+<SiteLayout
+  title="Volant: your Ansible playbooks, run by a fast engine written in Rust"
+  description="Volant reads the playbooks, roles and inventories you already have and runs them against Linux hosts over SSH, much faster than ansible-playbook."
+>
+  <section class="hero" data-wheel-area>
+    <AsciiWheel />
+    <div class="wrap hero-grid">
+      <div class="hero-text">
+        <h1>Your Ansible playbooks, run by a fast engine written&nbsp;in&nbsp;Rust.</h1>
+        <p class="lede">
+          Volant reads the playbooks, roles and inventories you already have and runs them over SSH. Nothing to convert.
+        </p>
+        <div class="install">
+          <CopyCommand command="curl -fsSL https://volant.sh/install.sh | sh" />
+        </div>
+        <div class="ctas">
+          <a class="btn btn-brand" href="/docs/start/quickstart/">
+            Quickstart
+            <svg class="arrow" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"
+              stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+          </a>
+          <a class="btn btn-line" href={repo}>Source on GitHub</a>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <aside class="status" aria-label="Project status">
+    <div class="wrap status-row">
+      <span class="badge mono">pre-alpha</span>
+      <p>
+        Volant runs real playbooks end to end, but not every playbook yet. Try it on a host you can afford to touch.
+      </p>
+      <a class="text-link" href="/docs/start/compatibility/">Will my playbook run?</a>
+    </div>
+  </aside>
+
+  <section class="section">
+    <div class="wrap split">
+      <div class="section-head reveal">
+        <h2>The same run, in a fraction of the time.</h2>
+        <p>
+          On roles that change nothing, almost all of ansible-playbook’s time goes to the machinery around each module.
+          Volant removes most of it. Real work, such as restarting a service, takes as long under either engine.
+        </p>
+        <p><a class="text-link" href="/performance/">How it was measured</a></p>
+      </div>
+      <div class="reveal"><Race /></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <h2>Where the time goes.</h2>
+        <p>
+          ansible-playbook pays for a new Python interpreter on the host for every task. Volant pays once per run.
+        </p>
+      </div>
+      <div class="lanes reveal">
+        <div class="lane-card panel">
+          <div class="core">
+            <p class="lane-title">ansible-playbook <span>for every task, on every host</span></p>
+            <ol class="steps slow">
+              <li>build the module payload</li>
+              <li>send it over SSH</li>
+              <li>start Python</li>
+              <li>import module_utils</li>
+              <li>run the module</li>
+            </ol>
+          </div>
+        </div>
+        <div class="lane-card panel">
+          <div class="core">
+            <p class="lane-title">Volant <span>once per run</span></p>
+            <ol class="steps once">
+              <li>upload a small agent, cached on the host</li>
+              <li>open one SSH connection per host</li>
+            </ol>
+            <p class="lane-title">then <span>for every task</span></p>
+            <ol class="steps fast">
+              <li>send the task over the open link</li>
+              <li>answer it in Rust, or fork a warm Python</li>
+            </ol>
+          </div>
+        </div>
+      </div>
+      <p class="note reveal">
+        Common modules such as <code>apt</code>, <code>systemd</code>, <code>file</code>, <code>lineinfile</code> and
+        fact gathering are answered in Rust by the agent when a task’s arguments allow it. Every other module runs in
+        Python, in a server that loaded its imports once.
+        <a class="text-link" href="/docs/internals/architecture/">How the engine is built</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap split">
+      <div class="reveal">
+        <Terminal title="~/infra" lines={run} />
+      </div>
+      <div class="section-head reveal">
+        <h2>Same files, same command.</h2>
+        <p>
+          <code>volant playbook</code> takes the options of <code>ansible-playbook</code> and prints the output you
+          know, down to the recap. Everything your project already has is read as it is.
+        </p>
+        <dl class="files">
+          {
+            files.map(([name, what]) => (
+              <div>
+                <dt>{name}</dt>
+                <dd>{what}</dd>
+              </div>
+            ))
+          }
+        </dl>
+      </div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <h2>Measured against ansible-core, name by name.</h2>
+        <p>
+          Every keyword, option and plugin of ansible-core 2.19.12 has a row in the support matrix, generated by the test
+          suite. These numbers come from it.
+        </p>
+      </div>
+      <div class="stats reveal">
+        {
+          stats.map((stat) => (
+            <div class="stat">
+              <b class="mono">{stat.value}</b>
+              <span>{stat.label}</span>
+            </div>
+          ))
+        }
+      </div>
+      <p class="note reveal">
+        <a class="text-link" href="/compatibility/">What runs, what is partial and what comes later</a>
+      </p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <h2>What Volant promises.</h2>
+      </div>
+      <div class="promises reveal">
+        {
+          promises.map(([title, text]) => (
+            <div class="promise">
+              <h3>{title}</h3>
+              <p>{text}</p>
+            </div>
+          ))
+        }
+      </div>
+    </div>
+  </section>
+
+  <section class="section closing">
+    <div class="wrap closing-row reveal">
+      <div>
+        <h2>Built in the open.</h2>
+        <p>
+          Volant is GPL-3.0-or-later, like Ansible. The roadmap, the issues and the decisions behind the design are
+          public.
+        </p>
+      </div>
+      <div class="ctas">
+        <a class="btn btn-brand" href="/community/">Get involved</a>
+        <a class="btn btn-line" href="/docs/project/roadmap/">Roadmap</a>
+      </div>
+    </div>
+  </section>
+</SiteLayout>
+
+<style>
+  .hero {
+    position: relative;
+    overflow: hidden;
+    border-bottom: 1px solid var(--line);
+  }
+  .hero :global(.ascii-wheel) {
+    position: absolute;
+    inset: -6% -12% -6% 38%;
+    opacity: 0.55;
+    mask-image: radial-gradient(closest-side, #000 55%, transparent);
+  }
+  .hero-grid {
+    position: relative;
+    padding-block: clamp(4.5rem, 10vw, 7.5rem);
+  }
+  .hero-text {
+    max-width: 46rem;
+  }
+  h1 {
+    font-size: clamp(2.5rem, 5.2vw, 4.1rem);
+    line-height: 1.03;
+    letter-spacing: -0.035em;
+    font-weight: 650;
+  }
+  .lede {
+    margin-top: 1.4rem;
+    max-width: 34rem;
+    color: var(--fg-2);
+    font-size: clamp(1.05rem, 1.5vw, 1.25rem);
+  }
+  .install {
+    margin-top: 2rem;
+    max-width: 32rem;
+  }
+  .ctas {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.75rem;
+    margin-top: 1.25rem;
+  }
+
+  .status {
+    border-bottom: 1px solid var(--line);
+    background: var(--bg-2);
+  }
+  .status-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.75rem 1.25rem;
+    padding-block: 1rem;
+    font-size: 0.925rem;
+    color: var(--fg-2);
+  }
+  .badge {
+    padding: 0.2rem 0.55rem;
+    border-radius: 999px;
+    background: color-mix(in srgb, var(--slow) 16%, transparent);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--slow) 45%, transparent);
+    color: #e9b54a;
+    font-size: 0.75rem;
+  }
+  .status p {
+    flex: 1 1 24rem;
+  }
+
+  .split {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: clamp(2rem, 5vw, 4.5rem);
+    align-items: center;
+  }
+  .split .section-head p + p {
+    margin-top: 1.25rem;
+  }
+
+  .lanes {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+    margin-top: 3rem;
+  }
+  .lane-card .core {
+    padding: 1.5rem;
+  }
+  .lane-title {
+    font-weight: 600;
+  }
+  .lane-title span {
+    margin-inline-start: 0.4rem;
+    color: var(--fg-3);
+    font-weight: 400;
+    font-size: 0.875rem;
+  }
+  .steps {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin: 0.9rem 0 1.4rem;
+    padding: 0;
+    list-style: none;
+    counter-reset: step;
+  }
+  .steps:last-child {
+    margin-bottom: 0;
+  }
+  .steps li {
+    position: relative;
+    padding: 0.45rem 0.75rem;
+    border-radius: 0.5rem;
+    background: var(--bg-3);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+    color: var(--fg-2);
+    font: 0.8rem var(--f-mono);
+  }
+  .fast li,
+  .once li {
+    background: var(--brand-low);
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--brand) 45%, transparent);
+    color: var(--fg);
+  }
+  .once li {
+    background: transparent;
+    box-shadow: none;
+    border: 1px dashed color-mix(in srgb, var(--brand) 45%, transparent);
+  }
+  /* A pulse walks the steps of each lane, the slow one at the pace of a task, again and again. */
+  @media (prefers-reduced-motion: no-preference) {
+    .steps li::after {
+      content: '';
+      position: absolute;
+      inset: 0;
+      border-radius: inherit;
+      box-shadow: inset 0 0 0 1px var(--brand);
+      opacity: 0;
+      animation: walk var(--cycle) linear infinite;
+      animation-delay: calc(var(--i) * var(--cycle) / var(--n));
+    }
+    .slow {
+      --cycle: 5s;
+      --n: 5;
+    }
+    .fast {
+      --cycle: 1s;
+      --n: 2;
+    }
+    .once li::after {
+      display: none;
+    }
+    .slow li:nth-child(1),
+    .fast li:nth-child(1) {
+      --i: 0;
+    }
+    .slow li:nth-child(2),
+    .fast li:nth-child(2) {
+      --i: 1;
+    }
+    .slow li:nth-child(3) {
+      --i: 2;
+    }
+    .slow li:nth-child(4) {
+      --i: 3;
+    }
+    .slow li:nth-child(5) {
+      --i: 4;
+    }
+  }
+  @keyframes walk {
+    0% {
+      opacity: 1;
+    }
+    18% {
+      opacity: 0;
+    }
+    100% {
+      opacity: 0;
+    }
+  }
+  .note {
+    margin-top: 1.5rem;
+    max-width: 70ch;
+    color: var(--fg-3);
+    font-size: 0.95rem;
+  }
+
+  .files {
+    display: grid;
+    gap: 0;
+    margin: 2rem 0 0;
+  }
+  .files div {
+    display: grid;
+    grid-template-columns: 12rem minmax(0, 1fr);
+    gap: 1rem;
+    padding-block: 0.7rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.925rem;
+  }
+  .files dt {
+    color: var(--fg);
+    font-weight: 560;
+  }
+  .files dd {
+    margin: 0;
+    color: var(--fg-3);
+  }
+
+  .stats {
+    display: grid;
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+    margin-top: 3rem;
+    border-block: 1px solid var(--line);
+  }
+  .stat {
+    display: grid;
+    gap: 0.4rem;
+    padding: 1.75rem 1.5rem;
+    border-inline-start: 1px solid var(--line);
+  }
+  .stat:first-child {
+    border-inline-start: 0;
+    padding-inline-start: 0;
+  }
+  .stat b {
+    color: var(--fg);
+    font-size: clamp(1.8rem, 3vw, 2.4rem);
+    font-weight: 560;
+    letter-spacing: -0.03em;
+  }
+  .stat span {
+    max-width: 24ch;
+    color: var(--fg-3);
+    font-size: 0.9rem;
+    line-height: 1.45;
+  }
+
+  .promises {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 0 3rem;
+    margin-top: 2.5rem;
+  }
+  .promise {
+    padding-block: 1.5rem;
+    border-top: 1px solid var(--line);
+  }
+  .promise h3 {
+    font-size: 1.15rem;
+  }
+  .promise p {
+    margin-top: 0.5rem;
+    color: var(--fg-2);
+  }
+
+  .closing {
+    background: radial-gradient(60% 80% at 85% 100%, color-mix(in srgb, var(--brand) 10%, transparent), transparent);
+  }
+  .closing-row {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: end;
+    justify-content: space-between;
+    gap: 2rem;
+  }
+  .closing h2 {
+    font-size: clamp(1.9rem, 3.4vw, 2.75rem);
+  }
+  .closing p {
+    margin-top: 0.75rem;
+    max-width: 52ch;
+    color: var(--fg-2);
+  }
+
+  @media (max-width: 60rem) {
+    .split,
+    .lanes,
+    .promises {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .stats {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .stat:nth-child(3) {
+      border-inline-start: 0;
+      padding-inline-start: 0;
+    }
+    .stat:nth-child(n + 3) {
+      border-top: 1px solid var(--line);
+    }
+    .hero :global(.ascii-wheel) {
+      inset: 30% -40% -20% 10%;
+      opacity: 0.3;
+    }
+  }
+  @media (max-width: 36rem) {
+    .files div {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.15rem;
+    }
+  }
+</style>

@@ -13,15 +13,15 @@
   <a href="https://codecov.io/gh/lorica-labs/volant"><img src="https://codecov.io/gh/lorica-labs/volant/graph/badge.svg" alt="Coverage"></a>
   <a href="https://crates.io/crates/volant"><img src="https://img.shields.io/crates/v/volant?include_prereleases&label=crates.io" alt="crates.io"></a>
   <a href="https://github.com/lorica-labs/volant/releases"><img src="https://img.shields.io/github/v/release/lorica-labs/volant?include_prereleases&label=release" alt="Latest release"></a>
-  <a href="https://volant.sh/"><img src="https://img.shields.io/badge/docs-volant.sh-0d9488" alt="Documentation"></a>
+  <a href="https://volant.sh/docs/"><img src="https://img.shields.io/badge/docs-volant.sh-0d9488" alt="Documentation"></a>
   <a href="https://github.com/lorica-labs/volant/blob/main/LICENSE"><img src="https://img.shields.io/badge/license-GPL--3.0--or--later-blue" alt="License"></a>
 </p>
 
 <p align="center">
-  <a href="https://volant.sh/">Documentation</a> ·
-  <a href="https://volant.sh/start/installation/">Installation</a> ·
-  <a href="https://volant.sh/start/quickstart/">Quickstart</a> ·
-  <a href="https://volant.sh/start/compatibility/">Will my playbook run?</a>
+  <a href="https://volant.sh/docs/">Documentation</a> ·
+  <a href="https://volant.sh/docs/start/installation/">Installation</a> ·
+  <a href="https://volant.sh/docs/start/quickstart/">Quickstart</a> ·
+  <a href="https://volant.sh/docs/start/compatibility/">Will my playbook run?</a>
 </p>
 
 <!-- A short demo video goes here once it is recorded. -->
@@ -31,13 +31,13 @@ Volant reads the playbooks, roles and inventories you already have, in Ansible's
 *Volant* is French for steering wheel: the thing you drive with. Here, it is what you drive your infrastructure with.
 
 > [!WARNING]
-> Volant is in **pre-alpha**. It runs real playbooks end to end, but not every playbook yet. Most of what it does not support yet is named before it connects to a host. A few gaps are not: see the [known gaps](https://volant.sh/start/compatibility/#known-gaps).
+> Volant is in **pre-alpha**. It runs real playbooks end to end, but not every playbook yet. Most of what it does not support yet is named before it connects to a host. A few gaps are not: see the [known gaps](https://volant.sh/docs/start/compatibility/#known-gaps).
 
 ## Why it is fast
 
 `ansible-playbook` starts a fresh Python interpreter on the host for every task. Volant uploads a small static agent once and keeps one ssh connection per host for the whole run. The agent answers common modules such as `apt`, `systemd`, `file`, `lineinfile` and fact gathering in Rust when a task's arguments allow it, and runs every other module in a warm Python server that forks a child per task.
 
-On four published Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) against two converged Ubuntu 24.04 hosts, Volant takes 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s. On the official k3s-ansible playbook it takes 23.477 s against 50.519 s. Both engines end on the same recap. Measured on 2026-09-27 with `just bench` and `just bench-k3s`; the configuration and the method are on the [performance page](https://volant.sh/project/performance/).
+On four published Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`) against two converged Ubuntu 24.04 hosts, Volant takes 0.529 s where ansible-core 2.19.12 with `pipelining = True` takes 26.435 s. On the official k3s-ansible playbook it takes 23.477 s against 50.519 s. Both engines end on the same recap. Measured on 2026-09-27 with `just bench` and `just bench-k3s`; the configuration and the method are on the [performance page](https://volant.sh/docs/project/performance/).
 
 ## Install
 
@@ -45,7 +45,7 @@ On four published Galaxy roles (`geerlingguy.security`, `nginx`, `git` and `pip`
 curl -fsSL https://volant.sh/install.sh | sh
 ```
 
-The script works on Linux and macOS, x86_64 and arm64. It downloads the newest release, checks its checksum, and installs `volant` under `~/.local`, without root. The binary carries the agents it uploads to your hosts, so `cargo binstall volant` gives the same result. Ansible does not have to be installed. When a playbook needs Python, Volant downloads its own Python and ansible-core on first use, checks every file against a pinned hash, and keeps them under `~/.local/share/volant`; see [the managed runtime](https://volant.sh/reference/runtime/). The managed runtime is untested on macOS. The [installation guide](https://volant.sh/start/installation/) covers its options, what the controller and the hosts need, and the other ways to install.
+The script works on Linux and macOS, x86_64 and arm64. It downloads the newest release, checks its checksum, and installs `volant` under `~/.local`, without root. The binary carries the agents it uploads to your hosts, so `cargo binstall volant` gives the same result. Ansible does not have to be installed. When a playbook needs Python, Volant downloads its own Python and ansible-core on first use, checks every file against a pinned hash, and keeps them under `~/.local/share/volant`; see [the managed runtime](https://volant.sh/docs/reference/runtime/). The managed runtime is untested on macOS. The [installation guide](https://volant.sh/docs/start/installation/) covers its options, what the controller and the hosts need, and the other ways to install.
 
 Each release has one archive per platform. On Linux there is a static build with no libc, which runs from a `FROM scratch` container, and a glibc build. macOS has one build, because it cannot link statically.
 
@@ -86,7 +86,7 @@ PLAY RECAP *********************************************************************
 localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
 ```
 
-`volant playbook` takes the same options as `ansible-playbook`. The [quickstart](https://volant.sh/start/quickstart/) continues with a remote host over SSH.
+`volant playbook` takes the same options as `ansible-playbook`. The [quickstart](https://volant.sh/docs/start/quickstart/) continues with a remote host over SSH.
 
 ## What works today
 
@@ -95,17 +95,17 @@ localhost                  : ok=1    changed=1    unreachable=0    failed=0    s
 | **Plays** | `pre_tasks`, roles with dependencies and argument specs, `tasks`, `post_tasks`, handlers with `listen` and `flush_handlers`, `serial` |
 | **Tasks** | `when`, `loop`, `register`, `until`, `changed_when`, `failed_when`, `ignore_errors`, `no_log`, `environment`, tags, `run_once`, `delegate_to` |
 | **Structure** | blocks with `rescue` and `always`, `import_*` and `include_*` for tasks, roles and playbooks |
-| **Modules** | `command`, `shell`, `raw`, controller modules such as `debug`, `set_fact` and `assert`, most ansible-core Python modules, native versions of `setup`, `stat`, `file`, `apt`, `systemd`, `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` and `group`, modules from installed collections, and the modules backed by an [action plugin](https://volant.sh/reference/action-plugins/), such as `copy`, `template`, `uri` and `script` |
+| **Modules** | `command`, `shell`, `raw`, controller modules such as `debug`, `set_fact` and `assert`, most ansible-core Python modules, native versions of `setup`, `stat`, `file`, `apt`, `systemd`, `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` and `group`, modules from installed collections, and the modules backed by an [action plugin](https://volant.sh/docs/internals/action-plugins/), such as `copy`, `template`, `uri` and `script` |
 | **Hosts** | INI, YAML, TOML, script and plugin inventories, `group_vars` and `host_vars`, the full host-pattern grammar, SSH with keys, `become` through `sudo`, fact gathering with a `jsonfile` cache |
 | **Run modes** | `--check` and `--diff`, vault (`!vault`, vaulted files, `--ask-vault-pass`, `--vault-id`), SSH passwords with `-k` or `ansible_password` |
 | **Listings** | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`, byte for byte like Ansible |
 
-Not there yet: custom action, callback and vars plugins, the `stdout_callback` setting, a few templating features, and every `volant` subcommand except `playbook` and `runtime`. See [Will my playbook run?](https://volant.sh/start/compatibility/) and the [roadmap](https://volant.sh/project/roadmap/).
+Not there yet: custom action, callback and vars plugins, the `stdout_callback` setting, a few templating features, and every `volant` subcommand except `playbook` and `runtime`. See [Will my playbook run?](https://volant.sh/docs/start/compatibility/) and the [roadmap](https://volant.sh/docs/project/roadmap/).
 
 ## Promises
 
 - Your files stay yours: no conversion step and no new format.
-- Most of what this release does not support yet is named before the first connection. The [known gaps](https://volant.sh/start/compatibility/#known-gaps) are the exceptions: there a run can ignore a setting or give a wrong result without an error.
+- Most of what this release does not support yet is named before the first connection. The [known gaps](https://volant.sh/docs/start/compatibility/#known-gaps) are the exceptions: there a run can ignore a setting or give a wrong result without an error.
 - Linux over SSH comes first. Windows and network devices come later.
 - Volant collects no telemetry and makes no network call other than the ones your playbook asks for.
 
@@ -115,4 +115,4 @@ Bug reports, fixes and ideas are welcome. Start with [CONTRIBUTING.md](https://g
 
 ## License
 
-Volant is licensed under [GPL-3.0-or-later](https://github.com/lorica-labs/volant/blob/main/LICENSE), like Ansible itself. [Decision record 0001](https://volant.sh/decisions/0001-gpl-3-0-or-later-license/) explains why. Crates that only describe a public interface for other programs, starting with the planned `volant-events`, are dual-licensed MIT OR Apache-2.0, as [decision record 0009](https://volant.sh/decisions/0009-interface-crates-mit-or-apache/) sets out.
+Volant is licensed under [GPL-3.0-or-later](https://github.com/lorica-labs/volant/blob/main/LICENSE), like Ansible itself. [Decision record 0001](https://volant.sh/docs/decisions/0001-gpl-3-0-or-later-license/) explains why. Crates that only describe a public interface for other programs, starting with the planned `volant-events`, are dual-licensed MIT OR Apache-2.0, as [decision record 0009](https://volant.sh/docs/decisions/0009-interface-crates-mit-or-apache/) sets out.

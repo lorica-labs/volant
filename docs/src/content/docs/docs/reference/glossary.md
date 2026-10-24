@@ -1,0 +1,72 @@
+---
+title: Glossary
+description: The words this documentation uses in a precise sense.
+---
+
+### Action plugin
+
+Code of ansible-core that runs on the controller and decides what to send to a host for a module such as `copy` or `package`. Volant runs eight of them in Rust and the rest through the bridge. See [Action plugins](/docs/internals/action-plugins/).
+
+### Agent
+
+A small static program that Volant uploads to each managed host and caches there. It receives tasks from the controller, runs them and streams results back. See [Connections and the agent](/docs/hosts/connections/).
+
+### Batch
+
+The tasks one host runs in a row before it next waits for the others. By default a batch is one task wide. See [Cross-host batching](/docs/hosts/batching/).
+
+### Bridge
+
+The road an action plugin takes when Volant has no Rust version of it: the plugin's own Python from ansible-core runs in the controller's helper, and the controller answers what it asks for. See [On the bridge](/docs/internals/action-plugins/#on-the-bridge).
+
+### Controller
+
+The machine you run `volant` on, and the `volant` program itself. It reads playbooks, renders templates and drives the agents.
+
+### Flush point
+
+A step where notified handlers run. Every play has three, and `meta: flush_handlers` adds more. See [Handlers](/docs/playbooks/blocks/#handlers).
+
+### Link
+
+One open connection from the controller to an agent. A host has its own link, plus one while it escalates and one per delegate.
+
+### Managed runtime
+
+The Python and ansible-core that Volant installs for itself and uses before any interpreter of the system. See [The managed runtime](/docs/reference/runtime/).
+
+### Native module
+
+A Rust version of a module that the agent carries. It answers a task itself when its arguments stay within what it implements, and hands the task back to the Python module otherwise. See [Native modules](/docs/internals/python/#native-modules).
+
+### Pre-flight
+
+The check that names, before any connection, everything this release does not support yet, and stops the run. See [What is not supported yet](/docs/internals/preflight/).
+
+### The reference
+
+ansible-core 2.19.12, the release whose behavior Volant reproduces. A difference from it is a bug unless a page lists it as deliberate. See [decision record 0002](/docs/decisions/0002-ansible-core-2-19-as-reference/).
+
+### Splice point
+
+A step whose followers are only known while the play runs: a handler flush, or a dynamic `include_tasks` or `include_role`. The new steps are inserted there. See [Includes and imports](/docs/playbooks/roles/#imports-and-includes).
+
+### Step
+
+One entry in the flat, numbered list a play is compiled into. Every host walks the same list. See [How a play runs](/docs/playbooks/how-a-play-runs/).
+
+### Synchronization point
+
+A step where every host of a batch waits for the others. Under the default `linear` behavior, every task is one.
+
+### Union
+
+The set of modules a run may send to a host, built once before the first connection. See [The warm Python path](/docs/internals/python/).
+
+### Union blob
+
+The single archive that carries every Python module a run needs, with the shared code they import. It is sent to each host once. See [The warm Python path](/docs/internals/python/).
+
+### Warm Python server
+
+A Python process the agent keeps running on a host. It loads the shared module code once and forks a child for each task.

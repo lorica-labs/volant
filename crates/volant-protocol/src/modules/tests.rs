@@ -353,7 +353,7 @@ fn every_builtin_module_has_one_row() {
 #[test]
 fn the_documentation_table_matches_the_registry() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/src/content/docs/reference/modules.md");
+        .join("../../docs/src/content/docs/docs/reference/modules.md");
     let expected = documentation_table();
     if std::env::var_os("VOLANT_UPDATE_DOCS").is_some() {
         std::fs::write(&path, &expected).unwrap();
@@ -361,6 +361,6 @@ fn the_documentation_table_matches_the_registry() {
     let actual = std::fs::read_to_string(&path).unwrap_or_default();
     assert_eq!(
         actual, expected,
-        "run `just docs-modules` to regenerate docs/src/content/docs/reference/modules.md"
+        "run `just docs-modules` to regenerate docs/src/content/docs/docs/reference/modules.md"
     );
 }

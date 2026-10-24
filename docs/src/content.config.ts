@@ -7,7 +7,7 @@ export const collections = {
   docs: defineCollection({ loader: docsLoader(), schema: docsSchema() }),
   changelogs: defineCollection({
     loader: changelogsLoader([
-      { provider: 'keep-a-changelog', base: 'changelog', changelog: '../CHANGELOG.md', title: 'Changelog' },
+      { provider: 'keep-a-changelog', base: 'docs/changelog', changelog: '../CHANGELOG.md', title: 'Changelog' },
     ]),
   }),
 };

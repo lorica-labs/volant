@@ -1,0 +1,130 @@
+---
+import Mark from './Mark.astro';
+import { repo } from '../../nav';
+
+const columns = [
+  {
+    title: 'Use',
+    links: [
+      ['Installation', '/docs/start/installation/'],
+      ['Quickstart', '/docs/start/quickstart/'],
+      ['Will my playbook run?', '/docs/start/compatibility/'],
+      ['When a run fails', '/docs/start/troubleshooting/'],
+    ],
+  },
+  {
+    title: 'Reference',
+    links: [
+      ['Command line', '/docs/reference/cli/'],
+      ['Configuration', '/docs/reference/configuration/'],
+      ['Support matrix', '/docs/reference/parity/'],
+      ['Changelog', '/docs/changelog/'],
+    ],
+  },
+  {
+    title: 'Project',
+    links: [
+      ['Performance', '/performance/'],
+      ['Compatibility', '/compatibility/'],
+      ['Community', '/community/'],
+      ['Roadmap', '/docs/project/roadmap/'],
+    ],
+  },
+  {
+    title: 'Source',
+    links: [
+      ['GitHub', repo],
+      ['Contributing', `${repo}/blob/main/CONTRIBUTING.md`],
+      ['Security policy', `${repo}/blob/main/SECURITY.md`],
+      ['License', `${repo}/blob/main/LICENSE`],
+    ],
+  },
+];
+---
+
+<footer>
+  <div class="wrap grid">
+    <div class="about">
+      <a class="logo" href="/" aria-label="Volant, home"><Mark size={22} /> <span>Volant</span></a>
+      <p>An engine for Ansible playbooks, written in Rust. Open source under GPL-3.0-or-later.</p>
+    </div>
+    {
+      columns.map((column) => (
+        <nav aria-label={column.title}>
+          <h2>{column.title}</h2>
+          {column.links.map(([label, href]) => (
+            <a href={href}>{label}</a>
+          ))}
+        </nav>
+      ))
+    }
+  </div>
+  <div class="wrap legal">
+    <span>Volant collects no telemetry.</span>
+    <span><i>Volant</i> is French for steering wheel.</span>
+  </div>
+</footer>
+
+<style>
+  footer {
+    border-top: 1px solid var(--line);
+    padding-block: 3.5rem 2rem;
+    color: var(--fg-3);
+    font-size: 0.9rem;
+  }
+  .grid {
+    display: grid;
+    grid-template-columns: minmax(0, 1.6fr) repeat(4, minmax(0, 1fr));
+    gap: 2rem;
+  }
+  .logo {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.5rem;
+    color: var(--brand);
+    font-weight: 680;
+  }
+  .logo span {
+    color: var(--fg);
+  }
+  .about p {
+    margin-top: 0.75rem;
+    max-width: 30ch;
+  }
+  nav {
+    display: grid;
+    align-content: start;
+    gap: 0.55rem;
+  }
+  h2 {
+    margin-bottom: 0.25rem;
+    color: var(--fg);
+    font-size: 0.85rem;
+    font-weight: 600;
+    letter-spacing: 0;
+  }
+  nav a {
+    transition: color 0.2s var(--ease);
+  }
+  nav a:hover {
+    color: var(--fg);
+  }
+  .legal {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: space-between;
+    gap: 0.5rem 2rem;
+    margin-top: 3rem;
+    padding-top: 1.5rem;
+    border-top: 1px solid var(--line);
+    font-size: 0.8rem;
+  }
+  @media (max-width: 52rem) {
+    .grid {
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+    }
+    .about {
+      grid-column: 1 / -1;
+    }
+  }
+</style>

@@ -1,6 +1,6 @@
 # Architecture
 
-This is the map of the source tree for contributors. It says where things live, not how every detail works. The [architecture page](https://volant.sh/internals/architecture/) of the documentation explains the design with diagrams, and the [decision records](https://volant.sh/decisions/) explain why it is built this way.
+This is the map of the source tree for contributors. It says where things live, not how every detail works. The [architecture page](https://volant.sh/docs/internals/architecture/) of the documentation explains the design with diagrams, and the [decision records](https://volant.sh/docs/decisions/) explain why it is built this way.
 
 ## Three crates
 

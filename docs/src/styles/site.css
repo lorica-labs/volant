@@ -1,0 +1,233 @@
+@import '@fontsource-variable/geist';
+@import '@fontsource-variable/geist-mono';
+
+/* ------------------------------------------------------------------------------------------------
+   The project site: the pages outside the documentation. The same palette, type and header as the
+   documentation, so moving between the two never feels like leaving.
+   ------------------------------------------------------------------------------------------------ */
+:root {
+  --bg: #0b0d0f;
+  --bg-2: #111417;
+  --bg-3: #171b1f;
+  --line: rgb(255 255 255 / 0.08);
+  --line-2: rgb(255 255 255 / 0.14);
+  --fg: #eef1f3;
+  --fg-2: #b3bcc3;
+  --fg-3: #7c868e;
+  --fg-4: #4f585f;
+  --brand: #19b6a6;
+  --brand-hi: #9af0e4;
+  --brand-low: #0a2b28;
+  --brand-ink: #04110f;
+  --slow: #c98a0b;
+  --f-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
+  --f-mono: 'Geist Mono Variable', ui-monospace, Menlo, Consolas, monospace;
+  --ease: cubic-bezier(0.16, 1, 0.3, 1);
+  --nav-h: 4rem;
+  color-scheme: dark;
+}
+
+*,
+*::before,
+*::after {
+  box-sizing: border-box;
+}
+html {
+  scroll-padding-top: calc(var(--nav-h) + 1rem);
+}
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--fg);
+  font-family: var(--f-sans);
+  font-size: 1rem;
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+::selection {
+  background: color-mix(in srgb, var(--brand) 35%, transparent);
+}
+a {
+  color: inherit;
+  text-decoration: none;
+}
+:focus-visible {
+  outline: 2px solid var(--brand);
+  outline-offset: 3px;
+  border-radius: 6px;
+}
+h1,
+h2,
+h3 {
+  margin: 0;
+  font-weight: 620;
+  letter-spacing: -0.025em;
+  text-wrap: balance;
+}
+p {
+  margin: 0;
+  text-wrap: pretty;
+}
+code,
+pre,
+.mono {
+  font-family: var(--f-mono);
+  font-variant-numeric: tabular-nums;
+}
+.wrap {
+  width: 100%;
+  max-width: 76rem;
+  margin-inline: auto;
+  padding-inline: max(1.25rem, env(safe-area-inset-left, 0px));
+}
+.visually-hidden {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* Buttons. */
+.btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.5rem;
+  height: 2.75rem;
+  padding: 0 1.15rem;
+  border: 0;
+  border-radius: 0.55rem;
+  font: 560 0.95rem var(--f-sans);
+  white-space: nowrap;
+  cursor: pointer;
+  transition:
+    background-color 0.25s var(--ease),
+    box-shadow 0.25s var(--ease),
+    transform 0.25s var(--ease);
+}
+.btn:active {
+  transform: translateY(1px);
+}
+.btn-brand {
+  background: var(--brand);
+  color: var(--brand-ink);
+}
+.btn-brand:hover {
+  background: #2bd0bf;
+}
+.btn-line {
+  background: transparent;
+  color: var(--fg);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+}
+.btn-line:hover {
+  background: var(--bg-3);
+}
+.btn svg {
+  width: 1rem;
+  height: 1rem;
+  transition: transform 0.3s var(--ease);
+}
+.btn:hover svg.arrow {
+  transform: translateX(2px);
+}
+
+/* Sections. */
+.section {
+  padding-block: clamp(4.5rem, 9vw, 7rem);
+  border-top: 1px solid var(--line);
+}
+.section-head {
+  max-width: 44rem;
+}
+.section-head h2 {
+  font-size: clamp(1.9rem, 3.4vw, 2.75rem);
+  line-height: 1.08;
+}
+.section-head p {
+  margin-top: 1rem;
+  color: var(--fg-2);
+  font-size: 1.1rem;
+  max-width: 60ch;
+}
+.page-head {
+  padding-block: clamp(4rem, 8vw, 6rem) clamp(2.5rem, 5vw, 3.5rem);
+}
+.page-head h1 {
+  font-size: clamp(2.4rem, 5vw, 3.75rem);
+  line-height: 1.04;
+  letter-spacing: -0.035em;
+}
+.page-head p {
+  margin-top: 1.25rem;
+  max-width: 60ch;
+  color: var(--fg-2);
+  font-size: clamp(1.05rem, 1.4vw, 1.2rem);
+}
+.text-link {
+  color: var(--brand-hi);
+  text-decoration: underline;
+  text-decoration-color: color-mix(in srgb, currentColor 40%, transparent);
+  text-underline-offset: 0.2em;
+  transition: text-decoration-color 0.25s var(--ease);
+}
+.text-link:hover {
+  text-decoration-color: currentColor;
+}
+
+/* A panel: a thin shell around a raised core, as the figures of the documentation. */
+.panel {
+  padding: 0.375rem;
+  border: 1px solid var(--line);
+  border-radius: 1rem;
+  background: rgb(255 255 255 / 0.025);
+}
+.panel > .core {
+  height: 100%;
+  border: 1px solid var(--line);
+  border-radius: 0.65rem;
+  background: var(--bg-2);
+  box-shadow: inset 0 1px 0 rgb(255 255 255 / 0.04);
+}
+
+/* Inline code and code blocks. */
+:not(pre) > code {
+  padding: 0.12em 0.4em;
+  border-radius: 0.35rem;
+  background: rgb(255 255 255 / 0.04);
+  box-shadow: inset 0 0 0 1px var(--line);
+  font-size: 0.875em;
+}
+pre.code {
+  margin: 0;
+  padding: 1.1rem 1.25rem;
+  overflow-x: auto;
+  color: var(--fg-2);
+  font-size: 0.85rem;
+  line-height: 1.7;
+}
+pre.code .k {
+  color: var(--brand-hi);
+}
+pre.code .s {
+  color: #c3d68b;
+}
+pre.code .c {
+  color: var(--fg-4);
+}
+
+/* Things that arrive as they scroll into view, once, when motion is welcome. */
+@media (prefers-reduced-motion: no-preference) {
+  .reveal {
+    opacity: 0;
+    transform: translateY(1rem);
+    transition:
+      opacity 0.8s var(--ease),
+      transform 0.8s var(--ease);
+  }
+  .reveal.is-visible {
+    opacity: 1;
+    transform: none;
+  }
+}

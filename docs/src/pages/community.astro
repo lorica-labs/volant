@@ -1,0 +1,227 @@
+---
+import SiteLayout from '../layouts/SiteLayout.astro';
+import { releases } from '../lib/roadmap';
+import { repo } from '../nav';
+
+const ways = [
+  {
+    title: 'Report a difference',
+    text: 'A playbook that behaves differently under Volant and ansible-playbook is a bug. The template asks for what it takes to reproduce it.',
+    href: `${repo}/issues/new?template=compat.yml`,
+    action: 'Open a compatibility report',
+  },
+  {
+    title: 'Take an issue',
+    text: 'Each planned issue gives the expected behaviour, the acceptance criteria and where to start in the code. Comment on it before you begin.',
+    href: `${repo}/issues?q=is%3Aissue+is%3Aopen+label%3A%22good+first+issue%22`,
+    action: 'Good first issues',
+  },
+  {
+    title: 'Ask or propose',
+    text: 'Questions, ideas and design discussions go to Discussions. For anything larger than a fix, open an issue first so the approach is agreed.',
+    href: `${repo}/discussions`,
+    action: 'Go to Discussions',
+  },
+  {
+    title: 'Improve the documentation',
+    text: 'Every page has a link to edit it and a link to report a problem with it. The documentation lives in the same repository as the engine.',
+    href: '/docs/',
+    action: 'Read the documentation',
+  },
+];
+
+const setup = `cargo install cargo-binstall
+cargo binstall just
+just setup        # git hooks and the tools the recipes use
+just check        # formatting, lints and the test suite`;
+---
+
+<SiteLayout
+  title="Community"
+  description="How to report a difference from Ansible, take an issue, ask a question or contribute to Volant, and what the next releases bring."
+>
+  <section class="wrap page-head">
+    <h1>Built in the open.</h1>
+    <p>
+      The code, the roadmap, the issues and the decisions behind the design are public. Bug reports, fixes, features and
+      documentation are all welcome.
+    </p>
+  </section>
+
+  <section class="section">
+    <div class="wrap ways">
+      {
+        ways.map((way) => (
+          <a class="way panel reveal" href={way.href}>
+            <div class="core">
+              <h2>{way.title}</h2>
+              <p>{way.text}</p>
+              <span class="action">
+                {way.action}
+                <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"
+                  stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><path d="M5 12h14M13 6l6 6-6 6"></path></svg>
+              </span>
+            </div>
+          </a>
+        ))
+      }
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap two">
+      <div class="section-head reveal">
+        <h2>Set up in four commands.</h2>
+        <p>
+          The repository pins its Rust toolchain, so rustup picks the right version. Every change goes through a pull
+          request, with tests for what it touches.
+        </p>
+        <p><a class="text-link" href={`${repo}/blob/main/CONTRIBUTING.md`}>Read CONTRIBUTING.md</a></p>
+      </div>
+      <div class="panel reveal"><pre class="code core">{setup}</pre></div>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap">
+      <div class="section-head reveal">
+        <h2>What comes next.</h2>
+        <p>The releases planned so far, in order. Each one is a milestone on GitHub with its issues.</p>
+      </div>
+      <ol class="releases">
+        {
+          releases.map((release) => (
+            <li class="reveal">
+              <a class="mono" href={release.milestone}>{release.version}</a>
+              <p>{release.brings}</p>
+            </li>
+          ))
+        }
+      </ol>
+      <p class="more reveal"><a class="text-link" href="/docs/project/roadmap/">The roadmap</a></p>
+    </div>
+  </section>
+
+  <section class="section">
+    <div class="wrap facts">
+      <div class="reveal">
+        <h2>License</h2>
+        <p>
+          GPL-3.0-or-later, like Ansible.
+          <a class="text-link" href="/docs/decisions/0001-gpl-3-0-or-later-license/">Decision record 0001</a> explains
+          why.
+        </p>
+      </div>
+      <div class="reveal">
+        <h2>Security</h2>
+        <p>
+          Report a vulnerability privately, never in a public issue.
+          <a class="text-link" href={`${repo}/blob/main/SECURITY.md`}>The security policy</a> says how.
+        </p>
+      </div>
+      <div class="reveal">
+        <h2>Decisions</h2>
+        <p>
+          The choices that shape what users see are written down with their reasons.
+          <a class="text-link" href="/docs/decisions/">The decision records</a>
+        </p>
+      </div>
+    </div>
+  </section>
+</SiteLayout>
+
+<style>
+  .ways {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 1rem;
+  }
+  .way {
+    transition: border-color 0.3s var(--ease);
+  }
+  .way:hover {
+    border-color: color-mix(in srgb, var(--brand) 45%, transparent);
+  }
+  .way .core {
+    display: grid;
+    gap: 0.75rem;
+    padding: 1.75rem;
+  }
+  .way h2 {
+    font-size: 1.25rem;
+  }
+  .way p {
+    color: var(--fg-2);
+  }
+  .action {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    margin-top: 0.5rem;
+    color: var(--brand-hi);
+    font-weight: 560;
+  }
+  .action svg {
+    transition: transform 0.3s var(--ease);
+  }
+  .way:hover .action svg {
+    transform: translateX(3px);
+  }
+  .two {
+    display: grid;
+    grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+    gap: clamp(2rem, 5vw, 4rem);
+    align-items: center;
+  }
+  .two .section-head p + p {
+    margin-top: 1rem;
+  }
+  .releases {
+    display: grid;
+    margin: 2.5rem 0 0;
+    padding: 0;
+    list-style: none;
+  }
+  .releases li {
+    display: grid;
+    grid-template-columns: 10rem minmax(0, 1fr);
+    gap: 1.5rem;
+    padding-block: 1rem;
+    border-top: 1px solid var(--line);
+  }
+  .releases a {
+    color: var(--brand-hi);
+    font-size: 0.9rem;
+  }
+  .releases p {
+    color: var(--fg-2);
+  }
+  .more {
+    margin-top: 1.5rem;
+  }
+  .facts {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 2rem;
+  }
+  .facts h2 {
+    font-size: 1.15rem;
+  }
+  .facts p {
+    margin-top: 0.6rem;
+    color: var(--fg-2);
+  }
+  @media (max-width: 60rem) {
+    .ways,
+    .two,
+    .facts {
+      grid-template-columns: minmax(0, 1fr);
+    }
+  }
+  @media (max-width: 36rem) {
+    .releases li {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 0.25rem;
+    }
+  }
+</style>

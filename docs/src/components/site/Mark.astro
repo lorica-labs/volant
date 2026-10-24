@@ -1,0 +1,13 @@
+---
+// The five-spoke steering wheel, drawn in the current colour.
+const { size = 26 } = Astro.props as { size?: number };
+const spokes = [-9, -81, -153, -225, -297];
+---
+
+<svg width={size} height={size} viewBox="0 0 256 256" aria-hidden="true">
+  <g transform="translate(128 128)" fill="currentColor">
+    <circle r="104.5" fill="none" stroke="currentColor" stroke-width="23" />
+    {spokes.map((angle) => <rect x="18" y="-8" width="77" height="16" transform={`rotate(${angle})`} />)}
+    <circle r="25" />
+  </g>
+</svg>

@@ -1,0 +1,147 @@
+---
+title: Keywords
+description: Every play, block and task keyword ansible-core 2.19 knows, and what Volant does with each one.
+---
+
+<!-- Generated from crates/volant/src/keywords.rs by `just docs-keywords`. Do not edit by hand. -->
+
+Volant loads a playbook against the whole ansible-core 2.19 grammar, so it parses here as it parses under Ansible. What this release does not support yet is named before the run starts, never accepted and then ignored. Each keyword has a status for each place it can be written.
+
+<ul class="kw-legend not-content">
+<li><span class="kw kw-runs">runs</span><span>Volant honors it, or names the one value it does not support yet.</span></li>
+<li><span class="kw kw-no">not accepted</span><span>Cannot be written there. Ansible rejects it too, when it reads the playbook.</span></li>
+</ul>
+
+A keyword inside a file that only a dynamic `include_tasks` or `include_role` names is checked when a host reaches that statement: if it is not supported yet, the statement fails for that host, a `rescue` around it can catch the failure, and nothing in the file runs. See [Includes and imports](/docs/playbooks/roles/#dynamic-includes).
+
+A keyword that takes a boolean or a number may be written as a template: `become`, `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable`, `delegate_facts`, `timeout`, `async` and `poll`. It is rendered for each host when its task runs, once the task's `when` has held, and a value the keyword cannot take fails the task with the reference's sentence. `gather_facts` and `force_handlers` of a play are rendered when the play starts. A literal that is not a boolean is refused when the playbook loads.
+
+This page is generated from the tables the loader and the pre-flight read, so it always describes the release it ships with. A status says what Volant does with the keyword, not that every value works: the [known gaps](/docs/start/compatibility/#known-gaps) list the values that fail.
+
+## All keywords
+
+<div class="kw-grid-wrap not-content">
+<table class="kw-grid">
+<thead><tr><th>Keyword</th><th>Play</th><th>Block</th><th>Task</th></tr></thead>
+<tbody>
+<tr><td><code>action</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>always</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>any_errors_fatal</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>args</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>async</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>become</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>become_exe</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>become_flags</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>become_method</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>become_user</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>block</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>changed_when</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>check_mode</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>collections</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>connection</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>debugger</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>delay</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>delegate_facts</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>delegate_to</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>diff</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>environment</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>fact_path</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>failed_when</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>force_handlers</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>gather_facts</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>gather_subset</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>gather_timeout</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>handlers</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>hosts</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>ignore_errors</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>ignore_unreachable</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>local_action</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>loop</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>loop_control</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>max_fail_percentage</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>module_defaults</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>name</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>no_log</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>notify</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>order</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>poll</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>port</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>post_tasks</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>pre_tasks</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>register</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>remote_user</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>rescue</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>retries</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>roles</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>run_once</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>serial</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>strategy</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>tags</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>tasks</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>throttle</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>timeout</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>until</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>vars</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>vars_files</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>vars_prompt</code></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td></tr>
+<tr><td><code>when</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_config</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_csvfile</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_dict</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_env</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_file</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_fileglob</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_first_found</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_indexed_items</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_ini</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_inventory_hostnames</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_items</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_lines</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_list</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_nested</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_password</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_pipe</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_random_choice</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_sequence</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_subelements</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_template</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_together</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_unvault</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_url</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_varnames</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+<tr><td><code>with_vars</code></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-no">not accepted</span></td><td><span class="kw kw-runs">runs</span></td></tr>
+</tbody>
+</table>
+</div>
+
+## Limits of what runs
+
+| Keyword | Limit |
+|---|---|
+| `any_errors_fatal` | A template counts as true whatever it renders to, as ansible-core 2.19 reads it, and the task then fails on a value that is not a boolean |
+| `debugger` | `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs. `task_vars` edited at the prompt reach a redo through `u` only |
+| `gather_facts` | A template is rendered once, when the play starts, with the play's variables. The play still counts as one that may gather facts, so it needs ansible-core to be there |
+| `no_log` | A template is rendered for each host when its task runs. In a loop, one item that hides hides every item, where ansible-core hides each item by its own value |
+| `run_once` | A template is read for each host of the batch, and the first host it is true for runs the task. A template that is true for some hosts and false for others ends the run, where ansible-core also runs the hosts in front of the first. Under `free` and `host_pinned` a template is ignored without the warning a literal gets |
+
+## Handlers
+
+A handler accepts every task keyword above, plus one of its own.
+
+| Keyword | Status |
+|---|---|
+| `listen` | <span class="kw kw-runs">runs</span> |
+
+## Under loop_control
+
+A sub-key ansible-core does not know is rejected when the playbook loads.
+
+| Sub-key | Status |
+|---|---|
+| `break_when` | <span class="kw kw-runs">runs</span> |
+| `extended` | <span class="kw kw-runs">runs</span> |
+| `extended_allitems` | <span class="kw kw-runs">runs</span> |
+| `index_var` | <span class="kw kw-runs">runs</span> |
+| `label` | <span class="kw kw-runs">runs</span> |
+| `loop_var` | <span class="kw kw-runs">runs</span> |
+| `pause` | <span class="kw kw-runs">runs</span> |

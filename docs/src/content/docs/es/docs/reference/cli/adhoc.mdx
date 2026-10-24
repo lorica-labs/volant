@@ -1,0 +1,29 @@
+---
+sourceHash: f506b5727dea
+title: volant adhoc
+description: Ejecuta un módulo en cada host que coincide con un patrón, con las opciones y la salida de ansible.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant adhoc` es `ansible`: ejecuta un módulo en cada host que coincide con un patrón.
+
+```sh
+volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
+             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
+```
+
+<Option name="-m, --module-name" arg="MODULE">
+  El módulo que se ejecuta. Por defecto: `command`.
+</Option>
+
+<Option name="-a, --args" arg="ARGS">
+  Los argumentos del módulo: palabras `key=value`, o un objeto JSON cuando el valor empieza por `{` y termina en `}`. Para `command`, `shell`, `raw` y `script`, las palabras que no son una opción del módulo forman la línea de comandos. Los argumentos se renderizan como plantilla con las variables de cada host y `-e`. Un valor que empieza por `{`, termina en `}` y no es JSON válido detiene el comando con el código de salida 250; una comilla sin cerrar lo detiene con el código 4.
+</Option>
+
+Las demás opciones significan lo mismo que para `volant playbook`. `-f 1` ejecuta un host cada vez, en el orden del inventario.
+
+Cada host imprime un resultado, como lo imprime el callback `minimal` de ansible. Un resultado de `command`, `shell` o `raw` es `h1 | CHANGED | rc=0 >>`, y a continuación su stdout, su stderr y su `msg` unidos sin nada entre ellos. Cualquier otro resultado es `h1 | SUCCESS => ` seguido del resultado como JSON, con sangría de cuatro espacios y las claves ordenadas. Los estados son `SUCCESS`, `CHANGED`, `FAILED` (forma de comando), `FAILED!` (forma JSON), `SKIPPED` y `UNREACHABLE!`. Antes de un resultado fallido o inalcanzable, la salida estándar lleva el mismo bloque `[ERROR]` que imprime un playbook. Su `Origin:` es `<adhoc 'MODULE' task>`, seguido de la tarea tal como la muestra ansible, recortada a 120 caracteres.
+
+El código de salida es 0 cuando todos los hosts tuvieron éxito o se omitieron, 2 cuando un host falló, y 4 cuando no se pudo alcanzar un host, haya o no hosts fallidos. `ANSIBLE_STDOUT_CALLBACK` no cambia la salida. Con `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, o `callback_result_format = yaml` bajo `[defaults]` en `ansible.cfg`, un resultado de forma JSON se imprime en cambio como YAML, en las líneas después de `=>`, con sangría de cuatro espacios. Una cadena con saltos de línea se convierte en un bloque literal. Cualquier otro valor, incluido el vacío, detiene el comando con el código de salida 5. `-vv` y superiores se rechazan con el código de salida 4.

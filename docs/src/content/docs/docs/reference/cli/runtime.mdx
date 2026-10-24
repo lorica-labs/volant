@@ -1,0 +1,32 @@
+---
+title: volant runtime
+description: Install, pack, inspect and remove the Python and ansible-core that Volant manages for itself.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+`volant runtime` manages the Python and ansible-core that Volant installs for itself. [The managed runtime](/docs/reference/runtime/) describes what each step does.
+
+```sh
+volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
+volant runtime pack FILE
+volant runtime status
+volant runtime path
+volant runtime remove [ID | --all]
+```
+
+<Option name="install --collections" arg="NAME_OR_FILE...">
+  Also install collections into the runtime. Each value is a name, with an optional version (`community.general:13.4.0`), or a requirements file ending in `.yml` or `.yaml`.
+</Option>
+
+<Option name="install --from" arg="FILE">
+  Install from a file `volant runtime pack` wrote, with no download. The platform has to match. It prints the SHA-256 of the file on a `sha256` line.
+</Option>
+
+<Option name="install --sha256" arg="HASH">
+  With `--from`, refuse the file before unpacking it when its SHA-256 differs from `HASH`. The error shows both hashes and the exit code is 1.
+</Option>
+
+<Option name="remove --all">
+  Delete every runtime, not only the current one.
+</Option>

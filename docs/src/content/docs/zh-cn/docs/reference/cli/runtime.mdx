@@ -1,0 +1,33 @@
+---
+sourceHash: ae3b65b07678
+title: volant runtime
+description: 安装、打包、检查和删除 Volant 为自己管理的 Python 和 ansible-core。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant runtime` 管理 Volant 为自己安装的 Python 和 ansible-core。每一步做什么，见[托管运行时](/zh-cn/docs/reference/runtime/)。
+
+```sh
+volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
+volant runtime pack FILE
+volant runtime status
+volant runtime path
+volant runtime remove [ID | --all]
+```
+
+<Option name="install --collections" arg="NAME_OR_FILE...">
+  同时把 collection 安装到运行时中。每个值是一个名字，可以带版本（`community.general:13.4.0`），或是以 `.yml` 或 `.yaml` 结尾的 requirements 文件。
+</Option>
+
+<Option name="install --from" arg="FILE">
+  从 `volant runtime pack` 写出的文件安装，不下载任何东西。平台必须匹配。它会在一行 `sha256` 中打印该文件的 SHA-256。
+</Option>
+
+<Option name="install --sha256" arg="HASH">
+  与 `--from` 一起使用时，如果文件的 SHA-256 与 `HASH` 不同，就在解包前拒绝该文件。错误中会显示两个哈希值，退出码为 1。
+</Option>
+
+<Option name="remove --all">
+  删除所有运行时，而不只是当前的那个。
+</Option>

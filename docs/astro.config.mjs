@@ -171,7 +171,17 @@ export default defineConfig({
         {
           label: 'Reference',
           items: [
-            { label: 'Command line', slug: 'docs/reference/cli' },
+            {
+              label: 'Command line',
+              items: [
+                { label: 'volant playbook', slug: 'docs/reference/cli' },
+                { label: 'volant adhoc', slug: 'docs/reference/cli/adhoc' },
+                { label: 'volant inventory', slug: 'docs/reference/cli/inventory' },
+                { label: 'volant runtime', slug: 'docs/reference/cli/runtime' },
+                { label: 'volant shims', slug: 'docs/reference/cli/shims' },
+                { label: 'volant vault', slug: 'docs/reference/cli/vault' },
+              ],
+            },
             { label: 'Configuration', slug: 'docs/reference/configuration' },
             { label: 'Exit codes', slug: 'docs/reference/exit-codes' },
             { label: 'Keywords', slug: 'docs/reference/keywords' },

@@ -1,0 +1,29 @@
+---
+sourceHash: f506b5727dea
+title: volant adhoc
+description: Führt ein Modul auf jedem Host aus, der zu einem Muster passt, mit den Optionen und der Ausgabe von ansible.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant adhoc` ist `ansible`: Es führt ein Modul auf jedem Host aus, der zu einem Muster passt.
+
+```sh
+volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
+             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
+```
+
+<Option name="-m, --module-name" arg="MODULE">
+  Das auszuführende Modul. Standard: `command`.
+</Option>
+
+<Option name="-a, --args" arg="ARGS">
+  Die Argumente des Moduls: `key=value`-Wörter oder ein JSON-Objekt, wenn der Wert mit `{` beginnt und mit `}` endet. Bei `command`, `shell`, `raw` und `script` bilden Wörter, die keine Option des Moduls sind, die Kommandozeile. Die Argumente werden mit den Variablen jedes Hosts und `-e` als Template gerendert. Ein Wert, der mit `{` beginnt, mit `}` endet und kein gültiges JSON ist, bricht den Befehl mit Exit-Code 250 ab; ein nicht geschlossenes Anführungszeichen bricht ihn mit Exit-Code 4 ab.
+</Option>
+
+Die übrigen Optionen bedeuten das, was sie für `volant playbook` bedeuten. `-f 1` führt einen Host nach dem anderen aus, in der Reihenfolge des Inventorys.
+
+Jeder Host gibt ein Ergebnis aus, so wie es der `minimal`-Callback von ansible ausgibt. Ein Ergebnis von `command`, `shell` oder `raw` lautet `h1 | CHANGED | rc=0 >>`, dann folgen Stdout, Stderr und `msg` ohne Trennzeichen aneinandergehängt. Jedes andere Ergebnis lautet `h1 | SUCCESS => `, gefolgt vom Ergebnis als JSON, mit vier Leerzeichen eingerückt und Schlüsseln sortiert. Die Status sind `SUCCESS`, `CHANGED`, `FAILED` (Befehlsform), `FAILED!` (JSON-Form), `SKIPPED` und `UNREACHABLE!`. Vor einem fehlgeschlagenen oder nicht erreichbaren Ergebnis enthält die Standardausgabe denselben `[ERROR]`-Block, den ein Playbook ausgibt. Sein `Origin:` ist `<adhoc 'MODULE' task>`, gefolgt von der Task, wie ansible sie zeigt, auf 120 Zeichen gekürzt.
+
+Der Exit-Code ist 0, wenn jeder Host erfolgreich war oder übersprungen wurde, 2, wenn ein Host fehlgeschlagen ist, und 4, wenn ein Host nicht erreicht werden konnte, ob es fehlgeschlagene Hosts gibt oder nicht. `ANSIBLE_STDOUT_CALLBACK` ändert die Ausgabe nicht. Mit `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml` oder `callback_result_format = yaml` unter `[defaults]` in der `ansible.cfg` wird ein Ergebnis in JSON-Form stattdessen als YAML ausgegeben, in den Zeilen nach `=>`, mit vier Leerzeichen eingerückt. Ein String mit Zeilenumbrüchen wird zu einem Literalblock. Jeder andere Wert, auch der leere, bricht den Befehl mit Exit-Code 5 ab. `-vv` und höher werden mit Exit-Code 4 abgelehnt.

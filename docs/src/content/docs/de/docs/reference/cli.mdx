@@ -1,5 +1,5 @@
 ---
-sourceHash: 26c0ba36bd76
+sourceHash: e9d95d95a105
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -10,10 +10,14 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
+volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
-volant vault <encrypt|decrypt|view>
+volant shims <install|remove>
+volant vault <encrypt|decrypt|view|create|edit|rekey>
 volant --version
 ```
+
+Jeder andere Befehl hat eine eigene Seite: [`volant adhoc`](/de/docs/reference/cli/adhoc/), [`volant inventory`](/de/docs/reference/cli/inventory/), [`volant runtime`](/de/docs/reference/cli/runtime/), [`volant shims`](/de/docs/reference/cli/shims/), [`volant vault`](/de/docs/reference/cli/vault/). Diese Seite behandelt `volant playbook`.
 
 `volant playbook` nimmt dieselben Optionen wie `ansible-playbook`, soweit sie dort existieren. `volant-playbook` ist dasselbe Programm unter einem Namen, der dem vertrauten ähnelt. Playbooks, die zusammen angegeben werden, laufen der Reihe nach, und jedes gibt seinen eigenen Recap aus.
 
@@ -226,155 +230,6 @@ Volant liest die oben genannten `ANSIBLE_*`-Variablen sowie einige eigene.
 <Option name="VOLANT_PROFILE_JSON" arg="FILE">
   Schreibt das Profil des Laufs in diese Datei, ein JSON-Objekt pro Zeile: zuerst die nativen Module, die jeder Agent gemeldet hat, dann die Phasen, dann eine Zeile pro Task mit Modul, Pfad, Rückgabegrund und Zeiten in Mikrosekunden. Sie wird unabhängig davon geschrieben, was aus dem Lauf wurde, und eine Datei, die sich nicht schreiben lässt, gibt nur eine Warnung aus.
 </Option>
-
-## Der Befehl adhoc
-
-`volant adhoc` ist `ansible`: Es führt ein Modul auf jedem Host aus, der zu einem Muster passt.
-
-```sh
-volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
-             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
-```
-
-<Option name="-m, --module-name" arg="MODULE">
-  Das auszuführende Modul. Standard: `command`.
-</Option>
-
-<Option name="-a, --args" arg="ARGS">
-  Die Argumente des Moduls: `key=value`-Wörter oder ein JSON-Objekt, wenn der Wert mit `{` beginnt und mit `}` endet. Bei `command`, `shell`, `raw` und `script` bilden Wörter, die keine Option des Moduls sind, die Kommandozeile. Die Argumente werden mit den Variablen jedes Hosts und `-e` als Template gerendert. Ein Wert, der mit `{` beginnt, mit `}` endet und kein gültiges JSON ist, bricht den Befehl mit Exit-Code 250 ab; ein nicht geschlossenes Anführungszeichen bricht ihn mit Exit-Code 4 ab.
-</Option>
-
-Die übrigen Optionen bedeuten das, was sie für `volant playbook` bedeuten. `-f 1` führt einen Host nach dem anderen aus, in der Reihenfolge des Inventorys.
-
-Jeder Host gibt ein Ergebnis aus, so wie es der `minimal`-Callback von ansible ausgibt. Ein Ergebnis von `command`, `shell` oder `raw` lautet `h1 | CHANGED | rc=0 >>`, dann folgen Stdout, Stderr und `msg` ohne Trennzeichen aneinandergehängt. Jedes andere Ergebnis lautet `h1 | SUCCESS => `, gefolgt vom Ergebnis als JSON, mit vier Leerzeichen eingerückt und Schlüsseln sortiert. Die Status sind `SUCCESS`, `CHANGED`, `FAILED` (Befehlsform), `FAILED!` (JSON-Form), `SKIPPED` und `UNREACHABLE!`. Vor einem fehlgeschlagenen oder nicht erreichbaren Ergebnis enthält die Standardausgabe denselben `[ERROR]`-Block, den ein Playbook ausgibt. Sein `Origin:` ist `<adhoc 'MODULE' task>`, gefolgt von der Task, wie ansible sie zeigt, auf 120 Zeichen gekürzt.
-
-Der Exit-Code ist 0, wenn jeder Host erfolgreich war oder übersprungen wurde, 2, wenn ein Host fehlgeschlagen ist, und 4, wenn ein Host nicht erreicht werden konnte, ob es fehlgeschlagene Hosts gibt oder nicht. `ANSIBLE_STDOUT_CALLBACK` ändert die Ausgabe nicht. Mit `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml` oder `callback_result_format = yaml` unter `[defaults]` in der `ansible.cfg` wird ein Ergebnis in JSON-Form stattdessen als YAML ausgegeben, in den Zeilen nach `=>`, mit vier Leerzeichen eingerückt. Ein String mit Zeilenumbrüchen wird zu einem Literalblock. Jeder andere Wert, auch der leere, bricht den Befehl mit Exit-Code 5 ab. `-vv` und höher werden mit Exit-Code 4 abgelehnt.
-
-## Der Befehl runtime
-
-`volant runtime` verwaltet das Python und ansible-core, die Volant für sich selbst installiert. [Die verwaltete Runtime](/de/docs/reference/runtime/) beschreibt, was jeder Schritt tut.
-
-```sh
-volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
-volant runtime pack FILE
-volant runtime status
-volant runtime path
-volant runtime remove [ID | --all]
-```
-
-<Option name="install --collections" arg="NAME_OR_FILE...">
-  Installiert zusätzlich Collections in die Runtime. Jeder Wert ist ein Name mit optionaler Version (`community.general:13.4.0`) oder eine Requirements-Datei, die auf `.yml` oder `.yaml` endet.
-</Option>
-
-<Option name="install --from" arg="FILE">
-  Installiert aus einer Datei, die `volant runtime pack` geschrieben hat, ohne Download. Die Plattform muss übereinstimmen. Es gibt den SHA-256 der Datei in einer Zeile `sha256` aus.
-</Option>
-
-<Option name="install --sha256" arg="HASH">
-  Lehnt mit `--from` die Datei vor dem Entpacken ab, wenn ihr SHA-256 von `HASH` abweicht. Der Fehler zeigt beide Hashes, und der Exit-Code ist 1.
-</Option>
-
-<Option name="remove --all">
-  Löscht jede Runtime, nicht nur die aktuelle.
-</Option>
-
-## Der Befehl vault
-
-`volant vault` tut, was `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit` und `rekey` tun, auf denselben Dateien, mit denselben Meldungen und denselben Exit-Codes. `encrypt_string` gibt es noch nicht. Einzelheiten stehen unter [Vault](/de/docs/variables/vault/#dateien-verschlüsseln-und-anzeigen) und [Vault](/de/docs/variables/vault/#dateien-anlegen-bearbeiten-und-neu-verschlüsseln).
-
-```sh
-volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
-volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
-volant vault view [FILE...] [OPTIONS]
-volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
-volant vault edit FILE... [OPTIONS]
-volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
-```
-
-`OPTIONS` sind `--vault-id`, `--vault-password-file` (auch `--vault-pass-file`), `-J`/`--ask-vault-pass` und `-v`, oben unter [Vault](#vault) beschrieben. Ohne eine davon und ohne die Einstellung `vault_password_file` fragt der Befehl nach dem Passwort.
-
-<Option name="--output" arg="FILE">
-  Schreibt das Ergebnis dorthin und lässt die Quelle unverändert. `-` ist die Standardausgabe. Damit wird nur eine Eingabedatei akzeptiert, sonst ist der Exit-Code 5.
-</Option>
-
-<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  Die Vault-ID, die `encrypt`, `create` und `rekey` verwenden. `encrypt` und `create` verlangen sie, wenn mehr als eine `--vault-id` angegeben wird. `edit` akzeptiert sie und ignoriert sie: Eine Datei behält ihr eigenes Label.
-</Option>
-
-<Option name="--skip-tty-check">
-  `create` öffnet den Editor auch dann, wenn die Standardausgabe kein Terminal ist. Ohne sie verweigert `create` mit Exit-Code 5.
-</Option>
-
-<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
-  Das neue Geheimnis für `rekey`. Geben Sie eine der beiden an. Ohne beide fragt `rekey` danach.
-</Option>
-
-## Der Befehl shims
-
-`volant shims` verknüpft die Programmnamen von ansible-core mit `volant`, sodass `ansible-vault` und die anderen Volant starten. Nichts legt diese Links an, solange Sie den Befehl nicht ausführen. Er funktioniert unter Linux und macOS.
-
-```sh
-volant shims install [--dir DIR] [--force] [NAME...]
-volant shims remove [--dir DIR] [NAME...]
-```
-
-`NAME` ist einer von `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` und `ansible-vault`. Ohne Angabe nimmt der Befehl alle neun.
-
-<Option name="--dir" arg="DIR">
-  Das Verzeichnis der Links. Standard: `$VOLANT_BIN_DIR`, dann `~/.local/bin`. Ein fehlendes Verzeichnis ist ein Fehler: `ERROR! DIR is not a directory`, Exit-Code 1.
-</Option>
-
-<Option name="install --force" arg="">
-  Ersetzt eine Datei oder einen Link dieses Namens, die kein Volant-Link sind.
-</Option>
-
-Ein Shim ist ein symbolischer Link. Sein Ziel ist der relative Name `volant`, wenn `DIR` einen Eintrag namens `volant` enthält, sodass ein Update dieses Links die Shims mitnimmt. Sonst ist es der absolute Pfad der laufenden Binärdatei.
-
-`install` gibt eine Zeile pro Name aus:
-
-| Zeile | Bedeutung |
-|---|---|
-| `ansible-vault: installed` | Der Link wurde angelegt. |
-| `ansible-vault: already installed` | Der Link existiert und zeigt auf `volant`. Nichts hat sich geändert. |
-| `ansible-vault: replaced` | `--force` hat eine andere Datei oder einen anderen Link ersetzt. |
-| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | Nichts wurde angelegt, und der Exit-Code ist 1. |
-
-Liegt eine andere ausführbare Datei dieses Namens im `PATH`, hängt eine Zeile, die einen Link angelegt hat, einen zweiten Satz an: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH` oder `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`. Ist `DIR` gar nicht im `PATH`, endet sie mit `DIR is not in PATH`.
-
-`remove` löscht nur symbolische Links, deren Ziel eine Datei namens `volant` ist, und gibt `ansible-vault: removed`, `ansible-vault: not installed` oder `ansible-vault: not a Volant link, left alone` aus. Die letzte setzt den Exit-Code auf 1.
-
-## Der Befehl inventory
-
-`volant inventory` gibt ein Inventory als JSON aus, so wie es `ansible-inventory` tut. Unter dem Namen `ansible-inventory` gestartet (siehe [der Befehl shims](#der-befehl-shims)), verhält er sich genauso.
-
-```
-volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
-```
-
-Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--graph`, `--yaml`, `--toml`, `--export` und `--vars` gibt es noch nicht: `--graph` wird mit Namen abgelehnt, die anderen sind unbekannte Optionen.
-
-<Option name="--list" arg="">
-  Gibt jeden Host mit seinen Variablen aus, einschließlich der Dateien `group_vars` und `host_vars` und der Variablen seiner Gruppen, dann die Gruppen mit ihren `hosts` und `children`. Die Schlüssel sind sortiert, die Einrückung beträgt vier Leerzeichen, und Nicht-ASCII-Text wird unverändert geschrieben. Ein String, der Daten ist, wird als `{"__ansible_unsafe": "..."}` ausgegeben und ein `!vault`-Wert als `{"__ansible_vault": "..."}`; nichts wird entschlüsselt.
-</Option>
-
-<Option name="--host" arg="HOST">
-  Gibt die Variablen eines Hosts aus. `HOST` ist ein Host-Muster, das genau einen Host treffen muss, sonst gibt der Befehl `You must pass a single valid host to --host parameter` aus und endet mit Exit-Code 5. `--limit` gilt nicht.
-</Option>
-
-<Option name="-l, --limit" arg="SUBSET">
-  Behält mit `--list` nur die Hosts, die zum Muster passen. Gruppen bleiben, mit ihren Kindern. Ein Muster ohne Treffer warnt und gibt ein Inventory ohne Host aus.
-</Option>
-
-<Option name="-e, --extra-vars" arg="VARS">
-  Zusätzliche Variablen, jedem Host hinzugefügt und stärker als jede andere Ebene.
-</Option>
-
-<Option name="--output" arg="FILE">
-  Schreibt das Dokument nach `FILE` und gibt nichts aus. Die Datei enthält, was die Standardausgabe enthalten hätte, ohne den letzten Zeilenumbruch.
-</Option>
-
-`-i`, `-v` und die Vault-Optionen funktionieren wie bei `volant playbook`. Ohne gewählte Aktion gibt der Befehl `No action selected, at least one of --host, --graph or --list needs to be specified.` aus, bei zwei Aktionen `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; beide enden mit Exit-Code 5.
 
 ## Noch nicht vorhanden
 

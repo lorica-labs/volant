@@ -66,7 +66,7 @@
   vars: {}
   volatile: []
   generate: null
-  skip_reason: null
+  skip_reason: 'upstream: Unable to start service auditd.service: Job for auditd.service failed because the control process exited with error code.'
 - name: ssh-hardening
   source: {galaxy_collection: devsec.hardening, version: 11.0.0}
   collections:

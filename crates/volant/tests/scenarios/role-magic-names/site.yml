@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  roles:
+    - outer
+    - my.coll.cr
+  tasks:
+    - name: outside a role
+      debug:
+        msg: "{{ role_name | default('none') }} {{ ansible_parent_role_names | default('none') }}"

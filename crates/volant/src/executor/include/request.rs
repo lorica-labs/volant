@@ -114,6 +114,24 @@ pub(super) fn include_request(
                 body.insert("reason".into(), json!(format!("{err:#}")));
                 TaskResult(body)
             })?;
+            // The role this statement is written in heads `ansible_parent_role_names` and
+            // `ansible_parent_role_paths` of the role it brings in, in front of what an include
+            // above it handed down: measured on 2.19.12, `IncludeRole.get_include_params`.
+            if let (Some(parent), Some(dir)) = (
+                step.role.and_then(|i| compiled.roles.get(i)),
+                &step.origin.role_dir,
+            ) {
+                prepend(
+                    &mut vars,
+                    "ansible_parent_role_names",
+                    json!(parent.full_name()),
+                );
+                prepend(
+                    &mut vars,
+                    "ansible_parent_role_paths",
+                    json!(dir.display().to_string()),
+                );
+            }
             let what = entry.name.clone();
             role_id = Some(crate::compile::role_identity(&entry, &own));
             (IncludeTarget::Role(Box::new(entry)), what)
@@ -126,6 +144,17 @@ pub(super) fn include_request(
         label: item.label.clone(),
         role_id,
     })
+}
+
+/// `value` put in front of the list `name` holds in `vars`, the engine's own and so trusted.
+fn prepend(vars: &mut IncludeParams, name: &str, value: Value) {
+    let mut list = match vars.values.remove(name) {
+        Some(Value::Array(list)) => list,
+        _ => Vec::new(),
+    };
+    list.insert(0, value);
+    vars.values.insert(name.to_string(), Value::Array(list));
+    vars.untrusted.remove(name);
 }
 
 /// What the loop binds for one item, handed down with the statement's variables and kept apart

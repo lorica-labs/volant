@@ -382,8 +382,11 @@ impl Builder<'_> {
         dependencies?;
         let index = self.roles.len();
         self.exporting = outer_exporting;
+        let (role_name, collection) = crate::roles::identity(&path, &entry.name);
         self.roles.push(RoleVars {
             name: entry.name.clone(),
+            role_name,
+            collection,
             defaults: role.defaults,
             vars: role.vars,
             params: entry.params.clone(),

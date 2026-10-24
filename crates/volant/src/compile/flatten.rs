@@ -49,7 +49,8 @@ pub(super) fn validation(
         "validate_args_context".to_string(),
         serde_json::json!({
             "argument_spec_name": entry.from.tasks,
-            "name": entry.name,
+            // `Role._role_name`: the role's own name, without its collection.
+            "name": crate::roles::identity(path, &entry.name).0,
             "path": path.display().to_string(),
             "type": "role",
         }),

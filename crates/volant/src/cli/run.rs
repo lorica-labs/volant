@@ -122,7 +122,7 @@ async fn run_all(
         eprintln!("ERROR! The number of processes (--forks) must be >= 1");
         return Ok(2);
     }
-    let sources = inventory_sources(args, &config);
+    let sources = inventory_sources(&args.inventory, &config);
     // One helper for the run: the inventory's collection plugins, its refreshes, and the filters.
     let bridge = Bridge::late();
     let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));

@@ -59,9 +59,9 @@ pub(super) fn announce_callbacks(out: &mut Renderer) {
 
 /// The sources a run reads: every `-i`, else the configuration's, else the reference's
 /// `/etc/ansible/hosts`.
-pub(super) fn inventory_sources(args: &PlaybookArgs, config: &Config) -> Vec<Source> {
-    if !args.inventory.is_empty() {
-        return args.inventory.iter().map(|s| Source::new(s)).collect();
+pub(super) fn inventory_sources(given: &[String], config: &Config) -> Vec<Source> {
+    if !given.is_empty() {
+        return given.iter().map(|s| Source::new(s)).collect();
     }
     if !config.inventory.is_empty() {
         return config
@@ -100,7 +100,7 @@ pub(super) fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -
         .iter()
         .flat_map(|t| crate::config::tag_list(t))
         .collect();
-    let inventory: Vec<String> = inventory_sources(args, config)
+    let inventory: Vec<String> = inventory_sources(&args.inventory, config)
         .iter()
         .map(|s| s.text().to_string())
         .collect();

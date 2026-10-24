@@ -66,39 +66,60 @@ pub(crate) fn dir() -> Result<PathBuf, String> {
 /// Refuses the directory that holds `root` unless it is this user's or root's, and, when others
 /// can write it, has the sticky bit: without it they could rename a checked directory away and
 /// put their own in its place before `ansible-pull` runs the programs in it. The rule OpenSSH
-/// applies to its paths.
+/// applies to its paths, including its exception for a user-private group.
 #[cfg(unix)]
 fn check_parent(parent: &Path) -> Result<(), String> {
     use std::os::unix::fs::MetadataExt as _;
 
-    use std::os::unix::fs::PermissionsExt as _;
-
-    let failed =
-        |e: std::io::Error| format!("cannot use {} for ansible-pull: {e}", parent.display());
-    let mut meta = std::fs::metadata(parent).map_err(failed)?;
-    // SAFETY: `geteuid` reads the calling process's own credentials and cannot fail.
-    let euid = unsafe { libc::geteuid() };
-    // A home directory's `.cache` is `0775` under a umask of 002 and belongs to this user: only
-    // the group's write is taken off it, anything wider is for the check below.
-    if meta.uid() == euid && meta.mode() & 0o1022 == 0o020 {
-        std::fs::set_permissions(
-            parent,
-            std::fs::Permissions::from_mode(meta.mode() & 0o7755),
-        )
-        .map_err(failed)?;
-        meta = std::fs::metadata(parent).map_err(failed)?;
-    }
+    let meta = std::fs::metadata(parent)
+        .map_err(|e| format!("cannot use {} for ansible-pull: {e}", parent.display()))?;
+    // SAFETY: `geteuid` and `getegid` read the calling process's own credentials.
+    let (euid, egid) = unsafe { (libc::geteuid(), libc::getegid()) };
+    let private = meta.gid() == egid && private_group(egid);
     let mode = meta.mode() & 0o7777;
-    if (meta.uid() != euid && meta.uid() != 0) || (mode & 0o022 != 0 && mode & 0o1000 == 0) {
-        return Err(format!(
-            "{} (owner uid {}, mode {mode:o}) is not safe to keep the links of ansible-pull in, \
-             because others could replace what is inside it: set XDG_CACHE_HOME to a directory \
-             only you can write",
-            parent.display(),
-            meta.uid()
-        ));
+    if parent_is_safe(meta.uid(), euid, mode, private) {
+        return Ok(());
     }
-    Ok(())
+    Err(format!(
+        "{} (owner uid {}, mode {mode:o}) is not safe to keep the links of ansible-pull in,          because others could replace what is inside it: set XDG_CACHE_HOME to a directory          only you can write",
+        parent.display(),
+        meta.uid()
+    ))
+}
+
+/// Whether a directory of `owner` and `mode` may hold the links: its owner is the user or root,
+/// and anyone who can write it is stopped by the sticky bit, or is the user's own private group.
+#[cfg(unix)]
+fn parent_is_safe(owner: u32, euid: u32, mode: u32, private_group: bool) -> bool {
+    let sticky = mode & 0o1000 != 0;
+    let others = mode & 0o002 != 0;
+    let group = mode & 0o020 != 0;
+    (owner == euid || owner == 0) && (sticky || (!others && (!group || private_group)))
+}
+
+/// Whether `gid` is a group with no member listed: the group a user gets of their own. Accounts
+/// that only have it as their primary group are not in the list, so a shared primary group is
+/// not seen here; that is the cost of not walking the whole password database.
+#[cfg(unix)]
+fn private_group(gid: libc::gid_t) -> bool {
+    let mut group = std::mem::MaybeUninit::<libc::group>::uninit();
+    let mut buffer = vec![0 as libc::c_char; 16 * 1024];
+    let mut found: *mut libc::group = std::ptr::null_mut();
+    // SAFETY: `group`, `buffer` and `found` are valid for the call, which fills the first two
+    // and sets the third to the entry or null.
+    let status = unsafe {
+        libc::getgrgid_r(
+            gid,
+            group.as_mut_ptr(),
+            buffer.as_mut_ptr(),
+            buffer.len(),
+            &raw mut found,
+        )
+    };
+    // SAFETY: on success `found` points at `group`, whose `gr_mem` is a null-terminated list.
+    status == 0
+        && !found.is_null()
+        && unsafe { (*found).gr_mem.is_null() || (*(*found).gr_mem).is_null() }
 }
 
 /// Takes group and other write off a directory this user owns, which other code of Volant may

@@ -9,6 +9,8 @@ fn mode(path: &Path, bits: u32) {
 /// A fake binary to link to, in a scratch directory.
 fn scratch() -> (tempfile::TempDir, PathBuf) {
     let work = tempfile::tempdir().unwrap();
+    // The machine's umask must not decide whether its group can write the parent.
+    mode(work.path(), 0o755);
     let volant = work.path().join("volant");
     std::fs::write(&volant, "").unwrap();
     (work, volant)
@@ -100,6 +102,34 @@ fn a_writable_parent_needs_the_sticky_bit() {
     prepare(&parent.join("volant"), &volant).unwrap();
     mode(&parent, 0o755);
     prepare(&parent.join("volant"), &volant).unwrap();
+}
+
+/// The rule for the directory that holds the cache: owner, sticky bit and the private group.
+#[rstest::rstest]
+#[case::own_private(1000, 0o755, false, true)]
+#[case::root_owned(0, 0o755, false, true)]
+#[case::someone_elses(1001, 0o755, false, false)]
+#[case::group_private(1000, 0o775, true, true)]
+#[case::group_shared(1000, 0o775, false, false)]
+#[case::others_write(1000, 0o777, true, false)]
+#[case::others_sticky(0, 0o1777, false, true)]
+#[case::group_sticky(1000, 0o1775, false, true)]
+fn the_parent_rule(
+    #[case] owner: u32,
+    #[case] mode: u32,
+    #[case] private: bool,
+    #[case] safe: bool,
+) {
+    assert_eq!(parent_is_safe(owner, 1000, mode, private), safe);
+}
+
+/// The group lookup answers for the group of this process without failing.
+#[test]
+fn the_group_lookup_runs() {
+    // SAFETY: reads this process's own credentials.
+    let gid = unsafe { libc::getegid() };
+    let _ = private_group(gid);
+    assert!(!private_group(u32::MAX - 1));
 }
 
 /// A binary that is gone, as after an in-place upgrade, is named rather than linked to.

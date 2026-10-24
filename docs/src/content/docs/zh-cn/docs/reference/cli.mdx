@@ -1,5 +1,5 @@
 ---
-sourceHash: 845dd11b012a
+sourceHash: 070a7ee4f0e3
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -308,8 +308,40 @@ shim 是符号链接。当 `DIR` 里有一个名为 `volant` 的条目时，它�
 
 `remove` 只删除目标是名为 `volant` 的文件的符号链接，并打印 `ansible-vault: removed`、`ansible-vault: not installed` 或 `ansible-vault: not a Volant link, left alone`。最后一种会使退出码为 1。
 
+## inventory 命令
+
+`volant inventory` 以 JSON 打印 inventory，与 `ansible-inventory` 一样。以 `ansible-inventory` 的名字启动时（见 [shims 命令](#shims-命令)），行为相同。
+
+```
+volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
+```
+
+`--list`、`--host` 和 `--graph` 必须恰好给出一个。`--graph`、`--yaml`、`--toml`、`--export` 和 `--vars` 暂时还没有：`--graph` 会被点名拒绝，其余的是未知选项。
+
+<Option name="--list" arg="">
+  打印每台主机及其变量（已合并 `group_vars` 和 `host_vars` 文件以及所属组的变量），然后是各个组及其 `hosts` 和 `children`。键按字母顺序排序，缩进为四个空格，非 ASCII 文本按原样写出。属于数据的字符串打印为 `{"__ansible_unsafe": "..."}`，`!vault` 值打印为 `{"__ansible_vault": "..."}`；不会解密任何内容。
+</Option>
+
+<Option name="--host" arg="HOST">
+  打印一台主机的变量。`HOST` 是主机模式，必须恰好匹配一台主机，否则命令打印 `You must pass a single valid host to --host parameter` 并以退出码 5 结束。`--limit` 不适用。
+</Option>
+
+<Option name="-l, --limit" arg="SUBSET">
+  与 `--list` 一起使用时，只保留匹配该模式的主机。组仍然保留，连同其子组。没有匹配任何内容的模式会发出警告，并打印一个没有主机的 inventory。
+</Option>
+
+<Option name="-e, --extra-vars" arg="VARS">
+  额外变量，加到每台主机上，优先于其他所有层。
+</Option>
+
+<Option name="--output" arg="FILE">
+  把文档写入 `FILE`，不打印任何内容。文件内容与标准输出相同，只是少了最后的换行。
+</Option>
+
+`-i`、`-v` 和 vault 选项的用法与 `volant playbook` 相同。没有选择动作时，命令打印 `No action selected, at least one of --host, --graph or --list needs to be specified.`；给出两个动作时打印 `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`；两者都以退出码 5 结束。
+
 ## 尚未支持
 
 每个 `ansible-playbook` 选项都能接受。`--scp-extra-args` 和 `--sftp-extra-args` 没有效果，因为文件是通过 agent 链路传输的。[对等性页面](/zh-cn/docs/reference/parity/#ansible-playbook-option)列出了每个选项及其状态。
 
-`volant` 有三个子命令：`playbook`、`runtime` 和 `vault`。其他 Ansible 工具暂时没有对应的命令：用于临时命令的 `ansible`、`ansible-inventory`、`ansible-doc`、`ansible-config` 和 `ansible-galaxy`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。
+`volant` 的子命令有 `playbook`、`inventory`、`runtime`、`shims` 和 `vault`。其他 Ansible 工具暂时没有对应的命令：用于临时命令的 `ansible`、`ansible-doc`、`ansible-config` 和 `ansible-galaxy`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。

@@ -447,14 +447,15 @@ fn missing_values_keep_defaults() {
 fn the_inventory_section_feeds_the_plugin_chain() {
     let c = cfg(
         "[inventory]\nenable_plugins = ini, host_list\nignore_extensions = .ini\n\
-             ignore_patterns = ^sub, 30\nunparsed_is_failed = yes\nany_unparsed_is_failed = 1\n",
+             ignore_patterns = ^sub, 30\nunparsed_is_failed = yes\nany_unparsed_is_failed = 1\n\
+             export = true\n",
         ".",
     );
     let p = &c.inventory_plugins;
     assert_eq!(p.enabled, ["ini", "host_list"]);
     assert_eq!(p.ignore_extensions, [".ini"]);
     assert_eq!(p.ignore_patterns, ["^sub", "30"]);
-    assert!(p.unparsed_is_failed && p.any_unparsed_is_failed);
+    assert!(p.unparsed_is_failed && p.any_unparsed_is_failed && p.export);
     let base = std::env::temp_dir();
     let bad = parse("[inventory]\nunparsed_is_failed = maybe\n", &base, "x.cfg");
     assert!(bad.is_err(), "a bad boolean is refused");

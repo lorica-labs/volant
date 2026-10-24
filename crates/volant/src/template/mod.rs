@@ -27,7 +27,9 @@ mod templar;
 mod test_plugins;
 mod vm;
 mod yaml_dump;
-pub(crate) use yaml_dump::callback_yaml;
+pub(crate) use yaml_dump::{
+    callback_yaml, inventory_yaml, mapping as yaml_mapping, node as yaml_node,
+};
 
 pub use context::{ALLITEMS_KEY, Vars, complete_loop, with_allitems};
 use context::{Context, TaintSink, context_of, take_failure};

@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The dump itself: the emitter state and the node writers.
 
+use std::collections::{BTreeMap, HashMap, HashSet};
+
 use minijinja::value::{Kwargs, ValueKind};
 use minijinja::{Error, ErrorKind, Value};
 
@@ -37,7 +39,9 @@ pub(super) fn dump(
     };
     let sort_keys = kwargs.get::<Option<bool>>("sort_keys")?.unwrap_or(true);
     kwargs.assert_all_used()?;
-    Ok(emit(value, indent, width, flow_style, sort_keys, false))
+    Ok(emit(
+        value, indent, width, flow_style, sort_keys, false, false,
+    ))
 }
 
 /// The dump of `value` with the settings read. `literal` is the callbacks' dumper
@@ -50,6 +54,7 @@ pub(super) fn emit(
     flow_style: Option<bool>,
     sort_keys: bool,
     literal: bool,
+    inventory: bool,
 ) -> String {
     // PyYAML's own bounds on the two settings: anything outside them is its default.
     let best_indent = if (2..10).contains(&indent) { indent } else { 2 };
@@ -67,7 +72,14 @@ pub(super) fn emit(
         flow_style,
         sort_keys,
         literal,
+        inventory,
+        anchors: HashMap::new(),
+        aliased: HashSet::new(),
+        last_anchor: 0,
     };
+    if inventory {
+        e.anchor_node(value);
+    }
     // The value itself, not its JSON form: JSON has no `inf` or `nan`, and no integer keys.
     e.node(value, false, false);
     // Document end. libyaml writes no `...` after an open-ended plain root scalar.
@@ -95,10 +107,67 @@ struct Emitter {
     flow_style: Option<bool>,
     sort_keys: bool,
     literal: bool,
+    /// `ansible-inventory`'s dumper: anchors for a node reached twice, `!vault` for vaulted
+    /// text, text marked unsafe written as the text.
+    inventory: bool,
+    /// The nodes the anchor pass reached, by address, with the name of those reached twice.
+    anchors: HashMap<usize, Option<String>>,
+    /// The anchored nodes already written: an alias from now on.
+    aliased: HashSet<usize>,
+    last_anchor: usize,
+}
+
+/// The address of a list or a mapping [`super::node`] built: a clone is the same node.
+fn identity(v: &Value) -> Option<usize> {
+    if let Some(items) = v.downcast_object_ref::<Vec<Value>>() {
+        return Some(std::ptr::from_ref(items).addr());
+    }
+    v.downcast_object_ref::<BTreeMap<Value, Value>>()
+        .map(|map| std::ptr::from_ref(map).addr())
 }
 
 impl Emitter {
+    /// PyYAML's `Serializer.anchor_node` (libyaml's `_anchor_node`): the document walked in the
+    /// order it is written, a node named `id001`, `id002` when it is reached the second time, and
+    /// not entered again.
+    fn anchor_node(&mut self, v: &Value) {
+        if let Some(id) = identity(v) {
+            if let Some(anchor) = self.anchors.get_mut(&id) {
+                if anchor.is_none() {
+                    self.last_anchor += 1;
+                    *anchor = Some(format!("id{:03}", self.last_anchor));
+                }
+                return;
+            }
+            self.anchors.insert(id, None);
+        }
+        match v.kind() {
+            ValueKind::Map => {
+                for (_, item) in self.entries(v) {
+                    self.anchor_node(&item);
+                }
+            }
+            ValueKind::Seq | ValueKind::Iterable => {
+                for item in v.try_iter().into_iter().flatten() {
+                    self.anchor_node(&item);
+                }
+            }
+            _ => {}
+        }
+    }
+
     fn node(&mut self, v: &Value, mapping: bool, simple_key: bool) {
+        if self.inventory
+            && let Some(id) = identity(v)
+            && let Some(Some(anchor)) = self.anchors.get(&id)
+        {
+            let anchor = anchor.clone();
+            if !self.aliased.insert(id) {
+                self.write_indicator(&format!("*{anchor}"), true, false, false);
+                return;
+            }
+            self.write_indicator(&format!("&{anchor}"), true, false, false);
+        }
         match v.kind() {
             ValueKind::Map => {
                 let entries = self.entries(v);
@@ -252,6 +321,43 @@ impl Emitter {
     }
 
     fn scalar(&mut self, v: &Value, simple_key: bool) {
+        if self.inventory
+            && let Some(text) = v.as_str()
+        {
+            if let Some(cipher) = crate::yaml::vault_text(text) {
+                self.vault(&cipher, simple_key);
+                return;
+            }
+            if let Some(plain) = crate::yaml::unsafe_text(text) {
+                self.scalar_text(&Value::from(plain), simple_key);
+                return;
+            }
+        }
+        self.scalar_text(v, simple_key);
+    }
+
+    /// `AnsibleDumper.get_node_from_ciphertext`: the ciphertext under the `!vault` tag, asked
+    /// for as a literal block, which libyaml double-quotes where a block cannot stand.
+    fn vault(&mut self, cipher: &str, simple_key: bool) {
+        let chars: Vec<char> = cipher.chars().collect();
+        let a = analyze(&chars);
+        // `yaml_emitter_write_tag_handle`: a space unless one is there, then the tag.
+        if !self.whitespace {
+            self.write(&[' ']);
+        }
+        self.write(&['!', 'v', 'a', 'u', 'l', 't']);
+        self.whitespace = false;
+        self.indention = false;
+        self.increase_indent(true, false);
+        if a.allow_block && self.flow_level == 0 && !simple_key {
+            self.write_literal(&chars);
+        } else {
+            self.write_double_quoted(&chars, !simple_key);
+        }
+        self.pop_indent();
+    }
+
+    fn scalar_text(&mut self, v: &Value, simple_key: bool) {
         let (mut text, implicit) = scalar_text(v);
         // `_should_use_block`: Python's line breaks, which leave out `\r`.
         let block = self.literal

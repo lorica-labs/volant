@@ -241,6 +241,11 @@ impl Config {
                 "always_show_stderr",
                 &mut plugins.script_stderr,
             ),
+            (
+                "ANSIBLE_INVENTORY_EXPORT",
+                "INVENTORY_EXPORT",
+                &mut plugins.export,
+            ),
         ] {
             if let Ok(value) = std::env::var(env) {
                 *flag = boolean(setting, &format!("env: {env}"), &value)?;

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `volant inventory` against the bytes `ansible-inventory` printed for every case of
-//! `golden/inventories/cases.yml`: `--list` for each, `--host` for the first host, and for the
-//! `cli` cases `--host nosuch` and `--output`. Regenerate with `just golden inventory`.
+//! `golden/inventories/cases.yml`: `--list` for each, `--host` for the first host, both with
+//! `--yaml`, `--export` and the two, and for the `cli` cases `--host nosuch` and `--output`.
+//! Regenerate with `just golden inventory`.
 #![cfg(unix)]
 use std::path::Path;
 use std::process::Command;
@@ -108,14 +109,15 @@ fn the_command_prints_the_bytes_the_reference_printed() {
                 failures.push(format!("{name}: --host nosuch {got:?} want {want:?}"));
             }
         }
-        // `--graph` and `--graph --vars` for each case, then the cases that name a group and the
-        // one run without the options the case was given.
+        // `--graph`, `--graph --vars` and with `--export` for each case, then the cases that name
+        // a group and the one run without the options the case was given.
         if let Some(graphs) = case["graphs"].as_object() {
             for (key, want) in graphs {
                 let mut bare = case.clone();
                 let extra: Vec<&str> = match key.as_str() {
                     "graph" => vec!["--graph"],
                     "graph_vars" => vec!["--graph", "--vars"],
+                    "graph_vars_export" => vec!["--graph", "--vars", "--export"],
                     "graph_vars_bare" => {
                         bare["args"] = serde_json::json!([]);
                         vec!["--graph", "--vars"]
@@ -136,16 +138,47 @@ fn the_command_prints_the_bytes_the_reference_printed() {
                 }
             }
         }
-        if case["cli_only"] == true {
-            let file = root.join("out.json");
-            let (code, stdout, _) = run(&root, case, &["--list", "--output", "out.json"]);
-            let written = std::fs::read_to_string(&file).unwrap_or_default();
-            compared += 1;
-            let want = case["list_stdout"].as_str().unwrap().trim_end_matches('\n');
-            if (code, stdout.as_str(), written.as_str()) != (0, "", want) {
-                failures.push(format!("{name}: --output exit {code}, wrote {written:?}"));
+        // `--yaml`, `--export` and both, for `--list` and for the first host.
+        if let Some(dumps) = case["dumps"].as_object() {
+            for (key, want) in dumps {
+                let (mut extra, options) = match key.strip_prefix("host_") {
+                    Some(options) => (vec!["--host", host["name"].as_str().unwrap()], options),
+                    None => (vec!["--list"], key.as_str()),
+                };
+                extra.extend_from_slice(match options {
+                    "yaml" => &["--yaml"][..],
+                    "export" => &["--export"],
+                    "yaml_export" => &["--yaml", "--export"],
+                    other => panic!("{name}: no dump is recorded as {other}"),
+                });
+                let (code, stdout, _) = run(&root, case, &extra);
+                compared += 1;
+                let wanted = (
+                    i32::try_from(want["rc"].as_i64().unwrap()).unwrap(),
+                    want["stdout"].as_str().unwrap(),
+                );
+                if (code, stdout.as_str()) != wanted {
+                    failures.push(format!("{name}: {key} exit {code}\n{stdout}"));
+                }
             }
-            let _ = std::fs::remove_file(file);
+        }
+        if case["cli_only"] == true {
+            // The JSON without the newline `print` adds, the YAML with the one it ends with.
+            let yaml = case["dumps"]["yaml"]["stdout"].as_str().unwrap();
+            let json = case["list_stdout"].as_str().unwrap().trim_end_matches('\n');
+            for (options, want) in [(&["--list"][..], json), (&["--list", "--yaml"], yaml)] {
+                let file = root.join("out.txt");
+                let (code, stdout, _) =
+                    run(&root, case, &[options, &["--output", "out.txt"]].concat());
+                let written = std::fs::read_to_string(&file).unwrap_or_default();
+                compared += 1;
+                if (code, stdout.as_str(), written.as_str()) != (0, "", want) {
+                    failures.push(format!(
+                        "{name}: {options:?} --output exit {code}, wrote {written:?}"
+                    ));
+                }
+                let _ = std::fs::remove_file(file);
+            }
         }
     }
     assert!(compared > 100, "only {compared} comparisons ran");

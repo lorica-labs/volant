@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The inventory as `ansible-inventory` lists it: `--list`, `--host` and `--limit`.
+//! The inventory as `ansible-inventory` lists it: `--list`, `--host`, `--limit`, `--export` and
+//! `--yaml`.
 
 use std::collections::{BTreeMap, HashSet};
 
@@ -7,6 +8,10 @@ use serde_json::Value;
 
 use super::Inventory;
 use super::unsafe_text::{mark_unsafe, show_unsafe};
+use crate::template::yaml_mapping;
+
+/// Each host's, or each group's, variables as a listing shows them.
+pub type VarsOf<'a> = dyn Fn(&str) -> BTreeMap<String, Value> + 'a;
 
 impl Inventory {
     /// One host's variables as `--list` and `--host` print them, or `None` when it has none.
@@ -55,15 +60,21 @@ impl Inventory {
     /// in, `all`'s top groups, and each group's own hosts and children. An empty group has no
     /// entry of its own.
     pub fn dump(&self) -> Value {
-        self.dump_with(&|host| self.host_with_vars(host).vars)
+        self.dump_with(&|host| self.host_with_vars(host).vars, None)
     }
 
-    /// [`Inventory::dump`] with each host's variables taken from `vars_of`.
-    pub fn dump_with(&self, vars_of: &dyn Fn(&str) -> BTreeMap<String, Value>) -> Value {
+    /// [`Inventory::dump`] with each host's variables taken from `vars_of`. With `--export`,
+    /// `group_vars` gives each group its `vars`, left out when it has none.
+    pub fn dump_with(&self, vars_of: &VarsOf<'_>, group_vars: Option<&VarsOf<'_>>) -> Value {
         if self.detached {
             // Nothing is under `all`, which is all the listing walks.
-            return Inventory::default().dump();
+            return Inventory::default().dump_with(vars_of, group_vars);
         }
+        let shown_group_vars = |name: &str| {
+            let vars = group_vars.map(|of| of(name)).unwrap_or_default();
+            (!vars.is_empty())
+                .then(|| show_unsafe(&Value::Object(vars.into_iter().collect()), true))
+        };
         let mut out = serde_json::Map::new();
         let hostvars: serde_json::Map<String, Value> = self
             .hosts
@@ -75,7 +86,12 @@ impl Inventory {
             serde_json::json!({ "hostvars": hostvars, "profile": "inventory_legacy" }),
         );
         let top = self.top_groups();
-        out.insert("all".into(), serde_json::json!({ "children": top }));
+        let mut all = serde_json::Map::new();
+        all.insert("children".into(), serde_json::json!(top));
+        if let Some(vars) = shown_group_vars("all") {
+            all.insert("vars".into(), vars);
+        }
+        out.insert("all".into(), Value::Object(all));
         for group in self.groups.iter().filter(|g| g.name != "all") {
             let mut body = serde_json::Map::new();
             if !group.children.is_empty() {
@@ -84,11 +100,100 @@ impl Inventory {
             if !group.hosts.is_empty() {
                 body.insert("hosts".into(), serde_json::json!(group.hosts));
             }
+            if let Some(vars) = shown_group_vars(&group.name) {
+                body.insert("vars".into(), vars);
+            }
             if !body.is_empty() {
                 out.insert(group.name.clone(), Value::Object(body));
             }
         }
         Value::Object(out)
+    }
+
+    /// What `ansible-inventory --list --yaml` dumps, built as its `yaml_inventory` builds it:
+    /// from `all` down, each group's children before its hosts, in the inventory's order. A
+    /// host's variables (`host_vars`) are written where the walk first reaches it and `{}`
+    /// after; a group already written is `{}`; empty `children`, `hosts` and `vars` are left
+    /// out, and a group left with nothing is too. With `--export`, `group_vars` gives each
+    /// group's `vars`, `None` when it has none.
+    pub fn yaml_document(
+        &self,
+        host_vars: &mut dyn FnMut(&str) -> minijinja::Value,
+        group_vars: &mut dyn FnMut(&str) -> Option<minijinja::Value>,
+    ) -> minijinja::Value {
+        if self.detached {
+            return Inventory::default().yaml_document(host_vars, group_vars);
+        }
+        let (mut seen_hosts, mut seen_groups) = (HashSet::new(), HashSet::new());
+        let all = self.yaml_group(
+            "all",
+            &mut seen_hosts,
+            &mut seen_groups,
+            host_vars,
+            group_vars,
+        );
+        yaml_mapping(all.map(|body| ("all".to_string(), body)))
+    }
+
+    fn yaml_group(
+        &self,
+        name: &str,
+        seen_hosts: &mut HashSet<String>,
+        seen_groups: &mut HashSet<String>,
+        host_vars: &mut dyn FnMut(&str) -> minijinja::Value,
+        group_vars: &mut dyn FnMut(&str) -> Option<minijinja::Value>,
+    ) -> Option<minijinja::Value> {
+        let (children, hosts) = if name == "all" {
+            (self.top_groups(), Vec::new())
+        } else {
+            self.group(name)
+                .map(|g| (g.children.clone(), g.hosts.clone()))
+                .unwrap_or_default()
+        };
+        let mut written = Vec::new();
+        for child in children.into_iter().filter(|c| c != "all") {
+            // The reference marks a group seen once it is written; marked before, a group is
+            // never entered twice, which is the same walk on the acyclic tree the sources leave.
+            if !seen_groups.insert(child.clone()) {
+                written.push((child, yaml_mapping([])));
+            } else if let Some(body) =
+                self.yaml_group(&child, seen_hosts, seen_groups, host_vars, group_vars)
+            {
+                written.push((child, body));
+            }
+        }
+        let hosts: Vec<(String, minijinja::Value)> = hosts
+            .into_iter()
+            .map(|host| {
+                let vars = if seen_hosts.insert(host.clone()) {
+                    host_vars(&host)
+                } else {
+                    yaml_mapping([])
+                };
+                (host, vars)
+            })
+            .collect();
+        let mut body = Vec::new();
+        if !written.is_empty() {
+            body.push(("children".to_string(), yaml_mapping(written)));
+        }
+        if !hosts.is_empty() {
+            body.push(("hosts".to_string(), yaml_mapping(hosts)));
+        }
+        if let Some(vars) = group_vars(name) {
+            body.push(("vars".to_string(), vars));
+        }
+        (!body.is_empty()).then(|| yaml_mapping(body))
+    }
+
+    /// The group whose inventory variable `name` a host reads: the last of its groups, in the
+    /// order they are merged, that sets it.
+    pub fn group_setting(&self, host: &str, name: &str) -> Option<&str> {
+        self.sorted_groups_of(host)
+            .into_iter()
+            .rev()
+            .find(|g| g.vars.contains_key(name))
+            .map(|g| g.name.as_str())
     }
 
     /// A group's own variables, as the inventory sources wrote them.

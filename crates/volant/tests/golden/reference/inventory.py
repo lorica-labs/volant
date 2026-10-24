@@ -25,7 +25,8 @@ def _list_hosts(inventory, pattern):
 
 def _sources():
     """Every case of inventories/cases.yml, read in a copy of the directory (plus the empty
-    directory git cannot hold): rc, stderr, the --list dump and the order --list-hosts gives."""
+    directory git cannot hold): rc, stderr, the --list dump, its --yaml and --export forms and the
+    order --list-hosts gives."""
     with open(os.path.join(GOLDEN, "inventories", "cases.yml"), encoding="utf-8") as f:
         cases = yaml.safe_load(f)
     recorded = {}
@@ -68,6 +69,9 @@ def _sources():
                     "graph_vars": shown(
                         run(["ansible-inventory", *args, "--graph", "--vars"], cwd=copy, extra_env=used)
                     ),
+                    "graph_vars_export": shown(
+                        run(["ansible-inventory", *args, "--graph", "--vars", "--export"], cwd=copy, extra_env=used)
+                    ),
                 }
                 # The cases that name a group, and the one without the options they were given.
                 for group in case.get("graph_groups", []):
@@ -79,6 +83,21 @@ def _sources():
                     graphs["graph_vars_bare"] = shown(
                         run(["ansible-inventory", *bare, "--graph", "--vars"], cwd=copy, extra_env=used)
                     )
+            # `--yaml`, `--export` and both, for `--list` and for the first host.
+            dumps = None
+            if not unordered:
+                options = {"yaml": ["--yaml"]}
+                if not case.get("no_export"):
+                    options.update({"export": ["--export"], "yaml_export": ["--yaml", "--export"]})
+                dumps = {
+                    key: shown(run(["ansible-inventory", *args, "--list", *extra], cwd=copy, extra_env=used))
+                    for key, extra in options.items()
+                }
+                if host:
+                    for key, extra in options.items():
+                        dumps[f"host_{key}"] = shown(
+                            run(["ansible-inventory", *args, "--host", host["name"], *extra], cwd=copy, extra_env=used)
+                        )
             nosuch = None
             if case.get("cli"):
                 missing = run(["ansible-inventory", *args, "--host", "nosuch"], cwd=copy, extra_env=used)
@@ -92,6 +111,7 @@ def _sources():
                 "list_stdout": None if unordered else listed.stdout.replace(copy, TMP),
                 "host": host,
                 "graphs": graphs,
+                "dumps": dumps,
                 "args": case.get("args", []),
                 "nosuch": nosuch,
                 "sources": case["sources"],

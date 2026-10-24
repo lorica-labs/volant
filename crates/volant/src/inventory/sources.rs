@@ -106,6 +106,8 @@ pub struct PluginConfig {
     /// The script plugin's `always_show_stderr`: what a successful script wrote on its standard
     /// error is shown as an `[ERROR]:` line.
     pub script_stderr: bool,
+    /// `export`: `ansible-inventory` lists as with `--export`.
+    pub export: bool,
 }
 
 impl Default for PluginConfig {
@@ -121,6 +123,7 @@ impl Default for PluginConfig {
             unparsed_is_failed: false,
             any_unparsed_is_failed: false,
             script_stderr: true,
+            export: false,
         }
     }
 }

@@ -13,6 +13,10 @@ Every argument goes to `ansible-config` unchanged, including `-h` and `--version
 
 The interpreter, the environment, the terminal, the exit code and `--version` work as for [`volant doc`](/docs/reference/cli/doc/). `ansible-config` finds `ansible.cfg` itself, by the usual rules, so nothing needs to be passed.
 
+## The collections path
+
+Once the runtime has a `collections/` directory, Volant gives the tool an `ANSIBLE_COLLECTIONS_PATH` that ends with it, so `volant config dump` shows `COLLECTIONS_PATHS` as set by the environment (`env: ANSIBLE_COLLECTIONS_PATH`), even when the value comes from `collections_path` in `ansible.cfg`. `ansible-config` run directly would not show that.
+
 ## The `[volant]` section
 
 `[volant]` is Volant's own section and ansible-core does not know it. `volant config` does not show its settings: `volant runtime status` does. `volant config validate` reports the section like `ansible-config validate` does:

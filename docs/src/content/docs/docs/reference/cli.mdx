@@ -9,10 +9,14 @@ import Option from '../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
+volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
-volant vault <encrypt|decrypt|view>
+volant shims <install|remove>
+volant vault <encrypt|decrypt|view|create|edit|rekey>
 volant --version
 ```
+
+Each other command has its own page: [`volant adhoc`](/docs/reference/cli/adhoc/), [`volant inventory`](/docs/reference/cli/inventory/), [`volant runtime`](/docs/reference/cli/runtime/), [`volant shims`](/docs/reference/cli/shims/), [`volant vault`](/docs/reference/cli/vault/). This page covers `volant playbook`.
 
 `volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know. Playbooks given together run in order, and each one prints its own recap.
 
@@ -225,163 +229,6 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 <Option name="VOLANT_PROFILE_JSON" arg="FILE">
   Write the run's profile to this file, one JSON object per line: the native modules each agent reported, then the phases, then one line per task with its module, path, hand-back reason and times in microseconds. It is written whatever became of the run, and a file that cannot be written only prints a warning.
 </Option>
-
-## The adhoc command
-
-`volant adhoc` is `ansible`: it runs one module on every host that matches a pattern.
-
-```sh
-volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
-             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
-```
-
-<Option name="-m, --module-name" arg="MODULE">
-  The module to run. Default: `command`.
-</Option>
-
-<Option name="-a, --args" arg="ARGS">
-  The module's arguments: `key=value` words, or a JSON object when the value starts with `{` and ends with `}`. For `command`, `shell`, `raw` and `script`, words that are not one of the module's options make up the command line. The arguments are templated with each host's variables and `-e`. A value that starts with `{`, ends with `}` and is not valid JSON stops the command with exit code 250; an unbalanced quote stops it with exit code 4.
-</Option>
-
-The other options mean what they mean for `volant playbook`. `-f 1` runs one host at a time, in inventory order.
-
-Each host prints one result, the way ansible's `minimal` callback prints it. A `command`, `shell` or `raw` result is `h1 | CHANGED | rc=0 >>`, then its stdout, stderr and `msg` joined with nothing between. Any other result is `h1 | SUCCESS => ` followed by the result as JSON, indented four spaces, keys sorted. The statuses are `SUCCESS`, `CHANGED`, `FAILED` (command form), `FAILED!` (JSON form), `SKIPPED` and `UNREACHABLE!`. Before a failed or unreachable result, standard output carries the same `[ERROR]` block a playbook prints. Its `Origin:` is `<adhoc 'MODULE' task>`, followed by the task as ansible shows it, cut down to 120 characters.
-
-The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. With `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, or `callback_result_format = yaml` under `[defaults]` in `ansible.cfg`, a JSON-form result is printed as YAML instead, on the lines after `=>`, indented four spaces. A string with line breaks becomes a literal block. Any other value, the empty one included, stops the command with exit code 5. `-vv` and above are refused with exit code 4.
-
-## The runtime command
-
-`volant runtime` manages the Python and ansible-core that Volant installs for itself. [The managed runtime](/docs/reference/runtime/) describes what each step does.
-
-```sh
-volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
-volant runtime pack FILE
-volant runtime status
-volant runtime path
-volant runtime remove [ID | --all]
-```
-
-<Option name="install --collections" arg="NAME_OR_FILE...">
-  Also install collections into the runtime. Each value is a name, with an optional version (`community.general:13.4.0`), or a requirements file ending in `.yml` or `.yaml`.
-</Option>
-
-<Option name="install --from" arg="FILE">
-  Install from a file `volant runtime pack` wrote, with no download. The platform has to match. It prints the SHA-256 of the file on a `sha256` line.
-</Option>
-
-<Option name="install --sha256" arg="HASH">
-  With `--from`, refuse the file before unpacking it when its SHA-256 differs from `HASH`. The error shows both hashes and the exit code is 1.
-</Option>
-
-<Option name="remove --all">
-  Delete every runtime, not only the current one.
-</Option>
-
-## The vault command
-
-`volant vault` does what `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit` and `rekey` do, on the same files, with the same messages and exit codes. `encrypt_string` is not there yet. [Vault](/docs/variables/vault/#encrypting-and-viewing-files) and [Vault](/docs/variables/vault/#creating-editing-and-rekeying-files) have the details.
-
-```sh
-volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
-volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
-volant vault view [FILE...] [OPTIONS]
-volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
-volant vault edit FILE... [OPTIONS]
-volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
-```
-
-`OPTIONS` are `--vault-id`, `--vault-password-file` (also `--vault-pass-file`), `-J`/`--ask-vault-pass` and `-v`, described under [Vault](#vault) above. With none of them, and no `vault_password_file` setting, the command asks for the password.
-
-<Option name="--output" arg="FILE">
-  Write the result there and leave the source alone. `-` is standard output. Only one input file is accepted with it, or the exit code is 5.
-</Option>
-
-<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  The vault id `encrypt`, `create` and `rekey` use. `encrypt` and `create` require it when more than one `--vault-id` is given. `edit` accepts it and ignores it: a file keeps its own label.
-</Option>
-
-<Option name="--skip-tty-check">
-  `create` opens the editor even when standard output is not a terminal. Without it, `create` refuses with exit code 5.
-</Option>
-
-<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
-  The new secret for `rekey`. Give one of them. With neither, `rekey` asks for it.
-</Option>
-
-## The shims command
-
-`volant shims` links the ansible-core program names to `volant`, so `ansible-vault` and the others start Volant. Nothing creates these links unless you run it. It works on Linux and macOS.
-
-```sh
-volant shims install [--dir DIR] [--force] [NAME...]
-volant shims remove [--dir DIR] [NAME...]
-```
-
-`NAME` is one of `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` and `ansible-vault`. With none given, the command takes all nine.
-
-<Option name="--dir" arg="DIR">
-  The directory of the links. Default: `$VOLANT_BIN_DIR`, then `~/.local/bin`. A missing directory is an error: `ERROR! DIR is not a directory`, exit code 1.
-</Option>
-
-<Option name="install --force" arg="">
-  Replace a file or link of that name that is not a Volant link.
-</Option>
-
-A shim is a symbolic link. Its target is the relative name `volant` when `DIR` holds an entry called `volant`, so upgrading that link carries the shims along. Otherwise it is the absolute path of the running binary.
-
-`install` prints one line per name:
-
-| Line | Meaning |
-|---|---|
-| `ansible-vault: installed` | The link was created. |
-| `ansible-vault: already installed` | The link exists and points at `volant`. Nothing changed. |
-| `ansible-vault: replaced` | `--force` replaced another file or link. |
-| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | Nothing was created, and the exit code is 1. |
-
-When another executable of that name is on `PATH`, a line that created a link adds a second sentence: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`, or `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`. If `DIR` is not on `PATH` at all, it ends with `DIR is not in PATH`.
-
-`remove` deletes only symbolic links whose target is a file called `volant`, and prints `ansible-vault: removed`, `ansible-vault: not installed`, or `ansible-vault: not a Volant link, left alone`. The last one makes the exit code 1.
-
-## The inventory command
-
-`volant inventory` prints an inventory as JSON, the way `ansible-inventory` does. Started under the name `ansible-inventory` (see [the shims command](#the-shims-command)), it behaves the same.
-
-```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [--output FILE] [-v]
-```
-
-Exactly one of `--list`, `--host` and `--graph` is required. `--yaml`, `--toml` and `--export` are not there yet and are unknown options.
-
-<Option name="--list" arg="">
-  Print every host with its variables, the `group_vars` and `host_vars` files and its groups' variables folded in, then the groups with their `hosts` and `children`. Keys are sorted, the indent is four spaces, and non-ASCII text is written as is. A string that is data is printed as `{"__ansible_unsafe": "..."}` and a `!vault` value as `{"__ansible_vault": "..."}`; nothing is decrypted.
-</Option>
-
-<Option name="--host" arg="HOST">
-  Print the variables of one host. `HOST` is a host pattern that must match exactly one host, otherwise the command prints `You must pass a single valid host to --host parameter` and exits 5. `--limit` does not apply.
-</Option>
-
-<Option name="--graph" arg="[GROUP]">
-  Print the groups as a tree: `@name:` for a group, bare names for hosts, a group's children before its hosts, each level indented by `  |`. With a group name, print only that subtree. A name that is not a group prints `Pattern must be valid group name when using --graph` and exits 5. `--limit` does not apply.
-</Option>
-
-<Option name="--vars" arg="">
-  With `--graph`, add `{name = value}` lines under every host (its folded variables) and every group (its own, `group_vars` files included), sorted by name and written with Python's `str()`. `!vault` values are decrypted, so this needs the vault password, and `!unsafe` text is printed as it is. The other actions ignore `--vars`.
-</Option>
-
-<Option name="-l, --limit" arg="SUBSET">
-  With `--list`, keep only the hosts matching the pattern. Groups stay, with their children. A pattern that matches nothing warns and prints an inventory with no host.
-</Option>
-
-<Option name="-e, --extra-vars" arg="VARS">
-  Extra variables, added to every host and winning over every other layer.
-</Option>
-
-<Option name="--output" arg="FILE">
-  Write the document to `FILE` and print nothing. The file holds what standard output would, without the last newline.
-</Option>
-
-`-i`, `-v` and the vault options work as they do for `volant playbook`. Without a selected action the command prints `No action selected, at least one of --host, --graph or --list needs to be specified.`, and with two it prints `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; both exit 5.
 
 ## Not there yet
 

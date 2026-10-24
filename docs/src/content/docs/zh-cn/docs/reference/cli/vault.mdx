@@ -1,0 +1,36 @@
+---
+sourceHash: a8879d1f5dc4
+title: volant vault
+description: 加密、解密、查看、创建、编辑并更换 vault 文件的密钥，消息和退出码与 ansible-vault 相同。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant vault` 的作用与 `ansible-vault encrypt`、`decrypt`、`view`、`create`、`edit` 和 `rekey` 相同，处理同样的文件，消息和退出码也一样。`encrypt_string` 暂时还没有。详情见 [Vault](/zh-cn/docs/variables/vault/#加密和查看文件) 和 [Vault](/zh-cn/docs/variables/vault/#创建编辑和更换文件密钥)。
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
+```
+
+`OPTIONS` 指 `--vault-id`、`--vault-password-file`（也可写作 `--vault-pass-file`）、`-J`/`--ask-vault-pass` 和 `-v`，见 [Vault](/zh-cn/docs/reference/cli/#vault)。一个都不给，也没有 `vault_password_file` 设置时，命令会询问密码。
+
+<Option name="--output" arg="FILE">
+  把结果写到该处，源文件保持不变。`-` 表示标准输出。使用它时只接受一个输入文件，否则退出码为 5。
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  `encrypt`、`create` 和 `rekey` 使用的 vault id。给出多个 `--vault-id` 时，`encrypt` 和 `create` 必须指定它。`edit` 接受它但忽略它：文件保留自己的标签。
+</Option>
+
+<Option name="--skip-tty-check">
+  即使标准输出不是终端，`create` 也会打开编辑器。不给它时，`create` 以退出码 5 拒绝。
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  `rekey` 的新密钥。二者给出其一。都不给时，`rekey` 会询问。
+</Option>

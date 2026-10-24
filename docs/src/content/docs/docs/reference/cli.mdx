@@ -235,6 +235,6 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 
 Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/docs/reference/parity/#ansible-playbook-option) lists each option with its status.
 
-`volant adhoc` does not have `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` or `-t` yet.
+`volant adhoc` does not have `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` or `-t` yet.
 
 `volant` has the subcommands `playbook`, `adhoc`, `inventory`, `runtime`, `shims` and `vault`. The other Ansible tools have no counterpart yet: `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.

@@ -57,6 +57,22 @@ pub(super) fn resolve_limit(
     inventory: &Inventory,
     out: &mut Renderer,
 ) -> anyhow::Result<Option<HashSet<String>>> {
+    let names = limit_names(args, inventory, out)?;
+    if names.as_ref().is_some_and(HashSet::is_empty) {
+        anyhow::bail!(
+            "Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
+        );
+    }
+    Ok(names)
+}
+
+/// What `--limit` names, with the warnings for what it cannot match, and no refusal for a set
+/// that comes out empty: the ad hoc command decides that itself.
+pub(super) fn limit_names(
+    args: &PlaybookArgs,
+    inventory: &Inventory,
+    out: &mut Renderer,
+) -> anyhow::Result<Option<HashSet<String>>> {
     let Some(pattern) = &args.hosts.limit else {
         return Ok(None);
     };
@@ -74,13 +90,7 @@ pub(super) fn resolve_limit(
             false,
         );
     }
-    let names: HashSet<String> = resolution.hosts.into_iter().map(|h| h.name).collect();
-    if names.is_empty() {
-        anyhow::bail!(
-            "Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
-        );
-    }
-    Ok(Some(names))
+    Ok(Some(resolution.hosts.into_iter().map(|h| h.name).collect()))
 }
 
 /// The play with its `hosts` rendered, for a play whose `hosts` is a template, against the

@@ -1,0 +1,25 @@
+# The community playbooks `just corpus` runs under both engines. Each source is pinned exactly.
+# Fields: name, source ({galaxy_role|galaxy_collection, version} or {git, sha}), roles and
+# collections installed beside it, playbook (under this directory, or `repo:<path>` inside a git
+# source), hosts (1|2), where (container|both|local), vars (passed as -e @file to both engines),
+# volatile (result keys left out of the body comparison), generate (one line run before the first
+# pass), skip_reason (null, or the issue that explains the skip).
+# community.postgresql 5.x dropped the `db` argument that geerlingguy.postgresql 4.2.0 still passes to
+# postgresql_user, so the newest collection that accepts it is pinned.
+- name: postgresql
+  source: {galaxy_role: geerlingguy.postgresql, version: 4.2.0}
+  collections:
+    - {name: community.postgresql, version: 4.2.0}
+    - {name: community.general, version: 13.5.0}
+  playbook: postgresql/site.yml
+  hosts: 1
+  where: both
+  vars: {}
+  # What `systemd` reports about a unit that differs between any two runs.
+  volatile: [StateChangeTimestamp, Requires, StateChangeTimestampMonotonic, MemoryAvailable, ExecMainPID,
+             ExecMainExitTimestamp, ExecMainExitTimestampMonotonic, ControlGroupId, CPUUsageNSec,
+             ConditionTimestamp, ConditionTimestampMonotonic, AssertTimestamp, AssertTimestampMonotonic,
+             InactiveEnterTimestamp, InactiveEnterTimestampMonotonic, ActiveExitTimestamp,
+             ActiveExitTimestampMonotonic, ExecStart, ExecStartEx, After, Before]
+  generate: null
+  skip_reason: null

@@ -1,0 +1,27 @@
+# The hosts a pattern matches, listed or not, and what an empty set does: standard output, standard
+# error and the exit code. A pattern that matches nothing exits 0, a `--limit` that leaves nothing
+# exits 1, and an inventory with no host at all says nothing more than its warnings.
+program: ansible
+needs: [ansible-core]
+stderr: true
+runs:
+  - args: [web, -i, inv.ini, -m, ping, --list-hosts]
+  - args: [localhost, -m, ping, --list-hosts]
+  - args: ["web:db", -i, inv.ini, -m, ping, --list-hosts]
+  - args: ["web:!h1", -i, inv.ini, -m, ping, --list-hosts]
+  - args: [all, -i, inv.ini, -m, ping, --list-hosts, -l, h1]
+  - args: [nomatch, -i, inv.ini, -m, ping]
+  - args: [nomatch, -i, inv.ini, -m, ping, --list-hosts]
+  - args: ["web:nomatch", -i, inv.ini, --list-hosts]
+  - args: [all, -i, inv.ini, -m, ping, -l, nomatch]
+  - args: [all, -i, inv.ini, -m, ping, --list-hosts, -l, nomatch]
+  - args: [web, -i, inv.ini, -m, ping, --list-hosts, -l, db]
+  - args: [db, -i, inv.ini, -m, ping, -l, h1]
+  - args: [all, -i, nosuch.ini, -m, ping]
+  - args: [all, -i, nosuch.ini, -m, ping, --list-hosts]
+  - args: [web]
+  - args: [web, --list-hosts]
+  - args: [localhost]
+  - args: [all, -i, inv.ini]
+  - args: [web, -i, inv.ini, -m, shell]
+  - args: [all, -i, nosuch.ini, -m, ping, --list-hosts, -l, x]

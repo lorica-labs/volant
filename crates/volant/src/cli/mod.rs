@@ -4,12 +4,14 @@
 //! `vault` command.
 
 mod adhoc;
+mod adhoc_usage;
 mod announce;
 mod args;
 mod doc;
 mod hosts;
 mod inventory;
 mod passwords;
+mod plays;
 mod program;
 mod run;
 mod runtime;
@@ -22,6 +24,7 @@ mod vault_edit;
 mod vault_string;
 
 pub use adhoc::adhoc;
+pub use adhoc_usage::usage_error as adhoc_usage_error;
 pub use args::{AdhocArgs, BecomeArgs, ConnectionArgs, HostsArgs, PlaybookArgs, VaultSecretArgs};
 pub use doc::{DocArgs, doc};
 pub use inventory::{InventoryArgs, inventory};

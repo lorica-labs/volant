@@ -56,7 +56,8 @@ script_hostvars_late: {sources: [script_hostvars_late.sh]}
 script_hostvars_late_then_ini: {sources: [script_hostvars_late.sh, one.ini]}
 script_hosts_str: {sources: [script_hosts_str.sh]}
 script_vars_list: {sources: [script_vars_list.sh]}
-script_malformed: {sources: [script_malformed.sh]}
+# `no_graph`: the reference keeps the malformed group's body as a variable of the group too.
+script_malformed: {sources: [script_malformed.sh], no_graph: true}
 script_host_empty: {sources: [script_host_empty.sh]}
 script_host_bad: {sources: [script_host_bad.sh]}
 constructed: {sources: [constructed_base.ini, constructed.yml]}
@@ -102,5 +103,6 @@ generator_non_ascii: {sources: [generator_non_ascii.yml], hosts: unordered}
 yaml_non_ascii: {sources: [yaml_non_ascii.yml]}
 # `cli: true` leaves the case to the `inventory` command test: its group_vars and host_vars files
 # are read by the command, not by the inventory loader the other test calls.
-spec_example: {sources: [spec/hosts.ini], cli: true}
+spec_example: {sources: [spec/hosts.ini], cli: true, graph_groups: [web]}
 values: {sources: [values.yml], cli: true}
+graph: {sources: [graph/inv.yml], cli: true, args: [--vault-password-file, graph/pw], graph_groups: [a, all, ungrouped, nosuch, h1]}

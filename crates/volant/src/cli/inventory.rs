@@ -12,14 +12,12 @@ use serde_json::Value;
 use super::announce::{announce, inventory_sources};
 use crate::bridge::Bridge;
 use crate::config::Config;
-use crate::inventory::{Inventory, Note, load_sources_with};
+use crate::inventory::{GraphItem, Inventory, Note, load_sources_with};
 use crate::render::Renderer;
 use crate::stats::error_code;
 use crate::vars::VarStore;
 
-/// The arguments of `ansible-inventory` this release reads. `--yaml`, `--toml`, `--export` and
-/// `--vars` are not here, so clap refuses them by name; `--graph` is read, and refused once the
-/// exactly-one-action rule has run.
+/// The arguments of `ansible-inventory` this release reads. `--yaml`, `--toml` and `--export` are not here, so clap refuses them by name.
 #[derive(Args, Debug)]
 pub struct InventoryArgs {
     /// Print the whole inventory as JSON.
@@ -28,9 +26,12 @@ pub struct InventoryArgs {
     /// Print the variables of one host as JSON.
     #[arg(long, value_name = "HOST", overrides_with = "host")]
     host: Option<String>,
-    /// Print the inventory as a graph. Not supported yet.
+    /// Print the group tree, the whole inventory or one group.
     #[arg(long, value_name = "GROUP", num_args = 0..=1, overrides_with = "graph")]
     graph: Option<Option<String>>,
+    /// With `--graph`, add the variables of every host and group. The other actions ignore it.
+    #[arg(long)]
+    vars: bool,
     /// Inventory source: a file, a directory, or a comma-separated host list. Repeatable; the
     /// sources are merged in order.
     #[arg(
@@ -99,10 +100,6 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
         );
         return Ok(5);
     }
-    if args.graph.is_some() {
-        eprintln!("[ERROR]: --graph is not supported yet");
-        return Ok(4);
-    }
     let config = crate::runtime::resolve::configured(Config::load()?);
     let mut out = Renderer::new(config.color_choice(false), args.verbose);
     announce(&mut out);
@@ -137,6 +134,9 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     )?;
     let vars_of =
         |host: &str| -> BTreeMap<String, Value> { store.listed_vars(host).into_iter().collect() };
+    if let Some(group) = &args.graph {
+        return graph(args, group.as_deref().unwrap_or("all"), &loaded, &store);
+    }
     let document = if let Some(name) = &args.host {
         // The reference leaves `--limit` out of `--host`.
         let resolution = loaded.resolve(name);
@@ -171,6 +171,93 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
         None => println!("{text}"),
     }
     Ok(0)
+}
+
+/// `--graph`: the tree to standard output or `--output`. `--limit` and `--yaml` leave it as it is.
+fn graph(
+    args: &InventoryArgs,
+    root: &str,
+    inventory: &Inventory,
+    store: &VarStore,
+) -> anyhow::Result<i32> {
+    let mut lines = |item: GraphItem<'_>| -> Result<Vec<String>, String> {
+        if !args.vars {
+            return Ok(Vec::new());
+        }
+        let vars: BTreeMap<String, Value> = match item {
+            GraphItem::Host(name) => store.listed_vars(name).into_iter().collect(),
+            GraphItem::Group(name) => store
+                .listed_group_vars(name, &inventory.group_vars_of(name).into_iter().collect())
+                .into_iter()
+                .collect(),
+        };
+        vars.iter()
+            .map(|(name, value)| Ok(format!("{{{name} = {}}}", py_str(&revealed(value)?))))
+            .collect()
+    };
+    let text = match inventory.graph(root, &mut lines) {
+        Ok(Some(text)) => text,
+        Ok(None) => {
+            eprintln!("[ERROR]: Pattern must be valid group name when using --graph");
+            return Ok(5);
+        }
+        Err(failure) => {
+            // The reference words it without the task-style lead.
+            let message = failure
+                .strip_prefix(crate::vault::UNDECRYPTABLE)
+                .unwrap_or(&failure);
+            match crate::vault::failure_origin(&failure) {
+                Some(o) => eprintln!(
+                    "[ERROR]: {message}\n{}\n",
+                    crate::render::source_context(&o)
+                ),
+                None => eprintln!("[ERROR]: {message}"),
+            }
+            return Ok(1);
+        }
+    };
+    match &args.output {
+        // The tree ends with the newline of its last line, and `print` adds none after it.
+        Some(path) => {
+            std::fs::write(path, text.trim_end_matches('\n'))
+                .map_err(|err| write_failure(path, &err))?;
+        }
+        None => print!("{text}"),
+    }
+    Ok(0)
+}
+
+/// A value as `--graph --vars` shows it: a `!vault` value decrypted and an `!unsafe` string as its
+/// text. `Err` carries the failure's message, which names where the value is written.
+fn revealed(value: &Value) -> Result<Value, String> {
+    Ok(match value {
+        Value::String(text) => {
+            if let Some(cipher) = crate::yaml::vault_text(text) {
+                let plain = crate::vault::reveal(&cipher)
+                    .map_err(|reason| crate::vault::undecryptable(&cipher, &reason))?;
+                Value::String(plain)
+            } else if let Some(plain) = crate::yaml::unsafe_text(text) {
+                Value::String(plain)
+            } else {
+                value.clone()
+            }
+        }
+        Value::Array(items) => Value::Array(items.iter().map(revealed).collect::<Result<_, _>>()?),
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| Ok::<_, String>((k.clone(), revealed(v)?)))
+                .collect::<Result<_, _>>()?,
+        ),
+        other => other.clone(),
+    })
+}
+
+/// Python's `str()` of a value.
+fn py_str(value: &Value) -> String {
+    match value {
+        Value::String(text) => text.clone(),
+        other => crate::playbook::python_repr(other),
+    }
 }
 
 /// The inventory every `-i` names, else the configuration's, else the reference's default; what

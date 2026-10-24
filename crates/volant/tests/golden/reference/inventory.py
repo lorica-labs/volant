@@ -35,6 +35,8 @@ def _sources():
         os.mkdir(os.path.join(copy, "empty"))
         for name, case in cases.items():
             args = [word for source in case["sources"] for word in ("-i", source)]
+            # What the command is also given, like a vault password file.
+            args += case.get("args", [])
             env = case.get("env", {})
             # `$COPY` is this copy of the directory and `$PATH` the search path the run has.
             used = {k: v.replace("$COPY", copy).replace("$PATH", os.environ["PATH"]) for k, v in env.items()}
@@ -52,6 +54,31 @@ def _sources():
                 first = sorted(dump["_meta"]["hostvars"])[0]
                 one = run(["ansible-inventory", *args, "--host", first], cwd=copy, extra_env=used)
                 host = {"name": first, "rc": one.returncode, "stdout": one.stdout.replace(copy, TMP)}
+            def shown(result):
+                return {
+                    "rc": result.returncode,
+                    "stdout": result.stdout.replace(copy, TMP),
+                    "stderr": result.stderr.replace(copy, TMP),
+                }
+
+            graphs = None
+            if not unordered and not case.get("no_graph"):
+                graphs = {
+                    "graph": shown(run(["ansible-inventory", *args, "--graph"], cwd=copy, extra_env=used)),
+                    "graph_vars": shown(
+                        run(["ansible-inventory", *args, "--graph", "--vars"], cwd=copy, extra_env=used)
+                    ),
+                }
+                # The cases that name a group, and the one without the options they were given.
+                for group in case.get("graph_groups", []):
+                    graphs[f"graph_{group}"] = shown(
+                        run(["ansible-inventory", *args, "--graph", group, "--vars"], cwd=copy, extra_env=used)
+                    )
+                if case.get("args"):
+                    bare = [word for source in case["sources"] for word in ("-i", source)]
+                    graphs["graph_vars_bare"] = shown(
+                        run(["ansible-inventory", *bare, "--graph", "--vars"], cwd=copy, extra_env=used)
+                    )
             nosuch = None
             if case.get("cli"):
                 missing = run(["ansible-inventory", *args, "--host", "nosuch"], cwd=copy, extra_env=used)
@@ -64,6 +91,8 @@ def _sources():
                 "cli_only": bool(case.get("cli")),
                 "list_stdout": None if unordered else listed.stdout.replace(copy, TMP),
                 "host": host,
+                "graphs": graphs,
+                "args": case.get("args", []),
                 "nosuch": nosuch,
                 "sources": case["sources"],
                 "env": env,

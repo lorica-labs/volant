@@ -50,7 +50,15 @@ impl InventoryPlugin for YamlInventory {
         };
         let bytes = std::fs::read(source.path()).map_err(|e| failed(e.to_string()))?;
         let text = String::from_utf8(bytes).map_err(|e| failed(e.to_string()))?;
-        let docs = yaml::load(&text, source.text()).map_err(|e| failed(load_failure(&e)))?;
+        // Where a `!vault` value is written is read only for a file that holds one: a failure to
+        // decrypt it points there.
+        let (docs, origins) = if text.contains("!vault") {
+            yaml::load_with_origins(&text, source.text())
+        } else {
+            yaml::load(&text, source.text()).map(|docs| (docs, yaml::Origins::default()))
+        }
+        .map_err(|e| failed(load_failure(&e)))?;
+        yaml::note_vault_origins(&docs, &origins, &source.path().display().to_string(), &text);
         let null = Yaml::Value(Scalar::Null);
         // `load` refuses a second document, so there is at most one.
         let root = docs.first().unwrap_or(&null);

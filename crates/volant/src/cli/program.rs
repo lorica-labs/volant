@@ -23,6 +23,7 @@ pub const TOOLS: [(&str, &str); 9] = [
 pub fn subcommand_for(program: &OsStr) -> Option<&'static str> {
     let name = Path::new(program).file_name()?.to_str()?;
     match name {
+        "ansible-inventory" => Some("inventory"),
         "ansible-playbook" => Some("playbook"),
         "ansible-vault" => Some("vault"),
         _ => None,
@@ -35,6 +36,7 @@ mod tests {
     use rstest::rstest;
 
     #[rstest]
+    #[case("ansible-inventory", Some("inventory"))]
     #[case("ansible-playbook", Some("playbook"))]
     #[case("/usr/local/bin/ansible-playbook", Some("playbook"))]
     #[case("ansible-vault", Some("vault"))]

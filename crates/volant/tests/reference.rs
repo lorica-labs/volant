@@ -665,6 +665,9 @@ fn inventory_sources_match_the_reference() {
     let cases = expected["sources"].as_object().unwrap();
     assert!(!cases.is_empty(), "no recorded inventory source case");
     for (name, case) in cases {
+        if case["cli_only"] == true {
+            continue;
+        }
         let sources: Vec<Source> = case["sources"]
             .as_array()
             .unwrap()

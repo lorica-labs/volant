@@ -1,5 +1,5 @@
 ---
-sourceHash: 845dd11b012a
+sourceHash: 070a7ee4f0e3
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -308,8 +308,40 @@ Liegt eine andere ausführbare Datei dieses Namens im `PATH`, hängt eine Zeile,
 
 `remove` löscht nur symbolische Links, deren Ziel eine Datei namens `volant` ist, und gibt `ansible-vault: removed`, `ansible-vault: not installed` oder `ansible-vault: not a Volant link, left alone` aus. Die letzte setzt den Exit-Code auf 1.
 
+## Der Befehl inventory
+
+`volant inventory` gibt ein Inventory als JSON aus, so wie es `ansible-inventory` tut. Unter dem Namen `ansible-inventory` gestartet (siehe [der Befehl shims](#der-befehl-shims)), verhält er sich genauso.
+
+```
+volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
+```
+
+Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--graph`, `--yaml`, `--toml`, `--export` und `--vars` gibt es noch nicht: `--graph` wird mit Namen abgelehnt, die anderen sind unbekannte Optionen.
+
+<Option name="--list" arg="">
+  Gibt jeden Host mit seinen Variablen aus, einschließlich der Dateien `group_vars` und `host_vars` und der Variablen seiner Gruppen, dann die Gruppen mit ihren `hosts` und `children`. Die Schlüssel sind sortiert, die Einrückung beträgt vier Leerzeichen, und Nicht-ASCII-Text wird unverändert geschrieben. Ein String, der Daten ist, wird als `{"__ansible_unsafe": "..."}` ausgegeben und ein `!vault`-Wert als `{"__ansible_vault": "..."}`; nichts wird entschlüsselt.
+</Option>
+
+<Option name="--host" arg="HOST">
+  Gibt die Variablen eines Hosts aus. `HOST` ist ein Host-Muster, das genau einen Host treffen muss, sonst gibt der Befehl `You must pass a single valid host to --host parameter` aus und endet mit Exit-Code 5. `--limit` gilt nicht.
+</Option>
+
+<Option name="-l, --limit" arg="SUBSET">
+  Behält mit `--list` nur die Hosts, die zum Muster passen. Gruppen bleiben, mit ihren Kindern. Ein Muster ohne Treffer warnt und gibt ein Inventory ohne Host aus.
+</Option>
+
+<Option name="-e, --extra-vars" arg="VARS">
+  Zusätzliche Variablen, jedem Host hinzugefügt und stärker als jede andere Ebene.
+</Option>
+
+<Option name="--output" arg="FILE">
+  Schreibt das Dokument nach `FILE` und gibt nichts aus. Die Datei enthält, was die Standardausgabe enthalten hätte, ohne den letzten Zeilenumbruch.
+</Option>
+
+`-i`, `-v` und die Vault-Optionen funktionieren wie bei `volant playbook`. Ohne gewählte Aktion gibt der Befehl `No action selected, at least one of --host, --graph or --list needs to be specified.` aus, bei zwei Aktionen `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; beide enden mit Exit-Code 5.
+
 ## Noch nicht vorhanden
 
 Jede `ansible-playbook`-Option wird akzeptiert. `--scp-extra-args` und `--sftp-extra-args` haben keine Wirkung, weil Dateien über die Agent-Verbindung übertragen werden. Die [Paritätsseite](/de/docs/reference/parity/#ansible-playbook-option) führt jede Option mit ihrem Status auf.
 
-`volant` hat drei Unterbefehle, `playbook`, `runtime` und `vault`. Die anderen Ansible-Werkzeuge haben noch keine Entsprechung: `ansible` für Ad-hoc-Befehle, `ansible-inventory`, `ansible-doc`, `ansible-config` und `ansible-galaxy`. Es gibt kein `volant check` und kein `volant lint`. Führen Sie diese Werkzeuge aus ansible-core aus oder nutzen Sie die Auflistungsoptionen von `volant playbook`.
+`volant` hat die Unterbefehle `playbook`, `inventory`, `runtime`, `shims` und `vault`. Die anderen Ansible-Werkzeuge haben noch keine Entsprechung: `ansible` für Ad-hoc-Befehle, `ansible-doc`, `ansible-config` und `ansible-galaxy`. Es gibt kein `volant check` und kein `volant lint`. Führen Sie diese Werkzeuge aus ansible-core aus oder nutzen Sie die Auflistungsoptionen von `volant playbook`.

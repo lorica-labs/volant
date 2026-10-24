@@ -10,6 +10,7 @@ mod generator;
 mod graph;
 mod host_list;
 mod ini;
+mod listed;
 mod patterns;
 pub mod ranges;
 mod script;
@@ -33,7 +34,6 @@ pub use sources::{
     InventoryPlugin, Note, ParseCx, PluginConfig, PluginError, Source, load_sources,
     load_sources_with,
 };
-use unsafe_text::{mark_unsafe, show_unsafe};
 
 /// Every inventory plugin this release knows, the ones `enable_plugins` picks from.
 const PLUGINS: &[&dyn InventoryPlugin] = &[
@@ -197,70 +197,6 @@ impl Inventory {
         for name in alone {
             self.add_member(&name, "ungrouped");
         }
-    }
-
-    /// What `ansible-inventory --list` prints: every host's variables with its groups' folded
-    /// in, `all`'s top groups, and each group's own hosts and children. An empty group has no
-    /// entry of its own.
-    pub fn dump(&self) -> Value {
-        if self.detached {
-            // Nothing is under `all`, which is all the listing walks.
-            return Inventory::default().dump();
-        }
-        let mut out = serde_json::Map::new();
-        let hostvars: serde_json::Map<String, Value> = self
-            .hosts
-            .iter()
-            .map(|h| (h.name.clone(), self.host_with_vars(&h.name).vars))
-            .map(|(name, mut vars)| {
-                for ((host, var), computed) in &self.unsafe_vars {
-                    if *host == name
-                        && let Some(value) = vars.get_mut(var)
-                    {
-                        mark_unsafe(value, computed);
-                    }
-                }
-                (name, vars)
-            })
-            .filter(|(_, vars)| !vars.is_empty())
-            .map(|(name, vars)| {
-                (
-                    name,
-                    show_unsafe(&Value::Object(vars.into_iter().collect())),
-                )
-            })
-            .collect();
-        out.insert(
-            "_meta".into(),
-            serde_json::json!({ "hostvars": hostvars, "profile": "inventory_legacy" }),
-        );
-        let nested: HashSet<&str> = self
-            .groups
-            .iter()
-            .filter(|g| g.name != "all")
-            .flat_map(|g| g.children.iter().map(String::as_str))
-            .collect();
-        let mut top = vec!["ungrouped".to_string()];
-        top.extend(
-            self.groups
-                .iter()
-                .map(|g| g.name.clone())
-                .filter(|n| n != "all" && n != "ungrouped" && !nested.contains(n.as_str())),
-        );
-        out.insert("all".into(), serde_json::json!({ "children": top }));
-        for group in self.groups.iter().filter(|g| g.name != "all") {
-            let mut body = serde_json::Map::new();
-            if !group.children.is_empty() {
-                body.insert("children".into(), serde_json::json!(group.children));
-            }
-            if !group.hosts.is_empty() {
-                body.insert("hosts".into(), serde_json::json!(group.hosts));
-            }
-            if !body.is_empty() {
-                out.insert(group.name.clone(), Value::Object(body));
-            }
-        }
-        Value::Object(out)
     }
 
     /// An inventory holding the groups `groups` lists, in that order, and `all`'s hosts in the

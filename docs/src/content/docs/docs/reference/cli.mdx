@@ -307,8 +307,40 @@ When another executable of that name is on `PATH`, a line that created a link ad
 
 `remove` deletes only symbolic links whose target is a file called `volant`, and prints `ansible-vault: removed`, `ansible-vault: not installed`, or `ansible-vault: not a Volant link, left alone`. The last one makes the exit code 1.
 
+## The inventory command
+
+`volant inventory` prints an inventory as JSON, the way `ansible-inventory` does. Started under the name `ansible-inventory` (see [the shims command](#the-shims-command)), it behaves the same.
+
+```
+volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
+```
+
+Exactly one of `--list`, `--host` and `--graph` is required. `--graph`, `--yaml`, `--toml`, `--export` and `--vars` are not there yet: `--graph` is refused by name and the others are unknown options.
+
+<Option name="--list" arg="">
+  Print every host with its variables, the `group_vars` and `host_vars` files and its groups' variables folded in, then the groups with their `hosts` and `children`. Keys are sorted, the indent is four spaces, and non-ASCII text is written as is. A string that is data is printed as `{"__ansible_unsafe": "..."}` and a `!vault` value as `{"__ansible_vault": "..."}`; nothing is decrypted.
+</Option>
+
+<Option name="--host" arg="HOST">
+  Print the variables of one host. `HOST` is a host pattern that must match exactly one host, otherwise the command prints `You must pass a single valid host to --host parameter` and exits 5. `--limit` does not apply.
+</Option>
+
+<Option name="-l, --limit" arg="SUBSET">
+  With `--list`, keep only the hosts matching the pattern. Groups stay, with their children. A pattern that matches nothing warns and prints an inventory with no host.
+</Option>
+
+<Option name="-e, --extra-vars" arg="VARS">
+  Extra variables, added to every host and winning over every other layer.
+</Option>
+
+<Option name="--output" arg="FILE">
+  Write the document to `FILE` and print nothing. The file holds what standard output would, without the last newline.
+</Option>
+
+`-i`, `-v` and the vault options work as they do for `volant playbook`. Without a selected action the command prints `No action selected, at least one of --host, --graph or --list needs to be specified.`, and with two it prints `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; both exit 5.
+
 ## Not there yet
 
 Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/docs/reference/parity/#ansible-playbook-option) lists each option with its status.
 
-`volant` has three subcommands, `playbook`, `runtime` and `vault`. The other Ansible tools have no counterpart yet: `ansible` for ad-hoc commands, `ansible-inventory`, `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.
+`volant` has the subcommands `playbook`, `inventory`, `runtime`, `shims` and `vault`. The other Ansible tools have no counterpart yet: `ansible` for ad-hoc commands, `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.

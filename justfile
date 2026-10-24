@@ -710,7 +710,7 @@ corpus name="" runs="3": _corpus-image
     err=""
     fail() { err="$1"; return 1; }
     field() { "$py" -c 'import json,sys; v = json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$dir/entry.json" "$1"; }
-    first_error() { grep -h -m1 -E 'fatal:|ERROR|rror' "$@" 2>/dev/null || tail -n1 "$1" 2>/dev/null || true; }
+    first_error() { { grep -h -m1 -E '^(fatal:|\[ERROR\]|ERROR)' "$@" 2>/dev/null || tail -qn1 "$@" 2>/dev/null; } | head -n1 | cut -c1-300; }
     record() { printf '%s %s\n' "$1" "$2" >> "$dir/times.tsv"; }
 
     # Install one pinned source under src/, unless the installed version or sha already matches.
@@ -730,7 +730,12 @@ corpus name="" runs="3": _corpus-image
             echo "collection $a $b already installed"
           else
             echo "installing collection $a $b"
-            "$core/ansible-galaxy" collection install --force "$a:$b" -p "$src/collections" > "$log" 2>&1 || fail "collection $a $b: $(first_error "$log")" || return 1
+            # Galaxy artifact downloads fail now and then; the same tag from GitHub is the same release.
+            if ! "$core/ansible-galaxy" collection install --force "$a:$b" -p "$src/collections" > "$log" 2>&1; then
+              echo "Galaxy failed for collection $a $b: $(first_error "$log"); trying the tag on GitHub"
+              rm -rf "$dir/collection-tag"
+              { git clone -q --depth 1 --branch "$b" "https://github.com/ansible-collections/$a.git" "$dir/collection-tag"                 && "$core/ansible-galaxy" collection install --force "$dir/collection-tag" -p "$src/collections"; } > "$log" 2>&1                 || fail "collection $a $b: $(first_error "$log")" || return 1
+            fi
           fi ;;
         git)
           if [ "$(git -C "$src/repo" rev-parse HEAD 2>/dev/null || true)" = "$b" ]; then

@@ -1149,12 +1149,12 @@ fn text_is_kept_byte_for_byte_whatever_way_it_comes() {
     assert_eq!(sandbox.reveal(&blocks(&text(&out.stdout))[0].1), b"tail\n");
     let out = sandbox.run(
         &["encrypt_string", PW[0], PW[1]],
-        Some("a\r\nb\rc caf\u{e9}".as_bytes()),
+        Some("a\r\nb\rc \u{e9}\u{e8}".as_bytes()),
     );
     assert_eq!(text(&out.stderr), "");
     assert_eq!(
         sandbox.reveal(&blocks(&text(&out.stdout))[0].1),
-        "a\r\nb\rc caf\u{e9}".as_bytes()
+        "a\r\nb\rc \u{e9}\u{e8}".as_bytes()
     );
     let out = sandbox.run(
         &[

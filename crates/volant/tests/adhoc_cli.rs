@@ -156,7 +156,6 @@ fn an_unreachable_host_exits_4(#[case] args: &[&str]) {
 
 /// Refused before a host is touched, on stderr, with the code the reference exits with.
 #[rstest]
-#[case::more_verbosity(&["h1", "-i", "inv.ini", "-vv", "-a", "true"], &[], 4, "ERROR! -vv and above are not supported yet for ad hoc commands\n")]
 #[case::unknown_result_format(
     &["h1", "-i", "inv.ini", "-a", "true"],
     &[("ANSIBLE_CALLBACK_RESULT_FORMAT", "xml")],
@@ -265,4 +264,172 @@ fn a_run_through_the_controller_python(
     let out = adhoc(args, &[("VOLANT_PYTHON", &python)]);
     assert_eq!(out.status.code(), Some(code), "{}", text(&out.stderr));
     assert_eq!(text(&out.stdout), stdout);
+}
+
+const NOT_MATCHED: &str = "[WARNING]: Could not match supplied host pattern, ignoring: nomatch\n";
+const NO_HOSTS: &str = "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.\n";
+const UNPARSED: &str = "[WARNING]: Unable to parse <dir>/nosuch.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'\n";
+
+/// Listed hosts and the empty sets, with the reference's streams and codes: no match exits 0, a
+/// `-l` that leaves nothing exits 1, a command module with no `-a` exits 5.
+#[rstest]
+#[case::listed(&["web", "-i", "inv.ini", "--list-hosts"], 0, "  hosts (2):\n    h1\n    h2\n", "")]
+#[case::listed_and_limited(&["all", "-i", "inv.ini", "--list-hosts", "-l", "h2"], 0, "  hosts (1):\n    h2\n", "")]
+#[case::union(&["web:db", "-i", "inv.ini", "--list-hosts"], 0, "  hosts (3):\n    h1\n    h2\n    h3\n", "")]
+#[case::no_match(&["nomatch", "-i", "inv.ini", "-a", "true"], 0, "", &format!("{NOT_MATCHED}[WARNING]: No hosts matched, nothing to do\n"))]
+#[case::no_match_listed(&["nomatch", "-i", "inv.ini", "--list-hosts"], 0, "  hosts (0):\n", &format!("{NOT_MATCHED}[WARNING]: No hosts matched, nothing to do\n"))]
+#[case::limit_leaves_nothing(&["all", "-i", "inv.ini", "-a", "true", "-l", "nomatch"], 1, "", &format!("{NOT_MATCHED}{NO_HOSTS}"))]
+#[case::limit_leaves_nothing_listed(&["web", "-i", "inv.ini", "--list-hosts", "-l", "h9"], 1, "", &format!("{}{NO_HOSTS}", NOT_MATCHED.replace("nomatch", "h9")))]
+#[case::unreadable_inventory(&["all", "-i", "nosuch.ini", "-a", "true"], 0, "", UNPARSED)]
+#[case::no_arguments(&["h1", "-i", "inv.ini"], 5, "", "[ERROR]: No argument passed to command module\n")]
+#[case::no_arguments_shell(&["h1", "-i", "inv.ini", "-m", "shell"], 5, "", "[ERROR]: No argument passed to shell module\n")]
+fn the_hosts_of_a_pattern_are_listed_or_reported_empty(
+    #[case] args: &[&str],
+    #[case] code: i32,
+    #[case] stdout: &str,
+    #[case] stderr: &str,
+) {
+    let out = adhoc(args, &[]);
+    let dir = fixtures().canonicalize().unwrap().display().to_string();
+    assert_eq!(out.status.code(), Some(code), "{args:?}");
+    assert_eq!(text(&out.stdout), stdout, "{args:?}");
+    assert_eq!(text(&out.stderr).replace(&dir, "<dir>"), stderr, "{args:?}");
+}
+
+/// The usage block of the reference, then the error line, exit 2: and the complete help after the
+/// errors argparse raises, not after a forks count below 1.
+#[rstest]
+#[case::no_pattern(&[], &[], "the following arguments are required: pattern", true)]
+#[case::forks_not_a_number(&["-f", "x", "h1"], &[], "argument -f/--forks: invalid tag_value value: 'x'", true)]
+#[case::background_not_a_number(&["-B", "x", "h1"], &[], "argument -B/--background: invalid tag_value value: 'x'", true)]
+#[case::poll_not_a_number(&["-P", "x", "h1"], &[], "argument -P/--poll: invalid tag_value value: 'x'", true)]
+#[case::timeout_not_a_number(&["--task-timeout", "1.5", "h1"], &[], "argument --task-timeout: invalid tag_value value: '1.5'", true)]
+#[case::forks_zero(&["-f", "0", "h1"], &[], "The number of processes (--forks) must be >= 1", false)]
+#[case::forks_negative(&["-f", "-1", "h1"], &[], "The number of processes (--forks) must be >= 1", false)]
+#[case::forks_from_the_environment(&["h1", "-i", "inv.ini"], &[("ANSIBLE_FORKS", "0")], "The number of processes (--forks) must be >= 1", false)]
+fn a_usage_error_prints_the_usage_block_and_exits_2(
+    #[case] args: &[&str],
+    #[case] envs: &[(&str, &str)],
+    #[case] error: &str,
+    #[case] help: bool,
+) {
+    let help_text = include_str!("../src/cli/adhoc_help.txt");
+    let usage = &help_text[..help_text.find("\n\n").unwrap() + 1];
+    let out = adhoc(args, envs);
+    let expected = if help {
+        format!("{usage}ansible: error: {error}\n \n{help_text}")
+    } else {
+        format!("{usage}ansible: error: {error}\n")
+    };
+    assert_eq!(out.status.code(), Some(2), "{args:?}");
+    assert_eq!(text(&out.stderr), expected, "{args:?}");
+    assert_eq!(text(&out.stdout), "", "{args:?}");
+}
+
+/// A negative count, and `-C` with a job, are refused by name before a host is touched.
+#[rstest]
+#[case::background(&["h1", "-i", "inv.ini", "-a", "true", "-B", "-1"], "ERROR! a negative -B is not supported yet for ad hoc commands\n")]
+#[case::poll(&["h1", "-i", "inv.ini", "-a", "true", "-P", "-1"], "ERROR! a negative -P is not supported yet for ad hoc commands\n")]
+#[case::timeout(&["h1", "-i", "inv.ini", "-a", "true", "--task-timeout", "-1"], "ERROR! a negative --task-timeout is not supported yet for ad hoc commands\n")]
+#[case::check_and_background(&["h1", "-i", "inv.ini", "-a", "true", "-C", "-B", "5"], "ERROR! -C with -B is not supported yet for ad hoc commands\n")]
+fn a_run_option_this_release_cannot_honour_is_refused(#[case] args: &[&str], #[case] stderr: &str) {
+    let out = adhoc(args, &[]);
+    assert_eq!(out.status.code(), Some(4), "{args:?}");
+    assert_eq!(text(&out.stderr), stderr, "{args:?}");
+    assert_eq!(text(&out.stdout), "", "{args:?}");
+}
+
+/// `-C`, `--task-timeout` and `-B`, on modules that need no ansible-core.
+#[test]
+fn check_timeout_and_background_run_without_ansible_core() {
+    let skipped = adhoc(&["h1", "-i", "inv.ini", "-a", "true", "-C", "-D"], &[]);
+    assert_eq!(text(&skipped.stdout), "h1 | SKIPPED\n");
+
+    let slow = adhoc(
+        &[
+            "h1",
+            "-i",
+            "inv.ini",
+            "-m",
+            "shell",
+            "-a",
+            "sleep 5",
+            "--task-timeout",
+            "1",
+        ],
+        &[],
+    );
+    assert_eq!(slow.status.code(), Some(2), "{}", text(&slow.stderr));
+    let shown = text(&slow.stdout);
+    assert!(
+        shown.starts_with(
+            "[ERROR]: Task failed: Timed out after 1 second(s).\nOrigin: <adhoc 'shell' task>\n\n{'action': 'shell', 'args': {'_raw_params': 'sleep 5'}, 'timeout': 1, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED | rc=-1 >>\n"
+        ),
+        "{shown}"
+    );
+
+    // The job's status file goes under the home, so the run gets one of its own.
+    let home = std::env::temp_dir().join(format!("volant-adhoc-home-{}", std::process::id()));
+    std::fs::create_dir_all(&home).unwrap();
+    let home = home.display().to_string();
+    let started = adhoc(
+        &[
+            "h1", "-i", "inv.ini", "-m", "shell", "-a", "true", "-B", "5", "-P", "0",
+        ],
+        &[("HOME", &home)],
+    );
+    let polled = adhoc(
+        &[
+            "h1", "-i", "inv.ini", "-m", "shell", "-a", "echo hi", "-B", "5", "-P", "1",
+        ],
+        &[("HOME", &home)],
+    );
+    let _ = std::fs::remove_dir_all(&home);
+    let (started, polled) = (text(&started.stdout), text(&polled.stdout));
+    assert!(
+        started.starts_with("h1 | CHANGED => {\n    \"ansible_job_id\": \"j"),
+        "{started}"
+    );
+    assert!(started.contains("\"finished\": false,\n"), "{started}");
+    assert!(
+        polled.contains("\"finished\": true,\n") && polled.contains("\"stdout\": \"hi\""),
+        "{polled}"
+    );
+}
+
+/// `--version` and `-vv` print the reference's block; with no interpreter the lines about the
+/// Python side are left out and nothing is installed.
+#[test]
+fn the_version_block_is_printed_for_version_and_vv() {
+    let envs = [("VOLANT_PYTHON", "/nonexistent/python")];
+    let version = adhoc(&["--version"], &envs);
+    assert_eq!(version.status.code(), Some(0), "{}", text(&version.stderr));
+    let block = text(&version.stdout);
+    let lines: Vec<&str> = block.lines().collect();
+    assert_eq!(lines.len(), 5, "{block}");
+    assert_eq!(lines[0], "ansible [core 2.19.12]");
+    assert!(lines[1].starts_with("  config file = "), "{block}");
+    assert!(
+        lines[2].starts_with("  configured module search path = ['"),
+        "{block}"
+    );
+    assert!(
+        lines[3].starts_with("  ansible collection location = "),
+        "{block}"
+    );
+    assert_eq!(
+        lines[4],
+        format!("  executable location = {}", env!("CARGO_BIN_EXE_volant"))
+    );
+
+    let verbose = adhoc(
+        &["h1", "-i", "inv.ini", "-m", "debug", "-a", "msg=x", "-vv"],
+        &envs,
+    );
+    let shown = text(&verbose.stdout);
+    assert!(shown.starts_with(&block), "{shown}");
+    assert!(
+        shown.ends_with("Skipping callback 'default', as we already have a stdout callback.\nSkipping callback 'oneline', as we already have a stdout callback.\nh1 | SUCCESS => {\n    \"msg\": \"x\"\n}\n"),
+        "{shown}"
+    );
 }

@@ -25,8 +25,16 @@ pub(super) fn refuse(message: &str, with_help: bool) -> i32 {
     2
 }
 
+/// The options argparse reads as integers, as clap names them and as argparse does.
+const NUMBERS: [(&str, &str); 4] = [
+    ("--forks", "-f/--forks"),
+    ("--background", "-B/--background"),
+    ("--poll", "-P/--poll"),
+    ("--task-timeout", "--task-timeout"),
+];
+
 /// The reference's wording and exit code for the usage errors clap would otherwise word itself:
-/// a missing pattern, and a `--forks` that is not a number. `None` for any other error, which
+/// a missing pattern, and an option read as a number that is not one. `None` for any other error, which
 /// stays clap's.
 #[must_use]
 pub fn usage_error(err: &clap::Error) -> Option<i32> {
@@ -40,12 +48,13 @@ pub fn usage_error(err: &clap::Error) -> Option<i32> {
             "the following arguments are required: pattern",
             true,
         )),
-        ErrorKind::ValueValidation | ErrorKind::InvalidValue if arg.contains("--forks") => {
+        ErrorKind::ValueValidation | ErrorKind::InvalidValue => {
+            let (_, shown) = NUMBERS.iter().find(|(long, _)| arg.contains(long))?;
             let Some(ContextValue::String(value)) = err.get(ContextKind::InvalidValue) else {
                 return None;
             };
             Some(refuse(
-                &format!("argument -f/--forks: invalid tag_value value: '{value}'"),
+                &format!("argument {shown}: invalid tag_value value: '{value}'"),
                 true,
             ))
         }
@@ -60,16 +69,7 @@ mod tests {
     use clap::CommandFactory;
 
     /// Options of the reference that `volant adhoc` does not take yet.
-    const NOT_YET: [&str; 8] = [
-        "--background",
-        "--check",
-        "--diff",
-        "--one-line",
-        "--poll",
-        "--task-timeout",
-        "--tree",
-        "--version",
-    ];
+    const NOT_YET: [&str; 2] = ["--one-line", "--tree"];
 
     #[test]
     fn every_option_of_the_help_is_an_argument_or_not_yet_one() {

@@ -110,7 +110,7 @@ async fn run_all(
     {
         return Ok(code);
     }
-    announce_callbacks(out);
+    announce_callbacks(out, matches!(plays, Plays::Adhoc(_)));
     let dump = if out.verbose_at(4) {
         options_dump(args, &config, forks)
     } else {

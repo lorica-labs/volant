@@ -208,8 +208,8 @@ pub struct VaultSecretArgs {
 #[derive(Parser, Debug)]
 pub struct AdhocArgs {
     /// Host pattern the module runs against.
-    #[arg(value_name = "PATTERN")]
-    pub pattern: String,
+    #[arg(value_name = "PATTERN", required_unless_present = "version")]
+    pub pattern: Option<String>,
     /// The module to run.
     #[arg(
         short = 'm',
@@ -249,6 +249,38 @@ pub struct AdhocArgs {
     /// List the hosts the pattern matches, and stop.
     #[arg(long = "list-hosts")]
     pub list_hosts: bool,
+    /// Run the task in check mode.
+    #[arg(short = 'C', long = "check")]
+    pub check: bool,
+    /// Show the differences a task makes to files and templates.
+    #[arg(short = 'D', long = "diff")]
+    pub diff: bool,
+    /// Run the module as an async job with this many seconds to finish.
+    #[arg(
+        short = 'B',
+        long = "background",
+        value_name = "SECONDS",
+        allow_negative_numbers = true
+    )]
+    pub background: Option<i64>,
+    /// Seconds between two looks at a job started with `-B`; 0 only starts it.
+    #[arg(
+        short = 'P',
+        long = "poll",
+        value_name = "POLL_INTERVAL",
+        allow_negative_numbers = true
+    )]
+    pub poll: Option<i64>,
+    /// Fail a task that runs longer than this many seconds.
+    #[arg(
+        long = "task-timeout",
+        value_name = "TASK_TIMEOUT",
+        allow_negative_numbers = true
+    )]
+    pub task_timeout: Option<i64>,
+    /// Print the version and the paths the program works with, and stop.
+    #[arg(long = "version")]
+    pub version: bool,
     /// Clear the fact cache of every host in the inventory.
     #[arg(long = "flush-cache")]
     pub flush_cache: bool,
@@ -275,7 +307,9 @@ impl AdhocArgs {
             // A negative number never gets here: the command refuses it first.
             forks: self.forks.and_then(|forks| usize::try_from(forks).ok()),
             flush_cache: self.flush_cache,
-            adhoc_pattern: Some(self.pattern.clone()),
+            check: self.check,
+            diff: self.diff,
+            adhoc_pattern: self.pattern.clone(),
             connect: self.connect.clone(),
             escalation: self.escalation.clone(),
             vault: self.vault.clone(),

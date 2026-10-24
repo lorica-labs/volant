@@ -1,0 +1,54 @@
+[
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"changed\": false,\n    \"ping\": \"pong\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "--- before\n+++ after: /tmp/volant-adhoc-golden-diff\n@@ -0,0 +1 @@\n+x\n\\ No newline at end of file\n\nh1 | CHANGED => {\n    \"changed\": true\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j582347644877.392200\",\n    \"changed\": true,\n    \"cmd\": \"sleep 1; echo hi\",\n    \"delta\": \"0:00:01.009952\",\n    \"end\": \"2026-10-24 14:53:06.928723\",\n    \"finished\": true,\n    \"msg\": \"\",\n    \"rc\": 0,\n    \"results_file\": \"<results-file>\",\n    \"start\": \"2026-10-24 14:53:05.918771\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"hi\",\n    \"stdout_lines\": [\n        \"hi\"\n    ]\n}\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'sleep 1; echo hi'}, 'timeout': 0, 'async_val': 10, 'poll': 1}\n\nh1 | FAILED | rc=1 >>\nsleep: invalid time interval '1;'\nsleep: invalid time interval 'echo'\nsleep: invalid time interval 'hi'\nTry 'sleep --help' for more information.non-zero return code\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j152088895956.392379\",\n    \"changed\": true,\n    \"cmd\": \"sleep 1\",\n    \"delta\": \"0:00:01.009769\",\n    \"end\": \"2026-10-24 14:53:13.835865\",\n    \"finished\": true,\n    \"msg\": \"\",\n    \"rc\": 0,\n    \"results_file\": \"<results-file>\",\n    \"start\": \"2026-10-24 14:53:12.826096\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"\",\n    \"stdout_lines\": []\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED | rc=0 >>\nhi\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j205212707250.392686\",\n    \"changed\": true,\n    \"finished\": false,\n    \"results_file\": \"<results-file>\",\n    \"started\": true\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"ansible_job_id\": \"j668379656417.392724\",\n    \"changed\": false,\n    \"finished\": true,\n    \"ping\": \"pong\",\n    \"results_file\": \"<results-file>\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"\",\n    \"stdout_lines\": []\n}\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Timed out after 1 second(s).\nOrigin: <adhoc 'shell' task>\n\n{'action': 'shell', 'args': {'_raw_params': 'sleep 3'}, 'timeout': 1, 'async_val': 0, 'poll': 15}\n\nh2 | FAILED | rc=-1 >>\nTask failed: Timed out after 1 second(s).\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Timeout 100000001 is invalid, it must be between 0 and 100000000.\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {}, 'timeout': 100000001, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Timeout 100000001 is invalid, it must be between 0 and 100000000.\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED | rc=0 >>\n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "<golden-version>\nUsing <golden-tmp>/ansible.cfg as config file\nSkipping callback 'default', as we already have a stdout callback.\nSkipping callback 'oneline', as we already have a stdout callback.\nh1 | SUCCESS => {\n    \"changed\": false,\n    \"ping\": \"pong\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "<golden-version>\n"
+  }
+]

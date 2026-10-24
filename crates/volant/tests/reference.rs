@@ -410,11 +410,19 @@ fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
     let version = regex::Regex::new(r"(?m)^volant .* \(ansible-core [0-9.]+ compatible\)\n")
         .expect("the pattern compiles");
     let stdout = version.replace_all(&stdout, "<golden-version>\n");
+    // The reference's block of an `ansible` program opens `-vv` and is what `--version` prints.
+    let block = regex::Regex::new(r"(?m)^ansible \[core [^\]\n]*\]\n(?:  .*\n){8}")
+        .expect("the pattern compiles");
+    let stdout = block.replace_all(&stdout, "<golden-version>\n");
+    // The status file of an async job sits under the home of whoever runs it.
+    let results = regex::Regex::new(r#""results_file": "[^"]*""#).expect("the pattern compiles");
+    let stdout = results.replace_all(&stdout, r#""results_file": "<results-file>""#);
     // `-vvvv` names the callback plugin's file in the reference and the engine's own callback
     // here: the recording writes the same placeholder.
-    let callback =
-        regex::Regex::new(r"(?m)^(Loading callback plugin default of type stdout, v2\.0 from ).*$")
-            .expect("the pattern compiles");
+    let callback = regex::Regex::new(
+        r"(?m)^(Loading callback plugin (?:default|minimal) of type stdout, v2\.0 from ).*$",
+    )
+    .expect("the pattern compiles");
     let stdout = callback.replace_all(&stdout, "${1}<golden-callback>");
     // A job's id, `j<random>.<pid>`, and the process its limit killed: drawn anew by every run.
     let jid = regex::Regex::new(r"\bj[0-9]+\.[0-9]+\b").expect("the pattern compiles");

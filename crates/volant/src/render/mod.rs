@@ -243,7 +243,8 @@ impl Renderer {
     /// What the reference prints when a playbook starts at `-vv`: its banner, at `-vvvv` the
     /// options it was run with, and how many plays it holds.
     pub fn playbook(&mut self, file: &std::path::Path, plays: usize, options: &[String]) {
-        if self.verbosity < 2 {
+        // The `minimal` callback has no playbook banner.
+        if self.verbosity < 2 || self.minimal.is_some() {
             return;
         }
         let base = file.file_name().map_or_else(
@@ -339,6 +340,10 @@ impl Renderer {
     /// A line the reference prints in its debug colour: the `ASYNC POLL`, `ASYNC OK` and
     /// `ASYNC FAILED` lines of a polled job.
     pub fn debug(&mut self, line: &str) {
+        // The `minimal` callback does not show them.
+        if self.minimal.is_some() {
+            return;
+        }
         let painted = self.paint(DEBUG, line);
         let _ = writeln!(self.out, "{painted}");
     }

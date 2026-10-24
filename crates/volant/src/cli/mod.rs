@@ -21,6 +21,7 @@ mod vault;
 mod vault_args;
 mod vault_edit;
 mod vault_string;
+mod version;
 
 pub use adhoc::adhoc;
 pub use adhoc_usage::usage_error as adhoc_usage_error;

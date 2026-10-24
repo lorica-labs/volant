@@ -102,7 +102,7 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     }
     let config = crate::runtime::resolve::configured(Config::load()?);
     let mut out = Renderer::new(config.color_choice(false), args.verbose);
-    announce(&mut out);
+    announce(&mut out, None);
     let secrets = match crate::vault::load(&crate::vault::Request {
         ask: args.ask_vault_pass,
         password_files: args.vault_password_file.clone(),

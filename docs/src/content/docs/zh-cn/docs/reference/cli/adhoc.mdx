@@ -1,5 +1,5 @@
 ---
-sourceHash: 162269910b1f
+sourceHash: bb42889a1a65
 title: volant adhoc
 description: 在每台匹配模式的主机上运行一个模块，选项和输出与 ansible 一致。
 ---
@@ -12,7 +12,7 @@ import Option from '../../../../../../components/Option.astro';
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
              [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
-             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
+             [-C] [-D] [-o] [-t DIR] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -29,6 +29,14 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-D, --diff">
   在结果之前打印任务对文件和模板所做的差异。与 `-C` 一起使用时，文件不会被修改。
+</Option>
+
+<Option name="-o, --one-line">
+  每台主机打印一行，与 ansible 的 `oneline` callback 的做法相同。ansible-core 2.19.12 已弃用此选项，并在标准错误输出给出警告；见下文。
+</Option>
+
+<Option name="-t, --tree" arg="DIR">
+  同时把每台主机的结果写入 `DIR` 中以主机命名的文件，与 ansible 的 `tree` callback 的做法相同。ansible-core 2.19.12 已弃用此选项，并在标准错误输出给出警告；见下文。
 </Option>
 
 <Option name="-B, --background" arg="SECONDS">
@@ -65,6 +73,25 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 当每台主机都成功或被跳过时，退出码为 0；有主机失败时为 2；有主机无法到达时为 4，不论是否同时有失败的主机。`ANSIBLE_STDOUT_CALLBACK` 不会改变输出。设置 `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`，或在 `ansible.cfg` 的 `[defaults]` 下设置 `callback_result_format = yaml` 时，JSON 形式的结果改为以 YAML 打印，位于 `=>` 之后的行中，缩进四个空格。含换行的字符串会变成字面量块。其他任何值（包括空值）都会使命令以退出码 5 停止。
 
-`-vv` 以 `--version` 打印的块开头，然后是 `Using PATH as config file`（或 `No config file found; using defaults`），以及 `Skipping callback 'default', as we already have a stdout callback.` 和 `Skipping callback 'oneline', as we already have a stdout callback.` 这两行。`-vvv` 及以上会加上 inventory 插件的行和 `volant playbook` 打印的行；参考实现自己的 `ESTABLISH LOCAL CONNECTION` 和 `EXEC` 行描述的是它的模块上传，Volant 并不这样做，所以不会打印。
+## 每台主机一行
+
+使用 `-o` 时，`command`、`shell` 或 `raw` 的结果是 `h1 | CHANGED | rc=0 | (stdout) hi`，其中的换行写作 `\n`，有 stderr 时后面跟 `(stderr) text`。其他任何结果是 `h1 | SUCCESS => ` 加上单行 JSON 形式的结果，键已排序，用 `,` 分隔，逗号后没有空格。要求缩进形式的结果（例如 `debug`），或 `-vvv` 下的任何结果，保留其四个空格，但去掉换行。失败的主机打印同样两种行，使用 `FAILED`；对命令来说，先是命令形式，然后是 `FAILED!` 行。失败带有异常时，先有一行 `An exception occurred during task execution. To see the full traceback, use -vvv. The error was: ...`；在 `-vvv` 下它包含完整文本。无法到达的主机打印 `h1 | UNREACHABLE!: ` 和它的消息。`-o` 不打印 `[ERROR]` 块、结果自带的警告和 diff，也不读取 `callback_result_format`。退出码与不使用它时相同。
+
+使用 `-t DIR` 时输出不变。`DIR` 在第一个结果到达时创建，`~` 会被展开，相对路径从工作目录开始。每个不是跳过的结果都以单行 JSON 写入 `DIR/HOST`，键已排序，末尾没有换行，覆盖该主机上一个结果留下的内容；无法到达的主机也会得到一个文件。`debug` 的结果以及 `-vvv` 下的任何结果以缩进形式写入。文件是被替换而不是原地写入：放在其位置上的链接会被替换，权限为 0600。不是单个普通文件名的主机名（空、`.`、`..` 或含有 `/`）会打印 `[WARNING]` 且不会得到文件，而 ansible-core 会写到名字所指的任何位置，包括 `../x` 和绝对路径。无法创建的目录或无法写入的文件会打印 `[WARNING]`，运行继续。`DIR` 中的 `$`，或 `~` 后面跟用户名，会使命令以退出码 4 停止，并说明尚不支持。
+
+两个选项都会在第一个结果之前于标准错误输出打印这些行，顺序如下：说明如何关闭弃用警告的 `[WARNING]`，每个选项一条 `[DEPRECATION WARNING]`，拼写和顺序与命令行给出的一致（同一组短选项中的 `-o` 和 `-t` 算作两个），主机模式的警告，然后是 `oneline` callback 的一条 `[DEPRECATION WARNING]` 和 `tree` callback 的一条。在 callback 加载之前就结束的运行（`--list-hosts`，或没有留下任何主机的 `-l`）只打印前两组。`deprecation_warnings = False` 或 `ANSIBLE_DEPRECATION_WARNINGS=false` 会让它们全部静默。在 `-vv` 下，`-o` 会撇开 `minimal`，默认输出则撇开 `oneline`；在 `-vvvv` 下，`-t` 会为 `tree` callback 增加一行。
+
+## 不是模块的动作
+
+`set_fact` 像任何模块结果一样打印它的 `ansible_facts`。`meta` 带 `noop`、`flush_handlers`、`clear_facts`、`refresh_inventory`、`reset_connection` 或 `end_host` 时不打印任何内容，退出码为 0。与 ansible-core 2.19.12 相比，这些差异仍然存在：
+
+- `meta -a end_play` 会让 ansible-core 以意外异常和退出码 250 结束。Volant 不打印任何内容，退出码为 0。
+- `meta` 带未知动作，或没有 `-a` 时，与参考实现一样以退出码 1 停止，但它的 `[ERROR]` 块末尾没有参考实现打印的那个空行，而且没有 `-a` 时对参数的称呼不同。
+- `include_role` 和 `include_tasks` 在参考实现中会在 `FAILED!` 块之前打印带 `include_args` 的 `SUCCESS` 块。Volant 只打印 `FAILED!` 块。退出码一致：这两个是 2，`import_role` 和 `import_tasks` 是 1，`[ERROR]` 的文本不同。
+- `group_by` 报告 `SUCCESS` 且 `"changed": false`，而参考实现报告 `CHANGED`。
+
+## 详细输出
+
+`-vv` 以 `--version` 打印的块开头，然后是 `Using PATH as config file`（或 `No config file found; using defaults`），以及 `Skipping callback 'default', as we already have a stdout callback.` 和 `Skipping callback 'oneline', as we already have a stdout callback.` 这两行（使用 `-o` 时是 `minimal` 而不是 `oneline`）。`-vvv` 及以上会加上 inventory 插件的行和 `volant playbook` 打印的行；参考实现自己的 `ESTABLISH LOCAL CONNECTION` 和 `EXEC` 行描述的是它的模块上传，Volant 并不这样做，所以不会打印。
 
 负的 `-B`、`-P` 或 `--task-timeout`，以及 `-C` 与 `-B` 同时使用，都会使命令以退出码 4 停止，并说明哪些暂不支持。`-B`、`-P` 和 `--task-timeout` 接受整数；其他任何值都是用法错误。

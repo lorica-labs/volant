@@ -1,9 +1,10 @@
 # A systemd host for the corpus runs. The run's public key is added when a container starts, so
-# the image carries no key. The apt lists stay, so roles can install packages.
+# the image carries no key. The apt lists stay, so roles can install packages; iproute2 gives the
+# network facts (`ansible_default_ipv4`) something to read and rsyslog the `syslog` group some hardening roles use.
 FROM ubuntu:24.04
 ENV DEBIAN_FRONTEND=noninteractive
 RUN apt-get update \
- && apt-get install -y --no-install-recommends systemd systemd-sysv dbus openssh-server python3 python3-apt sudo acl ca-certificates gnupg locales \
+ && apt-get install -y --no-install-recommends systemd systemd-sysv dbus openssh-server python3 python3-apt sudo acl ca-certificates gnupg locales iproute2 rsyslog \
  && locale-gen en_US.UTF-8 \
  && systemctl enable ssh \
  && useradd -m -s /bin/bash corpus \

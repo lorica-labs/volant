@@ -1,0 +1,106 @@
+# A 5 MB vars file, generated under target/corpus/<name>/ by the recipe, read by 50 tasks.
+- hosts: corpus
+  gather_facts: false
+  tasks:
+    - ansible.builtin.include_vars:
+        file: "{{ lookup('env', 'CORPUS_DIR') }}/bigvars.json"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"
+    - ansible.builtin.debug:
+        msg: "{{ bigvars_rows | length }}"

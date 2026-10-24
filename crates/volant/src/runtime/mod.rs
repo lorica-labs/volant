@@ -8,6 +8,7 @@ pub(crate) mod fetch;
 pub(crate) mod install;
 pub(crate) mod manifest;
 pub(crate) mod pack;
+pub(crate) mod pull_links;
 pub(crate) mod resolve;
 pub(crate) mod tool;
 

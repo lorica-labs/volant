@@ -122,9 +122,8 @@ pub(in crate::executor) fn merged_vars(
     playbook_dir: &Path,
 ) -> HostVars {
     let compiled = plan.steps();
-    let role = role
-        .and_then(|i| compiled.roles.get(i))
-        .unwrap_or(&compiled.exported);
+    let own_role = role.and_then(|i| compiled.roles.get(i));
+    let role = own_role.unwrap_or(&compiled.exported);
     // What an include handed down joins the role parameters rather than the task variables:
     // measured, it beats a `set_fact` of the same name, which a task's own `vars:` does not.
     let mut role_params = role.params.clone();
@@ -182,7 +181,53 @@ pub(in crate::executor) fn merged_vars(
     // calls (`first_found`, `template`) reads these two names to find its file, and a pass that
     // resolves the task's variables without them first is a pass that lookup cannot complete on.
     insert_search_path(&mut vars, origin, playbook_dir);
+    if let Some(role) = own_role {
+        insert_role_names(&mut vars, role);
+    }
+    insert_play_role_names(&mut vars, &compiled.roles);
     vars
+}
+
+/// The play's role lists, which every task of the play reads, measured on 2.19.12:
+/// `ansible_play_role_names` and `role_names` name the play's roles in [`crate::roles::RoleKind`] order, an
+/// `include_role` once it ran; `ansible_dependent_role_names` names their dependencies and
+/// `ansible_role_names` both. The reference builds the last two from Python sets, in no order a
+/// playbook can rely on; they are sorted here.
+fn insert_play_role_names(vars: &mut HostVars, roles: &[crate::roles::RoleVars]) {
+    use crate::roles::RoleKind;
+    let mut listed: Vec<&crate::roles::RoleVars> = roles
+        .iter()
+        .filter(|r| r.kind != RoleKind::Dependency)
+        .collect();
+    listed.sort_by_key(|r| r.kind);
+    let play: Vec<String> = listed.iter().map(|r| r.full_name()).collect();
+    let mut dependent: Vec<String> = roles
+        .iter()
+        .filter(|r| r.kind == RoleKind::Dependency)
+        .map(crate::roles::RoleVars::full_name)
+        .collect();
+    dependent.sort();
+    dependent.dedup();
+    let mut all: Vec<String> = play.iter().chain(&dependent).cloned().collect();
+    all.sort();
+    all.dedup();
+    let list = |names: &[String]| Value::Array(names.iter().cloned().map(Value::String).collect());
+    vars.insert("ansible_play_role_names".into(), list(&play));
+    vars.insert("role_names".into(), list(&play));
+    vars.insert("ansible_dependent_role_names".into(), list(&dependent));
+    vars.insert("ansible_role_names".into(), list(&all));
+}
+
+/// The names ansible-core gives a role's own tasks and handlers, measured on 2.19.12
+/// (`VariableManager._get_magic_variables`): `role_name` without the collection,
+/// `ansible_role_name` with it, and `ansible_collection_name`, null outside a collection.
+fn insert_role_names(vars: &mut HostVars, role: &crate::roles::RoleVars) {
+    vars.insert("role_name".into(), Value::String(role.role_name.clone()));
+    vars.insert("ansible_role_name".into(), Value::String(role.full_name()));
+    vars.insert(
+        "ansible_collection_name".into(),
+        role.collection.clone().map_or(Value::Null, Value::String),
+    );
 }
 
 /// The variables of [`merged_vars`] resolved against each other.

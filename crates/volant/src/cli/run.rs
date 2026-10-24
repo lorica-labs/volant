@@ -50,6 +50,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     let mut out = Renderer::new(choice, args.verbose);
     if let Plays::Adhoc(adhoc) = plays {
         out.set_minimal(adhoc.module());
+        adhoc.show(&mut out);
     }
     crate::transport::trace::configure(args.verbose, choice);
     let runtime = match tokio::runtime::Runtime::new() {
@@ -105,12 +106,20 @@ async fn run_all(
         Err(code) => return Ok(code),
     };
     let show_custom_stats = config.show_custom_stats;
-    if let Plays::Adhoc(_) = plays
+    // `-o` loads `oneline` instead of `minimal`, and the option is `minimal`'s.
+    if let Plays::Adhoc(adhoc) = plays
+        && !adhoc.callbacks().0
         && let Err(code) = super::adhoc::result_format(&config, out)
     {
         return Ok(code);
     }
-    announce_callbacks(out, matches!(plays, Plays::Adhoc(_)));
+    announce_callbacks(
+        out,
+        match plays {
+            Plays::Adhoc(adhoc) => Some(adhoc.callbacks()),
+            Plays::Files => None,
+        },
+    );
     let dump = if out.verbose_at(4) {
         options_dump(args, &config, forks)
     } else {

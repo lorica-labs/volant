@@ -120,6 +120,7 @@ export const en = {
     involved: 'Get involved',
   },
   performance: {
+    title: 'Ansible performance: Volant against ansible-core 2.19',
     description:
       'Two real workloads measured against ansible-core 2.19.12 with pipelining, the configuration behind them, and the commands that reproduce them.',
     heading: 'Measured on real playbooks.',
@@ -184,6 +185,7 @@ export const en = {
       'These figures describe two playbooks on two hosts. Yours depend on your network, on what your tasks do, on how many of them a native module covers and on how many hosts you drive at once. <a class="text-link" href="/docs/project/performance/">The full measurement</a>',
   },
   compatibility: {
+    title: 'Ansible compatibility: what Volant runs today',
     description:
       'How much of ansible-core 2.19.12 and of the ansible package Volant runs today, measured name by name by the test suite.',
     heading: 'Compatible with ansible-core 2.19, name by name.',

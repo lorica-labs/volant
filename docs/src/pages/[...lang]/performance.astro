@@ -41,7 +41,7 @@ const max = (rows: [Step, number, Kind][]) => Math.max(...rows.map((r) => r[1]))
 const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v} ms`);
 ---
 
-<SiteLayout code={code} title={t.nav.performance} description={p.description}>
+<SiteLayout code={code} title={p.title} description={p.description}>
   <section class="wrap page-head">
     <h1>{p.heading}</h1>
     <p>{fill(p.lede, { date: measuredOn })}</p>

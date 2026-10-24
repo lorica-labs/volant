@@ -3,7 +3,7 @@ title: The managed runtime
 description: The Python and ansible-core that Volant installs for itself, where they live, what they download, and how to manage them.
 ---
 
-Volant needs a Python 3 with `ansible-core` on the controller for Python modules, fact gathering and the filters and lookups it does not implement itself. If the machine has none, Volant installs its own, once, and uses it from then on. You do not need ansible installed to run a playbook.
+Volant needs a Python 3 with `ansible-core` on the controller for Python modules, fact gathering and the filters and lookups it does not implement itself. If the machine has none, Volant installs its own, once, and uses it from then on. You do not need ansible installed to run a playbook, nor for `volant doc`, `config`, `galaxy`, `pull` and `console`, which run ansible-core's own tools from this runtime.
 
 The runtime is CPython 3.13 and ansible-core 2.19.12, the version Volant matches. It lives in one directory that Volant owns, so it touches no system Python and no virtual environment of yours.
 

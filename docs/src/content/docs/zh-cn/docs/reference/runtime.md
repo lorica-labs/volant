@@ -1,10 +1,10 @@
 ---
-sourceHash: 86490c3c05d2
+sourceHash: f052dfc7833f
 title: 托管运行时
 description: Volant 为自己安装的 Python 和 ansible-core，它们位于哪里、下载什么，以及如何管理。
 ---
 
-控制节点上需要有一个带 `ansible-core` 的 Python 3，用于 Python 模块、facts 收集，以及 Volant 自己没有实现的过滤器和 lookup。如果机器上没有，Volant 会为自己安装一个，只装一次，之后一直使用它。运行 playbook 不需要安装 ansible。
+控制节点上需要有一个带 `ansible-core` 的 Python 3，用于 Python 模块、facts 收集，以及 Volant 自己没有实现的过滤器和 lookup。如果机器上没有，Volant 会为自己安装一个，只装一次，之后一直使用它。运行 playbook 不需要安装 ansible，`volant doc`、`config`、`galaxy`、`pull` 和 `console` 也不需要，它们从这个运行时运行 ansible-core 自己的工具。
 
 这个运行时是 CPython 3.13 和 ansible-core 2.19.12，即 Volant 对应的版本。它位于由 Volant 管理的一个目录中，所以不会触碰系统的 Python，也不会触碰你的任何虚拟环境。
 

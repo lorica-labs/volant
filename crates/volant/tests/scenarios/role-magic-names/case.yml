@@ -1,0 +1,5 @@
+# The names a role's tasks read about the role: `role_name` without its collection,
+# `ansible_role_name` with it, `ansible_collection_name`, and for a role an `include_role` brings
+# in, `ansible_parent_role_names` and `ansible_parent_role_paths`, nearest first.
+runs:
+  - args: [-i, inv.ini, site.yml]

@@ -124,7 +124,10 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
         message, censored, ..
     } = &event
     {
-        out.warning(message, *censored);
+        // The `oneline` callback shows none of the notes a result carries.
+        if !out.is_oneline() {
+            out.warning(message, *censored);
+        }
         return;
     }
     if let Event::Display { line, debug, .. } = &event {

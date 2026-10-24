@@ -24,6 +24,10 @@ enum Command {
     Config(ToolArgs),
     /// Install and list roles and collections, with the arguments of ansible-galaxy.
     Galaxy(ToolArgs),
+    /// Run ad hoc commands in an interactive shell, with the arguments of ansible-console.
+    Console(ToolArgs),
+    /// Clone a repository and run its playbook, with the arguments of ansible-pull.
+    Pull(ToolArgs),
     /// Print an inventory as JSON, with the arguments of ansible-inventory.
     Inventory(InventoryArgs),
     /// Install, show or remove the Python runtime Volant manages for ansible-core.
@@ -96,6 +100,8 @@ fn main() {
         Command::Doc(args) => volant::cli::doc(args),
         Command::Config(args) => volant::cli::config(args),
         Command::Galaxy(args) => volant::cli::galaxy(args),
+        Command::Console(args) => volant::cli::console(args),
+        Command::Pull(args) => volant::cli::pull(args),
         Command::Inventory(args) => volant::cli::inventory(args),
         Command::Runtime(command) => volant::cli::runtime(command),
         Command::Shims(command) => volant::cli::shims(command),

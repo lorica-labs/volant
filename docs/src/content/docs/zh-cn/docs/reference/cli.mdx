@@ -1,5 +1,5 @@
 ---
-sourceHash: b9099a4b9554
+sourceHash: 6bc9ad5a2398
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -11,8 +11,10 @@ volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
 volant config [ARGS...]
+volant console [ARGS...]
 volant doc [ARGS...]
 volant galaxy [ARGS...]
+volant pull [ARGS...]
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
@@ -20,11 +22,11 @@ volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-其他每个命令都有自己的页面：[`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)、[`volant config`](/zh-cn/docs/reference/cli/config/)、[`volant doc`](/zh-cn/docs/reference/cli/doc/)、[`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/)、[`volant inventory`](/zh-cn/docs/reference/cli/inventory/)、[`volant runtime`](/zh-cn/docs/reference/cli/runtime/)、[`volant shims`](/zh-cn/docs/reference/cli/shims/)、[`volant vault`](/zh-cn/docs/reference/cli/vault/)。本页介绍 `volant playbook`。
+其他每个命令都有自己的页面：[`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)、[`volant config`](/zh-cn/docs/reference/cli/config/)、[`volant console`](/zh-cn/docs/reference/cli/console/)、[`volant doc`](/zh-cn/docs/reference/cli/doc/)、[`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/)、[`volant pull`](/zh-cn/docs/reference/cli/pull/)、[`volant inventory`](/zh-cn/docs/reference/cli/inventory/)、[`volant runtime`](/zh-cn/docs/reference/cli/runtime/)、[`volant shims`](/zh-cn/docs/reference/cli/shims/)、[`volant vault`](/zh-cn/docs/reference/cli/vault/)。[ansible 命令名](/zh-cn/docs/start/ansible-command-names/)把它们联系在一起。本页介绍 `volant playbook`。
 
 `volant playbook` 接受与 `ansible-playbook` 相同的选项（对于存在的那些）。`volant-playbook` 是同一个程序，名字读起来就像你熟悉的那个。一起给出的多个 playbook 按顺序运行，每个都会打印自己的汇总。
 
-在 Linux 和 macOS 上，`volant` 二进制文件还会根据启动时使用的名字（`argv[0]` 的文件名）来决定行为。以 `ansible-playbook`、`ansible-vault`、`ansible-doc`、`ansible-config`、`ansible-galaxy` 或 `ansible-inventory` 的名字启动时，无论通过符号链接还是硬链接，它的行为都等同于 `volant playbook`、`volant vault`、`volant doc`、`volant config`、`volant galaxy` 或 `volant inventory`，参数、输出和退出码都相同。以 `ansible` 的名字启动时，它的行为等同于 `volant adhoc`。用法错误以 2 退出，并按启动时的名字称呼该程序。其他任何名字都保持 `volant` 的常规行为。
+在 Linux 和 macOS 上，`volant` 二进制文件还会根据启动时使用的名字（`argv[0]` 的文件名）来决定行为。以 `ansible-playbook`、`ansible-vault`、`ansible-doc`、`ansible-config`、`ansible-galaxy`、`ansible-console`、`ansible-pull` 或 `ansible-inventory` 的名字启动时，无论通过符号链接还是硬链接，它的行为都等同于 `volant playbook`、`volant vault`、`volant doc`、`volant config`、`volant galaxy`、`volant console`、`volant pull` 或 `volant inventory`，参数、输出和退出码都相同。以 `ansible` 的名字启动时，它的行为等同于 `volant adhoc`。`volant doc`、`config`、`galaxy`、`console` 和 `pull` 在 Volant 的 Python 运行时中运行 ansible-core 自己的工具；它们的输出只有一处不同，即 `volant pull` 在第二行为 `ansible-pull` 显示的路径，见 [`volant pull`](/zh-cn/docs/reference/cli/pull/)。用法错误以 2 退出，并按启动时的名字称呼该程序。其他任何名字都保持 `volant` 的常规行为。
 
 如果某个选项有对应的 `ansible.cfg` 键或环境变量，条目中会写明。选项优先于两者；顺序见[配置](/zh-cn/docs/reference/configuration/)。
 
@@ -238,6 +240,4 @@ Volant 读取上面提到的 `ANSIBLE_*` 变量，以及它自己的几个变量
 
 每个 `ansible-playbook` 选项都能接受。`--scp-extra-args` 和 `--sftp-extra-args` 没有效果，因为文件是通过 agent 链路传输的。[对等性页面](/zh-cn/docs/reference/parity/#ansible-playbook-option)列出了每个选项及其状态。
 
-`volant adhoc` 暂时没有 `-o` 和 `-t`。
-
-`volant` 的子命令有 `playbook`、`adhoc`、`inventory`、`runtime`、`shims` 和 `vault`。其他 Ansible 工具暂时没有对应的命令：`ansible-doc`、`ansible-config` 和 `ansible-galaxy`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。
+`volant` 的子命令有 `playbook`、`adhoc`、`inventory`、`runtime`、`shims`、`vault`、`doc`、`config`、`galaxy`、`console` 和 `pull`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。

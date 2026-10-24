@@ -1841,3 +1841,74 @@ fn an_unsearchable_working_directory_keeps_the_server() {
     }
     assert!(server.alive(), "the server stopped after a task");
 }
+
+/// A server keeps what it compiled from the payload in a file beside it, and the next server
+/// reads it back; a file anyone else could have written is not read.
+#[test]
+#[cfg(target_os = "linux")]
+fn the_payload_s_compiled_code_is_kept_for_the_next_server() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let root = scratch();
+    let tmp = root.path().to_str().unwrap().to_string();
+    let payload = cached_payload(
+        root.path(),
+        "\n    from ansible.module_utils import basic\n    print(json.dumps({\"mark\": hasattr(basic, \"MARK\"), \"file\": basic.__file__}))\n",
+    );
+    let blob = crate::blobs::path(&tmp, &payload.blob).unwrap();
+    batch_started();
+    let task = |value: &str| {
+        let mut context = Context {
+            remote_tmp: tmp.clone(),
+            ..Context::default()
+        };
+        // Each value is a server of its own.
+        context
+            .environment
+            .insert("VOLANT_CACHE_PROBE".into(), value.into());
+        let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
+        assert!(!result.failed(), "{:?}", result.0);
+        result
+    };
+    let first = task("a");
+    task("a");
+    assert_eq!(first.0["mark"], json!(false));
+    assert_eq!(
+        first.0["file"],
+        json!(blob.join("ansible/module_utils/basic.py").to_str().unwrap())
+    );
+    let tag = Command::new(HOST_PYTHON)
+        .args([
+            "-c",
+            "import sys; print(sys.implementation.cache_tag, end='')",
+        ])
+        .output()
+        .unwrap()
+        .stdout;
+    let cache = PathBuf::from(format!(
+        "{}.{}.code",
+        blob.display(),
+        String::from_utf8(tag).unwrap()
+    ));
+    assert!(cache.exists(), "no cache beside the payload");
+    // A cache saying `basic` is `MARK = 1` proves the next server reads it instead of the zip.
+    let forged = Command::new(HOST_PYTHON)
+        .args([
+            "-c",
+            "import importlib.util, marshal, os, sys\nos.unlink(sys.argv[1])\nfd = os.open(sys.argv[1], os.O_WRONLY | os.O_CREAT, 0o600)\nwith os.fdopen(fd, 'wb') as out:\n    marshal.dump((importlib.util.MAGIC_NUMBER, {'ansible.module_utils.basic': (sys.argv[2], compile('MARK = 1', sys.argv[2], 'exec'))}), out)\n",
+            cache.to_str().unwrap(),
+            blob.join("ansible/module_utils/basic.py").to_str().unwrap(),
+        ])
+        .status()
+        .unwrap();
+    assert!(forged.success());
+    assert_eq!(task("b").0["mark"], json!(true));
+    // Its second task is sent once the first one's save is done.
+    task("b");
+    std::fs::set_permissions(&cache, std::fs::Permissions::from_mode(0o666)).unwrap();
+    assert_eq!(
+        task("c").0["mark"],
+        json!(false),
+        "a cache others can write was read"
+    );
+}

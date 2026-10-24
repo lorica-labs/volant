@@ -1,28 +1,32 @@
 // @ts-check
 import { defineConfig } from 'astro/config';
+import sitemap from '@astrojs/sitemap';
 import starlight from '@astrojs/starlight';
 import mermaid from 'astro-mermaid';
 import starlightChangelogs from 'starlight-changelogs';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import starlightScrollToTop from 'starlight-scroll-to-top';
-import { readFileSync, readdirSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { sep } from 'node:path';
 import { locales } from './src/i18n/locales.ts';
 import { translateSidebar } from './src/i18n/sidebar.ts';
 import { anchorMap, staleTranslations } from './src/i18n/source-hash.mjs';
 
 const repo = 'https://github.com/lorica-labs/volant';
+const ogAlt = 'Volant runs four Galaxy roles in 0.529 s where ansible-core takes 26.435 s.';
 // The header shows the release the documentation describes, read from the workspace manifest.
 const version = readFileSync(new URL('../Cargo.toml', import.meta.url), 'utf8').match(/^version = "(.+)"$/m)[1];
 
 // The documentation used to live at the root of the site. Every page it had there redirects to the
 // same page under /docs/, and the pages merged since then redirect to the page that holds them now.
 const docsDir = new URL('./src/content/docs/docs/', import.meta.url);
+const docFiles = readdirSync(docsDir, { recursive: true })
+  .map((file) => String(file).split(sep).join('/'))
+  .filter((file) => /\.mdx?$/.test(file));
 const moved = Object.fromEntries(
-  readdirSync(docsDir, { recursive: true })
-    .map((file) => String(file).split(sep).join('/'))
-    .filter((file) => /\.mdx?$/.test(file) && file !== 'index.mdx')
+  docFiles
+    .filter((file) => file !== 'index.mdx')
     .map((file) => file.replace(/\.mdx?$/, ''))
     .map((page) => [`/${page}`, `/docs/${page}/`]),
 );
@@ -49,6 +53,21 @@ const redirects = { ...moved, ...merged };
 const stale = staleTranslations();
 if (stale.length) console.warn(`[i18n] ${stale.length} translated pages are behind their English page`);
 
+// The sitemap lists each text once. A page not translated yet shows the English text under the
+// translation's prefix, and the changelog is English everywhere, so those copies stay out of it,
+// with the pages that compare a release against the latest one.
+const fallbacks = locales
+  .filter((l) => l.code !== 'en')
+  .flatMap((l) =>
+    docFiles
+      .filter((file) => !existsSync(new URL(`./src/content/docs/${l.code}/docs/${file}`, import.meta.url)))
+      .map((file) => `/${l.code}/docs/${file.replace(/(index)?\.mdx?$/, '')}`.replace(/\/?$/, '/')),
+  );
+const inSitemap = (page) => {
+  const path = new URL(page).pathname;
+  return !path.includes('...latest') && !/^\/[^/]+\/docs\/changelog\//.test(path) && !fallbacks.includes(path);
+};
+
 export default defineConfig({
   site: 'https://volant.sh',
   // The overview used to live here; old links land on the home page.
@@ -74,6 +93,14 @@ export default defineConfig({
         sequence: { mirrorActors: false, actorMargin: 48, boxMargin: 8, noteMargin: 12, messageMargin: 32, width: 140 },
       },
     }),
+    // Starlight adds a sitemap of its own unless one is here; this one has the same languages.
+    sitemap({
+      i18n: {
+        defaultLocale: 'root',
+        locales: Object.fromEntries(locales.map((l) => [l.code === 'en' ? 'root' : l.code, l.lang])),
+      },
+      filter: inSitemap,
+    }),
     starlight({
       title: 'Volant',
       // English is the source and lives at the root; every translation under its own prefix. A page
@@ -85,6 +112,16 @@ export default defineConfig({
       description: 'Run your Ansible playbooks with a fast engine written in Rust.',
       logo: { src: './assets/volant-mark.svg' },
       favicon: '/favicon.svg',
+      // The picture a link to any page shows when it is shared.
+      head: [
+        { tag: 'meta', attrs: { property: 'og:image', content: 'https://volant.sh/og.png' } },
+        { tag: 'meta', attrs: { property: 'og:image:width', content: '1200' } },
+        { tag: 'meta', attrs: { property: 'og:image:height', content: '630' } },
+        { tag: 'meta', attrs: { property: 'og:image:alt', content: ogAlt } },
+        { tag: 'meta', attrs: { name: 'twitter:image', content: 'https://volant.sh/og.png' } },
+      ],
+      // Untranslated pages point search engines at the English page they show.
+      routeMiddleware: './src/routeData.ts',
       social: [{ icon: 'github', label: 'GitHub', href: repo }],
       editLink: { baseUrl: `${repo}/edit/main/docs/` },
       lastUpdated: true,
@@ -138,6 +175,7 @@ export default defineConfig({
             { label: 'Installation', slug: 'docs/start/installation' },
             { label: 'Quickstart', slug: 'docs/start/quickstart' },
             { label: 'Will my playbook run?', slug: 'docs/start/compatibility' },
+            { label: 'Ansible command names', slug: 'docs/start/ansible-command-names' },
             { label: 'When a run fails', slug: 'docs/start/troubleshooting' },
           ],
         },
@@ -177,8 +215,10 @@ export default defineConfig({
                 { label: 'volant playbook', slug: 'docs/reference/cli' },
                 { label: 'volant adhoc', slug: 'docs/reference/cli/adhoc' },
                 { label: 'volant config', slug: 'docs/reference/cli/config' },
+                { label: 'volant console', slug: 'docs/reference/cli/console' },
                 { label: 'volant doc', slug: 'docs/reference/cli/doc' },
                 { label: 'volant galaxy', slug: 'docs/reference/cli/galaxy' },
+                { label: 'volant pull', slug: 'docs/reference/cli/pull' },
                 { label: 'volant inventory', slug: 'docs/reference/cli/inventory' },
                 { label: 'volant runtime', slug: 'docs/reference/cli/runtime' },
                 { label: 'volant shims', slug: 'docs/reference/cli/shims' },

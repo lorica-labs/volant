@@ -1,5 +1,5 @@
 ---
-sourceHash: 72cf8b339b72
+sourceHash: 06260172771b
 title: Vault
 description: Wie Volant Ansible-Vault-Daten liest, woher es die Passwörter bekommt und warum sie den Controller-Prozess nie verlassen.
 ---
@@ -55,6 +55,23 @@ Ein Wert, der von einem verwalteten Host zurückkam, wird nie mit den Geheimniss
 - Der Editor ist `EDITOR`, sonst `ANSIBLE_EDITOR`, sonst `[defaults] editor`, sonst `vi`, so in Wörter zerlegt, wie es eine Shell täte, mit angehängtem Dateinamen. Sein Exit-Status wird nicht ausgewertet, wie bei ansible-vault.
 - Der Editor arbeitet an einer Kopie mit Modus `0600` in einem privaten Verzeichnis unter `ANSIBLE_LOCAL_TEMP` (`[defaults] local_tmp`, sonst `~/.ansible/tmp`). Die Kopie wird bei jedem Ausstieg überschrieben und entfernt, auch bei einem fehlschlagenden Editor und bei SIGTERM oder SIGHUP. Strg-C geht an den Editor.
 - `rekey` entschlüsselt jede Datei mit den alten Geheimnissen und schreibt sie mit dem neuen wieder, unter Beibehaltung des Modus. Das neue Geheimnis kommt aus `--new-vault-password-file`, aus `--new-vault-id LABEL@SOURCE` oder aus den Abfragen `New Vault password: ` und `Confirm New Vault password: `. Es gibt `Rekey successful` auf der Standardfehlerausgabe aus, was auch immer die Standardausgabe ist.
+
+## Strings verschlüsseln
+
+`volant vault encrypt_string` macht aus einem Wert einen `!vault |`-Block für eine Variablendatei. Jede Zeile des Chiffretexts ist um zehn Leerzeichen eingerückt, und jeder Block endet mit einem Zeilenumbruch:
+
+```yaml
+mykey: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          66313561363937653234366564623639...
+```
+
+- `-n NAME` benennt den String an derselben Stelle und `--stdin-name NAME` benennt die Standardeingabe. Ohne Namen beginnt der Block mit `!vault |`. `--vault-id LABEL@SOURCE` ergibt einen `1.2`-Header mit dem Label.
+- Ohne String oder mit `-` wird der Text bis zum Ende von der Standardeingabe gelesen. Leere Eingabe endet mit Exit-Code 5.
+- Bei mehr als einem String enthält die Standardfehlerausgabe pro String eine Kommentarzeile und einen Hinweis, wenn es weniger Namen als Strings gibt. Die Standardausgabe enthält nur die Blöcke.
+- `-p` fragt nach einem Variablennamen, dann nach dem String, der nicht angezeigt wird, außer `--show-input` ist angegeben. Es lässt sich nicht mit dem Lesen der Standardeingabe kombinieren.
+- In einem Terminal geht `Encryption successful` vor den Blöcken auf die Standardfehlerausgabe.
+- `--output FILE` schreibt die Blöcke in die Datei, im Modus `0600`.
 
 ## Bekannte Lücken
 

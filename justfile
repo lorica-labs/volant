@@ -943,12 +943,14 @@ corpus-report:
     set -euo pipefail
     root="$PWD/target/corpus"
     "$(uv tool dir)/ansible-core/bin/python" -c '
-    import glob, json, os, re, sys
+    import glob, json, os, re, sys, yaml
     root = sys.argv[1]
     def s(v): return "-" if v is None else "%.1f" % v
-    rows = ["| entry | status | first ref / Volant (s) | converged median ref / Volant (s) | ratio | body diff lines |", "|---|---|---|---|---|---|"]
+    rows = ["| entry | status | first ref / Volant (s) | converged median ref / Volant (s) | ratio (reference / Volant) | body diff lines |", "|---|---|---|---|---|---|"]
+    names = [e["name"] for e in yaml.safe_load(open(sys.argv[2]))]
     for path in sorted(glob.glob(root + "/*/result.json")):
         r = json.load(open(path)); d = os.path.dirname(path)
+        if r["name"] not in names: continue
         status = r["status"]
         if r.get("error"):
             e = r["error"]
@@ -961,7 +963,7 @@ corpus-report:
             s(c.get("reference_median")), s(c.get("volant_median")), c.get("ratio") or "-", body))
     open(root + "/report.md", "w").write("\n".join(rows) + "\n")
     print("\n".join(rows))
-    ' "$root"
+    ' "$root" "$PWD/crates/volant/tests/fixtures/corpus/corpus.yml"
 
 # Time the four pinned Galaxy roles under both engines and print the ratio the public speed claim
 # cites. Builds once, installs the roles the same way `proof-roles` does, then runs one uncounted
@@ -1562,6 +1564,11 @@ profile play hosts="local" name="":
       if [ -n "$(printf '%s' "$entry" | "$py" -c 'import json,sys; print(1 if json.load(sys.stdin).get("source") else "")')" ]; then
         [ -d "$edir/src" ] || { echo "$play has no installed sources: run 'just corpus $play' first"; exit 1; }
       fi
+      if [ -n "$(efield generate)" ]; then
+        [ -n "$(ls -A "$edir" 2> /dev/null)" ] || { echo "$play has no generated files: run 'just corpus $play' first"; exit 1; }
+      fi
+      mkdir -p "$edir"
+      entry_hosts="$(efield hosts)"
       play="$(efield playbook)"
       case "$play" in repo:*) play="$edir/src/repo/${play#repo:}" ;; *) play="$PWD/crates/volant/tests/fixtures/corpus/$play" ;; esac
       [ -f "$play" ] || { echo "playbook $play not found"; exit 1; }
@@ -1579,7 +1586,8 @@ profile play hosts="local" name="":
       remote)
         test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
         hosts=("$VOLANT_TARGET_HOST")
-        [ -z "${VOLANT_SECOND_HOST:-}" ] || hosts+=("$VOLANT_SECOND_HOST") ;;
+        # A one-host entry runs on the first host only.
+        [ -z "${VOLANT_SECOND_HOST:-}" ] || [ "${entry_hosts:-2}" = 1 ] || hosts+=("$VOLANT_SECOND_HOST") ;;
       *) echo "hosts must be 'local' or 'remote', not '$hosts_arg'"; exit 1 ;;
     esac
 
@@ -1589,6 +1597,8 @@ profile play hosts="local" name="":
     out=target/profile
     mkdir -p "$out/agents"
     cp target/x86_64-unknown-linux-musl/profiling/volant-agent "$out/agents/volant-agent-x86_64-unknown-linux-musl"
+    # A local connection starts the agent under its plain name.
+    [ "$hosts_arg" != local ] || cp "$out/agents/volant-agent-x86_64-unknown-linux-musl" "$out/agents/volant-agent"
     stamp="$(date -u +%Y%m%dT%H%M%S)-$$"
     data="/tmp/volant-profile-$stamp.data"
     mkdir -p "$out"

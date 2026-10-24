@@ -63,10 +63,10 @@
   playbook: os-hardening/site.yml
   hosts: 1
   where: container
-  vars: {}
+  vars: {os_auditd_enabled: false}
   volatile: []
   generate: null
-  skip_reason: 'upstream: Unable to start service auditd.service: Job for auditd.service failed because the control process exited with error code.'
+  skip_reason: 'pending issue: ansible_role_name is undefined (first failing task: Create login.defs, could not render etc/login.defs.j2)'
 - name: ssh-hardening
   source: {galaxy_collection: devsec.hardening, version: 11.0.0}
   collections:
@@ -79,7 +79,7 @@
   vars: {}
   volatile: []
   generate: null
-  skip_reason: 'upstream: Unable to start service ssh: Failed to start ssh.service: Unit ssh.socket is masked.'
+  skip_reason: null
 - name: cis
   source: {git: "https://github.com/ansible-lockdown/UBUNTU24-CIS", sha: 7f7c949f0ae1784e0e7687b3d68f2e8fcdf27b54}
   collections:

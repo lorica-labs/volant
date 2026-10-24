@@ -261,7 +261,9 @@ jobs:
           if ! ./volant runtime install --collections community.general; then
             echo "::warning::Galaxy failed; installing community.general from its release tag"
             apt-get install -y --no-install-recommends git
-            ./volant runtime install --collections               git+https://github.com/ansible-collections/community.general.git,13.4.0               git+https://github.com/ansible-collections/community.library_inventory_filtering.git,1.1.5
+            ./volant runtime install --collections \
+              git+https://github.com/ansible-collections/community.general.git,13.4.0 \
+              git+https://github.com/ansible-collections/community.library_inventory_filtering.git,1.1.5
           fi
           ./volant playbook -i runtime-clean/inventory.yml runtime-clean/collection.yml
 

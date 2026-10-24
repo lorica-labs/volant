@@ -1,5 +1,5 @@
 ---
-sourceHash: faf55681f8db
+sourceHash: 00b6cbd9dbbb
 title: 测试
 description: Volant 如何对照 ansible-core 进行检查，四种已记录的应答，以及如何添加场景。
 ---
@@ -28,10 +28,11 @@ Volant 的行为必须与 ansible-core 2.19.12 一致。因此，测试套件的
 3. 运行 `just golden scenario`。它会在该目录中写出 `expected.json`。
 4. 运行 `touch crates/volant/tests/reference.rs`，然后运行测试。场景列表在该文件编译时就固定下来，所以新目录要在重新构建之后才会被看到。
 
-Volant 的每次运行都发生在目录的一份全新副本中，除非 case 另有规定，否则使用 `--forks 1`。测试会比较退出码和完整的标准输出，其中的耗时已被遮蔽。除了 `args` 和 `runs`，`case.yml` 还接受另外五个键：
+Volant 的每次运行都发生在目录的一份全新副本中，除非 case 另有规定，否则使用 `--forks 1`。测试会比较退出码和完整的标准输出，其中的耗时已被遮蔽。除了 `args` 和 `runs`，`case.yml` 还接受另外六个键：
 
 - `modes` 列出 `check`、`check-diff` 和 `diff`。于是每次运行会按每个模式再进行一次，分别加上 `--check`、`--check --diff` 或 `--diff`，顺序固定，每次运行都会被记录。
 - `env` 为这次运行设置环境变量。
+- `program: ansible` 用 `ansible` 而不是 `ansible-playbook` 来记录运行，并运行 `volant adhoc` 而不是 `volant playbook`。
 - `forks` 把 fork 数提高到一以上。此时各主机的打印顺序可能不同，所以请在 `unordered` 中以正则表达式列出顺序可能不同的那些行。没有 `forks` 而使用 `unordered` 会被拒绝。
 - `needs` 指明机器必须具备什么：`ansible-core`、`sudo` 或 `systemd`。需求得不到满足的 case 会被跳过，除非设置了 `VOLANT_PYTHON`，这时跳过会变成失败。
 - `links` 把一个路径映射到链接的目标，每份副本都会在该路径上得到这个链接。用它来表示 git 或 cargo 无法保存的链接，例如指向不存在的文件的链接：`cargo package` 会拒绝这样被跟踪的链接。

@@ -1,5 +1,5 @@
 ---
-sourceHash: faf55681f8db
+sourceHash: 00b6cbd9dbbb
 title: Tests
 description: Wie Volant gegen ansible-core geprüft wird, die vier Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
@@ -28,10 +28,11 @@ Ein Szenario ist ein Verzeichnis unter `crates/volant/tests/scenarios`:
 3. Führen Sie `just golden scenario` aus. Es schreibt `expected.json` ins Verzeichnis.
 4. Führen Sie `touch crates/volant/tests/reference.rs` und danach die Tests aus. Die Liste der Szenarien steht fest, wenn diese Datei kompiliert wird, sodass ein neues Verzeichnis erst nach einem Neubau erkannt wird.
 
-Jeder Volant-Lauf geschieht in einer frischen Kopie des Verzeichnisses, mit `--forks 1`, sofern der Fall nichts anderes sagt. Der Test vergleicht den Exit-Code und die vollständige Standardausgabe, mit maskierten Zeiten. Außer `args` und `runs` nimmt `case.yml` fünf weitere Schlüssel:
+Jeder Volant-Lauf geschieht in einer frischen Kopie des Verzeichnisses, mit `--forks 1`, sofern der Fall nichts anderes sagt. Der Test vergleicht den Exit-Code und die vollständige Standardausgabe, mit maskierten Zeiten. Außer `args` und `runs` nimmt `case.yml` sechs weitere Schlüssel:
 
 - `modes` listet `check`, `check-diff` und `diff` auf. Jeder Lauf geschieht dann pro Modus einmal mehr, mit `--check`, `--check --diff` oder `--diff` zusätzlich, in dieser festen Reihenfolge, und jeder Lauf wird aufgezeichnet.
 - `env` setzt Umgebungsvariablen für den Lauf.
+- `program: ansible` zeichnet die Läufe mit `ansible` statt `ansible-playbook` auf und führt `volant adhoc` statt `volant playbook` aus.
 - `forks` erhöht die Zahl der Forks über eins. Hosts geben dann möglicherweise in anderer Reihenfolge aus, führen Sie also die Zeilen, deren Reihenfolge abweichen darf, als reguläre Ausdrücke in `unordered` auf. `unordered` ohne `forks` wird abgelehnt.
 - `needs` nennt, was der Rechner haben muss: `ansible-core`, `sudo` oder `systemd`. Ein Fall, dessen Voraussetzungen nicht erfüllt sind, wird übersprungen, außer wenn `VOLANT_PYTHON` gesetzt ist, was das Überspringen in einen Fehlschlag verwandelt.
 - `links` ordnet einem Pfad das Ziel eines Links zu, den jede Kopie unter diesem Pfad erhält. Nutzen Sie es für einen Link, den git oder cargo nicht halten können, etwa einen Link auf eine Datei, die nicht existiert: `cargo package` lehnt einen versionierten Link dieser Art ab.

@@ -1,5 +1,5 @@
 ---
-sourceHash: 070a7ee4f0e3
+sourceHash: d021dcc2ad95
 title: Ligne de commande
 description: Chaque commande et option que Volant accepte, regroupées selon ce qu'elles changent, et les options d'ansible-playbook qu'il n'a pas encore.
 ---
@@ -9,6 +9,7 @@ import Option from '../../../../../components/Option.astro';
 ```sh
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
+volant adhoc [OPTIONS] <PATTERN>
 volant runtime <install|pack|status|path|remove>
 volant vault <encrypt|decrypt|view>
 volant --version
@@ -16,7 +17,7 @@ volant --version
 
 `volant playbook` accepte les mêmes options qu'`ansible-playbook`, pour celles qui existent. `volant-playbook` est le même programme sous un nom qui ressemble à celui que vous connaissez. Les playbooks donnés ensemble s'exécutent dans l'ordre, et chacun affiche son propre récapitulatif.
 
-Sous Linux et macOS, le binaire `volant` choisit aussi son comportement d'après le nom sous lequel il a été lancé (le nom de fichier de `argv[0]`). Lancé comme `ansible-playbook` ou `ansible-vault`, par un lien symbolique ou un lien physique, il se comporte comme `volant playbook` ou `volant vault`, avec les mêmes arguments, la même sortie et les mêmes codes de sortie. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé. Tout autre nom garde le comportement habituel de `volant`.
+Sous Linux et macOS, le binaire `volant` choisit aussi son comportement d'après le nom sous lequel il a été lancé (le nom de fichier de `argv[0]`). Lancé comme `ansible-playbook` ou `ansible-vault`, par un lien symbolique ou un lien physique, il se comporte comme `volant playbook` ou `volant vault`, avec les mêmes arguments, la même sortie et les mêmes codes de sortie. Lancé comme `ansible`, il se comporte comme `volant adhoc`. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé. Tout autre nom garde le comportement habituel de `volant`.
 
 Quand une option a une clé d'`ansible.cfg` ou une variable d'environnement, l'entrée la nomme. L'option l'emporte sur les deux ; [Configuration](/fr/docs/reference/configuration/) explique l'ordre.
 
@@ -226,6 +227,30 @@ Volant lit les variables `ANSIBLE_*` citées plus haut, plus quelques-unes qui l
   Écrit le profil de l'exécution dans ce fichier, un objet JSON par ligne : les modules natifs que chaque agent a signalés, puis les phases, puis une ligne par tâche avec son module, son chemin, la raison du renvoi et ses durées en microsecondes. Il est écrit quel que soit le sort de l'exécution, et un fichier qui ne peut pas être écrit n'affiche qu'un avertissement.
 </Option>
 
+## La commande adhoc
+
+`volant adhoc` est `ansible` : il exécute un module sur chaque hôte qui correspond à un motif.
+
+```sh
+volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
+             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
+```
+
+<Option name="-m, --module-name" arg="MODULE">
+  Le module à exécuter. Par défaut : `command`.
+</Option>
+
+<Option name="-a, --args" arg="ARGS">
+  Les arguments du module : des mots `key=value`, ou un objet JSON quand la valeur commence par `{` et finit par `}`. Pour `command`, `shell`, `raw` et `script`, les mots qui ne sont pas une option du module forment la ligne de commande. Les arguments sont rendus comme modèles avec les variables de chaque hôte et `-e`. Une valeur qui commence par `{`, finit par `}` et n'est pas du JSON valide arrête la commande avec le code de sortie 250 ; un guillemet non fermé l'arrête avec le code 4.
+</Option>
+
+Les autres options ont le sens qu'elles ont pour `volant playbook`. `-f 1` exécute un hôte à la fois, dans l'ordre de l'inventaire.
+
+Chaque hôte affiche un résultat, comme le fait le callback `minimal` d'ansible. Un résultat de `command`, `shell` ou `raw` est `h1 | CHANGED | rc=0 >>`, puis sa sortie standard, son erreur standard et son `msg` collés sans rien entre eux. Tout autre résultat est `h1 | SUCCESS => ` suivi du résultat en JSON, indenté de quatre espaces, clés triées. Les statuts sont `SUCCESS`, `CHANGED`, `FAILED` (forme commande), `FAILED!` (forme JSON), `SKIPPED` et `UNREACHABLE!`. Avant un résultat en échec ou injoignable, la sortie standard porte le même bloc `[ERROR]` qu'affiche un playbook. Son `Origin:` est `<adhoc 'MODULE' task>`, suivi de la tâche telle qu'ansible la montre, coupée à 120 caractères.
+
+Le code de sortie est 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, et 4 quand un hôte n'a pas pu être joint, qu'il y ait ou non des hôtes en échec. `ANSIBLE_STDOUT_CALLBACK` ne change pas la sortie. Avec `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, ou `callback_result_format = yaml` sous `[defaults]` dans `ansible.cfg`, un résultat de forme JSON est affiché en YAML à la place, sur les lignes après `=>`, indenté de quatre espaces. Une chaîne avec des sauts de ligne devient un bloc littéral. Toute autre valeur, la valeur vide comprise, arrête la commande avec le code de sortie 5. `-vv` et plus sont refusés avec le code de sortie 4.
+
 ## La commande runtime
 
 `volant runtime` gère le Python et l'ansible-core que Volant installe pour lui-même. [Le runtime géré](/fr/docs/reference/runtime/) décrit ce que fait chaque étape.
@@ -344,4 +369,6 @@ Exactement une des options `--list`, `--host` et `--graph` est requise. `--graph
 
 Toutes les options d'`ansible-playbook` sont acceptées. `--scp-extra-args` et `--sftp-extra-args` n'ont aucun effet, parce que les fichiers circulent sur le lien de l'agent. La [page de parité](/fr/docs/reference/parity/#ansible-playbook-option) liste chaque option avec son statut.
 
-`volant` a les sous-commandes `playbook`, `inventory`, `runtime`, `shims` et `vault`. Les autres outils d'Ansible n'ont pas encore d'équivalent : `ansible` pour les commandes ad hoc, `ansible-doc`, `ansible-config` et `ansible-galaxy`. Il n'y a pas de `volant check` ni de `volant lint`. Lancez ces outils depuis ansible-core, ou utilisez les options de liste de `volant playbook`.
+`volant adhoc` n'a pas encore `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` ni `-t`.
+
+`volant` a les sous-commandes `playbook`, `adhoc`, `inventory`, `runtime`, `shims` et `vault`. Les autres outils d'Ansible n'ont pas encore d'équivalent : `ansible-doc`, `ansible-config` et `ansible-galaxy`. Il n'y a pas de `volant check` ni de `volant lint`. Lancez ces outils depuis ansible-core, ou utilisez les options de liste de `volant playbook`.

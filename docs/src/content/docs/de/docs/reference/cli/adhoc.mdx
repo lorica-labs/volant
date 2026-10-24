@@ -1,5 +1,5 @@
 ---
-sourceHash: 162269910b1f
+sourceHash: bb42889a1a65
 title: volant adhoc
 description: Führt ein Modul auf jedem Host aus, der zu einem Muster passt, mit den Optionen und der Ausgabe von ansible.
 ---
@@ -12,7 +12,7 @@ import Option from '../../../../../../components/Option.astro';
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
              [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
-             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
+             [-C] [-D] [-o] [-t DIR] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -29,6 +29,14 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-D, --diff">
   Gibt vor dem Ergebnis die Unterschiede aus, die eine Task an Dateien und Templates vornimmt. Mit `-C` wird die Datei nicht geändert.
+</Option>
+
+<Option name="-o, --one-line">
+  Gibt eine Zeile pro Host aus, so wie es der Callback `oneline` von ansible tut. ansible-core 2.19.12 markiert diese Option als veraltet und warnt auf der Standardfehlerausgabe; siehe unten.
+</Option>
+
+<Option name="-t, --tree" arg="DIR">
+  Schreibt das Ergebnis jedes Hosts zusätzlich in eine nach dem Host benannte Datei in `DIR`, so wie es der Callback `tree` von ansible tut. ansible-core 2.19.12 markiert diese Option als veraltet und warnt auf der Standardfehlerausgabe; siehe unten.
 </Option>
 
 <Option name="-B, --background" arg="SECONDS">
@@ -65,6 +73,25 @@ Jeder Host gibt ein Ergebnis aus, so wie es der `minimal`-Callback von ansible a
 
 Der Exit-Code ist 0, wenn jeder Host erfolgreich war oder übersprungen wurde, 2, wenn ein Host fehlgeschlagen ist, und 4, wenn ein Host nicht erreicht werden konnte, ob es fehlgeschlagene Hosts gibt oder nicht. `ANSIBLE_STDOUT_CALLBACK` ändert die Ausgabe nicht. Mit `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml` oder `callback_result_format = yaml` unter `[defaults]` in der `ansible.cfg` wird ein Ergebnis in JSON-Form stattdessen als YAML ausgegeben, in den Zeilen nach `=>`, mit vier Leerzeichen eingerückt. Ein String mit Zeilenumbrüchen wird zu einem Literalblock. Jeder andere Wert, auch der leere, bricht den Befehl mit Exit-Code 5 ab.
 
-`-vv` beginnt mit dem Block, den `--version` ausgibt, dann `Using PATH as config file` (oder `No config file found; using defaults`) und die Zeilen `Skipping callback 'default', as we already have a stdout callback.` und `Skipping callback 'oneline', as we already have a stdout callback.`. `-vvv` und höher fügen die Zeilen der Inventory-Plugins hinzu und die, die `volant playbook` ausgibt; die eigenen Zeilen `ESTABLISH LOCAL CONNECTION` und `EXEC` der Referenz beschreiben ihren Modul-Upload, den Volant nicht macht, daher werden sie nicht ausgegeben.
+## Eine Zeile pro Host
+
+Mit `-o` lautet ein Ergebnis von `command`, `shell` oder `raw` `h1 | CHANGED | rc=0 | (stdout) hi`, seine Zeilenumbrüche als `\n` geschrieben, und `(stderr) text` folgt, wenn es welchen gibt. Jedes andere Ergebnis lautet `h1 | SUCCESS => ` und das Ergebnis als JSON in einer Zeile, Schlüssel sortiert und durch `,` ohne folgendes Leerzeichen getrennt. Ein Ergebnis, das die eingerückte Form verlangt, etwa `debug`, oder jedes Ergebnis bei `-vvv`, behält seine vier Leerzeichen, ohne Zeilenumbrüche. Ein fehlgeschlagener Host gibt dieselben zwei Arten von Zeilen aus, mit `FAILED`, und bei einem Befehl kommt zuerst die Befehlsform, dann die Zeile `FAILED!`. Trägt der Fehler eine Exception, kommt zuerst eine Zeile `An exception occurred during task execution. To see the full traceback, use -vvv. The error was: ...`; bei `-vvv` enthält sie den vollständigen Text. Ein nicht erreichbarer Host gibt `h1 | UNREACHABLE!: ` und seine Meldung aus. `-o` gibt keinen `[ERROR]`-Block, keine Warnungen eines Ergebnisses und kein Diff aus und liest `callback_result_format` nicht. Die Exit-Codes sind dieselben wie ohne.
+
+Mit `-t DIR` bleibt die Ausgabe unverändert. `DIR` wird angelegt, wenn das erste Ergebnis eintrifft, `~` wird aufgelöst, und ein relativer Pfad beginnt im Arbeitsverzeichnis. Jedes Ergebnis, das kein Überspringen ist, wird als JSON in einer Zeile in `DIR/HOST` geschrieben, Schlüssel sortiert, ohne abschließenden Zeilenumbruch, über das, was das vorige Ergebnis des Hosts hinterließ; auch ein nicht erreichbarer Host bekommt eine Datei. Ein `debug`-Ergebnis und jedes Ergebnis bei `-vvv` wird eingerückt geschrieben. Die Datei wird ersetzt, nicht an Ort und Stelle beschrieben: Ein an ihrer Stelle abgelegter Link wird ersetzt, und der Modus ist 0600. Ein Hostname, der kein einfacher Dateiname ist (leer, `.`, `..` oder mit einem `/`), gibt eine `[WARNING]` aus und bekommt keine Datei, wo ansible-core dorthin schreibt, worauf der Name zeigt, einschließlich `../x` und absoluter Pfade. Ein Verzeichnis, das sich nicht anlegen lässt, oder eine Datei, die sich nicht schreiben lässt, gibt eine `[WARNING]` aus, und der Lauf geht weiter. Ein `$` in `DIR` oder `~` gefolgt von einem Benutzernamen bricht den Befehl mit Exit-Code 4 ab und sagt, dass es noch nicht unterstützt wird.
+
+Beide Optionen geben diese Zeilen vor dem ersten Ergebnis auf der Standardfehlerausgabe aus, in dieser Reihenfolge: die `[WARNING]`, die sagt, wie man Deprecation-Warnungen abschaltet, eine `[DEPRECATION WARNING]` je Option, so geschrieben und geordnet, wie die Kommandozeile sie gab (`-o` und `-t` in einer Gruppe kurzer Optionen zählen als zwei), die Warnungen des Host-Musters, dann eine `[DEPRECATION WARNING]` für den Callback `oneline` und eine für den Callback `tree`. Ein Lauf, der endet, bevor die Callbacks geladen werden (`--list-hosts`, ein `-l`, das keinen Host übrig lässt), gibt nur die ersten beiden Gruppen aus. `deprecation_warnings = False` oder `ANSIBLE_DEPRECATION_WARNINGS=false` unterdrückt sie alle. Bei `-vv` legt `-o` `minimal` beiseite, wo die Standardausgabe `oneline` beiseitelegt; bei `-vvvv` fügt `-t` eine Zeile für den Callback `tree` hinzu.
+
+## Aktionen, die keine Module sind
+
+`set_fact` gibt seine `ansible_facts` wie jedes Modulergebnis aus. `meta` mit `noop`, `flush_handlers`, `clear_facts`, `refresh_inventory`, `reset_connection` oder `end_host` gibt nichts aus und endet mit 0. Diese Unterschiede zu ansible-core 2.19.12 bleiben:
+
+- `meta -a end_play` beendet ansible-core mit einer unerwarteten Exception und Exit-Code 250. Volant gibt nichts aus und endet mit 0.
+- `meta` mit einer unbekannten Aktion oder ohne `-a` bricht wie die Referenz mit Exit-Code 1 ab, aber sein `[ERROR]`-Block endet nicht mit der Leerzeile, die die Referenz ausgibt, und ohne `-a` nennt er das Argument anders.
+- `include_role` und `include_tasks` geben in der Referenz vor dem Block `FAILED!` einen Block `SUCCESS` mit `include_args` aus. Volant gibt nur den Block `FAILED!` aus. Die Exit-Codes stimmen überein: 2 für diese beiden, 1 für `import_role` und `import_tasks`, und der Text von `[ERROR]` weicht ab.
+- `group_by` meldet `SUCCESS` mit `"changed": false`, wo die Referenz `CHANGED` meldet.
+
+## Ausführliche Ausgabe
+
+`-vv` beginnt mit dem Block, den `--version` ausgibt, dann `Using PATH as config file` (oder `No config file found; using defaults`) und die Zeilen `Skipping callback 'default', as we already have a stdout callback.` und `Skipping callback 'oneline', as we already have a stdout callback.` (`minimal` statt `oneline` mit `-o`). `-vvv` und höher fügen die Zeilen der Inventory-Plugins hinzu und die, die `volant playbook` ausgibt; die eigenen Zeilen `ESTABLISH LOCAL CONNECTION` und `EXEC` der Referenz beschreiben ihren Modul-Upload, den Volant nicht macht, daher werden sie nicht ausgegeben.
 
 Ein negatives `-B`, `-P` oder `--task-timeout` sowie `-C` zusammen mit `-B` beenden den Befehl mit Exit-Code 4 und sagen, was noch nicht unterstützt wird. `-B`, `-P` und `--task-timeout` nehmen eine ganze Zahl; alles andere ist ein Aufruffehler.

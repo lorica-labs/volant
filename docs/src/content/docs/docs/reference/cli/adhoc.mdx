@@ -11,7 +11,7 @@ import Option from '../../../../../components/Option.astro';
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
              [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
-             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
+             [-C] [-D] [-o] [-t DIR] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -28,6 +28,14 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-D, --diff">
   Print the differences a task makes to files and templates before its result. With `-C` the file is not changed.
+</Option>
+
+<Option name="-o, --one-line">
+  Print one line per host, the way ansible's `oneline` callback does. ansible-core 2.19.12 deprecates this option and warns on standard error; see below.
+</Option>
+
+<Option name="-t, --tree" arg="DIR">
+  Also write each host's result to a file of `DIR` named by the host, the way ansible's `tree` callback does. ansible-core 2.19.12 deprecates this option and warns on standard error; see below.
 </Option>
 
 <Option name="-B, --background" arg="SECONDS">
@@ -64,6 +72,25 @@ Each host prints one result, the way ansible's `minimal` callback prints it. A `
 
 The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. With `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, or `callback_result_format = yaml` under `[defaults]` in `ansible.cfg`, a JSON-form result is printed as YAML instead, on the lines after `=>`, indented four spaces. A string with line breaks becomes a literal block. Any other value, the empty one included, stops the command with exit code 5.
 
-`-vv` opens with the block `--version` prints, then `Using PATH as config file` (or `No config file found; using defaults`), and the lines `Skipping callback 'default', as we already have a stdout callback.` and `Skipping callback 'oneline', as we already have a stdout callback.`. `-vvv` and above add the inventory plugin lines and the lines `volant playbook` prints; the reference's own `ESTABLISH LOCAL CONNECTION` and `EXEC` lines describe its module upload, which Volant does not do, so they are not printed.
+## One line per host
+
+With `-o` a `command`, `shell` or `raw` result is `h1 | CHANGED | rc=0 | (stdout) hi`, its line breaks written `\n`, and `(stderr) text` follows when there is some. Any other result is `h1 | SUCCESS => ` and the result as JSON on one line, keys sorted and separated by `,` with no space after it. A result that asks for the indented form, such as `debug`, or any result at `-vvv`, keeps its four spaces with the line breaks taken out. A host that fails prints the same two kinds of line, with `FAILED`, and for a command the command form comes first, then the `FAILED!` line. Where the failure carries an exception, a line `An exception occurred during task execution. To see the full traceback, use -vvv. The error was: ...` comes first; at `-vvv` it holds the full text. A host that cannot be reached prints `h1 | UNREACHABLE!: ` and its message. `-o` prints no `[ERROR]` block, no warnings from a result, no diff, and it does not read `callback_result_format`. The exit codes are the same as without it.
+
+With `-t DIR` the output is unchanged. `DIR` is made when the first result arrives, `~` is expanded, and a relative path starts from the working directory. Each result that is not a skip is written to `DIR/HOST` as JSON on one line, keys sorted, with no line break at the end, over what the host's previous result left; an unreachable host gets a file too. A `debug` result, and any result at `-vvv`, is written indented. The file is replaced, not written through: a link planted at its place is replaced, and the mode is 0600. A host name that is not one plain file name (empty, `.`, `..`, or with a `/`) prints a `[WARNING]` and gets no file, where ansible-core writes wherever the name points, `../x` and absolute paths included. A directory that cannot be made, or a file that cannot be written, prints a `[WARNING]` and the run goes on. A `$` in `DIR`, or `~` followed by a user name, stops the command with exit code 4 and says it is not supported yet.
+
+Both options print these lines on standard error before the first result, in this order: the `[WARNING]` that says how to turn deprecation warnings off, one `[DEPRECATION WARNING]` for each option, spelled and ordered as the command line gave it (`-o` and `-t` in one group of short options count as two), the warnings of the host pattern, and one `[DEPRECATION WARNING]` for the `oneline` callback and one for the `tree` callback. A run that ends before the callbacks load (`--list-hosts`, a `-l` that leaves no host) prints the first two groups only. `deprecation_warnings = False` or `ANSIBLE_DEPRECATION_WARNINGS=false` silences them all. At `-vv`, `-o` sets `minimal` aside, where the default output sets `oneline` aside; at `-vvvv` `-t` adds a line for the `tree` callback.
+
+## Actions that are not modules
+
+`set_fact` prints its `ansible_facts` as any module result. `meta` with `noop`, `flush_handlers`, `clear_facts`, `refresh_inventory`, `reset_connection` or `end_host` prints nothing and exits with 0. These differences from ansible-core 2.19.12 remain:
+
+- `meta -a end_play` ends ansible-core with an unexpected exception and exit code 250. Volant prints nothing and exits with 0.
+- `meta` with an unknown action, or with no `-a`, stops with exit code 1 as the reference does, but its `[ERROR]` block does not end with the blank line the reference prints, and without `-a` it names the argument differently.
+- `include_role` and `include_tasks` print a `SUCCESS` block with `include_args` before the `FAILED!` block in the reference. Volant prints the `FAILED!` block only. The exit codes agree: 2 for these two, 1 for `import_role` and `import_tasks`, and the `[ERROR]` text differs.
+- `group_by` reports `SUCCESS` with `"changed": false` where the reference reports `CHANGED`.
+
+## Verbose output
+
+`-vv` opens with the block `--version` prints, then `Using PATH as config file` (or `No config file found; using defaults`), and the lines `Skipping callback 'default', as we already have a stdout callback.` and `Skipping callback 'oneline', as we already have a stdout callback.` (`minimal` instead of `oneline` with `-o`). `-vvv` and above add the inventory plugin lines and the lines `volant playbook` prints; the reference's own `ESTABLISH LOCAL CONNECTION` and `EXEC` lines describe its module upload, which Volant does not do, so they are not printed.
 
 A negative `-B`, `-P` or `--task-timeout`, and `-C` together with `-B`, stop the command with exit code 4 and say what is not supported yet. `-B`, `-P` and `--task-timeout` take a whole number; anything else is a usage error.

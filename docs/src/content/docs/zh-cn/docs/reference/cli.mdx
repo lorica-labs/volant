@@ -1,5 +1,5 @@
 ---
-sourceHash: 87f9944418cf
+sourceHash: "494248131207"
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -239,7 +239,5 @@ Volant 读取上面提到的 `ANSIBLE_*` 变量，以及它自己的几个变量
 ## 尚未支持
 
 每个 `ansible-playbook` 选项都能接受。`--scp-extra-args` 和 `--sftp-extra-args` 没有效果，因为文件是通过 agent 链路传输的。[对等性页面](/zh-cn/docs/reference/parity/#ansible-playbook-option)列出了每个选项及其状态。
-
-`volant adhoc` 暂时没有 `-o` 和 `-t`。
 
 `volant` 的子命令有 `playbook`、`adhoc`、`inventory`、`runtime`、`shims`、`vault`、`doc`、`config`、`galaxy`、`console` 和 `pull`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。

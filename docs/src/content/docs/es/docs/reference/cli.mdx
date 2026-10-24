@@ -1,5 +1,5 @@
 ---
-sourceHash: 87f9944418cf
+sourceHash: "494248131207"
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -239,7 +239,5 @@ Volant lee las variables `ANSIBLE_*` nombradas arriba, además de algunas propia
 ## Todavía no disponible
 
 Se acepta cada opción de `ansible-playbook`. `--scp-extra-args` y `--sftp-extra-args` no tienen efecto, porque los archivos viajan por el enlace con el agente. La [página de paridad](/es/docs/reference/parity/#ansible-playbook-option) enumera cada opción con su estado.
-
-`volant adhoc` todavía no tiene `-o` ni `-t`.
 
 `volant` tiene los subcomandos `playbook`, `adhoc`, `inventory`, `runtime`, `shims`, `vault`, `doc`, `config`, `galaxy`, `console` y `pull`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.

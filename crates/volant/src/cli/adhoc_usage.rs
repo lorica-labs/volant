@@ -68,11 +68,8 @@ mod tests {
     use crate::cli::AdhocArgs;
     use clap::CommandFactory;
 
-    /// Options of the reference that `volant adhoc` does not take yet.
-    const NOT_YET: [&str; 2] = ["--one-line", "--tree"];
-
     #[test]
-    fn every_option_of_the_help_is_an_argument_or_not_yet_one() {
+    fn every_option_of_the_help_is_an_argument() {
         let mut command = AdhocArgs::command();
         command.build();
         let mut known: Vec<String> = Vec::new();
@@ -95,8 +92,8 @@ mod tests {
         assert!(listed.len() > 30, "the help lists its options: {listed:?}");
         for option in listed {
             assert!(
-                known.iter().any(|k| k == option) || NOT_YET.contains(&option),
-                "{option} is in the help and neither an argument nor on the not-yet list"
+                known.iter().any(|k| k == option),
+                "{option} is in the help and not an argument"
             );
         }
     }

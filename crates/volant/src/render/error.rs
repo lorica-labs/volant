@@ -315,6 +315,10 @@ impl Renderer {
     /// every one in `_errors`, as `_warning` does. Measured on ansible-core 2.19.12: two hosts, or
     /// two items, failing one task with one message print one block and two `fatal:` lines.
     pub fn error(&mut self, block: &ErrorBlock) {
+        // The `oneline` callback prints no block: it has no `_handle_warnings_and_exception`.
+        if self.oneline {
+            return;
+        }
         let mut text = format!("[ERROR]: {}", block.message);
         if block.causes.is_empty() {
             if let Some(origin) = &block.origin {
@@ -369,6 +373,17 @@ impl Renderer {
         } else {
             serde_json::json!({"changed": false, "msg": msg, "unreachable": true})
         };
+        if self.tree.is_some()
+            && let serde_json::Value::Object(map) = &body
+        {
+            self.tree_file(host, "v2_runner_on_unreachable", map.clone(), false);
+        }
+        if self.oneline {
+            let msg = body.get("msg").and_then(serde_json::Value::as_str);
+            let line = format!("{host} | UNREACHABLE!: {}", msg.unwrap_or_default());
+            let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));
+            return;
+        }
         if self.minimal.is_some() {
             let serde_json::Value::Object(body) = body else {
                 return;

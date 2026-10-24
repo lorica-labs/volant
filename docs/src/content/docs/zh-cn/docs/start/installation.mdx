@@ -1,5 +1,5 @@
 ---
-sourceHash: 1ea7a1827bd0
+sourceHash: ef0b71293725
 title: 安装
 description: 用一条命令安装 Volant，了解控制节点和主机各自需要什么，以及如何保持更新。
 ---
@@ -52,7 +52,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 ```
 
-脚本默认从不安装它们。它运行 [`volant shims install`](/zh-cn/docs/reference/cli/shims/)，对不是它创建的文件或链接不做改动，并在 `PATH` 中真正的 Ansible 被遮蔽或仍然排在前面时给出提示。如果某个名字无法链接，脚本会打印 `some ansible-* names were not linked, see above`，仍以 0 退出，因为 Volant 已经安装好了。
+[ansible 命令名](/zh-cn/docs/start/ansible-command-names/)列出了每个名字运行什么以及有哪些不同。脚本默认从不安装它们。它运行 [`volant shims install`](/zh-cn/docs/reference/cli/shims/)，对不是它创建的文件或链接不做改动，并在 `PATH` 中真正的 Ansible 被遮蔽或仍然排在前面时给出提示。如果某个名字无法链接，脚本会打印 `some ansible-* names were not linked, see above`，仍以 0 退出，因为 Volant 已经安装好了。
 
 ## 你会得到什么
 
@@ -62,6 +62,7 @@ curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 |---|---|
 | `volant` | 控制节点，也就是你运行的命令。 |
 | `volant-playbook` | 同一个控制节点，换了一个读起来像 `ansible-playbook` 的名字。 |
+| `ansible`、`ansible-vault` 和另外七个名字 | 指向 `volant` 的可选链接，只有使用 `--shims` 才有。见[ansible 命令名](/zh-cn/docs/start/ansible-command-names/)。 |
 
 第一次使用时，控制节点会把 agent 写到 `~/.cache/volant/agents/<version>/`，设置了 `$XDG_CACHE_HOME` 时则写到它下面：包括你自己这台机器用的 agent（`ansible_connection=local` 使用它），以及要上传到 x86_64 和 arm64 Linux 主机的 agent。之后的运行会复用它们，与控制节点内置 agent 不一致的副本会被重新写入。
 
@@ -105,7 +106,7 @@ scratch 镜像里没有 `ssh`、没有 Python、没有 shell，也没有 `/etc/p
 
     对于在 Python 中运行的模块，Volant 使用带有 `ansible-core` 的 Python 3。找不到时，它会下载自己的一份（大约 155 MB），按固定的哈希校验每个文件，并保存在 `~/.local/share/volant/runtime` 下。发生这种情况的那次运行会打印一行提示。如果你已经有这样的 Python，Volant 可以使用它：[运行使用哪个解释器](/zh-cn/docs/reference/runtime/#运行使用哪个解释器)给出了查找顺序。另见[托管运行时](/zh-cn/docs/reference/runtime/)。
 
-    Volant 有 `volant vault encrypt|decrypt|view|create|edit|rekey` 和 `volant inventory`，但没有 `galaxy`、`doc` 或 `config` 命令。要使用 `ansible-galaxy`、`ansible-doc`、`ansible-config` 和 `ansible-vault encrypt_string`，请自行安装 ansible-core。
+    Volant 为 ansible-core 的每个程序都提供了一个命令，安装脚本可以把 `ansible-*` 这些名字链接到它们。[ansible 命令名](/zh-cn/docs/start/ansible-command-names/)说明哪些在 Volant 中运行，哪些从托管运行时运行 ansible-core 自己的工具。
 
     如果一个 playbook 只包含 `command`、`shell`、`raw` 和在控制节点上运行的模块，并且设置了 `gather_facts: false`，那它完全不需要 Python。
   </TabItem>

@@ -1,5 +1,5 @@
 ---
-sourceHash: 3d7354233964
+sourceHash: 46781db2c359
 title: 退出码
 description: 每个退出码的含义，以及 Volant 在哪些地方与 ansible-playbook 一致。
 ---
@@ -53,3 +53,7 @@ Volant 使用 `ansible-playbook` 使用的退出码，所以为 Ansible 编写�
 ## Ansible 崩溃的地方
 
 在少数情况下，ansible-core 会以退出码 250 崩溃，例如遇到导入自身的 playbook，或 `serial: abc`。Volant 则会拒绝这些情形，给出清晰的消息，并使用上面的某个退出码。每种情形都列在涉及它的那一页的*与 Ansible 的差异*之下。
+
+## 其他命令
+
+`volant adhoc`（`ansible`）在每台主机都成功或被跳过时退出码为 0，有主机失败时为 2，有主机无法到达时为 4，`-l` 没有留下任何主机时为 1，设置无效时为 5。`volant vault`（`ansible-vault`）和 `volant inventory`（`ansible-inventory`）成功时退出码为 0，出现错误（例如对已存在的文件执行 `create`）时为 1，选项或动作错误时为 5。它们中任何一个的用法错误退出码都是 2。表格见[ansible 命令名](/zh-cn/docs/start/ansible-command-names/#退出码)。

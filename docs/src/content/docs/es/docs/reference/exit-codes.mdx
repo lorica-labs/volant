@@ -1,5 +1,5 @@
 ---
-sourceHash: 3d7354233964
+sourceHash: 46781db2c359
 title: Códigos de salida
 description: Qué significa cada código de salida y dónde coincide Volant con ansible-playbook.
 ---
@@ -53,3 +53,7 @@ Un playbook detenido por la [comprobación previa](/es/docs/internals/preflight/
 ## Dónde falla Ansible
 
 En unos pocos casos ansible-core falla con código de salida 250, por ejemplo con un playbook que se importa a sí mismo o con `serial: abc`. Volant rechaza esos casos en su lugar, con un mensaje claro y uno de los códigos anteriores. Cada caso figura en *Diferencias con Ansible* de la página que lo trata.
+
+## Los demás comandos
+
+`volant adhoc` (`ansible`) sale con 0 cuando todos los hosts tuvieron éxito o se omitieron, 2 cuando un host falló, 4 cuando un host era inalcanzable, 1 cuando `-l` no deja ningún host, y 5 para un ajuste no válido. `volant vault` (`ansible-vault`) y `volant inventory` (`ansible-inventory`) salen con 0 si todo va bien, 1 ante un error como `create` sobre un archivo que existe, y 5 ante una opción o acción incorrecta. Un error de uso de cualquiera de ellos sale con 2. [Nombres de comandos de ansible](/es/docs/start/ansible-command-names/#códigos-de-salida) tiene la tabla.

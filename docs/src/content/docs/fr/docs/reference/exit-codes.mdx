@@ -1,5 +1,5 @@
 ---
-sourceHash: 3d7354233964
+sourceHash: 46781db2c359
 title: Codes de sortie
 description: Ce que signifie chaque code de sortie, et où Volant s'aligne sur ansible-playbook.
 ---
@@ -53,3 +53,7 @@ Un playbook arrêté par la [vérification préalable](/fr/docs/internals/prefli
 ## Là où Ansible plante
 
 Dans quelques cas, ansible-core plante avec le code de sortie 250, par exemple sur un playbook qui s'importe lui-même ou sur `serial: abc`. Volant rejette ces cas à la place, avec un message clair et l'un des codes ci-dessus. Chaque cas est listé sous *Différences avec Ansible* dans la page qui le traite.
+
+## Les autres commandes
+
+`volant adhoc` (`ansible`) sort avec 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, 4 quand un hôte était injoignable, 1 quand `-l` ne laisse aucun hôte, et 5 pour un réglage invalide. `volant vault` (`ansible-vault`) et `volant inventory` (`ansible-inventory`) sortent avec 0 en cas de succès, 1 sur une erreur comme `create` sur un fichier qui existe, et 5 sur une mauvaise option ou action. Une erreur d'usage de l'une d'elles sort avec 2. [Les noms des commandes ansible](/fr/docs/start/ansible-command-names/#codes-de-sortie) donne le tableau.

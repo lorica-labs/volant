@@ -1,10 +1,10 @@
 ---
-sourceHash: 86490c3c05d2
+sourceHash: f052dfc7833f
 title: Die verwaltete Runtime
 description: Das Python und ansible-core, die Volant für sich selbst installiert, wo sie liegen, was sie herunterladen und wie Sie sie verwalten.
 ---
 
-Volant braucht auf dem Controller ein Python 3 mit `ansible-core` für Python-Module, das Sammeln von Facts und die Filter und Lookups, die es nicht selbst umsetzt. Hat der Rechner keines, installiert Volant sein eigenes, einmal, und verwendet es von da an. Sie müssen ansible nicht installiert haben, um ein Playbook auszuführen.
+Volant braucht auf dem Controller ein Python 3 mit `ansible-core` für Python-Module, das Sammeln von Facts und die Filter und Lookups, die es nicht selbst umsetzt. Hat der Rechner keines, installiert Volant sein eigenes, einmal, und verwendet es von da an. Sie müssen ansible nicht installiert haben, um ein Playbook auszuführen, und auch nicht für `volant doc`, `config`, `galaxy`, `pull` und `console`, die die eigenen Werkzeuge von ansible-core aus dieser Runtime ausführen.
 
 Die Runtime ist CPython 3.13 und ansible-core 2.19.12, die Version, der Volant entspricht. Sie liegt in einem einzigen Verzeichnis, das Volant gehört, sodass sie weder ein System-Python noch eine virtuelle Umgebung von Ihnen berührt.
 

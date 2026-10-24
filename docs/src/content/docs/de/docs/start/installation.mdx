@@ -1,5 +1,5 @@
 ---
-sourceHash: 1ea7a1827bd0
+sourceHash: ef0b71293725
 title: Installation
 description: Installieren Sie Volant mit einem Befehl, prüfen Sie, was Controller und Hosts brauchen, und halten Sie es aktuell.
 ---
@@ -14,7 +14,7 @@ curl -fsSL https://volant.sh/install.sh | sh
 
 Das Skript läuft unter Linux und macOS, auf x86_64 und arm64. Unter Linux nimmt es den statischen Build. Es braucht `curl`, `tar` und `sha256sum` oder `shasum`, unter Linux zusätzlich `xz`. Es lädt das neueste Release für Ihren Rechner herunter, prüft dessen SHA-256-Prüfsumme, entpackt es unter `~/.local/share/volant` und verlinkt `volant` und `volant-playbook` nach `~/.local/bin`. Das Skript verlangt keinen Root-Zugriff und schreibt nichts außerhalb dieser beiden Verzeichnisse. Was Volant später beim Ausführen schreibt, steht unter [Was Volant auf Ihren Rechnern ablegt](/de/docs/#was-volant-auf-ihren-rechnern-ablegt). Sie können das [Skript lesen](https://volant.sh/install.sh), bevor Sie es ausführen. Windows wird noch nicht unterstützt: Ein Windows-Controller steht auf der [Roadmap](/de/docs/project/roadmap/).
 
-Sie brauchen kein Ansible. Beim ersten Lauf, der Python benötigt, lädt Volant eine eigene Kopie von Python und ansible-core herunter, etwa 155 MB, und legt sie in `~/.local/share/volant/runtime` ab. Dabei gibt es eine einzelne Zeile aus. [Was Volant auf Ihren Rechnern ablegt](/de/docs/#was-volant-auf-ihren-rechnern-ablegt) listet alles auf, was es schreibt.
+Sie brauchen kein installiertes Ansible. Beim ersten Lauf, der Python benötigt, lädt Volant eine eigene Kopie von Python und ansible-core herunter, etwa 155 MB, und legt sie in `~/.local/share/volant/runtime` ab. Dabei gibt es eine einzelne Zeile aus. [Was Volant auf Ihren Rechnern ablegt](/de/docs/#was-volant-auf-ihren-rechnern-ablegt) listet alles auf, was es schreibt.
 
 <Aside type="caution" title="macOS ist nicht getestet">
 Die macOS-Builds und die verwaltete Runtime wurden nicht getestet: Es stand kein Mac zur Verfügung. Wenn ein Lauf unter macOS die Runtime nicht installieren kann, richten Sie `VOLANT_PYTHON` auf ein Python 3 mit ansible-core, wie [Die verwaltete Runtime](/de/docs/reference/runtime/#welchen-interpreter-ein-lauf-verwendet) es beschreibt.
@@ -52,7 +52,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 ```
 
-Das Skript installiert sie nie von sich aus. Es führt [`volant shims install`](/de/docs/reference/cli/shims/) aus, das eine Datei oder einen Link, die es nicht angelegt hat, in Ruhe lässt und meldet, wenn ein echtes Ansible im `PATH` verdeckt wird oder weiter zuerst läuft. Konnte ein Name nicht verlinkt werden, gibt das Skript `some ansible-* names were not linked, see above` aus und endet trotzdem mit 0, weil Volant installiert ist.
+[Ansible-Befehlsnamen](/de/docs/start/ansible-command-names/) listet auf, was jeder Name startet und was abweicht. Das Skript installiert sie nie von sich aus. Es führt [`volant shims install`](/de/docs/reference/cli/shims/) aus, das eine Datei oder einen Link, die es nicht angelegt hat, in Ruhe lässt und meldet, wenn ein echtes Ansible im `PATH` verdeckt wird oder weiter zuerst läuft. Konnte ein Name nicht verlinkt werden, gibt das Skript `some ansible-* names were not linked, see above` aus und endet trotzdem mit 0, weil Volant installiert ist.
 
 ## Was Sie erhalten
 
@@ -62,6 +62,7 @@ Das Release enthält zwei ausführbare Dateien. `volant` bringt die Agents mit, 
 |---|---|
 | `volant` | Der Controller, der Befehl, den Sie ausführen. |
 | `volant-playbook` | Derselbe Controller unter einem Namen, der wie `ansible-playbook` klingt. |
+| `ansible`, `ansible-vault` und die anderen sieben Namen | Optionale Links auf `volant`, nur mit `--shims`. Siehe [Ansible-Befehlsnamen](/de/docs/start/ansible-command-names/). |
 
 Bei der ersten Verwendung schreibt der Controller seine Agents nach `~/.cache/volant/agents/<version>/`, oder unter `$XDG_CACHE_HOME`, wenn gesetzt: den Agent für Ihren eigenen Rechner, den `ansible_connection=local` nutzt, und die Agents, die er auf x86_64- und arm64-Linux-Hosts hochlädt. Spätere Läufe verwenden sie wieder, und eine Kopie, die nicht zum eingebauten Agent des Controllers passt, wird neu geschrieben.
 
@@ -105,7 +106,7 @@ Ein scratch-Image hat kein `ssh`, kein Python, keine Shell und keine `/etc/passw
 
     Für die Module, die in Python laufen, verwendet Volant ein Python 3 mit `ansible-core`. Findet es keines, lädt es ein eigenes herunter (etwa 155 MB), prüft jede Datei gegen einen festgelegten Hash und legt es unter `~/.local/share/volant/runtime` ab. Ein Lauf, der das tut, gibt eine einzelne Zeile aus. Wenn Sie bereits ein solches Python haben, kann Volant es verwenden: [Welchen Interpreter ein Lauf verwendet](/de/docs/reference/runtime/#welchen-interpreter-ein-lauf-verwendet) nennt die Reihenfolge. Siehe [Die verwaltete Runtime](/de/docs/reference/runtime/).
 
-    Volant hat `volant vault encrypt|decrypt|view|create|edit|rekey` und `volant inventory`, aber keinen Befehl `galaxy`, `doc` oder `config`. Für `ansible-galaxy`, `ansible-doc`, `ansible-config` und `ansible-vault encrypt_string` installieren Sie ansible-core selbst.
+    Volant hat für jedes Programm von ansible-core einen Befehl, und das Installationsskript kann die Namen `ansible-*` mit ihnen verlinken. [Ansible-Befehlsnamen](/de/docs/start/ansible-command-names/) sagt, welche in Volant laufen und welche das eigene Werkzeug von ansible-core aus der verwalteten Runtime starten.
 
     Ein Playbook, das nur aus `command`, `shell`, `raw` und Modulen besteht, die auf dem Controller laufen, und `gather_facts: false` setzt, braucht überhaupt kein Python.
   </TabItem>

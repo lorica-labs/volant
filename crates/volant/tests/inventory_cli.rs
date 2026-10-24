@@ -21,6 +21,31 @@ const LIST_D1: &str = "{\n    \"_meta\": {\n        \"hostvars\": {\n           
 
 const LIST_NOTHING: &str = "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"prod\"\n        ]\n    },\n    \"prod\": {\n        \"children\": [\n            \"web\",\n            \"db\"\n        ]\n    }\n}\n";
 
+const W1: &str = "{
+    \"ansible_host\": \"10.0.0.1\",
+    \"dns\": \"1.1.1.1\",
+    \"env\": \"production\",
+    \"http_port\": 80,
+    \"list\": [
+        1,
+        2
+    ],
+    \"tier\": \"front\"
+}
+";
+
+const D1_BOB: &str = "{
+    \"ansible_user\": \"bob\",
+    \"dns\": \"9.9.9.9\",
+    \"env\": \"production\",
+    \"list\": [
+        1,
+        2
+    ],
+    \"role\": \"primary\"
+}
+";
+
 const W9: &str = "{\n    \"b\": \"true\",\n    \"dns\": \"1.1.1.1\",\n    \"f\": 1.5,\n    \"n\": \"null\",\n    \"tpl\": \"{{ inventory_hostname }}-x\",\n    \"uni\": \"café ü\"\n}\n";
 
 const NO_ACTION: &str = "[ERROR]: No action selected, at least one of --host, --graph or --list needs to be specified.\n";
@@ -85,6 +110,14 @@ fn run_in(root: &Path, args: &[&str]) -> (i32, String, String) {
     5,
     "",
     "[WARNING]: Could not match supplied host pattern, ignoring: nosuch\n[ERROR]: You must pass a single valid host to --host parameter\n"
+)]
+#[case::host_is_a_pattern_of_one(&["-i", "hosts.ini", "--host", "w1*"], 0, W1, "")]
+#[case::host_pattern_with_an_intersection(&["-i", "hosts.ini", "--host", "w1:&web"], 0, W1, "")]
+#[case::extra_vars_win_over_group_and_host_vars(
+    &["-i", "hosts.ini", "--host", "d1", "-e", "dns=9.9.9.9", "-e", "ansible_user=bob"],
+    0,
+    D1_BOB,
+    ""
 )]
 #[case::host_is_a_group(&["-i", "hosts.ini", "--host", "web"], 5, "", NO_HOST)]
 #[case::bad_pattern(

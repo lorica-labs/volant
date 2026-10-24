@@ -52,6 +52,10 @@ pub enum BlobEncoding {
 pub enum ToAgent {
     Hello {
         protocol: u32,
+        /// Start every Python interpreter with `PYTHONPERFSUPPORT=1`, so `perf` can name Python
+        /// frames. Set for profiling runs only; absent from the wire otherwise.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        python_perf: bool,
     },
     /// Run these tasks in order. One batch at a time: the controller waits for `BatchDone`.
     RunBatch {

@@ -19,6 +19,7 @@ mod server;
 pub use pool::{batch_started, run};
 #[cfg(all(test, unix))]
 use server::Server;
+pub use server::set_perf;
 
 /// Where a Python task's time went, as the server measured it: the fork, the module's import up
 /// to the moment it builds its `AnsibleModule`, and the rest of its run. Each is `None` when the

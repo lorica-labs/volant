@@ -39,14 +39,18 @@ fn parse() -> Cli {
                 .chain(argv);
             let parsed = Cli::command()
                 .bin_name(started.clone())
-                .mut_subcommand(sub, |command| command.bin_name(started.clone()))
                 .try_get_matches_from(args)
                 .and_then(|matches| Cli::from_arg_matches(&matches));
             return parsed.unwrap_or_else(|err| {
+                // clap names a subcommand's usage after its parent, `ansible-playbook playbook`.
+                let text = err
+                    .render()
+                    .to_string()
+                    .replace(&format!("{started} {sub}"), &started);
                 if err.use_stderr() {
-                    eprint!("{started}: {}", err.render());
+                    eprint!("{started}: {text}");
                 } else {
-                    print!("{}", err.render());
+                    print!("{text}");
                 }
                 std::process::exit(err.exit_code());
             });

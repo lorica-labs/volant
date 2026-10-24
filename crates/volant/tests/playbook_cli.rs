@@ -7953,8 +7953,15 @@ fn a_link_named_ansible_playbook_behaves_as_the_playbook_subcommand() {
     let dir = tempfile::tempdir().unwrap();
     let link = dir.path().join("ansible-playbook");
     std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_volant"), &link).unwrap();
-    let inventory = fixture("inventory.ini");
-    let site = fixture("site.yml");
+    // A command result carries start and end times, so the playbook only prints messages.
+    let site = dir.path().join("site.yml");
+    std::fs::write(
+        &site,
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug: msg=hi\n",
+    )
+    .unwrap();
+    let site = site.display().to_string();
+    let inventory = "localhost,".to_string();
     let run = |mut cmd: Command, extra: &[&str]| {
         cmd.args(extra)
             .env("NO_COLOR", "1")

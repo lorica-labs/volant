@@ -1,5 +1,5 @@
 ---
-sourceHash: e261982fee7c
+sourceHash: fc3f00e1fecb
 title: Inventory 与 facts 缓存
 description: Volant 读取的 inventory 格式、组变量和主机变量的来源、主机模式的语法，以及 facts 如何在多次运行之间保留。
 ---
@@ -33,6 +33,7 @@ Volant 读取 inventory 的方式与 ansible-core 相同：可以有一个或多
 - `ignore_extensions` 和 `ignore_patterns` 用于跳过目录中的文件。
 - `unparsed_is_failed` 在没有任何来源能被读取时让运行失败。
 - `any_unparsed_is_failed` 在遇到第一个没有任何插件能读取的来源时就让运行失败。
+- `export` 让 `volant inventory` 把每个变量保留在它被设置的地方，与 `--export` 的作用相同。
 
 没有插件能读取的来源会被跳过并给出警告，与 Ansible 一致。`-vvv` 会打印每个来源由哪个插件接手，以及哪些插件拒绝了它。
 

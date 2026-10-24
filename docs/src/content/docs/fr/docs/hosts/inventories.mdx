@@ -1,5 +1,5 @@
 ---
-sourceHash: e261982fee7c
+sourceHash: fc3f00e1fecb
 title: Inventaires et cache de facts
 description: Le format d'inventaire que Volant lit, d'où viennent les variables de groupe et d'hôte, la grammaire des motifs d'hôtes, et comment les facts sont conservés entre deux exécutions.
 ---
@@ -33,6 +33,7 @@ La section `[inventory]` de `ansible.cfg` contrôle la façon dont une source es
 - `ignore_extensions` et `ignore_patterns` ignorent des fichiers dans les répertoires.
 - `unparsed_is_failed` fait échouer l'exécution quand aucune source n'a pu être lue.
 - `any_unparsed_is_failed` fait échouer l'exécution dès la première source qu'aucun plugin n'a pu lire.
+- `export` fait garder à `volant inventory` chaque variable là où elle est définie, comme le fait `--export`.
 
 Une source qu'aucun plugin ne lit est ignorée avec un avertissement, comme dans Ansible. `-vvv` affiche quel plugin a pris chaque source, et lesquels l'ont refusée.
 

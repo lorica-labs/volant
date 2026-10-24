@@ -1047,3 +1047,318 @@ fn create_refuses_a_directory_and_works_without_home() {
     let out = process::run_within(&mut command, DEADLINE, None);
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
 }
+
+/// The `!vault |` blocks of `encrypt_string` output: the first line of each, and its ciphertext
+/// with the ten spaces of indentation taken off.
+fn blocks(output: &str) -> Vec<(String, String)> {
+    let mut found: Vec<(String, String)> = Vec::new();
+    for line in output.lines() {
+        if let Some(rest) = line.strip_prefix("          ") {
+            let (_, text) = found.last_mut().expect("a block starts first");
+            text.push_str(rest);
+            text.push('\n');
+        } else {
+            assert!(
+                line.ends_with("!vault |"),
+                "a block opens with !vault |: {line}"
+            );
+            found.push((line.to_string(), String::new()));
+        }
+    }
+    found
+}
+
+impl Sandbox {
+    /// What a block opens to, through `volant vault decrypt`.
+    fn reveal(&self, ciphertext: &str) -> Vec<u8> {
+        std::fs::write(self.dir.join("block"), ciphertext).expect("a block");
+        let out = self.run(&["decrypt", "block", "--output", "-", PW[0], PW[1]], None);
+        assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+        out.stdout
+    }
+}
+
+#[rstest]
+#[case::no_name(&["foobar"], "!vault |", "$ANSIBLE_VAULT;1.1;AES256")]
+#[case::a_name(&["-n", "mykey", "foobar"], "mykey: !vault |", "$ANSIBLE_VAULT;1.1;AES256")]
+#[case::long_name(&["--name", "mykey", "foobar"], "mykey: !vault |", "$ANSIBLE_VAULT;1.1;AES256")]
+fn a_string_becomes_one_block_with_the_references_shape(
+    #[case] args: &[&str],
+    #[case] first: &str,
+    #[case] header: &str,
+) {
+    let sandbox = Sandbox::new();
+    let mut all = vec!["encrypt_string", PW[0], PW[1]];
+    all.extend(args);
+    let out = sandbox.run(&all, None);
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(out.status.code(), Some(0));
+    let stdout = text(&out.stdout);
+    assert!(stdout.ends_with('\n') && !stdout.ends_with("\n\n"));
+    let found = blocks(&stdout);
+    assert_eq!(found.len(), 1);
+    assert_eq!(found[0].0, first);
+    assert!(found[0].1.starts_with(&format!("{header}\n")));
+    assert!(stdout.lines().skip(1).all(|l| l.starts_with("          ")));
+    assert_eq!(sandbox.reveal(&found[0].1), b"foobar");
+}
+
+#[test]
+fn a_label_gives_a_version_1_2_header() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run(&["encrypt_string", "--vault-id", "lbl@pw", "x"], None);
+    let found = blocks(&text(&out.stdout));
+    assert!(found[0].1.starts_with("$ANSIBLE_VAULT;1.2;AES256;lbl\n"));
+    assert_eq!(sandbox.reveal(&found[0].1), b"x");
+}
+
+#[rstest]
+#[case::fewer_names(&["one", "two", "-n", "k"],
+    "The number of --name options do not match the number of args.\nThe last named variable will be \"k\". The rest will not have names.\n# The encrypted version of variable (\"k\", the string #1 from the command line args).\n# The encrypted version of the string #2 from the command line args.)\n",
+    &["k: !vault |", "!vault |"])]
+#[case::more_names(&["one", "two", "-n", "k", "-n", "j", "-n", "m"],
+    "# The encrypted version of variable (\"k\", the string #1 from the command line args).\n# The encrypted version of variable (\"j\", the string #2 from the command line args).\n",
+    &["k: !vault |", "j: !vault |"])]
+#[case::no_names(&["one", "two"],
+    "# The encrypted version of the string #1 from the command line args.)\n# The encrypted version of the string #2 from the command line args.)\n",
+    &["!vault |", "!vault |"])]
+fn several_strings_print_blocks_in_order_and_comment_on_standard_error(
+    #[case] args: &[&str],
+    #[case] want_stderr: &str,
+    #[case] firsts: &[&str],
+) {
+    let sandbox = Sandbox::new();
+    let mut all = vec!["encrypt_string", PW[0], PW[1]];
+    all.extend(args);
+    let out = sandbox.run(&all, None);
+    assert_eq!(text(&out.stderr), want_stderr);
+    assert_eq!(out.status.code(), Some(0));
+    let found = blocks(&text(&out.stdout));
+    assert_eq!(
+        found.iter().map(|b| b.0.as_str()).collect::<Vec<_>>(),
+        firsts
+    );
+    assert_eq!(sandbox.reveal(&found[0].1), b"one");
+    assert_eq!(sandbox.reveal(&found[1].1), b"two");
+}
+
+#[test]
+fn text_is_kept_byte_for_byte_whatever_way_it_comes() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run(&["encrypt_string", PW[0], PW[1], "tail\n"], None);
+    assert_eq!(sandbox.reveal(&blocks(&text(&out.stdout))[0].1), b"tail\n");
+    let out = sandbox.run(
+        &["encrypt_string", PW[0], PW[1]],
+        Some("a\r\nb\rc caf\u{e9}".as_bytes()),
+    );
+    assert_eq!(text(&out.stderr), "");
+    assert_eq!(
+        sandbox.reveal(&blocks(&text(&out.stdout))[0].1),
+        "a\r\nb\rc caf\u{e9}".as_bytes()
+    );
+    let out = sandbox.run(
+        &[
+            "encrypt_string",
+            PW[0],
+            PW[1],
+            "--stdin-name",
+            "sn",
+            "foo",
+            "-",
+        ],
+        Some(b"in"),
+    );
+    assert_eq!(
+        text(&out.stderr),
+        "# The encrypted version of variable (\"sn\", the string #1 from stdin).\n# The encrypted version of the string #2 from the command line args.)\n"
+    );
+    let found = blocks(&text(&out.stdout));
+    assert_eq!(found[0].0, "sn: !vault |");
+    assert_eq!(sandbox.reveal(&found[0].1), b"in");
+    assert_eq!(sandbox.reveal(&found[1].1), b"foo");
+}
+
+#[rstest]
+#[case::empty_argument(&["encrypt_string", ""], None, "[ERROR]: The plaintext provided from the command line args was empty, not encrypting\n", 5)]
+#[case::empty_stdin(&["encrypt_string"], Some(&b""[..]), "[ERROR]: stdin was empty, not encrypting\n", 5)]
+#[case::empty_stdin_named(&["encrypt_string", "--stdin-name", "sn"], Some(&b""[..]), "[ERROR]: stdin was empty, not encrypting\n", 5)]
+#[case::prompt_and_stdin(&["encrypt_string", "-p", "-"], None, "[ERROR]: The --prompt option is not supported if also reading input from stdin\n", 5)]
+#[case::prompt_and_stdin_name(&["encrypt_string", "--prompt", "--stdin-name", "x"], None, "[ERROR]: The --prompt option is not supported if also reading input from stdin\n", 5)]
+#[case::output_with_two(&["encrypt_string", "a", "b", "--output", "out"], None, "[ERROR]: At most one input file may be used with the --output option\n", 5)]
+#[case::not_utf8(&["encrypt_string"], Some(&b"\xff\xfe"[..]), "[ERROR]: Unexpected Exception, this is probably a bug: 'utf-8' codec can't decode byte 0xff in position 0: invalid start byte\n", 250)]
+fn a_refusal_of_encrypt_string_is_worded_as_the_reference_words_it(
+    #[case] args: &[&str],
+    #[case] stdin: Option<&[u8]>,
+    #[case] want: &str,
+    #[case] code: i32,
+) {
+    let sandbox = Sandbox::new();
+    let mut all = args.to_vec();
+    all.extend(PW);
+    let out = sandbox.run(&all, stdin);
+    assert_eq!(text(&out.stdout), "");
+    assert_eq!(text(&out.stderr), want);
+    assert_eq!(out.status.code(), Some(code));
+}
+
+#[test]
+fn output_writes_the_blocks_to_a_file() {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run(
+        &[
+            "encrypt_string",
+            PW[0],
+            PW[1],
+            "-n",
+            "k",
+            "--output",
+            "vars.yml",
+            "foobar",
+        ],
+        None,
+    );
+    assert_eq!(
+        (text(&out.stdout), text(&out.stderr)),
+        (String::new(), String::new())
+    );
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(sandbox.mode("vars.yml"), 0o600);
+    let found = blocks(&text(&sandbox.read("vars.yml")));
+    assert_eq!(found[0].0, "k: !vault |");
+    assert_eq!(sandbox.reveal(&found[0].1), b"foobar");
+}
+
+/// The answers typed ahead on standard input: the name is echoed, the string is not.
+#[rstest]
+#[case::hidden(&["-p"], b"k\nsecret\n", "Variable name (enter for no name): k: !vault |\n")]
+#[case::shown(&["-p", "--show-input"], b"k\nsecret\n", "Variable name (enter for no name): String to encrypt:k: !vault |\n")]
+#[case::no_name(&["-p"], b"\nsecret\n", "Variable name (enter for no name): !vault |\n")]
+fn the_prompt_asks_for_a_name_then_a_string(
+    #[case] args: &[&str],
+    #[case] typed: &[u8],
+    #[case] starts: &str,
+) {
+    let sandbox = Sandbox::new();
+    let mut all = vec!["encrypt_string", PW[0], PW[1]];
+    all.extend(args);
+    let out = sandbox.run(&all, Some(typed));
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let stdout = text(&out.stdout);
+    assert!(stdout.starts_with(starts), "{stdout}");
+    let body = stdout
+        .strip_prefix("Variable name (enter for no name): ")
+        .expect("the name prompt comes first")
+        .replacen("String to encrypt:", "", 1);
+    let found = blocks(&body);
+    assert_eq!(sandbox.reveal(&found[0].1), b"secret");
+}
+
+#[rstest]
+#[case::no_string(
+    b"k\n\n",
+    "[ERROR]: The plaintext provided from the prompt was empty, not encrypting\n",
+    5
+)]
+#[case::no_input(
+    b"",
+    "[ERROR]: Unexpected Exception, this is probably a bug: EOF when reading a line\n",
+    250
+)]
+fn a_prompt_with_nothing_to_encrypt_stops(
+    #[case] typed: &[u8],
+    #[case] tail: &str,
+    #[case] code: i32,
+) {
+    let sandbox = Sandbox::new();
+    let out = sandbox.run(&["encrypt_string", "-p", PW[0], PW[1]], Some(typed));
+    assert!(text(&out.stderr).ends_with(tail), "{}", text(&out.stderr));
+    assert_eq!(out.status.code(), Some(code));
+}
+
+/// On a terminal: the notice before reading standard input, the message before the block.
+#[test]
+fn standard_input_and_output_on_a_terminal_add_their_notices() {
+    let sandbox = Sandbox::new();
+    let (master, slave) = terminal();
+    let keep = slave.try_clone().expect("the slave end is duplicated");
+    type_ahead(&master, b"abc\n\x04");
+    let mut command = sandbox.command(&["encrypt_string", PW[0], PW[1]]);
+    command
+        .stdin(Stdio::from(slave.try_clone().expect("duplicated")))
+        .stdout(Stdio::from(slave))
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("volant starts");
+    drop(command);
+    let (code, stderr, _) = finish(child);
+    assert_eq!(code, 0, "{stderr}");
+    assert_eq!(
+        stderr,
+        "Reading plaintext input from stdin. (ctrl-d to end input, twice if your content does not already have a newline)\nEncryption successful\n"
+    );
+    let shown = screen(&master);
+    assert!(
+        shown.contains("!vault |\r\n          $ANSIBLE_VAULT;1.1;AES256\r\n"),
+        "{shown}"
+    );
+    drop(keep);
+}
+
+#[test]
+fn the_prompt_on_a_terminal_ends_with_the_message_and_the_block() {
+    let sandbox = Sandbox::new();
+    let (master, slave) = terminal();
+    let keep = slave.try_clone().expect("the slave end is duplicated");
+    type_ahead(&master, b"k\nsecret\n");
+    let mut command = sandbox.command(&["encrypt_string", "-p", PW[0], PW[1]]);
+    command
+        .stdin(Stdio::from(slave.try_clone().expect("duplicated")))
+        .stdout(Stdio::from(slave))
+        .stderr(Stdio::piped());
+    let child = command.spawn().expect("volant starts");
+    drop(command);
+    let (code, stderr, _) = finish(child);
+    assert_eq!(code, 0, "{stderr}");
+    assert!(stderr.ends_with("Encryption successful\n"), "{stderr}");
+    let shown = screen(&master);
+    assert!(
+        shown.contains("Variable name (enter for no name): "),
+        "{shown}"
+    );
+    assert!(
+        shown.contains("k: !vault |\r\n          $ANSIBLE_VAULT;1.1;AES256\r\n"),
+        "{shown}"
+    );
+    drop(keep);
+}
+
+/// What the reference prints for the same strings has the same shape, and each opens under the
+/// other tool.
+#[test]
+fn a_block_one_tool_wrote_the_other_opens() {
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let sandbox = Sandbox::new();
+    let run = |args: &[&str]| {
+        Command::new(&python)
+            .args([
+                "-c",
+                "from ansible.cli.vault import VaultCLI; VaultCLI.cli_executor()",
+            ])
+            .args(args)
+            .current_dir(&sandbox.dir)
+            .stdin(Stdio::null())
+            .output()
+            .expect("the reference starts")
+    };
+    let theirs = run(&["encrypt_string", PW[0], PW[1], "-n", "k", "foobar"]);
+    assert_eq!(theirs.status.code(), Some(0), "{}", text(&theirs.stderr));
+    let ours = sandbox.run(&["encrypt_string", PW[0], PW[1], "-n", "k", "foobar"], None);
+    let (theirs, ours) = (text(&theirs.stdout), text(&ours.stdout));
+    let shape = |s: &str| s.lines().map(str::len).collect::<Vec<_>>();
+    assert_eq!(shape(&theirs), shape(&ours));
+    assert_eq!(sandbox.reveal(&blocks(&theirs)[0].1), b"foobar");
+    std::fs::write(sandbox.dir.join("mine"), &blocks(&ours)[0].1).expect("a block");
+    let decrypted = run(&["decrypt", "mine", "--output", "-", PW[0], PW[1]]);
+    assert_eq!(decrypted.stdout, b"foobar");
+}

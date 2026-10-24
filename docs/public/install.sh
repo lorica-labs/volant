@@ -5,10 +5,14 @@
 #
 #   curl -fsSL https://volant.sh/install.sh | sh
 #
+# Options:
+#   --shims          also link the ansible-* program names to volant (runs `volant shims install`)
+#
 # Environment:
 #   VOLANT_VERSION   release tag to install, such as v0.1.0-alpha.10 (default: the newest release)
 #   VOLANT_HOME      where releases are unpacked (default: ~/.local/share/volant)
 #   VOLANT_BIN_DIR   where the volant and volant-playbook links go (default: ~/.local/bin)
+#   VOLANT_SHIMS     set to 1 to do what --shims does
 
 set -eu
 
@@ -16,9 +20,18 @@ repo="lorica-labs/volant"
 home_dir="${VOLANT_HOME:-$HOME/.local/share/volant}"
 bin_dir="${VOLANT_BIN_DIR:-$HOME/.local/bin}"
 
+shims=0
+[ "${VOLANT_SHIMS:-}" = 1 ] && shims=1
 say() { printf 'volant-install: %s\n' "$*"; }
 die() { printf 'volant-install: error: %s\n' "$*" >&2; exit 1; }
 need() { command -v "$1" >/dev/null 2>&1 || die "this installer needs '$1'"; }
+
+for arg in "$@"; do
+  case "$arg" in
+    --shims) shims=1 ;;
+    *) die "unknown option: $arg" ;;
+  esac
+done
 
 need curl
 need tar
@@ -79,6 +92,10 @@ ln -sf "$home_dir/current/volant" "$bin_dir/volant"
 ln -sf "$home_dir/current/volant-playbook" "$bin_dir/volant-playbook"
 
 say "installed $("$bin_dir/volant" --version) in $dest"
+if [ "$shims" = 1 ]; then
+  # Volant itself is installed, so a name that could not be linked does not fail the script.
+  "$bin_dir/volant" shims install --dir "$bin_dir" || say "some ansible-* names were not linked, see above"
+fi
 case ":$PATH:" in
   *":$bin_dir:"*) ;;
   *) say "add $bin_dir to your PATH, for example: export PATH=\"$bin_dir:\$PATH\"" ;;

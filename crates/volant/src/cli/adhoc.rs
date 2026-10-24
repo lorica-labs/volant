@@ -23,12 +23,13 @@ use crate::stats::{Outcome, Refusal};
 
 /// Runs `args` and returns the process exit code.
 pub fn adhoc(args: AdhocArgs) -> i32 {
-    if args.forks.is_some_and(|forks| forks < 1) {
-        return refuse("The number of processes (--forks) must be >= 1", false);
-    }
+    // argparse acts on `--version` as it reads it, before the checks that follow the parse.
     if args.version {
         println!("{}", super::version::block("ansible", &[]));
         return 0;
+    }
+    if args.forks.is_some_and(|forks| forks < 1) {
+        return refuse("The number of processes (--forks) must be >= 1", false);
     }
     // Clap requires the pattern unless `--version` was given.
     let pattern = args.pattern.clone().unwrap_or_default();

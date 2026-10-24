@@ -5,11 +5,15 @@
   },
   {
     "code": 0,
+    "stdout": "h1 | SKIPPED\n"
+  },
+  {
+    "code": 0,
     "stdout": "--- before\n+++ after: /tmp/volant-adhoc-golden-diff\n@@ -0,0 +1 @@\n+x\n\\ No newline at end of file\n\nh1 | CHANGED => {\n    \"changed\": true\n}\n"
   },
   {
     "code": 0,
-    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j582347644877.392200\",\n    \"changed\": true,\n    \"cmd\": \"sleep 1; echo hi\",\n    \"delta\": \"0:00:01.009952\",\n    \"end\": \"2026-10-24 14:53:06.928723\",\n    \"finished\": true,\n    \"msg\": \"\",\n    \"rc\": 0,\n    \"results_file\": \"<results-file>\",\n    \"start\": \"2026-10-24 14:53:05.918771\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"hi\",\n    \"stdout_lines\": [\n        \"hi\"\n    ]\n}\n"
+    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j167050614166.427215\",\n    \"changed\": true,\n    \"cmd\": \"sleep 1; echo hi\",\n    \"delta\": \"0:00:01.009884\",\n    \"end\": \"2026-10-24 15:06:48.280589\",\n    \"finished\": true,\n    \"msg\": \"\",\n    \"rc\": 0,\n    \"results_file\": \"<results-file>\",\n    \"start\": \"2026-10-24 15:06:47.270705\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"hi\",\n    \"stdout_lines\": [\n        \"hi\"\n    ]\n}\n"
   },
   {
     "code": 2,
@@ -17,7 +21,7 @@
   },
   {
     "code": 0,
-    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j152088895956.392379\",\n    \"changed\": true,\n    \"cmd\": \"sleep 1\",\n    \"delta\": \"0:00:01.009769\",\n    \"end\": \"2026-10-24 14:53:13.835865\",\n    \"finished\": true,\n    \"msg\": \"\",\n    \"rc\": 0,\n    \"results_file\": \"<results-file>\",\n    \"start\": \"2026-10-24 14:53:12.826096\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"\",\n    \"stdout_lines\": []\n}\n"
+    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j723728424915.427449\",\n    \"changed\": true,\n    \"cmd\": \"sleep 1\",\n    \"delta\": \"0:00:01.009360\",\n    \"end\": \"2026-10-24 15:06:55.591059\",\n    \"finished\": true,\n    \"msg\": \"\",\n    \"rc\": 0,\n    \"results_file\": \"<results-file>\",\n    \"start\": \"2026-10-24 15:06:54.581699\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"\",\n    \"stdout_lines\": []\n}\n"
   },
   {
     "code": 0,
@@ -25,11 +29,11 @@
   },
   {
     "code": 0,
-    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j205212707250.392686\",\n    \"changed\": true,\n    \"finished\": false,\n    \"results_file\": \"<results-file>\",\n    \"started\": true\n}\n"
+    "stdout": "h1 | CHANGED => {\n    \"ansible_job_id\": \"j40013083339.427981\",\n    \"changed\": true,\n    \"finished\": false,\n    \"results_file\": \"<results-file>\",\n    \"started\": true\n}\n"
   },
   {
     "code": 0,
-    "stdout": "h1 | SUCCESS => {\n    \"ansible_job_id\": \"j668379656417.392724\",\n    \"changed\": false,\n    \"finished\": true,\n    \"ping\": \"pong\",\n    \"results_file\": \"<results-file>\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"\",\n    \"stdout_lines\": []\n}\n"
+    "stdout": "h1 | SUCCESS => {\n    \"ansible_job_id\": \"j906441154087.428020\",\n    \"changed\": false,\n    \"finished\": true,\n    \"ping\": \"pong\",\n    \"results_file\": \"<results-file>\",\n    \"started\": true,\n    \"stderr\": \"\",\n    \"stderr_lines\": [],\n    \"stdout\": \"\",\n    \"stdout_lines\": []\n}\n"
   },
   {
     "code": 2,

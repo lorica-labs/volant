@@ -345,6 +345,10 @@ fn check_timeout_and_background_run_without_ansible_core() {
     let skipped = adhoc(&["h1", "-i", "inv.ini", "-a", "true", "-C", "-D"], &[]);
     assert_eq!(text(&skipped.stdout), "h1 | SKIPPED\n");
 
+    // The command touches a marker after its sleep: a task that timed out must be gone by then.
+    let marker = std::env::temp_dir().join(format!("volant-adhoc-marker-{}", std::process::id()));
+    let _ = std::fs::remove_file(&marker);
+    let command = format!("sleep 2; touch {}", marker.display());
     let slow = adhoc(
         &[
             "h1",
@@ -353,7 +357,7 @@ fn check_timeout_and_background_run_without_ansible_core() {
             "-m",
             "shell",
             "-a",
-            "sleep 5",
+            &command,
             "--task-timeout",
             "1",
         ],
@@ -361,12 +365,11 @@ fn check_timeout_and_background_run_without_ansible_core() {
     );
     assert_eq!(slow.status.code(), Some(2), "{}", text(&slow.stderr));
     let shown = text(&slow.stdout);
-    assert!(
-        shown.starts_with(
-            "[ERROR]: Task failed: Timed out after 1 second(s).\nOrigin: <adhoc 'shell' task>\n\n{'action': 'shell', 'args': {'_raw_params': 'sleep 5'}, 'timeout': 1, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED | rc=-1 >>\n"
-        ),
-        "{shown}"
-    );
+    let head = "[ERROR]: Task failed: Timed out after 1 second(s).\nOrigin: <adhoc 'shell' task>\n";
+    assert!(shown.starts_with(head), "{shown}");
+    assert!(shown.contains("h1 | FAILED | rc=-1 >>\n"), "{shown}");
+    std::thread::sleep(std::time::Duration::from_secs(3));
+    assert!(!marker.exists(), "the timed-out command kept running");
 
     // The job's status file goes under the home, so the run gets one of its own.
     let home = std::env::temp_dir().join(format!("volant-adhoc-home-{}", std::process::id()));
@@ -432,4 +435,15 @@ fn the_version_block_is_printed_for_version_and_vv() {
         shown.ends_with("Skipping callback 'default', as we already have a stdout callback.\nSkipping callback 'oneline', as we already have a stdout callback.\nh1 | SUCCESS => {\n    \"msg\": \"x\"\n}\n"),
         "{shown}"
     );
+}
+
+/// `--version` is acted on as it is read, before the checks that follow the parse.
+#[test]
+fn version_comes_before_the_forks_check() {
+    let out = adhoc(
+        &["--version", "-f", "0"],
+        &[("VOLANT_PYTHON", "/nonexistent/python")],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(text(&out.stdout).starts_with("ansible [core 2.19.12]\n"));
 }

@@ -5,6 +5,7 @@ program: ansible
 needs: [ansible-core]
 runs:
   - args: [h1, -i, inv.ini, -m, ping, -C]
+  - args: [h1, -i, inv.ini, -m, shell, -a, "true", -C]
   - args: [h1, -i, inv.ini, -m, copy, -a, content=x dest=/tmp/volant-adhoc-golden-diff, -C, -D]
   - args: [h1, -i, inv.ini, -m, shell, -a, sleep 1; echo hi, -B, "10", -P, "1"]
   - args: [h1, -i, inv.ini, -m, command, -a, sleep 1; echo hi, -B, "10", -P, "1"]

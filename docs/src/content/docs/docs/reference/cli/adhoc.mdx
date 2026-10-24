@@ -43,7 +43,7 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 </Option>
 
 <Option name="--version">
-  Print `ansible [core 2.19.12]`, the configuration file, the module search path, the collection location and the path of the program that was started, then stop. When Volant finds an interpreter with ansible-core, the module location and the Python, Jinja and PyYAML versions follow, in the reference's lines. Without one, those lines are left out: `--version` installs nothing. The search paths read the environment and the defaults, not `library` or `collections_path` of `ansible.cfg`.
+  Print `ansible [core 2.19.12]`, the configuration file, the module search path, the collection location and the executable location, then stop. The executable location follows `argv[0]`: a relative `argv[0]`, or one set with `exec -a`, can name a different file than the one that runs. When Volant finds an interpreter with ansible-core, the module location and the Python, Jinja and PyYAML versions follow, in the reference's lines. Without one, those lines are left out: `--version` installs nothing. The search paths read the environment and the defaults, not `library` or `collections_path` of `ansible.cfg`.
 </Option>
 
 <Option name="--list-hosts">

@@ -1,0 +1,74 @@
+---
+sourceHash: c49a21d239df
+title: "Pro warmem Python-Lauf einen Union-Blob verwenden"
+description: "Entscheidungsdokument 0006."
+sidebar:
+  label: "0006 · Warmer Python-Pfad"
+  order: 6
+---
+
+import BarChart from '../../../../../components/BarChart.astro';
+
+
+| Status | Datum |
+|---|---|
+| akzeptiert | 2026-09-20 |
+
+## Kontext
+
+Der Python-Pfad muss Module von ansible-core auf einem verwalteten Host ausführen, ohne dort ansible-core zu installieren. Ein Prozess pro Task kostet 340 ms. Von einem Python-Server zu forken, der nichts geladen hat, kostet 266 ms, was die Maschinerie nicht rechtfertigt.
+
+`module_utils` aus dem Zip eines Moduls zu laden und dann zu forken kostet 12,8 ms, bindet aber das Python-Paket `ansible` an dieses eine Zip. Jedes andere Modul scheitert dann beim Import. Das wurde gemessen, und es scheitert laut statt still.
+
+Die Einträge, die sich verschiedene Modul-Zips teilen, sind Byte für Byte identisch: null Konflikte bei 146 Einträgen aus zehn Modulen. Sie in ein Zip zusammenzuführen ist wohldefiniert, und der Builder behandelt einen Konflikt als harten Fehler.
+
+## Entscheidung
+
+Pro Lauf einen Union-Blob bauen, nicht einen Blob pro Modul. Der Blob enthält jedes Modul und seine importierten `module_utils`, wird durch den BLAKE3-Hash seines Inhalts identifiziert und auf dem verwalteten Host zwischengespeichert. Der Python-Server lädt ihn einmal und forkt für jeden Task ein Kind.
+
+Der Union-Blob für die fünf Golden-Module umfasst genau 631.050 Bytes, gegenüber 2.307.982 Bytes bei getrennten Zips. Das ist eine Ersparnis von 72,7 Prozent. Der Pfad mit vorgeladenem Fork kostet 12,8 ms pro Task, und das Laden des Blobs kostet 264,5 ms, einmal pro Server.
+
+## Konsequenzen
+
+- Ein Lauf bekommt einen einheitlichen Satz `module_utils`, sodass Module nicht aus unvereinbaren Zips importieren.
+- Der Builder muss bei einem widersprüchlichen gemeinsamen Eintrag stoppen, statt eine Version zu wählen.
+- Der verwaltete Host speichert den Blob zwischen und verifiziert ihn, bevor er ihn verwendet.
+- Der Controller braucht ansible-core; der verwaltete Host nicht.
+
+## An einem echten Play gemessen
+
+Die Zahlen oben stammen von einzelnen Modulen in einer Schleife. Ein Playbook mit fünfunddreißig Tasks gegen einen verwalteten Host, ausgeführt am 2026-09-21, sagt, was sie für ein echtes Play wert sind. Es installiert Pakete, legt Verzeichnisse an, schreibt eine Konfiguration Zeile für Zeile, liest Dateien zurück und hält einen Dienst gestartet, und es weitet die Rechte aus, weil ein solches Play das tut.
+
+Je drei Durchläufe gegen einen Host, auf den das Play schon konvergiert war, sodass jeder Durchlauf dieselbe Arbeit leistet, Release-Build. Der Median, wie zuerst gemessen:
+
+<BarChart
+  title="Erste Messung"
+  subtitle="Drei Durchläufe gegen einen konvergierten Host, Release-Build, Median. Kürzer ist schneller."
+  unit="s"
+  decimals={2}
+  rows={[
+    { label: 'Volant', value: 30.2, highlight: true, note: '863 ms pro Task' },
+    { label: 'ansible-core, ohne Pipelining', value: 27.69, note: '791 ms pro Task' },
+    { label: 'ansible-core, mit Pipelining', value: 20.02, note: '572 ms pro Task' },
+  ]}
+/>
+
+Volant führt das Play jetzt in 40 Prozent der Zeit der Referenz mit Pipelining aus. Ein Durchlauf öffnet 3 ssh-Sitzungen auf dem Host statt 58. Der Vorher-Arm reproduziert die erste Tabelle auf ein Prozent genau, der Gewinn kommt also von der Korrektur und nicht von einer Änderung an der Maschine.
+
+Der Durchschnitt pro Task enthält weiterhin echte Arbeit. `apt` verbringt etwa 755 ms im Gespräch mit `dpkg`, und das Sammeln von Facts ist der teuerste Task im Play. Der warme Pfad beseitigt den Overhead um ein Modul, nicht die eigene Arbeit des Moduls.
+
+Die Verbindung zu halten kostet etwas. Solange der Permit die Verbindung mit sich trug, begrenzte `forks` auch, wie viele Verbindungen mit erweiterten Rechten ein Lauf offen hielt. Jetzt kann ein Lauf zwei Verbindungen pro Host halten, sodass ein Controller, der auf 1024 Deskriptoren begrenzt ist, bei drei Dateideskriptoren pro Verbindung seine Obergrenze bei etwa 169 Hosts mit Rechteausweitung erreicht statt bei etwa 330.
+
+## Update, 2026-10-24
+
+Die Messung oben bleibt beim ersten Ergebnis stehen, das eine Niederlage war: Volant brauchte 30,2 s gegen 20,02 s für die Referenz mit Pipelining. Einundzwanzig Tasks ohne Rechteausweitung kosteten Volant je 17 ms gegen 437 ms für die Referenz, der warme Pfad funktionierte also. Dieselben Tasks unter `become: true` kosteten je 897 ms gegen 464 ms. Ein Host, der einen Synchronisationspunkt erreichte, gab seinen Fork-Permit zurück und schloss im selben Schritt seine Verbindung mit erweiterten Rechten, und ein Play aus Python-Tasks erreicht fast bei jedem Task einen, sodass jeder Task mit erweiterten Rechten eine neue `ssh`-Sitzung, ein neues `sudo` und einen neuen Handshake bezahlte. Ein Lauf öffnete 44 Sitzungen auf dem Host, wo ein Lauf ohne Rechteausweitung 4 öffnete.
+
+Die Korrektur ([#178](https://github.com/lorica-labs/volant/pull/178), 2026-09-22) behält die Verbindung mit erweiterten Rechten über einen Synchronisationspunkt hinweg und gibt nur den Permit zurück, auf den ein anderer Host wartet. Erneut gemessen auf demselben Host mit derselben Methode:
+
+| Lauf | Wanduhrzeit | Pro Task |
+|---|---|---|
+| Volant, Verbindung an jedem Punkt geschlossen | 30,51 s | 872 ms |
+| Volant, Verbindung behalten | 7,90 s | 226 ms |
+| ansible-core, `pipelining = True` | 19,72 s | 564 ms |
+
+Volant führt das Play dann in 40 Prozent der Zeit der Referenz mit Pipelining aus, und ein Durchlauf öffnet 3 `ssh`-Sitzungen auf dem Host statt 58. Die erste Zeile stimmt auf ein Prozent mit der ersten Messung überein, der Gewinn kommt also von der Korrektur und nicht von einer Änderung an der Maschine.

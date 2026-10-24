@@ -1,0 +1,58 @@
+---
+sourceHash: ad41e1075baf
+title: "Action-Plugins laufen als vom Controller gesteuerte Folge von Teil-Tasks"
+description: "Entscheidungsdokument 0007."
+sidebar:
+  label: "0007 · Action-Plugins"
+  order: 7
+---
+
+import BarChart from '../../../../../components/BarChart.astro';
+
+| Status | Datum |
+|---|---|
+| akzeptiert | 2026-09-23 |
+
+## Kontext
+
+`copy`, `package`, `service`, `template` und `unarchive` sind in der Referenz keine einzelnen Module, die ein Host auf einer vom Controller gesendeten Payload ausführt. `plugins/action/copy.py` führt zuerst `stat` auf dem Host aus und entscheidet aus der Antwort, ob `file` läuft oder die Quelle bereitgestellt und `copy` ausgeführt wird. `plugins/action/package.py` und `plugins/action/service.py` lesen einen Fact (den Paketmanager des Hosts, sein Init-System) und wissen erst dann überhaupt, welches Modul laufen soll; ist der Fact noch nicht gesammelt, führen sie selbst ein gefiltertes `setup` aus, um ihn zu bekommen. `template` liest und rendert eine Datei auf dem Controller, bevor irgendetwas den Host erreicht. In jedem Fall ist das, was das Playbook nennt, nicht das, was eine Modul-Payload allein ausführen kann: Die Entscheidung, die die Referenz zwischen einem Host-Roundtrip und dem nächsten trifft, gehört zum Task.
+
+Für den Nachbau waren zwei Formen offen. Eine Modul-Payload könnte so umgeschrieben werden, dass sie diese Entscheidung selbst trifft, auf dem Host, im Prozess, der ohnehin `stat` ausführt oder den Fact liest: die eigene Logik von `copy.py` oder `package.py` in die Python-Seite des Agents zu verlagern. Oder die eigene Rolle des Action-Plugins könnte als zweites Modul laufen, hochgeladen und auf dem Host ausgeführt anstelle des Controller-Prozesses, den die Referenz verwendet. Beides hätte den Controller aus einer Schleife herausgehalten, in der ihn die Referenz selbst hält: Die Referenz entscheidet zwischen Teil-Tasks auf dem Controller, in Python, und liest das Ergebnis jedes Teil-Tasks, bevor sie den nächsten wählt.
+
+## Entscheidung
+
+Jedes der fünf läuft als kleiner Zustandsautomat auf dem Controller: Er wird nach dem nächsten Teil-Task gefragt und bekommt das Ergebnis des letzten, bis er das eigene Ergebnis des Tasks hat. Jeder Teil-Task ist ein gewöhnliches Modul der Union des Laufs, allein gesendet über die Verbindung, die der Task schon hat, und zurückgelesen über denselben Pfad, den jedes andere Modulergebnis nimmt. Nichts an Versand, Argumenten oder Dateihandhabung eines Teil-Tasks lebt auf dem Host; der Host führt immer nur Module aus, die er schon auszuführen weiß.
+
+`copy` ist das Plugin, das die Form mit zwei Aufrufen explizit macht: zuerst `stat`, dann entweder `file` oder ein bereitgestelltes `copy`, genau wie `plugins/action/copy.py` es tut. `package` und `service` machen die Fact-Abhängigkeit explizit: Das Modul, das läuft, steht erst fest, wenn der Paketmanager oder das Init-System des Hosts bekannt ist, gesammelt über ein gefiltertes `setup`, wenn es noch kein Fact ist. `template` und `unarchive` lesen beide eine Datei auf dem Controller, bevor ein Teil-Task gesendet wird, `template` immer und `unarchive`, außer `remote_src` sagt, dass die Datei schon auf dem Host liegt.
+
+## Konsequenzen
+
+- Eine Datei, die ein Teil-Task braucht, reist einmal zum Host, bereitgestellt in einem Verzeichnis, das der Verbindung vorbehalten ist, die sie gesendet hat, und wird von diesem einen Task verbraucht: vom Modul gelesen, dann entfernt, was das Modul auch damit getan hat. Siehe [Action-Plugins](/de/docs/internals/action-plugins/#was-auf-dem-host-bleibt).
+- `package` und `service` tragen jedes Backend-Modul, an das sie verteilen könnten, in der Union des Laufs, nicht nur das, das der Host am Ende braucht, weil nichts über den Host bekannt ist, bevor die Facts da sind, und danach nichts mehr gebaut wird. Gemessen am eigenen Payload-Builder von ansible-core 2.19.12 sind das etwa 170 KB mehr, einmal pro Verbindung gesendet, als `apt` und `systemd_service` allein kosten würden.
+- Ein `src`, dessen Rendern einen verwalteten Host gelesen hat, wird so gelesen, wie die Referenz es liest, außer `[volant] host_named_paths` ist `contained` oder `refuse`. Das ist eine Sicherheitseinstellung, keine Lücke: Gemessen an der Referenz sendet ein `copy` (oder `template` oder `unarchive`), dessen `src` ein registrierter Wert ist, jede Controller-Datei, die dieser Wert benennt, an den Host, sodass ein Host, der die Ausgabe eines Befehls oder einen Fact kontrolliert, kontrolliert, welche Datei des Operators er erhält. `refuse` lehnt ein solches `src` ab, bevor es nachgeschlagen wird, für `copy`, `template` und `unarchive` gleichermaßen. Siehe [Action-Plugins](/de/docs/internals/action-plugins/#eine-quelldatei-die-ein-verwalteter-host-benannt-hat).
+
+## Ergebnisse
+
+Gemessen am 2026-09-23 mit vier Rollen aus Ansible Galaxy, ausgeführt wie veröffentlicht: `geerlingguy.security` 3.0.2, `geerlingguy.nginx` 3.3.1, `geerlingguy.git` 3.0.1 und `geerlingguy.pip` 3.1.2, in einem Play mit `become: true` und gesammelten Facts (`just proof-roles`). Die verwalteten Hosts sind zwei Maschinen mit Ubuntu 24.04. Die Referenz ist ansible-core 2.19.12.
+
+`just proof-roles-reset` entfernte die Pakete und Dateien, die die Rollen installieren, sodass beide Engines vom selben Zustand ausgingen. Ihre ersten Durchläufe endeten mit demselben Recap, `ok=30 changed=8 skipped=28`, und ihre zweiten Durchläufe mit `ok=28 changed=0 skipped=28`.
+
+Jede Zeitangabe ist der Median von drei Durchläufen gegen Hosts, auf die die Rollen schon konvergiert waren, mit einem Release-Build von Volant. Ein Durchlauf zeigt 56 Tasks pro Host.
+
+<BarChart
+  title="Vier Galaxy-Rollen, ein konvergierter Host"
+  subtitle="56 Tasks, <code>become: true</code>, Facts gesammelt, Median von drei Durchläufen. Kürzer ist schneller."
+  unit="s"
+  decimals={2}
+  rows={[
+    { label: 'ansible-core, ohne Pipelining', value: 33.5, note: '34.52 s gegen zwei Hosts' },
+    { label: 'ansible-core, mit Pipelining', value: 25.7, note: '26.34 s gegen zwei Hosts' },
+    { label: 'Volant', value: 12.49, highlight: true, note: '12.64 s gegen zwei Hosts' },
+  ]}
+/>
+
+Gegen zwei Hosts sind die Werte 34,52 s, 26,34 s und 12,64 s. Volant braucht 49 Prozent der Zeit der Referenz mit Pipelining bei einem Host und 48 Prozent bei zwei. Der Controller baut die Union einmal pro Lauf. Im ersten Durchlauf gegen zwei Hosts landete sie im Cache jedes Hosts, und der zweite Durchlauf ließ die zwischengespeicherte Datei unberührt.
+
+## Update, 2026-10-24
+
+Aus den fünf oben genannten Plugins sind jetzt acht geworden. `dnf` und `fetch` kamen am 2026-09-23 hinzu ([#213](https://github.com/lorica-labs/volant/pull/213), [#215](https://github.com/lorica-labs/volant/pull/215)) und `reboot` am 2026-09-24 ([#219](https://github.com/lorica-labs/volant/pull/219)). Jedes läuft als derselbe Typ von Zustandsautomat auf dem Controller. [Action-Plugins](/de/docs/internals/action-plugins/) beschreibt alle acht. Die Plugins von ansible-core und von Collections, für die es keine Rust-Version gibt, laufen im Python-Hilfsprozess, und seit 2026-10-24 ([#776](https://github.com/lorica-labs/volant/pull/776)) laufen die Jobs dieser überbrückten Plugins parallel und weiten die Rechte nur aus, wenn der Task es verlangt.

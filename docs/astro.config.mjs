@@ -6,33 +6,61 @@ import starlightChangelogs from 'starlight-changelogs';
 import starlightLinksValidator from 'starlight-links-validator';
 import starlightLlmsTxt from 'starlight-llms-txt';
 import starlightScrollToTop from 'starlight-scroll-to-top';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { sep } from 'node:path';
+import { locales } from './src/i18n/locales.ts';
+import { translateSidebar } from './src/i18n/sidebar.ts';
+import { anchorMap, staleTranslations } from './src/i18n/source-hash.mjs';
 
 const repo = 'https://github.com/lorica-labs/volant';
 // The header shows the release the documentation describes, read from the workspace manifest.
 const version = readFileSync(new URL('../Cargo.toml', import.meta.url), 'utf8').match(/^version = "(.+)"$/m)[1];
 
+// The documentation used to live at the root of the site. Every page it had there redirects to the
+// same page under /docs/, and the pages merged since then redirect to the page that holds them now.
+const docsDir = new URL('./src/content/docs/docs/', import.meta.url);
+const moved = Object.fromEntries(
+  readdirSync(docsDir, { recursive: true })
+    .map((file) => String(file).split(sep).join('/'))
+    .filter((file) => /\.mdx?$/.test(file) && file !== 'index.mdx')
+    .map((file) => file.replace(/\.mdx?$/, ''))
+    .map((page) => [`/${page}`, `/docs/${page}/`]),
+);
+const merged = {
+  '/start/why': '/docs/',
+  '/playbooks/serial': '/docs/playbooks/how-a-play-runs/',
+  '/playbooks/includes': '/docs/playbooks/roles/',
+  '/playbooks/handlers': '/docs/playbooks/blocks/',
+  '/playbooks/meta': '/docs/playbooks/delegation/',
+  '/playbooks/environment': '/docs/playbooks/delegation/',
+  '/playbooks/tags': '/docs/playbooks/check-and-diff/',
+  '/playbooks/preflight': '/docs/internals/preflight/',
+  '/variables/facts': '/docs/variables/precedence/',
+  '/variables/python-helper': '/docs/variables/templating/',
+  '/variables/trust': '/docs/variables/templating/',
+  '/hosts/fact-cache': '/docs/hosts/inventories/',
+  '/hosts/become': '/docs/hosts/connections/',
+  '/reference/action-plugins': '/docs/internals/action-plugins/',
+  '/changelog': '/docs/changelog/',
+};
+const redirects = { ...moved, ...merged };
+
+// Translated pages whose English page changed since they were translated show a notice.
+const stale = staleTranslations();
+if (stale.length) console.warn(`[i18n] ${stale.length} translated pages are behind their English page`);
+
 export default defineConfig({
   site: 'https://volant.sh',
   // The overview used to live here; old links land on the home page.
   // Old addresses keep working after pages were merged or moved.
-  redirects: {
-    '/start/why': '/',
-    '/playbooks/serial': '/playbooks/how-a-play-runs/',
-    '/playbooks/includes': '/playbooks/roles/',
-    '/playbooks/handlers': '/playbooks/blocks/',
-    '/playbooks/meta': '/playbooks/delegation/',
-    '/playbooks/environment': '/playbooks/delegation/',
-    '/playbooks/tags': '/playbooks/check-and-diff/',
-    '/playbooks/preflight': '/internals/preflight/',
-    '/variables/facts': '/variables/precedence/',
-    '/variables/python-helper': '/variables/templating/',
-    '/variables/trust': '/variables/templating/',
-    '/hosts/fact-cache': '/hosts/inventories/',
-    '/hosts/become': '/hosts/connections/',
-    '/reference/action-plugins': '/internals/action-plugins/',
+  redirects,
+  vite: {
+    define: {
+      __VOLANT_VERSION__: JSON.stringify(version),
+      __VOLANT_STALE__: JSON.stringify(stale),
+      __VOLANT_ANCHORS__: JSON.stringify(anchorMap()),
+    },
   },
-  vite: { define: { __VOLANT_VERSION__: JSON.stringify(version) } },
   integrations: [
     // Mermaid has to come before Starlight so its code fences are claimed first. The colors come
     // from the site's own tokens in custom.css, so one render serves both light and dark.
@@ -48,6 +76,12 @@ export default defineConfig({
     }),
     starlight({
       title: 'Volant',
+      // English is the source and lives at the root; every translation under its own prefix. A page
+      // not translated yet shows the English text with a notice.
+      defaultLocale: 'root',
+      locales: Object.fromEntries(
+        locales.map((l) => [l.code === 'en' ? 'root' : l.code, { label: l.label, lang: l.lang }]),
+      ),
       description: 'Run your Ansible playbooks with a fast engine written in Rust.',
       logo: { src: './assets/volant-mark.svg' },
       favicon: '/favicon.svg',
@@ -88,88 +122,89 @@ export default defineConfig({
       },
       plugins: [
         // Fails the build on a broken internal link or anchor.
-        starlightLinksValidator(),
+        // Links to a page not translated yet are fine: Starlight shows the English page there.
+        starlightLinksValidator({ errorOnFallbackPages: false }),
         // Renders CHANGELOG.md as pages under /changelog/.
         starlightChangelogs(),
         // Publishes /llms.txt and the full text of the site for tools that read documentation.
         starlightLlmsTxt({ projectName: 'Volant' }),
         starlightScrollToTop(),
       ],
-      sidebar: [
+      sidebar: translateSidebar([
         {
           label: 'Start here',
           items: [
-            { label: 'Why Volant', slug: '' },
-            { label: 'Installation', slug: 'start/installation' },
-            { label: 'Quickstart', slug: 'start/quickstart' },
-            { label: 'Will my playbook run?', slug: 'start/compatibility' },
-            { label: 'When a run fails', slug: 'start/troubleshooting' },
+            { label: 'Why Volant', slug: 'docs' },
+            { label: 'Installation', slug: 'docs/start/installation' },
+            { label: 'Quickstart', slug: 'docs/start/quickstart' },
+            { label: 'Will my playbook run?', slug: 'docs/start/compatibility' },
+            { label: 'When a run fails', slug: 'docs/start/troubleshooting' },
           ],
         },
         {
           label: 'Playbooks',
           items: [
-            { label: 'Running plays', slug: 'playbooks/how-a-play-runs' },
-            { label: 'Roles, includes and imports', slug: 'playbooks/roles' },
-            { label: 'Blocks and handlers', slug: 'playbooks/blocks' },
-            { label: 'Loops and retries', slug: 'playbooks/loops' },
-            { label: 'Delegation, meta and environment', slug: 'playbooks/delegation' },
-            { label: 'Check mode, diff and listings', slug: 'playbooks/check-and-diff' },
+            { label: 'Running plays', slug: 'docs/playbooks/how-a-play-runs' },
+            { label: 'Roles, includes and imports', slug: 'docs/playbooks/roles' },
+            { label: 'Blocks and handlers', slug: 'docs/playbooks/blocks' },
+            { label: 'Loops and retries', slug: 'docs/playbooks/loops' },
+            { label: 'Delegation, meta and environment', slug: 'docs/playbooks/delegation' },
+            { label: 'Check mode, diff and listings', slug: 'docs/playbooks/check-and-diff' },
           ],
         },
         {
           label: 'Variables',
           items: [
-            { label: 'Precedence and facts', slug: 'variables/precedence' },
-            { label: 'Templating', slug: 'variables/templating' },
-            { label: 'Vault', slug: 'variables/vault' },
+            { label: 'Precedence and facts', slug: 'docs/variables/precedence' },
+            { label: 'Templating', slug: 'docs/variables/templating' },
+            { label: 'Vault', slug: 'docs/variables/vault' },
           ],
         },
         {
           label: 'Hosts',
           items: [
-            { label: 'Inventories and the fact cache', slug: 'hosts/inventories' },
-            { label: 'Connections and become', slug: 'hosts/connections' },
-            { label: 'Cross-host batching', slug: 'hosts/batching' },
+            { label: 'Inventories and the fact cache', slug: 'docs/hosts/inventories' },
+            { label: 'Connections and become', slug: 'docs/hosts/connections' },
+            { label: 'Cross-host batching', slug: 'docs/hosts/batching' },
           ],
         },
         {
           label: 'Reference',
           items: [
-            { label: 'Command line', slug: 'reference/cli' },
-            { label: 'Configuration', slug: 'reference/configuration' },
-            { label: 'Exit codes', slug: 'reference/exit-codes' },
-            { label: 'Keywords', slug: 'reference/keywords' },
-            { label: 'Modules', slug: 'reference/modules' },
-            { label: 'Full support matrix', slug: 'reference/parity' },
-            { label: 'Template language', slug: 'reference/templates' },
-            { label: 'Managed runtime', slug: 'reference/runtime' },
-            { label: 'Glossary', slug: 'reference/glossary' },
+            { label: 'Command line', slug: 'docs/reference/cli' },
+            { label: 'Configuration', slug: 'docs/reference/configuration' },
+            { label: 'Exit codes', slug: 'docs/reference/exit-codes' },
+            { label: 'Keywords', slug: 'docs/reference/keywords' },
+            { label: 'Modules', slug: 'docs/reference/modules' },
+            { label: 'Full support matrix', slug: 'docs/reference/parity' },
+            { label: 'Template language', slug: 'docs/reference/templates' },
+            { label: 'Managed runtime', slug: 'docs/reference/runtime' },
+            { label: 'Glossary', slug: 'docs/reference/glossary' },
           ],
         },
         {
           label: 'Under the hood',
           items: [
-            { label: 'Architecture', slug: 'internals/architecture' },
-            { label: 'The agent on your hosts', slug: 'internals/agent' },
-            { label: 'The pre-flight check', slug: 'internals/preflight' },
-            { label: 'Action plugins', slug: 'internals/action-plugins' },
-            { label: 'The warm Python path', slug: 'internals/python' },
-            { label: 'Decision records', items: [{ autogenerate: { directory: 'decisions' } }] },
+            { label: 'Architecture', slug: 'docs/internals/architecture' },
+            { label: 'The agent on your hosts', slug: 'docs/internals/agent' },
+            { label: 'The pre-flight check', slug: 'docs/internals/preflight' },
+            { label: 'Action plugins', slug: 'docs/internals/action-plugins' },
+            { label: 'The warm Python path', slug: 'docs/internals/python' },
+            { label: 'Decision records', items: [{ autogenerate: { directory: 'docs/decisions' } }] },
           ],
         },
         {
           label: 'Project',
           items: [
-            { label: 'Roadmap', slug: 'project/roadmap' },
-            { label: 'Performance', slug: 'project/performance' },
-            { label: 'Tests', slug: 'project/tests' },
+            { label: 'Roadmap', slug: 'docs/project/roadmap' },
+            { label: 'Performance', slug: 'docs/project/performance' },
+            { label: 'Tests', slug: 'docs/project/tests' },
             { label: 'Contributing', link: `${repo}/blob/main/CONTRIBUTING.md`, attrs: { target: '_blank' } },
-            { label: 'Changelog', link: '/changelog/' },
+            { label: 'Changelog', link: '/docs/changelog/' },
             { label: 'Security policy', link: `${repo}/blob/main/SECURITY.md`, attrs: { target: '_blank' } },
           ],
         },
-      ],
+      ]),
     }),
   ],
 });

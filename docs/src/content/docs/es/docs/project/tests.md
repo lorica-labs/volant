@@ -1,0 +1,47 @@
+---
+sourceHash: faf55681f8db
+title: Tests
+description: Cómo se comprueba Volant contra ansible-core, los cuatro tipos de respuesta grabada y cómo añadir un escenario.
+---
+
+Volant debe comportarse como ansible-core 2.19.12. Por eso, la mayor parte de la suite de tests es una comparación: ansible-core ejecutó algo una vez, su respuesta se grabó en el repositorio, y el test ejecuta Volant con la misma entrada y compara.
+
+## Los cuatro tipos
+
+Cada tipo de grabación tiene un nombre, y `just golden <kind>` lo regenera.
+
+| Tipo | Qué se grabó | Dónde se ejecuta |
+|---|---|---|
+| `template` | El resultado de renderizar cada expresión de `crates/volant/tests/golden/cases.yml` | Todos los jobs, con `reference.rs` |
+| `inventory` | Hosts, variables y grupos de un inventario, y los hosts que selecciona cada patrón | Todos los jobs, con `reference.rs` |
+| `scenario` | Una ejecución de playbook: el código de salida y toda la salida estándar | Todos los jobs, con `reference.rs` |
+| `module` | Lo que respondió cada módulo nativo en una máquina real | El job `ssh` y `just test-reference`, con `reference_modules.rs` |
+
+Nada de una grabación se edita a mano. Cambia la entrada, ejecuta `just golden <kind>` con ansible-core 2.19.12 instalado y lee el diff. Ejecutarlo en un árbol sin cambios deja los archivos exactamente como estaban. El tipo `module` necesita además `sudo`, systemd, apt y cron, porque crea una cuenta y una unidad en la máquina.
+
+## Añadir un escenario
+
+Un escenario es un directorio dentro de `crates/volant/tests/scenarios`:
+
+1. Crea `crates/volant/tests/scenarios/<name>/` y pon dentro el playbook, el inventario y los archivos que lee el playbook.
+2. Escribe `case.yml` a su lado. Una sola ejecución es `args: [-i, inv.ini, site.yml]`. Varias ejecuciones del mismo directorio son `runs:`, una lista de `{args: [...]}`.
+3. Ejecuta `just golden scenario`. Escribe `expected.json` en el directorio.
+4. Ejecuta `touch crates/volant/tests/reference.rs` y después los tests. La lista de escenarios se fija cuando ese archivo se compila, así que un directorio nuevo no se ve hasta que se recompila.
+
+Cada ejecución de Volant se hace en una copia nueva del directorio, con `--forks 1` salvo que el caso diga otra cosa. El test compara el código de salida y la salida estándar completa, con los tiempos enmascarados. Además de `args` y `runs`, `case.yml` acepta otras cinco claves:
+
+- `modes` enumera `check`, `check-diff` y `diff`. Entonces cada ejecución se hace una vez más por modo, con `--check`, `--check --diff` o `--diff` añadido, en ese orden fijo, y cada ejecución se graba.
+- `env` define variables de entorno para la ejecución.
+- `forks` sube el número de forks por encima de uno. Entonces los hosts pueden imprimir en otro orden, así que enumera en `unordered`, como expresiones regulares, las líneas cuyo orden puede variar. `unordered` sin `forks` se rechaza.
+- `needs` nombra lo que debe tener la máquina: `ansible-core`, `sudo` o `systemd`. Un caso cuyas necesidades no se cumplen se omite, salvo cuando `VOLANT_PYTHON` está definida, lo que convierte la omisión en un fallo.
+- `links` asocia una ruta con el destino de un enlace que cada copia recibe en esa ruta. Úsalo para un enlace que git o cargo no pueden guardar, como un enlace a un archivo que no existe: `cargo package` rechaza un enlace versionado así.
+
+## La matriz de paridad
+
+`crates/volant/tests/parity.rs` compara cada nombre que conocen ansible-core 2.19.12 y las colecciones del paquete `ansible` fijado (palabras clave, módulos, filtros, tests, lookups y los demás tipos de plugin) con lo que hace el motor con él. `just parity-reference` regenera el lado de la referencia, `crates/volant/tests/parity/reference.json`. Las páginas [Paridad](/es/docs/reference/parity/), [Palabras clave](/es/docs/reference/keywords/) y [Módulos](/es/docs/reference/modules/) se generan a partir de las tablas del propio motor con `just docs-parity`, `just docs-keywords` y `just docs-modules`, y un test falla cuando alguna está desactualizada.
+
+## Ejecutarlos
+
+`just check-touched` es la comprobación que conviene ejecutar antes de una pull request. Formatea, ejecuta clippy y el ratchet de tamaño de archivos, ejecuta los tests de los módulos que cambia la rama y comprueba la ortografía. `just check-local` hace lo mismo con todos los tests. CI ejecuta todos los tests.
+
+`just test` ejecuta todo lo que no necesita ningún host. `just test-reference` ejecuta las grabaciones de módulos contra la máquina en la que estás, lo que necesita ansible-core, sudo y systemd. `just ssh-test` es lo que ejecuta el job `ssh`: parte de un sshd en localhost y cubre también los tests de extremo a extremo. Es preferible un escenario o una fila de tabla en un test existente a una función de test nueva.

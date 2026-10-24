@@ -1,0 +1,337 @@
+---
+// The header of the site pages: the same mark, sections and install button as the documentation.
+import Mark from './Mark.astro';
+import { currentSection, navFor, repo } from '../../nav';
+import { localize, locales, stripLocale, strings } from '../../i18n';
+
+const { code } = Astro.props as { code: string };
+const t = strings(code);
+const nav = navFor(code, t);
+const current = currentSection(Astro.url.pathname);
+// The same page in each language, for the language menus; from a page in English only, such as the
+// blog, the home page of each language.
+const here = stripLocale(Astro.url.pathname);
+const page = localize('fr', here) === here ? '/' : here;
+const languages = locales.map((l) => {
+  const current = l.code === code;
+  return { ...l, current, href: current ? Astro.url.pathname : localize(l.code, page) };
+});
+const install = localize(code, '/docs/start/installation/');
+---
+
+<header class="nav">
+  <div class="wrap bar">
+    <a class="logo" href={localize(code, '/')} aria-label={t.header.home}>
+      <Mark />
+      <span>Volant</span>
+    </a>
+    <a class="version mono" href="/docs/changelog/" title={t.header.releaseNotes}>v{__VOLANT_VERSION__}</a>
+    <nav class="links" aria-label="Main">
+      {
+        nav.map((link) => (
+          <a href={link.href} aria-current={link.key === current ? 'page' : undefined}>
+            {link.label}
+          </a>
+        ))
+      }
+    </nav>
+    <div class="right">
+      <details class="lang">
+        <summary class="icon" aria-label={t.header.language} title={t.header.language}>
+          <svg viewBox="0 0 24 24" width="20" height="20" fill="none" stroke="currentColor" stroke-width="1.75"
+            stroke-linecap="round" stroke-linejoin="round" aria-hidden="true"><circle cx="12" cy="12" r="9"></circle><path
+            d="M3 12h18M12 3c2.5 2.6 3.8 5.6 3.8 9s-1.3 6.4-3.8 9c-2.5-2.6-3.8-5.6-3.8-9S9.5 5.6 12 3"></path></svg>
+        </summary>
+        <ul class="lang-list">
+          {
+            languages.map((l) => (
+              <li>
+                <a href={l.href} hreflang={l.lang} lang={l.lang} aria-current={l.current ? 'page' : undefined}>
+                  {l.label}
+                </a>
+              </li>
+            ))
+          }
+        </ul>
+      </details>
+      <a class="icon" href={repo} aria-label={t.header.github}>
+        <svg viewBox="0 0 24 24" width="20" height="20" fill="currentColor" aria-hidden="true">
+          <path
+            d="M12 .3a12 12 0 0 0-3.8 23.4c.6.1.8-.3.8-.6v-2c-3.3.7-4-1.6-4-1.6-.6-1.4-1.4-1.8-1.4-1.8-1-.7.1-.7.1-.7 1.2.1 1.8 1.2 1.8 1.2 1 1.8 2.8 1.3 3.5 1 .1-.8.4-1.3.7-1.6-2.7-.3-5.5-1.3-5.5-6 0-1.2.5-2.3 1.3-3.1-.2-.4-.6-1.6 0-3.2 0 0 1-.3 3.3 1.2a11.5 11.5 0 0 1 6 0C17.3 4.6 18.3 5 18.3 5c.6 1.6.2 2.8.1 3.2.8.8 1.3 1.9 1.3 3.1 0 4.7-2.8 5.7-5.5 6 .4.4.8 1.1.8 2.2v3.3c0 .3.2.7.8.6A12 12 0 0 0 12 .3"
+          ></path>
+        </svg>
+      </a>
+      <a class="btn btn-brand install" href={install}>{t.header.install}</a>
+      <details class="menu">
+        <summary aria-label={t.header.menu}>
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75"
+            stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
+        </summary>
+        <nav class="drawer" aria-label="Main">
+          {nav.map((link) => <a href={link.href}>{link.label}</a>)}
+          <a href="/docs/changelog/">{t.header.releaseNotes}, v{__VOLANT_VERSION__}</a>
+          <a href={repo}>GitHub</a>
+          <div class="langs" role="group" aria-label={t.header.language}>
+            {
+              languages.map((l) => (
+                <a href={l.href} hreflang={l.lang} lang={l.lang} aria-current={l.current ? 'page' : undefined}>
+                  {l.label}
+                </a>
+              ))
+            }
+          </div>
+          <a class="btn btn-brand" href={install}>{t.header.install}</a>
+        </nav>
+      </details>
+    </div>
+  </div>
+</header>
+
+<script>
+  // The menu and the language list are <details>: Escape closes them. While the menu is open the
+  // page behind it can neither scroll nor take focus; the language list also closes when the click
+  // or the focus goes elsewhere.
+  const menu = document.querySelector<HTMLDetailsElement>('header.nav details.menu');
+  const lang = document.querySelector<HTMLDetailsElement>('header.nav details.lang');
+  if (menu) {
+    const main = document.querySelector('main');
+    menu.addEventListener('toggle', () => {
+      document.documentElement.classList.toggle('menu-open', menu.open);
+      main?.toggleAttribute('inert', menu.open);
+    });
+    window.matchMedia('(min-width: 52.01rem)').addEventListener('change', () => (menu.open = false));
+  }
+  if (lang) {
+    const outside = (target: EventTarget | null) => !lang.contains(target as Node | null);
+    document.addEventListener('click', (event) => {
+      if (lang.open && outside(event.target)) lang.open = false;
+    });
+    lang.addEventListener('focusout', (event) => {
+      if (outside(event.relatedTarget)) lang.open = false;
+    });
+  }
+  document.addEventListener('keydown', (event) => {
+    if (event.key !== 'Escape') return;
+    for (const details of [menu, lang]) {
+      if (!details?.open) continue;
+      details.open = false;
+      details.querySelector('summary')?.focus();
+    }
+  });
+</script>
+
+<style>
+  .nav {
+    position: sticky;
+    top: 0;
+    z-index: 30;
+    height: var(--nav-h);
+    border-bottom: 1px solid var(--line);
+  }
+  /* The blur sits on a layer of its own: a backdrop-filter on the header would make it the box the
+     fixed menu is placed in, and squeeze the menu into the header's height. */
+  .nav::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: color-mix(in srgb, var(--bg) 82%, transparent);
+    backdrop-filter: saturate(140%) blur(12px);
+  }
+  :global(html.menu-open) {
+    overflow: hidden;
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 1.5rem;
+    height: 100%;
+  }
+  .logo {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    color: var(--brand);
+    font-size: 1.2rem;
+    font-weight: 680;
+    letter-spacing: -0.02em;
+  }
+  .logo span {
+    color: var(--fg);
+  }
+  .version {
+    margin-inline-start: -0.75rem;
+    padding: 0.15rem 0.5rem;
+    border: 1px solid var(--line-2);
+    border-radius: 999px;
+    color: var(--fg-3);
+    font-size: 0.72rem;
+    transition:
+      color 0.25s var(--ease),
+      border-color 0.25s var(--ease);
+  }
+  .version:hover {
+    color: var(--fg);
+    border-color: var(--fg-4);
+  }
+  .links {
+    display: flex;
+    gap: 0.25rem;
+  }
+  .links a {
+    padding: 0.45rem 0.7rem;
+    border-radius: 0.5rem;
+    color: var(--fg-2);
+    font-size: 0.875rem;
+    font-weight: 500;
+    transition:
+      color 0.2s var(--ease),
+      background-color 0.2s var(--ease);
+  }
+  .links a:hover,
+  .links a[aria-current='page'] {
+    color: var(--fg);
+    background: rgb(255 255 255 / 0.03);
+  }
+  .links a[aria-current='page'] {
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .right {
+    display: flex;
+    align-items: center;
+    gap: 1rem;
+    margin-inline-start: auto;
+  }
+  .icon {
+    display: grid;
+    place-items: center;
+    color: var(--fg-2);
+    transition: color 0.2s var(--ease);
+  }
+  .icon:hover {
+    color: var(--fg);
+  }
+  .lang {
+    position: relative;
+  }
+  .lang summary {
+    width: 2.25rem;
+    height: 2.25rem;
+    border-radius: 0.5rem;
+    list-style: none;
+    cursor: pointer;
+  }
+  .lang summary::-webkit-details-marker {
+    display: none;
+  }
+  .lang[open] summary {
+    color: var(--fg);
+    background: rgb(255 255 255 / 0.03);
+  }
+  .lang-list {
+    position: absolute;
+    top: calc(100% + 0.5rem);
+    inset-inline-end: 0;
+    display: grid;
+    min-width: 10rem;
+    margin: 0;
+    padding: 0.35rem;
+    border-radius: 0.65rem;
+    background: var(--bg-2);
+    box-shadow:
+      inset 0 0 0 1px var(--line-2),
+      0 12px 32px rgb(0 0 0 / 0.45);
+    list-style: none;
+  }
+  .lang-list a {
+    display: block;
+    padding: 0.45rem 0.7rem;
+    border-radius: 0.45rem;
+    color: var(--fg-2);
+    font-size: 0.875rem;
+    transition:
+      color 0.2s var(--ease),
+      background-color 0.2s var(--ease);
+  }
+  .lang-list a:hover,
+  .lang-list a[aria-current='page'] {
+    color: var(--fg);
+    background: rgb(255 255 255 / 0.04);
+  }
+  .lang-list a[aria-current='page'] {
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  .install {
+    height: 2.25rem;
+    padding: 0 0.9rem;
+    font-size: 0.875rem;
+  }
+  .menu {
+    display: none;
+  }
+  .menu summary {
+    display: grid;
+    place-items: center;
+    width: 2.75rem;
+    height: 2.75rem;
+    border-radius: 0.5rem;
+    list-style: none;
+    cursor: pointer;
+  }
+  .menu summary::-webkit-details-marker {
+    display: none;
+  }
+  .drawer {
+    position: fixed;
+    inset: var(--nav-h) 0 0;
+    display: grid;
+    align-content: start;
+    gap: 0.25rem;
+    padding: 1.25rem;
+    overflow-y: auto;
+    background: var(--bg);
+  }
+  .drawer a:not(.btn) {
+    min-height: 2.75rem;
+    padding: 0.85rem 0.25rem;
+    border-bottom: 1px solid var(--line);
+    font-size: 1.05rem;
+  }
+  .drawer .langs {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.5rem;
+    margin-top: 1rem;
+  }
+  .drawer .langs a {
+    display: flex;
+    align-items: center;
+    min-height: 2.75rem;
+    padding: 0 0.9rem;
+    border: 0;
+    border-radius: 999px;
+    color: var(--fg-2);
+    font-size: 0.95rem;
+    box-shadow: inset 0 0 0 1px var(--line-2);
+  }
+  .drawer .langs a[aria-current='page'] {
+    color: var(--fg);
+    box-shadow: inset 0 0 0 1px var(--brand);
+  }
+  .drawer .btn {
+    justify-content: center;
+    margin-top: 1rem;
+  }
+  @media (max-width: 52rem) {
+    .links,
+    .version,
+    .install,
+    .lang,
+    .icon {
+      display: none;
+    }
+    .menu {
+      display: block;
+    }
+  }
+</style>

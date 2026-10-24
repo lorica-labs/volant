@@ -220,6 +220,14 @@ docs-parity:
     VOLANT_UPDATE_DOCS=1 cargo test -p volant --test parity the_parity_page_matches_the_engine
 
 # Serve the documentation site with live reload (needs Node.js)
+# Stamp each translated documentation page with the hash of its English page, once it has caught up
+docs-i18n-stamp:
+    node docs/src/i18n/source-hash.mjs
+
+# List the translated documentation pages whose English page changed since they were translated
+docs-i18n-check:
+    node docs/src/i18n/source-hash.mjs --check
+
 docs-dev:
     cd docs && npm ci && npx astro dev
 

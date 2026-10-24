@@ -967,7 +967,7 @@ fn the_published_host_variables_are_the_ones_this_module_reads() {
 
     let page = std::fs::read_to_string(
         Path::new(env!("CARGO_MANIFEST_DIR"))
-            .join("../../docs/src/content/docs/hosts/connections.md"),
+            .join("../../docs/src/content/docs/docs/hosts/connections.md"),
     )
     .expect("the connections page is in the repository");
     // Every name in the first cell of a row, so one row can carry a variable and its aliases.

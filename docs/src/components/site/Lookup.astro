@@ -1,0 +1,56 @@
+---
+// A search that opens the full support matrix already filtered on the name typed.
+import { localize, strings } from '../../i18n';
+
+const { code, id = 'lookup', label } = Astro.props as { code: string; id?: string; label?: string };
+const t = strings(code).lookup;
+---
+
+<form class="lookup" action={localize(code, '/docs/reference/parity/')} method="get" role="search">
+  <label for={id}>{label ?? t.label}</label>
+  <div>
+    <input id={id} name="q" type="search" required placeholder="copy, community.general, json_query, --diff" />
+    <button class="btn btn-brand" type="submit">{t.button}</button>
+  </div>
+</form>
+
+<style>
+  .lookup {
+    display: grid;
+    gap: 0.6rem;
+    max-width: 40rem;
+  }
+  label {
+    color: var(--fg);
+    font-weight: 560;
+  }
+  div {
+    display: flex;
+    gap: 0.5rem;
+  }
+  input {
+    flex: 1;
+    min-width: 0;
+    height: 2.75rem;
+    padding: 0 1rem;
+    border: 1px solid var(--line-2);
+    border-radius: 0.55rem;
+    background: var(--bg-2);
+    color: var(--fg);
+    font: 0.95rem var(--f-sans);
+    transition: border-color 0.2s var(--ease);
+  }
+  input::placeholder {
+    color: var(--fg-3);
+  }
+  input:focus-visible {
+    border-color: var(--brand);
+    outline: 2px solid color-mix(in srgb, var(--brand) 45%, transparent);
+    outline-offset: 1px;
+  }
+  @media (max-width: 36rem) {
+    div {
+      flex-direction: column;
+    }
+  }
+</style>

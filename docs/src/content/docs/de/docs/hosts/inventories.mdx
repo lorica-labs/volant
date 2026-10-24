@@ -1,0 +1,161 @@
+---
+sourceHash: bced5151937a
+title: Inventories und der Fact-Cache
+description: Das Inventory-Format, das Volant liest, woher Gruppen- und Hostvariablen kommen, die Grammatik der Host-Muster und wie Facts zwischen Läufen erhalten bleiben.
+---
+
+Diese Seite beantwortet, woher Ihre Hosts kommen, wie ein Muster einige davon auswählt und wie Sie ihre Facts zwischen Läufen behalten. Ihre vorhandenen Inventory-Dateien, `group_vars` und `host_vars` werden unverändert gelesen.
+
+Volant liest Inventories so wie ansible-core: eine oder mehrere Quellen, jede vom ersten aktivierten Plugin geparst, das sie akzeptiert. Ein statischer Lauf (INI, YAML, TOML, eine Hostliste) startet kein Python.
+
+## Quellen
+
+`-i` (auch `--inventory` und `--inventory-file`) nimmt eine Quelle und lässt sich wiederholen. Ohne `-i` liest Volant `ANSIBLE_INVENTORY`, dann `inventory` in der `ansible.cfg`. Beide akzeptieren eine kommagetrennte Liste. Gibt es keines davon, liest Volant wie ansible-core `/etc/ansible/hosts` und überspringt die Datei ohne Meldung, wenn sie fehlt. Auf einem Rechner ohne diese Datei existiert nur das implizite `localhost`.
+
+Eine Quelle ist eine der folgenden:
+
+| Quelle | Hinweise |
+|---|---|
+| Eine INI-Datei | Hosts, `[group]`, `[group:children]`, `[group:vars]` und Bereiche. Ein Bereich zählt Ziffern (`web[01:03]`, die führenden Nullen bleiben), Buchstaben (`db[a:c]`) und kann eine Schrittweite haben (`n[1:10:3]`). |
+| Eine YAML- oder TOML-Datei | Die Formate `yaml` und `toml` von Ansible. |
+| Ein Verzeichnis | Jede Datei darin ist eine Quelle, in sortierter Reihenfolge durchlaufen. Dateien mit einer ignorierten Endung oder einem Ignorier-Muster sowie die Verzeichnisse `group_vars` und `host_vars` werden übersprungen. |
+| Eine Kommaliste | `-i web1,web2,` ist eine Liste von Hosts (`host_list`). Ein einzelner Host braucht ein abschließendes Komma. `advanced_host_list` wird gelesen, wenn Sie es aktivieren. |
+| Eine ausführbare Datei | Wird als dynamisches Inventory-Skript ausgeführt: einmal `--list`, dann `--host <name>` für Hosts, zu denen die Liste keine Variablen lieferte. |
+| Eine Plugin-Datei | Eine YAML-Datei, in der `plugin:` `constructed`, `generator` oder das Inventory-Plugin einer Collection nennt (das Plugin `auto`). |
+
+Mehrere Quellen werden in der angegebenen Reihenfolge zusammengeführt. Eine spätere Quelle gewinnt pro Schlüssel, Gruppenmitglieder werden vereinigt, und Hosts und Gruppen behalten die Reihenfolge, in der sie zuerst auftauchten.
+
+### Die Plugin-Kette
+
+Der Abschnitt `[inventory]` der `ansible.cfg` steuert, wie eine Quelle zugeordnet wird:
+
+- `enable_plugins` listet die Plugins auf, die der Reihe nach probiert werden. Der Standard ist `host_list, script, auto, yaml, ini, toml`.
+- `ignore_extensions` und `ignore_patterns` überspringen Dateien in Verzeichnissen.
+- `unparsed_is_failed` lässt den Lauf fehlschlagen, wenn gar keine Quelle gelesen werden konnte.
+- `any_unparsed_is_failed` lässt den Lauf bei der ersten Quelle fehlschlagen, die kein Plugin lesen konnte.
+
+Eine Quelle, die kein Plugin liest, wird wie in Ansible mit einer Warnung übersprungen. `-vvv` zeigt, welches Plugin welche Quelle übernommen hat und welche sie abgelehnt haben.
+
+### Dynamische Quellen
+
+Ein Skript gibt sein Inventory als JSON aus, im Format, das `ansible-inventory --list` schreibt. `constructed` und `generator` bauen Gruppen und Hosts aus Templates.
+
+Das Inventory-Plugin einer Collection (zum Beispiel für einen Cloud-Anbieter) läuft innerhalb von ansible-core, über einen Python-Prozess, den Volant nur startet, wenn eine solche Quelle vorhanden ist, siehe [den warmen Python-Pfad](/de/docs/internals/python/).
+
+Mit `always_show_stderr` in `[inventory_plugin_script]` legen Sie fest, was mit der Standardfehlerausgabe eines Skripts geschieht. Die Einstellung ist standardmäßig an: Was ein Skript dorthin schreibt, erscheint als Zeile `[ERROR]:`, auch wenn das Skript erfolgreich ist.
+
+## Ein INI-Inventory
+
+```ini title="inventory.ini"
+bastion ansible_host=198.51.100.7
+
+[web]
+web1 ansible_host=192.0.2.11
+web2 ansible_host=192.0.2.12
+
+[db]
+db1 ansible_host=192.0.2.21 ansible_user=postgres
+
+[prod:children]
+web
+db
+
+[prod:vars]
+ansible_user=deploy
+ansible_ssh_common_args=-o ProxyJump=bastion
+```
+
+Kommentare beginnen mit `#` oder `;`.
+
+### Das implizite localhost
+
+Der Controller ist ein Host unter drei Namen: `localhost`, `127.0.0.1` und `::1`. Definiert das Inventory keinen davon, legt Volant einen impliziten Host an. Er hat eine lokale Verbindung und das Python des Controllers als `ansible_python_interpreter`, gehört zu keiner Gruppe, und `all` trifft ihn nicht. Ein Play, das ihn nennt (`hosts: localhost`), ein `delegate_to: localhost` und `hostvars['localhost']` erreichen ihn alle. Eine Schleife über `hostvars` führt ihn nicht auf.
+
+Definiert das Inventory einen der drei Namen, hört dieser Host auch auf die beiden anderen. So läuft `hosts: 127.0.0.1` auf dem `localhost` des Inventorys, mit dessen Variablen. Der zuerst definierte gewinnt. Enthält das Inventory gar keinen Host, warnt Volant, dass nur `localhost` verfügbar ist. Setzen Sie `localhost_warning` auf `false`, um die Warnung abzuschalten.
+
+## Variablen von Gruppen und Hosts
+
+Volant liest `group_vars/` und `host_vars/` neben jeder Quelle, dann neben dem Playbook, als Dateien (`group_vars/web.yml`) oder als Verzeichnisse (`group_vars/web/*.yml`). Die [Rangfolge](/de/docs/variables/precedence/) zeigt, wo jede Ebene steht.
+
+Gehört ein Host zu mehreren Gruppen, gewinnt die tiefere Gruppe. Zwischen Gruppen gleicher Tiefe entscheidet `ansible_group_priority` (der höhere Wert gewinnt), danach der Gruppenname.
+
+Ein Name, der zugleich Host und Gruppe ist, steht für den Host. Volant warnt pro Lauf einmal, wenn ein Inventory einen solchen Namen enthält, unabhängig vom Muster des Laufs, weil Ansible das beim Laden des Inventorys erkennt.
+
+## Neu laden
+
+`meta: refresh_inventory` liest jede Quelle erneut, siehe [Delegation, Meta-Tasks und Umgebungsvariablen](/de/docs/playbooks/delegation/#das-inventory-neu-laden).
+
+## Host-Muster
+
+Ein Muster in `hosts:` eines Plays oder in `--limit` folgt der Grammatik von Ansible:
+
+| Muster | Wählt |
+|---|---|
+| `all` oder `*` | jeden Host |
+| `web:db` oder `web,db` | Hosts in einer der beiden Gruppen |
+| `web*`, `db?`, `host[abc]`, `host[a-z]` | Wildcards im Shell-Stil auf Host- und Gruppennamen |
+| `web:&prod` | Hosts in `web`, die auch in `prod` sind |
+| `web:!web2` | Hosts in `web` außer `web2` |
+| `~web\d+` | Hosts und Gruppen, deren Name ab dem ersten Zeichen auf den regulären Ausdruck passt |
+| `web[0]`, `web[0:2]`, `web[1:]` | einen Index oder einen Ausschnitt der Hosts, die ein Term ergeben hat |
+| `::1`, `fe80::1`, `[::1]:22` | einen Host: eine Adresse wird nicht an ihren Doppelpunkten zerschnitten |
+
+Ausschnitte schließen ihr Ende ein, wie in Ansible: `web[0:2]` sind drei Hosts. `name[N-M]` wird als ältere Schreibweise von `name[N:M]` akzeptiert. Ein `~`-Term, der kein gültiger regulärer Ausdruck ist, beendet den Lauf, wie in ansible-core.
+
+So wird ein Muster in Terme zerlegt:
+
+| Muster | Terme |
+|---|---|
+| Enthält ein Komma, etwa `web:db,cache` | Nur an den Kommas getrennt: `web:db` und `cache`. |
+| Kein Komma, und eine gültige Adresse, ein Hostname mit Port oder ein Bereich | Ein Term. |
+| Kein Komma, alles andere | An den Doppelpunkten getrennt. |
+
+Terme werden nicht in der Reihenfolge angewendet, in der Sie sie schreiben. Zuerst kommen einfache Terme, dann `&`-Terme, dann `!`-Terme, genau wie bei Ansible. Ein Muster, das nur aus `!`- oder `&`-Termen besteht, beginnt bei `all`.
+
+`--limit` folgt derselben Grammatik. Jeder Term, der auf keinen Host passt, gibt `Could not match supplied host pattern, ignoring: <term>` aus, und der Lauf behält die Hosts, auf die die anderen Terme gepasst haben. Ein Limit, das auf gar keinen Host passt, schlägt mit `Specified inventory, host pattern and/or --limit leaves us with no hosts to target.` und Exit-Code 1 fehl.
+
+## Der Fact-Cache
+
+Standardmäßig liegen Facts im Speicher und sind weg, wenn der Lauf endet. Mit `fact_caching = jsonfile` schreibt Volant die Facts jedes Hosts in eine Datei und liest sie beim nächsten Lauf zurück, im Dateiformat von ansible-core 2.19. Ein Cache, den das eine Werkzeug geschrieben hat, liest auch das andere.
+
+```ini title="ansible.cfg"
+[defaults]
+gathering = smart
+fact_caching = jsonfile
+fact_caching_connection = /var/cache/volant/facts
+fact_caching_timeout = 3600
+```
+
+### Einstellungen des Fact-Caches
+
+| Einstellung | Umgebungsvariable | Bedeutung |
+|---|---|---|
+| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory` (der Standard, pro Lauf) oder `jsonfile`. `ansible.builtin.memory` und `ansible.builtin.jsonfile` funktionieren ebenfalls. |
+| `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | Das Verzeichnis, das die Dateien enthält. `jsonfile` braucht es; ohne es hält der Lauf die Facts im Speicher. |
+| `fact_caching_timeout` | `ANSIBLE_CACHE_PLUGIN_TIMEOUT` | Sekunden, die eine Datei frisch bleibt. Standard 86400. `0` läuft nie ab. |
+| `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | Wird jedem Dateinamen vorangestellt. Standardmäßig leer. |
+| `gathering` | `ANSIBLE_GATHERING` | `implicit` (Standard), `explicit` oder `smart`. |
+
+Jeder Host hat eine Datei mit dem Namen `<prefix>s1_<host>`.
+
+Jedes andere Cache-Plugin, etwa `redis` oder `yaml`, beendet den Lauf mit Exit-Code 4 und der Meldung `fact cache plugin '<name>' (from '<origin>') is not supported yet; use 'memory' or 'jsonfile'`.
+
+### Sammeln
+
+- `implicit` sammelt Facts in jedem Play, das es nicht abschaltet.
+- `explicit` sammelt nur in Plays, die `gather_facts: true` setzen.
+- `smart` sammelt nur für Hosts, die keinen frischen Eintrag im Cache haben.
+
+Gecachte Facts werden zu Beginn des Laufs geladen, sodass Tasks sie auch dann sehen, wenn ein Play nicht sammelt.
+
+### set_fact
+
+`set_fact` mit `cacheable: true` schreibt den Wert zusätzlich in den Cache-Eintrag des Hosts, und der nächste Lauf liest ihn zurück.
+
+### Leeren
+
+`--flush-cache` entfernt vor dem Lauf die Einträge der Hosts im Inventory. Dateien anderer Hosts bleiben.
+
+### Fehler im Fact-Cache
+
+Ein Cache-Verzeichnis, das sich nicht anlegen lässt, oder ein fehlendes `fact_caching_connection` (`Required config '_uri' for 'jsonfile' cache plugin not provided.`) löst eine Warnung aus, und der Lauf geht mit dem Cache im Speicher weiter. Eine Datei, die kein gültiges JSON ist, wird entfernt und beendet den Lauf, mit der Meldung von ansible-core: `The cache file <path> was corrupt, or did not otherwise contain valid data. It has been removed, so you can re-run your command now.`

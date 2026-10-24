@@ -1,0 +1,88 @@
+---
+// A one-line command with a button that copies it.
+import { strings } from '../../i18n';
+
+const { command, code } = Astro.props as { command: string; code: string };
+const t = strings(code).copy;
+---
+
+<div class="copy-command">
+  <code class="mono"><span aria-hidden="true">$</span> {command}</code>
+  <button type="button" data-command={command} data-copied={t.copied} data-manual={t.manual} aria-label={t.label}>
+    <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75"
+      stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+      <rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
+    </svg>
+    <span class="label">{t.copy}</span>
+  </button>
+</div>
+
+<script>
+  for (const button of document.querySelectorAll<HTMLButtonElement>('.copy-command button')) {
+    const label = button.querySelector('.label')!;
+    const copy = label.textContent;
+    button.addEventListener('click', async () => {
+      try {
+        await navigator.clipboard.writeText(button.dataset.command!);
+        label.textContent = button.dataset.copied!;
+      } catch {
+        label.textContent = button.dataset.manual!;
+      }
+      setTimeout(() => (label.textContent = copy), 1800);
+    });
+  }
+</script>
+
+<style>
+  .copy-command {
+    display: flex;
+    align-items: center;
+    gap: 0.75rem;
+    max-width: 100%;
+    padding: 0.4rem 0.4rem 0.4rem 1rem;
+    border-radius: 0.65rem;
+    background: var(--bg-2);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+  }
+  code {
+    flex: 1;
+    min-width: 0;
+    overflow-x: auto;
+    padding: 0;
+    background: none;
+    box-shadow: none;
+    color: var(--fg);
+    font-size: 0.875rem;
+    white-space: nowrap;
+    /* A command too long for the box scrolls without a scrollbar, and fades at its right edge. */
+    scrollbar-width: none;
+    padding-inline-end: 1.5rem;
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
+  }
+  code::-webkit-scrollbar {
+    display: none;
+  }
+  code span {
+    color: var(--brand);
+  }
+  button {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.4rem;
+    height: 2.25rem;
+    padding: 0 0.75rem;
+    border: 0;
+    border-radius: 0.45rem;
+    background: var(--bg-3);
+    color: var(--fg-2);
+    font: 500 0.8rem var(--f-sans);
+    cursor: pointer;
+    transition:
+      color 0.2s var(--ease),
+      background-color 0.2s var(--ease);
+  }
+  button:hover {
+    color: var(--fg);
+    background: #1f2429;
+  }
+</style>

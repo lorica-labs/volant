@@ -1,0 +1,71 @@
+---
+sourceHash: e61565118f58
+title: "带 Python 回退的原生模块，以及其他速度方面的选择"
+description: "决策记录 0008。"
+sidebar:
+  label: "0008 · 原生模块与速度"
+  order: 8
+---
+
+| 状态 | 日期 |
+|---|---|
+| 已接受 | 2026-09-27 |
+
+## 背景
+
+2026-09-24，Volant 针对两台已收敛的主机运行了[决策记录 0007](/zh-cn/docs/decisions/0007-action-plugins/#结果) 中的四个 Galaxy role，用了 12.66 秒，而启用 pipelining 的 ansible-core 2.19.12 用了 26.23 秒。对这次运行逐步骤的剖析显示了时间花在哪里，按每台主机计：
+
+- 8 个无事可装的 `apt` task 花了 5.5 秒：每次调用都要用 140 毫秒导入模块，606 毫秒运行它；
+- 3.8 秒用于在控制节点上重新构建 Python 模块的 union，尽管自上次运行以来 ansible-core 里什么都没变；
+- `setup` 花了 1.1 秒，其中约 300 毫秒用于启动 Python 服务，然后三个 `systemd` task 花 0.7 秒，`file`、`lineinfile` 和 `stat` 花 0.7 秒；
+- 0.6 秒用于打开连接，因为探测和链路各自付出了自己的 ssh 握手；
+- 0.2 秒用于在控制节点上准备 task。在 k3s 上，同一步骤花了 2 秒，CPU 剖析把其中约 80% 归于复制和释放变量表。
+
+帧本身只花了 30 毫秒，序列化整个运行大约 5 毫秒，所以时间并没有花在传输格式上。
+
+对 k3s-ansible playbook 的同样剖析，另外发现了 `service_facts`（3.3 秒）、`package_facts`（2.1 秒），以及一次包含 collection 的 5.7 秒 union 构建。
+
+## 决策
+
+常用模块在 agent 中原生运行，并回退到 Python。`setup`、`stat`、`file`、`apt`、`systemd`（以及 `systemd_service`）、`lineinfile`、`copy`、`package_facts`、`service_facts`、`user` 和 `group` 在 agent 中有 Rust 版本。原生模块接收的参数，就是 Python 模块本来会接收的参数。当这些参数落在它所实现的范围内时，它以参照模块的结果作答，否则把 task 交还给 Python 模块。它先通过读取来判断，然后才行动，所以交还总是发生在主机上任何东西被改变之前。它的结果经由与 Python 模块相同的路径进入控制节点，作为不可信数据。
+
+golden 对比是关卡：只有在某次变更中，原生模块的回答与参照版本逐键一致，包括 `changed`、`diff` 和 `invocation`，覆盖 golden 记录的每种情形，它才会被开启。同一个测试还会检查每种情形走了哪条路径，所以在自己的子集之外作答的原生模块，或者把每种情形都交还的原生模块，都无法通过它。
+
+只有当 playbook 可证明不需要其他任何东西时，才会用原生方式收集 facts。原生 `setup` 产出 `gather_subset: min` 的 17 个收集器、`hardware` 的处理器和内存 facts，以及 `network` 的默认路由和地址列表。它无法产出的 fact 会从结果中省略。连接之前，控制节点会通读本次运行的每个 play、role、模板和变量定义，并列出它们可以读取的 facts。只有当其中每一个都由原生方式产出时，它才使用原生 `setup`。通过计算出的名称进行读取（`ansible_facts[item]`、`vars[...]`、`lookup('vars', ...)`、整个 `hostvars[host]`）算作读取一切，会保留 Python 的 `setup`。`--facts python` 仍可强制使用它。
+
+union 缓存在控制节点上：条目保存在 `$XDG_CACHE_HOME/volant/unions/` 下，以构建所读取的、不是文件的一切为键：Volant 版本、解释器、被要求的模块、`ANSIBLE_*` 和 `PYTHON*` 环境、`ansible.cfg` 和工作目录。它记录每个源文件的大小和修改时间。检查这 154 个文件约花 1 毫秒。任何变化都会触发重建，而无法读取或写入的缓存永远不会让运行失败。
+
+每台 inventory 主机得到一个 OpenSSH 连接。除非操作者的 ssh 配置或 `ansible_ssh_*_args` 已经对连接共享有所设定，否则 Volant 会在它的 `ssh` 命令行里加上 `ControlMaster`、它自己的 `ControlPath` 和 `ControlPersist=30s`。这样，探测、上传检查、链路和提权链路共享一次密钥交换。socket 是按 inventory 主机而不是按机器划分的：五十个同一台机器的别名共享一个 master，撞上了服务器 `MaxSessions` 的上限 10。
+
+主机的变量是一叠从上往下读取的共享层，而不是为每个 task 合并并复制一次的映射。收集到的 facts 只保存一份，被每个读取它们的 task 共享，一台主机写入的 fact 只会使那台主机的视图失效。
+
+屏障依然保留，批处理依然是可选的。批处理现在还会看到模板正文和变量定义中对其他主机的读取，但默认仍然关闭。它依据 playbook 的文本做决定，而文本没有写明的依赖，例如另一台主机仍在安装的服务，是不会被等待的。见[跨主机批处理](/zh-cn/docs/hosts/batching/)。
+
+blob 是二进制的，并且是压缩的。协议版本 6 把 union 和暂存文件作为原始字节，放在通告之后的帧里发送，不再是 JSON 内的 base64。union 在写入控制节点缓存时用 deflate 压缩一次。暂存文件在大于 4 KiB 且压缩能让它变小时才压缩。agent 解压到通告的大小，并校验结果的 BLAKE3 哈希。其他帧仍是 JSON。
+
+Python 服务会预热它的导入。在 fork 出运行模块的子进程之后，它会在子进程运行期间把该模块导入自己，所以同一个模块的下一个子进程启动时它已经加载好了。
+
+## 考虑过并搁置的选项
+
+Rust 的 ssh 客户端（`russh`）针对一台主机做了测量：在已打开的 `russh` 连接上新建一个通道花 45 毫秒，在 OpenSSH `ControlMaster` 上新建一个会话花 53 毫秒。这 8 毫秒的收益，代价是 agent 的依赖树多出 115 个 crate（从 63 个到 178 个），`cargo deny` 在 RUSTSEC-2023-0071 上失败，以及对操作者配置的支持问题：`Match` 被忽略，`Include` 使整个文件失败，`ProxyJump` 被解析但不使用，没有 `HostKeyAlias`，没有 `/etc/ssh/ssh_config` 或全局 `known_hosts`，静态构建里没有 GSSAPI。保留 OpenSSH，就让每个 `~/.ssh/config` 都像对 `ansible-playbook` 那样继续有效。
+
+二进制帧格式几乎节省不了什么。对一次完整 roles 运行的帧做编码和解码，JSON 花 4.8 到 5.3 毫秒，带字段名的 MessagePack 花 3.9 到 4.6 毫秒，CBOR 花 5.9 到 6.6 毫秒，而整个运行是 12.5 秒。不带字段名的 MessagePack 无法读回它自己的输出。Protobuf 没有干净的办法承载占了 80% 字节的 `Map<String, Value>`。JSON 保留；只有 blob 变了。
+
+QUIC 需要在每台主机上有一个守护进程和一个监听端口。Volant 的承诺是一个通过你已有的 ssh 访问启动的静态 agent。
+
+io_uring 能加速的地方很少，因为 agent 自己做的 I/O 很少。它的时间花在它运行的模块和这些模块启动的进程上。
+
+在 Python 服务里测量了 `gc.freeze()` 和提前 fork 好的子进程。每个只为每个 task 节省 1 毫秒或更少，都没有采用。
+
+## 后果
+
+- 落在原生子集之内的 task 不再运行 Python。每个 task 都落在子集之内的主机，根本不会启动 Python 服务，就像 roles 工作负载那样。
+- 对其他一切，Python 路径仍是参照，每个原生模块的子集都记录在它的源码里。参数的变化可以把 task 从一条路径移到另一条，而不改变它的结果。
+- `[volant] native_modules = false` 把每个 task 都发给 Python，`--facts python` 强制使用 Python 的 `setup`，以便在真实运行上比较两条路径。`--profile` 和 `VOLANT_PROFILE_JSON` 显示每个 task 走了哪条路径，以及它为什么交还。
+- ssh socket 目录（`$XDG_RUNTIME_DIR/volant-cm`，或权限为 0700 的 `/tmp/volant-cm-<uid>`）是控制节点又多出来的一个写入位置。master 比运行多存活 30 秒。
+- 启动时，Volant 会把它的打开文件限制提高到硬限制，因为每条链路占三个描述符。1024 的硬限制仍会把一次运行限制在约 330 条链路。
+- 协议版本不同的控制节点和 agent 会彼此拒绝，与以前一样。Volant 总是上传自己的 agent，所以这只对手工构建的 agent 有意义。
+
+## 结果
+
+2026-09-27 用 `just bench` 和 `just bench-k3s` 测量：四个 role 用了 0.529 秒，而启用 `pipelining = True` 的 ansible-core 2.19.12 用了 26.435 秒（比值 49.97），k3s-ansible 用了 23.477 秒，而 ansible-core 用了 50.519 秒（比值 2.15）。配置、命令行，以及与 2026-09-24 的逐步骤对比，见[性能页面](/zh-cn/docs/project/performance/)。

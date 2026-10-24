@@ -1,0 +1,154 @@
+---
+sourceHash: 3fc9a949d509
+title: 安装
+description: 用一条命令安装 Volant，了解控制节点和主机各自需要什么，以及如何保持更新。
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+## 安装
+
+```sh
+curl -fsSL https://volant.sh/install.sh | sh
+```
+
+这个脚本支持 Linux 和 macOS，架构为 x86_64 和 arm64。在 Linux 上它使用静态构建。它需要 `curl`、`tar`，以及 `sha256sum` 或 `shasum`，Linux 上还需要 `xz`。脚本会为你的机器下载最新发布版本，校验它的 SHA-256 校验和，解压到 `~/.local/share/volant` 下，并把 `volant` 和 `volant-playbook` 链接到 `~/.local/bin`。脚本不要求 root 权限，也不会在这两个目录之外写入任何内容。Volant 之后运行时会写入什么，列在 [Volant 会在你的机器上留下什么](/zh-cn/docs/#volant-会在你的机器上留下什么)里。运行之前，你可以先[阅读这个脚本](https://volant.sh/install.sh)。目前还不支持 Windows，Windows 控制节点在[路线图](/zh-cn/docs/project/roadmap/)上。
+
+你不需要安装 Ansible。第一次运行需要 Python 时，Volant 会下载自己的 Python 和 ansible-core，大约 155 MB，保存在 `~/.local/share/volant/runtime`。下载时它会打印一行提示。[Volant 会在你的机器上留下什么](/zh-cn/docs/#volant-会在你的机器上留下什么)列出了它写入的全部内容。
+
+<Aside type="caution" title="macOS 尚未测试">
+macOS 构建和托管运行时都还没有测试过：我们没有可用的 Mac。如果在 macOS 上某次运行无法安装运行时，请把 `VOLANT_PYTHON` 指向一个带有 ansible-core 的 Python 3，做法见[托管运行时](/zh-cn/docs/reference/runtime/#运行使用哪个解释器)。
+</Aside>
+
+检查是否安装成功：
+
+```sh
+volant --version
+```
+
+如果 shell 找不到 `volant`，请把 `~/.local/bin` 加入 `PATH`。缺少这一项时，脚本会打印需要添加的那一行。
+
+### 选项
+
+脚本读取三个环境变量：
+
+| 变量 | 默认值 | 作用 |
+|---|---|---|
+| `VOLANT_VERSION` | 最新发布版本 | 要安装的版本，例如 `v0.1.0-alpha.10`。 |
+| `VOLANT_HOME` | `~/.local/share/volant` | 各版本解压到哪里。 |
+| `VOLANT_BIN_DIR` | `~/.local/bin` | `volant` 和 `volant-playbook` 的链接放在哪里。 |
+
+```sh
+curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.10 sh
+```
+
+## 你会得到什么
+
+发布包里有两个可执行文件。`volant` 内置了它要上传到主机的 agent。agent 是在主机上运行你的 task 的小程序。除此之外没有别的需要安装，也没有别的需要放在它旁边：
+
+| 文件 | 说明 |
+|---|---|
+| `volant` | 控制节点，也就是你运行的命令。 |
+| `volant-playbook` | 同一个控制节点，换了一个读起来像 `ansible-playbook` 的名字。 |
+
+第一次使用时，控制节点会把 agent 写到 `~/.cache/volant/agents/<version>/`，设置了 `$XDG_CACHE_HOME` 时则写到它下面：包括你自己这台机器用的 agent（`ansible_connection=local` 使用它），以及要上传到 x86_64 和 arm64 Linux 主机的 agent。之后的运行会复用它们，与控制节点内置 agent 不一致的副本会被重新写入。
+
+## 构建与平台
+
+每个发布版本为每个平台提供一个归档。Linux 有静态构建和 glibc 构建。macOS 只有一个构建，链接系统库。
+
+| 平台 | 归档 | 链接方式 | 最低要求 | 还需要 |
+|---|---|---|---|---|
+| Linux x86_64，静态 | `volant-x86_64-unknown-linux-musl.tar.xz` | 静态，不依赖 libc | 任意 Linux | `ssh` 客户端，运行 Python 模块需要 Python |
+| Linux x86_64，glibc | `volant-x86_64-unknown-linux-gnu.tar.xz` | 动态，只依赖 glibc | glibc 2.17 | `ssh` 客户端，运行 Python 模块需要 Python |
+| Linux arm64，静态 | `volant-aarch64-unknown-linux-musl.tar.xz` | 静态，不依赖 libc | 任意 Linux | `ssh` 客户端，运行 Python 模块需要 Python |
+| Linux arm64，glibc | `volant-aarch64-unknown-linux-gnu.tar.xz` | 动态，只依赖 glibc | glibc 2.17 | `ssh` 客户端，运行 Python 模块需要 Python |
+| macOS，Apple silicon | `volant-aarch64-apple-darwin.tar.xz` | 动态，只依赖系统库 | macOS 11 | `ssh` 客户端，运行 Python 模块需要 Python |
+| macOS，Intel | `volant-x86_64-apple-darwin.tar.xz` | 动态，只依赖系统库 | macOS 10.12 | `ssh` 客户端，运行 Python 模块需要 Python |
+
+两个 Linux 构建运行的是同一份代码，带有同样的 agent。静态构建可以在任何发行版上运行，包括 Alpine 和没有 libc 的容器。glibc 构建需要 glibc 2.17 或更新版本，覆盖 Debian 8、Ubuntu 14.04、RHEL 和 CentOS 7 以及之后的所有版本，并且能获得系统 libc 的安全更新。
+
+安装脚本在 Linux 上始终使用静态构建。`volant-installer.sh` 在 glibc 2.17 或更新版本上使用 glibc 构建，在其他 Linux 上使用静态构建。`cargo binstall` 在任何 glibc 主机上使用 glibc 构建，在 Alpine 上使用静态构建。在低于 2.17 的 glibc 主机上，请手动下载静态归档。
+
+### 在容器中
+
+静态构建不需要镜像提供任何东西，所以它可以运行在用 `FROM scratch` 构建的容器里：
+
+```dockerfile
+FROM scratch
+COPY volant /volant
+ENTRYPOINT ["/volant"]
+```
+
+scratch 镜像里没有 `ssh`、没有 Python、没有 shell，也没有 `/etc/passwd`。镜像里只有控制节点时，playbook 可以使用 `connection: local`，并以 `argv` 的方式使用 `command`。SSH 连接需要镜像里有 `ssh` 客户端，Python 模块和收集 facts 需要 Python，`shell` 和 `raw` 需要 shell。控制节点会把解出的 agent 保存在 `~/.cache/volant` 下，设置了 `$XDG_CACHE_HOME` 时则保存在它下面：请给它一个可写的目录。
+
+## 机器需要什么
+
+<Tabs>
+  <TabItem label="控制节点">
+    - Linux 或 macOS。
+    - `PATH` 上有 OpenSSH 客户端。Volant 自己运行 `ssh`，所以你的 `~/.ssh/config` 会生效。
+    - 第一次有 playbook 需要 Python 时，需要 `curl` 或 `wget`，以及 `tar`。
+    - 如果要使用安装脚本或手动解压发布包，需要 `curl`、`tar`、`sha256sum` 或 `shasum`，Linux 上还需要 `xz`。
+
+    对于在 Python 中运行的模块，Volant 使用带有 `ansible-core` 的 Python 3。找不到时，它会下载自己的一份（大约 155 MB），按固定的哈希校验每个文件，并保存在 `~/.local/share/volant/runtime` 下。发生这种情况的那次运行会打印一行提示。如果你已经有这样的 Python，Volant 可以使用它：[运行使用哪个解释器](/zh-cn/docs/reference/runtime/#运行使用哪个解释器)给出了查找顺序。另见[托管运行时](/zh-cn/docs/reference/runtime/)。
+
+    Volant 没有 `vault`、`galaxy`、`inventory` 或 `doc` 命令。要使用 `ansible-vault` 和 ansible-core 的其他工具，请自行安装 ansible-core。
+
+    如果一个 playbook 只包含 `command`、`shell`、`raw` 和在控制节点上运行的模块，并且设置了 `gather_facts: false`，那它完全不需要 Python。
+  </TabItem>
+  <TabItem label="受管主机">
+    - Linux，x86_64 或 arm64。
+    - 一个 SSH 服务和一个可以用密钥或 ssh-agent 登录的账户。
+    - 一个 Python 3 解释器，用于运行 Python 模块和收集 facts。主机不需要 ansible-core：Volant 会发送模块导入的每个文件。
+    - 如果使用 `become`，需要 `sudo`。
+
+    不需要手动安装任何东西。控制节点随第一个 task 上传 agent，并缓存在 `~/.ansible/tmp` 下。
+  </TabItem>
+</Tabs>
+
+## 更新
+
+再运行一次安装命令。它会在你已有的版本旁边安装最新版本，并把链接指向它。旧版本仍然保留在 `~/.local/share/volant` 下，所以要回退，设置 `VOLANT_VERSION` 即可。
+
+## 其他安装方式
+
+<Tabs>
+  <TabItem label="cargo binstall">
+    ```sh
+    # Only pre-releases exist so far, so name the version.
+    cargo binstall volant@0.1.0-alpha.10
+    ```
+
+    这会下载一个已包含 agent 的发布版二进制文件。在 glibc 主机上是 glibc 构建，在 Alpine 上是静态构建。
+  </TabItem>
+  <TabItem label="手动下载">
+    [发布页面](https://github.com/lorica-labs/volant/releases)上的每个版本，都为每个平台提供一个归档，命名为 `volant-<target>.tar.xz`，与上表一致，旁边有一个 `.sha256` 文件。解压它（需要 `xz`），再把 `volant` 放到 `PATH` 里：
+
+    ```sh
+    tar -xJf volant-x86_64-unknown-linux-musl.tar.xz
+    install -m 755 volant-x86_64-unknown-linux-musl/volant ~/.local/bin/volant
+    ```
+  </TabItem>
+  <TabItem label="从源码安装">
+    ```sh
+    cargo install --git https://github.com/lorica-labs/volant volant
+    ```
+
+    从源码构建的版本不带 agent，因为 agent 是为主机交叉编译的。请把 `VOLANT_AGENT_DIR` 指向存放它们的目录，或者从检出的代码自行构建：`cargo build` 会在控制节点旁边生成一个本地 agent，`just agent-musl` 会构建 x86_64 Linux 的 agent。`just smoke-embedded` 展示了发布构建如何内嵌它们。
+  </TabItem>
+</Tabs>
+
+<Aside type="note">
+我们计划提供 Homebrew formula。[路线图](/zh-cn/docs/project/roadmap/)在跟踪这件事。
+</Aside>
+
+## 卸载
+
+删除发布目录、链接和控制节点的缓存。在每台主机上，agent 缓存是运行所用的每个账户各一个目录。你的项目里没有其他任何改动，所以[回到 `ansible-playbook`](/zh-cn/docs/start/troubleshooting/#回到-ansible-playbook)不需要别的操作：
+
+```sh
+volant runtime remove --all
+rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook ~/.cache/volant
+ssh web1 'rm -rf ~/.ansible/tmp/volant-*'
+```

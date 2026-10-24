@@ -7,7 +7,7 @@ body:
     attributes:
       label: Page
       description: The address of the page
-      placeholder: https://volant.sh/start/quickstart/
+      placeholder: https://volant.sh/docs/start/quickstart/
     validations:
       required: true
   - type: textarea

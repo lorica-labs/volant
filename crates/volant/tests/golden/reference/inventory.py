@@ -94,6 +94,13 @@ def _sources():
                     )
             # `--yaml`, `--export` and both, for `--list` and for the first host.
             dumps = None
+
+            def brief(result):
+                # The stderr of a dump is not compared; a crash's traceback names the machine.
+                recorded = shown(result)
+                recorded["stderr"] = recorded["stderr"].split("\n\n")[0]
+                return recorded
+
             if not unordered:
                 options = {"yaml": ["--yaml"], "toml": ["--toml"]}
                 if not case.get("no_export"):
@@ -106,7 +113,7 @@ def _sources():
                     )
                 with_lib = {**used, "PYTHONPATH": lib}
                 dumps = {
-                    key: shown(
+                    key: brief(
                         run(
                             ["ansible-inventory", *args, "--list", *extra],
                             cwd=copy,
@@ -117,7 +124,7 @@ def _sources():
                 }
                 if host:
                     for key, extra in options.items():
-                        dumps[f"host_{key}"] = shown(
+                        dumps[f"host_{key}"] = brief(
                             run(
                                 ["ansible-inventory", *args, "--host", host["name"], *extra],
                                 cwd=copy,

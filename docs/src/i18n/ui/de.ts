@@ -119,6 +119,7 @@ export const de: Deep<Strings> = {
     involved: 'Mitmachen',
   },
   performance: {
+    title: 'Ansible-Performance: Volant im Vergleich mit ansible-core 2.19',
     description:
       'Zwei reale Workloads, gemessen gegen ansible-core 2.19.12 mit Pipelining, die zugrunde liegende Konfiguration und die Befehle, mit denen sich die Messungen reproduzieren lassen.',
     heading: 'Gemessen an echten Playbooks.',
@@ -181,6 +182,7 @@ export const de: Deep<Strings> = {
       'Diese Zahlen beschreiben zwei Playbooks auf zwei Hosts. Ihre hängen von Ihrem Netzwerk ab, davon, was Ihre Tasks tun, wie viele davon ein natives Modul abdeckt und wie viele Hosts Sie gleichzeitig ansteuern. <a class="text-link" href="/docs/project/performance/">Die vollständige Messung</a>',
   },
   compatibility: {
+    title: 'Ansible-Kompatibilität: was Volant heute ausführt',
     description:
       'Wie viel von ansible-core 2.19.12 und vom ansible-Paket Volant heute ausführt, Name für Name von der Testsuite gemessen.',
     heading: 'Kompatibel mit ansible-core 2.19, Name für Name.',

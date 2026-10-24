@@ -119,6 +119,7 @@ export const es: Deep<Strings> = {
     involved: 'Participa',
   },
   performance: {
+    title: 'Rendimiento de Ansible: Volant frente a ansible-core 2.19',
     description:
       'Dos cargas reales medidas contra ansible-core 2.19.12 con pipelining, la configuración que hay detrás y los comandos que las reproducen.',
     heading: 'Medido con playbooks reales.',
@@ -181,6 +182,7 @@ export const es: Deep<Strings> = {
       'Estas cifras describen dos playbooks en dos hosts. Las tuyas dependen de tu red, de lo que hagan tus tareas, de cuántas cubre un módulo nativo y de cuántos hosts manejes a la vez. <a class="text-link" href="/docs/project/performance/">La medición completa</a>',
   },
   compatibility: {
+    title: 'Compatibilidad con Ansible: lo que Volant ejecuta hoy',
     description:
       'Cuánto de ansible-core 2.19.12 y del paquete ansible ejecuta hoy Volant, medido nombre por nombre por la suite de pruebas.',
     heading: 'Compatible con ansible-core 2.19, nombre por nombre.',

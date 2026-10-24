@@ -118,6 +118,7 @@ export const zhCn: Deep<Strings> = {
     involved: '参与进来',
   },
   performance: {
+    title: 'Ansible 性能：Volant 对比 ansible-core 2.19',
     description:
       '对比启用 pipelining 的 ansible-core 2.19.12 测得的两个真实工作负载、背后的配置，以及复现它们的命令。',
     heading: '在真实 playbook 上测量。',
@@ -180,6 +181,7 @@ export const zhCn: Deep<Strings> = {
       '这些数字描述的是两台主机上的两个 playbook。你的结果取决于网络、task 的内容、原生模块覆盖了其中多少个，以及同时操作多少台主机。<a class="text-link" href="/docs/project/performance/">完整的测量</a>',
   },
   compatibility: {
+    title: 'Ansible 兼容性：Volant 目前能运行什么',
     description:
       'Volant 目前能运行多少 ansible-core 2.19.12 和 ansible 包的内容，由测试套件逐名称测量。',
     heading: '与 ansible-core 2.19 逐名称兼容。',

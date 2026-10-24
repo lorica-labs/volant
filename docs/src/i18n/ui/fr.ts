@@ -115,6 +115,7 @@ export const fr: Deep<Strings> = {
     involved: 'Participer',
   },
   performance: {
+    title: 'Performance Ansible : Volant face à ansible-core 2.19',
     description: `Deux charges de travail réelles mesurées face à ansible-core 2.19.12 avec pipelining, la configuration utilisée et les commandes pour les reproduire.`,
     heading: 'Mesuré sur de vrais playbooks.',
     lede: `Deux charges de travail, chacune lancée par une recette du dépôt, face à ansible-core 2.19.12 avec pipelining activé. Chaque chiffre de cette page vient de ces recettes, mesuré le {date}.`,
@@ -172,6 +173,7 @@ export const fr: Deep<Strings> = {
     caveat: `Ces chiffres décrivent deux playbooks sur deux hôtes. Les vôtres dépendent de votre réseau, de ce que font vos tâches, du nombre de celles qu'un module natif couvre et du nombre d'hôtes que vous pilotez en même temps. <a class="text-link" href="/docs/project/performance/">La mesure complète</a>`,
   },
   compatibility: {
+    title: 'Compatibilité Ansible : ce que Volant exécute aujourd’hui',
     description: `Quelle part d'ansible-core 2.19.12 et du paquet ansible Volant exécute aujourd'hui, mesurée nom par nom par la suite de tests.`,
     heading: 'Compatible avec ansible-core 2.19, nom par nom.',
     lede: `Volant charge toute la grammaire d'ansible-core 2.19 et reproduit son comportement, donc toute différence est un bug. La suite de tests liste chaque mot-clé, option et plugin livré par ansible-core et vérifie ce que cette version en fait.`,

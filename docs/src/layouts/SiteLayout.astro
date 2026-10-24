@@ -25,6 +25,17 @@ const alternates =
         ...locales.map((l) => ({ lang: l.lang, href: new URL(localize(l.code, page), Astro.site) })),
         { lang: 'x-default', href: new URL(page, Astro.site) },
       ];
+// The name search engines show for the site, read from the English home page only.
+const website =
+  page === '/' && code === 'en'
+    ? JSON.stringify({
+        '@context': 'https://schema.org',
+        '@type': 'WebSite',
+        name: 'Volant',
+        alternateName: 'Volant for Ansible',
+        url: 'https://volant.sh/',
+      })
+    : undefined;
 ---
 
 <!doctype html>
@@ -43,6 +54,13 @@ const alternates =
     <meta property="og:description" content={description} />
     <meta property="og:url" content={canonical} />
     <meta property="og:type" content="website" />
+    <meta property="og:image" content="https://volant.sh/og.png" />
+    <meta property="og:image:width" content="1200" />
+    <meta property="og:image:height" content="630" />
+    <meta property="og:image:alt" content="Volant runs four Galaxy roles in 0.529 s where ansible-core takes 26.435 s." />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:image" content="https://volant.sh/og.png" />
+    {website && <script type="application/ld+json" set:html={website} />}
     <meta name="theme-color" content="#0b0d0f" />
   </head>
   <body>

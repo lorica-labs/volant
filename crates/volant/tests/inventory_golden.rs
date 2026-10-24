@@ -60,6 +60,37 @@ fn run(cwd: &Path, case: &Value, extra: &[&str]) -> (i32, String, String) {
     )
 }
 
+/// `--yaml`, `--export` and both, for `--list` and for the first host: how many ran.
+fn compare_dumps(root: &Path, name: &str, case: &Value, failures: &mut Vec<String>) -> usize {
+    let Some(dumps) = case["dumps"].as_object() else {
+        return 0;
+    };
+    for (key, want) in dumps {
+        let (mut extra, options) = match key.strip_prefix("host_") {
+            Some(options) => (
+                vec!["--host", case["host"]["name"].as_str().unwrap()],
+                options,
+            ),
+            None => (vec!["--list"], key.as_str()),
+        };
+        extra.extend_from_slice(match options {
+            "yaml" => &["--yaml"][..],
+            "export" => &["--export"],
+            "yaml_export" => &["--yaml", "--export"],
+            other => panic!("{name}: no dump is recorded as {other}"),
+        });
+        let (code, stdout, _) = run(root, case, &extra);
+        let wanted = (
+            i32::try_from(want["rc"].as_i64().unwrap()).unwrap(),
+            want["stdout"].as_str().unwrap(),
+        );
+        if (code, stdout.as_str()) != wanted {
+            failures.push(format!("{name}: {key} exit {code}\n{stdout}"));
+        }
+    }
+    dumps.len()
+}
+
 #[test]
 fn the_command_prints_the_bytes_the_reference_printed() {
     let expected: Value =
@@ -138,30 +169,7 @@ fn the_command_prints_the_bytes_the_reference_printed() {
                 }
             }
         }
-        // `--yaml`, `--export` and both, for `--list` and for the first host.
-        if let Some(dumps) = case["dumps"].as_object() {
-            for (key, want) in dumps {
-                let (mut extra, options) = match key.strip_prefix("host_") {
-                    Some(options) => (vec!["--host", host["name"].as_str().unwrap()], options),
-                    None => (vec!["--list"], key.as_str()),
-                };
-                extra.extend_from_slice(match options {
-                    "yaml" => &["--yaml"][..],
-                    "export" => &["--export"],
-                    "yaml_export" => &["--yaml", "--export"],
-                    other => panic!("{name}: no dump is recorded as {other}"),
-                });
-                let (code, stdout, _) = run(&root, case, &extra);
-                compared += 1;
-                let wanted = (
-                    i32::try_from(want["rc"].as_i64().unwrap()).unwrap(),
-                    want["stdout"].as_str().unwrap(),
-                );
-                if (code, stdout.as_str()) != wanted {
-                    failures.push(format!("{name}: {key} exit {code}\n{stdout}"));
-                }
-            }
-        }
+        compared += compare_dumps(&root, name, case, &mut failures);
         if case["cli_only"] == true {
             // The JSON without the newline `print` adds, the YAML with the one it ends with.
             let yaml = case["dumps"]["yaml"]["stdout"].as_str().unwrap();

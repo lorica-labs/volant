@@ -1,5 +1,5 @@
 ---
-sourceHash: d50c2578bd7e
+sourceHash: 162269910b1f
 title: volant adhoc
 description: 在每台匹配模式的主机上运行一个模块，选项和输出与 ansible 一致。
 ---
@@ -44,7 +44,7 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 </Option>
 
 <Option name="--version">
-  打印 `ansible [core 2.19.12]`、配置文件、模块搜索路径、collection 位置和已启动程序的路径，然后停止。当 Volant 找到带 ansible-core 的解释器时，后面会接上模块位置以及 Python、Jinja 和 PyYAML 的版本，沿用参考实现的行。没有时这些行会省略：`--version` 不安装任何东西。搜索路径读取环境变量和默认值，而不是 `ansible.cfg` 里的 `library` 或 `collections_path`。
+  打印 `ansible [core 2.19.12]`、配置文件、模块搜索路径、collection 位置和可执行文件位置，然后停止。可执行文件位置跟随 `argv[0]`：相对的 `argv[0]`，或用 `exec -a` 设置的 `argv[0]`，可能指向与实际运行的文件不同的文件。当 Volant 找到带 ansible-core 的解释器时，后面会接上模块位置以及 Python、Jinja 和 PyYAML 的版本，沿用参考实现的行。没有时这些行会省略：`--version` 不安装任何东西。搜索路径读取环境变量和默认值，而不是 `ansible.cfg` 里的 `library` 或 `collections_path`。
 </Option>
 
 <Option name="--list-hosts">

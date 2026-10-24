@@ -1,5 +1,5 @@
 ---
-sourceHash: d50c2578bd7e
+sourceHash: 162269910b1f
 title: volant adhoc
 description: Führt ein Modul auf jedem Host aus, der zu einem Muster passt, mit den Optionen und der Ausgabe von ansible.
 ---
@@ -44,7 +44,7 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 </Option>
 
 <Option name="--version">
-  Gibt `ansible [core 2.19.12]`, die Konfigurationsdatei, den Modulsuchpfad, den Ort der Collections und den Pfad des gestarteten Programms aus und hält dann an. Findet Volant einen Interpreter mit ansible-core, folgen der Ort der Module und die Versionen von Python, Jinja und PyYAML, in den Zeilen der Referenz. Ohne ihn entfallen diese Zeilen: `--version` installiert nichts. Die Suchpfade lesen die Umgebung und die Standardwerte, nicht `library` oder `collections_path` der `ansible.cfg`.
+  Gibt `ansible [core 2.19.12]`, die Konfigurationsdatei, den Modulsuchpfad, den Ort der Collections und den Ort der ausführbaren Datei aus und hält dann an. Der Ort der ausführbaren Datei folgt `argv[0]`: Ein relatives `argv[0]` oder eines, das mit `exec -a` gesetzt wurde, kann eine andere Datei nennen als die, die läuft. Findet Volant einen Interpreter mit ansible-core, folgen der Ort der Module und die Versionen von Python, Jinja und PyYAML, in den Zeilen der Referenz. Ohne ihn entfallen diese Zeilen: `--version` installiert nichts. Die Suchpfade lesen die Umgebung und die Standardwerte, nicht `library` oder `collections_path` der `ansible.cfg`.
 </Option>
 
 <Option name="--list-hosts">

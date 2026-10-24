@@ -507,3 +507,82 @@ fn a_file_one_tool_encrypts_the_other_decrypts(#[case] secret: &[&str]) {
         );
     }
 }
+
+/// A write that cannot finish leaves the original as it was, and no temporary file behind.
+#[test]
+fn a_failed_write_keeps_the_original() {
+    let sandbox = Sandbox::new();
+    std::fs::create_dir(sandbox.dir.join("target_dir")).expect("a directory");
+    let before = sandbox.read("plain");
+    // The rename over a directory fails after the new file was written.
+    let out = sandbox.run(
+        &[
+            "encrypt",
+            "plain",
+            "--output",
+            "target_dir",
+            "--vault-password-file",
+            "pw",
+        ],
+        None,
+    );
+    assert_eq!(out.status.code(), Some(1), "{}", text(&out.stderr));
+    assert!(
+        text(&out.stderr).starts_with("[ERROR]: Unable to replace "),
+        "{}",
+        text(&out.stderr)
+    );
+    assert_eq!(sandbox.read("plain"), before);
+    let mut names: Vec<String> = std::fs::read_dir(&sandbox.dir)
+        .expect("the directory")
+        .map(|e| {
+            e.expect("an entry")
+                .file_name()
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect();
+    names.sort();
+    assert_eq!(names, ["bad", "plain", "pw", "target_dir", "vaulted"]);
+
+    // A directory that cannot be written to: the file is untouched (root writes anyway).
+    std::fs::set_permissions(&sandbox.dir, std::fs::Permissions::from_mode(0o500))
+        .expect("its mode");
+    let out = sandbox.run(&["encrypt", "plain", "--vault-password-file", "pw"], None);
+    std::fs::set_permissions(&sandbox.dir, std::fs::Permissions::from_mode(0o700))
+        .expect("its mode");
+    if out.status.code() != Some(0) {
+        assert_eq!(out.status.code(), Some(1));
+        assert_eq!(sandbox.read("plain"), before);
+    }
+}
+
+/// No subcommand is argparse's error on standard error, naming the program as started.
+#[rstest]
+#[case::as_ansible_vault(
+    "ansible-vault",
+    "usage: ansible-vault [-h] [--version] [-v] {encrypt,decrypt,view} ...\nansible-vault: error: the following arguments are required: action\n"
+)]
+#[case::as_volant_vault(
+    "volant",
+    "usage: volant vault [-h] [--version] [-v] {encrypt,decrypt,view} ...\nvolant vault: error: the following arguments are required: action\n"
+)]
+fn no_subcommand_is_a_usage_error(#[case] name: &str, #[case] want: &str) {
+    let sandbox = Sandbox::new();
+    let mut command = if name == "volant" {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+        command.arg("vault");
+        command
+    } else {
+        let link = sandbox.dir.join(name);
+        std::os::unix::fs::symlink(env!("CARGO_BIN_EXE_volant"), &link).expect("a symlink");
+        Command::new(link)
+    };
+    command.current_dir(&sandbox.dir).stdin(Stdio::null());
+    let out = process::run_within(&mut command, DEADLINE, None);
+    assert_eq!(
+        (text(&out.stdout), text(&out.stderr)),
+        (String::new(), want.to_string())
+    );
+    assert_eq!(out.status.code(), Some(2));
+}

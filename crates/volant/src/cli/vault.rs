@@ -119,13 +119,22 @@ pub fn vault(args: VaultArgs) -> i32 {
     }
     let Some(command) = args.command else {
         // `--version` is the one argument that stands without a subcommand, which clap's own
-        // `subcommand_required` cannot express.
-        clap::Command::new("vault")
-            .error(
-                clap::error::ErrorKind::MissingSubcommand,
-                "a subcommand is required: encrypt, decrypt or view",
-            )
-            .exit()
+        // `subcommand_required` cannot express, so the usage error is worded here, as argparse
+        // words it, with the program as started.
+        let started = std::env::args_os()
+            .next()
+            .and_then(|p| {
+                Path::new(&p)
+                    .file_name()
+                    .map(|n| n.to_string_lossy().into_owned())
+            })
+            .filter(|name| name.starts_with("ansible-"))
+            .unwrap_or_else(|| "volant vault".to_string());
+        eprintln!(
+            "usage: {started} [-h] [--version] [-v] {{encrypt,decrypt,view}} ...
+{started}: error: the following arguments are required: action"
+        );
+        return 2;
     };
     match execute(command) {
         Ok(()) => 0,
@@ -384,19 +393,12 @@ fn write_data(data: &[u8], target: &str, shred: bool) -> Result<(), Failure> {
             dir.display()
         )));
     }
-    if path.is_file() {
-        if shred && !path.is_symlink() {
-            // One pass of zeros: the reference's `shred` fallback writes random passes, and
-            // neither survives a copy-on-write filesystem.
-            if let Ok(meta) = std::fs::metadata(path)
-                && let Ok(mut old) = std::fs::OpenOptions::new().write(true).open(path)
-            {
-                let zeros = vec![0_u8; usize::try_from(meta.len()).unwrap_or(0)];
-                let _ = old.write_all(&zeros).and_then(|()| old.sync_all());
-            }
-        }
-        std::fs::remove_file(path).map_err(|e| fail(os_error(target, &e)))?;
-    }
+    // The new bytes go to a file beside the target and replace it by a rename, so a failed
+    // create or write leaves the original as it was.
+    let leaf = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let temp = dir.join(format!(".{leaf}.volant-{}", std::process::id()));
     let mut options = std::fs::OpenOptions::new();
     options.write(true).create_new(true);
     #[cfg(unix)]
@@ -404,21 +406,48 @@ fn write_data(data: &[u8], target: &str, shred: bool) -> Result<(), Failure> {
         use std::os::unix::fs::OpenOptionsExt as _;
         options.mode(0o600);
     }
-    let mut file = options.open(path).map_err(|e| {
+    let mut file = options.open(&temp).map_err(|e| {
         if e.kind() == std::io::ErrorKind::AlreadyExists {
             fail("Vault file got recreated while we were operating on it.")
         } else {
             fail("Problem creating temporary vault file.")
         }
     })?;
-    #[cfg(unix)]
-    {
-        // The reference runs under a umask of 077; the mode is the same whatever ours is.
-        use std::os::unix::fs::PermissionsExt as _;
-        let _ = file.set_permissions(std::fs::Permissions::from_mode(0o600));
-    }
-    file.write_all(data)
+    let written = (|| {
+        #[cfg(unix)]
+        {
+            // The reference runs under a umask of 077; the mode is the same whatever ours is.
+            use std::os::unix::fs::PermissionsExt as _;
+            file.set_permissions(std::fs::Permissions::from_mode(0o600))?;
+        }
+        file.write_all(data)?;
+        file.sync_all()
+    })();
+    // The old bytes, held open so they can be zeroed once the new file is in place.
+    let old = (shred && path.is_file() && !path.is_symlink())
+        .then(|| std::fs::OpenOptions::new().write(true).open(path).ok())
+        .flatten();
+    let old_len = old
+        .as_ref()
+        .and_then(|f| f.metadata().ok())
+        .map_or(0, |m| m.len());
+    let done = written
         .map_err(|e| fail(format!("Unable to write to temporary vault file: {e}")))
+        .and_then(|()| {
+            std::fs::rename(&temp, path)
+                .map_err(|e| fail(format!("Unable to replace {target}: {e}")))
+        });
+    if let Err(failure) = done {
+        let _ = std::fs::remove_file(&temp);
+        return Err(failure);
+    }
+    if let Some(mut old) = old {
+        // One pass of zeros over the replaced file: the reference's `shred` fallback writes
+        // random passes, and neither survives a copy-on-write filesystem.
+        let zeros = vec![0_u8; usize::try_from(old_len).unwrap_or(0)];
+        let _ = old.write_all(&zeros).and_then(|()| old.sync_all());
+    }
+    Ok(())
 }
 
 /// The plaintext on the screen: on a terminal through the pager, which defaults to `less`;

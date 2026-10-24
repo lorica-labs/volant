@@ -278,7 +278,7 @@ fn the_page_describes_partial_only_when_a_keyword_is_partial() {
 #[test]
 fn the_keyword_page_matches_the_tables() {
     let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
-        .join("../../docs/src/content/docs/reference/keywords.md");
+        .join("../../docs/src/content/docs/docs/reference/keywords.md");
     let expected = documentation();
     if std::env::var_os("VOLANT_UPDATE_DOCS").is_some() {
         std::fs::write(&path, &expected).unwrap();
@@ -286,6 +286,6 @@ fn the_keyword_page_matches_the_tables() {
     let actual = std::fs::read_to_string(&path).unwrap_or_default();
     assert_eq!(
         actual, expected,
-        "run `just docs-keywords` to regenerate docs/src/content/docs/reference/keywords.md"
+        "run `just docs-keywords` to regenerate docs/src/content/docs/docs/reference/keywords.md"
     );
 }

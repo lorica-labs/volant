@@ -1,0 +1,78 @@
+---
+sourceHash: 65506ddc8a04
+title: 跨主机批处理
+description: 一个需要主动开启的设置，让每台主机在不依赖其他主机的 task 之间向前推进。
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../../components/HostTimeline.astro';
+
+批处理让每台主机在不依赖其他主机的 task 之间向前推进，于是覆盖很多主机的 play 能更早结束。它需要主动开启：默认是关闭的。
+
+默认情况下，Volant 运行 play 的方式与 Ansible 的 `linear` 策略相同：一个批次中的主机会在每个 task 之前汇合。这一保证让 playbook 可以依赖 task 从未提及的东西。一台主机可以写下一个文件，让另一台主机稍后读取，也可以重启一个服务，让另一台主机去连接。这些都不会体现在 task 的文本里，所以唯一安全的假设是：任何 task 都可能依赖前一个 task，在每台主机上都是如此。
+
+本页讲的是默认的 `linear` 策略。在 `strategy: free` 和 `host_pinned` 下，每台主机按自己的节奏运行，`run_once`、`any_errors_fatal` 和 `max_fail_percentage` 会被忽略并给出警告，`pause` 或 `add_host` task 会让运行停止。无论 `batching` 如何设置，主机只会在作用于整个批次的 `meta` task（`end_play`、`end_batch`、`clear_facts`、`clear_host_errors` 和 `refresh_inventory`）、handler 以及动态 include 处汇合。见[其他策略](/zh-cn/docs/playbooks/how-a-play-runs/#其他策略)。
+
+## 批处理会改变什么
+
+开启 `batching` 后，主机会接着往下执行自己的 task，而不是在每个 task 前等待，只在同步点停下：
+
+- `run_once` 或 `pause` task
+- 文本中通过 `hostvars`、`ansible_play_hosts` 或 `ansible_play_batch` 提到另一台主机状态的 task
+- 间接读取这类名字的 task：通过 `src` 固定的模板正文，或通过定义中读取了另一台主机的变量，无论链条经过多少个变量
+- 委派的 task，因为它作用的主机可能还没有走到那里
+- 在可能写入过控制节点文件的 task（例如 `fetch`）之后读取控制节点文件的 task
+- include 或 handler 刷新向 play 添加步骤的位置
+- play 的结尾
+
+同步点在两侧都有效：在每台主机完成它之前的步骤之前，没有主机会越过它。
+
+当 playbook 在运行期间写入的某个 fact 仍然是模板时，每一步都重新成为同步点。
+
+还有几种情况会结束一个批次，但不会让每台主机等待：注册结果的 task、可能返回 facts 的模块（`set_fact`、`setup`、`package_facts`，以及来自 collection 或 role 的 `library/` 的任何模块），以及调用 lookup 的 task。它们之后的 task 要等它们运行完才会渲染。
+
+<HostTimeline />
+
+它改变的是 task 的运行顺序，而不是 task 的行为。汇总在两种情况下相同。可能不同的是文本中看不出来的依赖：开启批处理后，一台主机可能在另一台主机运行第一个 task 之前就到达了第五个 task。
+
+## 它看不到什么
+
+批处理根据 playbook 的文本做判断。文本中没有明说的依赖不带任何标记，也没有任何东西会等待它：
+
+- 另一台主机仍在安装的网络服务：`wait_for: host=db1 port=5432`、`uri` 调用、`psql -h db1`，以及任何直接写出主机名的客户端；
+- 直接写出主机名的某台主机上的文件、共享文件系统，或者两台主机的 task 交汇的数据库或队列；
+- `shell` 或 `command` task 对另一台机器做的任何事。
+
+诸如 `vars[name]` 或 `lookup('vars', name)` 这样的计算式读取会保留同步点，因为文本无法说明它读取的是哪台主机。在 ansible-core 和 Volant 的默认设置下，每个 task 都是同步点，所以这些先后关系不需要有人写下来就能成立。只对主机之间不存在这类依赖的 play 开启批处理。
+
+## 开启
+
+它默认关闭，需要你主动开启。
+
+<Tabs>
+  <TabItem label="ansible.cfg">
+    ```ini
+    [volant]
+    batching = true
+    ```
+  </TabItem>
+  <TabItem label="环境变量">
+    ```sh
+    VOLANT_BATCHING=1 volant playbook -i inventory.ini site.yml
+    ```
+  </TabItem>
+</Tabs>
+
+Ansible 会忽略它不认识的段。在 ansible-core 2.19.12 上用上面的配置测得：`ansible-playbook` 运行该 play 并以 0 退出，没有任何警告，`ansible-config dump` 也不会列出这个段。同一个 `ansible.cfg` 可以包含 `[volant]`，并同时驱动两个引擎。
+
+<Aside type="caution">
+`ansible-config validate` 会发现它：它拒绝这个文件，提示 `Found unknown section 'volant'`，并以 1 退出。如果你要校验共享的 `ansible.cfg`，请改为通过环境变量设置这个选项。
+</Aside>
+
+## 它能节省多少
+
+在一台 Linux 机器上用 Volant 0.1.0-alpha.5 测得，条件是 200 台主机、20 个 task、本地连接和 `-f 50`：在没有任何 task 读取其他主机的 play 中，默认设置耗时 1.28 秒，设置 `batching = true` 后耗时 0.53 秒，快 2.4 倍。当每个 task 都读取 `hostvars` 时，两种设置都约为 1.3 秒，因为无论哪种设置，每个 task 都是同步点。通过 SSH 时，每个 task 还要付出一次网络往返，所以你自己的倍数取决于你的延迟。这些数字自 alpha.5 以来没有重新测量过。
+
+## 为什么它不是 playbook 关键字
+
+Ansible 没有这样的关键字，而用 Volant 运行的 playbook 必须仍然是 `ansible-playbook` 能以相同方式运行的 playbook。批处理描述的是你运行时所用的机器，所以这个设置放在 `ansible.cfg` 中。[决策记录 0005](/zh-cn/docs/decisions/0005-fork-permits-span-host-local-batches/)记录了其背后的规则。

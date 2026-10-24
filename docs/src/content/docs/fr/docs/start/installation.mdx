@@ -1,0 +1,154 @@
+---
+sourceHash: 3fc9a949d509
+title: Installation
+description: Installez Volant en une commande, vérifiez ce dont le contrôleur et les hôtes ont besoin, et gardez-le à jour.
+---
+
+import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
+
+## Installer
+
+```sh
+curl -fsSL https://volant.sh/install.sh | sh
+```
+
+Le script fonctionne sous Linux et macOS, en x86_64 et en arm64. Sous Linux, il prend le build statique. Il a besoin de `curl`, `tar` et `sha256sum` ou `shasum`, plus `xz` sous Linux. Il télécharge la dernière version pour votre machine, vérifie sa somme de contrôle SHA-256, la décompresse sous `~/.local/share/volant` et lie `volant` et `volant-playbook` dans `~/.local/bin`. Le script ne demande aucun accès root et n'écrit rien en dehors de ces deux répertoires. Ce que Volant écrit ensuite, quand il s'exécute, est listé dans [Ce que Volant laisse sur vos machines](/fr/docs/#ce-que-volant-laisse-sur-vos-machines). Vous pouvez [lire le script](https://volant.sh/install.sh) avant de le lancer. Windows n'est pas encore pris en charge : un contrôleur Windows figure sur la [feuille de route](/fr/docs/project/roadmap/).
+
+Vous n'avez pas besoin d'Ansible. À la première exécution qui a besoin de Python, Volant télécharge sa propre copie de Python et d'ansible-core, environ 155 MB, et la garde dans `~/.local/share/volant/runtime`. Il affiche une ligne quand il le fait. [Ce que Volant laisse sur vos machines](/fr/docs/#ce-que-volant-laisse-sur-vos-machines) liste tout ce qu'il écrit.
+
+<Aside type="caution" title="macOS n'est pas testé">
+Les builds macOS et le runtime géré n'ont pas été testés : aucun Mac n'était disponible. Si une exécution ne parvient pas à installer le runtime sous macOS, faites pointer `VOLANT_PYTHON` vers un Python 3 qui a ansible-core, comme le décrit [Le runtime géré](/fr/docs/reference/runtime/#quel-interpréteur-une-exécution-utilise).
+</Aside>
+
+Vérifiez que tout a fonctionné :
+
+```sh
+volant --version
+```
+
+Si votre shell ne trouve pas `volant`, ajoutez `~/.local/bin` à votre `PATH`. Le script affiche la ligne à ajouter quand elle manque.
+
+### Options
+
+Le script lit trois variables d'environnement :
+
+| Variable | Valeur par défaut | Ce qu'elle change |
+|---|---|---|
+| `VOLANT_VERSION` | la dernière version | La version à installer, par exemple `v0.1.0-alpha.10`. |
+| `VOLANT_HOME` | `~/.local/share/volant` | L'endroit où les versions sont décompressées. |
+| `VOLANT_BIN_DIR` | `~/.local/bin` | L'endroit où vont les liens `volant` et `volant-playbook`. |
+
+```sh
+curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.10 sh
+```
+
+## Ce que vous obtenez
+
+Une version contient deux exécutables. `volant` embarque les agents qu'il envoie à vos hôtes. Un agent est un petit programme qui exécute vos tâches sur un hôte. Il n'y a rien d'autre à installer et rien à garder à côté :
+
+| Fichier | Ce que c'est |
+|---|---|
+| `volant` | Le contrôleur, la commande que vous lancez. |
+| `volant-playbook` | Le même contrôleur sous un nom qui rappelle `ansible-playbook`. |
+
+À la première utilisation, le contrôleur écrit ses agents dans `~/.cache/volant/agents/<version>/`, ou sous `$XDG_CACHE_HOME` quand elle est définie : l'agent de votre propre machine, utilisé par `ansible_connection=local`, et ceux qu'il envoie aux hôtes Linux x86_64 et arm64. Les exécutions suivantes les réutilisent, et une copie qui ne correspond pas à l'agent intégré au contrôleur est réécrite.
+
+## Builds et plateformes
+
+Chaque version propose une archive par plateforme. Linux a un build statique et un build glibc. macOS a un seul build, qui lie les bibliothèques du système.
+
+| Plateforme | Archive | Édition de liens | Minimum | Nécessaire à côté |
+|---|---|---|---|---|
+| Linux x86_64, statique | `volant-x86_64-unknown-linux-musl.tar.xz` | Statique. Pas de libc. | N'importe quel Linux | client `ssh`, Python pour les modules Python |
+| Linux x86_64, glibc | `volant-x86_64-unknown-linux-gnu.tar.xz` | Dynamique, glibc seulement | glibc 2.17 | client `ssh`, Python pour les modules Python |
+| Linux arm64, statique | `volant-aarch64-unknown-linux-musl.tar.xz` | Statique. Pas de libc. | N'importe quel Linux | client `ssh`, Python pour les modules Python |
+| Linux arm64, glibc | `volant-aarch64-unknown-linux-gnu.tar.xz` | Dynamique, glibc seulement | glibc 2.17 | client `ssh`, Python pour les modules Python |
+| macOS, Apple silicon | `volant-aarch64-apple-darwin.tar.xz` | Dynamique, bibliothèques système seulement | macOS 11 | client `ssh`, Python pour les modules Python |
+| macOS, Intel | `volant-x86_64-apple-darwin.tar.xz` | Dynamique, bibliothèques système seulement | macOS 10.12 | client `ssh`, Python pour les modules Python |
+
+Les deux builds Linux exécutent le même code et embarquent les mêmes agents. Le build statique fonctionne sur toute distribution, y compris Alpine et un conteneur sans libc. Le build glibc exige glibc 2.17 ou plus récent, ce qui couvre Debian 8, Ubuntu 14.04, RHEL et CentOS 7 et tout ce qui a suivi, et il profite des mises à jour de sécurité de la libc du système.
+
+Le script d'installation prend toujours le build statique sous Linux. `volant-installer.sh` prend le build glibc sur glibc 2.17 ou plus récent, et le build statique sur tout autre Linux. `cargo binstall` prend le build glibc sur tout hôte glibc et le build statique sur Alpine. Sur un hôte glibc plus ancien que 2.17, téléchargez l'archive statique à la main.
+
+### Dans un conteneur
+
+Le build statique n'a besoin de rien dans l'image : il fonctionne donc dans un conteneur construit `FROM scratch` :
+
+```dockerfile
+FROM scratch
+COPY volant /volant
+ENTRYPOINT ["/volant"]
+```
+
+Une image scratch n'a ni `ssh`, ni Python, ni shell, ni `/etc/passwd`. Avec le seul contrôleur dedans, un playbook peut s'exécuter avec `connection: local` et utiliser `command` avec `argv`. Les connexions SSH demandent un client `ssh` dans l'image, les modules Python et la collecte des facts demandent Python, et `shell` et `raw` demandent un shell. Le contrôleur garde l'agent qu'il extrait sous `~/.cache/volant`, ou sous `$XDG_CACHE_HOME` quand elle est définie : donnez-lui un répertoire où il peut écrire.
+
+## Ce dont les machines ont besoin
+
+<Tabs>
+  <TabItem label="Contrôleur">
+    - Linux ou macOS.
+    - Le client OpenSSH dans votre `PATH`. Volant lance lui-même `ssh`, donc votre `~/.ssh/config` s'applique.
+    - `curl` ou `wget`, et `tar`, la première fois qu'un playbook a besoin de Python.
+    - Pour utiliser le script d'installation ou décompresser une version à la main, `curl`, `tar`, `sha256sum` ou `shasum`, et `xz` sous Linux.
+
+    Pour les modules qui s'exécutent en Python, Volant utilise un Python 3 avec `ansible-core`. S'il n'en trouve aucun, il télécharge le sien (environ 155 MB), vérifie chaque fichier par rapport à une empreinte fixée et le garde sous `~/.local/share/volant/runtime`. Une exécution qui le fait affiche une ligne. Si vous avez déjà un tel Python, Volant peut l'utiliser : [Quel interpréteur une exécution utilise](/fr/docs/reference/runtime/#quel-interpréteur-une-exécution-utilise) donne l'ordre. Voir [Le runtime géré](/fr/docs/reference/runtime/).
+
+    Volant n'a pas de commande `vault`, `galaxy`, `inventory` ni `doc`. Pour `ansible-vault` et les autres outils d'ansible-core, installez vous-même ansible-core.
+
+    Un playbook composé uniquement de `command`, `shell`, `raw` et de modules côté contrôleur, avec `gather_facts: false`, n'a besoin d'aucun Python.
+  </TabItem>
+  <TabItem label="Hôtes gérés">
+    - Linux, x86_64 ou arm64.
+    - Un serveur SSH et un compte sur lequel vous pouvez vous connecter avec une clé ou un ssh-agent.
+    - Un interpréteur Python 3 pour les modules Python et la collecte des facts. L'hôte n'a pas besoin d'ansible-core : Volant envoie tous les fichiers qu'un module importe.
+    - `sudo` si vous utilisez `become`.
+
+    Rien n'est à installer à la main. Le contrôleur envoie l'agent avec la première tâche et le met en cache sous `~/.ansible/tmp`.
+  </TabItem>
+</Tabs>
+
+## Mettre à jour
+
+Relancez la commande d'installation. Elle installe la dernière version à côté de celles que vous avez et fait pointer les liens vers elle. Les anciennes versions restent sous `~/.local/share/volant`, donc revenir en arrière revient à définir `VOLANT_VERSION`.
+
+## Autres méthodes d'installation
+
+<Tabs>
+  <TabItem label="cargo binstall">
+    ```sh
+    # Only pre-releases exist so far, so name the version.
+    cargo binstall volant@0.1.0-alpha.10
+    ```
+
+    Cela télécharge un binaire de version avec ses agents inclus. Sur un hôte glibc, c'est le build glibc, sur Alpine le build statique.
+  </TabItem>
+  <TabItem label="Téléchargement manuel">
+    Chaque version de la [page des versions](https://github.com/lorica-labs/volant/releases) propose une archive par plateforme, nommée `volant-<target>.tar.xz` comme dans le tableau ci-dessus, avec un fichier `.sha256` à côté. Décompressez-la (cela demande `xz`) et mettez `volant` dans votre `PATH` :
+
+    ```sh
+    tar -xJf volant-x86_64-unknown-linux-musl.tar.xz
+    install -m 755 volant-x86_64-unknown-linux-musl/volant ~/.local/bin/volant
+    ```
+  </TabItem>
+  <TabItem label="Depuis les sources">
+    ```sh
+    cargo install --git https://github.com/lorica-labs/volant volant
+    ```
+
+    Un build depuis les sources n'embarque pas les agents, parce qu'ils sont compilés en croisé pour les hôtes. Faites pointer `VOLANT_AGENT_DIR` vers un répertoire qui les contient, ou construisez-les depuis un clone : `cargo build` laisse un agent local à côté du contrôleur, et `just agent-musl` construit celui de Linux x86_64. `just smoke-embedded` montre comment un build de version les embarque.
+  </TabItem>
+</Tabs>
+
+<Aside type="note">
+Une formule Homebrew est prévue. La [feuille de route](/fr/docs/project/roadmap/) la suit.
+</Aside>
+
+## Désinstaller
+
+Supprimez le répertoire des versions, les liens et les caches du contrôleur. Sur chaque hôte, le cache de l'agent est un répertoire par compte sous lequel l'exécution a agi. Rien d'autre ne change dans votre projet, donc [revenir à `ansible-playbook`](/fr/docs/start/troubleshooting/#revenir-à-ansible-playbook) ne demande rien de plus :
+
+```sh
+volant runtime remove --all
+rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook ~/.cache/volant
+ssh web1 'rm -rf ~/.ansible/tmp/volant-*'
+```

@@ -1,0 +1,55 @@
+---
+sourceHash: 3d7354233964
+title: Codes de sortie
+description: Ce que signifie chaque code de sortie, et où Volant s'aligne sur ansible-playbook.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+Volant sort avec les codes qu'utilise `ansible-playbook` : les scripts et les tâches CI écrits pour Ansible continuent donc de fonctionner.
+
+## Les codes
+
+<Option name="0" id="code-0">
+  Tous les hôtes ont terminé sans échec.
+</Option>
+
+<Option name="1" id="code-1">
+  Une erreur générale : un playbook ou un rôle introuvable, un nom de `notify` ou une action `meta` inconnus, ou un motif d'hôtes qui ne laisse aucun hôte.
+</Option>
+
+<Option name="2" id="code-2">
+  Au moins un hôte a échoué, ou l'exécution a demandé une méthode d'élévation de privilèges que cette version ne prend pas encore en charge.
+</Option>
+
+<Option name="4" id="code-4">
+  Au moins un hôte était injoignable, ou le playbook s'est arrêté avant l'exécution : il ne s'analyse pas, ou il utilise quelque chose que cette version ne prend pas encore en charge.
+</Option>
+
+<Option name="5" id="code-5">
+  Un paramètre a une valeur qu'il ne peut pas prendre, comme `forks = many`, un mot inconnu pour `gathering`, `runtime` ou `host_named_paths`, ou un mot-clé `order` que le play ne connaît pas. Le message nomme la clé et la valeur.
+</Option>
+
+<Option name="6" id="code-6">
+  Certains hôtes ont échoué et d'autres étaient injoignables : 2 et 4 combinés.
+</Option>
+
+<Option name="99" id="code-99">
+  Ctrl-C ou SIGTERM a arrêté l'exécution. Les lots en cours sont annulés, le récapitulatif s'affiche, et Volant sort avec 99, comme `ansible-playbook`.
+</Option>
+
+<Option name="250" id="code-250">
+  `--step` n'a trouvé aucun terminal sur l'entrée standard. Volant s'arrête avant de toucher un hôte.
+</Option>
+
+## Après une exécution
+
+Après une exécution, le code vient du récapitulatif : on ajoute 2 quand un hôte a échoué, et 4 quand un hôte était injoignable. Un play `serial` s'arrête au premier lot qui a perdu tous ses hôtes actifs, avec 2 s'ils ont échoué et 4 s'ils sont tous devenus injoignables.
+
+## Avant une exécution
+
+Un playbook arrêté par la [vérification préalable](/fr/docs/internals/preflight/) sort avec 4 avant toute connexion, ce qu'Ansible utilise pour un playbook qu'il ne peut pas charger. Les cas dont le code a été mesuré sur Ansible gardent ce code : 1 pour un rôle manquant, une action `meta` inconnue ou un nom de `notify` inconnu. Un nom de `notify` inconnu dans un fichier qu'un include dynamique apporte n'est trouvé que pendant l'exécution, et il y met fin avec 1 également.
+
+## Là où Ansible plante
+
+Dans quelques cas, ansible-core plante avec le code de sortie 250, par exemple sur un playbook qui s'importe lui-même ou sur `serial: abc`. Volant rejette ces cas à la place, avec un message clair et l'un des codes ci-dessus. Chaque cas est listé sous *Différences avec Ansible* dans la page qui le traite.

@@ -1,0 +1,262 @@
+---
+// The steering wheel of the logo as a turning 3D figure drawn in characters, like a terminal would
+// draw it. In the hero it also swings left and right on its vertical axis; as the run console below, each spoke takes the
+// colour of the result a host just returned. Hidden from assistive technology, still under reduced
+// motion, and paused whenever it is off screen or the tab is hidden.
+interface Props {
+  cols?: number;
+  rows?: number;
+  /** `hero` swings and does a warm-up lap; `console` stays put and listens to a run replay. */
+  mode?: 'hero' | 'console';
+}
+const { cols = 120, rows = 60, mode = 'hero' } = Astro.props;
+---
+
+<div class="ascii-wheel" aria-hidden="true" data-cols={cols} data-rows={rows} data-mode={mode}>
+  <pre></pre>
+</div>
+
+<script>
+  // Each point belongs to a part: the rim and the hub are the same under any turn, so only the
+  // spokes are turned. Turning a rim that looks the same would only move its sample points between
+  // cells, which reads as characters flickering on a still shape.
+  type Point = { x: number; y: number; z: number; nx: number; ny: number; nz: number; part: number };
+  const RIM = 0;
+  const HUB = 1;
+  const SPOKE = 2;
+
+  function wheel(): Point[] {
+    const points: Point[] = [];
+    const tau = Math.PI * 2;
+    const tube = 0.11;
+    for (let i = 0; i < 320; i++) {
+      const u = (i / 320) * tau;
+      for (let j = 0; j < 28; j++) {
+        const v = (j / 28) * tau;
+        const nx = Math.cos(v) * Math.cos(u);
+        const ny = Math.cos(v) * Math.sin(u);
+        const nz = Math.sin(v);
+        points.push({ x: Math.cos(u) + tube * nx, y: Math.sin(u) + tube * ny, z: tube * nz, nx, ny, nz, part: RIM });
+      }
+    }
+    const radius = 0.07;
+    [9, 81, 153, 225, 297].forEach((degrees, spoke) => {
+      const a = (degrees * Math.PI) / 180;
+      const dx = Math.cos(a);
+      const dy = Math.sin(a);
+      for (let i = 0; i <= 56; i++) {
+        const t = 0.2 + (i / 56) * 0.72;
+        for (let j = 0; j < 16; j++) {
+          const w = (j / 16) * tau;
+          const px = -dy * Math.cos(w);
+          const py = dx * Math.cos(w);
+          const pz = Math.sin(w);
+          points.push({ x: dx * t + radius * px, y: dy * t + radius * py, z: radius * pz, nx: px, ny: py, nz: pz, part: SPOKE + spoke });
+        }
+      }
+    });
+    const hub = 0.24;
+    const half = 0.1;
+    for (let j = 0; j < 64; j++) {
+      const w = (j / 64) * tau;
+      const c = Math.cos(w);
+      const s = Math.sin(w);
+      for (let k = 0; k <= 5; k++) {
+        points.push({ x: hub * c, y: hub * s, z: -half + (k / 5) * 2 * half, nx: c, ny: s, nz: 0, part: HUB });
+      }
+      for (let k = 1; k <= 10; k++) {
+        const r = (k / 10) * hub;
+        points.push({ x: r * c, y: r * s, z: -half, nx: 0, ny: 0, nz: -1, part: HUB });
+        points.push({ x: r * c, y: r * s, z: half, nx: 0, ny: 0, nz: 1, part: HUB });
+      }
+    }
+    return points;
+  }
+
+  const ramp = '.,-~:;=!*#$@';
+  const light = (() => {
+    const l = [-0.45, 0.55, -0.7];
+    const n = Math.hypot(...l);
+    return l.map((v) => v / n);
+  })();
+
+  for (const root of document.querySelectorAll<HTMLElement>('.ascii-wheel')) {
+    const pre = root.querySelector('pre')!;
+    const cols = Number(root.dataset.cols);
+    const rows = Number(root.dataset.rows);
+    const hero = root.dataset.mode === 'hero';
+    const points = wheel();
+    const cells = cols * rows;
+    const depth = new Float32Array(cells);
+    const lum = new Float32Array(cells);
+    const lit = new Float32Array(cells);
+    const owner = new Int8Array(cells);
+    // In console mode a spoke shows the state of the host it stands for: `ok`, `changed` and so on.
+    const spokeState: (string | null)[] = [null, null, null, null, null];
+
+    const fit = () => {
+      const size = Math.min(root.clientWidth / (cols * 0.6), root.clientHeight / (rows * 1.2));
+      pre.style.fontSize = `${Math.max(size, 3)}px`;
+    };
+    fit();
+    new ResizeObserver(fit).observe(root);
+
+    const restX = 0.32;
+    const restY = -0.18;
+    let spin = 0.6;
+    let tiltX = restX;
+    let tiltY = restY;
+    let aimX = restX;
+    let aimY = restY;
+    let clock = 0;
+    const distance = 3.2;
+    // The console has the wheel alone in its frame, so it fills more of it.
+    const scale = rows * (hero ? 0.62 : 0.95);
+    const fresh = new Float32Array(cells);
+
+    const draw = (smooth: number) => {
+      depth.fill(0);
+      owner.fill(-1);
+      const [ca, sa] = [Math.cos(spin), Math.sin(spin)];
+      const [cb, sb] = [Math.cos(tiltX), Math.sin(tiltX)];
+      // In the hero the wheel swings slowly from one side to the other around its vertical axis.
+      const yaw = tiltY + (hero ? 0.42 * Math.sin(clock * 0.35) : 0);
+      const [cc, sc] = [Math.cos(yaw), Math.sin(yaw)];
+      fresh.fill(-1);
+      for (const p of points) {
+        const turn = p.part >= SPOKE;
+        let x = turn ? p.x * ca - p.y * sa : p.x;
+        let y = turn ? p.x * sa + p.y * ca : p.y;
+        let z = p.z;
+        let nx = turn ? p.nx * ca - p.ny * sa : p.nx;
+        let ny = turn ? p.nx * sa + p.ny * ca : p.ny;
+        let nz = p.nz;
+        [y, z] = [y * cb - z * sb, y * sb + z * cb];
+        [ny, nz] = [ny * cb - nz * sb, ny * sb + nz * cb];
+        [x, z] = [x * cc + z * sc, -x * sc + z * cc];
+        [nx, nz] = [nx * cc + nz * sc, -nx * sc + nz * cc];
+        const ooz = 1 / (z + distance);
+        const col = Math.round(cols / 2 + 2 * scale * x * ooz);
+        const row = Math.round(rows / 2 - scale * y * ooz);
+        if (col < 0 || col >= cols || row < 0 || row >= rows) continue;
+        const at = row * cols + col;
+        if (ooz <= depth[at]) continue;
+        depth[at] = ooz;
+        fresh[at] = Math.max(0, nx * light[0] + ny * light[1] + nz * light[2]);
+        owner[at] = p.part;
+      }
+      // Each cell keeps a little of its last value, so a character changes only when the shape
+      // under it really changes, and edges in motion leave a short trail instead of popping.
+      let out = '';
+      for (let r = 0; r < rows; r++) {
+        let open = '';
+        for (let c = 0; c < cols; c++) {
+          const at = r * cols + c;
+          const hit = fresh[at] >= 0;
+          lit[at] = lit[at] * smooth + (hit ? 1 - smooth : 0);
+          if (hit) lum[at] = lum[at] * smooth + fresh[at] * (1 - smooth);
+          const char = lit[at] > 0.45 ? ramp[Math.min(ramp.length - 1, Math.floor(lum[at] * ramp.length))] : ' ';
+          const part = owner[at];
+          const state = part >= SPOKE ? spokeState[part - SPOKE] : null;
+          const want = char !== ' ' && state ? state : '';
+          if (want !== open) {
+            if (open) out += '</span>';
+            if (want) out += `<span class="s-${want}">`;
+            open = want;
+          }
+          out += char;
+        }
+        if (open) out += '</span>';
+        out += '\n';
+      }
+      pre.innerHTML = out;
+    };
+
+    const still = window.matchMedia('(prefers-reduced-motion: reduce)');
+    draw(0);
+    if (still.matches) {
+      root.classList.add('is-lit');
+      continue;
+    }
+
+    if (hero) {
+      const area = root.closest<HTMLElement>('[data-wheel-area]') ?? root;
+      area.addEventListener('pointermove', (event) => {
+        const box = area.getBoundingClientRect();
+        aimY = restY + ((event.clientX - box.left) / box.width - 0.5) * 0.35;
+        aimX = restX + ((event.clientY - box.top) / box.height - 0.5) * 0.25;
+      });
+    } else {
+      window.addEventListener('volant-run', (event) => {
+        const { spoke, state } = (event as CustomEvent<{ spoke: number; state: string | null }>).detail;
+        if (spoke === -1) spokeState.fill(null);
+        else spokeState[spoke % spokeState.length] = state;
+      });
+    }
+
+    // The warm-up lap: one fast extra turn that slows into the cruising speed while the colour
+    // comes up from grey. The extra speed decays so that it adds exactly one turn.
+    const lap = 0.7;
+    const boost = hero ? (Math.PI * 2) / lap : 0;
+    requestAnimationFrame(() => root.classList.add('is-lit'));
+
+    let visible = false;
+    let frame = 0;
+    let last = 0;
+    const tick = (now: number) => {
+      frame = requestAnimationFrame(tick);
+      const step = last ? Math.min(now - last, 50) / 1000 : 0;
+      last = now;
+      clock += step;
+      spin += step * (0.45 + boost * Math.exp(-clock / lap));
+      const ease = 1 - Math.exp(-step * 3);
+      tiltX += (aimX - tiltX) * ease;
+      tiltY += (aimY - tiltY) * ease;
+      draw(Math.exp(-step * 18));
+    };
+    const run = () => {
+      cancelAnimationFrame(frame);
+      last = 0;
+      if (visible && !document.hidden) frame = requestAnimationFrame(tick);
+    };
+    new IntersectionObserver(([entry]) => {
+      visible = entry.isIntersecting;
+      run();
+    }).observe(root);
+    document.addEventListener('visibilitychange', run);
+  }
+</script>
+
+<style>
+  .ascii-wheel {
+    display: grid;
+    place-items: center;
+    overflow: hidden;
+    pointer-events: none;
+    user-select: none;
+  }
+  pre {
+    margin: 0;
+    color: var(--fg-4);
+    font-family: var(--f-mono);
+    line-height: 1.2;
+    letter-spacing: 0;
+    white-space: pre;
+    transition: color 1.6s var(--ease);
+  }
+  .is-lit pre {
+    color: color-mix(in srgb, var(--brand) 70%, var(--brand-hi));
+  }
+  pre :global(.s-ok) {
+    color: var(--state-ok);
+  }
+  pre :global(.s-changed) {
+    color: var(--state-changed);
+  }
+  pre :global(.s-failed) {
+    color: var(--state-failed);
+  }
+  pre :global(.s-skipped) {
+    color: var(--state-skipped);
+  }
+</style>

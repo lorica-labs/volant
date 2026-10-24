@@ -1,0 +1,171 @@
+---
+sourceHash: 71da6f6cf85b
+title: Templating
+description: Jinja2 sur le contrôleur, mode strict, conditions, filtres, tests et lookups fournis par Volant, et rendu des fichiers modèles.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Vos modèles fonctionnent comme dans Ansible, avec les exceptions suivantes. Volant rend Jinja2 sur le contrôleur et y ajoute les filtres, tests et lookups d'Ansible.
+
+- Les variables non définies sont des erreurs, voir [Strict par défaut](#strict-par-défaut).
+- Un filtre, un test ou un lookup que Volant n'implémente pas s'exécute en Python, et peut demander des paquets installés, voir [Filtres, tests et lookups qui nécessitent Python](#filtres-tests-et-lookups-qui-nécessitent-python).
+- Une valeur venue d'un hôte géré n'est jamais rendue comme modèle, voir [Les valeurs venues des hôtes ne sont jamais rendues comme modèles](#les-valeurs-venues-des-hôtes-ne-sont-jamais-rendues-comme-modèles).
+- Quelques arguments, méthodes et options de fichiers modèles ne sont pas encore disponibles, voir [Pas encore disponible](#pas-encore-disponible) et la [Référence du langage de modèles](/fr/docs/reference/templates/).
+
+## Strict par défaut
+
+Les modèles sont rendus en mode strict. Une variable non définie est une erreur, pas une chaîne vide, sauf si vous la protégez :
+
+```yaml
+- debug:
+    msg: "{{ release | default('latest') }}"
+  when: release is defined or use_latest | bool
+```
+
+Un `when` dont la valeur n'est pas un booléen est rejeté lui aussi.
+
+Une variable ou un attribut non défini est formulé et chaîné comme le fait ansible-core : `'nope' is undefined`, ou `object of type 'dict' has no attribute 'b'`. Dans un argument de tâche, le message se trouve sous `Finalization of task args for 'module' failed: Error while resolving value for 'arg'`. Une lecture protégée par `default` ou `is defined` ne lève rien.
+
+## Conditions
+
+`when`, `changed_when`, `failed_when` et `until` prennent une expression ou une liste d'expressions. Avec une liste, chaque expression doit être vraie.
+
+```yaml
+- command: /opt/app/migrate.sh
+  register: migrate
+  changed_when: "'applied' in migrate.stdout"
+  failed_when:
+    - migrate.rc != 0
+    - "'already up to date' not in migrate.stderr"
+```
+
+Une condition entourée de `{{ }}` qui est rendue en chaîne est évaluée une fois de plus comme condition, ainsi que le fait ansible-core 2.19. Avec `healthy: "true"` dans les `vars` du play, `when: "{{ healthy }}"` exécute la tâche. Cette seconde évaluation n'a jamais lieu quand le premier rendu a lu une valeur venue d'un hôte géré : la tâche échoue alors avec `Encountered untrusted template or expression.` Voir [Les valeurs venues des hôtes ne sont jamais rendues comme modèles](#les-valeurs-venues-des-hôtes-ne-sont-jamais-rendues-comme-modèles).
+
+## Variables qui contiennent des modèles
+
+Une variable dont la valeur est un modèle est rendue quand un autre modèle la lit : un filtre ou un opérateur voit donc toujours la valeur finale :
+
+```yaml
+vars:
+  host: example.org
+  url: "http://{{ host }}:8080/x"
+  port: "{{ 8080 }}"
+tasks:
+  - debug:
+      msg: "{{ url | length }} {{ port | int + 1 }}"   # 25 8081
+```
+
+Cela vaut pour les `vars` de play, de bloc et de tâche, `group_vars`, les valeurs par défaut des rôles, `vars_files`, `include_vars` et les variables supplémentaires, ainsi que pour une liste ou un mapping qui contient des modèles. Un membre qui ne parvient pas à être rendu ne lève rien tant que quelque chose ne le lit pas.
+
+Une variable qui lit un nom sans valeur n'en a pas non plus : `default` et `is defined` la voient comme non définie. Une variable qui se lit elle-même, directement ou par d'autres, échoue avec `Recursive loop detected in template: maximum recursion depth exceeded`, y compris derrière `default`, comme dans ansible-core.
+
+Les données d'hôte ne sont jamais rendues. Une variable venue d'un hôte géré, et une variable construite à partir d'une telle variable, restent du texte. Voir [Les valeurs venues des hôtes ne sont jamais rendues comme modèles](#les-valeurs-venues-des-hôtes-ne-sont-jamais-rendues-comme-modèles).
+
+Une variable qui lit `vars`, ou appelle `lookup` ou `query`, est laissée telle qu'elle est écrite et rendue quand une tâche l'utilise. `hostvars['other']['name']` donne le texte brut d'une variable qui contient un modèle.
+
+## Ce qui est disponible
+
+| Type | Noms |
+|---|---|
+| Filtres | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `extract`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
+| Tests | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed` / `change`, `failed` / `failure`, `succeeded` / `success` / `successful`, `skipped` / `skip`, `version` (et `version_compare`) |
+| Lookups | `env`, `file`, `vars`, `varnames`, `pipe`, `first_found`, `fileglob`, `template`, `inventory_hostnames`, `unvault` (et les formes d'appel `query` et `q`) |
+| Globales | `now`, `lipsum` |
+| Depuis `ansible.utils` | le filtre `ansible.utils.ipwrap`, sous ce seul nom |
+
+Chaque filtre, test et lookup de cette liste répond aussi sous son nom `ansible.builtin.*` : `{{ data | ansible.builtin.to_json }}` fonctionne donc. Un filtre, un test ou un lookup qui n'est pas dans cette liste s'exécute en Python avec le propre code d'ansible-core, voir [Filtres, tests et lookups qui nécessitent Python](#filtres-tests-et-lookups-qui-nécessitent-python). Cela inclut les plugins des autres collections.
+
+`first_found`, `fileglob` et `template` cherchent des fichiers le long de `ansible_search_path`. Dans la tâche d'un rôle, ce sont le répertoire du rôle, le répertoire du fichier de la tâche, puis le répertoire du playbook. Hors d'un rôle, c'est le répertoire du playbook. `role_path` est défini dans la tâche d'un rôle et non défini en dehors. `fileglob` essaie un motif relatif sous `files/` de chaque entrée, puis dans l'entrée elle-même, et la première entrée qui a une correspondance l'emporte. Il ne renvoie que des fichiers, triés, et une correspondance unique revient sous forme de chaîne.
+
+`now()` donne la date et l'heure du contrôleur, jamais d'un hôte géré, et `lipsum()` donne du texte de remplissage aléatoire. Leurs arguments et leurs résultats sont dans la [Référence du langage de modèles](/fr/docs/reference/templates/#date-et-texte-de-remplissage).
+
+## Filtres, tests et lookups qui nécessitent Python
+
+Volant implémente lui-même, en Rust, les filtres, tests et lookups courants. Tous les autres qu'ansible-core 2.19.12 ou une collection fournit s'exécutent dans un processus Python sur le contrôleur, avec le propre code du plugin : le résultat est donc celui qu'ansible-core donne.
+
+Un play qui n'utilise que ceux en Rust ne démarre jamais Python pour le templating. Le processus Python démarre au premier appel qui en a besoin, puis sert le reste de l'exécution. Son démarrage prend environ 0.55 s, payées une fois par exécution, mesurées avec `hash`.
+
+### Ce qui nécessite Python
+
+Un nom nécessite Python quand Volant n'en a pas de version Rust. La [page de parité](/fr/docs/reference/parity/) marque ces lignes `runs` avec la note "through the Python helper; needs the plugin's Python libraries". Par exemple les filtres `hash`, `password_hash`, `json_query` et `ipaddr`, et les lookups `lines` et `url`.
+
+Un nom qui a une version Rust n'atteint jamais Python, quel que soit son nom. `ansible.utils.ipwrap` reste en Rust. Les filtres, tests et lookups de vault ne vont jamais non plus vers Python : le mot de passe vault reste dans le processus du contrôleur. Voir [Vault](/fr/docs/variables/vault/).
+
+### Ce qu'il faut installer
+
+Le contrôleur a besoin d'un Python 3 avec `ansible-core`. S'il n'en a pas, Volant installe son propre [runtime géré](/fr/docs/reference/runtime/).
+
+Un plugin a aussi besoin de ce qu'il importe. `json_query` a besoin de `jmespath`, `ipaddr` de `netaddr`, `password_hash` de `passlib`, et le plugin d'une collection a besoin de cette collection. Tout doit être installé pour l'interpréteur que Volant exécute. Le runtime géré contient ansible-core et ses dépendances et rien d'autre : pour ces noms, faites donc pointer `VOLANT_PYTHON` vers un environnement à vous qui a les paquets. Sans eux, la tâche échoue avec le message propre au plugin.
+
+Volant utilise `VOLANT_PYTHON` quand il est défini, et rien d'autre. Sinon il essaie son runtime géré, puis l'environnement virtuel actif, puis `python3` dans votre `PATH`, et installe le runtime géré quand aucun ne convient. Un interpréteur sans `ansible-core` est refusé par son nom, et le message dit quels interpréteurs ont été essayés. Une tâche qui appelle un nom qui nécessite Python échoue alors avec un message comme `filter 'hash' needs the Python helper, which could not start: …`, suivi de la raison, et l'exécution se termine avec un code non nul.
+
+[Filtres qui s'exécutent en Python](/fr/docs/reference/templates/#filtres-qui-sexécutent-en-python) liste les autres échecs et ce que Python reçoit.
+
+## Les valeurs venues des hôtes ne sont jamais rendues comme modèles
+
+Un modèle que vous avez écrit est du code. Une valeur qu'un hôte géré a renvoyée est une donnée, et elle ne s'exécute jamais comme modèle sur le contrôleur.
+
+- Les valeurs non fiables sont `register` et les résultats de modules, les facts collectés, les valeurs de `set_fact`, et les résultats de `lookup('file')`, `lookup('pipe')`, `lookup('env')` et `lookup('template')`.
+- Les valeurs fiables sont celles que porte le playbook : `vars` de play et de tâche, `--extra-vars`, variables d'inventaire, `vars_files` et `include_vars`. `!unsafe` marque l'une d'elles comme donnée.
+- Une valeur non fiable est rendue une seule fois. Si le résultat ressemble encore à un modèle, il reste du texte.
+- Une condition ou un `debug: var:` qui évaluerait une valeur d'hôte comme une expression échoue avec `Encountered untrusted template or expression.`
+
+La [Référence du langage de modèles](/fr/docs/reference/templates/#valeurs-fiables-et-non-fiables) donne les règles complètes et des exemples.
+
+<Aside type="caution">
+C'est une frontière de sécurité. Si vous trouvez un moyen de faire évaluer des données d'hôte comme modèle sur le contrôleur, signalez-le en privé comme le décrit la [politique de sécurité](https://github.com/lorica-labs/volant/blob/main/SECURITY.md).
+</Aside>
+
+## Rendu d'un fichier modèle
+
+Le module `template` et `lookup('template')` partagent un même rendu, qui diffère de celui d'un argument de tâche sur un point : il rend le texte du fichier **une seule fois**. Un argument de tâche passe par d'autres passes, ce qui explique qu'une valeur qui contient encore `{{ ... }}` après rendu puisse être relue comme modèle. Un fichier modèle n'a pas cette seconde passe : une valeur qu'un hôte géré a apportée atterrit donc dans le fichier écrit comme du texte brut et ne s'exécute jamais comme modèle propre.
+
+Il prend les options que lit le module `template` :
+
+| Option | Valeur par défaut | Effet |
+|---|---|---|
+| `trim_blocks` | activé | Retire le premier retour à la ligne après une balise de bloc. |
+| `lstrip_blocks` | désactivé | Retire les espaces avant une balise de bloc sur sa ligne. |
+| `newline_sequence` | `\n` | Fins de ligne du fichier écrit : `\n`, `\r` ou `\r\n`, échappées ou littérales. |
+| `variable_start_string`, `variable_end_string` | `{{`, `}}` | Les marques autour d'une expression. |
+| `block_start_string`, `block_end_string` | `{%`, `%}` | Les marques autour d'une instruction. |
+| `comment_start_string`, `comment_end_string` | `{#`, `#}` | Les marques autour d'un commentaire. |
+| `output_encoding` | `utf-8` | L'encodage du fichier écrit. `template` seulement. |
+
+`lookup('template')` prend les quatre délimiteurs de variable et de commentaire et `trim_blocks`, et rien d'autre.
+
+Un délimiteur personnalisé remplace celui par défaut : avec `variable_start_string: '[['`, un `{{` dans le fichier est du texte brut. Les trois chaînes de début doivent être différentes les unes des autres. Un texte qui ne contient aucune des trois chaînes de début n'est pas un modèle, et il est écrit tel quel, fins de ligne comprises, quoi que dise `newline_sequence`.
+
+La première ligne d'un fichier modèle peut redéfinir les options. Elle commence par `#jinja2:` et contient des paires `key: value`, séparées par des virgules, avec un littéral Python comme valeur :
+
+```jinja
+#jinja2: variable_start_string:'[%', variable_end_string:'%]', trim_blocks: False
+```
+
+Les clés sont les six délimiteurs, `trim_blocks`, `lstrip_blocks`, `newline_sequence` et `keep_trailing_newline`. La ligne l'emporte sur les options de la tâche. Une mauvaise clé, un mauvais type ou deux chaînes de début égales font échouer le rendu avec le message d'ansible-core. La ligne est retirée de la sortie. Un `#jinja2:` qui n'est pas tout au début du fichier est du texte brut.
+
+`output_encoding` écrit en UTF-8, UTF-8 avec signature, Latin-1, ASCII, cp1252, ISO 8859-15, UTF-16 et UTF-32, sous les noms et alias que Python connaît (`latin-1`, `iso8859_1`, `utf_16_le`, `windows-1252`). UTF-16 et UTF-32 sans ordre écrivent une marque d'ordre des octets puis du little-endian. Un caractère que l'encodage ne peut pas contenir fait échouer la tâche avec le message de Python, qui nomme le caractère et sa position. Tout autre encodage est refusé par son nom.
+
+Le retour à la ligne final du fichier survit au rendu. [Plugins d'action](/fr/docs/internals/action-plugins/#template) couvre le reste de ce que fait le module `template`.
+
+La façon dont les accolades qu'un bloc `raw` ou une expression construit restent littérales est décrite dans [Accolades littérales](/fr/docs/reference/templates/#accolades-littérales).
+
+## Pas encore disponible
+
+Ces manques touchent le plus de playbooks. La [Référence du langage de modèles](/fr/docs/reference/templates/#pas-encore-disponible) liste les manques de rendu, de fichiers modèles et d'octets.
+
+### Filtres et tests
+
+- Ces arguments de filtres ne sont pas pris en charge : la méthode de `round`, `start` et `attribute` de `sum`, `attribute` de `min` et `max`, `count` de `replace`, `sort_keys` de `to_json`, et `strict` et `version_type` du test `version`.
+- `b64encode` et `b64decode` n'acceptent `encoding` que sous la forme `utf-8`. Tout autre encodage est refusé par son nom.
+- `password_hash`, `json_query` et `ipaddr` ont besoin des paquets Python `passlib`, `jmespath` et `netaddr`. Le runtime géré ne les embarque pas, voir [Ce qu'il faut installer](#ce-quil-faut-installer).
+
+### Entiers de plus de 128 bits
+
+Un module peut renvoyer un tel entier, comme le modulus d'une clé RSA. Volant garde chaque chiffre dans les résultats, les variables, `string`, `to_json` et `from_json`. Il compare un entier large à n'importe quel nombre par sa valeur, dans les opérateurs de comparaison, `min`, `max`, `sort`, `unique` et `list.sort()`.
+
+- Les opérateurs `+`, `-`, `*`, `/`, `//`, `%` et `**` et les filtres `abs` et `round` refusent un opérande large. Un résultat de plus de 128 bits est une erreur.
+- Un entier YAML de plus de 4300 chiffres est refusé. Il en va de même d'un texte de cette taille passé à `int`, qui répond sa valeur par défaut, comme dans Python 3.11 et les suivants.
+
+Pour faire de l'arithmétique sur une telle valeur, utilisez un module, ou `command` avec `python3 -c`, et gardez la valeur large sous forme de texte.

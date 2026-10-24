@@ -2,10 +2,16 @@
 // The page title with the sidebar group it belongs to above it and the page's description below,
 // so a reader landing from search sees where they are and what the page answers.
 import type { StarlightRouteData } from '@astrojs/starlight/route-data';
+import { stripLocale, strings } from '../i18n';
 
 type Entry = StarlightRouteData['sidebar'][number];
 
-const { entry, sidebar } = Astro.locals.starlightRoute;
+const { entry, sidebar, locale, isFallback } = Astro.locals.starlightRoute;
+const t = strings(locale ?? 'en');
+// A translated page whose English page changed since it was translated says so, with a link to the
+// English page. The list is worked out when the site is built: see src/i18n/source-hash.mjs.
+const stale = Boolean(locale) && !isFallback && __VOLANT_STALE__.includes(entry.id);
+const english = stripLocale(Astro.url.pathname);
 
 // The labels of the groups that lead to the current page, outermost first.
 function trail(entries: Entry[]): string[] | undefined {
@@ -35,6 +41,16 @@ const { title, description } = entry.data;
 }
 <h1 id="_top">{title}</h1>
 {description && <p class="lead">{description}</p>}
+{
+  stale && (
+    <aside class="stale not-content" role="note">
+      <b>{t.docs.staleTitle}</b>
+      <span>
+        {t.docs.staleBody} <a href={english}>{t.docs.staleLink}</a>
+      </span>
+    </aside>
+  )
+}
 
 <style>
   .crumbs ol {
@@ -62,6 +78,22 @@ const { title, description } = entry.data;
     line-height: var(--sl-line-height-headings);
     font-weight: 600;
     color: var(--sl-color-white);
+  }
+  .stale {
+    display: grid;
+    gap: 0.25rem;
+    margin-top: 1.25rem;
+    padding: 0.85rem 1rem;
+    border: 1px solid color-mix(in srgb, var(--sl-color-orange) 45%, transparent);
+    border-radius: 0.75rem;
+    background: color-mix(in srgb, var(--sl-color-orange) 8%, transparent);
+    font-size: var(--sl-text-sm);
+  }
+  .stale b {
+    color: var(--sl-color-white);
+  }
+  .stale a {
+    color: var(--sl-color-text-accent);
   }
   .lead {
     max-width: 62ch;

@@ -1,0 +1,221 @@
+---
+sourceHash: 2ef629a7b495
+title: 配置
+description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
+---
+
+import { Steps } from '@astrojs/starlight/components';
+import Option from '../../../../../components/Option.astro';
+
+Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第一个文件处停止：
+
+<Steps>
+
+1. `ANSIBLE_CONFIG` 指定的文件
+2. `./ansible.cfg`
+3. `~/.ansible.cfg`
+4. `/etc/ansible/ansible.cfg`
+
+</Steps>
+
+当工作目录可被其他用户写入（权限位 `o+w`）时，Volant 会跳过 `./ansible.cfg`，与 `ansible-playbook` 一样。其他本地用户可能在那里放了这个文件。粘滞位和目录的所有者都不会改变这一点。Volant 会在标准错误上打印 `[WARNING]: Ansible is being run in a world writable directory (...), ignoring it as an ansible.cfg source.`，然后继续读取下一个文件。`ANSIBLE_CONFIG` 指定的文件则不论工作目录的权限如何都会读取。
+
+对于每个设置，环境变量优先于文件，命令行选项又优先于两者。Volant 用不到的键会被忽略，就像 Ansible 忽略它用不到的键一样。
+
+存在但无法读取的文件会被跳过，运行使用默认值继续。Volant 会先打印一条警告，这一点 Ansible 不会做：你写的文件进程却打不开，值得提示一行，而警告不会改变退出码。
+
+## [defaults]
+
+<Option name="inventory" id="defaults-inventory" flag="-i" env="ANSIBLE_INVENTORY">
+  inventory 来源，以逗号分隔的列表。见 [Inventory](/zh-cn/docs/hosts/inventories/#来源)。
+</Option>
+
+<Option name="timeout" id="defaults-timeout" default="10" flag="-T" env="ANSIBLE_TIMEOUT">
+  等待连接的秒数。它会成为 `ssh` 命令行上的 `ConnectTimeout`。
+</Option>
+
+<Option name="remote_user" id="defaults-remote-user" flag="-u" env="ANSIBLE_REMOTE_USER">
+  登录所用的用户。不设置时，由 `ssh` 选择一个。
+</Option>
+
+<Option name="private_key_file" id="defaults-private-key-file" flag="--private-key" env="ANSIBLE_PRIVATE_KEY_FILE">
+  `ssh` 用来认证的私钥。
+</Option>
+
+<Option name="host_key_checking" id="defaults-host-key-checking" default="true" env="ANSIBLE_HOST_KEY_CHECKING">
+  开启时，未知的主机密钥会让该主机不可达。关闭时，Volant 会添加 `StrictHostKeyChecking=no` 和 `UserKnownHostsFile=/dev/null`，所以未知的密钥会被接受，但不会被记录。
+</Option>
+
+<Option name="remote_tmp" id="defaults-remote-tmp" default="~/.ansible/tmp" env="ANSIBLE_REMOTE_TMP">
+  每台主机上存放 [agent 缓存](/zh-cn/docs/hosts/connections/#agent-缓存)的目录。
+</Option>
+
+<Option name="forks" id="defaults-forks" default="5" flag="-f" env="ANSIBLE_FORKS">
+  一个 play 同时处理多少台主机。零或不是数字的值会在运行开始前被拒绝。playbook 通过 `ansible_forks` 读取当前值。
+</Option>
+
+<Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
+  每台主机上存放[异步 task](/zh-cn/docs/playbooks/how-a-play-runs/#异步任务)状态文件的目录。`ansible_async_dir` 会覆盖它。
+</Option>
+
+<Option name="enable_task_debugger" id="defaults-enable-task-debugger" default="false" env="ANSIBLE_ENABLE_TASK_DEBUGGER">
+  在每个失败或不可达的 task 之后打开[调试器](/zh-cn/docs/playbooks/how-a-play-runs/#调试器)。
+</Option>
+
+<Option name="show_task_path_on_failure" id="defaults-show-task-path-on-failure" default="false" env="ANSIBLE_SHOW_TASK_PATH_ON_FAILURE">
+  在失败 task 的 `fatal:` 行之前打印 `task path: <file>:<line>`。从 `-vv` 起，这一行已经跟在每个 task 横幅之后，所以在那里这个设置没有任何变化。循环项的 `failed:` 行和不可达的主机不会得到路径行。与 Ansible 一样，`y`、`yes`、`on`、`true`、`t` 和 `1` 在任何大小写下都会开启它，其他任何词（包括空的环境变量）都保持关闭。
+</Option>
+
+<Option name="force_color" id="defaults-force-color" default="false" env="ANSIBLE_FORCE_COLOR">
+  即使输出不是终端也着色，CI 日志需要这样。它优先于 `nocolor`、`ANSIBLE_NOCOLOR` 和 `NO_COLOR`；只有 `--no-color` 优先于它。在 diff 中，只有 Ansible 的 `difflib` 根据 `before` 和 `after` 生成的那些行会着色。
+</Option>
+
+<Option name="nocolor" id="defaults-nocolor" default="false" env="ANSIBLE_NOCOLOR">
+  输出从不着色。`force_color` 优先于它。
+</Option>
+
+<Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
+  打印 `[DEPRECATION WARNING]` 通知，以及说明如何关闭它们的那一行。设为 `False` 则两者都不打印。
+</Option>
+
+<Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
+  当 inventory 中没有任何主机、只剩下隐式的 `localhost` 时给出警告。`all` 不会匹配这台主机。
+</Option>
+
+<Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
+  即使在失败的主机上，也运行已被 notify 的 handler。
+</Option>
+
+<Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
+  在汇总之后打印 `set_stats` 收集的统计信息。
+</Option>
+
+<Option name="vault_password_file" id="defaults-vault-password-file" flag="--vault-password-file" env="ANSIBLE_VAULT_PASSWORD_FILE">
+  保存 vault 密码的文件，或打印该密码的可执行文件。环境变量会替换文件中的值，命令行则追加到胜出的那个值上。见 [Vault](/zh-cn/docs/variables/vault/)。
+</Option>
+
+<Option name="vault_identity_list" id="defaults-vault-identity-list" flag="--vault-id" env="ANSIBLE_VAULT_IDENTITY_LIST">
+  以逗号分隔的 vault 标识，每个写作 `label@source`，其中来源是文件、可执行文件或 `prompt`。环境变量会替换文件中的列表，命令行则追加到胜出的那个列表上。
+</Option>
+
+<Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">
+  查找 role 的位置，在 `<playbook_dir>/roles` 之后、`<playbook_dir>` 本身之前。见 [role](/zh-cn/docs/playbooks/roles/#查找-role)。
+</Option>
+
+<Option name="collections_path" id="defaults-collections-path" default="~/.ansible/collections:/usr/share/ansible/collections" env="ANSIBLE_COLLECTIONS_PATH">
+  也可以写作 `collections_paths`，以及通过 `ANSIBLE_COLLECTIONS_PATHS` 设置，后者优先于 `ANSIBLE_COLLECTIONS_PATH`。查找 `acme.demo.hello` 这类由三段组成的 role 名的位置。collection 中的模块由控制节点的 ansible-core 在它所配置的路径中查找：见[来自 collection 的模块](/zh-cn/docs/internals/python/#来自-collection-的模块)。
+</Option>
+
+<Option name="gathering" id="defaults-gathering" default="implicit" env="ANSIBLE_GATHERING">
+  `implicit`、`explicit` 或 `smart`。见 [facts 缓存](/zh-cn/docs/hosts/inventories/#收集)。
+</Option>
+
+<Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
+  `memory` 在本次运行期间保留 facts，`jsonfile` 在多次运行之间保留。见 [facts 缓存](/zh-cn/docs/hosts/inventories/#facts-缓存)。
+</Option>
+
+<Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">
+  `jsonfile` 缓存的目录。
+</Option>
+
+<Option name="fact_caching_timeout" id="defaults-fact-caching-timeout" default="86400" env="ANSIBLE_CACHE_PLUGIN_TIMEOUT">
+  缓存条目保持有效的秒数。`0` 表示永不过期。
+</Option>
+
+<Option name="fact_caching_prefix" id="defaults-fact-caching-prefix" env="ANSIBLE_CACHE_PLUGIN_PREFIX">
+  加在每个缓存文件名前面。
+</Option>
+
+## [inventory]
+
+<Option name="enable_plugins" id="inventory-enable-plugins" default="host_list, script, auto, yaml, ini, toml" env="ANSIBLE_INVENTORY_ENABLED">
+  按顺序尝试的 inventory 插件。见[插件链](/zh-cn/docs/hosts/inventories/#插件链)。
+</Option>
+
+<Option name="ignore_extensions" id="inventory-ignore-extensions" default=".pyc, .pyo, .swp, .bak, ~, .rpm, .md, .txt, .rst, .orig, .cfg, .retry" env="ANSIBLE_INVENTORY_IGNORE">
+  读取目录时跳过的文件扩展名。设置的值会替换默认列表。`[defaults] inventory_ignore_extensions` 同样会被读取。
+</Option>
+
+<Option name="ignore_patterns" id="inventory-ignore-patterns" env="ANSIBLE_INVENTORY_IGNORE_REGEX">
+  读取目录时要跳过的文件名所用的正则表达式。`[defaults] inventory_ignore_patterns` 同样会被读取。
+</Option>
+
+<Option name="unparsed_is_failed" id="inventory-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_UNPARSED_FAILED">
+  在没有任何来源能被读取时让运行失败。
+</Option>
+
+<Option name="any_unparsed_is_failed" id="inventory-any-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED">
+  在遇到第一个没有任何插件能读取的来源时就让运行失败。
+</Option>
+
+## [inventory_plugin_script]
+
+<Option name="always_show_stderr" id="inventory-plugin-script-always-show-stderr" default="true" env="ANSIBLE_INVENTORY_PLUGIN_SCRIPT_STDERR">
+  把成功的 inventory 脚本写到标准错误的内容显示为一行 `[ERROR]:`。设为 `false` 时，只显示失败脚本的标准错误。
+</Option>
+
+## [privilege_escalation]
+
+<Option name="become" id="privilege-escalation-become" default="false" flag="-b" env="ANSIBLE_BECOME">
+  默认提升权限。playbook 关键字和主机变量优先，见[权限提升](/zh-cn/docs/hosts/connections/#哪个设置优先)。
+</Option>
+
+<Option name="become_user" id="privilege-escalation-become-user" default="root" flag="--become-user" env="ANSIBLE_BECOME_USER">
+  要提升到的用户。
+</Option>
+
+<Option name="become_method" id="privilege-escalation-become-method" default="sudo" flag="--become-method" env="ANSIBLE_BECOME_METHOD">
+  提升权限的方法：`sudo` 或 `su`。其他方法会让运行在开始前就停止。
+</Option>
+
+<Option name="become_exe" id="privilege-escalation-become-exe" env="ANSIBLE_BECOME_EXE">
+  用来代替 `sudo` 或 `su` 运行的程序。
+</Option>
+
+<Option name="become_flags" id="privilege-escalation-become-flags" env="ANSIBLE_BECOME_FLAGS">
+  传给该程序的标志，取代 `sudo` 的 `-H`，`su` 则默认没有标志。空值表示完全不带标志。
+</Option>
+
+## [ssh_connection]
+
+<Option name="usetty" id="ssh-connection-usetty" default="true" env="ANSIBLE_SSH_USETTY">
+  为 `raw`、`script`，以及 `reboot` 这类模块插件不带输入发送的命令提供终端，就像 `ssh -tt` 那样。当 `sudoers` 规则含有 `requiretty`，或命令在终端上打印控制字符时，把它设为 `False`。主机变量 `ansible_ssh_use_tty` 优先于环境变量，环境变量又优先于文件。`y`、`yes`、`on`、`true`、`t` 和 `1` 以外的词都按关闭处理。
+</Option>
+
+## [tags]
+
+<Option name="run" id="tags-run" flag="--tags" env="ANSIBLE_RUN_TAGS">
+  默认选中的 tag。`--tags` 是追加到这个列表，而不是替换它。
+</Option>
+
+<Option name="skip" id="tags-skip" flag="--skip-tags" env="ANSIBLE_SKIP_TAGS">
+  默认跳过的 tag。`--skip-tags` 会追加到这个列表。
+</Option>
+
+## [volant]
+
+Ansible 会忽略这个段，所以同一个 `ansible.cfg` 可以包含它，并同时驱动两个引擎。`ansible-config validate` 是例外，见[跨主机批处理](/zh-cn/docs/hosts/batching/#开启)。
+
+<Option name="batching" id="volant-batching" default="false" env="VOLANT_BATCHING">
+  默认关闭。设置 `batching = true` 后，主机会直接进入下一批 task，不等待其他主机，但文本中读取了另一台主机的 task（`hostvars`、`ansible_play_hosts`、`delegate_to`，以及这样做的模板或变量）之前除外。playbook 没有明说的依赖不会被等待，例如另一台主机仍在安装的服务，或直接写出主机名的某台主机上的文件。只对主机之间不存在这类依赖的 play 开启它。见[跨主机批处理](/zh-cn/docs/hosts/batching/)。
+</Option>
+
+<Option name="native_modules" id="volant-native-modules" default="true" env="VOLANT_NATIVE_MODULES">
+  当 task 的参数没有超出原生版本所实现的范围时，让 agent 用模块的原生版本来处理该 task。设为 `false` 时，每个 task 都交给 ansible-core 的 Python 模块，`setup` 也是如此，这是在真实运行中比较两条路径的方法。该值按 ansible-core 读取布尔值的方式解析，遇到它不认识的词会让运行以退出码 5 停止。见[原生模块](/zh-cn/docs/internals/python/#原生模块)。
+</Option>
+
+<Option name="runtime" id="volant-runtime" default="auto" env="VOLANT_RUNTIME">
+  控制节点的 Python 来自哪里。`auto` 依次使用 `VOLANT_PYTHON`、已安装的托管运行时、当前激活的虚拟环境和 `python3`，其中没有一个可用时就安装托管运行时。`managed` 只使用 `VOLANT_PYTHON` 或托管运行时，缺少时会安装它。`system` 从不使用也从不安装托管运行时。其他任何词都会让运行以退出码 5 停止。见[托管运行时](/zh-cn/docs/reference/runtime/)。
+</Option>
+
+<Option name="ssh_control_master" id="volant-ssh-control-master" default="true" env="VOLANT_SSH_CONTROL_MASTER">
+  让一台 inventory 主机的所有 `ssh` 运行共享同一个 OpenSSH 连接。设为 `false` 时，每个链路和探测都会打开自己的连接。见[每台主机一个连接](/zh-cn/docs/hosts/connections/#每台主机一个连接)。
+</Option>
+
+<Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">
+  设置 `template`、`copy`、`script`、`unarchive` 和 `assemble` 如何处理受管主机指定的控制节点 `src`，以及 `fetch` 能否写入主机指定的 `dest`：`allow`、`contained` 或 `refuse`。默认值是 `allow`，行为与 ansible-core 相同，其他任何词都会让运行以退出码 5 停止。每个词的具体含义见[受管主机指定的源文件](/zh-cn/docs/internals/action-plugins/#受管主机指定的源文件)。
+</Option>
+
+<Option name="host_named_dest_dirs" id="volant-host-named-dest-dirs" default="unset" env="VOLANT_HOST_NAMED_DEST_DIRS">
+  以冒号分隔的控制节点绝对目录列表，`fetch` 可以在这些目录下写入受管主机指定的 `dest`。相对路径、使用 `~` 或 `..` 的条目，或者 `/`，都会让运行以退出码 5 停止。规则见[受管主机指定的 dest](/zh-cn/docs/internals/action-plugins/#受管主机指定的-dest)。
+</Option>

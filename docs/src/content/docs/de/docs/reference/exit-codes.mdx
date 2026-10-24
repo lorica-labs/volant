@@ -1,0 +1,55 @@
+---
+sourceHash: 3d7354233964
+title: Exit-Codes
+description: Was jeder Exit-Code bedeutet und wo Volant mit ansible-playbook übereinstimmt.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+Volant beendet sich mit den Codes, die `ansible-playbook` verwendet, sodass für Ansible geschriebene Skripte und CI-Jobs weiter funktionieren.
+
+## Die Codes
+
+<Option name="0" id="code-0">
+  Jeder Host wurde ohne Fehler beendet.
+</Option>
+
+<Option name="1" id="code-1">
+  Ein allgemeiner Fehler: ein Playbook oder eine Rolle, die sich nicht finden lässt, ein unbekannter `notify`-Name oder eine unbekannte `meta`-Aktion oder ein Host-Muster, das keine Hosts übrig lässt.
+</Option>
+
+<Option name="2" id="code-2">
+  Mindestens ein Host ist fehlgeschlagen, oder der Lauf hat eine Methode der Rechteausweitung verlangt, die dieses Release noch nicht unterstützt.
+</Option>
+
+<Option name="4" id="code-4">
+  Mindestens ein Host war nicht erreichbar, oder das Playbook wurde vor dem Lauf gestoppt: Es lässt sich nicht parsen oder nutzt etwas, das dieses Release noch nicht unterstützt.
+</Option>
+
+<Option name="5" id="code-5">
+  Eine Einstellung hat einen Wert, den sie nicht annehmen kann, etwa `forks = many`, ein unbekanntes Wort für `gathering`, `runtime` oder `host_named_paths` oder ein Keyword `order`, das das Play nicht kennt. Die Meldung nennt den Schlüssel und den Wert.
+</Option>
+
+<Option name="6" id="code-6">
+  Einige Hosts sind fehlgeschlagen, und einige waren nicht erreichbar: 2 und 4 zusammen.
+</Option>
+
+<Option name="99" id="code-99">
+  Strg+C oder SIGTERM hat den Lauf gestoppt. Laufende Batches werden abgebrochen, der Recap wird ausgegeben, und Volant endet mit 99, wie `ansible-playbook`.
+</Option>
+
+<Option name="250" id="code-250">
+  `--step` hat auf der Standardeingabe kein Terminal gefunden. Volant stoppt, bevor es einen Host berührt.
+</Option>
+
+## Nach einem Lauf
+
+Nach einem Lauf ergibt sich der Code aus dem Recap: 2 kommt hinzu, wenn ein Host fehlgeschlagen ist, und 4, wenn ein Host nicht erreichbar war. Ein `serial`-Play stoppt beim ersten Batch, der jeden aktiven Host verloren hat, mit 2, wenn sie fehlgeschlagen sind, und mit 4, wenn sie alle nicht erreichbar wurden.
+
+## Vor einem Lauf
+
+Ein Playbook, das die [Vorabprüfung](/de/docs/internals/preflight/) stoppt, endet vor jeder Verbindung mit 4, was Ansible für ein Playbook verwendet, das es nicht laden kann. Fälle, deren Code an Ansible gemessen wurde, behalten diesen Code: 1 für eine fehlende Rolle, eine unbekannte `meta`-Aktion oder einen unbekannten `notify`-Namen. Ein unbekannter `notify`-Name in einer Datei, die ein dynamisches Include einbringt, wird erst während des Laufs gefunden und beendet den Lauf dort ebenfalls mit 1.
+
+## Wo Ansible abstürzt
+
+In einigen Fällen stürzt ansible-core mit Exit-Code 250 ab, zum Beispiel bei einem Playbook, das sich selbst importiert, oder bei `serial: abc`. Volant lehnt diese Fälle stattdessen mit einer klaren Meldung und einem der obigen Codes ab. Jeder Fall steht unter *Unterschiede zu Ansible* auf der Seite, die ihn behandelt.

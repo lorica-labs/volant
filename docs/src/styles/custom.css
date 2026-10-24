@@ -284,8 +284,10 @@ starlight-toc a[aria-current='true'] {
 .sl-markdown-content table:not(.kw-grid) tr:last-child td {
   border-bottom: 0;
 }
+/* Code in a cell wraps at its spaces, so a long message never pushes the table under the table of
+   contents. A name without spaces stays on one line. */
 .sl-markdown-content table code {
-  white-space: nowrap;
+  white-space: normal;
 }
 /* A table of six columns or more is set tighter, and scrolls inside its own frame if it still does
    not fit, instead of running under the table of contents. */

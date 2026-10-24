@@ -3,6 +3,7 @@
 //! ansible-core 2.19.12 runs it (`cli/adhoc.py`), its results shown by the `minimal` callback.
 
 use std::collections::HashSet;
+use std::fmt::Write as _;
 use std::path::PathBuf;
 
 use serde_json::{Map, Value};
@@ -22,19 +23,41 @@ use crate::stats::{Outcome, Refusal};
 
 /// Runs `args` and returns the process exit code.
 pub fn adhoc(args: AdhocArgs) -> i32 {
+    // argparse acts on `--version` as it reads it, before the checks that follow the parse.
+    if args.version {
+        println!("{}", super::version::block("ansible", &[]));
+        return 0;
+    }
     if args.forks.is_some_and(|forks| forks < 1) {
         return refuse("The number of processes (--forks) must be >= 1", false);
     }
-    // `-vv` and above print what the default callback prints at those levels, which is not the
-    // reference's ad hoc output.
-    if args.verbose > 1 {
-        eprintln!("ERROR! -vv and above are not supported yet for ad hoc commands");
+    // Clap requires the pattern unless `--version` was given.
+    let pattern = args.pattern.clone().unwrap_or_default();
+    // The reference accepts them: a negative `-B` or `-P` starts the job without polling, and a
+    // negative `--task-timeout` fails the task on every host. This release refuses them by name.
+    if let Some(flag) = [
+        ("-B", args.background),
+        ("-P", args.poll),
+        ("--task-timeout", args.task_timeout),
+    ]
+    .into_iter()
+    .find_map(|(flag, value)| value.filter(|v| *v < 0).map(|_| flag))
+    {
+        eprintln!("ERROR! a negative {flag} is not supported yet for ad hoc commands");
         return 4;
     }
-    let adhoc = match Adhoc::new(&args.pattern, &args.module_name, &args.module_args) {
+    // The reference starts the job for real under `-C`; this release does not.
+    if args.check && args.background.is_some_and(|seconds| seconds != 0) {
+        eprintln!("ERROR! -C with -B is not supported yet for ad hoc commands");
+        return 4;
+    }
+    let adhoc = match Adhoc::new(&pattern, &args.module_name, &args.module_args) {
         Ok(mut adhoc) => {
             adhoc.list_hosts = args.list_hosts;
             adhoc.dir.clone_from(&args.playbook_dir);
+            adhoc.background = args.background.unwrap_or(0).unsigned_abs();
+            adhoc.poll = args.poll.map(i64::unsigned_abs);
+            adhoc.timeout = args.task_timeout.unwrap_or(0).unsigned_abs();
             adhoc
         }
         Err((code, message)) => {
@@ -78,6 +101,10 @@ pub(super) struct Adhoc {
     dir: Option<PathBuf>,
     /// A module that reads `-a` as a command line, given none.
     missing_args: bool,
+    /// `-B`, `-P` and `--task-timeout`: the task's `async`, `poll` and `timeout`.
+    background: u64,
+    poll: Option<u64>,
+    timeout: u64,
 }
 
 /// `C.MODULE_REQUIRE_ARGS`: the modules whose `-a` is read with `check_raw`, so that only their
@@ -127,6 +154,9 @@ impl Adhoc {
             list_hosts: false,
             dir: None,
             missing_args: raw.is_empty() && REQUIRE_ARGS.contains(&module),
+            background: 0,
+            poll: None,
+            timeout: 0,
         })
     }
 
@@ -215,10 +245,10 @@ impl Adhoc {
         let mut ds = Map::new();
         ds.insert("action".into(), self.module.clone().into());
         ds.insert("args".into(), Value::Object(self.args.clone()));
-        ds.insert("timeout".into(), 0.into());
+        ds.insert("timeout".into(), self.timeout.into());
         if !INCLUDES.contains(&self.module.as_str()) {
-            ds.insert("async_val".into(), 0.into());
-            ds.insert("poll".into(), 15.into());
+            ds.insert("async_val".into(), self.background.into());
+            ds.insert("poll".into(), self.poll.unwrap_or(15).into());
         }
         Origin::described(
             &format!("<adhoc {} task>", repr(&self.module)),
@@ -236,8 +266,18 @@ impl Adhoc {
     /// loader records point into that text, so they are replaced by the reference's own.
     pub(super) fn playbook(&self) -> anyhow::Result<Playbook> {
         let json = |v: Value| serde_json::to_string(&v).expect("JSON values serialize");
+        let mut keywords = String::new();
+        for (name, value) in [
+            ("async", self.background),
+            ("poll", self.poll.unwrap_or(0)),
+            ("timeout", self.timeout),
+        ] {
+            if value != 0 || (name == "poll" && self.poll == Some(0)) {
+                writeln!(keywords, "    {name}: {value}").expect("a String takes a write");
+            }
+        }
         let text = format!(
-            "- name: Ansible Ad-Hoc\n  hosts: {}\n  gather_facts: false\n  tasks:\n  - action: {}\n    args: {}\n",
+            "- name: Ansible Ad-Hoc\n  hosts: {}\n  gather_facts: false\n  tasks:\n  - action: {}\n    args: {}\n{keywords}",
             json(self.pattern.clone().into()),
             json(self.module.clone().into()),
             json(Value::Object(self.args.clone())),

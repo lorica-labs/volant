@@ -1,5 +1,5 @@
 ---
-sourceHash: 16096ceac904
+sourceHash: 87f9944418cf
 title: Ligne de commande
 description: Chaque commande et option que Volant accepte, regroupées selon ce qu'elles changent, et les options d'ansible-playbook qu'il n'a pas encore.
 ---
@@ -240,6 +240,6 @@ Volant lit les variables `ANSIBLE_*` citées plus haut, plus quelques-unes qui l
 
 Toutes les options d'`ansible-playbook` sont acceptées. `--scp-extra-args` et `--sftp-extra-args` n'ont aucun effet, parce que les fichiers circulent sur le lien de l'agent. La [page de parité](/fr/docs/reference/parity/#ansible-playbook-option) liste chaque option avec son statut.
 
-`volant adhoc` n'a pas encore `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` ni `-t`.
+`volant adhoc` n'a pas encore `-o` ni `-t`.
 
 `volant` a les sous-commandes `playbook`, `adhoc`, `inventory`, `runtime`, `shims`, `vault`, `doc`, `config`, `galaxy`, `console` et `pull`. Il n'y a pas de `volant check` ni de `volant lint`. Lancez ces outils depuis ansible-core, ou utilisez les options de liste de `volant playbook`.

@@ -1,5 +1,5 @@
 ---
-sourceHash: b9d47fe3c8ae
+sourceHash: 162269910b1f
 title: volant adhoc
 description: 在每台匹配模式的主机上运行一个模块，选项和输出与 ansible 一致。
 ---
@@ -11,7 +11,8 @@ import Option from '../../../../../../components/Option.astro';
 ```sh
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
+             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -20,6 +21,30 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-a, --args" arg="ARGS">
   模块的参数：`key=value` 形式的词，或者当值以 `{` 开头、以 `}` 结尾时的 JSON 对象。对于 `command`、`shell`、`raw` 和 `script`，不属于模块选项的词组成命令行。参数会用每台主机的变量和 `-e` 作为模板渲染。以 `{` 开头、以 `}` 结尾但不是有效 JSON 的值，会使命令以退出码 250 停止；引号未闭合则以退出码 4 停止。
+</Option>
+
+<Option name="-C, --check">
+  以 check 模式运行任务。无法检查的模块报告 `SKIPPED`。
+</Option>
+
+<Option name="-D, --diff">
+  在结果之前打印任务对文件和模板所做的差异。与 `-C` 一起使用时，文件不会被修改。
+</Option>
+
+<Option name="-B, --background" arg="SECONDS">
+  把模块作为异步作业运行，它有这么多秒来完成，并对其轮询。结果带有 `ansible_job_id`、`started`、`finished` 和 `results_file`，`Origin:` 字典的 `async_val` 就是这个值。没有 `-B` 时，`-P` 被忽略。
+</Option>
+
+<Option name="-P, --poll" arg="SECONDS">
+  两次查看 `-B` 作业之间的秒数。默认：15。为 `0` 时只启动作业，结果带有 `"finished": false`。`Origin:` 字典的 `poll` 就是这个值。
+</Option>
+
+<Option name="--task-timeout" arg="SECONDS">
+  让运行超过这么多秒的任务失败，退出码为 2，消息为 `Task failed: Timed out after N second(s).`。`0` 表示没有限制，大于 100000000 的值会使任务以 `Timeout N is invalid, it must be between 0 and 100000000.` 失败。`Origin:` 字典的 `timeout` 就是这个值。
+</Option>
+
+<Option name="--version">
+  打印 `ansible [core 2.19.12]`、配置文件、模块搜索路径、collection 位置和可执行文件位置，然后停止。可执行文件位置跟随 `argv[0]`：相对的 `argv[0]`，或用 `exec -a` 设置的 `argv[0]`，可能指向与实际运行的文件不同的文件。当 Volant 找到带 ansible-core 的解释器时，后面会接上模块位置以及 Python、Jinja 和 PyYAML 的版本，沿用参考实现的行。没有时这些行会省略：`--version` 不安装任何东西。搜索路径读取环境变量和默认值，而不是 `ansible.cfg` 里的 `library` 或 `collections_path`。
 </Option>
 
 <Option name="--list-hosts">
@@ -38,4 +63,8 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 每台主机打印一个结果，与 ansible 的 `minimal` callback 的打印方式一致。`command`、`shell` 或 `raw` 的结果是 `h1 | CHANGED | rc=0 >>`，然后是它的 stdout、stderr 和 `msg`，之间不加任何内容。其他任何结果是 `h1 | SUCCESS => `，后面跟着 JSON 形式的结果，缩进四个空格，键已排序。状态有 `SUCCESS`、`CHANGED`、`FAILED`（命令形式）、`FAILED!`（JSON 形式）、`SKIPPED` 和 `UNREACHABLE!`。在失败或不可达的结果之前，标准输出会带有 playbook 打印的同一个 `[ERROR]` 块。它的 `Origin:` 是 `<adhoc 'MODULE' task>`，后面是 ansible 所展示的任务，截断到 120 个字符。
 
-当每台主机都成功或被跳过时，退出码为 0；有主机失败时为 2；有主机无法到达时为 4，不论是否同时有失败的主机。`ANSIBLE_STDOUT_CALLBACK` 不会改变输出。设置 `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`，或在 `ansible.cfg` 的 `[defaults]` 下设置 `callback_result_format = yaml` 时，JSON 形式的结果改为以 YAML 打印，位于 `=>` 之后的行中，缩进四个空格。含换行的字符串会变成字面量块。其他任何值（包括空值）都会使命令以退出码 5 停止。`-vv` 及以上会被拒绝，退出码为 4。
+当每台主机都成功或被跳过时，退出码为 0；有主机失败时为 2；有主机无法到达时为 4，不论是否同时有失败的主机。`ANSIBLE_STDOUT_CALLBACK` 不会改变输出。设置 `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`，或在 `ansible.cfg` 的 `[defaults]` 下设置 `callback_result_format = yaml` 时，JSON 形式的结果改为以 YAML 打印，位于 `=>` 之后的行中，缩进四个空格。含换行的字符串会变成字面量块。其他任何值（包括空值）都会使命令以退出码 5 停止。
+
+`-vv` 以 `--version` 打印的块开头，然后是 `Using PATH as config file`（或 `No config file found; using defaults`），以及 `Skipping callback 'default', as we already have a stdout callback.` 和 `Skipping callback 'oneline', as we already have a stdout callback.` 这两行。`-vvv` 及以上会加上 inventory 插件的行和 `volant playbook` 打印的行；参考实现自己的 `ESTABLISH LOCAL CONNECTION` 和 `EXEC` 行描述的是它的模块上传，Volant 并不这样做，所以不会打印。
+
+负的 `-B`、`-P` 或 `--task-timeout`，以及 `-C` 与 `-B` 同时使用，都会使命令以退出码 4 停止，并说明哪些暂不支持。`-B`、`-P` 和 `--task-timeout` 接受整数；其他任何值都是用法错误。

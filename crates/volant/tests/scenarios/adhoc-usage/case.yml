@@ -10,3 +10,7 @@ runs:
   - args: [-f, x, web]
   - args: [-f, "-1", web]
   - args: [--forks, "0", -i, inv.ini, all, -m, ping]
+  - args: [-B, x, web]
+  - args: [-P, x, web]
+  - args: [--task-timeout, x, web]
+  - args: [--task-timeout, "1.5", web]

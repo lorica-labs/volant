@@ -1,0 +1,21 @@
+# `-C`, `-D`, `-B` and `-P`, `--task-timeout`, `-vv` and `--version`: the task as the reference runs
+# it, the job id, times and the status file path masked. The status file path and the version
+# block hold the recording machine's paths.
+program: ansible
+needs: [ansible-core]
+runs:
+  - args: [h1, -i, inv.ini, -m, ping, -C]
+  - args: [h1, -i, inv.ini, -m, shell, -a, "true", -C]
+  - args: [h1, -i, inv.ini, -m, copy, -a, content=x dest=/tmp/volant-adhoc-golden-diff, -C, -D]
+  - args: [h1, -i, inv.ini, -m, shell, -a, sleep 1; echo hi, -B, "10", -P, "1"]
+  - args: [h1, -i, inv.ini, -m, command, -a, echo hi; echo there, -B, "10", -P, "1"]
+  - args: [h1, -i, inv.ini, -m, command, -a, "false", -B, "10", -P, "1"]
+  - args: [h1, -i, inv.ini, -m, shell, -a, sleep 1, -B, "5"]
+  - args: [h1, -i, inv.ini, -m, shell, -a, echo hi, -P, "1"]
+  - args: [h1, -i, inv.ini, -m, shell, -a, echo hi, -B, "5", -P, "0"]
+  - args: [h1, -i, inv.ini, -m, ping, -B, "5", -P, "1"]
+  - args: [h2, -i, inv.ini, -m, shell, -a, sleep 3, --task-timeout, "1"]
+  - args: [h1, -i, inv.ini, -m, ping, --task-timeout, "100000001"]
+  - args: [h1, -i, inv.ini, -m, shell, -a, echo, --task-timeout, "0"]
+  - args: [h1, -i, inv.ini, -m, ping, -vv]
+  - args: [--version]

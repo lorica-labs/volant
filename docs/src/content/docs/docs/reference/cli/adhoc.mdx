@@ -10,7 +10,8 @@ import Option from '../../../../../components/Option.astro';
 ```sh
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
+             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -19,6 +20,30 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-a, --args" arg="ARGS">
   The module's arguments: `key=value` words, or a JSON object when the value starts with `{` and ends with `}`. For `command`, `shell`, `raw` and `script`, words that are not one of the module's options make up the command line. The arguments are templated with each host's variables and `-e`. A value that starts with `{`, ends with `}` and is not valid JSON stops the command with exit code 250; an unbalanced quote stops it with exit code 4.
+</Option>
+
+<Option name="-C, --check">
+  Run the task in check mode. A module that cannot check reports `SKIPPED`.
+</Option>
+
+<Option name="-D, --diff">
+  Print the differences a task makes to files and templates before its result. With `-C` the file is not changed.
+</Option>
+
+<Option name="-B, --background" arg="SECONDS">
+  Run the module as an async job that has this many seconds to finish, and poll it. The result carries `ansible_job_id`, `started`, `finished` and `results_file`, and the `async_val` of the `Origin:` dictionary is this value. Without `-B`, `-P` is ignored.
+</Option>
+
+<Option name="-P, --poll" arg="SECONDS">
+  Seconds between two looks at the job of `-B`. Default: 15. With `0` the job is only started, and the result has `"finished": false`. The `poll` of the `Origin:` dictionary is this value.
+</Option>
+
+<Option name="--task-timeout" arg="SECONDS">
+  Fail a task that runs longer than this many seconds, with exit code 2 and the message `Task failed: Timed out after N second(s).`. `0` is no limit, and a value above 100000000 fails the task with `Timeout N is invalid, it must be between 0 and 100000000.`. The `timeout` of the `Origin:` dictionary is this value.
+</Option>
+
+<Option name="--version">
+  Print `ansible [core 2.19.12]`, the configuration file, the module search path, the collection location and the executable location, then stop. The executable location follows `argv[0]`: a relative `argv[0]`, or one set with `exec -a`, can name a different file than the one that runs. When Volant finds an interpreter with ansible-core, the module location and the Python, Jinja and PyYAML versions follow, in the reference's lines. Without one, those lines are left out: `--version` installs nothing. The search paths read the environment and the defaults, not `library` or `collections_path` of `ansible.cfg`.
 </Option>
 
 <Option name="--list-hosts">
@@ -37,4 +62,8 @@ A usage error exits with 2. Standard error carries the `usage:` block of `ansibl
 
 Each host prints one result, the way ansible's `minimal` callback prints it. A `command`, `shell` or `raw` result is `h1 | CHANGED | rc=0 >>`, then its stdout, stderr and `msg` joined with nothing between. Any other result is `h1 | SUCCESS => ` followed by the result as JSON, indented four spaces, keys sorted. The statuses are `SUCCESS`, `CHANGED`, `FAILED` (command form), `FAILED!` (JSON form), `SKIPPED` and `UNREACHABLE!`. Before a failed or unreachable result, standard output carries the same `[ERROR]` block a playbook prints. Its `Origin:` is `<adhoc 'MODULE' task>`, followed by the task as ansible shows it, cut down to 120 characters.
 
-The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. With `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, or `callback_result_format = yaml` under `[defaults]` in `ansible.cfg`, a JSON-form result is printed as YAML instead, on the lines after `=>`, indented four spaces. A string with line breaks becomes a literal block. Any other value, the empty one included, stops the command with exit code 5. `-vv` and above are refused with exit code 4.
+The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. With `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, or `callback_result_format = yaml` under `[defaults]` in `ansible.cfg`, a JSON-form result is printed as YAML instead, on the lines after `=>`, indented four spaces. A string with line breaks becomes a literal block. Any other value, the empty one included, stops the command with exit code 5.
+
+`-vv` opens with the block `--version` prints, then `Using PATH as config file` (or `No config file found; using defaults`), and the lines `Skipping callback 'default', as we already have a stdout callback.` and `Skipping callback 'oneline', as we already have a stdout callback.`. `-vvv` and above add the inventory plugin lines and the lines `volant playbook` prints; the reference's own `ESTABLISH LOCAL CONNECTION` and `EXEC` lines describe its module upload, which Volant does not do, so they are not printed.
+
+A negative `-B`, `-P` or `--task-timeout`, and `-C` together with `-B`, stop the command with exit code 4 and say what is not supported yet. `-B`, `-P` and `--task-timeout` take a whole number; anything else is a usage error.

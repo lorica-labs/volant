@@ -340,14 +340,16 @@ async fn run_all(
     for play in compiled.iter().flatten() {
         preflight::check_collection_actions(play).map_err(|e| Refusal::or(4, e))?;
     }
-    // The filters, tests and lookups only ansible-core has run in the helper the union was
-    // built with, or in one started on the first of them.
+    // The filters, tests and lookups only ansible-core has run in the helper the union was built
+    // with, else in one started now when a loop needs one, or on the first call otherwise.
     bridge
         .set_plugin_dirs(reach.plugin_dirs.clone())
         .map_err(|e| Refusal::or(4, e))?;
     out.set_diffs(Arc::clone(&bridge));
-    if let Some(helper) = helper {
-        bridge.adopt(helper);
+    match helper {
+        Some(helper) => bridge.adopt(helper),
+        None if reach.bridged_loop => bridge.warm(),
+        None => {}
     }
     // What `module_defaults` names, resolved by ansible-core as the reference resolves it when it
     // loads a play: a key nothing answers to, or a group nobody declares, stops the run before

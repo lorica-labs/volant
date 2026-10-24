@@ -167,6 +167,15 @@ fn a_healthy_helper_answers_and_starts_once() {
     assert_eq!(starts.load(Ordering::SeqCst), 1);
 }
 
+#[test]
+fn a_warmed_helper_serves_the_first_call_and_starts_once() {
+    let starts = Arc::new(AtomicUsize::new(0));
+    let bridge = bridge_with("echo", &starts);
+    bridge.warm();
+    assert_eq!(ask(&bridge), Ok(json!(["a"])));
+    assert_eq!(starts.load(Ordering::SeqCst), 1);
+}
+
 #[rstest]
 #[case::wrong_id("wrong_id", "answered request 2 to request 1")]
 #[case::oversized_frame("oversized", "exceeds the 67108864 byte limit")]

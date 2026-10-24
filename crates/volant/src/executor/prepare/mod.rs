@@ -52,7 +52,6 @@ use loops::{LoopOptions, loop_list, loop_options, named_undefined, with_lookup_i
 #[expect(clippy::too_many_lines)]
 pub(super) fn prepare(
     step: &Step,
-    step_index: usize,
     host: &str,
     plan: &PlayPlan,
     live: &Progress,
@@ -230,7 +229,16 @@ pub(super) fn prepare(
             plan,
             templar,
             &vars,
-            (step_index, host),
+            &fields::Noting {
+                prepare: crate::profile::next_prepare(),
+                host,
+                later_item: index > 0,
+                loop_names: [
+                    task.loop_var.as_str(),
+                    task.index_var.as_deref().unwrap_or_default(),
+                    "ansible_loop",
+                ],
+            },
             &mut loop_error,
             warnings,
         ) {

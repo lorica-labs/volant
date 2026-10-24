@@ -173,16 +173,32 @@ impl Templar {
 
     /// What the template `text` reads, cached. `None` when it does not compile.
     pub(super) fn reads_of(&self, text: &str) -> Option<Arc<TemplateReads>> {
+        self.reads_counted(text, true)
+    }
+
+    /// Whether the template `text` may read one of `names`: `true` when that cannot be told.
+    /// For the profile, so the cache's own counters leave it out.
+    pub fn may_read(&self, text: &str, names: &[&str]) -> bool {
+        self.reads_counted(text, false).is_none_or(|reads| {
+            reads.dynamic || names.iter().any(|name| reads.names.contains(*name))
+        })
+    }
+
+    fn reads_counted(&self, text: &str, counted: bool) -> Option<Arc<TemplateReads>> {
         let mut table = self
             .inner
             .reads
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(known) = table.get(text) {
-            crate::profile::count(crate::profile::Counter::ReadsHit, 1);
+            if counted {
+                crate::profile::count(crate::profile::Counter::ReadsHit, 1);
+            }
             return known.clone();
         }
-        crate::profile::count(crate::profile::Counter::ReadsMiss, 1);
+        if counted {
+            crate::profile::count(crate::profile::Counter::ReadsMiss, 1);
+        }
         let found = template_reads(text).map(Arc::new);
         if table.len() >= MAX_READS {
             table.clear();

@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// The counters and the repeat tables are process statics, which these tests change: they rely on
+// nextest running every test in a process of its own.
 use super::*;
 use crate::testing::scratch;
 
@@ -158,6 +160,9 @@ fn a_text_rendered_again_for_one_step_and_host_is_a_repeat() {
         (2, vec![("{{ x }}".into(), 1), ("{{ y\n }}".into(), 1)])
     );
     assert_eq!(repeats(1).1.len(), 1);
+    note_invariant("{{ z }}");
+    note_invariant("{{ z }}");
+    assert_eq!(loop_invariant(20), (2, vec![("{{ z }}".into(), 2)]));
     let table = Profile::default().render();
     let block = table.split_once("bridge plugin").unwrap().1;
     let row = format!("\n{:<24} {:>14} {:>14}\n", "to_yaml", 2, 42);
@@ -172,7 +177,9 @@ fn nothing_but_the_counters_is_kept_without_tracking() {
     note_render(1, "h1", "{{ x }}");
     note_render(1, "h1", "{{ x }}");
     bridge_call("to_yaml", 40);
+    note_invariant("{{ z }}");
     assert_eq!(repeats(20), (0, Vec::new()));
+    assert_eq!(loop_invariant(20), (0, Vec::new()));
     assert!(bridge_table().is_empty());
     assert_eq!(counters()[10], ("bridge_calls", 1));
 }

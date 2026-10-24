@@ -151,7 +151,6 @@ fn a_task_is_prepared_with_the_payload_built_for_its_module() {
         let mut warnings = Vec::new();
         let prepared = prepare(
             &step,
-            0,
             "h1",
             &plan,
             &Progress::default(),
@@ -227,7 +226,6 @@ fn a_task_is_sent_to_python_where_a_native_must_not_answer() {
         let step = step_of(task(module), Origin::default());
         let prepared = prepare(
             &step,
-            0,
             "h1",
             &plan,
             &Progress::default(),
@@ -309,7 +307,6 @@ fn step_of(task: PlayTask, origin: Origin) -> Step {
 fn prepared(step: &Step, store: &Mutex<VarStore>) -> Result<Vec<Item>, TemplateError> {
     let prepared = prepare(
         step,
-        0,
         "h1",
         &plan(),
         &Progress::default(),
@@ -336,7 +333,6 @@ fn inventory_actions_are_prepared_without_a_link(#[case] module: &str, #[case] l
     let step = step_of(task(module), Origin::default());
     let prepared = prepare(
         &step,
-        0,
         "h1",
         &plan(),
         &Progress::default(),
@@ -633,7 +629,6 @@ fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
     let templar = Templar::new(play.clone());
     let prepared = prepare(
         &step,
-        0,
         "h1",
         &plan(),
         &Progress::default(),

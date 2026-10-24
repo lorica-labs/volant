@@ -585,7 +585,6 @@ pub(super) async fn drive_host(
                         let mut ignored = Vec::new();
                         match prepare(
                             step,
-                            pos,
                             &name,
                             &plan,
                             &live,
@@ -703,7 +702,6 @@ pub(super) async fn drive_host(
                     let (groups, shown, waited, copy) = resolve_include(
                         &c,
                         step,
-                        pos,
                         kind,
                         &name,
                         &plan,
@@ -899,7 +897,6 @@ pub(super) async fn drive_host(
             };
             let prepared = prepare(
                 step_read,
-                pos,
                 &name,
                 &plan,
                 &live,

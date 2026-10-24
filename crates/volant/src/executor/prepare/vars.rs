@@ -189,7 +189,7 @@ pub(in crate::executor) fn merged_vars(
 }
 
 /// The play's role lists, which every task of the play reads, measured on 2.19.12:
-/// `ansible_play_role_names` and `role_names` name the play's roles in [`RoleKind`] order, an
+/// `ansible_play_role_names` and `role_names` name the play's roles in [`crate::roles::RoleKind`] order, an
 /// `include_role` once it ran; `ansible_dependent_role_names` names their dependencies and
 /// `ansible_role_names` both. The reference builds the last two from Python sets, in no order a
 /// playbook can rely on; they are sorted here.

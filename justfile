@@ -1203,9 +1203,14 @@ profile play hosts="local" name="":
       *) echo "hosts must be 'local' or 'remote', not '{{hosts}}'"; exit 1 ;;
     esac
 
-    just agent-musl
+    # The agent is built with symbols into its own directory; `bench` keeps using target/agents.
+    cargo build -p volant-agent --profile profiling --target x86_64-unknown-linux-musl
     cargo build --profile profiling -p volant
     out=target/profile
+    mkdir -p "$out/agents"
+    cp target/x86_64-unknown-linux-musl/profiling/volant-agent "$out/agents/volant-agent-x86_64-unknown-linux-musl"
+    stamp="$(date -u +%Y%m%dT%H%M%S)-$$"
+    data="/tmp/volant-profile-$stamp.data"
     mkdir -p "$out"
     inventory="$out/$name-inventory.ini"
     if [ "${hosts[0]}" = local ]; then
@@ -1220,29 +1225,39 @@ profile play hosts="local" name="":
     fi
     [ ! -d target/proof-roles ] || export ANSIBLE_ROLES_PATH="$PWD/target/proof-roles"
     export VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}"
-    export VOLANT_AGENT_DIR="$PWD/target/agents"
+    export VOLANT_AGENT_DIR="$PWD/$out/agents"
     volant=./target/profiling/volant
 
     on() { local h="$1"; shift; if [ "$h" = local ]; then bash -c "$*"; else ssh "$h" "$*"; fi; }
-    stop_agent_perf() { for h in "${hosts[@]}"; do on "$h" "sudo -n pkill -INT -f '[v]olant-profile.data'; while pgrep -f '[v]olant-profile.data' > /dev/null; do sleep 0.2; done" || true; done; }
-    cleanup() { stop_agent_perf; for h in "${hosts[@]}"; do on "$h" "sudo -n rm -f /tmp/volant-profile.data" || true; done; }
+    stop_agent_perf() { for h in "${hosts[@]}"; do on "$h" "sudo -n pkill -INT -f '[v]olant-profile-$stamp.data'; while pgrep -f '[v]olant-profile-$stamp.data' > /dev/null; do sleep 0.2; done" || true; done; }
+    cleanup() { stop_agent_perf; for h in "${hosts[@]}"; do on "$h" "sudo -n rm -f $data" || true; done; }
     trap cleanup EXIT
+
+    for h in "${hosts[@]}"; do
+      on "$h" "sudo -n true" || { echo "$h: passwordless sudo is needed for perf"; exit 1; }
+      on "$h" "command -v perf > /dev/null" || { echo "$h: perf is not installed"; exit 1; }
+    done
 
     # Warm-up: fills the agent's payload cache and the hosts' own caches.
     "$volant" playbook -i "$inventory" "$play" > "$out/$name-warmup.log"
 
     for h in "${hosts[@]}"; do
-      on "$h" "nohup sudo -n perf record -a -F 499 --call-graph dwarf,16384 -o /tmp/volant-profile.data > /dev/null 2>&1 < /dev/null &"
+      on "$h" "nohup sudo -n timeout 15m perf record -a -F 499 --call-graph dwarf,16384 -o $data > /dev/null 2>&1 < /dev/null &"
     done
     sleep 1
+    for h in "${hosts[@]}"; do
+      on "$h" "pgrep -f '[v]olant-profile-$stamp.data' > /dev/null" || { echo "$h: perf record did not start"; exit 1; }
+    done
     rm -f "$out/$name.jsonl"
+    status=0
     VOLANT_PYTHON_PERF=1 VOLANT_PROFILE_JSON="$out/$name.jsonl" \
       perf record -F 999 --call-graph dwarf,16384 -o "$out/$name-controller.data" -- \
-      "$volant" playbook -i "$inventory" "$play" > "$out/$name.log"
+      "$volant" playbook -i "$inventory" "$play" > "$out/$name.log" || status=$?
     stop_agent_perf
 
     perf script -i "$out/$name-controller.data" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-controller.svg"
     for h in "${hosts[@]}"; do
-      on "$h" "sudo -n perf script -i /tmp/volant-profile.data --comms volant-agent,python3" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-agent-$h.svg"
+      on "$h" "sudo -n perf script -i $data --comms volant-agent,python3" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-agent-$h.svg"
     done
     ls -l "$out/$name"*.svg "$out/$name.jsonl"
+    exit "$status"

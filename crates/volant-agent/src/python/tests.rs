@@ -20,8 +20,6 @@ use serde_json::json;
 
 use crate::modules::{Context, Run};
 
-/// The module_utils come from the blob, not from the interpreter. This is the proof: the dev
-/// host's `/usr/bin/python3` has no ansible-core at all, and the module still runs.
 #[test]
 fn the_perf_flag_adds_the_variable_and_keeps_the_task_environment() {
     let task = BTreeMap::from([("A".to_string(), "1".to_string())]);
@@ -31,6 +29,8 @@ fn the_perf_flag_adds_the_variable_and_keeps_the_task_environment() {
     assert_eq!(perf.get("PYTHONPERFSUPPORT").map(String::as_str), Some("1"));
 }
 
+/// The module_utils come from the blob, not from the interpreter. This is the proof: the dev
+/// host's `/usr/bin/python3` has no ansible-core at all, and the module still runs.
 #[test]
 fn the_module_utils_come_from_the_blob_and_not_from_the_interpreter() {
     assert_ne!(

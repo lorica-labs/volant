@@ -965,14 +965,23 @@ corpus-report:
     print("\n".join(rows))
     ' "$root" "$PWD/crates/volant/tests/fixtures/corpus/corpus.yml"
 
-# Time the four pinned Galaxy roles under both engines and print the ratio the public speed claim
-# cites. Builds once, installs the roles the same way `proof-roles` does, then runs one uncounted
-# warm-up pass per engine (filling Volant's payload cache and the host's own caches) followed by
-# `runs` timed passes of Volant and `runs` timed passes of the reference
-# (`ANSIBLE_PIPELINING=True`), each preceded by a wait for any leftover build or test on this
-# machine so it never inflates a measured time. Every timed pass's PLAY RECAP is compared against
-# the first one, engine included: a difference there means the two sides did not do the same work,
-# and the number would be meaningless.
+# The Mitogen release the benches time as a third engine: the reference ansible-core with
+# Mitogen's `mitogen_linear` strategy.
+MITOGEN_VERSION := "0.3.54"
+
+# Mitogen unpacked under target/ and named through `strategy_plugins`, the install its own
+# documentation describes, so the reference ansible-core's environment is never touched.
+_mitogen:
+    [ -d target/mitogen-{{MITOGEN_VERSION}}/ansible_mitogen ] || uv pip install --python "$(uv tool dir)/ansible-core/bin/python" --target target/mitogen-{{MITOGEN_VERSION}} --no-deps "mitogen=={{MITOGEN_VERSION}}"
+
+# Time the four pinned Galaxy roles under three engines and print the ratios the public speed
+# claim cites. Builds once, installs the roles the same way `proof-roles` does, then runs one
+# uncounted warm-up pass per engine (filling Volant's payload cache and the host's own caches)
+# followed by `runs` timed passes of Volant, of the reference (`ANSIBLE_PIPELINING=True`) and of
+# the reference under Mitogen (`ANSIBLE_STRATEGY=mitogen_linear`), each preceded by a wait for any
+# leftover build or test on this machine so it never inflates a measured time. Every timed pass's
+# PLAY RECAP is compared against the first one, engine included: a difference there means the
+# engines did not do the same work, and the number would be meaningless.
 #
 # `flock` on a lock file outside the tree (so `git worktree remove` never takes it with it) is
 # held from the first warm-up pass to the last timed pass: several lanes can share this machine's
@@ -1000,6 +1009,8 @@ bench runs="3":
     done < <(grep 'name:' "$requirements" | sed 's/.*name: *//')
     [ "$installed" = true ] || "$(uv tool dir)/ansible-core/bin/ansible-galaxy" role install --force -r "$requirements" -p "$roles_dir"
     export ANSIBLE_ROLES_PATH="$roles_dir"
+    just _mitogen
+    mitogen_strategy="$PWD/target/mitogen-{{MITOGEN_VERSION}}/ansible_mitogen/plugins/strategy"
 
     {
       printf '[targets]\n'
@@ -1071,6 +1082,8 @@ bench runs="3":
       ./target/release/volant playbook -i target/proof-roles-inventory.ini "$play" > "target/bench/$stamp-roles-volant-warmup.log"
     idle
     ANSIBLE_PIPELINING=True "$ansible_playbook" -i target/proof-roles-inventory.ini "$play" > "target/bench/$stamp-roles-reference-warmup.log"
+    idle
+    ANSIBLE_STRATEGY_PLUGINS="$mitogen_strategy" ANSIBLE_STRATEGY=mitogen_linear "$ansible_playbook" -i target/proof-roles-inventory.ini "$play" > "target/bench/$stamp-roles-mitogen-warmup.log"
 
     volant_logs=()
     volant_times=()
@@ -1099,20 +1112,36 @@ bench runs="3":
       reference_logs+=("$log")
     done
 
-    check_recap "$hosts" "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
+    mitogen_logs=()
+    mitogen_times=()
+    for i in $(seq 1 {{runs}}); do
+      idle
+      log="target/bench/$stamp-roles-mitogen-$i.log"
+      start="$(date +%s.%N)"
+      ANSIBLE_STRATEGY_PLUGINS="$mitogen_strategy" ANSIBLE_STRATEGY=mitogen_linear "$ansible_playbook" -i target/proof-roles-inventory.ini "$play" > "$log"
+      end="$(date +%s.%N)"
+      mitogen_times+=("$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')")
+      mitogen_logs+=("$log")
+    done
+
+    check_recap "$hosts" "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}" "${mitogen_logs[@]}"
 
     flock -u 200
 
     volant_median="$(median "${volant_times[@]}")"
     reference_median="$(median "${reference_times[@]}")"
+    mitogen_median="$(median "${mitogen_times[@]}")"
     ratio="$(awk -v r="$reference_median" -v v="$volant_median" 'BEGIN{printf "%.2f", r/v}')"
+    ratio_mitogen="$(awk -v r="$mitogen_median" -v v="$volant_median" 'BEGIN{printf "%.2f", r/v}')"
 
     out="target/bench/$stamp-roles.txt"
     {
-      printf 'bench roles hosts=%s date=%s volant=%s ansible-core=%s pipelining=True\n' "$hosts" "$stamp" "$volant_version" "$ansible_core_version"
+      printf 'bench roles hosts=%s date=%s volant=%s ansible-core=%s pipelining=True mitogen=%s\n' "$hosts" "$stamp" "$volant_version" "$ansible_core_version" "{{MITOGEN_VERSION}}"
       printf 'volant    runs %s  median %s s\n' "${volant_times[*]}" "$volant_median"
       printf 'reference runs %s  median %s s\n' "${reference_times[*]}" "$reference_median"
+      printf 'mitogen   runs %s  median %s s\n' "${mitogen_times[*]}" "$mitogen_median"
       printf 'ratio %s\n' "$ratio"
+      printf 'ratio-mitogen %s\n' "$ratio_mitogen"
     } | tee "$out"
 
 # The commit the k3s proof's playbooks are pinned to, so what runs never drifts out from under
@@ -1359,13 +1388,13 @@ proof-k3s-reset:
     rm -f target/k3s-inventory.ini
     echo "k3s-reset ok"
 
-# Time the official k3s-ansible playbook under both engines and print the ratio the public speed
-# claim for k3s cites. Sets the cluster up the same way `proof-k3s` does, then a `fresh` pass of
-# the reference without pipelining (the only pass that installs k3s, so its recap is its own and
-# never compared), one uncounted warm-up pass per engine, and `runs` timed passes of each engine
-# against the now-established cluster, exactly as `bench` does for the roles: idle wait, the
-# pass's own PLAY RECAP checked against the first timed pass, and `VOLANT_PROFILE_JSON` on every
-# timed Volant pass.
+# Time the official k3s-ansible playbook under the three engines `bench` times and print the
+# ratios the public speed claim for k3s cites. Sets the cluster up the same way `proof-k3s` does,
+# then a `fresh` pass of the reference without pipelining (the only pass that installs k3s, so its
+# recap is its own and never compared), one uncounted warm-up pass per engine, and `runs` timed
+# passes of each engine against the now-established cluster, exactly as `bench` does for the
+# roles: idle wait, the pass's own PLAY RECAP checked against the first timed pass, and
+# `VOLANT_PROFILE_JSON` on every timed Volant pass.
 #
 # `umask 077` covers the recipe because the fetched kubeconfig carries the cluster's admin
 # credentials, same reasoning as `proof-k3s`. The dead-man switch is armed once the build is done
@@ -1385,6 +1414,8 @@ bench-k3s runs="3":
     just _k3s-collections
     just _k3s-kubectl
     just _k3s-inventory
+    just _mitogen
+    mitogen_strategy="$PWD/target/mitogen-{{MITOGEN_VERSION}}/ansible_mitogen/plugins/strategy"
     export ANSIBLE_COLLECTIONS_PATH="$PWD/target/collections"
     export ANSIBLE_ROLES_PATH="$PWD/target/k3s-ansible/roles"
     export PATH="$PWD/target/bin:$PATH"
@@ -1484,6 +1515,8 @@ bench-k3s runs="3":
       ./target/release/volant playbook -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "target/bench/$stamp-k3s-volant-warmup.log"
     idle
     ANSIBLE_PIPELINING=True "$ansible_playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "target/bench/$stamp-k3s-reference-warmup.log"
+    idle
+    ANSIBLE_STRATEGY_PLUGINS="$mitogen_strategy" ANSIBLE_STRATEGY=mitogen_linear "$ansible_playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "target/bench/$stamp-k3s-mitogen-warmup.log"
 
     volant_logs=()
     volant_times=()
@@ -1512,18 +1545,34 @@ bench-k3s runs="3":
       reference_logs+=("$log")
     done
 
-    check_recap 2 "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}"
+    mitogen_logs=()
+    mitogen_times=()
+    for i in $(seq 1 {{runs}}); do
+      idle
+      log="target/bench/$stamp-k3s-mitogen-$i.log"
+      start="$(date +%s.%N)"
+      ANSIBLE_STRATEGY_PLUGINS="$mitogen_strategy" ANSIBLE_STRATEGY=mitogen_linear "$ansible_playbook" -i target/k3s-inventory.ini "$play" -e "kubeconfig=$kubeconfig" > "$log"
+      end="$(date +%s.%N)"
+      mitogen_times+=("$(awk -v a="$start" -v b="$end" 'BEGIN{printf "%.3f", b-a}')")
+      mitogen_logs+=("$log")
+    done
+
+    check_recap 2 "${volant_logs[0]}" "${volant_logs[@]:1}" "${reference_logs[@]}" "${mitogen_logs[@]}"
 
     volant_median="$(median "${volant_times[@]}")"
     reference_median="$(median "${reference_times[@]}")"
+    mitogen_median="$(median "${mitogen_times[@]}")"
     ratio="$(awk -v r="$reference_median" -v v="$volant_median" 'BEGIN{printf "%.2f", r/v}')"
+    ratio_mitogen="$(awk -v r="$mitogen_median" -v v="$volant_median" 'BEGIN{printf "%.2f", r/v}')"
 
     out="target/bench/$stamp-k3s.txt"
     {
-      printf 'bench k3s hosts=2 date=%s volant=%s ansible-core=%s pipelining=True\n' "$stamp" "$volant_version" "$ansible_core_version"
+      printf 'bench k3s hosts=2 date=%s volant=%s ansible-core=%s pipelining=True mitogen=%s\n' "$stamp" "$volant_version" "$ansible_core_version" "{{MITOGEN_VERSION}}"
       printf 'volant    runs %s  median %s s\n' "${volant_times[*]}" "$volant_median"
       printf 'reference runs %s  median %s s\n' "${reference_times[*]}" "$reference_median"
+      printf 'mitogen   runs %s  median %s s\n' "${mitogen_times[*]}" "$mitogen_median"
       printf 'ratio %s\n' "$ratio"
+      printf 'ratio-mitogen %s\n' "$ratio_mitogen"
     } | tee "$out"
 
 # Flamegraphs of one converged pass, for the controller and for the agent on each host, under

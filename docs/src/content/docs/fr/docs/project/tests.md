@@ -1,12 +1,12 @@
 ---
-sourceHash: 00b6cbd9dbbb
+sourceHash: 2e7bc4a7539f
 title: Tests
-description: Comment Volant est vérifié par rapport à ansible-core, les quatre types de réponse enregistrée, et comment ajouter un scénario.
+description: Comment Volant est vérifié par rapport à ansible-core, les types de réponse enregistrée, et comment ajouter un scénario.
 ---
 
 Volant doit se comporter comme ansible-core 2.19.12. La plus grande partie de la suite de tests est donc une comparaison : ansible-core a exécuté quelque chose une fois, sa réponse a été enregistrée dans le dépôt, et le test lance Volant sur la même entrée et compare.
 
-## Les quatre types
+## Les cinq types
 
 Chaque type d'enregistrement a un nom, et `just golden <kind>` le régénère.
 
@@ -16,8 +16,13 @@ Chaque type d'enregistrement a un nom, et `just golden <kind>` le régénère.
 | `inventory` | Les hôtes, variables et groupes d'un inventaire, et les hôtes que sélectionne chaque motif | Tous les jobs, avec `reference.rs` |
 | `scenario` | L'exécution d'un playbook : le code de sortie et toute la sortie standard | Tous les jobs, avec `reference.rs` |
 | `module` | Ce que chaque module natif a répondu sur une vraie machine | Le job `ssh` et `just test-reference`, avec `reference_modules.rs` |
+| `command-names` | La sortie des scripts de `tests/command-names`, qui appellent `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` et `ansible-galaxy` | Le job `command-names` |
 
 Rien dans un enregistrement n'est modifié à la main. Changez l'entrée, lancez `just golden <kind>` avec ansible-core 2.19.12 installé, et lisez le diff. Le lancer sur un arbre inchangé laisse les fichiers exactement comme ils étaient. Le type `module` a aussi besoin de `sudo`, de systemd, d'apt et de cron, parce qu'il crée un compte et une unité sur la machine.
+
+## Le job command-names
+
+Le job `command-names` s'exécute dans un conteneur `debian:stable-slim` sans `ansible` ni Python. Il lie les noms `ansible-*` au `volant` statique avec `volant shims install`, puis lance les scripts de `tests/command-names` exactement comme un utilisateur les écrirait pour ansible. Chaque script écrit sa sortie dans un fichier et la compare à `tests/command-names/expected/<script>.out`, un enregistrement d'ansible-core 2.19.12 fait par `just golden command-names`. Le job téléverse les fichiers de sortie quand un script échoue.
 
 ## Ajouter un scénario
 

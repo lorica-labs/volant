@@ -21,7 +21,7 @@ const LIST_D1: &str = "{\n    \"_meta\": {\n        \"hostvars\": {\n           
 
 const LIST_NOTHING: &str = "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"prod\"\n        ]\n    },\n    \"prod\": {\n        \"children\": [\n            \"web\",\n            \"db\"\n        ]\n    }\n}\n";
 
-const W9: &str = "{\n    \"b\": \"true\",\n    \"f\": 1.5,\n    \"n\": \"null\",\n    \"tpl\": \"{{ inventory_hostname }}-x\",\n    \"uni\": \"café ü\"\n}\n";
+const W9: &str = "{\n    \"b\": \"true\",\n    \"dns\": \"1.1.1.1\",\n    \"f\": 1.5,\n    \"n\": \"null\",\n    \"tpl\": \"{{ inventory_hostname }}-x\",\n    \"uni\": \"café ü\"\n}\n";
 
 const NO_ACTION: &str = "[ERROR]: No action selected, at least one of --host, --graph or --list needs to be specified.\n";
 const CONFLICT: &str = "[ERROR]: Conflicting options used, only one of --host, --graph or --list can be used at the same time.\n";

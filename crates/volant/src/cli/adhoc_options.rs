@@ -32,7 +32,7 @@ pub(super) fn tree_dir(dir: &Path) -> Result<PathBuf, String> {
 
 /// The deprecated options that were given, each as the reference words its notice, in the order
 /// of the command line and spelled as the line spelled them: argparse names the option string it
-/// matched, `-o` and `-t` too inside a group such as `-ot`.
+/// matched, `-o` and `-t` too inside a group of short options.
 pub(super) fn deprecated_options(args: &AdhocArgs, argv: &[OsString]) -> Vec<String> {
     let command = AdhocArgs::command();
     let takes_value = |c: char| {

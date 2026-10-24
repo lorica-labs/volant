@@ -560,12 +560,12 @@ fn the_callback_notices_wait_for_the_run(
     assert_eq!(text(&out.stderr), expected, "{args:?}");
 }
 
-/// The notices follow the command line: the option as it was spelled, `-ot` as two, a repeat once.
+/// The notices follow the command line: the option as it was spelled, two in one group as two, a repeat once.
 #[rstest]
 #[case::short(&["-o", "-t"], &["-o", "-t"])]
 #[case::reversed(&["-t", "-o"], &["-t", "-o"])]
 #[case::long(&["--tree", "--one-line"], &["--tree", "--one-line"])]
-#[case::group(&["-ot"], &["-o", "-t"])]
+#[case::group(&["-Dot"], &["-o", "-t"])]
 #[case::repeated(&["-o", "-o", "-t", "-t"], &["-o", "-t"])]
 fn the_options_are_noticed_as_they_are_spelled(#[case] given: &[&str], #[case] noticed: &[&str]) {
     let dir = tree_dir("spelled");

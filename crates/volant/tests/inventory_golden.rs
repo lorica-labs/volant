@@ -32,6 +32,9 @@ fn run(cwd: &Path, case: &Value, extra: &[&str]) -> (i32, String, String) {
     for source in case["sources"].as_array().unwrap() {
         command.args(["-i", source.as_str().unwrap()]);
     }
+    for arg in case["args"].as_array().unwrap() {
+        command.arg(arg.as_str().unwrap());
+    }
     command
         .args(extra)
         .current_dir(cwd)
@@ -103,6 +106,34 @@ fn the_command_prints_the_bytes_the_reference_printed() {
             compared += 1;
             if got != want {
                 failures.push(format!("{name}: --host nosuch {got:?} want {want:?}"));
+            }
+        }
+        // `--graph` and `--graph --vars` for each case, then the cases that name a group and the
+        // one run without the options the case was given.
+        if let Some(graphs) = case["graphs"].as_object() {
+            for (key, want) in graphs {
+                let mut bare = case.clone();
+                let extra: Vec<&str> = match key.as_str() {
+                    "graph" => vec!["--graph"],
+                    "graph_vars" => vec!["--graph", "--vars"],
+                    "graph_vars_bare" => {
+                        bare["args"] = serde_json::json!([]);
+                        vec!["--graph", "--vars"]
+                    }
+                    group => vec!["--graph", group.strip_prefix("graph_").unwrap(), "--vars"],
+                };
+                let (code, stdout, stderr) = run(&root, &bare, &extra);
+                compared += 1;
+                let wanted = (
+                    i32::try_from(want["rc"].as_i64().unwrap()).unwrap(),
+                    want["stdout"].as_str().unwrap(),
+                );
+                if (code, stdout.as_str()) != wanted {
+                    failures.push(format!("{name}: {key} exit {code}\n{stdout}"));
+                }
+                if stderr != want["stderr"].as_str().unwrap() {
+                    failures.push(format!("{name}: {key} stderr {stderr:?}"));
+                }
             }
         }
         if case["cli_only"] == true {

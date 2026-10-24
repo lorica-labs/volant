@@ -1,5 +1,5 @@
 ---
-sourceHash: c33007652b94
+sourceHash: a4ef5a99748b
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -10,14 +10,18 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
+volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
-volant vault <encrypt|decrypt|view>
+volant shims <install|remove>
+volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
+Cada uno de los demás comandos tiene su propia página: [`volant adhoc`](/es/docs/reference/cli/adhoc/), [`volant inventory`](/es/docs/reference/cli/inventory/), [`volant runtime`](/es/docs/reference/cli/runtime/), [`volant shims`](/es/docs/reference/cli/shims/), [`volant vault`](/es/docs/reference/cli/vault/). Esta página trata de `volant playbook`.
+
 `volant playbook` acepta las mismas opciones que `ansible-playbook`, en las que existen. `volant-playbook` es el mismo programa con un nombre que se parece al que conoces. Los playbooks que se pasan juntos se ejecutan en orden, y cada uno imprime su propio recap.
 
-En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook` o `ansible-vault`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook` o `volant vault`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
+En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook`, `ansible-vault` o `ansible-inventory`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook`, `volant vault` o `volant inventory`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
 
 Cuando una opción tiene una clave de `ansible.cfg` o una variable de entorno, la entrada la nombra. La opción gana a ambas; [Configuración](/es/docs/reference/configuration/) explica el orden.
 
@@ -226,167 +230,6 @@ Volant lee las variables `ANSIBLE_*` nombradas arriba, además de algunas propia
 <Option name="VOLANT_PROFILE_JSON" arg="FILE">
   Escribe el perfil de la ejecución en este archivo, un objeto JSON por línea: los módulos nativos que informó cada agente, después las fases y después una línea por tarea con su módulo, su camino, el motivo de la devolución y sus tiempos en microsegundos. Se escribe pase lo que pase con la ejecución, y un archivo que no se puede escribir solo imprime un aviso.
 </Option>
-
-## El comando adhoc
-
-`volant adhoc` es `ansible`: ejecuta un módulo en cada host que coincide con un patrón.
-
-```sh
-volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
-             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
-```
-
-<Option name="-m, --module-name" arg="MODULE">
-  El módulo que se ejecuta. Por defecto: `command`.
-</Option>
-
-<Option name="-a, --args" arg="ARGS">
-  Los argumentos del módulo: palabras `key=value`, o un objeto JSON cuando el valor empieza por `{` y termina en `}`. Para `command`, `shell`, `raw` y `script`, las palabras que no son una opción del módulo forman la línea de comandos. Los argumentos se renderizan como plantilla con las variables de cada host y `-e`. Un valor que empieza por `{`, termina en `}` y no es JSON válido detiene el comando con el código de salida 250; una comilla sin cerrar lo detiene con el código 4.
-</Option>
-
-<Option name="--list-hosts">
-  Muestra los hosts que el patrón designa, como `  hosts (2):` y una línea `    nombre` por host, y no ejecuta nada. El código de salida es 0.
-</Option>
-
-<Option name="--playbook-dir" arg="DIR">
-  Lee `group_vars/`, `host_vars/`, las rutas relativas y los roles desde `DIR`, y fija `playbook_dir` en él, donde un playbook habría aportado su propio directorio. Por defecto: el directorio de trabajo.
-</Option>
-
-Las demás opciones significan lo mismo que para `volant playbook`, incluidas `--flush-cache` y `-M`. `-f 1` ejecuta un host cada vez, en el orden del inventario.
-
-Un patrón que no designa ningún host imprime `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` y `[WARNING]: No hosts matched, nothing to do` en la salida de error estándar, y termina con 0. Un `-l` que no deja ningún host imprime su propio aviso y `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`, y termina con 1, con o sin `--list-hosts`. Un inventario sin ningún host avisa una vez y no ejecuta nada. Sin inventario, el `localhost` implícito es el único host que existe, y solo lo designa un patrón que lo nombre. Un `command`, `shell` o `raw` sin `-a` se detiene con `[ERROR]: No argument passed to command module` y el código de salida 5.
-
-Un error de uso termina con 2. La salida de error estándar lleva el bloque `usage:` de `ansible`, luego `ansible: error: ` y el motivo. Tras un patrón que falta o un `-f` que no es un número sigue la ayuda completa de `ansible`; tras un `-f` menor que 1, no.
-
-Cada host imprime un resultado, como lo imprime el callback `minimal` de ansible. Un resultado de `command`, `shell` o `raw` es `h1 | CHANGED | rc=0 >>`, y a continuación su stdout, su stderr y su `msg` unidos sin nada entre ellos. Cualquier otro resultado es `h1 | SUCCESS => ` seguido del resultado como JSON, con sangría de cuatro espacios y las claves ordenadas. Los estados son `SUCCESS`, `CHANGED`, `FAILED` (forma de comando), `FAILED!` (forma JSON), `SKIPPED` y `UNREACHABLE!`. Antes de un resultado fallido o inalcanzable, la salida estándar lleva el mismo bloque `[ERROR]` que imprime un playbook. Su `Origin:` es `<adhoc 'MODULE' task>`, seguido de la tarea tal como la muestra ansible, recortada a 120 caracteres.
-
-El código de salida es 0 cuando todos los hosts tuvieron éxito o se omitieron, 2 cuando un host falló, y 4 cuando no se pudo alcanzar un host, haya o no hosts fallidos. `ANSIBLE_STDOUT_CALLBACK` no cambia la salida. Con `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, o `callback_result_format = yaml` bajo `[defaults]` en `ansible.cfg`, un resultado de forma JSON se imprime en cambio como YAML, en las líneas después de `=>`, con sangría de cuatro espacios. Una cadena con saltos de línea se convierte en un bloque literal. Cualquier otro valor, incluido el vacío, detiene el comando con el código de salida 5. `-vv` y superiores se rechazan con el código de salida 4.
-
-## El comando runtime
-
-`volant runtime` administra el Python y el ansible-core que Volant instala para sí mismo. [El runtime administrado](/es/docs/reference/runtime/) describe qué hace cada paso.
-
-```sh
-volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
-volant runtime pack FILE
-volant runtime status
-volant runtime path
-volant runtime remove [ID | --all]
-```
-
-<Option name="install --collections" arg="NAME_OR_FILE...">
-  Instala también colecciones en el runtime. Cada valor es un nombre, con una versión opcional (`community.general:13.4.0`), o un archivo de requisitos que termina en `.yml` o `.yaml`.
-</Option>
-
-<Option name="install --from" arg="FILE">
-  Instala desde un archivo que escribió `volant runtime pack`, sin descargar nada. La plataforma tiene que coincidir. Imprime el SHA-256 del archivo en una línea `sha256`.
-</Option>
-
-<Option name="install --sha256" arg="HASH">
-  Con `--from`, rechaza el archivo antes de descomprimirlo cuando su SHA-256 difiere de `HASH`. El error muestra ambos hashes y el código de salida es 1.
-</Option>
-
-<Option name="remove --all">
-  Elimina todos los runtimes, no solo el actual.
-</Option>
-
-## El comando vault
-
-`volant vault` hace lo que hacen `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit` y `rekey`, sobre los mismos archivos, con los mismos mensajes y los mismos códigos de salida. `encrypt_string` todavía no existe. [Vault](/es/docs/variables/vault/#cifrar-y-ver-archivos) y [Vault](/es/docs/variables/vault/#crear-editar-y-recifrar-archivos) dan los detalles.
-
-```sh
-volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
-volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
-volant vault view [FILE...] [OPTIONS]
-volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
-volant vault edit FILE... [OPTIONS]
-volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
-```
-
-`OPTIONS` son `--vault-id`, `--vault-password-file` (también `--vault-pass-file`), `-J`/`--ask-vault-pass` y `-v`, descritas antes en [Vault](#vault). Sin ninguna de ellas, y sin el ajuste `vault_password_file`, el comando pide la contraseña.
-
-<Option name="--output" arg="FILE">
-  Escribe el resultado ahí y deja intacto el origen. `-` es la salida estándar. Con esta opción solo se acepta un archivo de entrada; si no, el código de salida es 5.
-</Option>
-
-<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  El id de vault que usan `encrypt`, `create` y `rekey`. `encrypt` y `create` lo exigen cuando se da más de un `--vault-id`. `edit` lo acepta y lo ignora: un archivo conserva su propia etiqueta.
-</Option>
-
-<Option name="--skip-tty-check">
-  `create` abre el editor aunque la salida estándar no sea un terminal. Sin ella, `create` se niega con el código de salida 5.
-</Option>
-
-<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
-  El nuevo secreto para `rekey`. Da uno de los dos. Sin ninguno, `rekey` lo pide.
-</Option>
-
-## El comando shims
-
-`volant shims` enlaza los nombres de los programas de ansible-core con `volant`, de modo que `ansible-vault` y los demás inician Volant. Nada crea estos enlaces a menos que lo ejecutes. Funciona en Linux y macOS.
-
-```sh
-volant shims install [--dir DIR] [--force] [NAME...]
-volant shims remove [--dir DIR] [NAME...]
-```
-
-`NAME` es uno de `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` y `ansible-vault`. Sin ninguno, el comando toma los nueve.
-
-<Option name="--dir" arg="DIR">
-  El directorio de los enlaces. Por defecto: `$VOLANT_BIN_DIR`, luego `~/.local/bin`. Un directorio que no existe es un error: `ERROR! DIR is not a directory`, código de salida 1.
-</Option>
-
-<Option name="install --force" arg="">
-  Sustituye un archivo o enlace con ese nombre que no sea un enlace de Volant.
-</Option>
-
-Un shim es un enlace simbólico. Su destino es el nombre relativo `volant` cuando `DIR` contiene una entrada llamada `volant`, así que actualizar ese enlace arrastra los shims. En otro caso es la ruta absoluta del binario en ejecución.
-
-`install` imprime una línea por nombre:
-
-| Línea | Significado |
-|---|---|
-| `ansible-vault: installed` | Se creó el enlace. |
-| `ansible-vault: already installed` | El enlace existe y apunta a `volant`. No cambió nada. |
-| `ansible-vault: replaced` | `--force` sustituyó otro archivo o enlace. |
-| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | No se creó nada, y el código de salida es 1. |
-
-Cuando hay otro ejecutable con ese nombre en el `PATH`, una línea que creó un enlace añade una segunda frase: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`, o `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`. Si `DIR` no está en el `PATH`, termina con `DIR is not in PATH`.
-
-`remove` elimina solo los enlaces simbólicos cuyo destino es un archivo llamado `volant`, e imprime `ansible-vault: removed`, `ansible-vault: not installed` o `ansible-vault: not a Volant link, left alone`. La última hace que el código de salida sea 1.
-
-## El comando inventory
-
-`volant inventory` imprime un inventario como JSON, igual que `ansible-inventory`. Iniciado con el nombre `ansible-inventory` (consulta [el comando shims](#el-comando-shims)), se comporta igual.
-
-```
-volant inventory (--list | --host HOST) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--output FILE] [-v]
-```
-
-Se requiere exactamente una de `--list`, `--host` y `--graph`. `--graph`, `--yaml`, `--toml`, `--export` y `--vars` todavía no existen: `--graph` se rechaza por su nombre y las demás son opciones desconocidas.
-
-<Option name="--list" arg="">
-  Imprime cada host con sus variables, con los archivos `group_vars` y `host_vars` y las variables de sus grupos ya incorporados, y luego los grupos con sus `hosts` y `children`. Las claves van ordenadas, la sangría es de cuatro espacios y el texto no ASCII se escribe tal cual. Una cadena que es un dato se imprime como `{"__ansible_unsafe": "..."}` y un valor `!vault` como `{"__ansible_vault": "..."}`; no se descifra nada.
-</Option>
-
-<Option name="--host" arg="HOST">
-  Imprime las variables de un host. `HOST` es un patrón de hosts que debe coincidir con exactamente un host; si no, el comando imprime `You must pass a single valid host to --host parameter` y sale con el código 5. `--limit` no se aplica.
-</Option>
-
-<Option name="-l, --limit" arg="SUBSET">
-  Con `--list`, conserva solo los hosts que coinciden con el patrón. Los grupos se quedan, con sus hijos. Un patrón que no coincide con nada avisa e imprime un inventario sin hosts.
-</Option>
-
-<Option name="-e, --extra-vars" arg="VARS">
-  Variables adicionales, añadidas a cada host y que ganan sobre todas las demás capas.
-</Option>
-
-<Option name="--output" arg="FILE">
-  Escribe el documento en `FILE` y no imprime nada. El archivo contiene lo que habría salido por la salida estándar, sin el último salto de línea.
-</Option>
-
-`-i`, `-v` y las opciones de vault funcionan como en `volant playbook`. Sin una acción elegida, el comando imprime `No action selected, at least one of --host, --graph or --list needs to be specified.`, y con dos imprime `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; ambos salen con el código 5.
 
 ## Todavía no disponible
 

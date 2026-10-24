@@ -1,0 +1,41 @@
+---
+sourceHash: 8b2c1bcae897
+title: volant adhoc
+description: 在每台匹配模式的主机上运行一个模块，选项和输出与 ansible 一致。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant adhoc` 就是 `ansible`：它在每台匹配模式的主机上运行一个模块。
+
+```sh
+volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
+             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
+```
+
+<Option name="-m, --module-name" arg="MODULE">
+  要运行的模块。默认：`command`。
+</Option>
+
+<Option name="-a, --args" arg="ARGS">
+  模块的参数：`key=value` 形式的词，或者当值以 `{` 开头、以 `}` 结尾时的 JSON 对象。对于 `command`、`shell`、`raw` 和 `script`，不属于模块选项的词组成命令行。参数会用每台主机的变量和 `-e` 作为模板渲染。以 `{` 开头、以 `}` 结尾但不是有效 JSON 的值，会使命令以退出码 250 停止；引号未闭合则以退出码 4 停止。
+</Option>
+
+<Option name="--list-hosts">
+  打印模式匹配到的主机，先是 `  hosts (2):`，然后每台主机一行 `    名称`，并且不运行任何东西。退出码为 0。
+</Option>
+
+<Option name="--playbook-dir" arg="DIR">
+  从 `DIR` 读取 `group_vars/`、`host_vars/`、相对路径和角色，并把 `playbook_dir` 设为它，相当于 playbook 本该提供的目录。默认值：当前工作目录。
+</Option>
+
+其余选项的含义与 `volant playbook` 相同，包括 `--flush-cache` 和 `-M`。`-f 1` 一次运行一台主机，按 inventory 的顺序。
+
+匹配不到任何主机的模式会在标准错误输出 `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` 和 `[WARNING]: No hosts matched, nothing to do`，退出码为 0。`-l` 没有留下任何主机时，会输出它自己的警告和 `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`，退出码为 1，是否带 `--list-hosts` 都一样。完全没有主机的 inventory 只警告一次，不运行任何东西。没有 inventory 时，隐式的 `localhost` 是唯一存在的主机，只有点名它的模式才能匹配。不带 `-a` 运行 `command`、`shell` 或 `raw` 会以 `[ERROR]: No argument passed to command module` 和退出码 5 停止。
+
+用法错误的退出码为 2。标准错误先输出 `ansible` 的 `usage:` 块，再输出 `ansible: error: ` 和原因。缺少模式，或 `-f` 不是数字时，后面还会跟 `ansible` 的完整帮助；`-f` 小于 1 时则没有。
+
+每台主机打印一个结果，与 ansible 的 `minimal` callback 的打印方式一致。`command`、`shell` 或 `raw` 的结果是 `h1 | CHANGED | rc=0 >>`，然后是它的 stdout、stderr 和 `msg`，之间不加任何内容。其他任何结果是 `h1 | SUCCESS => `，后面跟着 JSON 形式的结果，缩进四个空格，键已排序。状态有 `SUCCESS`、`CHANGED`、`FAILED`（命令形式）、`FAILED!`（JSON 形式）、`SKIPPED` 和 `UNREACHABLE!`。在失败或不可达的结果之前，标准输出会带有 playbook 打印的同一个 `[ERROR]` 块。它的 `Origin:` 是 `<adhoc 'MODULE' task>`，后面是 ansible 所展示的任务，截断到 120 个字符。
+
+当每台主机都成功或被跳过时，退出码为 0；有主机失败时为 2；有主机无法到达时为 4，不论是否同时有失败的主机。`ANSIBLE_STDOUT_CALLBACK` 不会改变输出。设置 `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`，或在 `ansible.cfg` 的 `[defaults]` 下设置 `callback_result_format = yaml` 时，JSON 形式的结果改为以 YAML 打印，位于 `=>` 之后的行中，缩进四个空格。含换行的字符串会变成字面量块。其他任何值（包括空值）都会使命令以退出码 5 停止。`-vv` 及以上会被拒绝，退出码为 4。

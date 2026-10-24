@@ -1,0 +1,39 @@
+---
+sourceHash: 7b80d85667ae
+title: volant shims
+description: 把 ansible-core 的程序名链接到 volant，并删除这些链接。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant shims` 把 ansible-core 的程序名链接到 `volant`，这样 `ansible-vault` 等命令启动的就是 Volant。除非你运行它，否则不会创建这些链接。它适用于 Linux 和 macOS。
+
+```sh
+volant shims install [--dir DIR] [--force] [NAME...]
+volant shims remove [--dir DIR] [NAME...]
+```
+
+`NAME` 是 `ansible`、`ansible-config`、`ansible-console`、`ansible-doc`、`ansible-galaxy`、`ansible-inventory`、`ansible-playbook`、`ansible-pull` 和 `ansible-vault` 之一。不给出时，命令处理全部九个。
+
+<Option name="--dir" arg="DIR">
+  放置链接的目录。默认：`$VOLANT_BIN_DIR`，然后是 `~/.local/bin`。目录不存在是错误：`ERROR! DIR is not a directory`，退出码为 1。
+</Option>
+
+<Option name="install --force" arg="">
+  替换同名但不是 Volant 链接的文件或链接。
+</Option>
+
+shim 是符号链接。当 `DIR` 里有一个名为 `volant` 的条目时，它的目标是相对名字 `volant`，所以升级那个链接时 shim 会跟着更新。否则目标是正在运行的二进制文件的绝对路径。
+
+`install` 为每个名字打印一行：
+
+| 行 | 含义 |
+|---|---|
+| `ansible-vault: installed` | 已创建链接。 |
+| `ansible-vault: already installed` | 链接已存在并指向 `volant`。没有任何改动。 |
+| `ansible-vault: replaced` | `--force` 替换了另一个文件或链接。 |
+| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | 没有创建任何东西，退出码为 1。 |
+
+当 `PATH` 中还有同名的其他可执行文件时，创建了链接的那一行会再加一句：`note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`，或 `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`。如果 `DIR` 根本不在 `PATH` 中，则以 `DIR is not in PATH` 结尾。
+
+`remove` 只删除目标是名为 `volant` 的文件的符号链接，并打印 `ansible-vault: removed`、`ansible-vault: not installed` 或 `ansible-vault: not a Volant link, left alone`。最后一种会使退出码为 1。

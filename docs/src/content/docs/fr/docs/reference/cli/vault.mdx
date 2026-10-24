@@ -1,0 +1,49 @@
+---
+sourceHash: d9ea9949d3e7
+title: volant vault
+description: Chiffre, déchiffre, affiche, crée, modifie et rechiffre des fichiers vault, avec les messages et les codes de sortie d'ansible-vault.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant vault` fait ce que font `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit`, `rekey` et `encrypt_string`, sur les mêmes fichiers, avec les mêmes messages et les mêmes codes de sortie. [Chiffrer et afficher des fichiers](/fr/docs/variables/vault/#chiffrer-et-afficher-des-fichiers), [créer, modifier et rechiffrer des fichiers](/fr/docs/variables/vault/#créer-modifier-et-rechiffrer-des-fichiers) et [chiffrer des chaînes](/fr/docs/variables/vault/#chiffrer-des-chaînes) donnent les détails.
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
+volant vault encrypt_string [-n NAME]... [-p] [--show-input] [--stdin-name NAME] [--output FILE] [--encrypt-vault-id ID] [OPTIONS] [STRING...]
+```
+
+`OPTIONS` désigne `--vault-id`, `--vault-password-file` (aussi `--vault-pass-file`), `-J`/`--ask-vault-pass` et `-v`, décrits sous [Vault](/fr/docs/reference/cli/#vault). Sans aucune d'elles, et sans réglage `vault_password_file`, la commande demande le mot de passe.
+
+<Option name="--output" arg="FILE">
+  Écrit le résultat à cet endroit et laisse la source intacte. `-` désigne la sortie standard. Un seul fichier d'entrée est accepté avec cette option, sinon le code de sortie est 5.
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  L'identifiant vault que `encrypt`, `create` et `rekey` utilisent. `encrypt` et `create` l'exigent quand plusieurs `--vault-id` sont donnés. `edit` l'accepte et l'ignore : un fichier garde son propre label.
+</Option>
+
+<Option name="--skip-tty-check">
+  `create` ouvre l'éditeur même quand la sortie standard n'est pas un terminal. Sans elle, `create` refuse avec le code de sortie 5.
+</Option>
+
+<Option name="-n, --name" arg="NAME">
+  Pour `encrypt_string` : le nom de variable de la chaîne placée au même rang. Répétable.
+</Option>
+
+<Option name="--stdin-name" arg="NAME">
+  Pour `encrypt_string` : chiffre l'entrée standard, sous ce nom de variable.
+</Option>
+
+<Option name="-p, --prompt, --show-input">
+  Pour `encrypt_string` : demande un nom et la chaîne sur le terminal. La chaîne n'est pas affichée à la frappe sauf si `--show-input` est donné.
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  Le nouveau secret pour `rekey`. Donnez l'une des deux. Sans aucune, `rekey` le demande.
+</Option>

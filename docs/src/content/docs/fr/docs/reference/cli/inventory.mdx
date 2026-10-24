@@ -1,0 +1,45 @@
+---
+sourceHash: 2c4ece9bf821
+title: volant inventory
+description: Affiche un inventaire en JSON, comme le fait ansible-inventory.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant inventory` affiche un inventaire en JSON, comme le fait `ansible-inventory`. Lancée sous le nom `ansible-inventory` (voir [la commande shims](/fr/docs/reference/cli/shims/)), elle se comporte de la même façon.
+
+```
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [--output FILE] [-v]
+```
+
+Exactement une des options `--list`, `--host` et `--graph` est requise. `--yaml`, `--toml` et `--export` n'existent pas encore et sont des options inconnues.
+
+<Option name="--list" arg="">
+  Affiche chaque hôte avec ses variables, y compris celles des fichiers `group_vars` et `host_vars` et de ses groupes, puis les groupes avec leurs `hosts` et `children`. Les clés sont triées, l'indentation est de quatre espaces et le texte non ASCII est écrit tel quel. Une chaîne qui est une donnée s'affiche `{"__ansible_unsafe": "..."}` et une valeur `!vault` `{"__ansible_vault": "..."}` ; rien n'est déchiffré.
+</Option>
+
+<Option name="--host" arg="HOST">
+  Affiche les variables d'un hôte. `HOST` est un motif d'hôte qui doit correspondre à exactement un hôte ; sinon la commande affiche `You must pass a single valid host to --host parameter` et sort avec le code 5. `--limit` ne s'applique pas.
+</Option>
+
+<Option name="--graph" arg="[GROUP]">
+  Affiche les groupes sous forme d'arbre : `@name:` pour un groupe, des noms seuls pour les hôtes, les enfants d'un groupe avant ses hôtes, chaque niveau indenté de `  |`. Avec un nom de groupe, n'affiche que ce sous-arbre. Un nom qui n'est pas un groupe affiche `Pattern must be valid group name when using --graph` et sort avec le code 5. `--limit` ne s'applique pas.
+</Option>
+
+<Option name="--vars" arg="">
+  Avec `--graph`, ajoute des lignes `{name = value}` sous chaque hôte (ses variables regroupées) et chaque groupe (les siennes, fichiers `group_vars` compris), triées par nom et écrites avec le `str()` de Python. Les valeurs `!vault` sont déchiffrées, donc cela demande le mot de passe vault, et le texte `!unsafe` est affiché tel quel. Les autres actions ignorent `--vars`.
+</Option>
+
+<Option name="-l, --limit" arg="SUBSET">
+  Avec `--list`, ne garde que les hôtes qui correspondent au motif. Les groupes restent, avec leurs enfants. Un motif qui ne correspond à rien avertit et affiche un inventaire sans hôte.
+</Option>
+
+<Option name="-e, --extra-vars" arg="VARS">
+  Variables supplémentaires, ajoutées à chaque hôte et prioritaires sur toutes les autres couches.
+</Option>
+
+<Option name="--output" arg="FILE">
+  Écrit le document dans `FILE` et n'affiche rien. Le fichier contient ce que la sortie standard aurait contenu, sans le dernier saut de ligne.
+</Option>
+
+`-i`, `-v` et les options vault fonctionnent comme pour `volant playbook`. Sans action choisie, la commande affiche `No action selected, at least one of --host, --graph or --list needs to be specified.`, et avec deux actions elle affiche `Conflicting options used, only one of --host, --graph or --list can be used at the same time.` ; les deux sortent avec le code 5.

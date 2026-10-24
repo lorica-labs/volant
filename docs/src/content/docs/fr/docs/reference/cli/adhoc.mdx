@@ -1,0 +1,41 @@
+---
+sourceHash: 8b2c1bcae897
+title: volant adhoc
+description: Exécute un module sur chaque hôte qui correspond à un motif, avec les options et la sortie d'ansible.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant adhoc` est `ansible` : il exécute un module sur chaque hôte qui correspond à un motif.
+
+```sh
+volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
+             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
+```
+
+<Option name="-m, --module-name" arg="MODULE">
+  Le module à exécuter. Par défaut : `command`.
+</Option>
+
+<Option name="-a, --args" arg="ARGS">
+  Les arguments du module : des mots `key=value`, ou un objet JSON quand la valeur commence par `{` et finit par `}`. Pour `command`, `shell`, `raw` et `script`, les mots qui ne sont pas une option du module forment la ligne de commande. Les arguments sont rendus comme modèles avec les variables de chaque hôte et `-e`. Une valeur qui commence par `{`, finit par `}` et n'est pas du JSON valide arrête la commande avec le code de sortie 250 ; un guillemet non fermé l'arrête avec le code 4.
+</Option>
+
+<Option name="--list-hosts">
+  Affiche les hôtes que le motif désigne, sous la forme `  hosts (2):` puis une ligne `    nom` par hôte, et n'exécute rien. Le code de sortie est 0.
+</Option>
+
+<Option name="--playbook-dir" arg="DIR">
+  Lit `group_vars/`, `host_vars/`, les chemins relatifs et les rôles depuis `DIR`, et y fixe `playbook_dir`, là où un playbook aurait fourni son propre répertoire. Par défaut : le répertoire courant.
+</Option>
+
+Les autres options ont le sens qu'elles ont pour `volant playbook`, `--flush-cache` et `-M` compris. `-f 1` exécute un hôte à la fois, dans l'ordre de l'inventaire.
+
+Un motif qui ne désigne aucun hôte affiche `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` et `[WARNING]: No hosts matched, nothing to do` sur l'erreur standard, et sort avec 0. Un `-l` qui ne laisse aucun hôte affiche son propre avertissement puis `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`, et sort avec 1, avec ou sans `--list-hosts`. Un inventaire sans aucun hôte avertit une fois et n'exécute rien. Sans inventaire, le `localhost` implicite est le seul hôte qui existe, et seul un motif qui le nomme le désigne. Un `command`, `shell` ou `raw` lancé sans `-a` s'arrête avec `[ERROR]: No argument passed to command module` et le code de sortie 5.
+
+Une erreur d'usage sort avec 2. L'erreur standard porte le bloc `usage:` d'`ansible`, puis `ansible: error: ` et la raison. Un motif manquant ou un `-f` qui n'est pas un nombre est suivi de l'aide complète d'`ansible` ; un `-f` inférieur à 1 ne l'est pas.
+
+Chaque hôte affiche un résultat, comme le fait le callback `minimal` d'ansible. Un résultat de `command`, `shell` ou `raw` est `h1 | CHANGED | rc=0 >>`, puis sa sortie standard, son erreur standard et son `msg` collés sans rien entre eux. Tout autre résultat est `h1 | SUCCESS => ` suivi du résultat en JSON, indenté de quatre espaces, clés triées. Les statuts sont `SUCCESS`, `CHANGED`, `FAILED` (forme commande), `FAILED!` (forme JSON), `SKIPPED` et `UNREACHABLE!`. Avant un résultat en échec ou injoignable, la sortie standard porte le même bloc `[ERROR]` qu'affiche un playbook. Son `Origin:` est `<adhoc 'MODULE' task>`, suivi de la tâche telle qu'ansible la montre, coupée à 120 caractères.
+
+Le code de sortie est 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, et 4 quand un hôte n'a pas pu être joint, qu'il y ait ou non des hôtes en échec. `ANSIBLE_STDOUT_CALLBACK` ne change pas la sortie. Avec `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, ou `callback_result_format = yaml` sous `[defaults]` dans `ansible.cfg`, un résultat de forme JSON est affiché en YAML à la place, sur les lignes après `=>`, indenté de quatre espaces. Une chaîne avec des sauts de ligne devient un bloc littéral. Toute autre valeur, la valeur vide comprise, arrête la commande avec le code de sortie 5. `-vv` et plus sont refusés avec le code de sortie 4.

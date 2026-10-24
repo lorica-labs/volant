@@ -281,6 +281,18 @@ impl VarStore {
         vars
     }
 
+    /// A group's own variables for `ansible-inventory --graph --vars`: what the inventory sources
+    /// wrote for it, then its `group_vars` files, a later source's winning.
+    pub fn listed_group_vars(&self, group: &str, own: &Map<String, Value>) -> Map<String, Value> {
+        let mut vars = own.clone();
+        for files in &self.group_files {
+            if let Some(file) = files.get(group) {
+                extend(&mut vars, file);
+            }
+        }
+        vars
+    }
+
     /// Inventory-level sources for one host, without play, facts, extra or magic variables.
     /// This is what other hosts see through `hostvars`.
     fn host_base(&self, host: &str) -> Map<String, Value> {

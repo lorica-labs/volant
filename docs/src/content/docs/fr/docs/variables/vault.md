@@ -1,5 +1,5 @@
 ---
-sourceHash: 72cf8b339b72
+sourceHash: 06260172771b
 title: Vault
 description: Comment Volant lit les données d'Ansible Vault, d'où il tire les mots de passe, et pourquoi ils ne quittent jamais le processus du contrôleur.
 ---
@@ -55,6 +55,23 @@ Une valeur revenue d'un hôte géré n'est jamais déchiffrée avec les secrets 
 - L'éditeur est `EDITOR`, sinon `ANSIBLE_EDITOR`, sinon `[defaults] editor`, sinon `vi`, découpé en mots comme le ferait un shell, avec le nom du fichier ajouté. Son statut de sortie n'est pas regardé, comme dans ansible-vault.
 - L'éditeur travaille sur une copie en mode `0600` dans un répertoire privé sous `ANSIBLE_LOCAL_TEMP` (`[defaults] local_tmp`, sinon `~/.ansible/tmp`). La copie est écrasée puis supprimée à chaque sortie, y compris avec un éditeur en échec et avec SIGTERM ou SIGHUP. Ctrl-C va à l'éditeur.
 - `rekey` déchiffre chaque fichier avec les anciens secrets et le réécrit avec le nouveau, en gardant son mode. Le nouveau secret vient de `--new-vault-password-file`, de `--new-vault-id LABEL@SOURCE`, ou des invites `New Vault password: ` et `Confirm New Vault password: `. Il affiche `Rekey successful` sur l'erreur standard, quelle que soit la sortie standard.
+
+## Chiffrer des chaînes
+
+`volant vault encrypt_string` transforme une valeur en bloc `!vault |` pour un fichier de variables. Chaque ligne du texte chiffré est indentée de dix espaces, et chaque bloc se termine par un saut de ligne :
+
+```yaml
+mykey: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          66313561363937653234366564623639...
+```
+
+- `-n NAME` nomme la chaîne placée au même rang et `--stdin-name NAME` nomme l'entrée standard. Sans nom, le bloc commence par `!vault |`. `--vault-id LABEL@SOURCE` donne un en-tête `1.2` avec le label.
+- Sans chaîne, ou avec `-`, le texte est lu sur l'entrée standard jusqu'à la fin. Une entrée vide sort avec le code 5.
+- Avec plus d'une chaîne, l'erreur standard porte une ligne de commentaire par chaîne, et une note quand il y a moins de noms que de chaînes. La sortie standard ne contient que les blocs.
+- `-p` demande un nom de variable, puis la chaîne, qui n'est pas affichée à la frappe sauf si `--show-input` est donné. Il ne peut pas être combiné avec la lecture de l'entrée standard.
+- Sur un terminal, `Encryption successful` va sur l'erreur standard avant les blocs.
+- `--output FILE` écrit les blocs dans le fichier, en mode `0600`.
 
 ## Limites connues
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 72cf8b339b72
+sourceHash: 06260172771b
 title: Vault
 description: Cómo lee Volant los datos de Ansible Vault, de dónde obtiene las contraseñas y por qué nunca salen del proceso del controlador.
 ---
@@ -55,6 +55,23 @@ Un valor que volvió de un host administrado nunca se descifra con los secretos 
 - El editor es `EDITOR`, si no `ANSIBLE_EDITOR`, si no `[defaults] editor`, si no `vi`, dividido en palabras como lo haría un shell, con el nombre del archivo añadido. No se mira su estado de salida, como en ansible-vault.
 - El editor trabaja sobre una copia con modo `0600` en un directorio privado bajo `ANSIBLE_LOCAL_TEMP` (`[defaults] local_tmp`, si no `~/.ansible/tmp`). La copia se sobrescribe y se elimina en cualquier salida, incluidos un editor que falla y SIGTERM o SIGHUP. Ctrl-C va al editor.
 - `rekey` descifra cada archivo con los secretos antiguos y lo escribe de nuevo con el nuevo, conservando su modo. El nuevo secreto viene de `--new-vault-password-file`, de `--new-vault-id LABEL@SOURCE` o de las preguntas `New Vault password: ` y `Confirm New Vault password: `. Imprime `Rekey successful` en el error estándar, sea cual sea la salida estándar.
+
+## Cifrar cadenas
+
+`volant vault encrypt_string` convierte un valor en un bloque `!vault |` para un archivo de variables. Cada línea del texto cifrado lleva diez espacios de sangría, y cada bloque termina con un salto de línea:
+
+```yaml
+mykey: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          66313561363937653234366564623639...
+```
+
+- `-n NAME` da nombre a la cadena que ocupa el mismo lugar y `--stdin-name NAME` da nombre a la entrada estándar. Sin nombre, el bloque empieza por `!vault |`. `--vault-id LABEL@SOURCE` da una cabecera `1.2` con la etiqueta.
+- Sin cadena, o con `-`, el texto se lee de la entrada estándar hasta el final. Una entrada vacía sale con el código 5.
+- Con más de una cadena, el error estándar lleva una línea de comentario por cadena, y una nota cuando hay menos nombres que cadenas. La salida estándar contiene solo los bloques.
+- `-p` pide un nombre de variable y luego la cadena, que no se muestra al escribirla salvo que se dé `--show-input`. No se puede combinar con la lectura de la entrada estándar.
+- En un terminal, `Encryption successful` va al error estándar antes de los bloques.
+- `--output FILE` escribe los bloques en el archivo, con modo `0600`.
 
 ## Carencias conocidas
 

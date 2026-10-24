@@ -126,7 +126,7 @@ fn run_in(root: &Path, args: &[&str]) -> (i32, String, String) {
     "",
     "[ERROR]: Invalid host list pattern: ~(\n"
 )]
-#[case::graph_is_refused(&["-i", "hosts.ini", "--graph"], 4, "", "[ERROR]: --graph is not supported yet\n")]
+#[case::graph_to_a_host(&["-i", "hosts.ini", "--graph", "d1"], 5, "", "[ERROR]: Pattern must be valid group name when using --graph\n")]
 fn prints_what_the_reference_prints(
     #[case] args: &[&str],
     #[case] code: i32,

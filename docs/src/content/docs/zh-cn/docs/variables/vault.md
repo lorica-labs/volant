@@ -1,5 +1,5 @@
 ---
-sourceHash: 72cf8b339b72
+sourceHash: 06260172771b
 title: Vault
 description: Volant 如何读取 Ansible Vault 数据，从哪里获取密码，以及为什么密码永远不会离开控制节点进程。
 ---
@@ -55,6 +55,23 @@ vault 密码以内存形式存在于控制节点进程中。它永远不会被�
 - 编辑器取自 `EDITOR`，否则 `ANSIBLE_EDITOR`，否则 `[defaults] editor`，否则 `vi`，按 shell 的方式拆分成词，再加上文件名。与 ansible-vault 一样，不检查它的退出状态。
 - 编辑器操作的是 `ANSIBLE_LOCAL_TEMP`（`[defaults] local_tmp`，否则 `~/.ansible/tmp`）下私有目录中权限为 `0600` 的副本。无论以何种方式退出，包括编辑器失败以及 SIGTERM 或 SIGHUP，副本都会被覆盖并删除。Ctrl-C 会交给编辑器。
 - `rekey` 用旧密钥解密每个文件，再用新密钥写回，保持其权限。新密钥来自 `--new-vault-password-file`、`--new-vault-id LABEL@SOURCE`，或提示 `New Vault password: ` 和 `Confirm New Vault password: `。无论标准输出是什么，它都在标准错误输出打印 `Rekey successful`。
+
+## 加密字符串
+
+`volant vault encrypt_string` 把一个值变成可放入变量文件的 `!vault |` 块。密文的每一行缩进十个空格，每个块以换行结束：
+
+```yaml
+mykey: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          66313561363937653234366564623639...
+```
+
+- `-n NAME` 为位于同一位置的字符串命名，`--stdin-name NAME` 为标准输入命名。没有名称时，块以 `!vault |` 开头。`--vault-id LABEL@SOURCE` 会给出带标签的 `1.2` 头部。
+- 没有字符串，或给出 `-` 时，从标准输入读取文本直到结尾。空输入以退出码 5 结束。
+- 字符串多于一个时，标准错误输出为每个字符串打印一行注释，名称少于字符串时还会有一条提示。标准输出只包含这些块。
+- `-p` 先询问变量名，再询问字符串；除非给出 `--show-input`，否则不会回显字符串。它不能与读取标准输入同时使用。
+- 在终端上，`Encryption successful` 会在这些块之前输出到标准错误输出。
+- `--output FILE` 把这些块写入文件，权限为 `0600`。
 
 ## 已知缺口
 

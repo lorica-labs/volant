@@ -1,0 +1,49 @@
+---
+sourceHash: d9ea9949d3e7
+title: volant vault
+description: Verschlüsselt, entschlüsselt, zeigt an, legt an, bearbeitet und verschlüsselt Vault-Dateien neu, mit den Meldungen und Exit-Codes von ansible-vault.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant vault` tut, was `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit`, `rekey` und `encrypt_string` tun, auf denselben Dateien, mit denselben Meldungen und denselben Exit-Codes. Einzelheiten stehen unter [Dateien verschlüsseln und anzeigen](/de/docs/variables/vault/#dateien-verschlüsseln-und-anzeigen), [Dateien anlegen, bearbeiten und neu verschlüsseln](/de/docs/variables/vault/#dateien-anlegen-bearbeiten-und-neu-verschlüsseln) und [Strings verschlüsseln](/de/docs/variables/vault/#strings-verschlüsseln).
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
+volant vault encrypt_string [-n NAME]... [-p] [--show-input] [--stdin-name NAME] [--output FILE] [--encrypt-vault-id ID] [OPTIONS] [STRING...]
+```
+
+`OPTIONS` sind `--vault-id`, `--vault-password-file` (auch `--vault-pass-file`), `-J`/`--ask-vault-pass` und `-v`, unter [Vault](/de/docs/reference/cli/#vault) beschrieben. Ohne eine davon und ohne die Einstellung `vault_password_file` fragt der Befehl nach dem Passwort.
+
+<Option name="--output" arg="FILE">
+  Schreibt das Ergebnis dorthin und lässt die Quelle unverändert. `-` ist die Standardausgabe. Damit wird nur eine Eingabedatei akzeptiert, sonst ist der Exit-Code 5.
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  Die Vault-ID, die `encrypt`, `create` und `rekey` verwenden. `encrypt` und `create` verlangen sie, wenn mehr als eine `--vault-id` angegeben wird. `edit` akzeptiert sie und ignoriert sie: Eine Datei behält ihr eigenes Label.
+</Option>
+
+<Option name="--skip-tty-check">
+  `create` öffnet den Editor auch dann, wenn die Standardausgabe kein Terminal ist. Ohne sie verweigert `create` mit Exit-Code 5.
+</Option>
+
+<Option name="-n, --name" arg="NAME">
+  Für `encrypt_string`: der Variablenname des Strings an derselben Stelle. Wiederholbar.
+</Option>
+
+<Option name="--stdin-name" arg="NAME">
+  Für `encrypt_string`: verschlüsselt die Standardeingabe unter diesem Variablennamen.
+</Option>
+
+<Option name="-p, --prompt, --show-input">
+  Für `encrypt_string`: fragt im Terminal nach einem Namen und dem String. Der String wird nicht angezeigt, außer `--show-input` ist angegeben.
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  Das neue Geheimnis für `rekey`. Geben Sie eine der beiden an. Ohne beide fragt `rekey` danach.
+</Option>

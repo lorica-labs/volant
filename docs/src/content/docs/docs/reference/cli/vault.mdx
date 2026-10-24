@@ -1,0 +1,48 @@
+---
+title: volant vault
+description: Encrypt, decrypt, view, create, edit and rekey vault files, with the messages and exit codes of ansible-vault.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+`volant vault` does what `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit`, `rekey` and `encrypt_string` do, on the same files, with the same messages and exit codes. [Encrypting and viewing files](/docs/variables/vault/#encrypting-and-viewing-files), [creating, editing and rekeying files](/docs/variables/vault/#creating-editing-and-rekeying-files) and [encrypting strings](/docs/variables/vault/#encrypting-strings) have the details.
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
+volant vault encrypt_string [-n NAME]... [-p] [--show-input] [--stdin-name NAME] [--output FILE] [--encrypt-vault-id ID] [OPTIONS] [STRING...]
+```
+
+`OPTIONS` are `--vault-id`, `--vault-password-file` (also `--vault-pass-file`), `-J`/`--ask-vault-pass` and `-v`, described under [Vault](/docs/reference/cli/#vault). With none of them, and no `vault_password_file` setting, the command asks for the password.
+
+<Option name="--output" arg="FILE">
+  Write the result there and leave the source alone. `-` is standard output. Only one input file is accepted with it, or the exit code is 5.
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  The vault id `encrypt`, `create` and `rekey` use. `encrypt` and `create` require it when more than one `--vault-id` is given. `edit` accepts it and ignores it: a file keeps its own label.
+</Option>
+
+<Option name="--skip-tty-check">
+  `create` opens the editor even when standard output is not a terminal. Without it, `create` refuses with exit code 5.
+</Option>
+
+<Option name="-n, --name" arg="NAME">
+  For `encrypt_string`: the variable name of the string at the same place. Repeatable.
+</Option>
+
+<Option name="--stdin-name" arg="NAME">
+  For `encrypt_string`: encrypt standard input, under this variable name.
+</Option>
+
+<Option name="-p, --prompt, --show-input">
+  For `encrypt_string`: ask for a name and the string on the terminal. The string is not echoed unless `--show-input` is given.
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  The new secret for `rekey`. Give one of them. With neither, `rekey` asks for it.
+</Option>

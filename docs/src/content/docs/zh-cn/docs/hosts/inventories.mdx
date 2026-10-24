@@ -1,5 +1,5 @@
 ---
-sourceHash: bffc802c3c07
+sourceHash: e261982fee7c
 title: Inventory 与 facts 缓存
 description: Volant 读取的 inventory 格式、组变量和主机变量的来源、主机模式的语法，以及 facts 如何在多次运行之间保留。
 ---
@@ -83,7 +83,7 @@ Volant 会读取每个来源旁边的 `group_vars/` 和 `host_vars/`，然后是
 
 ## 打印 inventory
 
-`volant inventory --list` 以 JSON 打印 Volant 从各来源读到的内容，`volant inventory --host NAME` 打印一台主机的变量，两者的字节都与 `ansible-inventory` 一致。见 [inventory 命令](/zh-cn/docs/reference/cli/#inventory-命令)。
+`volant inventory --list` 以 JSON 打印 Volant 从各来源读到的内容，`volant inventory --host NAME` 打印一台主机的变量，两者的字节都与 `ansible-inventory` 一致。`volant inventory --graph [GROUP]` 打印组树，`--vars` 会加上变量。见 [inventory 命令](/zh-cn/docs/reference/cli/inventory/)。
 
 ## 刷新
 

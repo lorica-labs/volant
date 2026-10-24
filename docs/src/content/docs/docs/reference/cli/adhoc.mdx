@@ -1,0 +1,40 @@
+---
+title: volant adhoc
+description: Run one module on every host that matches a pattern, with the options and the output of ansible.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+`volant adhoc` is `ansible`: it runs one module on every host that matches a pattern.
+
+```sh
+volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
+             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
+```
+
+<Option name="-m, --module-name" arg="MODULE">
+  The module to run. Default: `command`.
+</Option>
+
+<Option name="-a, --args" arg="ARGS">
+  The module's arguments: `key=value` words, or a JSON object when the value starts with `{` and ends with `}`. For `command`, `shell`, `raw` and `script`, words that are not one of the module's options make up the command line. The arguments are templated with each host's variables and `-e`. A value that starts with `{`, ends with `}` and is not valid JSON stops the command with exit code 250; an unbalanced quote stops it with exit code 4.
+</Option>
+
+<Option name="--list-hosts">
+  Print the hosts the pattern matches, as `  hosts (2):` and one `    name` line for each host, and run nothing. The exit code is 0.
+</Option>
+
+<Option name="--playbook-dir" arg="DIR">
+  Read `group_vars/`, `host_vars/`, relative paths and roles from `DIR`, and set `playbook_dir` to it, where a playbook would have supplied its own directory. Default: the working directory.
+</Option>
+
+The other options mean what they mean for `volant playbook`, `--flush-cache` and `-M` included. `-f 1` runs one host at a time, in inventory order.
+
+A pattern that matches no host prints `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` and `[WARNING]: No hosts matched, nothing to do` on standard error and exits with 0. A `-l` that leaves no host prints its own warning and `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`, and exits with 1, `--list-hosts` or not. An inventory with no host at all warns once and runs nothing. With no inventory, the implicit `localhost` is the only host that exists, and only a pattern that names it matches. A `command`, `shell` or `raw` run with no `-a` stops with `[ERROR]: No argument passed to command module` and exit code 5.
+
+A usage error exits with 2. Standard error carries the `usage:` block of `ansible`, then `ansible: error: ` and the reason. A missing pattern or a `-f` that is not a number is followed by the complete help of `ansible`; a `-f` below 1 is not.
+
+Each host prints one result, the way ansible's `minimal` callback prints it. A `command`, `shell` or `raw` result is `h1 | CHANGED | rc=0 >>`, then its stdout, stderr and `msg` joined with nothing between. Any other result is `h1 | SUCCESS => ` followed by the result as JSON, indented four spaces, keys sorted. The statuses are `SUCCESS`, `CHANGED`, `FAILED` (command form), `FAILED!` (JSON form), `SKIPPED` and `UNREACHABLE!`. Before a failed or unreachable result, standard output carries the same `[ERROR]` block a playbook prints. Its `Origin:` is `<adhoc 'MODULE' task>`, followed by the task as ansible shows it, cut down to 120 characters.
+
+The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. With `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, or `callback_result_format = yaml` under `[defaults]` in `ansible.cfg`, a JSON-form result is printed as YAML instead, on the lines after `=>`, indented four spaces. A string with line breaks becomes a literal block. Any other value, the empty one included, stops the command with exit code 5. `-vv` and above are refused with exit code 4.

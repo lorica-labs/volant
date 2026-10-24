@@ -55,6 +55,23 @@ A value that came back from a managed host is never decrypted with the run's sec
 - The editor works on a copy with mode `0600` in a private directory under `ANSIBLE_LOCAL_TEMP` (`[defaults] local_tmp`, else `~/.ansible/tmp`). The copy is overwritten and removed on every way out, including a failing editor and SIGTERM or SIGHUP. Ctrl-C goes to the editor.
 - `rekey` decrypts each file with the old secrets and writes it again with the new one, keeping its mode. The new secret comes from `--new-vault-password-file`, from `--new-vault-id LABEL@SOURCE`, or from the prompts `New Vault password: ` and `Confirm New Vault password: `. It prints `Rekey successful` on standard error, whatever standard output is.
 
+## Encrypting strings
+
+`volant vault encrypt_string` turns a value into a `!vault |` block for a vars file. Every line of the ciphertext is indented by ten spaces, and each block ends with a newline:
+
+```yaml
+mykey: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+          66313561363937653234366564623639...
+```
+
+- `-n NAME` names the string at the same place and `--stdin-name NAME` names standard input. Without a name the block starts with `!vault |`. `--vault-id LABEL@SOURCE` gives a `1.2` header with the label.
+- With no string, or with `-`, the text is read from standard input to its end. Empty input exits 5.
+- With more than one string, standard error carries one comment line per string, and a note when there are fewer names than strings. Standard output holds only the blocks.
+- `-p` asks for a variable name, then the string, which is not echoed unless `--show-input` is given. It cannot be combined with reading standard input.
+- On a terminal, `Encryption successful` goes to standard error before the blocks.
+- `--output FILE` writes the blocks to the file, at mode `0600`.
+
 ## Known gaps
 
 - The `salt` and `wrap_object` arguments of the `vault` filter are refused as not supported yet.

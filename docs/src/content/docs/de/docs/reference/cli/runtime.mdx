@@ -1,0 +1,33 @@
+---
+sourceHash: ae3b65b07678
+title: volant runtime
+description: Installiert, packt, prüft und entfernt das Python und ansible-core, die Volant für sich selbst verwaltet.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant runtime` verwaltet das Python und ansible-core, die Volant für sich selbst installiert. [Die verwaltete Runtime](/de/docs/reference/runtime/) beschreibt, was jeder Schritt tut.
+
+```sh
+volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
+volant runtime pack FILE
+volant runtime status
+volant runtime path
+volant runtime remove [ID | --all]
+```
+
+<Option name="install --collections" arg="NAME_OR_FILE...">
+  Installiert zusätzlich Collections in die Runtime. Jeder Wert ist ein Name mit optionaler Version (`community.general:13.4.0`) oder eine Requirements-Datei, die auf `.yml` oder `.yaml` endet.
+</Option>
+
+<Option name="install --from" arg="FILE">
+  Installiert aus einer Datei, die `volant runtime pack` geschrieben hat, ohne Download. Die Plattform muss übereinstimmen. Es gibt den SHA-256 der Datei in einer Zeile `sha256` aus.
+</Option>
+
+<Option name="install --sha256" arg="HASH">
+  Lehnt mit `--from` die Datei vor dem Entpacken ab, wenn ihr SHA-256 von `HASH` abweicht. Der Fehler zeigt beide Hashes, und der Exit-Code ist 1.
+</Option>
+
+<Option name="remove --all">
+  Löscht jede Runtime, nicht nur die aktuelle.
+</Option>

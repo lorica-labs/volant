@@ -3,6 +3,7 @@
 //! ansible-core 2.19.12's, measured with the same inventory; the scenario goldens hold the rest.
 #![cfg(unix)]
 use rstest::rstest;
+use std::fmt::Write as _;
 use std::path::{Path, PathBuf};
 use std::process::{Command, Output};
 
@@ -70,6 +71,13 @@ Origin: <adhoc 'command' task>
     0,
     "h1 | SUCCESS => {\n    \"msg\": \"bar\"\n}\n"
 )]
+#[case::set_fact(
+    &["web", "-i", "inv.ini", "-m", "set_fact", "-a", "x=1", "-f", "1"],
+    &[],
+    0,
+    "h1 | SUCCESS => {\n    \"ansible_facts\": {\n        \"x\": \"1\"\n    },\n    \"changed\": false\n}\nh2 | SUCCESS => {\n    \"ansible_facts\": {\n        \"x\": \"1\"\n    },\n    \"changed\": false\n}\n"
+)]
+#[case::meta_noop_prints_nothing(&["all", "-i", "inv.ini", "-m", "meta", "-a", "noop"], &[], 0, "")]
 #[case::json_args(
     &["h1", "-i", "inv.ini", "-m", "debug", "-a", r#"{"msg": "j"}"#],
     &[],
@@ -446,4 +454,307 @@ fn version_comes_before_the_forks_check() {
     );
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     assert!(text(&out.stdout).starts_with("ansible [core 2.19.12]\n"));
+}
+
+const SILENCE: &str = "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n";
+
+/// What the reference prints on stderr for `-o` and `-t`: the line about silencing, the notice of
+/// each option as spelled, `between` (the warnings of the pattern), then the notice of each callback.
+fn deprecations(options: &[&str], between: &str) -> String {
+    let mut out = String::from(SILENCE);
+    let (mut oneline, mut tree) = (false, false);
+    for option in options {
+        let callback = if matches!(*option, "-o" | "--one-line") {
+            oneline = true;
+            "oneline"
+        } else {
+            tree = true;
+            "tree"
+        };
+        let _ = writeln!(
+            out,
+            "[DEPRECATION WARNING]: The '{option}' argument is deprecated. This feature will be removed from ansible-core version 2.23. Use callback configuration to enable the {callback} callback instead."
+        );
+    }
+    out += between;
+    for (shown, callback) in [(oneline, "oneline"), (tree, "tree")] {
+        if shown {
+            let _ = writeln!(
+                out,
+                "[DEPRECATION WARNING]: The {callback} callback plugin is deprecated. This feature will be removed from ansible-core version 2.23."
+            );
+        }
+    }
+    out
+}
+
+/// `-o`, with the reference's lines on stdout and its notices on stderr.
+#[rstest]
+#[case::command(&["web", "-i", "inv.ini", "-m", "command", "-a", "echo hi", "-f", "1"], 0, "h1 | CHANGED | rc=0 | (stdout) hi\nh2 | CHANGED | rc=0 | (stdout) hi\n")]
+#[case::stdout_and_stderr(&["h1", "-i", "inv.ini", "-m", "command", "-a", "sh -c 'echo a; echo b >&2; echo c'"], 0, "h1 | CHANGED | rc=0 | (stdout) a\\nc (stderr) b\n")]
+#[case::json_form(&["h1", "-i", "inv.ini", "-m", "set_fact", "-a", "x=1"], 0, "h1 | SUCCESS => {\"ansible_facts\": {\"x\": \"1\"},\"changed\": false}\n")]
+#[case::debug_keeps_its_indent(&["h1", "-i", "inv.ini", "-m", "debug", "-a", "msg=x"], 0, "h1 | SUCCESS => {    \"changed\": false,    \"msg\": \"x\"}\n")]
+#[case::skipped(&["h1", "-i", "inv.ini", "-a", "true", "-C"], 0, "h1 | SKIPPED\n")]
+#[case::failed_without_block(&["h1", "-i", "inv.ini", "-m", "fail", "-a", "msg=boom"], 2, "An exception occurred during task execution. To see the full traceback, use -vvv. The error was: (traceback unavailable)\nh1 | FAILED! => {\"changed\": false,\"msg\": \"boom\"}\n")]
+#[case::meta_prints_nothing(&["h1", "-i", "inv.ini", "-m", "meta", "-a", "noop"], 0, "")]
+fn the_one_line_output_is_the_oneline_callbacks(
+    #[case] args: &[&str],
+    #[case] code: i32,
+    #[case] stdout: &str,
+) {
+    let args: Vec<&str> = args.iter().copied().chain(["-o"]).collect();
+    let out = adhoc(&args, &[]);
+    assert_eq!(out.status.code(), Some(code), "{args:?}");
+    assert_eq!(text(&out.stdout), stdout, "{args:?}");
+    assert_eq!(text(&out.stderr), deprecations(&["-o"], ""), "{args:?}");
+}
+
+/// A failed command prints its command form, then the line of the result; an unreachable host
+/// prints one line and no block. The dates and the text of the connection error are the system's.
+#[test]
+fn a_failed_or_unreachable_host_prints_its_line_and_no_block() {
+    let out = adhoc(&["h1", "-i", "inv.ini", "-a", "false", "-o"], &[]);
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(2), "{stdout}");
+    let (command, json) = stdout.split_once('\n').unwrap();
+    assert_eq!(command, "h1 | FAILED | rc=1 | (stdout) ");
+    assert!(
+        json.starts_with("h1 | FAILED! => {\"changed\": true,\"cmd\": [\"false\"],\"delta\": \"0:")
+            && json.contains("\"msg\": \"non-zero return code\",\"rc\": 1,")
+            && json.ends_with("\"stdout\": \"\",\"stdout_lines\": []}\n"),
+        "{json}"
+    );
+    assert_eq!(text(&out.stderr), deprecations(&["-o"], ""));
+    let out = adhoc(&["all", "-i", "bad.ini", "-a", "true", "-o"], &[]);
+    let stdout = text(&out.stdout);
+    assert_eq!(out.status.code(), Some(4), "{stdout}");
+    assert!(
+        stdout
+            .starts_with("u1 | UNREACHABLE!: Task failed: Failed to connect to the host via ssh: ")
+            && stdout.matches('\n').count() == 1,
+        "{stdout}"
+    );
+    assert_eq!(text(&out.stderr), deprecations(&["-o"], ""));
+}
+
+/// The notices of the callbacks come after the warnings of the pattern, and a run that ends
+/// before the callbacks load prints only the notices of the options.
+#[rstest]
+#[case::no_match(&["nomatch", "-i", "inv.ini", "-a", "true", "-o"], 0, &format!("{NOT_MATCHED}[WARNING]: No hosts matched, nothing to do\n"), true)]
+#[case::partial_match(&["h1:nomatch", "-i", "inv.ini", "-a", "true", "-o"], 0, NOT_MATCHED, true)]
+#[case::limit_leaves_nothing(&["all", "-i", "inv.ini", "-a", "true", "-o", "-l", "nomatch"], 1, &format!("{NOT_MATCHED}{NO_HOSTS}"), false)]
+#[case::listed(&["web", "-i", "inv.ini", "--list-hosts", "-o"], 0, "", false)]
+fn the_callback_notices_wait_for_the_run(
+    #[case] args: &[&str],
+    #[case] code: i32,
+    #[case] between: &str,
+    #[case] loaded: bool,
+) {
+    let out = adhoc(args, &[]);
+    assert_eq!(out.status.code(), Some(code), "{args:?}");
+    let mut expected = deprecations(&["-o"], between);
+    if !loaded {
+        let plugin = "[DEPRECATION WARNING]: The oneline callback plugin is deprecated. This feature will be removed from ansible-core version 2.23.\n";
+        expected = expected.replace(plugin, "");
+    }
+    assert_eq!(text(&out.stderr), expected, "{args:?}");
+}
+
+/// The notices follow the command line: the option as it was spelled, `-ot` as two, a repeat once.
+#[rstest]
+#[case::short(&["-o", "-t"], &["-o", "-t"])]
+#[case::reversed(&["-t", "-o"], &["-t", "-o"])]
+#[case::long(&["--tree", "--one-line"], &["--tree", "--one-line"])]
+#[case::group(&["-ot"], &["-o", "-t"])]
+#[case::repeated(&["-o", "-o", "-t", "-t"], &["-o", "-t"])]
+fn the_options_are_noticed_as_they_are_spelled(#[case] given: &[&str], #[case] noticed: &[&str]) {
+    let dir = tree_dir("spelled");
+    let path = dir.display().to_string();
+    // The directory comes right after `-t`, or as the value of a group ending in it.
+    let mut args = vec!["h1", "-i", "inv.ini", "-m", "debug", "-a", "msg=x"];
+    for option in given {
+        args.push(option);
+        if option.ends_with('t') || *option == "--tree" {
+            args.push(&path);
+        }
+    }
+    let out = adhoc(&args, &[]);
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(
+        out.status.code(),
+        Some(0),
+        "{args:?}\n{}",
+        text(&out.stderr)
+    );
+    assert_eq!(
+        text(&out.stdout),
+        "h1 | SUCCESS => {    \"changed\": false,    \"msg\": \"x\"}\n"
+    );
+    assert_eq!(text(&out.stderr), deprecations(noticed, ""), "{args:?}");
+}
+
+fn tree_dir(name: &str) -> PathBuf {
+    let dir = std::env::temp_dir().join(format!("volant-tree-{name}-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    dir
+}
+
+/// `-t` leaves the normal output, and a file per host holding the last result as one line of
+/// JSON with no end of line; a skipped host leaves none, a second run writes over the first.
+#[test]
+fn the_tree_option_writes_a_file_per_host() {
+    let dir = tree_dir("files").join("nested");
+    let path = dir.display().to_string();
+    let run = |args: &[&str]| {
+        let mut full = vec!["-i", "inv.ini", "-t", &path];
+        full.extend_from_slice(args);
+        adhoc(&full, &[])
+    };
+    let out = run(&["web", "-m", "set_fact", "-a", "x=1", "-f", "1"]);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    let block =
+        "{\n    \"ansible_facts\": {\n        \"x\": \"1\"\n    },\n    \"changed\": false\n}\n";
+    assert_eq!(
+        text(&out.stdout),
+        format!("h1 | SUCCESS => {block}h2 | SUCCESS => {block}")
+    );
+    assert_eq!(text(&out.stderr), deprecations(&["-t"], ""));
+    let file = |host: &str| std::fs::read_to_string(dir.join(host)).unwrap();
+    assert_eq!(
+        file("h1"),
+        "{\"ansible_facts\": {\"x\": \"1\"}, \"changed\": false}"
+    );
+    assert_eq!(file("h2"), file("h1"));
+    // A `debug` asks for the indented form, as the reference's `_dump_results` does.
+    let indented = "{
+    \"changed\": false,
+    \"msg\": \"x\"
+}";
+    run(&["h1", "-m", "debug", "-a", "msg=x"]);
+    assert_eq!(file("h1"), indented);
+    run(&["h1", "-a", "true", "-C"]);
+    assert_eq!(file("h1"), indented);
+    let out = run(&["h1", "-m", "fail", "-a", "msg=boom"]);
+    assert_eq!(out.status.code(), Some(2));
+    assert_eq!(file("h1"), "{\"changed\": false, \"msg\": \"boom\"}");
+    let out = adhoc(&["all", "-i", "bad.ini", "-a", "true", "-t", &path], &[]);
+    assert_eq!(out.status.code(), Some(4));
+    let unreachable = file("u1");
+    assert!(
+        unreachable.starts_with(
+            "{\"changed\": false, \"msg\": \"Task failed: Failed to connect to the host via ssh: "
+        ) && unreachable.ends_with("\", \"unreachable\": true}"),
+        "{unreachable}"
+    );
+    let _ = std::fs::remove_dir_all(dir.parent().unwrap());
+}
+
+/// A directory that cannot be made, and a file that cannot be written, are warnings and the run
+/// goes on. The errno text is the system's, so only its number is compared.
+#[rstest]
+#[case::directory(
+    "a_file/sub",
+    "[WARNING]: Callback dispatch 'v2_runner_on_ok' failed for plugin 'tree': Unable to create local directories '<dir>/a_file/sub': [Errno 20] "
+)]
+#[case::file("a_file", "[WARNING]: Unable to write to 'h1''s file: [Errno 20] ")]
+fn a_tree_that_cannot_be_written_is_a_warning(#[case] tree: &str, #[case] warning: &str) {
+    let dir = tree_dir("blocked");
+    std::fs::create_dir_all(&dir).unwrap();
+    std::fs::write(dir.join("a_file"), "").unwrap();
+    let path = dir.join(tree).display().to_string();
+    let out = adhoc(
+        &[
+            "h1", "-i", "inv.ini", "-m", "debug", "-a", "msg=x", "-t", &path,
+        ],
+        &[],
+    );
+    let stderr = text(&out.stderr).replace(&dir.display().to_string(), "<dir>");
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.status.code(), Some(0), "{stderr}");
+    let notices = deprecations(&["-t"], "");
+    assert!(
+        stderr.starts_with(&notices) && stderr[notices.len()..].starts_with(warning),
+        "{stderr}"
+    );
+}
+
+/// What this release does not expand in the directory is refused by name.
+#[rstest]
+#[case::variable("$DIR/out", "a '$' in the --tree directory")]
+#[case::other_user("~root/out", "a '~user' in the --tree directory")]
+fn a_tree_directory_this_release_cannot_expand_is_refused(#[case] tree: &str, #[case] what: &str) {
+    let out = adhoc(&["h1", "-i", "inv.ini", "-a", "true", "-t", tree], &[]);
+    assert_eq!(out.status.code(), Some(4), "{tree}");
+    assert_eq!(
+        text(&out.stderr),
+        format!("ERROR! {what} is not supported yet for ad hoc commands\n")
+    );
+    assert_eq!(text(&out.stdout), "");
+}
+
+/// `deprecation_warnings = False` silences the notices of the options and of the callbacks.
+#[test]
+fn the_notices_follow_the_deprecation_setting() {
+    let dir = tree_dir("silent");
+    let path = dir.display().to_string();
+    let out = adhoc(
+        &["h1", "-i", "inv.ini", "-a", "true", "-o", "-t", &path],
+        &[("ANSIBLE_DEPRECATION_WARNINGS", "false")],
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+    assert_eq!(out.status.code(), Some(0));
+    assert_eq!(text(&out.stderr), "");
+}
+
+/// `result_format` is an option of `minimal`, which `-o` does not load: a value it would refuse
+/// changes nothing, and the lines stay JSON.
+#[rstest]
+#[case::unknown("xml")]
+#[case::yaml("yaml")]
+fn one_line_output_ignores_the_result_format(#[case] format: &str) {
+    let out = adhoc(
+        &["h1", "-i", "inv.ini", "-m", "debug", "-a", "msg=x", "-o"],
+        &[("ANSIBLE_CALLBACK_RESULT_FORMAT", format)],
+    );
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "h1 | SUCCESS => {    \"changed\": false,    \"msg\": \"x\"}\n"
+    );
+}
+
+/// At `-vv` the callbacks the run sets aside are the ones it did not load.
+#[test]
+fn the_skipped_callbacks_follow_the_option() {
+    let skipped = |a: &str, b: &str| {
+        format!(
+            "Skipping callback '{a}', as we already have a stdout callback.\nSkipping callback '{b}', as we already have a stdout callback.\n"
+        )
+    };
+    let out = adhoc(&["h1", "-i", "inv.ini", "-a", "true", "-o", "-vv"], &[]);
+    assert!(text(&out.stdout).contains(&skipped("default", "minimal")));
+    let out = adhoc(&["h1", "-i", "inv.ini", "-a", "true", "-vv"], &[]);
+    assert!(text(&out.stdout).contains(&skipped("default", "oneline")));
+}
+
+/// A name nothing answers to fails the host with the exception note too, where the controller's
+/// ansible-core is there to say so.
+#[test]
+fn an_unknown_module_is_noted_as_an_exception_under_one_line() {
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let python = python.display().to_string();
+    let out = adhoc(
+        &["h1", "-i", "inv.ini", "-m", "nosuchmodule", "-o"],
+        &[("VOLANT_PYTHON", &python)],
+    );
+    assert_eq!(out.status.code(), Some(2), "{}", text(&out.stderr));
+    assert_eq!(
+        text(&out.stdout),
+        "An exception occurred during task execution. To see the full traceback, use -vvv. The error was: (traceback unavailable)
+h1 | FAILED! => {\"changed\": false,\"msg\": \"Task failed: Cannot resolve 'nosuchmodule' to an action or module.\"}
+"
+    );
+    assert_eq!(text(&out.stderr), deprecations(&["-o"], ""));
 }

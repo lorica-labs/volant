@@ -4,6 +4,7 @@
 //! `vault` command.
 
 mod adhoc;
+mod adhoc_options;
 mod adhoc_usage;
 mod announce;
 mod args;

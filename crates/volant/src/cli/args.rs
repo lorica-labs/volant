@@ -87,6 +87,9 @@ pub struct PlaybookArgs {
     /// The pattern of an ad hoc command, which runs through the same set-up as a playbook.
     #[arg(skip)]
     pub adhoc_pattern: Option<String>,
+    /// The deprecation notices of the ad hoc options that were given, worded and in order.
+    #[arg(skip)]
+    pub adhoc_deprecations: Vec<String>,
     /// Print the version and the ansible-core release it matches, and stop.
     #[arg(long = "version")]
     pub version: bool,
@@ -278,6 +281,18 @@ pub struct AdhocArgs {
         allow_negative_numbers = true
     )]
     pub task_timeout: Option<i64>,
+    /// One line per host, as the `oneline` callback prints it. The reference deprecates it.
+    #[arg(short = 'o', long = "one-line", overrides_with = "one_line")]
+    pub one_line: bool,
+    /// Write each host's result as JSON to a file of this directory, named by the host. The
+    /// reference deprecates it.
+    #[arg(
+        short = 't',
+        long = "tree",
+        value_name = "TREE",
+        overrides_with = "tree"
+    )]
+    pub tree: Option<PathBuf>,
     /// Print the version and the paths the program works with, and stop.
     #[arg(long = "version")]
     pub version: bool,

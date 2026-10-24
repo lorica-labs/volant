@@ -33,6 +33,9 @@ pub(super) fn set_up(
     let config = crate::runtime::resolve::configured(Config::load()?);
     out.set_path_on_failure(config.show_task_path_on_failure);
     playbook::set_deprecation_warnings(config.deprecation_warnings);
+    for notice in &args.adhoc_deprecations {
+        playbook::print_deprecation_line(notice);
+    }
     let choice = config.color_choice(args.no_color);
     out.set_choice(choice);
     crate::transport::trace::configure(args.verbose, choice);

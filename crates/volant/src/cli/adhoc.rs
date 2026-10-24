@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
+use super::adhoc_options::{deprecated_options, tree_dir};
 use super::adhoc_usage::refuse;
 use super::args::{AdhocArgs, PlaybookArgs};
 use super::hosts::{limit_names, play_hosts};
@@ -51,8 +52,17 @@ pub fn adhoc(args: AdhocArgs) -> i32 {
         eprintln!("ERROR! -C with -B is not supported yet for ad hoc commands");
         return 4;
     }
+    let tree = match args.tree.as_deref().map(tree_dir).transpose() {
+        Ok(tree) => tree,
+        Err(what) => {
+            eprintln!("ERROR! {what} is not supported yet for ad hoc commands");
+            return 4;
+        }
+    };
     let adhoc = match Adhoc::new(&pattern, &args.module_name, &args.module_args) {
         Ok(mut adhoc) => {
+            adhoc.one_line = args.one_line;
+            adhoc.tree = tree;
             adhoc.list_hosts = args.list_hosts;
             adhoc.dir.clone_from(&args.playbook_dir);
             adhoc.background = args.background.unwrap_or(0).unsigned_abs();
@@ -65,7 +75,10 @@ pub fn adhoc(args: AdhocArgs) -> i32 {
             return code;
         }
     };
-    let code = drive(&args.playbook_args(), &Plays::Adhoc(&adhoc));
+    let mut playbook_args = args.playbook_args();
+    playbook_args.adhoc_deprecations =
+        deprecated_options(&args, &std::env::args_os().collect::<Vec<_>>());
+    let code = drive(&playbook_args, &Plays::Adhoc(&adhoc));
     // Measured: a run with failed and unreachable hosts exits 4. The reference's strategy returns
     // `RUN_UNREACHABLE_HOSTS` before it looks at the failed ones, where a playbook's codes add up.
     if code == 6 { 4 } else { code }
@@ -105,6 +118,10 @@ pub(super) struct Adhoc {
     background: u64,
     poll: Option<u64>,
     timeout: u64,
+    /// `-o`: the results are shown by the `oneline` callback.
+    one_line: bool,
+    /// `-t`: the directory the `tree` callback writes one file per host in, already absolute.
+    tree: Option<PathBuf>,
 }
 
 /// `C.MODULE_REQUIRE_ARGS`: the modules whose `-a` is read with `check_raw`, so that only their
@@ -157,7 +174,31 @@ impl Adhoc {
             background: 0,
             poll: None,
             timeout: 0,
+            one_line: false,
+            tree: None,
         })
+    }
+
+    /// Hands the output options to the renderer.
+    pub(super) fn show(&self, out: &mut Renderer) {
+        out.set_oneline(self.one_line, self.tree.clone());
+    }
+
+    /// Whether `-o` and `-t` load a callback of their own.
+    pub(super) fn callbacks(&self) -> (bool, bool) {
+        (self.one_line, self.tree.is_some())
+    }
+
+    /// The notices of the callbacks `-o` and `-t` load, which the reference prints when the run
+    /// starts: after the warnings of the pattern, and for no run that ends before it.
+    fn deprecate_callbacks(&self) {
+        for (shown, name) in [(self.one_line, "oneline"), (self.tree.is_some(), "tree")] {
+            if shown {
+                playbook::print_deprecation_line(&format!(
+                    "The {name} callback plugin is deprecated. This feature will be removed from ansible-core version 2.23."
+                ));
+            }
+        }
     }
 
     /// The path the play is read from, so that its directory is `--playbook-dir`; nothing at all
@@ -202,11 +243,17 @@ impl Adhoc {
         let found = inventory.resolve(&play.hosts);
         let reaches = |host: &Host| limit.is_none_or(|allowed| allowed.contains(&host.name));
         let empty = !found.hosts.iter().any(reaches);
-        if !empty && !self.list_hosts && !self.missing_args {
+        let runs = !empty && !self.list_hosts && !self.missing_args;
+        if runs && !self.one_line && self.tree.is_none() {
             return Ok(None);
         }
-        // Prints the warnings of the pattern, once: the run's own pass has not happened.
+        // Prints the warnings of the pattern, once: the run's own pass has not happened, and with
+        // a callback to load the notices follow them.
         let hosts = play_hosts(inventory, play, limit, out, &mut HashSet::new(), false)?;
+        if runs {
+            self.deprecate_callbacks();
+            return Ok(None);
+        }
         let bare = inventory.resolve("all").hosts.is_empty();
         if empty && !bare && limit.is_some() {
             return Err(Refusal::plain(
@@ -232,6 +279,7 @@ impl Adhoc {
         if !bare {
             out.warning("No hosts matched, nothing to do", false);
         }
+        self.deprecate_callbacks();
         Ok(Some(0))
     }
 
@@ -276,11 +324,22 @@ impl Adhoc {
                 writeln!(keywords, "    {name}: {value}").expect("a String takes a write");
             }
         }
+        // `meta` reads its action from the statement, where the other modules read their options
+        // from `args`: `-a noop` is `meta noop`.
+        let meta = ["meta", "ansible.builtin.meta", "ansible.legacy.meta"]
+            .contains(&self.module.as_str())
+            .then(|| self.args.get("_raw_params").and_then(Value::as_str))
+            .flatten()
+            .filter(|_| self.args.len() == 1);
+        let (action, args) = match meta {
+            Some(action) => (format!("{} {action}", self.module), Map::new()),
+            None => (self.module.clone(), self.args.clone()),
+        };
         let text = format!(
             "- name: Ansible Ad-Hoc\n  hosts: {}\n  gather_facts: false\n  tasks:\n  - action: {}\n    args: {}\n{keywords}",
             json(self.pattern.clone().into()),
-            json(self.module.clone().into()),
-            json(Value::Object(self.args.clone())),
+            json(action.into()),
+            json(Value::Object(args)),
         );
         let source = match &self.dir {
             Some(_) => self.file().display().to_string(),
@@ -327,6 +386,10 @@ impl Adhoc {
         };
         let mut result = TaskResult::failed_with(message);
         result.0.insert("changed".into(), false.into());
+        // What `oneline` says of a failure, and the reference's placeholder for it.
+        result
+            .0
+            .insert("exception".into(), "(traceback unavailable)".into());
         for host in hosts {
             out.error(&block);
             out.result(

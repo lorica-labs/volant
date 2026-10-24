@@ -1034,7 +1034,14 @@ fn a_valid_cache_starts_nothing_and_a_union_without_sources_is_not_kept() {
         assert_eq!(starts.get(), 1);
         let second = run(&canned(b"PK other", Some(&source))).unwrap();
         assert_eq!(starts.get(), 1, "a valid entry started the helper");
-        assert_eq!(second, first);
+        // A loaded entry carries no base64 of its zip: the frame sent to the agent was kept when
+        // the entry was opened, and that is all the zip is read for.
+        let without_zip = |u: &Union| Union {
+            zip_b64: String::new(),
+            ..u.clone()
+        };
+        assert_eq!(without_zip(&second), without_zip(&first));
+        assert!(second.zip_b64.is_empty());
 
         std::fs::write(&source, "pong").unwrap();
         let file = std::fs::File::options().write(true).open(&source).unwrap();
@@ -1045,7 +1052,7 @@ fn a_valid_cache_starts_nothing_and_a_union_without_sources_is_not_kept() {
         assert_eq!(starts.get(), 2);
         assert_eq!(third.hash, blake3::hash(b"PK third").to_hex().to_string());
         let kept = crate::union_cache::load(&place.dir, &place.key).expect("written again");
-        assert_eq!(kept.union, third);
+        assert_eq!(without_zip(&kept.union), without_zip(&third));
     }
     {
         let root_guard = scratch();

@@ -10,7 +10,7 @@ use serde_json::{Map, Value};
 #[cfg(unix)]
 use super::key::CONFIG_BOUND;
 use super::key::{configs, expanded, key_from, plugin_files};
-use super::sweep::sweep;
+use super::sweep::{sweep, sweep_within};
 use super::*;
 use crate::agent::BlobFrame;
 use crate::python::ModuleFacts;
@@ -92,6 +92,14 @@ fn interpreter() -> InterpreterId {
     }
 }
 
+/// `entry` as `load` hands it back: with no base64 of its zip, since opening it keeps the frame
+/// the agent is sent instead.
+fn as_loaded(entry: &Entry) -> Entry {
+    let mut loaded = entry.clone();
+    loaded.union.zip_b64 = String::new();
+    loaded
+}
+
 fn some_key() -> CacheKey {
     key_from(
         None,
@@ -120,7 +128,7 @@ fn a_cache_hits_until_a_source_or_collection_changes() {
         let stored = entry(root.path(), b"PK\x03\x04 zip");
         store(&dir, &some_key(), &stored).unwrap();
         let loaded = load(&dir, &some_key()).expect("nothing changed");
-        assert_eq!(loaded, stored);
+        assert_eq!(loaded, as_loaded(&stored));
         assert_eq!(loaded.union.hash, stored.union.hash);
     }
     {
@@ -395,7 +403,7 @@ fn an_entry_that_cannot_be_trusted_is_a_miss() {
             assert_eq!(load(&dir, &key), None, "{why}");
         }
         fs::write(&manifest, text).unwrap();
-        assert_eq!(load(&dir, &key), Some(stored));
+        assert_eq!(load(&dir, &key), Some(as_loaded(&stored)));
     }
     {
         let root = scratch();
@@ -475,7 +483,7 @@ async fn a_missing_or_corrupt_deflated_form_is_made_again_never_sent() {
             Some(bytes) => fs::write(&path, bytes).unwrap(),
         }
         crate::agent::forget_frames();
-        assert_eq!(load(&dir, &key), Some(stored.clone()), "{why}");
+        assert_eq!(load(&dir, &key), Some(as_loaded(&stored)), "{why}");
         let kept = crate::agent::frame(&stored.union.hash, "not base64 at all")
             .await
             .expect(why);
@@ -768,4 +776,49 @@ fn the_key_reads_only_a_regular_file_and_only_up_to_the_bound() {
     // SAFETY: `fifo` is a valid C string that outlives the call.
     assert_eq!(unsafe { libc::mkfifo(fifo.as_ptr(), 0o644) }, 0);
     assert_eq!(read(&cwd), vec![]);
+}
+
+/// Past the size it may hold, the cache removes its oldest entries whole and keeps the newest.
+#[test]
+fn the_sweep_keeps_the_cache_under_its_size_by_removing_the_oldest_entries() {
+    let root = scratch();
+    let dir = root.path().join("unions");
+    let keys: Vec<CacheKey> = (1..=3).map(|n| CacheKey(format!("{n:064x}"))).collect();
+    // One entry stored three times: building it again would rewrite its source files and make
+    // the earlier copies stale.
+    let stored = entry(root.path(), b"PK zip");
+    for (age, key) in keys.iter().enumerate() {
+        store(&dir, key, &stored).unwrap();
+        for file in fs::read_dir(&dir).unwrap().flatten() {
+            if file.file_name().to_str().unwrap().starts_with(&key.0) {
+                let when = SystemTime::now() - Duration::from_secs(3600 * (3 - age as u64));
+                fs::File::options()
+                    .write(true)
+                    .open(file.path())
+                    .unwrap()
+                    .set_modified(when)
+                    .unwrap();
+            }
+        }
+    }
+    let size = |key: &CacheKey| -> u64 {
+        fs::read_dir(&dir)
+            .unwrap()
+            .flatten()
+            .filter(|f| f.file_name().to_str().unwrap().starts_with(&key.0))
+            .map(|f| f.metadata().unwrap().len())
+            .sum()
+    };
+    let room = size(&keys[1]) + size(&keys[2]);
+    sweep_within(&dir, SystemTime::now(), room);
+    assert_eq!(load(&dir, &keys[0]), None, "the oldest entry goes");
+    assert!(load(&dir, &keys[1]).is_some() && load(&dir, &keys[2]).is_some());
+    assert!(
+        fs::read_dir(&dir).unwrap().flatten().all(|f| !f
+            .file_name()
+            .to_str()
+            .unwrap()
+            .starts_with(&keys[0].0)),
+        "nothing of the oldest entry is left"
+    );
 }

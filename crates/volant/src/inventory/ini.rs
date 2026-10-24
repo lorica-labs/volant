@@ -1,7 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The `ini` inventory plugin.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 use std::sync::LazyLock;
 
@@ -272,7 +271,7 @@ fn uncommented(line: &str) -> &str {
     line
 }
 
-fn key_values(words: &[String]) -> Result<BTreeMap<String, Value>, String> {
+fn key_values(words: &[String]) -> Result<serde_json::Map<String, Value>, String> {
     words
         .iter()
         .map(|w| {

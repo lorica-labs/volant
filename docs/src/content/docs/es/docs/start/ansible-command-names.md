@@ -1,5 +1,5 @@
 ---
-sourceHash: bc8afbe14eea
+sourceHash: 37a3f4cfcd5c
 title: Nombres de comandos de ansible
 description: Qué comando de Volant sustituye a cada programa de ansible-core, qué es igual, qué difiere y cómo conservar tus líneas de comandos.
 ---
@@ -74,7 +74,7 @@ Las opciones que acepta cada comando nativo están listadas en su propia página
 - El texto de ayuda es el de Volant. Nunca se compara con la referencia.
 - `--version` imprime `ansible [core 2.19.12]` (o el nombre del programa) y las rutas. Las líneas de Python, Jinja y PyYAML se omiten cuando Volant no encuentra ningún intérprete con ansible-core, porque `--version` no instala nada. Consulta [`volant adhoc`](/es/docs/reference/cli/adhoc/).
 - `executable location` en `--version` es el programa tal como se inició: `volant`, o el enlace. Consulta [`volant doc`](/es/docs/reference/cli/doc/#terminal-código-de-salida-y---version).
-- `ansible-inventory --toml` todavía no está disponible y es una opción desconocida. Consulta [`volant inventory`](/es/docs/reference/cli/inventory/).
+- `ansible-inventory --toml` no necesita ningún paquete de Python, donde la referencia necesita `tomli-w`, y un valor `null` da una línea `[ERROR]` en lugar de un traceback (ambos salen con 250). Consulta [`volant inventory`](/es/docs/reference/cli/inventory/).
 - `volant pull` muestra `<cache>/volant/pull/ansible-pull` en la segunda línea de su salida, donde `ansible-pull` muestra la ruta de su script. Consulta [`volant pull`](/es/docs/reference/cli/pull/).
 - `volant config dump` muestra `COLLECTIONS_PATHS` como fijado por el entorno una vez que el runtime tiene un directorio `collections/`. Consulta [`volant config`](/es/docs/reference/cli/config/#la-ruta-de-colecciones).
 - `ansible-vault view` pasa por un paginador solo en un terminal, con `PAGER`, luego `ANSIBLE_PAGER`, luego `[defaults] pager`, luego `less`. Consulta [Vault](/es/docs/variables/vault/).

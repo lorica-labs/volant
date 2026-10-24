@@ -6,6 +6,7 @@ mod facts;
 mod host_vars;
 mod include_dir;
 mod layers;
+mod listed;
 mod load;
 mod magic;
 mod play_view;
@@ -29,7 +30,7 @@ pub fn hostvars_map(map: Map<String, Value>) -> HostvarsMap {
 }
 pub use host_vars::{HostSettings, HostVars, host_setting, omit_token, settled, settled_all};
 pub use include_dir::{Chain, Failure, Scan, include_dir, join_path, read_failure};
-pub use layers::ListedOrigin;
+pub use listed::ListedOrigin;
 pub use load::{
     VaultFile, include_vars_paths, load_vars_file, parse_extra_vars, read_vars_document,
 };
@@ -184,7 +185,7 @@ pub struct VarStore {
 /// One change a play made to the inventory.
 #[derive(Debug)]
 enum Added {
-    Host(String, BTreeMap<String, Value>),
+    Host(String, Map<String, Value>),
     Member(String, String),
     Child(String, String),
 }

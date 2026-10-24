@@ -2,7 +2,6 @@
 //! The `yaml` inventory plugin, and the group reader the `toml` plugin shares with it: both walk
 //! `{group: {vars, children, hosts}}` the way ansible-core 2.19.12's plugins do.
 
-use std::collections::BTreeMap;
 use std::path::Path;
 
 use saphyr::{Scalar, Yaml};
@@ -433,7 +432,7 @@ impl Reader<'_, '_> {
         };
         let (names, port) = expand_hostpattern(pattern)?;
         for name in names {
-            let mut all = BTreeMap::new();
+            let mut all = Map::new();
             if let Some(port) = port.filter(|p| *p != 0) {
                 all.insert("ansible_port".to_string(), Value::from(port));
             }

@@ -60,7 +60,7 @@ fn run(cwd: &Path, case: &Value, extra: &[&str]) -> (i32, String, String) {
     )
 }
 
-/// `--yaml`, `--export` and both, for `--list` and for the first host: how many ran.
+/// `--yaml`, `--toml`, `--export` and each with it, for `--list` and for the first host: how many ran.
 fn compare_dumps(root: &Path, name: &str, case: &Value, failures: &mut Vec<String>) -> usize {
     let Some(dumps) = case["dumps"].as_object() else {
         return 0;
@@ -77,6 +77,8 @@ fn compare_dumps(root: &Path, name: &str, case: &Value, failures: &mut Vec<Strin
             "yaml" => &["--yaml"][..],
             "export" => &["--export"],
             "yaml_export" => &["--yaml", "--export"],
+            "toml" => &["--toml"],
+            "toml_export" => &["--toml", "--export"],
             other => panic!("{name}: no dump is recorded as {other}"),
         });
         let (code, stdout, _) = run(root, case, &extra);

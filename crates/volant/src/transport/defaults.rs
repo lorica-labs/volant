@@ -353,8 +353,8 @@ pub(super) fn setting_args(
 /// An inventory object's variables in the shape the effective view has. The two sides of the
 /// engine keep different maps - the inventory is ordered by name, a host's merged view is a
 /// JSON object - and only the paths with no effective view in hand pay this copy.
-pub(super) fn as_map(vars: &std::collections::BTreeMap<String, Value>) -> Map<String, Value> {
-    vars.iter().map(|(k, v)| (k.clone(), v.clone())).collect()
+pub(super) fn as_map(vars: &Map<String, Value>) -> Map<String, Value> {
+    vars.clone()
 }
 
 /// `ansible_ssh_port` or `ansible_port`, whether the inventory typed it as a number or quoted

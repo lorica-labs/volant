@@ -4306,7 +4306,7 @@ async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
     }
     let source = source.unwrap_or_else(|panic| std::panic::resume_unwind(panic));
 
-    let mut vars = BTreeMap::new();
+    let mut vars = Map::new();
     vars.insert("ansible_connection".to_string(), json!("local"));
     let host = crate::inventory::Host {
         name: "localhost".to_string(),
@@ -4677,7 +4677,7 @@ async fn a_connect_timeout_reaches_the_connection_as_ssh_s_connecttimeout() {
     {
         let host = crate::inventory::Host {
             name: "h1".to_string(),
-            vars: BTreeMap::from([("ansible_host".to_string(), json!("probe-hostname"))]),
+            vars: Map::from_iter([("ansible_host".to_string(), json!("probe-hostname"))]),
         };
         let defaults = ConnectionDefaults {
             remote_user: None,

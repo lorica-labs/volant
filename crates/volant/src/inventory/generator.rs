@@ -2,8 +2,6 @@
 //! The `generator` inventory plugin of ansible-core 2.19.12: one host for each combination of
 //! its layers, named by a template, under the chain of parent groups the config describes.
 
-use std::collections::BTreeMap;
-
 use serde_json::{Map, Value};
 
 use super::auto::failed;
@@ -75,7 +73,7 @@ impl InventoryPlugin for Generator {
             let vars: Map<String, Value> = layers.keys().cloned().zip(combination).collect();
             let at = ["hosts".to_string(), "name".to_string()];
             let host = py_str(&run.template(&name, &vars, &at)?);
-            into.add_source_host(&host, None, BTreeMap::new(), Some(run.file));
+            into.add_source_host(&host, None, Map::new(), Some(run.file));
             run.parents(
                 into,
                 &host,

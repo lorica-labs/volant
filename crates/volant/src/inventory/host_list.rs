@@ -2,8 +2,6 @@
 //! The `host_list` inventory plugin, `-i 'a,b:2222,[::1]:22,'`, and `advanced_host_list`, which
 //! also expands ranges: `-i 'web[1:3],'`.
 
-use std::collections::BTreeMap;
-
 use super::ini::expand_hostpattern;
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source, ranges};
 
@@ -51,7 +49,7 @@ impl InventoryPlugin for HostList {
                 (vec![item.to_string()], None)
             });
             for host in hosts {
-                if into.add_source_host(&host, port, BTreeMap::new(), None) {
+                if into.add_source_host(&host, port, serde_json::Map::new(), None) {
                     into.add_member(&host, "ungrouped");
                 }
             }

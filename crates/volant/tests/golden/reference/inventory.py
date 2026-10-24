@@ -4,6 +4,8 @@ resolved by `ansible --list-hosts`, and the homonym fixture, recorded in expecte
 import json
 import os
 import shutil
+import subprocess
+import sys
 import tempfile
 
 import yaml
@@ -13,6 +15,9 @@ from .redact import TMP
 from .run import Failed, run, write_json
 
 HOMONYM_WARNING = "Found both group and host with same name"
+# `--toml` needs this package, which ansible-core does not bring: it is installed in a directory
+# of its own and put on the path of the runs that print TOML.
+TOMLI_W = "tomli-w==1.2.0"
 
 
 def _list_hosts(inventory, pattern):
@@ -25,12 +30,16 @@ def _list_hosts(inventory, pattern):
 
 def _sources():
     """Every case of inventories/cases.yml, read in a copy of the directory (plus the empty
-    directory git cannot hold): rc, stderr, the --list dump, its --yaml and --export forms and the
+    directory git cannot hold): rc, stderr, the --list dump, its --yaml, --toml and --export forms and the
     order --list-hosts gives."""
     with open(os.path.join(GOLDEN, "inventories", "cases.yml"), encoding="utf-8") as f:
         cases = yaml.safe_load(f)
     recorded = {}
-    with tempfile.TemporaryDirectory() as tmp:
+    with tempfile.TemporaryDirectory() as tmp, tempfile.TemporaryDirectory() as lib:
+        subprocess.run(
+            ["uv", "pip", "install", "--quiet", "--python", sys.executable, "--target", lib, TOMLI_W],
+            check=True,
+        )
         copy = os.path.join(os.path.realpath(tmp), "inventories")
         shutil.copytree(os.path.join(GOLDEN, "inventories"), copy)
         os.mkdir(os.path.join(copy, "empty"))
@@ -85,18 +94,42 @@ def _sources():
                     )
             # `--yaml`, `--export` and both, for `--list` and for the first host.
             dumps = None
+
+            def brief(result):
+                # The stderr of a dump is not compared; a crash's traceback names the machine.
+                recorded = shown(result)
+                recorded["stderr"] = recorded["stderr"].split("\n\n")[0]
+                return recorded
+
             if not unordered:
-                options = {"yaml": ["--yaml"]}
+                options = {"yaml": ["--yaml"], "toml": ["--toml"]}
                 if not case.get("no_export"):
-                    options.update({"export": ["--export"], "yaml_export": ["--yaml", "--export"]})
+                    options.update(
+                        {
+                            "export": ["--export"],
+                            "yaml_export": ["--yaml", "--export"],
+                            "toml_export": ["--toml", "--export"],
+                        }
+                    )
+                with_lib = {**used, "PYTHONPATH": lib}
                 dumps = {
-                    key: shown(run(["ansible-inventory", *args, "--list", *extra], cwd=copy, extra_env=used))
+                    key: brief(
+                        run(
+                            ["ansible-inventory", *args, "--list", *extra],
+                            cwd=copy,
+                            extra_env=with_lib if "toml" in key else used,
+                        )
+                    )
                     for key, extra in options.items()
                 }
                 if host:
                     for key, extra in options.items():
-                        dumps[f"host_{key}"] = shown(
-                            run(["ansible-inventory", *args, "--host", host["name"], *extra], cwd=copy, extra_env=used)
+                        dumps[f"host_{key}"] = brief(
+                            run(
+                                ["ansible-inventory", *args, "--host", host["name"], *extra],
+                                cwd=copy,
+                                extra_env=with_lib if "toml" in key else used,
+                            )
                         )
             nosuch = None
             if case.get("cli"):

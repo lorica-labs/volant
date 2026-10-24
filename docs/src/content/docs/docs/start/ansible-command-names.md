@@ -73,7 +73,7 @@ The options each native command accepts are listed on its own page: [`volant adh
 - The help text is Volant's. It is never compared with the reference.
 - `--version` prints `ansible [core 2.19.12]` (or the program's name) and the paths. The Python, Jinja and PyYAML lines are left out when Volant finds no interpreter with ansible-core, because `--version` installs nothing. See [`volant adhoc`](/docs/reference/cli/adhoc/).
 - `executable location` in `--version` is the program as it was started: `volant`, or the link. See [`volant doc`](/docs/reference/cli/doc/#terminal-exit-code-and---version).
-- `ansible-inventory --toml` is not available yet and is an unknown option. See [`volant inventory`](/docs/reference/cli/inventory/).
+- `ansible-inventory --toml` needs no Python package, where the reference needs `tomli-w`, and a `null` value gives one `[ERROR]` line instead of a traceback (both exit 250). See [`volant inventory`](/docs/reference/cli/inventory/).
 - `volant pull` shows `<cache>/volant/pull/ansible-pull` on the second line of its output, where `ansible-pull` shows the path of its script. See [`volant pull`](/docs/reference/cli/pull/).
 - `volant config dump` shows `COLLECTIONS_PATHS` as set by the environment once the runtime has a `collections/` directory. See [`volant config`](/docs/reference/cli/config/#the-collections-path).
 - `ansible-vault view` goes through a pager only on a terminal, with `PAGER`, then `ANSIBLE_PAGER`, then `[defaults] pager`, then `less`. See [Vault](/docs/variables/vault/).

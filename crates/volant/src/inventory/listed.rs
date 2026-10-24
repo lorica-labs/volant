@@ -60,7 +60,10 @@ impl Inventory {
     /// in, `all`'s top groups, and each group's own hosts and children. An empty group has no
     /// entry of its own.
     pub fn dump(&self) -> Value {
-        self.dump_with(&|host| self.host_with_vars(host).vars, None)
+        self.dump_with(
+            &|host| self.host_with_vars(host).vars.into_iter().collect(),
+            None,
+        )
     }
 
     /// [`Inventory::dump`] with each host's variables taken from `vars_of`. With `--export`,
@@ -186,6 +189,98 @@ impl Inventory {
         (!body.is_empty()).then(|| yaml_mapping(body))
     }
 
+    /// What `ansible-inventory --list --toml` dumps, built as its `toml_inventory` builds it:
+    /// every group a table of its own in the order the walk from `all` meets it, with `children`
+    /// as names, `hosts` and with `--export` `vars`. A host's variables are written the first
+    /// time it is met; a group met again is walked again and replaces its first entry, its
+    /// hosts then without variables.
+    pub fn toml_document(
+        &self,
+        host_vars: &mut dyn FnMut(&str) -> serde_json::Map<String, Value>,
+        group_vars: &mut dyn FnMut(&str) -> serde_json::Map<String, Value>,
+    ) -> serde_json::Map<String, Value> {
+        if self.detached {
+            return Inventory::default().toml_document(host_vars, group_vars);
+        }
+        let has_ungrouped = self.group("ungrouped").is_some_and(|g| !g.hosts.is_empty());
+        self.toml_group(
+            "all",
+            has_ungrouped,
+            &mut HashSet::new(),
+            host_vars,
+            group_vars,
+        )
+    }
+
+    fn toml_group(
+        &self,
+        name: &str,
+        has_ungrouped: bool,
+        seen_hosts: &mut HashSet<String>,
+        host_vars: &mut dyn FnMut(&str) -> serde_json::Map<String, Value>,
+        group_vars: &mut dyn FnMut(&str) -> serde_json::Map<String, Value>,
+    ) -> serde_json::Map<String, Value> {
+        let (children, hosts) = if name == "all" {
+            (self.top_groups(), Vec::new())
+        } else {
+            self.group(name)
+                .map(|g| (g.children.clone(), g.hosts.clone()))
+                .unwrap_or_default()
+        };
+        let mut results = serde_json::Map::new();
+        results.insert(name.to_string(), Value::Null);
+        let mut names = Vec::new();
+        for child in children.into_iter().filter(|c| c != "all") {
+            if child == "ungrouped" && !has_ungrouped {
+                continue;
+            }
+            if name != "all" {
+                names.push(Value::String(child.clone()));
+            }
+            let sub = self.toml_group(&child, has_ungrouped, seen_hosts, host_vars, group_vars);
+            results.extend(sub);
+        }
+        let mut hosted = serde_json::Map::new();
+        for host in hosts {
+            let vars = if seen_hosts.insert(host.clone()) {
+                host_vars(&host)
+            } else {
+                serde_json::Map::new()
+            };
+            hosted.insert(host, Value::Object(vars));
+        }
+        let mut body = serde_json::Map::new();
+        if !names.is_empty() {
+            body.insert("children".into(), Value::Array(names));
+        }
+        if !hosted.is_empty() {
+            body.insert("hosts".into(), Value::Object(hosted));
+        }
+        let vars = group_vars(name);
+        if !vars.is_empty() {
+            body.insert("vars".into(), Value::Object(vars));
+        }
+        if body.is_empty() {
+            results.shift_remove(name);
+        } else {
+            results.insert(name.to_string(), Value::Object(body));
+        }
+        results
+    }
+
+    /// The names the host's groups set, in the order the reference merges the groups, each once.
+    pub fn group_var_names(&self, host: &str) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for group in self.sorted_groups_of(host) {
+            for name in group.vars.keys() {
+                if !names.contains(name) {
+                    names.push(name.clone());
+                }
+            }
+        }
+        names
+    }
+
     /// The group whose inventory variable `name` a host reads: the last of its groups, in the
     /// order they are merged, that sets it.
     pub fn group_setting(&self, host: &str, name: &str) -> Option<&str> {
@@ -197,9 +292,9 @@ impl Inventory {
     }
 
     /// A group's own variables, as the inventory sources wrote them.
-    pub fn group_vars_of(&self, name: &str) -> BTreeMap<String, Value> {
+    pub fn group_vars_of(&self, name: &str) -> serde_json::Map<String, Value> {
         let Some(group) = self.group(name) else {
-            return BTreeMap::new();
+            return serde_json::Map::new();
         };
         let mut vars = group.vars.clone();
         // The reference keeps it among the group's variables, here it has a field of its own.

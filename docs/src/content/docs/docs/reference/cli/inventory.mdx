@@ -1,17 +1,17 @@
 ---
 title: volant inventory
-description: Print an inventory as JSON or YAML, the way ansible-inventory does.
+description: Print an inventory as JSON, YAML or TOML, the way ansible-inventory does.
 ---
 
 import Option from '../../../../../components/Option.astro';
 
-`volant inventory` prints an inventory as JSON or YAML, the way `ansible-inventory` does. Started under the name `ansible-inventory` (see [the shims command](/docs/reference/cli/shims/)), it behaves the same.
+`volant inventory` prints an inventory as JSON, YAML or TOML, the way `ansible-inventory` does. Started under the name `ansible-inventory` (see [the shims command](/docs/reference/cli/shims/)), it behaves the same.
 
 ```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y] [--export] [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y | --toml] [--export] [--output FILE] [-v]
 ```
 
-Exactly one of `--list`, `--host` and `--graph` is required. `--toml` is not there yet and is an unknown option.
+Exactly one of `--list`, `--host` and `--graph` is required.
 
 <Option name="--list" arg="">
   Print every host with its variables, the `group_vars` and `host_vars` files and its groups' variables folded in, then the groups with their `hosts` and `children`. Keys are sorted, the indent is four spaces, and non-ASCII text is written as is. A string that is data is printed as `{"__ansible_unsafe": "..."}` and a `!vault` value as `{"__ansible_vault": "..."}`; nothing is decrypted.
@@ -50,6 +50,12 @@ Exactly one of `--list`, `--host` and `--graph` is required. `--toml` is not the
   ```
 </Option>
 
+<Option name="--toml" arg="">
+  Print `--list` and `--host` as TOML, in the layout `ansible-inventory` prints with the `tomli-w` package; Volant needs no package for it. `--list` has one table per group that has something to show: `[group]` with `children` as names, and `[group.hosts.host]` with the host's variables. There is no `all` table, and a group that only has hosts has no `[group]` line. Variables are not sorted: they come in the order the reference merges them, the groups' first and the host's own last. A host's variables are written where the walk first reaches it, so a host that is in several groups has an empty table in the others. Arrays are written one element per line with a trailing comma and a four-space indent. `--host` prints the variables as a flat document. `--yaml` wins when both are given, and `--graph` ignores `--toml`.
+
+  A document with nothing in it prints nothing and exits 1, as the reference does. A `null` cannot be written in TOML: the command prints `[ERROR]: Object of type 'NoneType' is not TOML serializable` and exits 250. The reference exits 250 too, with a Python traceback, which Volant does not copy.
+</Option>
+
 <Option name="--export" arg="">
   Keep each variable where it is set instead of folding group variables into every host. `--list` gives each group a `vars` entry with its own variables and its `group_vars` files. Each host keeps only what its inventory line and its `host_vars` files set; extra variables are left out. With `--yaml`, no value is shared, so no anchors appear. With `--host`, only that host's own variables are printed. `export = true` in the `[inventory]` section of `ansible.cfg`, or `ANSIBLE_INVENTORY_EXPORT`, turns it on by default. With `--graph --vars`, a host's lines show only its own variables.
 </Option>
@@ -63,7 +69,7 @@ Exactly one of `--list`, `--host` and `--graph` is required. `--toml` is not the
 </Option>
 
 <Option name="--output" arg="FILE">
-  Write the document to `FILE` and print nothing. The file holds what standard output would. A JSON document has no newline at the end; a YAML document keeps its final newline.
+  Write the document to `FILE` and print nothing. The file holds what standard output would. A JSON document has no newline at the end; a YAML or TOML document keeps its final newline.
 </Option>
 
 `-i`, `-v` and the vault options work as they do for `volant playbook`. Without a selected action the command prints `No action selected, at least one of --host, --graph or --list needs to be specified.`, and with two it prints `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; both exit 5.

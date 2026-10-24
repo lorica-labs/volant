@@ -1,18 +1,18 @@
 ---
-sourceHash: a95d7480c0e1
+sourceHash: db3c71c9f89f
 title: volant inventory
-description: Imprime un inventario como JSON o YAML, igual que ansible-inventory.
+description: Imprime un inventario como JSON, YAML o TOML, igual que ansible-inventory.
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant inventory` imprime un inventario como JSON o YAML, igual que `ansible-inventory`. Iniciado con el nombre `ansible-inventory` (consulta [el comando shims](/es/docs/reference/cli/shims/)), se comporta igual.
+`volant inventory` imprime un inventario como JSON, YAML o TOML, igual que `ansible-inventory`. Iniciado con el nombre `ansible-inventory` (consulta [el comando shims](/es/docs/reference/cli/shims/)), se comporta igual.
 
 ```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y] [--export] [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y | --toml] [--export] [--output FILE] [-v]
 ```
 
-Se requiere exactamente una de `--list`, `--host` y `--graph`. `--toml` todavía no existe y es una opción desconocida.
+Se requiere exactamente una de `--list`, `--host` y `--graph`.
 
 <Option name="--list" arg="">
   Imprime cada host con sus variables, con los archivos `group_vars` y `host_vars` y las variables de sus grupos ya incorporados, y luego los grupos con sus `hosts` y `children`. Las claves van ordenadas, la sangría es de cuatro espacios y el texto no ASCII se escribe tal cual. Una cadena que es un dato se imprime como `{"__ansible_unsafe": "..."}` y un valor `!vault` como `{"__ansible_vault": "..."}`; no se descifra nada.
@@ -51,6 +51,12 @@ Se requiere exactamente una de `--list`, `--host` y `--graph`. `--toml` todavía
   ```
 </Option>
 
+<Option name="--toml" arg="">
+  Imprime `--list` y `--host` como TOML, con la disposición que imprime `ansible-inventory` con el paquete `tomli-w`; Volant no necesita ningún paquete para ello. `--list` tiene una tabla por grupo que tenga algo que mostrar: `[group]` con `children` como nombres, y `[group.hosts.host]` con las variables del host. No hay tabla `all`, y un grupo que solo tiene hosts no tiene línea `[group]`. Las variables no se ordenan: vienen en el orden en que la referencia las combina, primero las de los grupos y por último las del propio host. Las variables de un host se escriben donde el recorrido lo alcanza por primera vez, así que un host que está en varios grupos tiene una tabla vacía en los demás. Los arrays se escriben con un elemento por línea, una coma final y cuatro espacios de sangría. `--host` imprime las variables como un documento plano. `--yaml` gana cuando se dan ambas, y `--graph` ignora `--toml`.
+
+  Un documento sin nada imprime nada y sale con 1, como hace la referencia. Un `null` no se puede escribir en TOML: el comando imprime `[ERROR]: Object of type 'NoneType' is not TOML serializable` y sale con 250. La referencia también sale con 250, con un traceback de Python, que Volant no copia.
+</Option>
+
 <Option name="--export" arg="">
   Mantiene cada variable donde se define en lugar de combinar las variables de grupo en cada host. `--list` da a cada grupo una entrada `vars` con sus propias variables y sus archivos `group_vars`. Cada host conserva solo lo que fijan su línea de inventario y sus archivos `host_vars`; las variables adicionales se omiten. Con `--yaml` no se comparte ningún valor, así que no aparecen anclas. Con `--host` solo se imprimen las variables propias de ese host. `export = true` en la sección `[inventory]` de `ansible.cfg`, o `ANSIBLE_INVENTORY_EXPORT`, lo activa por defecto. Con `--graph --vars`, las líneas de un host muestran solo sus propias variables.
 </Option>
@@ -64,7 +70,7 @@ Se requiere exactamente una de `--list`, `--host` y `--graph`. `--toml` todavía
 </Option>
 
 <Option name="--output" arg="FILE">
-  Escribe el documento en `FILE` y no imprime nada. El archivo contiene lo que habría salido por la salida estándar. Un documento JSON no tiene salto de línea final; un documento YAML conserva el suyo.
+  Escribe el documento en `FILE` y no imprime nada. El archivo contiene lo que habría salido por la salida estándar. Un documento JSON no tiene salto de línea final; un documento YAML o TOML conserva el suyo.
 </Option>
 
 `-i`, `-v` y las opciones de vault funcionan como en `volant playbook`. Sin una acción elegida, el comando imprime `No action selected, at least one of --host, --graph or --list needs to be specified.`, y con dos imprime `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; ambos salen con el código 5.

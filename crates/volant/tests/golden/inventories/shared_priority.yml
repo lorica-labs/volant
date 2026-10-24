@@ -1,0 +1,19 @@
+# Two groups of one host set the same name: the higher `ansible_group_priority` wins, which is
+# not the later name, and the hosts that read the same group's value share one YAML anchor.
+all:
+  children:
+    a:
+      hosts:
+        h1:
+        h2:
+      vars:
+        ansible_group_priority: 10
+        x: [1, 2]
+        y: {k: [1]}
+    b:
+      hosts:
+        h1:
+        h3:
+      vars:
+        x: [3]
+        y: {k: [2]}

@@ -1,18 +1,18 @@
 ---
-sourceHash: a95d7480c0e1
+sourceHash: db3c71c9f89f
 title: volant inventory
-description: Gibt ein Inventory als JSON oder YAML aus, so wie es ansible-inventory tut.
+description: Gibt ein Inventory als JSON, YAML oder TOML aus, so wie es ansible-inventory tut.
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant inventory` gibt ein Inventory als JSON oder YAML aus, so wie es `ansible-inventory` tut. Unter dem Namen `ansible-inventory` gestartet (siehe [der Befehl shims](/de/docs/reference/cli/shims/)), verhält er sich genauso.
+`volant inventory` gibt ein Inventory als JSON, YAML oder TOML aus, so wie es `ansible-inventory` tut. Unter dem Namen `ansible-inventory` gestartet (siehe [der Befehl shims](/de/docs/reference/cli/shims/)), verhält er sich genauso.
 
 ```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y] [--export] [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y | --toml] [--export] [--output FILE] [-v]
 ```
 
-Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--toml` gibt es noch nicht und ist eine unbekannte Option.
+Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich.
 
 <Option name="--list" arg="">
   Gibt jeden Host mit seinen Variablen aus, einschließlich der Dateien `group_vars` und `host_vars` und der Variablen seiner Gruppen, dann die Gruppen mit ihren `hosts` und `children`. Die Schlüssel sind sortiert, die Einrückung beträgt vier Leerzeichen, und Nicht-ASCII-Text wird unverändert geschrieben. Ein String, der Daten ist, wird als `{"__ansible_unsafe": "..."}` ausgegeben und ein `!vault`-Wert als `{"__ansible_vault": "..."}`; nichts wird entschlüsselt.
@@ -51,6 +51,12 @@ Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--to
   ```
 </Option>
 
+<Option name="--toml" arg="">
+  Gibt `--list` und `--host` als TOML aus, im Layout, das `ansible-inventory` mit dem Paket `tomli-w` ausgibt; Volant braucht dafür kein Paket. `--list` hat eine Tabelle pro Gruppe, die etwas zu zeigen hat: `[group]` mit `children` als Namen und `[group.hosts.host]` mit den Variablen des Hosts. Es gibt keine Tabelle `all`, und eine Gruppe, die nur Hosts hat, hat keine Zeile `[group]`. Variablen sind nicht sortiert: Sie kommen in der Reihenfolge, in der die Referenz sie zusammenführt, zuerst die der Gruppen und zuletzt die des Hosts. Die Variablen eines Hosts werden dort geschrieben, wo der Durchlauf ihn zuerst erreicht, sodass ein Host in mehreren Gruppen in den anderen eine leere Tabelle hat. Arrays werden mit einem Element pro Zeile, einem abschließenden Komma und vier Leerzeichen Einrückung geschrieben. `--host` gibt die Variablen als flaches Dokument aus. `--yaml` gewinnt, wenn beide angegeben sind, und `--graph` ignoriert `--toml`.
+
+  Ein Dokument ohne Inhalt gibt nichts aus und endet mit 1, wie es die Referenz tut. Ein `null` lässt sich in TOML nicht schreiben: Der Befehl gibt `[ERROR]: Object of type 'NoneType' is not TOML serializable` aus und endet mit 250. Die Referenz endet ebenfalls mit 250, mit einem Python-Traceback, den Volant nicht nachahmt.
+</Option>
+
 <Option name="--export" arg="">
   Behält jede Variable dort, wo sie gesetzt ist, statt Gruppenvariablen in jeden Host einzurechnen. `--list` gibt jeder Gruppe einen Eintrag `vars` mit ihren eigenen Variablen und ihren `group_vars`-Dateien. Jeder Host behält nur, was seine Inventory-Zeile und seine `host_vars`-Dateien setzen; zusätzliche Variablen entfallen. Mit `--yaml` wird kein Wert geteilt, also erscheinen keine Anker. Mit `--host` werden nur die eigenen Variablen dieses Hosts ausgegeben. `export = true` im Abschnitt `[inventory]` der `ansible.cfg` oder `ANSIBLE_INVENTORY_EXPORT` schaltet es standardmäßig ein. Mit `--graph --vars` zeigen die Zeilen eines Hosts nur seine eigenen Variablen.
 </Option>
@@ -64,7 +70,7 @@ Genau eine der Optionen `--list`, `--host` und `--graph` ist erforderlich. `--to
 </Option>
 
 <Option name="--output" arg="FILE">
-  Schreibt das Dokument nach `FILE` und gibt nichts aus. Die Datei enthält, was die Standardausgabe enthalten hätte. Ein JSON-Dokument hat keinen abschließenden Zeilenumbruch; ein YAML-Dokument behält seinen.
+  Schreibt das Dokument nach `FILE` und gibt nichts aus. Die Datei enthält, was die Standardausgabe enthalten hätte. Ein JSON-Dokument hat keinen abschließenden Zeilenumbruch; ein YAML- oder TOML-Dokument behält seinen.
 </Option>
 
 `-i`, `-v` und die Vault-Optionen funktionieren wie bei `volant playbook`. Ohne gewählte Aktion gibt der Befehl `No action selected, at least one of --host, --graph or --list needs to be specified.` aus, bei zwei Aktionen `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`; beide enden mit Exit-Code 5.

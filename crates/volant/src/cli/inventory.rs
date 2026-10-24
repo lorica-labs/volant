@@ -13,14 +13,16 @@ use serde_json::Value;
 use super::announce::{announce, inventory_sources};
 use crate::bridge::Bridge;
 use crate::config::Config;
-use crate::inventory::{GraphItem, Inventory, Note, VarsOf, load_sources_with};
+use crate::inventory::{GraphItem, Inventory, Note, VarsOf, load_sources_with, toml_dumps};
 use crate::render::Renderer;
 use crate::stats::error_code;
 use crate::template::{inventory_yaml, yaml_mapping, yaml_node};
 use crate::vars::{ListedOrigin, VarStore};
 
-/// The arguments of `ansible-inventory` this release reads. `--toml` is not here, so clap refuses
-/// it by name.
+mod graph;
+use graph::graph;
+
+/// The arguments of `ansible-inventory` this release reads.
 #[derive(Args, Debug)]
 pub struct InventoryArgs {
     /// Print the whole inventory as JSON.
@@ -38,6 +40,9 @@ pub struct InventoryArgs {
     /// Print `--list` and `--host` as YAML instead of JSON.
     #[arg(short = 'y', long)]
     yaml: bool,
+    /// Print `--list` and `--host` as TOML instead of JSON. `--yaml` wins when both are given.
+    #[arg(long)]
+    toml: bool,
     /// Keep each variable on the host or group that sets it instead of folding the groups'
     /// variables into every host. `--host` then prints only the host's own variables.
     #[arg(long)]
@@ -153,14 +158,16 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
             export,
         );
     }
-    let vars_of = |host: &str| -> BTreeMap<String, Value> {
-        let vars = if export {
+    // In the order the reference merges them, which TOML keeps and JSON and YAML sort.
+    let ordered = |host: &str| -> serde_json::Map<String, Value> {
+        if export {
             store.exported_vars(host)
         } else {
-            store.listed_vars(host)
-        };
-        vars.into_iter().collect()
+            store.listed_vars_ordered(host, &loaded.group_var_names(host))
+        }
     };
+    let vars_of = |host: &str| -> BTreeMap<String, Value> { ordered(host).into_iter().collect() };
+    let toml = args.toml && !args.yaml;
     let text = if let Some(name) = &args.host {
         // The reference leaves `--limit` out of `--host`.
         let resolution = loaded.resolve(name);
@@ -177,15 +184,16 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
             eprintln!("[ERROR]: You must pass a single valid host to --host parameter");
             return Ok(5);
         };
-        if args.yaml {
-            inventory_yaml(&yaml_node(&Value::Object(
-                vars_of(&host.name).into_iter().collect(),
-            )))
+        if toml {
+            match toml_text(&ordered(&host.name)) {
+                Ok(text) => text,
+                Err(code) => return Ok(code),
+            }
         } else {
-            to_json(&loaded.host_dump(&host.name, &vars_of))?
+            host_text(args, &loaded, &host.name, &vars_of)?
         }
     } else {
-        match list_text(args, &loaded, &store, export, &vars_of, &mut out)? {
+        match list_text(args, &loaded, &store, export, &vars_of, &ordered, &mut out)? {
             Ok(text) => text,
             Err(code) => return Ok(code),
         }
@@ -207,6 +215,7 @@ fn list_text(
     store: &VarStore,
     export: bool,
     vars_of: &VarsOf<'_>,
+    ordered: &dyn Fn(&str) -> serde_json::Map<String, Value>,
     out: &mut Renderer,
 ) -> anyhow::Result<Result<String, i32>> {
     let limited;
@@ -226,12 +235,52 @@ fn list_text(
             .into_iter()
             .collect()
     };
+    if args.toml && !args.yaml {
+        let mut groups = |name: &str| {
+            if export {
+                store.listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect())
+            } else {
+                serde_json::Map::new()
+            }
+        };
+        let mut hosts = ordered;
+        return Ok(toml_text(&shown.toml_document(&mut hosts, &mut groups)));
+    }
     Ok(Ok(if args.yaml {
         inventory_yaml(&yaml_list(shown, store, export, vars_of, &group_vars))
     } else {
         let group_vars: &VarsOf<'_> = &group_vars;
         to_json(&shown.dump_with(vars_of, export.then_some(group_vars)))?
     }))
+}
+
+/// What `--host` prints as JSON or YAML.
+fn host_text(
+    args: &InventoryArgs,
+    loaded: &Inventory,
+    host: &str,
+    vars_of: &VarsOf<'_>,
+) -> anyhow::Result<String> {
+    if args.yaml {
+        Ok(inventory_yaml(&yaml_node(&Value::Object(
+            vars_of(host).into_iter().collect(),
+        ))))
+    } else {
+        to_json(&loaded.host_dump(host, vars_of))
+    }
+}
+
+/// A TOML document as text. The reference prints nothing and exits 1 for an empty one, and
+/// exits 250 for a value TOML cannot hold.
+fn toml_text(table: &serde_json::Map<String, Value>) -> Result<String, i32> {
+    match toml_dumps(table) {
+        Ok(text) if text.is_empty() => Err(1),
+        Ok(text) => Ok(text),
+        Err(message) => {
+            eprintln!("[ERROR]: {message}");
+            Err(250)
+        }
+    }
 }
 
 /// The document `--list --yaml` dumps. Without `--export`, a variable that one group, one
@@ -277,108 +326,6 @@ fn yaml_list(
         (!vars.is_empty()).then(|| yaml_node(&Value::Object(vars.into_iter().collect())))
     };
     inventory.yaml_document(&mut host_vars, &mut groups)
-}
-
-/// `--graph`: the tree to standard output or `--output`. `--limit` and `--yaml` leave it as it is;
-/// with `--export`, a host's lines are its own variables only.
-fn graph(
-    args: &InventoryArgs,
-    root: &str,
-    inventory: &Inventory,
-    store: &VarStore,
-    export: bool,
-) -> anyhow::Result<i32> {
-    let mut lines = |item: GraphItem<'_>| -> Result<Vec<String>, String> {
-        if !args.vars {
-            return Ok(Vec::new());
-        }
-        let vars: BTreeMap<String, Value> = match item {
-            GraphItem::Host(name) if export => store.exported_vars(name).into_iter().collect(),
-            GraphItem::Host(name) => store.listed_vars(name).into_iter().collect(),
-            GraphItem::Group(name) => store
-                .listed_group_vars(name, &inventory.group_vars_of(name).into_iter().collect())
-                .into_iter()
-                .collect(),
-        };
-        vars.iter()
-            .map(|(name, value)| Ok(format!("{{{name} = {}}}", shown(value)?)))
-            .collect()
-    };
-    let text = match inventory.graph(root, &mut lines) {
-        Ok(Some(text)) => text,
-        Ok(None) => {
-            eprintln!("[ERROR]: Pattern must be valid group name when using --graph");
-            return Ok(5);
-        }
-        Err(failure) => {
-            // The reference words it without the task-style lead.
-            let message = failure
-                .strip_prefix(crate::vault::UNDECRYPTABLE)
-                .unwrap_or(&failure);
-            match crate::vault::failure_origin(&failure) {
-                Some(o) => eprintln!(
-                    "[ERROR]: {message}\n{}\n",
-                    crate::render::source_context(&o)
-                ),
-                None => eprintln!("[ERROR]: {message}"),
-            }
-            return Ok(1);
-        }
-    };
-    match &args.output {
-        // The tree ends with the newline of its last line, and `print` adds none after it.
-        Some(path) => {
-            std::fs::write(path, text.trim_end_matches('\n'))
-                .map_err(|err| write_failure(path, &err))?;
-        }
-        None => print!("{text}"),
-    }
-    Ok(0)
-}
-
-/// Python's `str()` of a value as `--graph --vars` shows it. A `!vault` value that is the
-/// variable itself is decrypted, with the failure's message when it cannot be; one inside a list
-/// or a mapping is left as the reference's `repr` shows it, `EncryptedString(ciphertext=...)`.
-fn shown(value: &Value) -> Result<String, String> {
-    if let Value::String(text) = value {
-        if let Some(cipher) = crate::yaml::vault_text(text) {
-            return crate::vault::reveal(&cipher)
-                .map_err(|reason| crate::vault::undecryptable(&cipher, &reason));
-        }
-        if let Some(plain) = crate::yaml::unsafe_text(text) {
-            return Ok(plain);
-        }
-        return Ok(text.clone());
-    }
-    Ok(nested(value))
-}
-
-/// Python's `repr` of a value inside a container.
-fn nested(value: &Value) -> String {
-    let quoted = |text: &str| crate::playbook::python_repr(&Value::String(text.to_string()));
-    match value {
-        Value::String(text) => {
-            if let Some(cipher) = crate::yaml::vault_text(text) {
-                format!("EncryptedString(ciphertext={})", quoted(&cipher))
-            } else if let Some(plain) = crate::yaml::unsafe_text(text) {
-                quoted(&plain)
-            } else {
-                quoted(text)
-            }
-        }
-        Value::Array(items) => format!(
-            "[{}]",
-            items.iter().map(nested).collect::<Vec<_>>().join(", ")
-        ),
-        Value::Object(map) => format!(
-            "{{{}}}",
-            map.iter()
-                .map(|(k, v)| format!("{}: {}", quoted(k), nested(v)))
-                .collect::<Vec<_>>()
-                .join(", ")
-        ),
-        other => crate::playbook::python_repr(other),
-    }
 }
 
 /// The inventory every `-i` names, else the configuration's, else the reference's default; what

@@ -10,6 +10,8 @@ const columns = [
       ['Quickstart', '/docs/start/quickstart/'],
       ['Will my playbook run?', '/docs/start/compatibility/'],
       ['When a run fails', '/docs/start/troubleshooting/'],
+      ['What it leaves on your machines', '/docs/#what-volant-leaves-on-your-machines'],
+      ['Uninstall', '/docs/start/installation/#uninstall'],
     ],
   },
   {
@@ -51,7 +53,7 @@ const columns = [
     {
       columns.map((column) => (
         <nav aria-label={column.title}>
-          <h2>{column.title}</h2>
+          <p class="title">{column.title}</p>
           {column.links.map(([label, href]) => (
             <a href={href}>{label}</a>
           ))}
@@ -96,7 +98,7 @@ const columns = [
     align-content: start;
     gap: 0.55rem;
   }
-  h2 {
+  .title {
     margin-bottom: 0.25rem;
     color: var(--fg);
     font-size: 0.85rem;

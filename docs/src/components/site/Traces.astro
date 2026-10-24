@@ -1,0 +1,212 @@
+---
+// The measured runs as a logic analyser shows signals: each engine is a line that rises when its run
+// starts and falls when it ends, on one time axis per workload. Only the medians are drawn; a
+// cursor reads which runs are still going at the moment under it.
+import { measuredOn, reference, workloads } from '../../lib/bench';
+
+const W = 1000;
+const lane = 46;
+const ticks = (total: number) => {
+  const step = total > 30 ? 10 : 5;
+  return Array.from({ length: Math.floor(total / step) + 1 }, (_, i) => i * step);
+};
+---
+
+<div class="traces">
+  {
+    workloads.map((w) => {
+      const span = Math.ceil(w.ansible / 5) * 5;
+      const x = (t: number) => (t / span) * W;
+      const signals = [
+        { name: 'ansible-core', seconds: w.ansible, cls: 'ref' },
+        { name: 'Volant', seconds: w.volant, cls: 'vol' },
+      ];
+      const height = signals.length * lane + 36;
+      return (
+        <figure class="scope panel reveal" data-span={span} data-signals={JSON.stringify(signals)}>
+          <div class="core">
+            <figcaption>
+              <b>{w.name}</b>
+              <span>{w.detail}</span>
+            </figcaption>
+            <div class="screen">
+              <svg viewBox={`0 0 ${W} ${height}`} role="img"
+                aria-label={`${w.name}: ansible-core runs for ${w.ansible} seconds, Volant for ${w.volant} seconds`}>
+                {ticks(span).map((t) => (
+                  <line class="grid" x1={x(t)} x2={x(t)} y1="0" y2={height - 26} />
+                ))}
+                {signals.map((s, i) => {
+                  const top = i * lane + 12;
+                  const low = top + 26;
+                  const end = Math.max(x(s.seconds), 2);
+                  return (
+                    <path
+                      class:list={['signal', s.cls]}
+                      pathLength="1"
+                      d={`M0 ${low} V${top} H${end} V${low} H${W}`}
+                    />
+                  );
+                })}
+                {ticks(span).map((t) => (
+                  <text class="tick" x={x(t)} y={height - 8}>{t} s</text>
+                ))}
+                <line class="cursor" x1="0" x2="0" y1="0" y2={height - 26} />
+              </svg>
+              <div class="labels">
+                {signals.map((s) => (
+                  <span class={s.cls}>
+                    {s.name} <b class="mono">{s.seconds.toFixed(3)} s</b>
+                  </span>
+                ))}
+              </div>
+              <p class="readout mono" aria-live="polite">Move over the trace to read it.</p>
+            </div>
+          </div>
+        </figure>
+      );
+    })
+  }
+  <p class="caption">
+    Median of three timed passes on {measuredOn}, against {reference}. A line is high while that engine’s run is going.
+  </p>
+</div>
+
+<script>
+  type Signal = { name: string; seconds: number };
+  for (const scope of document.querySelectorAll<HTMLElement>('.scope')) {
+    const span = Number(scope.dataset.span);
+    const signals: Signal[] = JSON.parse(scope.dataset.signals!);
+    const svg = scope.querySelector('svg')!;
+    const cursor = scope.querySelector<SVGLineElement>('.cursor')!;
+    const readout = scope.querySelector<HTMLElement>('.readout')!;
+    const read = (clientX: number) => {
+      const box = svg.getBoundingClientRect();
+      const share = Math.min(Math.max((clientX - box.left) / box.width, 0), 1);
+      const t = share * span;
+      cursor.setAttribute('x1', String(share * 1000));
+      cursor.setAttribute('x2', String(share * 1000));
+      scope.classList.add('reading');
+      readout.textContent =
+        `t = ${t.toFixed(t < 1 ? 3 : 1)} s   ` +
+        signals.map((s) => `${s.name} ${t <= s.seconds ? 'running' : `done after ${s.seconds.toFixed(3)} s`}`).join('   ');
+    };
+    svg.addEventListener('pointermove', (event) => read(event.clientX));
+    svg.addEventListener('pointerdown', (event) => read(event.clientX));
+    svg.addEventListener('pointerleave', () => scope.classList.remove('reading'));
+  }
+</script>
+
+<style>
+  .traces {
+    display: grid;
+    gap: 1rem;
+  }
+  .scope {
+    margin: 0;
+  }
+  .scope .core {
+    display: grid;
+    gap: 1rem;
+    padding: 1.5rem;
+  }
+  figcaption {
+    display: grid;
+    gap: 0.2rem;
+  }
+  figcaption span {
+    color: var(--fg-3);
+    font-size: 0.85rem;
+  }
+  /* The screen of the instrument: a faint phosphor grid on black. */
+  .screen {
+    position: relative;
+    padding: 1rem 1rem 0.75rem;
+    border-radius: 0.5rem;
+    background:
+      linear-gradient(color-mix(in srgb, var(--brand) 7%, transparent) 1px, transparent 1px) 0 0 / 100% 1.5rem,
+      #070909;
+    box-shadow: inset 0 0 0 1px var(--line);
+  }
+  svg {
+    display: block;
+    width: 100%;
+    height: auto;
+    overflow: visible;
+    cursor: crosshair;
+    touch-action: pan-y;
+  }
+  .grid {
+    stroke: rgb(255 255 255 / 0.06);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+  .tick {
+    fill: var(--fg-3);
+    font: 15px var(--f-mono);
+    text-anchor: middle;
+  }
+  .signal {
+    fill: none;
+    stroke-width: 2;
+    stroke-linejoin: miter;
+    vector-effect: non-scaling-stroke;
+  }
+  .signal.ref {
+    stroke: var(--fg-2);
+  }
+  .signal.vol {
+    stroke: var(--brand);
+    filter: drop-shadow(0 0 4px color-mix(in srgb, var(--brand) 70%, transparent));
+  }
+  /* The traces are drawn from left to right when they come into view. */
+  @media (prefers-reduced-motion: no-preference) and (scripting: enabled) {
+    .signal {
+      stroke-dasharray: 1;
+      stroke-dashoffset: 1;
+      transition: stroke-dashoffset 2.2s var(--ease) 0.2s;
+    }
+    :global(.is-visible) .signal {
+      stroke-dashoffset: 0;
+    }
+  }
+  .cursor {
+    stroke: var(--state-changed);
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+    opacity: 0;
+  }
+  .reading .cursor {
+    opacity: 1;
+  }
+  .labels {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem 1.5rem;
+    margin-top: 0.6rem;
+    font-size: 0.85rem;
+  }
+  .labels .ref {
+    color: var(--fg-2);
+  }
+  .labels .vol {
+    color: var(--brand-hi);
+  }
+  .labels b {
+    margin-inline-start: 0.3rem;
+    font-weight: 500;
+  }
+  .readout {
+    min-height: 1.4em;
+    margin-top: 0.4rem;
+    color: var(--fg-3);
+    font-size: 0.78rem;
+    white-space: pre-wrap;
+  }
+  .reading .readout {
+    color: var(--state-changed);
+  }
+  .caption {
+    color: var(--fg-3);
+    font-size: 0.85rem;
+  }
+</style>

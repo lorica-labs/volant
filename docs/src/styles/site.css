@@ -15,11 +15,26 @@
   --fg-2: #b3bcc3;
   --fg-3: #7c868e;
   --fg-4: #4f585f;
+  /* Text never uses --fg-4: it is too faint on the background. --fg-3 is the faintest text. */
   --brand: #19b6a6;
   --brand-hi: #9af0e4;
   --brand-low: #0a2b28;
   --brand-ink: #04110f;
   --slow: #c98a0b;
+  /* Run states, in the colours ansible-playbook prints them: ok green, changed yellow, failed and
+     unreachable red, skipped cyan. They only ever mean a state; the teal accent never does. */
+  --state-ok: #4cc38a;
+  --state-changed: #e6b450;
+  --state-failed: #f0645a;
+  --state-skipped: #5fb8e6;
+  /* The light surface of reference sections, with inks that keep their meaning on paper. */
+  --paper: #f2f4f3;
+  --paper-2: #e6eae8;
+  --ink: #12191c;
+  --ink-2: #3b484e;
+  --ink-3: #5c6a70;
+  --ink-brand: #0b7d72;
+  --ink-partial: #9a6408;
   --f-sans: 'Geist Variable', ui-sans-serif, system-ui, sans-serif;
   --f-mono: 'Geist Mono Variable', ui-monospace, Menlo, Consolas, monospace;
   --ease: cubic-bezier(0.16, 1, 0.3, 1);
@@ -214,11 +229,28 @@ pre.code .s {
   color: #c3d68b;
 }
 pre.code .c {
-  color: var(--fg-4);
+  color: var(--fg-3);
 }
 
-/* Things that arrive as they scroll into view, once, when motion is welcome. */
-@media (prefers-reduced-motion: no-preference) {
+/* The skip link shows when it takes the focus. */
+.skip:focus {
+  position: fixed;
+  top: 0.75rem;
+  left: 0.75rem;
+  z-index: 40;
+  width: auto;
+  height: auto;
+  padding: 0.6rem 1rem;
+  clip: auto;
+  border-radius: 0.5rem;
+  background: var(--brand);
+  color: var(--brand-ink);
+  font-weight: 600;
+}
+
+/* Things that arrive as they scroll into view, once, when motion is welcome and a script is there
+   to reveal them. */
+@media (prefers-reduced-motion: no-preference) and (scripting: enabled) {
   .reveal {
     opacity: 0;
     transform: translateY(1rem);

@@ -1,6 +1,6 @@
 ---
 import SiteLayout from '../layouts/SiteLayout.astro';
-import Race from '../components/site/Race.astro';
+import Traces from '../components/site/Traces.astro';
 import { measuredOn, ratio, workloads } from '../lib/bench';
 
 // The median pass of the roles workload, per host, from the performance page of the documentation.
@@ -63,7 +63,7 @@ const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v} ms`)
 
   <section class="section">
     <div class="wrap">
-      <Race />
+      <Traces />
       <p class="why">
         The ratios are far apart for a reason. The roles change nothing on a converged host, so almost all of the
         reference’s time goes to the machinery around each module. The k3s playbook restarts services and runs install
@@ -137,18 +137,22 @@ const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v} ms`)
   <section class="section">
     <div class="wrap two">
       <div class="section-head reveal">
-        <h2>Reproduce them.</h2>
+        <h2>Measure your own run.</h2>
         <p>
-          Both recipes build Volant in release mode, run against the hosts you name and print the medians and the ratio.
-          They change the hosts they run on, so use machines you can wipe.
+          On your own playbook, <code>--profile</code> prints the split above for your run, step by step.
         </p>
         <p>
-          On your own playbook, <code>--profile</code> prints the same split for your run.
+          To reproduce the two workloads, the recipes build Volant in release mode, run against the hosts you name and print
+          the medians and the ratio. They need ansible-core 2.19.12 installed with <code>uv tool install</code>, two hosts
+          where the account has <code>sudo</code> without a password, and they change those hosts, so use machines you can
+          wipe. <a class="text-link" href="/docs/project/performance/#reproducing-the-figures">The recipes</a>
         </p>
       </div>
       <div class="panel reveal">
-        <pre class="code core"><span class="c"># ansible-core 2.19.12 installed with uv tool install,
-# and sudo without a password on both hosts</span>
+        <pre class="code core"><span class="c"># Your own run, split by step</span>
+volant playbook -i inventory.ini site.yml <span class="k">--profile</span>
+
+<span class="c"># The two workloads of this page</span>
 VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench 3</span>
 VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench-k3s 3</span></pre>
       </div>
@@ -225,7 +229,7 @@ VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench-k3s
   }
   .label em {
     margin-inline-start: 0.4rem;
-    color: var(--fg-4);
+    color: var(--fg-3);
     font-style: normal;
     font-size: 0.75rem;
   }

@@ -110,7 +110,8 @@ const { cols = 120, rows = 60, mode = 'hero' } = Astro.props;
     let aimY = restY;
     let clock = 0;
     const distance = 3.2;
-    const scale = rows * 0.62;
+    // The console has the wheel alone in its frame, so it fills more of it.
+    const scale = rows * (hero ? 0.62 : 0.95);
     const fresh = new Float32Array(cells);
 
     const draw = (smooth: number) => {

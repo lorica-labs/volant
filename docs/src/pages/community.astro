@@ -5,6 +5,12 @@ import { repo } from '../nav';
 
 const ways = [
   {
+    title: 'My run failed',
+    text: 'Read the exit code and the message, narrow the failure down to one task, and compare with ansible-playbook. The page walks through it.',
+    href: '/docs/start/troubleshooting/',
+    action: 'When a run fails',
+  },
+  {
     title: 'Report a difference',
     text: 'A playbook that behaves differently under Volant and ansible-playbook is a bug. The template asks for what it takes to reproduce it.',
     href: `${repo}/issues/new?template=compat.yml`,
@@ -120,6 +126,13 @@ just check        # formatting, lints and the test suite`;
         </p>
       </div>
       <div class="reveal">
+        <h2>Support</h2>
+        <p>
+          Where to ask, and what to include so someone can help.
+          <a class="text-link" href={`${repo}/blob/main/SUPPORT.md`}>SUPPORT.md</a>
+        </p>
+      </div>
+      <div class="reveal">
         <h2>Decisions</h2>
         <p>
           The choices that shape what users see are written down with their reasons.
@@ -138,6 +151,10 @@ just check        # formatting, lints and the test suite`;
   }
   .way {
     transition: border-color 0.3s var(--ease);
+  }
+  /* The most common reason to come here gets the full width. */
+  .way:first-child {
+    grid-column: 1 / -1;
   }
   .way:hover {
     border-color: color-mix(in srgb, var(--brand) 45%, transparent);
@@ -201,7 +218,7 @@ just check        # formatting, lints and the test suite`;
   }
   .facts {
     display: grid;
-    grid-template-columns: repeat(3, minmax(0, 1fr));
+    grid-template-columns: repeat(4, minmax(0, 1fr));
     gap: 2rem;
   }
   .facts h2 {

@@ -11,7 +11,7 @@ import { Tabs, TabItem, Aside } from '@astrojs/starlight/components';
 curl -fsSL https://volant.sh/install.sh | sh
 ```
 
-The script works on Linux and macOS, on x86_64 and arm64. On Linux it takes the static build. It needs `curl`, `tar` and `sha256sum` or `shasum`, plus `xz` on Linux. It downloads the newest release for your machine, checks its SHA-256 checksum, unpacks it under `~/.local/share/volant`, and links `volant` and `volant-playbook` into `~/.local/bin`. It asks for no root access and changes nothing outside those two directories. You can [read it](https://volant.sh/install.sh) before you run it.
+The script works on Linux and macOS, on x86_64 and arm64. On Linux it takes the static build. It needs `curl`, `tar` and `sha256sum` or `shasum`, plus `xz` on Linux. It downloads the newest release for your machine, checks its SHA-256 checksum, unpacks it under `~/.local/share/volant`, and links `volant` and `volant-playbook` into `~/.local/bin`. The script asks for no root access and writes nothing outside those two directories. What Volant writes later, when it runs, is listed in [What Volant leaves on your machines](/docs/#what-volant-leaves-on-your-machines). You can [read the script](https://volant.sh/install.sh) before you run it. Windows is not supported yet: a Windows controller is on the [roadmap](/docs/project/roadmap/).
 
 You do not need Ansible. On the first run that needs Python, Volant downloads its own copy of Python and ansible-core, about 155 MB, and keeps it in `~/.local/share/volant/runtime`. It prints one line when it does. [What Volant leaves on your machines](/docs/#what-volant-leaves-on-your-machines) lists everything it writes.
 

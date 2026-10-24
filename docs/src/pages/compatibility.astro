@@ -1,5 +1,6 @@
 ---
 import SiteLayout from '../layouts/SiteLayout.astro';
+import Lookup from '../components/site/Lookup.astro';
 import { categories, category, collections, core, later, partly, running, total } from '../lib/parity';
 
 const groups = [
@@ -43,33 +44,41 @@ const steps = [
         </span>
       </div>
     </div>
+    <div class="head-lookup"><Lookup id="compat-lookup" /></div>
+    <p class="also">
+      Checking one project? <a class="text-link" href="/docs/start/compatibility/">Will my playbook run?</a> shows the
+      three commands, and the <a class="text-link" href="#known-gaps-note">known gaps</a> list what fails without a message.
+    </p>
   </section>
 
-  <section class="section">
+  <section class="sheet">
     <div class="wrap">
       <div class="legend">
         <span><i class="runs"></i>runs</span>
         <span><i class="partial"></i>partial: an argument or a value is missing</span>
         <span><i class="later"></i>later: Windows, other connections, other output callbacks</span>
+        <span>The numbers are read from the support matrix the test suite generates.</span>
       </div>
       <div class="groups">
         {
           groups.map((group) => (
             <section class="group panel reveal">
               <div class="core">
-                <h2>{group.title}</h2>
+                <h2 class="flap" data-flap={group.title}>{group.title}</h2>
                 {group.rows.map((c) => {
                   const all = c.runs + c.partial + c.notYet + c.later;
                   return (
                     <div class="row">
                       <span class="name">{label(c.name)}</span>
-                      <span class="bar" title={`${c.runs} run, ${c.partial} partial, ${c.later} later`}>
+                      <span class="bar" aria-hidden="true">
                         <i class="runs" style={`--w: ${(c.runs / all) * 100}%`} />
                         <i class="partial" style={`--w: ${(c.partial / all) * 100}%`} />
                         <i class="later" style={`--w: ${((c.later + c.notYet) / all) * 100}%`} />
                       </span>
                       <span class="count mono">
                         {c.runs.toLocaleString('en')}/{all.toLocaleString('en')}
+                        {c.partial > 0 && <em>{c.partial} partial</em>}
+                        {c.later + c.notYet > 0 && <em>{(c.later + c.notYet).toLocaleString('en')} later</em>}
                       </span>
                     </div>
                   );
@@ -79,13 +88,6 @@ const steps = [
           ))
         }
       </div>
-      <form class="lookup reveal" action="/docs/reference/parity/" method="get">
-        <label for="lookup">Look up one name in the full support matrix</label>
-        <div>
-          <input id="lookup" name="q" type="search" placeholder="copy, community.general, json_query, --diff" />
-          <button class="btn btn-brand" type="submit">Look up</button>
-        </div>
-      </form>
     </div>
   </section>
 
@@ -106,7 +108,7 @@ const steps = [
           ))
         }
       </ol>
-      <p class="more reveal">
+      <p class="more reveal" id="known-gaps-note">
         A few gaps are silent: a run can ignore a setting there without an error.
         <a class="text-link" href="/docs/start/compatibility/#known-gaps">Read the known gaps</a> before a run that
         matters.
@@ -114,6 +116,42 @@ const steps = [
     </div>
   </section>
 </SiteLayout>
+
+<script>
+  // Each group title arrives like a split-flap departure board: its letters run through the
+  // alphabet and settle on the real word, left to right.
+  const glyphs = 'ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz';
+  const flap = (el: HTMLElement) => {
+    const word = el.dataset.flap!;
+    const start = performance.now();
+    const step = (now: number) => {
+      const t = now - start;
+      let done = true;
+      el.textContent = [...word]
+        .map((ch, i) => {
+          if (ch === ' ' || t > 260 + i * 28) return ch;
+          done = false;
+          return glyphs[Math.floor(Math.random() * glyphs.length)];
+        })
+        .join('');
+      if (!done) requestAnimationFrame(step);
+    };
+    requestAnimationFrame(step);
+  };
+  if (!window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+    const seen = new IntersectionObserver(
+      (entries) => {
+        for (const entry of entries) {
+          if (!entry.isIntersecting) continue;
+          seen.unobserve(entry.target);
+          flap(entry.target as HTMLElement);
+        }
+      },
+      { threshold: 0.6 },
+    );
+    document.querySelectorAll<HTMLElement>('.flap').forEach((el) => seen.observe(el));
+  }
+</script>
 
 <style>
   .totals {
@@ -138,11 +176,28 @@ const steps = [
     color: var(--fg-3);
     font-size: 0.925rem;
   }
+  .head-lookup {
+    margin-top: 2.5rem;
+  }
+  .also {
+    margin-top: 1rem;
+    color: var(--fg-2);
+    font-size: 0.925rem;
+  }
+
+  /* The reference part of the page is printed on paper, as a datasheet. */
+  .sheet {
+    padding-block: clamp(3.5rem, 7vw, 5.5rem);
+    background:
+      linear-gradient(var(--paper-2) 1px, transparent 1px) 0 0 / 100% 2rem,
+      var(--paper);
+    color: var(--ink);
+  }
   .legend {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 1.75rem;
-    color: var(--fg-3);
+    color: var(--ink-2);
     font-size: 0.85rem;
   }
   .legend span {
@@ -151,18 +206,20 @@ const steps = [
     gap: 0.5rem;
   }
   .legend i {
-    width: 0.75rem;
-    height: 0.75rem;
+    width: 0.85rem;
+    height: 0.85rem;
     border-radius: 3px;
   }
   .runs {
-    background: var(--brand);
+    background: var(--ink-brand);
   }
   .partial {
-    background: #c98a0b;
+    background: var(--ink-partial);
   }
+  /* What comes later is hatched, so it reads as not there yet without a colour of its own. */
   .later {
-    background: var(--fg-4);
+    background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 5px);
+    box-shadow: inset 0 0 0 1px var(--ink-3);
   }
   .groups {
     display: grid;
@@ -170,69 +227,57 @@ const steps = [
     gap: 1rem;
     margin-top: 1.5rem;
   }
+  .group {
+    border-color: rgb(18 25 28 / 0.12);
+    background: rgb(18 25 28 / 0.03);
+  }
   .group .core {
     display: grid;
     align-content: start;
-    gap: 0.55rem;
+    gap: 0.6rem;
     padding: 1.5rem;
+    border-color: rgb(18 25 28 / 0.1);
+    background: #fff;
+    box-shadow: 0 1px 2px rgb(18 25 28 / 0.06);
   }
   .group h2 {
     margin-bottom: 0.5rem;
-    font-size: 1.05rem;
+    color: var(--ink);
+    font-family: var(--f-mono);
+    font-size: 0.95rem;
+    font-weight: 600;
+    letter-spacing: 0;
+    text-transform: uppercase;
   }
   .row {
     display: grid;
-    grid-template-columns: 11rem minmax(0, 1fr) 6.5rem;
+    grid-template-columns: 10.5rem minmax(0, 1fr) 8.5rem;
     align-items: center;
     gap: 0.75rem;
     font-size: 0.85rem;
   }
   .name {
-    color: var(--fg-2);
+    color: var(--ink-2);
   }
   .bar {
     display: flex;
     gap: 2px;
-    height: 0.55rem;
+    height: 0.6rem;
   }
   .bar i {
     width: var(--w);
-    border-radius: 999px;
+    border-radius: 2px;
   }
   .count {
-    color: var(--fg);
+    display: grid;
+    justify-items: end;
+    color: var(--ink);
     text-align: end;
   }
-  .lookup {
-    display: grid;
-    gap: 0.6rem;
-    max-width: 40rem;
-    margin-top: 2.5rem;
-  }
-  .lookup label {
-    font-weight: 560;
-  }
-  .lookup div {
-    display: flex;
-    gap: 0.5rem;
-  }
-  .lookup input {
-    flex: 1;
-    min-width: 0;
-    height: 2.75rem;
-    padding: 0 1rem;
-    border: 1px solid var(--line-2);
-    border-radius: 0.55rem;
-    background: var(--bg-2);
-    color: var(--fg);
-    font: 0.95rem var(--f-sans);
-  }
-  .lookup input::placeholder {
-    color: var(--fg-3);
-  }
-  .lookup input:focus {
-    border-color: var(--brand);
-    outline: none;
+  .count em {
+    color: var(--ink-3);
+    font-size: 0.75rem;
+    font-style: normal;
   }
   .steps {
     display: grid;
@@ -292,14 +337,11 @@ const steps = [
   }
   @media (max-width: 36rem) {
     .row {
-      grid-template-columns: minmax(0, 1fr) 5.5rem;
+      grid-template-columns: minmax(0, 1fr) 6.5rem;
     }
     .bar {
       grid-column: 1 / -1;
       grid-row: 2;
-    }
-    .lookup div {
-      flex-direction: column;
     }
   }
 </style>

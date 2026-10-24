@@ -36,15 +36,35 @@ const current = currentSection(Astro.url.pathname);
           <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.75"
             stroke-linecap="round" aria-hidden="true"><path d="M4 7h16M4 12h16M4 17h16"></path></svg>
         </summary>
-        <div class="drawer">
+        <nav class="drawer" aria-label="Main">
           {nav.map((link) => <a href={link.href}>{link.label}</a>)}
+          <a href="/docs/changelog/">Release notes, v{__VOLANT_VERSION__}</a>
           <a href={repo}>GitHub</a>
           <a class="btn btn-brand" href="/docs/start/installation/">Install</a>
-        </div>
+        </nav>
       </details>
     </div>
   </div>
 </header>
+
+<script>
+  // The menu is a <details>: Escape closes it, and while it is open the page behind it can neither
+  // scroll nor take focus.
+  const menu = document.querySelector<HTMLDetailsElement>('header.nav details.menu');
+  if (menu) {
+    const main = document.querySelector('main');
+    menu.addEventListener('toggle', () => {
+      document.documentElement.classList.toggle('menu-open', menu.open);
+      main?.toggleAttribute('inert', menu.open);
+    });
+    document.addEventListener('keydown', (event) => {
+      if (event.key !== 'Escape' || !menu.open) return;
+      menu.open = false;
+      menu.querySelector('summary')?.focus();
+    });
+    window.matchMedia('(min-width: 52.01rem)').addEventListener('change', () => (menu.open = false));
+  }
+</script>
 
 <style>
   .nav {
@@ -53,8 +73,19 @@ const current = currentSection(Astro.url.pathname);
     z-index: 30;
     height: var(--nav-h);
     border-bottom: 1px solid var(--line);
+  }
+  /* The blur sits on a layer of its own: a backdrop-filter on the header would make it the box the
+     fixed menu is placed in, and squeeze the menu into the header's height. */
+  .nav::before {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
     background: color-mix(in srgb, var(--bg) 82%, transparent);
     backdrop-filter: saturate(140%) blur(12px);
+  }
+  :global(html.menu-open) {
+    overflow: hidden;
   }
   .bar {
     display: flex;
@@ -137,8 +168,8 @@ const current = currentSection(Astro.url.pathname);
   .menu summary {
     display: grid;
     place-items: center;
-    width: 2.5rem;
-    height: 2.5rem;
+    width: 2.75rem;
+    height: 2.75rem;
     border-radius: 0.5rem;
     list-style: none;
     cursor: pointer;
@@ -153,9 +184,11 @@ const current = currentSection(Astro.url.pathname);
     align-content: start;
     gap: 0.25rem;
     padding: 1.25rem;
+    overflow-y: auto;
     background: var(--bg);
   }
   .drawer a:not(.btn) {
+    min-height: 2.75rem;
     padding: 0.85rem 0.25rem;
     border-bottom: 1px solid var(--line);
     font-size: 1.05rem;

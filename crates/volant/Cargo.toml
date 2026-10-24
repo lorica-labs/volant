@@ -22,6 +22,8 @@ workspace = true
 
 [dependencies]
 aes.workspace = true
+# The controller's allocator: see `ALLOCATOR` in lib.rs.
+mimalloc.workspace = true
 anstream.workspace = true
 anstyle.workspace = true
 anyhow.workspace = true

@@ -1,6 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Volant controller: loads Ansible content and drives agents.
 
+/// The controller allocates on every thread of its runtime for every task of every host. Measured
+/// on a thousand local hosts and 20 tasks: the static musl build took 12.2 s with musl's own
+/// `malloc` and 3.0 s with this one, and the glibc build 4.3 s with glibc's and 3.0 s with this one.
+#[global_allocator]
+static ALLOCATOR: mimalloc::MiMalloc = mimalloc::MiMalloc;
+
 pub mod action_plugins;
 pub mod agent;
 pub mod askpass;

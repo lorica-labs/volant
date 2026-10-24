@@ -686,6 +686,8 @@ corpus name="" runs="3": _corpus-image
     sweep
 
     just agent-musl
+    # A local connection starts the agent from this machine under its plain name.
+    cp target/agents/volant-agent-x86_64-unknown-linux-musl target/agents/volant-agent
     cargo build --release -p volant
 
     idle() {

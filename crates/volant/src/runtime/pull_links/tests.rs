@@ -129,7 +129,13 @@ fn the_group_lookup_runs() {
     // SAFETY: reads this process's own credentials.
     let gid = unsafe { libc::getegid() };
     let _ = private_group(gid);
-    assert!(!private_group(u32::MAX - 1));
+    // Not a fixed number: `u32::MAX - 1` is macOS's `nobody` group, which lists no member.
+    // SAFETY: `getgrgid` only looks the group up; the pointer it returns is not kept.
+    let unknown = (3_000_000_000..u32::MAX)
+        .step_by(7919)
+        .find(|&g| unsafe { libc::getgrgid(g) }.is_null())
+        .expect("a group id with no entry");
+    assert!(!private_group(unknown));
 }
 
 /// A binary that is gone, as after an in-place upgrade, is named rather than linked to.

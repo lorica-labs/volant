@@ -1,0 +1,24 @@
+---
+title: volant config
+description: Show, list, validate and initialise the configuration with ansible-config, run from Volant's Python runtime.
+---
+
+`volant config` runs `ansible-config` of ansible-core 2.19.12 in the interpreter Volant chooses for a playbook run, so it works without ansible-core installed. It prints what the script prints and exits with the same code.
+
+```sh
+volant config [ARGS...]
+```
+
+Every argument goes to `ansible-config` unchanged, including `-h` and `--version`. For example `volant config dump --only-changed`, `volant config list`, `volant config view`, `volant config validate -c ansible.cfg` and `volant config init`.
+
+The interpreter, the environment, the terminal, the exit code and `--version` work as for [`volant doc`](/docs/reference/cli/doc/). `ansible-config` finds `ansible.cfg` itself, by the usual rules, so nothing needs to be passed.
+
+## The `[volant]` section
+
+`[volant]` is Volant's own section and ansible-core does not know it. `volant config` does not show its settings: `volant runtime status` does. `volant config validate` reports the section like `ansible-config validate` does:
+
+```
+[ERROR]: Found unknown section 'volant' in '<dir>/ansible.cfg.
+```
+
+The quote after the file name is missing in ansible-core's message too, and the exit code is 1. See [Configuration](/docs/reference/configuration/#volant).

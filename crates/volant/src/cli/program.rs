@@ -24,7 +24,9 @@ pub fn subcommand_for(program: &OsStr) -> Option<&'static str> {
     let name = Path::new(program).file_name()?.to_str()?;
     match name {
         "ansible" => Some("adhoc"),
+        "ansible-config" => Some("config"),
         "ansible-doc" => Some("doc"),
+        "ansible-galaxy" => Some("galaxy"),
         "ansible-inventory" => Some("inventory"),
         "ansible-playbook" => Some("playbook"),
         "ansible-vault" => Some("vault"),
@@ -45,6 +47,8 @@ mod tests {
     #[case("/usr/local/bin/ansible-playbook", Some("playbook"))]
     #[case("ansible-vault", Some("vault"))]
     #[case("ansible-doc", Some("doc"))]
+    #[case("ansible-config", Some("config"))]
+    #[case("ansible-galaxy", Some("galaxy"))]
     #[case("volant", None)]
     #[case("volant-playbook", None)]
     #[case("ansible-test", None)]

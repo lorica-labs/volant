@@ -61,7 +61,7 @@ volant runtime install --collections community.general ansible.posix:2.2.2
 volant runtime install --collections requirements.yml
 ```
 
-`--collections` takes names, each with an optional `:version`, or a requirements file ending in `.yml` or `.yaml`. The collections go to `collections/` inside the runtime. Volant looks there after the paths in `ANSIBLE_COLLECTIONS_PATH` and `[defaults] collections_path`, so collections you installed yourself win.
+`--collections` takes names, each with an optional `:version`, or a requirements file ending in `.yml` or `.yaml`. The collections go to `collections/` inside the runtime. Volant looks there after the paths in `ANSIBLE_COLLECTIONS_PATH` and `[defaults] collections_path`, so collections you installed yourself win. [`volant galaxy`](/docs/reference/cli/galaxy/) installs into the first entry of that path, `~/.ansible/collections` by default, and lists the runtime's directory last.
 
 The runtime holds ansible-core and its dependencies and nothing else. A collection whose plugins need another Python package, such as `jmespath` for `json_query`, does not work in it. For those, use your own environment with `VOLANT_PYTHON`.
 

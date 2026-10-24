@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
 use volant::cli::{
-    AdhocArgs, DocArgs, InventoryArgs, PlaybookArgs, RuntimeCommand, ShimsCommand, VaultArgs,
+    AdhocArgs, InventoryArgs, PlaybookArgs, RuntimeCommand, ShimsCommand, ToolArgs, VaultArgs,
 };
 
 /// Fast engine for Ansible playbooks.
@@ -19,7 +19,11 @@ enum Command {
     /// Run one module against the hosts of a pattern, with the arguments of ansible.
     Adhoc(Box<AdhocArgs>),
     /// Browse plugin documentation, with the arguments of ansible-doc.
-    Doc(DocArgs),
+    Doc(ToolArgs),
+    /// Show and validate the configuration, with the arguments of ansible-config.
+    Config(ToolArgs),
+    /// Install and list roles and collections, with the arguments of ansible-galaxy.
+    Galaxy(ToolArgs),
     /// Print an inventory as JSON, with the arguments of ansible-inventory.
     Inventory(InventoryArgs),
     /// Install, show or remove the Python runtime Volant manages for ansible-core.
@@ -90,6 +94,8 @@ fn main() {
         Command::Playbook(args) => volant::cli::run(*args),
         Command::Adhoc(args) => volant::cli::adhoc(*args),
         Command::Doc(args) => volant::cli::doc(args),
+        Command::Config(args) => volant::cli::config(args),
+        Command::Galaxy(args) => volant::cli::galaxy(args),
         Command::Inventory(args) => volant::cli::inventory(args),
         Command::Runtime(command) => volant::cli::runtime(command),
         Command::Shims(command) => volant::cli::shims(command),

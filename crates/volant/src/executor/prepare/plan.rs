@@ -54,7 +54,7 @@ pub(in crate::executor) struct PlayPlan {
     pub(in crate::executor) vars_files: HashMap<String, Vec<Map<String, Value>>>,
     /// Every host the play resolved, whatever batch it belongs to and whether it has failed or
     /// not: `ansible_play_hosts_all`. Fixed for the whole play, batches included.
-    pub(in crate::executor) all_play_hosts: Vec<String>,
+    pub(in crate::executor) all_play_hosts: Arc<[String]>,
     /// The play's `become` as a literal, or as the template each host's task renders.
     pub(in crate::executor) r#become: (Option<bool>, Option<String>),
     pub(in crate::executor) become_user: Option<String>,

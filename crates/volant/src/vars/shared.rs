@@ -117,9 +117,13 @@ impl VarStore {
         }
         // The lists moved: a host failed, went unreachable, or a new play began. A host no longer
         // in them has no task left to read its kept facts; everyone else's entry stays.
-        let live: BTreeSet<&String> = scope.play_hosts.iter().chain(&scope.batch_hosts).collect();
+        let live: BTreeSet<&String> = scope
+            .play_hosts
+            .iter()
+            .chain(scope.batch_hosts.iter())
+            .collect();
         self.host_facts.retain(|host, _| live.contains(host));
-        let batch = serde_json::to_value(&scope.batch_hosts).unwrap_or_default();
+        let batch = serde_json::to_value(&*scope.batch_hosts).unwrap_or_default();
         let mut map = Map::new();
         map.insert(
             "groups".to_string(),
@@ -127,7 +131,7 @@ impl VarStore {
         );
         map.insert(
             "ansible_play_hosts".to_string(),
-            serde_json::to_value(&scope.play_hosts).unwrap_or_default(),
+            serde_json::to_value(&*scope.play_hosts).unwrap_or_default(),
         );
         // Known gap: measured on ansible-core 2.19.12, `ansible_play_hosts_all` grows when
         // `add_host` runs inside a `serial` play; here it stays the play's own list.
@@ -135,8 +139,8 @@ impl VarStore {
             "ansible_play_hosts_all".to_string(),
             serde_json::to_value(
                 self.play_hosts_all
-                    .as_ref()
-                    .unwrap_or(&scope.all_play_hosts),
+                    .as_deref()
+                    .unwrap_or(&*scope.all_play_hosts),
             )
             .unwrap_or_default(),
         );

@@ -137,9 +137,11 @@ pub(in crate::executor) fn merged_vars(
         role_defaults: role.defaults.clone(),
         role_vars: role.vars.clone(),
         role_params,
-        play_hosts: live.play_hosts_left.to_vec(),
-        batch_hosts: live.live_hosts.to_vec(),
-        all_play_hosts: plan.all_play_hosts.clone(),
+        // Shared with the published progress, not copied: a copy per host and per task was a
+        // list of the whole play for every one of them.
+        play_hosts: Arc::clone(&live.play_hosts_left),
+        batch_hosts: Arc::clone(&live.live_hosts),
+        all_play_hosts: Arc::clone(&plan.all_play_hosts),
     };
     let mut vars = {
         let mut store = store.lock().expect("vars lock");

@@ -69,9 +69,9 @@ pub(crate) fn render_hosts<'a>(
         play_vars: play.vars.clone(),
         role_defaults: context.compiled.exported.defaults.clone(),
         role_vars: context.compiled.exported.vars.clone(),
-        play_hosts: context.all_hosts.to_vec(),
-        batch_hosts: context.all_hosts.to_vec(),
-        all_play_hosts: context.all_hosts.to_vec(),
+        play_hosts: context.all_hosts.into(),
+        batch_hosts: context.all_hosts.into(),
+        all_play_hosts: context.all_hosts.into(),
         ..Scope::default()
     };
     let mut view = {

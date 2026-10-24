@@ -51,9 +51,9 @@ fn store(dir: &Path) -> (Inventory, VarStore) {
 fn scope(hosts: &[&str]) -> Scope {
     let names: Vec<String> = hosts.iter().map(ToString::to_string).collect();
     Scope {
-        play_hosts: names.clone(),
-        batch_hosts: names.clone(),
-        all_play_hosts: names,
+        play_hosts: names.clone().into(),
+        batch_hosts: names.clone().into(),
+        all_play_hosts: names.into(),
         ..Scope::default()
     }
 }
@@ -359,9 +359,9 @@ fn the_magic_variables_follow_the_batch_and_the_play() {
         let inv = Inventory::parse_ini("[web]\nh1\nh2\nh3\n").unwrap();
         let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
         let v = store.shared_values(&Scope {
-            play_hosts: vec!["h2".into(), "h3".into()],
-            batch_hosts: vec!["h2".into()],
-            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
+            play_hosts: vec!["h2".into(), "h3".into()].into(),
+            batch_hosts: vec!["h2".into()].into(),
+            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()].into(),
             ..Scope::default()
         });
         assert_eq!(v["ansible_play_hosts"], json!(["h2", "h3"]));
@@ -371,9 +371,9 @@ fn the_magic_variables_follow_the_batch_and_the_play() {
         // The map is cached, and the next batch is a different answer: asking again with other
         // lists has to rebuild it.
         let next = store.shared_values(&Scope {
-            play_hosts: vec!["h3".into()],
-            batch_hosts: vec!["h3".into()],
-            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()],
+            play_hosts: vec!["h3".into()].into(),
+            batch_hosts: vec!["h3".into()].into(),
+            all_play_hosts: vec!["h1".into(), "h2".into(), "h3".into()].into(),
             ..Scope::default()
         });
         assert_eq!(next["ansible_play_hosts"], json!(["h3"]));
@@ -656,9 +656,9 @@ impl Rng {
             role_defaults: self.map(2),
             role_vars: self.map(2),
             role_params: self.map(2),
-            play_hosts: self.hosts(),
-            batch_hosts: self.hosts(),
-            all_play_hosts: vec!["h1".into(), "h2".into()],
+            play_hosts: self.hosts().into(),
+            batch_hosts: self.hosts().into(),
+            all_play_hosts: vec!["h1".into(), "h2".into()].into(),
         }
     }
     /// A write to the store: a gather, a trusted fact or an untrusted one.
@@ -1322,9 +1322,9 @@ fn an_add_host_name_that_holds_a_template_is_data_wherever_it_is_read() {
         let strings = |v: &[&str]| v.iter().map(ToString::to_string).collect::<Vec<_>>();
         store.add_host(row.name, &strings(row.groups), &Map::new());
         let at = Scope {
-            play_hosts: strings(row.batch),
-            batch_hosts: strings(row.batch),
-            all_play_hosts: strings(row.whole),
+            play_hosts: strings(row.batch).into(),
+            batch_hosts: strings(row.batch).into(),
+            all_play_hosts: strings(row.whole).into(),
             ..Scope::default()
         };
         let data = store.untrusted_of(row.reader, &at);

@@ -663,7 +663,7 @@ fn plan() -> PlayPlan {
         turn: watch::channel(0).0,
         play_vars: Map::new(),
         vars_files: HashMap::new(),
-        all_play_hosts: Vec::new(),
+        all_play_hosts: Vec::new().into(),
         r#become: (None, None),
         become_user: None,
         python: None,

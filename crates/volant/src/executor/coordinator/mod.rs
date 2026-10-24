@@ -109,7 +109,7 @@ pub(super) async fn run_batch(
         turn: watch::channel(0).0,
         play_vars: play.vars.clone(),
         vars_files: vars_files.clone(),
-        all_play_hosts: all.to_vec(),
+        all_play_hosts: all.into(),
         r#become: (play.r#become, play.deferred.r#become.clone()),
         become_user: play.become_user.clone(),
         python: state.python.clone(),

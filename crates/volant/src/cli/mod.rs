@@ -6,6 +6,7 @@
 mod adhoc;
 mod announce;
 mod args;
+mod doc;
 mod hosts;
 mod inventory;
 mod passwords;
@@ -22,6 +23,7 @@ mod vault_string;
 
 pub use adhoc::adhoc;
 pub use args::{AdhocArgs, BecomeArgs, ConnectionArgs, HostsArgs, PlaybookArgs, VaultSecretArgs};
+pub use doc::{DocArgs, doc};
 pub use inventory::{InventoryArgs, inventory};
 pub use program::{TOOLS, subcommand_for};
 pub use run::run;

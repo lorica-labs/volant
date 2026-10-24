@@ -22,7 +22,7 @@ mod union_build;
 
 pub(crate) use action_helper::{ActionHelper, Silence};
 pub use builder::PythonBuilder;
-pub(crate) use builder::{module_facts, resolved_from, resolved_json};
+pub(crate) use builder::{find_python, module_facts, resolved_from, resolved_json};
 pub(crate) use reach::{Named, Reach, check_plugin_order, modules_for_run};
 pub use reach::{is_python_module, module_path, set_module_path};
 pub(crate) use types::HELPER;

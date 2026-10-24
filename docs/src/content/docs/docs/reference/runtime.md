@@ -32,7 +32,7 @@ The first of these that applies:
 3. The active virtual environment, then `python3` on your `PATH`, when they have ansible-core.
 4. A new managed runtime, installed now.
 
-Volant starts the interpreter with `-P`, so a file in the working directory, such as `ansible.py` or `json.py`, is never imported in place of the real module. `-P` needs Python 3.11 or later, which ansible-core 2.19 needs too. An interpreter of your own keeps `PYTHONPATH` and its user site.
+Volant starts the interpreter with `-P`, so a file in the working directory, such as `ansible.py` or `json.py`, is never imported in place of the real module. `-P` needs Python 3.11 or later, which ansible-core 2.19 needs too. An interpreter of your own keeps `PYTHONPATH` and its user site. [`volant doc`](/docs/reference/cli/doc/) chooses its interpreter by this rule too, and runs ansible-core's own `ansible-doc` in it.
 
 `volant runtime status` shows the choice the next run would make, with every candidate and where it came from. The [`runtime` setting](/docs/reference/configuration/#volant) changes this order.
 

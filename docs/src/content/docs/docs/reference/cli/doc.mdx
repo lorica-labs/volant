@@ -1,0 +1,28 @@
+---
+title: volant doc
+description: Show plugin documentation with ansible-doc, run from Volant's Python runtime, so ansible-core does not need to be installed.
+---
+
+`volant doc` runs `ansible-doc` of ansible-core 2.19.12. It prints what the script prints and exits with the same code, using the interpreter Volant chooses for a playbook run, so a machine with no ansible-core can browse the documentation after `volant runtime install`.
+
+```sh
+volant doc [ARGS...]
+```
+
+Every argument after `doc` goes to `ansible-doc` unchanged, including `-h`, `--version` and options it does not know: `ansible-doc` reports them itself. For example `volant doc ping`, `volant doc -l`, `volant doc -s ping`, `volant doc --json ping` and `volant doc -t keyword -l`.
+
+## The interpreter
+
+The interpreter is the one [a playbook run uses](/docs/reference/runtime/#which-interpreter-a-run-uses): `VOLANT_PYTHON`, the managed runtime, the active virtual environment, `python3`. When none has ansible-core and `[volant] runtime` is not `system`, Volant installs its runtime and prints `Installing Volant's Python runtime (<id>) ...` on standard error first. In `system` mode the command is refused with the same message as a playbook run, which names the interpreters it tried.
+
+Volant starts the interpreter with `-P` and runs the `main()` of ansible-core's `ansible.cli.doc` module rather than the `ansible-doc` script, whose first line names the directory the runtime was built in. The program name, `ansible-doc`, is the same. Under the managed runtime the child gets the usual clean environment (no `PYTHONPATH`, no user site) and keeps your other variables, so `ANSIBLE_*`, `PAGER` and `TERM` apply. An interpreter set with `VOLANT_PYTHON` keeps its whole environment.
+
+## Collections
+
+`ANSIBLE_COLLECTIONS_PATH` is set to your collections path with the runtime's `collections/` directory added last, once that directory exists. A collection installed with `volant runtime install --collections` is therefore visible to `volant doc`, and one in your own paths wins over it. Your `ansible.cfg` and `ANSIBLE_*` variables are otherwise untouched.
+
+## Terminal, exit code and `--version`
+
+Standard input, output and error are the tool's own, so the pager works. The exit code is the tool's. A tool ended by a signal gives `128` plus the signal number. If the interpreter cannot be started, `volant doc` prints `[ERROR]:` and a reason, and exits with 1.
+
+`executable location` in `volant doc --version` is the path of the program as Volant was started, `volant` or a link named `ansible-doc` (see [Command line](/docs/reference/cli/)), so it names a file that exists.

@@ -176,6 +176,7 @@ export default defineConfig({
               items: [
                 { label: 'volant playbook', slug: 'docs/reference/cli' },
                 { label: 'volant adhoc', slug: 'docs/reference/cli/adhoc' },
+                { label: 'volant doc', slug: 'docs/reference/cli/doc' },
                 { label: 'volant inventory', slug: 'docs/reference/cli/inventory' },
                 { label: 'volant runtime', slug: 'docs/reference/cli/runtime' },
                 { label: 'volant shims', slug: 'docs/reference/cli/shims' },

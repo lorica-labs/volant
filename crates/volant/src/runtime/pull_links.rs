@@ -122,7 +122,8 @@ fn private_group(gid: libc::gid_t) -> bool {
     // SAFETY: a zero status with a non-null result means the call filled `group`.
     let group = unsafe { group.assume_init() };
     // SAFETY: `gr_mem` is null or a null-terminated list of pointers into `buffer`, still alive.
-    group.gr_mem.is_null() || unsafe { (*group.gr_mem).is_null() }
+    // macOS lays that list out in the byte buffer without aligning it, so it is read unaligned.
+    group.gr_mem.is_null() || unsafe { group.gr_mem.read_unaligned() }.is_null()
 }
 
 /// Takes group and other write off a directory this user owns, which other code of Volant may

@@ -85,12 +85,36 @@ thread_local! {
     static SERVERS: RefCell<Servers> = RefCell::new(Servers::default());
 }
 
-/// A server is keyed by the interpreter, the payload it preloaded and the task's environment, and
-/// is started with that environment: the three decide what a module imports and what an import
-/// reads (`PYTHONPATH`, `PYTHONHOME` and the rest are read by an interpreter as it starts, and a
-/// library can read a variable once, as it loads). A task naming any of them differently needs a
-/// server of its own; a play-level `environment:` keeps one warm server for all its tasks.
+/// A server is keyed by the interpreter, the payload it preloaded and the part of the task's
+/// environment an interpreter reads as it starts ([`startup_environment`]), and is started with
+/// that part. The rest of the environment is set by the child before the module runs, as the
+/// reference's own process gets it, so a task that only sets `PGOPTIONS` or `http_proxy` shares
+/// the warm server of the tasks around it: measured on geerlingguy.postgresql, a server started
+/// per environment cost 150 ms for every switch between two of them.
 type Key = (String, String, BTreeMap<String, String>);
+
+/// The variables of `environment` a server has to start with because they are read before any
+/// module runs: `PYTHON*` by the interpreter itself (`PYTHONPATH` sets `sys.path`), `LD_*` by the
+/// loader, the locale (`LANG`, `LANGUAGE`, `LC_*`) and `TZ` when the interpreter and `time`
+/// initialise, `HOME` by `site` for the user's site-packages, and the temporary directory
+/// `tempfile` may have settled on while the server imported ahead.
+pub(super) fn startup_environment(
+    environment: &BTreeMap<String, String>,
+) -> BTreeMap<String, String> {
+    environment
+        .iter()
+        .filter(|(name, _)| {
+            name.starts_with("PYTHON")
+                || name.starts_with("LD_")
+                || name.starts_with("LC_")
+                || matches!(
+                    name.as_str(),
+                    "LANG" | "LANGUAGE" | "TZ" | "HOME" | "TMPDIR" | "TEMP" | "TMP"
+                )
+        })
+        .map(|(name, value)| (name.clone(), value.clone()))
+        .collect()
+}
 
 #[derive(Default)]
 struct Servers {
@@ -119,7 +143,7 @@ impl Servers {
         let key = (
             payload.interpreter.clone(),
             payload.blob.clone(),
-            context.environment.clone(),
+            startup_environment(&context.environment),
         );
         if self
             .live
@@ -145,7 +169,7 @@ impl Servers {
                 self.refused.insert(key, msg.clone());
                 return (Run::Done(fail(msg, None)), Timing::default());
             }
-            match Server::start_in(&payload.interpreter, blob, &context.environment, cancelled) {
+            match Server::start_in(&payload.interpreter, blob, &key.2, cancelled) {
                 Ok(server) => {
                     // One server per environment would grow without bound under an environment
                     // that changes per task (a loop setting a variable from `item`): a server with

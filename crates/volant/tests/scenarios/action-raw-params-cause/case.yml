@@ -1,0 +1,4 @@
+# Words an action does not take: `action: ping foo` adds a cause at the statement's value,
+# `ping: foo` adds none.
+needs: [ansible-core]
+args: [-i, inv.ini, play.yml]

@@ -254,16 +254,20 @@ pub(in crate::executor) fn raw_params_refusal(task: &PlayTask) -> Option<TaskRes
     crate::playbook::stray_raw_params(task)
         .filter(|raw| !crate::playbook::possibly_all_template(raw))?;
     let action = action_fqcn(&task.module);
+    let msg = format!("Action '{action}' does not support raw params.");
     let mut r = Map::new();
     r.insert("changed".into(), json!(false));
     r.insert("exception".into(), json!("(traceback unavailable)"));
     r.insert("failed".into(), json!(true));
-    r.insert(
-        "msg".into(),
-        json!(format!(
-            "Task failed: Action '{action}' does not support raw params."
-        )),
-    );
+    r.insert("msg".into(), json!(format!("Task failed: {msg}")));
+    // Measured: an `action: ping foo` statement, and an ad hoc `-a`, add a cause at the action's
+    // value; `ping: foo`, whose value is the task's own place, adds none.
+    if let Some(at) = task.value_origins.get("action.value") {
+        r.insert(
+            crate::render::CHAIN_KEY.into(),
+            json!([crate::render::cause(&msg, Some(at), None)]),
+        );
+    }
     Some(TaskResult(r))
 }
 

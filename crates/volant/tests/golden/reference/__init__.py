@@ -1,5 +1,5 @@
 # SPDX-License-Identifier: GPL-3.0-or-later
-"""Records what the reference ansible-core does, for the four golden kinds.
+"""Records what the reference ansible-core does, for the golden kinds.
 
 `template` runs every row of cases.yml, `inventory` reads inventory.ini and its patterns,
 `scenario` runs every `tests/scenarios/<name>/case.yml`, and `module` runs the module play and

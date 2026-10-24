@@ -462,11 +462,12 @@ pub(super) fn write_data(data: &[u8], target: &str, shred: bool) -> Result<(), F
 }
 
 /// The plaintext on the screen: on a terminal through the pager, which defaults to `less`;
-/// otherwise as is, with the line break `display` adds.
+/// otherwise as `display` writes it: one line break, whether or not the text ended with one.
 fn show(plain: &[u8]) {
     let mut out = std::io::stdout().lock();
     if !out.is_terminal() {
-        let _ = out.write_all(plain).and_then(|()| out.write_all(b"\n"));
+        let text = plain.strip_suffix(b"\n").unwrap_or(plain);
+        let _ = out.write_all(text).and_then(|()| out.write_all(b"\n"));
         let _ = out.flush();
         return;
     }

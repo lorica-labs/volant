@@ -1,0 +1,165 @@
+$ ansible-inventory -i hosts.ini --list
+{
+    "_meta": {
+        "hostvars": {
+            "d1": {
+                "ansible_host": "10.0.0.3",
+                "backup": "true",
+                "env": "prod",
+                "ports": [
+                    80,
+                    443
+                ]
+            },
+            "w1": {
+                "ansible_host": "10.0.0.1",
+                "env": "prod",
+                "http_port": 8080,
+                "ports": [
+                    80,
+                    443
+                ]
+            },
+            "w2": {
+                "ansible_host": "10.0.0.2",
+                "env": "prod",
+                "ports": [
+                    80,
+                    443
+                ]
+            }
+        },
+        "profile": "inventory_legacy"
+    },
+    "all": {
+        "children": [
+            "ungrouped",
+            "prod"
+        ]
+    },
+    "db": {
+        "hosts": [
+            "d1"
+        ]
+    },
+    "prod": {
+        "children": [
+            "web",
+            "db"
+        ]
+    },
+    "web": {
+        "hosts": [
+            "w1",
+            "w2"
+        ]
+    }
+}
+rc=0
+$ ansible-inventory -i hosts.ini --host w1
+{
+    "ansible_host": "10.0.0.1",
+    "env": "prod",
+    "http_port": 8080,
+    "ports": [
+        80,
+        443
+    ]
+}
+rc=0
+$ ansible-inventory -i hosts.ini --graph
+@all:
+  |--@ungrouped:
+  |--@prod:
+  |  |--@web:
+  |  |  |--w1
+  |  |  |--w2
+  |  |--@db:
+  |  |  |--d1
+rc=0
+$ ansible-inventory -i hosts.ini --list --yaml
+all:
+  children:
+    prod:
+      children:
+        db:
+          hosts:
+            d1:
+              ansible_host: 10.0.0.3
+              backup: 'true'
+              env: prod
+              ports:
+              - 80
+              - 443
+        web:
+          hosts:
+            w1:
+              ansible_host: 10.0.0.1
+              env: prod
+              http_port: 8080
+              ports: &id001
+              - 80
+              - 443
+            w2:
+              ansible_host: 10.0.0.2
+              env: prod
+              ports: *id001
+rc=0
+$ ansible-inventory -i hosts.ini --list --export
+{
+    "_meta": {
+        "hostvars": {
+            "d1": {
+                "ansible_host": "10.0.0.3"
+            },
+            "w1": {
+                "ansible_host": "10.0.0.1",
+                "http_port": 8080
+            },
+            "w2": {
+                "ansible_host": "10.0.0.2"
+            }
+        },
+        "profile": "inventory_legacy"
+    },
+    "all": {
+        "children": [
+            "ungrouped",
+            "prod"
+        ],
+        "vars": {
+            "env": "prod"
+        }
+    },
+    "db": {
+        "hosts": [
+            "d1"
+        ],
+        "vars": {
+            "backup": "true",
+            "ports": [
+                80,
+                443
+            ]
+        }
+    },
+    "prod": {
+        "children": [
+            "web",
+            "db"
+        ]
+    },
+    "web": {
+        "hosts": [
+            "w1",
+            "w2"
+        ],
+        "vars": {
+            "ports": [
+                80,
+                443
+            ]
+        }
+    }
+}
+rc=0

@@ -215,7 +215,7 @@ jobs:
           cp "$agent" "$agents/volant-agent-aarch64-unknown-linux-musl"
           VOLANT_EMBED_AGENTS_DIR="$agents" cargo build -p volant --release --target x86_64-unknown-linux-musl
           cp target/x86_64-unknown-linux-musl/release/volant dist/
-          cp -r tests/runtime-clean dist/
+          cp -r tests/runtime-clean tests/command-names dist/
       - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: just
@@ -273,6 +273,62 @@ jobs:
               git+https://github.com/ansible-collections/community.library_inventory_filtering.git,1.1.5
           fi
           ./volant playbook -i runtime-clean/inventory.yml runtime-clean/collection.yml
+
+  # Ordinary ansible scripts on a machine with no ansible and no Python, run through the
+  # `ansible-*` names. Each script compares its output with a recording of ansible-core.
+  command-names:
+    needs: runtime-binary
+    runs-on: ubuntu-latest
+    container: debian:stable-slim@sha256:a717a33469731894e77e912ea7d714e27c2dc38ee6554fd1a3102e92999cfc66
+    steps:
+      - name: Install the download tools and git
+        run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: runtime-clean
+          path: dist
+      - name: The machine has no ansible and no Python
+        run: |
+          for tool in ansible ansible-playbook python3 python; do
+            if command -v "$tool"; then
+              echo "$tool exists on this machine" >&2
+              exit 1
+            fi
+          done
+      - name: Link the ansible programs
+        run: |
+          set -eu
+          chmod +x dist/volant
+          mkdir dist/bin
+          dist/volant shims install --dir "$GITHUB_WORKSPACE/dist/bin"
+          echo "$GITHUB_WORKSPACE/dist/bin" >> "$GITHUB_PATH"
+      - name: The programs resolve to the links
+        run: |
+          set -eu
+          test "$(command -v ansible-playbook)" = "$GITHUB_WORKSPACE/dist/bin/ansible-playbook"
+      - name: Install the runtime
+        # The step that needs the network: the Python runtime that ping, ansible-doc and ansible-config run on.
+        run: dist/volant runtime install
+      - name: Playbook, ad hoc, vault and inventory scripts
+        working-directory: dist/command-names
+        run: |
+          set -eu
+          failed=0
+          for script in playbook adhoc vault inventory; do
+            echo "::group::$script"
+            sh "$script.sh" || failed=1
+            echo "::endgroup::"
+          done
+          exit "$failed"
+      - name: Runtime tools script
+        working-directory: dist/command-names
+        run: sh runtime-tools.sh
+      - if: failure()
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: command-names-output
+          path: /tmp/command-names/out
+          retention-days: 3
 
   # The static controller in an image built FROM scratch: no libc, no shell, no /etc/passwd.
   scratch:

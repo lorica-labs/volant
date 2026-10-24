@@ -1,0 +1,27 @@
+$ ansible-vault encrypt --vault-password-file pw secret.yml
+rc=0
+$ANSIBLE_VAULT;1.1;AES256
+$ ansible-vault view --vault-password-file pw secret.yml
+token: s3cret
+rc=0
+key: !vault |
+          $ANSIBLE_VAULT;1.1;AES256
+$ ansible-playbook -i inventory.yml --vault-password-file pw vault.yml
+
+PLAY [h1] **********************************************************************
+
+TASK [ansible.builtin.debug] ***************************************************
+ok: [h1] => {
+    "msg": "s3cret inline value"
+}
+
+PLAY RECAP *********************************************************************
+h1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+rc=0
+$ ansible-vault rekey --vault-password-file pw --new-vault-password-file pw2 secret.yml
+Rekey successful
+rc=0
+$ ansible-vault decrypt --vault-password-file pw2 secret.yml
+rc=0
+token: s3cret

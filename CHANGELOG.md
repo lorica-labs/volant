@@ -6,6 +6,46 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.11](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) - 2026-10-24
+
+### Added
+
+- *(inventory)* add toml output ([#865](https://github.com/lorica-labs/volant/pull/865))
+- *(roles)* set the play's role name lists ([#862](https://github.com/lorica-labs/volant/pull/862))
+- *(runtime)* add console and pull through the managed runtime ([#852](https://github.com/lorica-labs/volant/pull/852))
+- *(adhoc)* add one-line and tree output ([#853](https://github.com/lorica-labs/volant/pull/853))
+- *(agent)* keep the payload's compiled code beside it ([#849](https://github.com/lorica-labs/volant/pull/849))
+- *(adhoc)* add check, diff, async and task timeout ([#848](https://github.com/lorica-labs/volant/pull/848))
+- *(inventory)* add yaml output with anchors ([#851](https://github.com/lorica-labs/volant/pull/851))
+- *(runtime)* add config and galaxy through the managed runtime ([#850](https://github.com/lorica-labs/volant/pull/850))
+- *(runtime)* run ansible-doc through the managed runtime ([#843](https://github.com/lorica-labs/volant/pull/843))
+- *(adhoc)* list hosts and report empty host sets ([#840](https://github.com/lorica-labs/volant/pull/840))
+- *(profile)* count renders, layer copies, bridge calls and wire bytes ([#839](https://github.com/lorica-labs/volant/pull/839))
+- *(vault)* add encrypt_string ([#837](https://github.com/lorica-labs/volant/pull/837))
+- *(inventory)* add graph output ([#835](https://github.com/lorica-labs/volant/pull/835))
+- *(vault)* add create, edit and rekey ([#829](https://github.com/lorica-labs/volant/pull/829))
+- *(profile)* flamegraph recipe for the controller and the agent ([#830](https://github.com/lorica-labs/volant/pull/830))
+- *(adhoc)* run one module against a host pattern ([#827](https://github.com/lorica-labs/volant/pull/827))
+- *(inventory)* add the inventory command with list and host ([#826](https://github.com/lorica-labs/volant/pull/826))
+- *(vault)* add encrypt, decrypt and view ([#825](https://github.com/lorica-labs/volant/pull/825))
+- *(cli)* add shims install and remove ([#823](https://github.com/lorica-labs/volant/pull/823))
+- *(cli)* dispatch on the program name ([#821](https://github.com/lorica-labs/volant/pull/821))
+
+### Changed
+
+- *(vars)* share the play's host lists instead of copying them ([#870](https://github.com/lorica-labs/volant/pull/870))
+- *(vars)* share each host's view in the hostvars map ([#868](https://github.com/lorica-labs/volant/pull/868))
+- *(executor)* publish batch progress only when it changes ([#866](https://github.com/lorica-labs/volant/pull/866))
+
+### Fixed
+
+- *(union-cache)* cap the cache size and cut two fixed run costs ([#869](https://github.com/lorica-labs/volant/pull/869))
+- *(roles)* render a roles entry named by a template ([#860](https://github.com/lorica-labs/volant/pull/860))
+- *(roles)* set role_name, ansible_role_name and the parent roles ([#859](https://github.com/lorica-labs/volant/pull/859))
+- *(facts)* follow a file name built from part of a fact ([#846](https://github.com/lorica-labs/volant/pull/846))
+- *(python)* keep the union cached for namespace module_utils packages ([#844](https://github.com/lorica-labs/volant/pull/844))
+- *(agent)* keep the Python server when its directory is not searchable ([#847](https://github.com/lorica-labs/volant/pull/847))
+
 ## [0.1.0-alpha.10](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.9...v0.1.0-alpha.10) - 2026-10-23
 
 ### Added

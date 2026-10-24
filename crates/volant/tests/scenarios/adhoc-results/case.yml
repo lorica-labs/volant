@@ -1,0 +1,11 @@
+# `ansible <pattern> -m <module> -a <args>`: one task run on the hosts of a pattern, each result
+# shown by the `minimal` callback; `command` when `-m` is absent, `-a` as words or a JSON object.
+program: ansible
+needs: [ansible-core]
+runs:
+  - args: [all, -i, inv.ini, -m, ping]
+  - args: [web, -i, inv.ini, -a, echo hi]
+  - args: [h1, -i, inv.ini, -m, debug, -a, "msg={{ foo }}", -e, foo=bar]
+  - args: [h1, -i, inv.ini, -m, ping, -a, '{"data": "j"}']
+  - args: [h1, -i, inv.ini, -m, shell, -a, "echo out; echo err >&2"]
+  - args: [-v, h1, -i, inv.ini, -m, ping]

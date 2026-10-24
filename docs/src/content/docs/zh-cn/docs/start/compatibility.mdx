@@ -1,5 +1,5 @@
 ---
-sourceHash: 3c0df8cc1f8a
+sourceHash: 4785cc48b4ad
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -103,7 +103,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 内容 | 会发生什么 |
 |---|---|
 | `callback_plugins/`、`vars_plugins/`、`stdout_callback`、`callbacks_enabled`、`result_format` | 被忽略。输出是默认的输出。 |
-| `volant check`、`inventory`、`vault`、`doc`、`config`、`galaxy` 和 ad-hoc 命令 | 它们不存在。`volant` 只有 `playbook` 和 `runtime`。 |
+| `volant check`、`inventory`、`vault`、`doc`、`config` 和 `galaxy` | 它们不存在。`volant` 有 `playbook`、`adhoc`、`runtime` 和 `shims`。 |
 | 在两个 Python 无法排序的类型的字面量之间写比较，例如 `{{ 'a' < 1 }}` | 它会回答 `false` 或 `true`，而 ansible-core 会失败并报 `'<' not supported between instances of 'str' and 'int'`。模板库在 Volant 看到之前就算出了字面量的比较结果。任意一边是变量时，比较会像 ansible-core 一样失败。 |
 | 失败的带 `no_log: true` 的 task | 这是有意为之。Volant 打印 `[ERROR]: Task failed: Action failed: <error censored due to no log>`，不打印失败原因的其他内容。ansible-core 2.19.12 会打印原因：`[ERROR]: Task failed: Action failed: <the msg of fail or assert>`、模块的错误，以及 `<<< caused by >>>` 块。这些文字可能包含机密，例如点出密码的 `fail` 的 `msg`。[安全策略](https://github.com/lorica-labs/volant/blob/main/SECURITY.md)把在 ansible-core 里被 `no_log` 隐藏、却进入日志或终端的机密算作漏洞，所以 Volant 把它隐藏起来。`fatal:` 行、已注册的结果和汇总在两者中相同。要读到原因，请去掉 `no_log` 再运行这个 task。 |
 | SIGTERM | 这是有意为之。Volant 会干净地停止：取消正在运行的 task，删除存放连接密码的目录，打印汇总，并以退出码 99 退出，与 Ctrl-C 的处理相同。`ansible-playbook` 不捕获 SIGTERM，它会立刻以退出码 143 终止，并且不打印汇总。在 `command: sleep` 运行期间用 `kill -TERM` 测得：Volant 下是 99，ansible-core 2.19.12 下是 143。 |

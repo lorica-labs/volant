@@ -17,18 +17,30 @@ pub(super) fn mark_unsafe(value: &mut Value, computed: &HashSet<String>) {
     }
 }
 
-/// A value as `ansible-inventory --list` prints it: text that is data, never rendered, as
-/// `{"__ansible_unsafe": text}`.
-pub(super) fn show_unsafe(value: &Value) -> Value {
+/// A value as `ansible-inventory` prints it: a `!vault` value as `{"__ansible_vault": text}`,
+/// and text that is data, never rendered, as `{"__ansible_unsafe": text}` under `--list` and as
+/// the text itself under `--host`.
+pub(super) fn show_unsafe(value: &Value, listing: bool) -> Value {
     match value {
-        Value::String(text) => crate::yaml::unsafe_text(text).map_or_else(
-            || value.clone(),
-            |text| serde_json::json!({ "__ansible_unsafe": text }),
-        ),
-        Value::Array(items) => Value::Array(items.iter().map(show_unsafe).collect()),
+        Value::String(text) => {
+            if let Some(cipher) = crate::yaml::vault_text(text) {
+                serde_json::json!({ "__ansible_vault": cipher })
+            } else if let Some(plain) = crate::yaml::unsafe_text(text) {
+                if listing {
+                    serde_json::json!({ "__ansible_unsafe": plain })
+                } else {
+                    Value::String(plain)
+                }
+            } else {
+                value.clone()
+            }
+        }
+        Value::Array(items) => {
+            Value::Array(items.iter().map(|v| show_unsafe(v, listing)).collect())
+        }
         Value::Object(map) => Value::Object(
             map.iter()
-                .map(|(k, v)| (k.clone(), show_unsafe(v)))
+                .map(|(k, v)| (k.clone(), show_unsafe(v, listing)))
                 .collect(),
         ),
         other => other.clone(),

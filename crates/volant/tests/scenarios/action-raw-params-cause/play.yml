@@ -1,0 +1,6 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - action: ping foo
+      ignore_errors: true
+    - ping: foo

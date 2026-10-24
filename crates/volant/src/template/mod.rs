@@ -27,6 +27,7 @@ mod templar;
 mod test_plugins;
 mod vm;
 mod yaml_dump;
+pub(crate) use yaml_dump::callback_yaml;
 
 pub use context::{ALLITEMS_KEY, Vars, complete_loop, with_allitems};
 use context::{Context, TaintSink, context_of, take_failure};

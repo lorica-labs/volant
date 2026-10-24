@@ -44,13 +44,33 @@ def _sources():
             hosts = None if unordered else run(
                 ["ansible", *args, "all", "--list-hosts"], cwd=copy, extra_env=used
             )
+            dump = json.loads(listed.stdout) if listed.returncode == 0 else None
+            # The command's own bytes: --list for every case, and --host for the first host of
+            # the dump. A walk of hashed groups gives no stable order to compare bytes with.
+            host = None
+            if dump and dump["_meta"]["hostvars"] and not unordered:
+                first = sorted(dump["_meta"]["hostvars"])[0]
+                one = run(["ansible-inventory", *args, "--host", first], cwd=copy, extra_env=used)
+                host = {"name": first, "rc": one.returncode, "stdout": one.stdout.replace(copy, TMP)}
+            nosuch = None
+            if case.get("cli"):
+                missing = run(["ansible-inventory", *args, "--host", "nosuch"], cwd=copy, extra_env=used)
+                nosuch = {
+                    "rc": missing.returncode,
+                    "stdout": missing.stdout,
+                    "stderr": missing.stderr.replace(copy, TMP),
+                }
             recorded[name] = {
+                "cli_only": bool(case.get("cli")),
+                "list_stdout": None if unordered else listed.stdout.replace(copy, TMP),
+                "host": host,
+                "nosuch": nosuch,
                 "sources": case["sources"],
                 "env": env,
                 "needs": case.get("needs", []),
                 "rc": listed.returncode,
                 "stderr": listed.stderr.replace(copy, TMP),
-                "list": json.loads(listed.stdout) if listed.returncode == 0 else None,
+                "list": dump,
                 "hosts": None
                 if unordered
                 else [h.strip() for h in hosts.stdout.splitlines()[1:] if h.strip()],

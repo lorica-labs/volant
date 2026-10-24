@@ -1,0 +1,54 @@
+[
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false xxxxxxxxxx'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}, 'timeout': 0, [...]\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx'}, [...]\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false [...]\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: Error executing command: [Errno 2] No such file or directory: b'nonexistentcmd'\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'nonexistentcmd'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED | rc=2 >>\nError executing command.\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: Unsupported parameters for (ping) module: foo. Supported parameters include: data.\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {'foo': 'bar'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Unsupported parameters for (ping) module: foo. Supported parameters include: data.\"\n}\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Cannot resolve 'nosuchmodule' to an action or module.\n\nTask failed.\nOrigin: <adhoc 'nosuchmodule' task>\n\n{'action': 'nosuchmodule', 'args': {}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\n<<< caused by >>>\n\nCannot resolve 'nosuchmodule' to an action or module.\nOrigin: <CLI option '-m'>\n\nnosuchmodule\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Cannot resolve 'nosuchmodule' to an action or module.\"\n}\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Cannot resolve 'nosuchmodule' to an action or module.\n\nTask failed.\nOrigin: <adhoc 'nosuchmodule' task>\n\n{'action': 'nosuchmodule', 'args': {}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\n<<< caused by >>>\n\nCannot resolve 'nosuchmodule' to an action or module.\nOrigin: <CLI option '-m'>\n\nnosuchmodule\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Cannot resolve 'nosuchmodule' to an action or module.\"\n}\nh2 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Cannot resolve 'nosuchmodule' to an action or module.\"\n}\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\nh2 | FAILED | rc=1 >>\nnon-zero return code\nh3 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: non-zero return code\nOrigin: <adhoc 'command' task>\n\n{'action': 'command', 'args': {'_raw_params': 'false restart some-long-service-name-for-the-cut-test-here-and- [...]\n\nh1 | FAILED | rc=1 >>\nnon-zero return code\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Action 'ansible.builtin.ping' does not support raw params.\n\nTask failed.\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {'_raw_params': '{}'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\n<<< caused by >>>\n\nAction 'ansible.builtin.ping' does not support raw params.\nOrigin: <CLI option '-m'>\n\nping\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Action 'ansible.builtin.ping' does not support raw params.\"\n}\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Action 'ansible.builtin.ping' does not support raw params.\n\nTask failed.\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {'_raw_params': '{\"data\": \"j\"}'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\n<<< caused by >>>\n\nAction 'ansible.builtin.ping' does not support raw params.\nOrigin: <CLI option '-m'>\n\nping\n\nh1 | FAILED! => {\n    \"changed\": false,\n    \"msg\": \"Task failed: Action 'ansible.builtin.ping' does not support raw params.\"\n}\n"
+  }
+]

@@ -100,3 +100,7 @@ generator_undefined: {sources: [generator_undefined.yml]}
 generator_invalid_chars: {sources: [generator_invalid_chars.yml], hosts: unordered}
 generator_non_ascii: {sources: [generator_non_ascii.yml], hosts: unordered}
 yaml_non_ascii: {sources: [yaml_non_ascii.yml]}
+# `cli: true` leaves the case to the `inventory` command test: its group_vars and host_vars files
+# are read by the command, not by the inventory loader the other test calls.
+spec_example: {sources: [spec/hosts.ini], cli: true}
+values: {sources: [values.yml], cli: true}

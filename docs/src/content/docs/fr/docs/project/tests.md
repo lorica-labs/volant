@@ -1,5 +1,5 @@
 ---
-sourceHash: faf55681f8db
+sourceHash: 00b6cbd9dbbb
 title: Tests
 description: Comment Volant est vérifié par rapport à ansible-core, les quatre types de réponse enregistrée, et comment ajouter un scénario.
 ---
@@ -28,10 +28,11 @@ Un scénario est un répertoire sous `crates/volant/tests/scenarios` :
 3. Lancez `just golden scenario`. Cela écrit `expected.json` dans le répertoire.
 4. Lancez `touch crates/volant/tests/reference.rs` puis les tests. La liste des scénarios est fixée quand ce fichier est compilé : un nouveau répertoire n'est donc pas vu avant une recompilation.
 
-Chaque exécution de Volant a lieu dans une copie neuve du répertoire, avec `--forks 1` sauf si le cas dit autre chose. Le test compare le code de sortie et toute la sortie standard, durées masquées. Outre `args` et `runs`, `case.yml` accepte cinq autres clés :
+Chaque exécution de Volant a lieu dans une copie neuve du répertoire, avec `--forks 1` sauf si le cas dit autre chose. Le test compare le code de sortie et toute la sortie standard, durées masquées. Outre `args` et `runs`, `case.yml` accepte six autres clés :
 
 - `modes` liste `check`, `check-diff` et `diff`. Chaque exécution a alors lieu une fois de plus par mode, avec `--check`, `--check --diff` ou `--diff` ajouté, dans cet ordre fixe, et chaque exécution est enregistrée.
 - `env` définit des variables d'environnement pour l'exécution.
+- `program: ansible` enregistre les exécutions avec `ansible` au lieu d'`ansible-playbook`, et lance `volant adhoc` au lieu de `volant playbook`.
 - `forks` relève le nombre de forks au-dessus de un. Les hôtes peuvent alors afficher dans un ordre différent : listez donc les lignes dont l'ordre peut différer dans `unordered`, sous forme d'expressions régulières. `unordered` sans `forks` est refusé.
 - `needs` nomme ce que la machine doit avoir : `ansible-core`, `sudo` ou `systemd`. Un cas dont les besoins ne sont pas satisfaits est ignoré, sauf quand `VOLANT_PYTHON` est défini, ce qui transforme l'omission en échec.
 - `links` associe un chemin à la cible d'un lien que chaque copie reçoit à ce chemin. Utilisez-le pour un lien que git ou cargo ne peuvent pas contenir, comme un lien vers un fichier qui n'existe pas : `cargo package` refuse un lien suivi de ce genre.

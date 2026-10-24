@@ -187,6 +187,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 config.deprecation_warnings =
                     boolean("DEPRECATION_WARNINGS", origin, value.trim())?;
             }
+            "callback_result_format" => {
+                config.callback_result_format = Some(value.trim().to_string());
+            }
             "show_task_path_on_failure" => {
                 config.show_task_path_on_failure = callback_flag(value);
             }

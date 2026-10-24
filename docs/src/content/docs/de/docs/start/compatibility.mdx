@@ -1,5 +1,5 @@
 ---
-sourceHash: 3c0df8cc1f8a
+sourceHash: 4785cc48b4ad
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
@@ -103,7 +103,7 @@ Diese Punkte weichen von `ansible-playbook` ab, ohne eine Meldung vor dem Lauf o
 | Was | Was geschieht |
 |---|---|
 | `callback_plugins/`, `vars_plugins/`, `stdout_callback`, `callbacks_enabled`, `result_format` | Werden ignoriert. Die Ausgabe ist die Standardausgabe. |
-| `volant check`, `inventory`, `vault`, `doc`, `config`, `galaxy` und Ad-hoc-Befehle | Sie existieren nicht. `volant` hat `playbook` und `runtime`. |
+| `volant check`, `inventory`, `vault`, `doc`, `config` und `galaxy` | Sie existieren nicht. `volant` hat `playbook`, `adhoc`, `runtime` und `shims`. |
 | Ein Vergleich zwischen zwei Literalen von Typen, die Python nicht ordnen kann, etwa `{{ 'a' < 1 }}` | Er liefert `false` oder `true`, wo ansible-core mit `'<' not supported between instances of 'str' and 'int'` fehlschlägt. Die Template-Bibliothek wertet einen Vergleich von Literalen aus, bevor Volant ihn sieht. Steht auf einer Seite eine Variable, schlägt der Vergleich wie in ansible-core fehl. |
 | Ein Task mit `no_log: true`, der fehlschlägt | Absicht. Volant gibt `[ERROR]: Task failed: Action failed: <error censored due to no log>` aus und sonst nichts von der Ursache. ansible-core 2.19.12 gibt die Ursache aus: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, den Fehler des Moduls und die Blöcke `<<< caused by >>>`. Dieser Text kann ein Geheimnis enthalten, etwa die `msg` eines `fail`, die ein Passwort nennt. Die [Sicherheitsrichtlinie](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) wertet ein Geheimnis, das in einem Log oder Terminal landet, wo `no_log` es in ansible-core verbirgt, als Sicherheitslücke, deshalb verbirgt Volant es. Die Zeile `fatal:`, das registrierte Ergebnis und der Recap sind in beiden gleich. Um die Ursache zu lesen, führen Sie den Task ohne `no_log` aus. |
 | SIGTERM | Absicht. Volant beendet sich sauber: Es bricht die laufenden Tasks ab, entfernt das Verzeichnis mit dem Verbindungspasswort, gibt den Recap aus und endet mit Exit-Code 99, wie bei Strg-C. `ansible-playbook` fängt SIGTERM nicht ab. Es stirbt sofort mit Code 143 und gibt keinen Recap aus. Gemessen mit `kill -TERM` während eines `command: sleep`: 99 unter Volant, 143 unter ansible-core 2.19.12. |

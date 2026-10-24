@@ -38,6 +38,70 @@ pub(super) fn verbose_always(result: &TaskResult, censored: bool) -> bool {
 }
 
 impl Renderer {
+    /// What a result line shows of `result`: the internal keys and what the reference's
+    /// `TaskResult` and `_dump_results` drop taken off, and a `debug`'s cleaned when `dump` says so.
+    fn shown_body(
+        &self,
+        result: &TaskResult,
+        dump: Dump,
+        censored: bool,
+    ) -> serde_json::Map<String, serde_json::Value> {
+        let mut body = if censored {
+            censored_body(result)
+        } else {
+            result.0.clone()
+        };
+        body.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
+        // The reference's callback never shows `failed` or `skipped`: its `TaskResult` drops both
+        // (`_IGNORE` in `executor/task_result.py`, 2.19.12) from every result it hands over, a loop
+        // item's included. Measured on the `fatal:` line of a timed-out `pause`, a failed `copy`
+        // validate and a failed `lineinfile`, which also show no `invocation` and no `diff`: its
+        // `_dump_results` keeps those two from `-vvv` on, read off the source and not measured.
+        if !censored {
+            body.remove("failed");
+            body.remove("skipped");
+            if self.verbosity < 3 {
+                // The reference's `_dump_results` keeps the diff and the `invocation` off the line
+                // of every outcome below `-vvv`; it prints the diff apart. Measured on `ok`,
+                // `changed`, `failed` and `skipped` results at `-v` and `-vv`, no module keeps it.
+                body.remove("diff");
+                body.remove("invocation");
+            }
+        }
+        // Registered and never shown: the reference's callback pops it off every line, measured.
+        body.remove("exception");
+        body.remove(ERROR_KEY);
+        if dump == Dump::Debug {
+            // The reference's `_clean_results` for a `debug`, ansible-core 2.19.12: a result with
+            // a `msg` keeps it alone, whatever `changed_when`, `failed_when` and `until` added
+            // (measured: a `debug` retried twice shows `{"msg": "probe"}` and registers
+            // `attempts: 2`); a `var` one loses `changed`, `failed`, `skipped`, `invocation`,
+            // `skip_reason` and the loop's own keys, but keeps the item (measured with a loop).
+            if body.contains_key("msg") {
+                body.retain(|k, _| {
+                    matches!(
+                        k.as_str(),
+                        "msg" | "exception" | "warnings" | "deprecations"
+                    )
+                });
+            } else {
+                for key in [
+                    "changed",
+                    "failed",
+                    "skipped",
+                    "invocation",
+                    "skip_reason",
+                    "ansible_loop_var",
+                    "ansible_index_var",
+                    "ansible_loop",
+                ] {
+                    body.remove(key);
+                }
+            }
+        }
+        body
+    }
+
     /// The block `v2_on_file_diff` prints in front of a changed result's line, when the task
     /// asked for diffs and the result carries one: the helper is asked only then.
     fn print_diff(&mut self, outcome: Outcome, result: &TaskResult, censored: bool) {
@@ -142,60 +206,12 @@ impl Renderer {
             label
         };
         self.print_diff(outcome, result, censored);
+        if self.minimal.is_some() {
+            self.minimal_line(host, outcome, result, dump, censored);
+            return;
+        }
         let verbose = verbose_always(result, censored);
-        let mut body = if censored {
-            censored_body(result)
-        } else {
-            result.0.clone()
-        };
-        body.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
-        // The reference's callback never shows `failed` or `skipped`: its `TaskResult` drops both
-        // (`_IGNORE` in `executor/task_result.py`, 2.19.12) from every result it hands over, a loop
-        // item's included. Measured on the `fatal:` line of a timed-out `pause`, a failed `copy`
-        // validate and a failed `lineinfile`, which also show no `invocation` and no `diff`: its
-        // `_dump_results` keeps those two from `-vvv` on, read off the source and not measured.
-        if !censored {
-            body.remove("failed");
-            body.remove("skipped");
-            if self.verbosity < 3 {
-                // The reference's `_dump_results` keeps the diff and the `invocation` off the line
-                // of every outcome below `-vvv`; it prints the diff apart. Measured on `ok`,
-                // `changed`, `failed` and `skipped` results at `-v` and `-vv`, no module keeps it.
-                body.remove("diff");
-                body.remove("invocation");
-            }
-        }
-        // Registered and never shown: the reference's callback pops it off every line, measured.
-        body.remove("exception");
-        body.remove(ERROR_KEY);
-        if dump == Dump::Debug {
-            // The reference's `_clean_results` for a `debug`, ansible-core 2.19.12: a result with
-            // a `msg` keeps it alone, whatever `changed_when`, `failed_when` and `until` added
-            // (measured: a `debug` retried twice shows `{"msg": "probe"}` and registers
-            // `attempts: 2`); a `var` one loses `changed`, `failed`, `skipped`, `invocation`,
-            // `skip_reason` and the loop's own keys, but keeps the item (measured with a loop).
-            if body.contains_key("msg") {
-                body.retain(|k, _| {
-                    matches!(
-                        k.as_str(),
-                        "msg" | "exception" | "warnings" | "deprecations"
-                    )
-                });
-            } else {
-                for key in [
-                    "changed",
-                    "failed",
-                    "skipped",
-                    "invocation",
-                    "skip_reason",
-                    "ansible_loop_var",
-                    "ansible_index_var",
-                    "ansible_loop",
-                ] {
-                    body.remove(key);
-                }
-            }
-        }
+        let body = self.shown_body(result, dump, censored);
         // `_dump_results` indents by 4 for a result carrying [`VERBOSE_ALWAYS`] and for every
         // result from `-vvv` on.
         let pretty = verbose || self.verbosity > 2;
@@ -256,4 +272,140 @@ impl Renderer {
             self.ignoring();
         }
     }
+    /// One host's line as the `minimal` callback prints it (`plugins/callback/minimal.py`,
+    /// ansible-core 2.19.12): `host | STATUS => ` and the result as JSON, four-space indent and
+    /// keys sorted, or for a command action the `rc=N >>` form with stdout, stderr and msg run
+    /// together. Only an `ok` result goes through `_clean_results`.
+    fn minimal_line(
+        &mut self,
+        host: &str,
+        outcome: Outcome,
+        result: &TaskResult,
+        dump: Dump,
+        censored: bool,
+    ) {
+        let succeeded = matches!(outcome, Outcome::Ok | Outcome::Changed);
+        let body = self.shown_body(result, if succeeded { dump } else { Dump::No }, censored);
+        let command = self
+            .minimal
+            .as_deref()
+            .is_some_and(|action| MODULE_NO_JSON.contains(&action));
+        let (style, line) = match outcome {
+            Outcome::Skipped => (SKIPPED, format!("{host} | SKIPPED")),
+            Outcome::Ok | Outcome::Changed => {
+                let (style, state) = if outcome == Outcome::Changed {
+                    (CHANGED, "CHANGED")
+                } else {
+                    (OK, "SUCCESS")
+                };
+                let line = if command && !result.0.contains_key("ansible_job_id") {
+                    command_text(host, state, &body)
+                } else {
+                    format!("{host} | {state} => {}", self.minimal_dump(body))
+                };
+                (style, line)
+            }
+            Outcome::Failed | Outcome::Rescued | Outcome::Ignored => {
+                let line = if command && !result.0.contains_key("module_stderr") {
+                    command_text(host, "FAILED", &body)
+                } else {
+                    format!("{host} | FAILED! => {}", self.minimal_dump(body))
+                };
+                (FAILED, line)
+            }
+        };
+        let _ = writeln!(self.out, "{}", self.paint(style, &line));
+    }
+}
+
+impl Renderer {
+    /// `_dump_results(result, indent=4)`: JSON with sorted keys, or with `result_format = yaml`
+    /// a line break and the YAML dump indented by four (`textwrap.indent`), `stdout_lines` and
+    /// `stderr_lines` written `<omitted>` beside their text. The trailing line break is the
+    /// line's own.
+    pub(super) fn minimal_dump(
+        &self,
+        mut body: serde_json::Map<String, serde_json::Value>,
+    ) -> String {
+        if !self.yaml {
+            return ansible_json_indented(&serde_json::Value::Object(body), 0);
+        }
+        for (text, lines) in [("stdout", "stdout_lines"), ("stderr", "stderr_lines")] {
+            if body.contains_key(text) && body.contains_key(lines) {
+                body.insert(lines.into(), "<omitted>".into());
+            }
+        }
+        let dumped = crate::template::callback_yaml(&serde_json::Value::Object(body));
+        let mut out = String::from("\n");
+        // `str.splitlines(keepends=True)`'s boundaries; a line of whitespace only gets no prefix.
+        let breaks = |c: char| {
+            matches!(
+                c,
+                '\n' | '\r'
+                    | '\x0b'
+                    | '\x0c'
+                    | '\x1c'
+                    | '\x1d'
+                    | '\x1e'
+                    | '\u{85}'
+                    | '\u{2028}'
+                    | '\u{2029}'
+            )
+        };
+        for line in dumped.split_inclusive(breaks) {
+            if !line.trim().is_empty() {
+                out.push_str("    ");
+            }
+            out.push_str(line);
+        }
+        out.strip_suffix('\n').map(str::to_string).unwrap_or(out)
+    }
+}
+
+/// `C.MODULE_NO_JSON` of ansible-core 2.19.12, its short names with their `ansible.builtin.` and
+/// `ansible.legacy.` forms: the actions whose `minimal` line is the command form.
+const MODULE_NO_JSON: [&str; 17] = [
+    "command",
+    "ansible.builtin.command",
+    "ansible.legacy.command",
+    "win_command",
+    "ansible.builtin.win_command",
+    "ansible.legacy.win_command",
+    "shell",
+    "ansible.builtin.shell",
+    "ansible.legacy.shell",
+    "win_shell",
+    "ansible.builtin.win_shell",
+    "ansible.legacy.win_shell",
+    "raw",
+    "ansible.builtin.raw",
+    "ansible.legacy.raw",
+    "ansible.windows.win_command",
+    "ansible.windows.win_shell",
+];
+
+/// `_command_generic_msg`: the header, then `stdout`, `stderr` and `msg` with nothing between.
+/// The line's own newline is the one the reference adds after them.
+fn command_text(
+    host: &str,
+    caption: &str,
+    body: &serde_json::Map<String, serde_json::Value>,
+) -> String {
+    // `%s` of the value, and `''` for a key that is not there.
+    let text = |key: &str| match body.get(key) {
+        None => String::new(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => crate::playbook::python_repr(other),
+    };
+    let rc = match body.get("rc") {
+        None => "-1".to_string(),
+        Some(_) => text("rc"),
+    };
+    format!(
+        "{host} | {caption} | rc={rc} >>
+{}{}{}",
+        text("stdout"),
+        text("stderr"),
+        text("msg")
+    )
 }

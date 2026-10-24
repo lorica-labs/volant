@@ -1,5 +1,5 @@
 ---
-sourceHash: faf55681f8db
+sourceHash: 00b6cbd9dbbb
 title: Tests
 description: Cómo se comprueba Volant contra ansible-core, los cuatro tipos de respuesta grabada y cómo añadir un escenario.
 ---
@@ -28,10 +28,11 @@ Un escenario es un directorio dentro de `crates/volant/tests/scenarios`:
 3. Ejecuta `just golden scenario`. Escribe `expected.json` en el directorio.
 4. Ejecuta `touch crates/volant/tests/reference.rs` y después los tests. La lista de escenarios se fija cuando ese archivo se compila, así que un directorio nuevo no se ve hasta que se recompila.
 
-Cada ejecución de Volant se hace en una copia nueva del directorio, con `--forks 1` salvo que el caso diga otra cosa. El test compara el código de salida y la salida estándar completa, con los tiempos enmascarados. Además de `args` y `runs`, `case.yml` acepta otras cinco claves:
+Cada ejecución de Volant se hace en una copia nueva del directorio, con `--forks 1` salvo que el caso diga otra cosa. El test compara el código de salida y la salida estándar completa, con los tiempos enmascarados. Además de `args` y `runs`, `case.yml` acepta otras seis claves:
 
 - `modes` enumera `check`, `check-diff` y `diff`. Entonces cada ejecución se hace una vez más por modo, con `--check`, `--check --diff` o `--diff` añadido, en ese orden fijo, y cada ejecución se graba.
 - `env` define variables de entorno para la ejecución.
+- `program: ansible` graba las ejecuciones con `ansible` en lugar de `ansible-playbook`, y ejecuta `volant adhoc` en lugar de `volant playbook`.
 - `forks` sube el número de forks por encima de uno. Entonces los hosts pueden imprimir en otro orden, así que enumera en `unordered`, como expresiones regulares, las líneas cuyo orden puede variar. `unordered` sin `forks` se rechaza.
 - `needs` nombra lo que debe tener la máquina: `ansible-core`, `sudo` o `systemd`. Un caso cuyas necesidades no se cumplen se omite, salvo cuando `VOLANT_PYTHON` está definida, lo que convierte la omisión en un fallo.
 - `links` asocia una ruta con el destino de un enlace que cada copia recibe en esa ruta. Úsalo para un enlace que git o cargo no pueden guardar, como un enlace a un archivo que no existe: `cargo package` rechaza un enlace versionado así.

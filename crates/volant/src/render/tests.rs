@@ -113,11 +113,44 @@ fn source_lines_read_as_python_does(#[case] bytes: &[u8], #[case] expected: Vec<
     let _ = std::fs::remove_file(&path);
 }
 
-#[test]
-fn shorten_keeps_whole_words_as_textwrap_does() {
-    assert_eq!(shorten("a  b\n c", 120), "a b c");
-    assert_eq!(shorten("aaaa bbbb cccc dddd", 15), "aaaa bbbb [...]");
-    assert_eq!(shorten("aaaaaaaaaaaaaaaaaaaa", 10), "[...]");
+/// Each row is Python 3.13's `textwrap.shorten(text, width)`, run on the reference controller.
+#[rstest]
+#[case("a  b\n c", 120, "a b c")]
+#[case("aaaa bbbb cccc dddd", 15, "aaaa bbbb [...]")]
+#[case("aaaaaaaaaaaaaaaaaaaa", 10, "[...]")]
+#[case("Hello  world!", 11, "Hello [...]")]
+#[case("Hello  world!", 12, "Hello world!")]
+#[case("", 10, "")]
+#[case(
+    "systemctl restart some-long-service-name-for-the-cut-test-here-and-more",
+    60,
+    "systemctl restart some-long-service-name-for-the-cut- [...]"
+)]
+#[case(
+    "systemctl restart some-long-service-name-for-the-cut-test-here-and-more",
+    40,
+    "systemctl restart some-long- [...]"
+)]
+#[case("a-b-c-d-e-f-g-h", 10, "a-b- [...]")]
+#[case("ab-cd ef-gh-ij-kl", 12, "ab-cd [...]")]
+#[case(
+    "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx",
+    120,
+    "[...]"
+)]
+#[case(
+    "pre ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-",
+    120,
+    "pre ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab-ab- [...]"
+)]
+#[case("one two---three four--five", 16, "one two--- [...]")]
+#[case("ab--cd ef", 6, "[...]")]
+#[case("well-known_name-2 things", 14, "well- [...]")]
+#[case("a---b c", 6, "[...]")]
+#[case("ab-cccccccccccccccccccc", 10, "ab- [...]")]
+#[case("--ab-cd-ef", 8, "[...]")]
+fn shorten_is_textwrap_shorten(#[case] text: &str, #[case] width: usize, #[case] want: &str) {
+    assert_eq!(shorten(text, width), want);
 }
 
 fn result(v: serde_json::Value) -> TaskResult {

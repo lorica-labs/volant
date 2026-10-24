@@ -57,7 +57,7 @@ pub(super) fn resolve_limit(
     inventory: &Inventory,
     out: &mut Renderer,
 ) -> anyhow::Result<Option<HashSet<String>>> {
-    let Some(pattern) = &args.limit else {
+    let Some(pattern) = &args.hosts.limit else {
         return Ok(None);
     };
     let resolution = inventory.resolve(pattern);

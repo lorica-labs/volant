@@ -19,6 +19,9 @@ use volant_protocol::{ExecPath, Ran, StagedFile, Task, TaskResult};
 
 use crate::natives::{self, NativeRun};
 
+/// The internal argument a Python module reads its own name from.
+const MODULE_NAME_ARG: &str = "_ansible_module_name";
+
 /// Outcome of running one task.
 pub enum Run {
     Done(TaskResult),
@@ -125,19 +128,19 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
                     }
                 }
             }
-            let mut flagged;
-            let args = if check_mode || diff {
-                flagged = args.clone();
-                for (key, on) in [(CHECK_MODE_ARG, check_mode), (DIFF_ARG, diff)] {
-                    if on {
-                        flagged.insert(key.into(), Value::Bool(true));
-                    }
+            let mut flagged = args.clone();
+            for (key, on) in [(CHECK_MODE_ARG, check_mode), (DIFF_ARG, diff)] {
+                if on {
+                    flagged.insert(key.into(), Value::Bool(true));
                 }
-                &flagged
-            } else {
-                args
-            };
-            let (run, timing) = crate::python::run(payload, args, &context, cancelled);
+            }
+            // The name `AnsibleModule` calls itself in its messages, `Unsupported parameters for
+            // (ping) module`: the reference's action sets it to the task's action, and without it
+            // the module names its own file, `basic.py`.
+            flagged
+                .entry(MODULE_NAME_ARG)
+                .or_insert_with(|| Value::String(task.module.clone()));
+            let (run, timing) = crate::python::run(payload, &flagged, &context, cancelled);
             ran.fork_micros = timing.fork;
             ran.import_micros = timing.import;
             ran.module_micros = timing.module;

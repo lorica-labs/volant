@@ -1,0 +1,12 @@
+# `callback_result_format = yaml`: a JSON-form result is a line break and the YAML dump, indented
+# four spaces, a multi-line string as a literal block; the command form does not change.
+program: ansible
+needs: [ansible-core]
+runs:
+  - args: [h1, -i, inv.ini, -m, ping]
+  - args: [h1, -i, inv.ini, -m, ping, -a, foo=bar]
+  - args: [web, -i, inv.ini, -a, echo hi]
+  - args: [all, -i, bad.ini, -m, ping]
+  - args: [h1, -i, inv.ini, -m, debug, -a, 'msg="a\nb  \n\n\tc  "']
+  - args: [h1, -i, inv.ini, -m, debug, -a, '{"msg": "  lead\nx"}']
+  - args: [h1, -i, inv.ini, -m, debug, -a, '{"msg": ["a", {"k": "v\nw"}]}']

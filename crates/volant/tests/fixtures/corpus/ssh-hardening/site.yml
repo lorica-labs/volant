@@ -1,0 +1,17 @@
+# devsec.hardening's ssh_hardening role; key login stays. The noble image links ssh.socket under
+# ssh.service.requires; the role deletes that link and masks the socket but never reloads systemd,
+# so starting ssh then fails on the masked socket. The link goes first, with a reload.
+- hosts: corpus
+  become: true
+  vars:
+    ssh_server_password_login: false
+  pre_tasks:
+    - name: Drop the ssh.socket requirement the image ships
+      ansible.builtin.file:
+        path: /etc/systemd/system/ssh.service.requires
+        state: absent
+    - name: Reload systemd
+      ansible.builtin.systemd:
+        daemon_reload: true
+  roles:
+    - devsec.hardening.ssh_hardening

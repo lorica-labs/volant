@@ -1,5 +1,5 @@
 # The community playbooks `just corpus` runs under both engines. Each source is pinned exactly.
-# Fields: name, source ({galaxy_role|galaxy_collection, version} or {git, sha}), roles and
+# Fields: name, source ({galaxy_role|galaxy_collection, version} or {git, sha}; null for a local entry), roles and
 # collections installed beside it, playbook (under this directory, or `repo:<path>` inside a git
 # source), hosts (1|2), where (container|both|local), vars (passed as -e @file to both engines),
 # volatile (result keys left out of the body comparison), generate (one line run before the first
@@ -22,4 +22,141 @@
              InactiveEnterTimestamp, InactiveEnterTimestampMonotonic, ActiveExitTimestamp,
              ActiveExitTimestampMonotonic, ExecStart, ExecStartEx, After, Before]
   generate: null
+  skip_reason: null
+- name: docker
+  source: {galaxy_role: geerlingguy.docker, version: 8.0.0}
+  playbook: docker/site.yml
+  hosts: 1
+  where: both
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: null
+- name: mysql
+  source: {galaxy_role: geerlingguy.mysql, version: 6.5.0}
+  collections:
+    - {name: community.mysql, version: 5.0.2}
+  playbook: mysql/site.yml
+  hosts: 1
+  where: both
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: null
+- name: lamp
+  source: {galaxy_role: geerlingguy.apache, version: 4.2.1}
+  roles:
+    - {name: geerlingguy.php, version: 6.1.0}
+  playbook: lamp/site.yml
+  hosts: 1
+  where: both
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: null
+- name: os-hardening
+  source: {galaxy_collection: devsec.hardening, version: 11.0.0}
+  collections:
+    - {name: ansible.posix, version: 2.2.2}
+    - {name: community.general, version: 13.5.0}
+    - {name: community.crypto, version: 3.5.1}
+  playbook: os-hardening/site.yml
+  hosts: 1
+  where: container
+  vars: {os_auditd_enabled: false}
+  volatile: []
+  generate: null
+  skip_reason: https://github.com/lorica-labs/volant/issues/857
+- name: ssh-hardening
+  source: {galaxy_collection: devsec.hardening, version: 11.0.0}
+  collections:
+    - {name: ansible.posix, version: 2.2.2}
+    - {name: community.general, version: 13.5.0}
+    - {name: community.crypto, version: 3.5.1}
+  playbook: ssh-hardening/site.yml
+  hosts: 1
+  where: container
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: https://github.com/lorica-labs/volant/issues/857
+- name: cis
+  source: {git: "https://github.com/ansible-lockdown/UBUNTU24-CIS", sha: 7f7c949f0ae1784e0e7687b3d68f2e8fcdf27b54}
+  collections:
+    - {name: community.general, version: 13.5.0}
+    - {name: community.crypto, version: 3.5.1}
+    - {name: ansible.posix, version: 2.2.2}
+  playbook: repo:site.yml
+  hosts: 1
+  where: container
+  vars:
+    system_is_container: true
+    ubtu24cis_disruption_high: false
+    setup_audit: false
+    run_audit: false
+    ubtu24cis_config_aide: false
+    # The corpus user logs in with a key and has a locked password; rule 5.2.4 refuses to run then.
+    ubtu24cis_rule_5_2_4: false
+  volatile: []
+  generate: null
+  skip_reason: https://github.com/lorica-labs/volant/issues/858
+- name: prometheus
+  source: {galaxy_collection: prometheus.prometheus, version: 0.30.2}
+  collections:
+    - {name: community.general, version: 13.5.0}
+  playbook: prometheus/site.yml
+  hosts: 1
+  where: both
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: https://github.com/lorica-labs/volant/issues/855
+- name: haproxy
+  source: {galaxy_role: geerlingguy.haproxy, version: 1.3.2}
+  roles:
+    - {name: geerlingguy.nginx, version: 3.3.1}
+  playbook: haproxy/site.yml
+  hosts: 2
+  where: both
+  vars: {}
+  volatile: [After, Before, MemoryAvailable, StateChangeTimestamp, StateChangeTimestampMonotonic, ExecMainPID,
+             ControlGroupId, CPUUsageNSec, ConditionTimestamp, ConditionTimestampMonotonic, AssertTimestamp,
+             AssertTimestampMonotonic, InactiveEnterTimestamp, InactiveEnterTimestampMonotonic]
+  generate: null
+  skip_reason: null
+- name: synthetic-loop
+  source: null
+  playbook: synthetic-loop/site.yml
+  hosts: 1
+  where: local
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: null
+- name: synthetic-facts
+  source: null
+  playbook: synthetic-facts/site.yml
+  hosts: 1
+  where: local
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: null
+- name: synthetic-includes
+  source: null
+  playbook: synthetic-includes/site.yml
+  hosts: 1
+  where: local
+  vars: {}
+  volatile: []
+  generate: null
+  skip_reason: null
+- name: synthetic-bigvars
+  source: null
+  playbook: synthetic-bigvars/site.yml
+  hosts: 1
+  where: local
+  vars: {}
+  volatile: []
+  generate: "python3 -c \"import json; json.dump({'bigvars_rows': [{'id': i, 'name': 'row-%d' % i, 'text': 'x' * 40} for i in range(70000)]}, open('bigvars.json', 'w'))\""
   skip_reason: null

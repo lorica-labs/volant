@@ -1,0 +1,13 @@
+# geerlingguy.mysql with one database and one user. Installed by `just corpus`.
+- hosts: corpus
+  become: true
+  vars:
+    mysql_root_password: volant-corpus-root
+    mysql_databases:
+      - name: volantdb
+    mysql_users:
+      - name: volantuser
+        password: volant-corpus-password
+        priv: "volantdb.*:ALL"
+  roles:
+    - geerlingguy.mysql

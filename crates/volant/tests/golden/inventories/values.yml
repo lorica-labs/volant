@@ -1,0 +1,12 @@
+all:
+  hosts:
+    v1:
+      uni: "café ü"
+      tpl: "{{ inventory_hostname }}-x"
+      flag: true
+      none: null
+      ratio: 1.5
+      secret: !vault |
+        $ANSIBLE_VAULT;1.1;AES256
+        66643539386365326631373938623365363363623263643666386136633466663534663339303034
+        3637386233643036363065386662666666383435343030660a

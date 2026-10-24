@@ -6,6 +6,12 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.12](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) - 2026-10-24
+
+### Changed
+
+- *(controller)* allocate with mimalloc ([#871](https://github.com/lorica-labs/volant/pull/871))
+
 ## [0.1.0-alpha.11](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) - 2026-10-24
 
 ### Added

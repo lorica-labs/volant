@@ -231,7 +231,8 @@ fn the_console_on_a_terminal_survives_ctrl_c() {
     unsafe {
         command.pre_exec(|| {
             libc::setsid();
-            libc::ioctl(0, libc::TIOCSCTTY, 0);
+            // The request's type differs between Linux and macOS.
+            libc::ioctl(0, libc::TIOCSCTTY as _, 0);
             Ok(())
         });
     }

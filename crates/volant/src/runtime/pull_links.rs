@@ -116,10 +116,13 @@ fn private_group(gid: libc::gid_t) -> bool {
             &raw mut found,
         )
     };
-    // SAFETY: on success `found` points at `group`, whose `gr_mem` is a null-terminated list.
-    status == 0
-        && !found.is_null()
-        && unsafe { (*found).gr_mem.is_null() || (*(*found).gr_mem).is_null() }
+    if status != 0 || found.is_null() {
+        return false;
+    }
+    // SAFETY: a zero status with a non-null result means the call filled `group`.
+    let group = unsafe { group.assume_init() };
+    // SAFETY: `gr_mem` is null or a null-terminated list of pointers into `buffer`, still alive.
+    group.gr_mem.is_null() || unsafe { (*group.gr_mem).is_null() }
 }
 
 /// Takes group and other write off a directory this user owns, which other code of Volant may

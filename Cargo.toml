@@ -37,6 +37,7 @@ too_many_lines = "warn"
 unnested_or_patterns = "warn"
 
 [workspace.dependencies]
+mimalloc = { version = "0.1", default-features = false }
 anstream = "1"
 anstyle = "1"
 aes = "0.8"

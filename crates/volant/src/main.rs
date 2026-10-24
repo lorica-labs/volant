@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
-use volant::cli::{PlaybookArgs, RuntimeCommand};
+use volant::cli::{PlaybookArgs, RuntimeCommand, ShimsCommand};
 
 /// Fast engine for Ansible playbooks.
 #[derive(Parser)]
@@ -17,6 +17,9 @@ enum Command {
     /// Install, show or remove the Python runtime Volant manages for ansible-core.
     #[command(subcommand)]
     Runtime(RuntimeCommand),
+    /// Link the ansible-core program names to volant, or remove those links.
+    #[command(subcommand)]
+    Shims(ShimsCommand),
 }
 
 /// Parses the command line. Started under an ansible-core program name, the process behaves as
@@ -64,6 +67,7 @@ fn main() {
     let code = match parse().command {
         Command::Playbook(args) => volant::cli::run(*args),
         Command::Runtime(command) => volant::cli::runtime(command),
+        Command::Shims(command) => volant::cli::shims(command),
     };
     std::process::exit(code);
 }

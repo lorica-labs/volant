@@ -1,5 +1,5 @@
 ---
-sourceHash: 7fc812957946
+sourceHash: 16096ceac904
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -11,8 +11,10 @@ volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
 volant config [ARGS...]
+volant console [ARGS...]
 volant doc [ARGS...]
 volant galaxy [ARGS...]
+volant pull [ARGS...]
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
@@ -20,11 +22,11 @@ volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-Cada uno de los demás comandos tiene su propia página: [`volant adhoc`](/es/docs/reference/cli/adhoc/), [`volant config`](/es/docs/reference/cli/config/), [`volant doc`](/es/docs/reference/cli/doc/), [`volant galaxy`](/es/docs/reference/cli/galaxy/), [`volant inventory`](/es/docs/reference/cli/inventory/), [`volant runtime`](/es/docs/reference/cli/runtime/), [`volant shims`](/es/docs/reference/cli/shims/), [`volant vault`](/es/docs/reference/cli/vault/). Esta página trata de `volant playbook`.
+Cada uno de los demás comandos tiene su propia página: [`volant adhoc`](/es/docs/reference/cli/adhoc/), [`volant config`](/es/docs/reference/cli/config/), [`volant console`](/es/docs/reference/cli/console/), [`volant doc`](/es/docs/reference/cli/doc/), [`volant galaxy`](/es/docs/reference/cli/galaxy/), [`volant pull`](/es/docs/reference/cli/pull/), [`volant inventory`](/es/docs/reference/cli/inventory/), [`volant runtime`](/es/docs/reference/cli/runtime/), [`volant shims`](/es/docs/reference/cli/shims/), [`volant vault`](/es/docs/reference/cli/vault/). Esta página trata de `volant playbook`.
 
 `volant playbook` acepta las mismas opciones que `ansible-playbook`, en las que existen. `volant-playbook` es el mismo programa con un nombre que se parece al que conoces. Los playbooks que se pasan juntos se ejecutan en orden, y cada uno imprime su propio recap.
 
-En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy` o `ansible-inventory`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy` o `volant inventory`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
+En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-console`, `ansible-pull` o `ansible-inventory`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy`, `volant console`, `volant pull` o `volant inventory`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. `volant doc`, `config`, `galaxy`, `console` y `pull` ejecutan las herramientas propias de ansible-core desde el runtime de Python de Volant; la única diferencia en su salida es la ruta que `volant pull` muestra para `ansible-pull` en su segunda línea, consulta [`volant pull`](/es/docs/reference/cli/pull/). Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
 
 Cuando una opción tiene una clave de `ansible.cfg` o una variable de entorno, la entrada la nombra. La opción gana a ambas; [Configuración](/es/docs/reference/configuration/) explica el orden.
 
@@ -240,4 +242,4 @@ Se acepta cada opción de `ansible-playbook`. `--scp-extra-args` y `--sftp-extra
 
 `volant adhoc` todavía no tiene `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` ni `-t`.
 
-`volant` tiene los subcomandos `playbook`, `adhoc`, `inventory`, `runtime`, `shims` y `vault`. Las demás herramientas de Ansible todavía no tienen equivalente: `ansible-doc`, `ansible-config` y `ansible-galaxy`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.
+`volant` tiene los subcomandos `playbook`, `adhoc`, `inventory`, `runtime`, `shims`, `vault`, `doc`, `config`, `galaxy`, `console` y `pull`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.

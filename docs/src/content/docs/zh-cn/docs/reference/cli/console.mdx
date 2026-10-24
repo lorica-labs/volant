@@ -1,0 +1,23 @@
+---
+sourceHash: 3c19687c4170
+title: volant console
+description: 用 ansible-console 在交互式 shell 中运行临时命令，它在 Volant 的 Python 运行时中运行。
+---
+
+`volant console` 用 Volant 为 playbook 运行选择的解释器运行 ansible-core 2.19.12 的 `ansible-console`，所以不装 ansible-core 也能工作。它是 ansible-core 自己的程序：它用 ansible-core 的执行器运行任务，而不是 Volant 的。
+
+```sh
+volant console [ARGS...]
+```
+
+每个参数都原样交给 `ansible-console`，包括 `-h` 和 `--version`。解释器、环境变量、终端、退出码和 `--version` 的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。
+
+控制台需要终端来显示提示符：
+
+```
+Welcome to the ansible console. Type help or ? to list commands.
+
+user@all (3)[f:5]$
+```
+
+提示符由用户、模式、主机数和 fork 数组成，后面跟 `$ `，在 `become yes` 之后则是 `# `。输入 `exit` 或按 ctrl-d 退出：控制台会打印一个空行和 `Ansible-console was exited.`，并以 0 退出。标准输入是管道时，它从那里读取命令，并在输入结束时以同样的方式结束。

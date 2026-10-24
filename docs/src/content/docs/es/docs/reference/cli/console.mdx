@@ -1,0 +1,23 @@
+---
+sourceHash: 3c19687c4170
+title: volant console
+description: Ejecuta comandos ad hoc en un shell interactivo con ansible-console, ejecutado desde el runtime de Python de Volant.
+---
+
+`volant console` ejecuta el `ansible-console` de ansible-core 2.19.12 con el intérprete que Volant elige para una ejecución de playbook, así que funciona sin ansible-core instalado. Es el programa propio de ansible-core: ejecuta las tareas con el ejecutor de ansible-core, no con el de Volant.
+
+```sh
+volant console [ARGS...]
+```
+
+Cada argumento va a `ansible-console` sin cambios, incluidos `-h` y `--version`. El intérprete, el entorno, el terminal, el código de salida y `--version` funcionan como en [`volant doc`](/es/docs/reference/cli/doc/).
+
+La consola necesita un terminal para su prompt:
+
+```
+Welcome to the ansible console. Type help or ? to list commands.
+
+user@all (3)[f:5]$
+```
+
+El prompt es el usuario, el patrón, el número de hosts y los forks, seguidos de `$ `, o de `# ` tras `become yes`. Escribe `exit` o pulsa ctrl-d para salir: la consola imprime una línea en blanco y `Ansible-console was exited.`, y sale con 0. Con la entrada estándar en una tubería, lee de ahí sus comandos y termina igual al final de la entrada.

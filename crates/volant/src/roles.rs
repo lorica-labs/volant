@@ -19,6 +19,9 @@ use crate::config::Config;
 use crate::playbook::{HandlerTask, PlayTask, TaskOrBlock};
 use crate::stats::Refusal;
 
+mod instance;
+pub use instance::{OwnVars, RoleVars, identity};
+
 /// Which file of each of a role's directories to read. `main` everywhere unless the entry that
 /// named the role said otherwise, which is what `tasks_from` and its three siblings do.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -103,32 +106,6 @@ pub struct LoadedRole {
     /// dash. Measured on ansible-core 2.19.12 through `--list-tasks`:
     /// `Validating arguments against arg spec 'main' - The spec role`.
     pub argument_spec_description: Option<String>,
-}
-
-/// One compiled role instance: the variables its own steps sit on, and the ones it lends to the
-/// rest of the play.
-#[derive(Debug, Clone, Default)]
-pub struct RoleVars {
-    pub name: String,
-    pub defaults: Map<String, Value>,
-    pub vars: Map<String, Value>,
-    pub params: Map<String, Value>,
-    /// Whether this instance lends `defaults` and `vars` to the rest of the play.
-    pub public: bool,
-    /// What the role itself says, set aside when the rest of the play's values were first laid
-    /// under it, so that a variable another role publishes later can be laid under it again.
-    pub own: Option<Box<OwnVars>>,
-}
-
-/// The `defaults` and `vars` a role directory holds, before anything was laid under them.
-#[derive(Debug, Clone, Default)]
-pub struct OwnVars {
-    pub defaults: Map<String, Value>,
-    pub vars: Map<String, Value>,
-    /// What the other roles of the same statement lend: its dependencies, which see each other
-    /// and the role that asked for them whether or not the statement is public.
-    pub group_defaults: Map<String, Value>,
-    pub group_vars: Map<String, Value>,
 }
 
 /// Where a role is looked for.

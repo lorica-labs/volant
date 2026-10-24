@@ -1,0 +1,3 @@
+- name: nested parents
+  debug:
+    msg: "{{ ansible_parent_role_names }} {{ ansible_parent_role_paths | map('basename') | list }}"

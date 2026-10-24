@@ -1,0 +1,30 @@
+[
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => \n    changed: false\n    ping: pong\n"
+  },
+  {
+    "code": 2,
+    "stdout": "[ERROR]: Task failed: Module failed: Unsupported parameters for (ping) module: foo. Supported parameters include: data.\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {'foo': 'bar'}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nh1 | FAILED! => \n    changed: false\n    msg: 'Unsupported parameters for (ping) module: foo. Supported parameters include:\n        data.'\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED | rc=0 >>\nhi\nh2 | CHANGED | rc=0 >>\nhi\n"
+  },
+  {
+    "code": 4,
+    "stdout": "[ERROR]: Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1 port 1: Connection refused\nOrigin: <adhoc 'ping' task>\n\n{'action': 'ping', 'args': {}, 'timeout': 0, 'async_val': 0, 'poll': 15}\n\nu1 | UNREACHABLE! => \n    changed: false\n    msg: 'Task failed: Failed to connect to the host via ssh: ssh: connect to host 127.0.0.1\n        port 1: Connection refused'\n    unreachable: true\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => \n    msg: |-\n        a\n        b\n\n                c\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => \n    msg: |4-\n          lead\n        x\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => \n    msg:\n    - a\n    -   k: |-\n            v\n            w\n"
+  }
+]

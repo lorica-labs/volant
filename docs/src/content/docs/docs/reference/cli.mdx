@@ -8,6 +8,7 @@ import Option from '../../../../components/Option.astro';
 ```sh
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
+volant adhoc [OPTIONS] <PATTERN>
 volant runtime <install|pack|status|path|remove>
 volant vault <encrypt|decrypt|view>
 volant --version
@@ -15,7 +16,7 @@ volant --version
 
 `volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know. Playbooks given together run in order, and each one prints its own recap.
 
-On Linux and macOS the `volant` binary also dispatches on the name it was started as (the file name of `argv[0]`). Started as `ansible-playbook` or `ansible-vault`, through a symlink or a hard link, it behaves as `volant playbook` or `volant vault` with the same arguments, output and exit codes. A usage error exits with 2 and names the program as started. Any other name keeps the usual `volant` behaviour.
+On Linux and macOS the `volant` binary also dispatches on the name it was started as (the file name of `argv[0]`). Started as `ansible-playbook` or `ansible-vault`, through a symlink or a hard link, it behaves as `volant playbook` or `volant vault` with the same arguments, output and exit codes. Started as `ansible`, it behaves as `volant adhoc`. A usage error exits with 2 and names the program as started. Any other name keeps the usual `volant` behaviour.
 
 Where an option has an `ansible.cfg` key or an environment variable, the entry names it. The option wins over both; [Configuration](/docs/reference/configuration/) explains the order.
 
@@ -225,6 +226,30 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
   Write the run's profile to this file, one JSON object per line: the native modules each agent reported, then the phases, then one line per task with its module, path, hand-back reason and times in microseconds. It is written whatever became of the run, and a file that cannot be written only prints a warning.
 </Option>
 
+## The adhoc command
+
+`volant adhoc` is `ansible`: it runs one module on every host that matches a pattern.
+
+```sh
+volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
+             [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
+```
+
+<Option name="-m, --module-name" arg="MODULE">
+  The module to run. Default: `command`.
+</Option>
+
+<Option name="-a, --args" arg="ARGS">
+  The module's arguments: `key=value` words, or a JSON object when the value starts with `{` and ends with `}`. For `command`, `shell`, `raw` and `script`, words that are not one of the module's options make up the command line. The arguments are templated with each host's variables and `-e`. A value that starts with `{`, ends with `}` and is not valid JSON stops the command with exit code 250; an unbalanced quote stops it with exit code 4.
+</Option>
+
+The other options mean what they mean for `volant playbook`. `-f 1` runs one host at a time, in inventory order.
+
+Each host prints one result, the way ansible's `minimal` callback prints it. A `command`, `shell` or `raw` result is `h1 | CHANGED | rc=0 >>`, then its stdout, stderr and `msg` joined with nothing between. Any other result is `h1 | SUCCESS => ` followed by the result as JSON, indented four spaces, keys sorted. The statuses are `SUCCESS`, `CHANGED`, `FAILED` (command form), `FAILED!` (JSON form), `SKIPPED` and `UNREACHABLE!`. Before a failed or unreachable result, standard output carries the same `[ERROR]` block a playbook prints. Its `Origin:` is `<adhoc 'MODULE' task>`, followed by the task as ansible shows it, cut down to 120 characters.
+
+The exit code is 0 when every host succeeded or was skipped, 2 when a host failed, and 4 when a host could not be reached, failed hosts or not. `ANSIBLE_STDOUT_CALLBACK` does not change the output. With `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, or `callback_result_format = yaml` under `[defaults]` in `ansible.cfg`, a JSON-form result is printed as YAML instead, on the lines after `=>`, indented four spaces. A string with line breaks becomes a literal block. Any other value, the empty one included, stops the command with exit code 5. `-vv` and above are refused with exit code 4.
+
 ## The runtime command
 
 `volant runtime` manages the Python and ansible-core that Volant installs for itself. [The managed runtime](/docs/reference/runtime/) describes what each step does.
@@ -343,4 +368,6 @@ Exactly one of `--list`, `--host` and `--graph` is required. `--graph`, `--yaml`
 
 Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/docs/reference/parity/#ansible-playbook-option) lists each option with its status.
 
-`volant` has the subcommands `playbook`, `inventory`, `runtime`, `shims` and `vault`. The other Ansible tools have no counterpart yet: `ansible` for ad-hoc commands, `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.
+`volant adhoc` does not have `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` or `-t` yet.
+
+`volant` has the subcommands `playbook`, `adhoc`, `inventory`, `runtime`, `shims` and `vault`. The other Ansible tools have no counterpart yet: `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.

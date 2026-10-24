@@ -104,7 +104,7 @@ pub(super) fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -
         .iter()
         .flat_map(|t| crate::config::tag_list(t))
         .collect();
-    let inventory: Vec<String> = inventory_sources(&args.inventory, config)
+    let inventory: Vec<String> = inventory_sources(&args.hosts.inventory, config)
         .iter()
         .map(|s| s.text().to_string())
         .collect();
@@ -123,6 +123,7 @@ pub(super) fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -
         }
     };
     let key = args
+        .connect
         .private_key
         .clone()
         .or_else(|| config.private_key_file.clone());
@@ -132,30 +133,40 @@ pub(super) fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -
     );
     given(
         "remote_user",
-        args.user.clone().or_else(|| config.remote_user.clone()),
+        args.connect
+            .user
+            .clone()
+            .or_else(|| config.remote_user.clone()),
     );
     given(
         "connection",
-        Some(args.connection.as_deref().unwrap_or("ssh").to_string()),
+        Some(
+            args.connect
+                .connection
+                .as_deref()
+                .unwrap_or("ssh")
+                .to_string(),
+        ),
     );
-    given("timeout", args.timeout.map(|t| t.to_string()));
-    given("ssh_common_args", args.ssh_common_args.clone());
-    given("sftp_extra_args", args.sftp_extra_args.clone());
-    given("scp_extra_args", args.scp_extra_args.clone());
-    given("ssh_extra_args", args.ssh_extra_args.clone());
+    given("timeout", args.connect.timeout.map(|t| t.to_string()));
+    given("ssh_common_args", args.connect.ssh_common_args.clone());
+    given("sftp_extra_args", args.connect.sftp_extra_args.clone());
+    given("scp_extra_args", args.connect.scp_extra_args.clone());
+    given("ssh_extra_args", args.connect.ssh_extra_args.clone());
     let flag = |on: bool| on.then(|| "True".to_string());
     given("force_handlers", flag(args.force_handlers));
-    given("become", flag(args.r#become));
+    given("become", flag(args.escalation.r#become));
     given(
         "become_method",
         Some(
-            args.become_method
+            args.escalation
+                .become_method
                 .as_deref()
                 .unwrap_or(&config.become_method)
                 .to_string(),
         ),
     );
-    given("become_user", args.become_user.clone());
+    given("become_user", args.escalation.become_user.clone());
     given(
         "tags",
         Some(tuple(if tags.is_empty() {
@@ -171,7 +182,7 @@ pub(super) fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -
     given("check", flag(args.check));
     given("diff", flag(args.diff));
     given("inventory", Some(tuple(inventory)));
-    given("subset", args.limit.clone());
+    given("subset", args.hosts.limit.clone());
     given("flush_cache", flag(args.flush_cache));
     given(
         "extra_vars",
@@ -179,9 +190,10 @@ pub(super) fn options_dump(args: &PlaybookArgs, config: &Config, forks: usize) -
     );
     given(
         "vault_password_files",
-        (!args.vault_password_file.is_empty()).then(|| {
+        (!args.vault.vault_password_file.is_empty()).then(|| {
             tuple(
-                args.vault_password_file
+                args.vault
+                    .vault_password_file
                     .iter()
                     .map(|p| p.display().to_string())
                     .collect(),

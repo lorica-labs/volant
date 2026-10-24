@@ -11,14 +11,16 @@ use crate::stats::{CustomStats, Stats};
 mod error;
 mod recap_json;
 mod result;
+mod shorten;
 
 pub(crate) use error::source_context;
 pub use error::{
-    AT_KEY, CHAIN_KEY, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, cause, concat_message,
-    lead, shorten, task_failed,
+    AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, cause,
+    concat_message, lead, task_failed,
 };
 pub(crate) use recap_json::ansible_json;
 use recap_json::dumps_indented;
+pub use shorten::shorten;
 
 /// How a task's result lines are cleaned before they are shown. Whether a body goes on the line
 /// at verbosity 0 is the result's own [`VERBOSE_ALWAYS`], not the task's.
@@ -53,6 +55,11 @@ pub struct Renderer {
     /// `show_task_path_on_failure`: a failure line is preceded by the task's `task path:` line
     /// when the run is below `-vv`, which already prints it under every banner.
     path_on_failure: bool,
+    /// The action of the one task `volant adhoc` runs, when the output is the `minimal`
+    /// callback's rather than the default one's.
+    minimal: Option<String>,
+    /// `result_format = yaml`: a result is dumped as YAML rather than JSON.
+    yaml: bool,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -99,6 +106,8 @@ impl Renderer {
             errored: std::collections::HashSet::new(),
             diffs: None,
             path_on_failure: false,
+            minimal: None,
+            yaml: false,
         }
     }
 
@@ -120,12 +129,26 @@ impl Renderer {
             errored: std::collections::HashSet::new(),
             diffs: None,
             path_on_failure: false,
+            minimal: None,
+            yaml: false,
         }
     }
 
     /// Turns on the `task path:` line before a failure, from `show_task_path_on_failure`.
     pub fn set_path_on_failure(&mut self, on: bool) {
         self.path_on_failure = on;
+    }
+
+    /// Switches to the `minimal` callback, the one `ansible` prints with whatever
+    /// `ANSIBLE_STDOUT_CALLBACK` says: no banner, no recap, one result line per host. `action` is
+    /// the module of the run's one task, which picks the command form or the JSON form of a line.
+    pub fn set_minimal(&mut self, action: &str) {
+        self.minimal = Some(action.to_string());
+    }
+
+    /// Dumps results as YAML: the callbacks' `result_format = yaml`.
+    pub fn set_result_yaml(&mut self) {
+        self.yaml = true;
     }
 
     /// Serves the diffs of the results this renderer prints.
@@ -144,6 +167,9 @@ impl Renderer {
     /// The star run fills the width past the text, so the line is one character wider than the
     /// width, and never shorter than three stars: what `ansible-playbook` prints.
     fn banner(&mut self, text: &str) {
+        if self.minimal.is_some() {
+            return;
+        }
         let stars = self.width.saturating_sub(text.chars().count()).max(3);
         let _ = writeln!(self.out, "\n{text} {}", "*".repeat(stars));
     }
@@ -169,7 +195,7 @@ impl Renderer {
     /// The `task path:` line under a banner at `-vv`: the file made absolute, and the line the
     /// task starts on.
     pub fn task_path(&mut self, origin: &crate::playbook::Origin) {
-        if self.verbosity >= 2 {
+        if self.verbosity >= 2 && self.minimal.is_none() {
             self.path_line(origin);
         }
     }
@@ -180,6 +206,7 @@ impl Renderer {
     /// file holds get none.
     pub fn failure_path(&mut self, origin: Option<&crate::playbook::Origin>) {
         if self.path_on_failure
+            && self.minimal.is_none()
             && self.verbosity < 2
             && let Some(origin) = origin
         {
@@ -256,6 +283,9 @@ impl Renderer {
     }
 
     pub fn no_hosts(&mut self) {
+        if self.minimal.is_some() {
+            return;
+        }
         let _ = writeln!(
             self.out,
             "{}",
@@ -323,7 +353,7 @@ impl Renderer {
     /// What `set_stats` collected, after the recap: each host that asked for `per_host`, sorted,
     /// then the run's own after a blank line. Nothing at all when nothing was collected.
     pub fn custom_stats(&mut self, stats: &CustomStats) {
-        if stats.is_empty() {
+        if stats.is_empty() || self.minimal.is_some() {
             return;
         }
         let dump = |map: &serde_json::Map<String, serde_json::Value>| {
@@ -341,7 +371,11 @@ impl Renderer {
         let _ = writeln!(self.out);
     }
 
+    /// The `minimal` callback prints no recap.
     pub fn recap(&mut self, stats: &Stats) {
+        if self.minimal.is_some() {
+            return;
+        }
         self.banner("PLAY RECAP");
         for (host, h) in stats.hosts() {
             let host_style = if h.failed > 0 || h.unreachable > 0 {

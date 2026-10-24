@@ -15,6 +15,20 @@ pub struct Origin {
     pub col: usize,
 }
 
+impl Origin {
+    /// A value no file holds, as `SourceContext.from_value` shows it under `Origin:`: the
+    /// reference's description of where it came from (`<adhoc 'ping' task>`, `<CLI option
+    /// '-m'>`), a blank line, then the value as `str()` prints it, `textwrap.shorten` to 120
+    /// characters. Line 0, so the error block prints it as it stands.
+    pub fn described(description: &str, value: &str) -> Self {
+        Origin {
+            path: format!("{description}\n\n{}", crate::render::shorten(value, 120)).into(),
+            line: 0,
+            col: 0,
+        }
+    }
+}
+
 thread_local! {
     /// The file being parsed and where its mappings start, while one is.
     static ORIGINS: std::cell::RefCell<Option<(std::sync::Arc<str>, crate::yaml::Origins)>> =

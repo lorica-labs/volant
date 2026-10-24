@@ -9,6 +9,7 @@ use std::time::Duration;
 use crate::executor::DEFAULT_CONNECT_TIMEOUT;
 
 mod color;
+mod defaults;
 mod locate;
 mod parse;
 mod paths;
@@ -86,6 +87,9 @@ pub struct Config {
     /// `task path:` line before the `fatal:` line of a failed task below `-vv`, where the
     /// reference prints it for no task. Off by default, as in the reference.
     pub show_task_path_on_failure: bool,
+    /// `[defaults] callback_result_format` or `ANSIBLE_CALLBACK_RESULT_FORMAT`, as written: how
+    /// the `minimal` callback of `volant adhoc` dumps a result. Checked where it is used.
+    pub callback_result_format: Option<String>,
     /// `[defaults] force_color` or `ANSIBLE_FORCE_COLOR`: colour the output even when it is not a
     /// terminal. It wins over `nocolor` and `NO_COLOR`, as measured on ansible-core 2.19.12;
     /// only `--no-color` wins over it.
@@ -161,54 +165,6 @@ pub struct Config {
     pub fact_caching_prefix: String,
     /// `gathering`: `implicit`, `explicit` or `smart`.
     pub gathering: String,
-}
-
-impl Default for Config {
-    fn default() -> Self {
-        Self {
-            inventory: Vec::new(),
-            inventory_plugins: crate::inventory::PluginConfig::default(),
-            timeout: DEFAULT_CONNECT_TIMEOUT,
-            remote_user: None,
-            private_key_file: None,
-            host_key_checking: true,
-            remote_tmp: DEFAULT_REMOTE_TMP.to_string(),
-            async_dir: None,
-            forks: DEFAULT_FORKS,
-            r#become: false,
-            become_user: DEFAULT_BECOME_USER.to_string(),
-            become_method: DEFAULT_BECOME_METHOD.to_string(),
-            become_exe: None,
-            become_flags: None,
-            vault_password_file: None,
-            vault_identity_list: Vec::new(),
-            vault_encrypt_identity: None,
-            force_handlers: false,
-            localhost_warning: true,
-            show_custom_stats: false,
-            show_task_path_on_failure: false,
-            force_color: false,
-            nocolor: false,
-            deprecation_warnings: true,
-            ssh_usetty: true,
-            enable_task_debugger: false,
-            roles_path: default_roles_path(),
-            collections_path: default_collections_path(),
-            tags_run: Vec::new(),
-            tags_skip: Vec::new(),
-            batching: false,
-            host_named_paths: HostNamedPaths::Allow,
-            host_named_dest_dirs: None,
-            native_modules: true,
-            runtime: crate::runtime::Mode::Auto,
-            ssh_control_master: true,
-            fact_caching: "memory".to_string(),
-            fact_caching_connection: None,
-            fact_caching_timeout: 86400,
-            fact_caching_prefix: String::new(),
-            gathering: "implicit".to_string(),
-        }
-    }
 }
 
 /// A comma-separated list of tags, as the reference reads one from a file, from the environment
@@ -350,6 +306,9 @@ impl Config {
             config.ssh_usetty = callback_flag(&flag);
         }
         // Set and empty still wins, and a word the reference does not know reads as false.
+        if let Ok(format) = std::env::var("ANSIBLE_CALLBACK_RESULT_FORMAT") {
+            config.callback_result_format = Some(format);
+        }
         if let Ok(flag) = std::env::var("ANSIBLE_SHOW_TASK_PATH_ON_FAILURE") {
             config.show_task_path_on_failure = callback_flag(&flag);
         }

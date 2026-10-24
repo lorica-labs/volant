@@ -96,6 +96,8 @@ pub(super) struct Analysis {
     pub(super) allow_flow_plain: bool,
     pub(super) allow_block_plain: bool,
     pub(super) allow_single_quoted: bool,
+    /// A literal or folded block may hold it.
+    pub(super) allow_block: bool,
 }
 
 #[expect(clippy::too_many_lines)]
@@ -107,6 +109,7 @@ pub(super) fn analyze(s: &[char]) -> Analysis {
             allow_flow_plain: false,
             allow_block_plain: true,
             allow_single_quoted: true,
+            allow_block: false,
         };
     }
     let ws = |c: char| matches!(c, '\0' | ' ' | '\t' | '\r') || is_break(c);
@@ -181,6 +184,7 @@ pub(super) fn analyze(s: &[char]) -> Analysis {
         allow_flow_plain: true,
         allow_block_plain: true,
         allow_single_quoted: true,
+        allow_block: !trailing_space && !space_break && !special_characters,
     };
     if leading_space || leading_break || trailing_space || trailing_break {
         a.allow_flow_plain = false;

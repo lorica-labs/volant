@@ -79,6 +79,11 @@ pub struct Unresolved {
 }
 
 impl Unresolved {
+    /// Whether this is `module`, a name that points at no collection.
+    pub fn is_plain(&self, module: &str) -> bool {
+        self.module == module && self.collection.is_none()
+    }
+
     /// The warning, when the name points at a collection, and the error block. The install hint
     /// goes last, on its own line, so the first line stays the reference's.
     pub fn report(&self) -> (Option<String>, String) {

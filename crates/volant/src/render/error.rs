@@ -227,42 +227,11 @@ pub fn concat_message(left: &str, right: &str) -> String {
     format!("{}: {right}", left.trim_end_matches(['.', ' ']))
 }
 
-/// Python's `textwrap.shorten(text, width)`: whitespace collapsed, then as many words as fit with
-/// ` [...]` behind them when the whole does not.
-// Words split on whitespace only, where `TextWrapper` also breaks after a hyphen;
-// split those too if a quoted value with hyphens ever needs it.
-pub fn shorten(text: &str, width: usize) -> String {
-    const PLACEHOLDER: &str = " [...]";
-    let words: Vec<&str> = text.split_whitespace().collect();
-    let whole = words.join(" ");
-    if whole.chars().count() <= width {
-        return whole;
-    }
-    let mut kept: Vec<&str> = Vec::new();
-    let mut len = 0;
-    for word in &words {
-        let add = word.chars().count() + usize::from(!kept.is_empty());
-        if len + add > width {
-            break;
-        }
-        kept.push(word);
-        len += add;
-    }
-    while let Some(last) = kept.last() {
-        if len + PLACEHOLDER.len() <= width {
-            return format!("{}{PLACEHOLDER}", kept.join(" "));
-        }
-        len -= last.chars().count() + usize::from(kept.len() > 1);
-        kept.pop();
-    }
-    PLACEHOLDER.trim_start().to_string()
-}
-
 /// `Origin: ...`, a blank line, then the task's line and the two before it, numbered, with a
 /// marker under the column: `SourceContext.from_origin` and its `__str__`.
 pub(crate) fn source_context(origin: &crate::playbook::Origin) -> String {
     // A file with no position: the reference names a vaulted file that could not be opened by its
-    // path alone.
+    // path alone. A value no file holds is shown the same way (`Origin::described`).
     if origin.line == 0 {
         return format!("Origin: {}", origin.path);
     }
@@ -400,6 +369,14 @@ impl Renderer {
         } else {
             serde_json::json!({"changed": false, "msg": msg, "unreachable": true})
         };
+        if self.minimal.is_some() {
+            let serde_json::Value::Object(body) = body else {
+                return;
+            };
+            let line = format!("{host} | UNREACHABLE! => {}", self.minimal_dump(body));
+            let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));
+            return;
+        }
         let who = match delegate {
             Some(d) => format!("{host} -> {d}"),
             None => host.to_string(),

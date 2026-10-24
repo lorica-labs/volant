@@ -84,22 +84,22 @@ pub(super) fn ask_passwords(
     };
     let mut connection = None;
     let mut become_prompt = "BECOME password: ";
-    if args.ask_pass {
+    if args.connect.ask_pass {
         connection = ask("SSH password: ")?;
         if connection.is_none() {
             return Ok((None, None));
         }
         become_prompt = "BECOME password[defaults to SSH password]: ";
-    } else if let Some(path) = &args.connection_password_file {
+    } else if let Some(path) = &args.connect.connection_password_file {
         connection = Some(password_from_file(path)?);
     }
     let mut escalation = None;
-    if args.ask_become_pass {
+    if args.escalation.ask_become_pass {
         escalation = ask(become_prompt)?;
-        if args.ask_pass && escalation.as_deref() == Some("") {
+        if args.connect.ask_pass && escalation.as_deref() == Some("") {
             escalation.clone_from(&connection);
         }
-    } else if let Some(path) = &args.become_password_file {
+    } else if let Some(path) = &args.escalation.become_password_file {
         escalation = Some(password_from_file(path)?);
     }
     Ok((connection, escalation))

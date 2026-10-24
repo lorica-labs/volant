@@ -1,0 +1,26 @@
+[
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"changed\": false,\n    \"ping\": \"pong\"\n}\nh2 | SUCCESS => {\n    \"changed\": false,\n    \"ping\": \"pong\"\n}\nh3 | SUCCESS => {\n    \"changed\": false,\n    \"ping\": \"pong\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED | rc=0 >>\nhi\nh2 | CHANGED | rc=0 >>\nhi\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"msg\": \"bar\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"changed\": false,\n    \"ping\": \"j\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | CHANGED | rc=0 >>\nouterr\n"
+  },
+  {
+    "code": 0,
+    "stdout": "Using <golden-tmp>/ansible.cfg as config file\nh1 | SUCCESS => {\n    \"changed\": false,\n    \"ping\": \"pong\"\n}\n"
+  }
+]

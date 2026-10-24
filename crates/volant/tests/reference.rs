@@ -177,24 +177,27 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
 }
 
 /// `case.yml` of a scenario, as the generator's `scenario.py` reads it: the argv of each run,
-/// `modes`, `env`, `forks`, `needs`, `unordered` and `links`.
+/// `modes`, `env`, `forks`, `program`, `needs`, `unordered` and `links`.
 struct Case {
     runs: Vec<Vec<String>>,
     single: bool,
     env: Vec<(String, String)>,
     forks: u64,
+    /// The Volant subcommand of the program the reference ran, `ansible-playbook` unless said.
+    subcommand: &'static str,
     needs: Vec<String>,
     unordered: Vec<String>,
     links: Vec<(String, String)>,
 }
 
 /// The keys a case.yml takes.
-const KEYS: [&str; 8] = [
+const KEYS: [&str; 9] = [
     "args",
     "runs",
     "modes",
     "env",
     "forks",
+    "program",
     "needs",
     "unordered",
     "links",
@@ -318,6 +321,13 @@ impl Case {
                 .filter(|&forks| forks > 0)
                 .unwrap_or_else(|| panic!("{name}: forks is not a positive integer"))
         });
+        let subcommand = match map.get("program").map(|p| p.as_str()) {
+            None | Some(Some("ansible-playbook")) => "playbook",
+            Some(Some("ansible")) => "adhoc",
+            Some(other) => {
+                panic!("{name}: program takes ansible-playbook or ansible, not {other:?}")
+            }
+        };
         let list = |key: &str| {
             map.get(key)
                 .filter(|v| !v.is_null())
@@ -330,6 +340,7 @@ impl Case {
             single: map.contains_key("args") && modes.is_empty(),
             env,
             forks,
+            subcommand,
             needs: list("needs"),
             unordered: list("unordered"),
             links,
@@ -563,7 +574,7 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
                 let own = copy.join("ansible.cfg");
                 let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
                 command
-                    .arg("playbook")
+                    .arg(spec.subcommand)
                     .args(args)
                     .args(["--forks", &spec.forks.to_string()])
                     .current_dir(&copy)

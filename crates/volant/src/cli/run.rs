@@ -7,19 +7,16 @@ use std::sync::{Arc, Mutex};
 use anstream::ColorChoice;
 use tokio::sync::watch;
 
-use super::announce::{
-    announce, announce_callbacks, banner_before_vars_refusal, inventory_sources, module_path_dirs,
-    options_dump, version_line,
-};
+use super::adhoc::Adhoc;
+use super::announce::{announce_callbacks, banner_before_vars_refusal, options_dump, version_line};
 use super::args::PlaybookArgs;
 use super::hosts::{ListingHosts, play_hosts, rendered, resolve_limit, tag_selection};
 use super::passwords::{ask_passwords, ssh_words};
+use super::setup::{SetUp, set_up};
 use super::signals::spawn_signal_watcher;
-use crate::bridge::Bridge;
 use crate::compile::{self, Compiled};
-use crate::config::Config;
 use crate::executor::{self, Abort, RunOptions, RunState};
-use crate::inventory::{Host, Note, load_sources_with};
+use crate::inventory::Host;
 use crate::listing::{self, Listing};
 use crate::profile::{Phase, Profile, micros};
 use crate::python::{Facts, Natives};
@@ -37,6 +34,20 @@ pub fn run(args: PlaybookArgs) -> i32 {
         println!("{}", version_line());
         return 0;
     }
+    drive(&args, &Plays::Files)
+}
+
+/// Where a run's plays come from.
+pub(super) enum Plays<'a> {
+    /// The playbook files `args.playbooks` names.
+    Files,
+    /// The one play `volant adhoc` builds, shown through the `minimal` callback.
+    Adhoc(&'a Adhoc),
+}
+
+/// Runs `plays` with `args` and returns the process exit code: the runtime, the run, and what is
+/// printed after it.
+pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     // Before anything opens a descriptor: every host's link takes three of them.
     crate::transport::raise_open_file_limit();
     let choice = if args.no_color {
@@ -45,6 +56,9 @@ pub fn run(args: PlaybookArgs) -> i32 {
         ColorChoice::Auto
     };
     let mut out = Renderer::new(choice, args.verbose);
+    if let Plays::Adhoc(adhoc) = plays {
+        out.set_minimal(adhoc.module());
+    }
     crate::transport::trace::configure(args.verbose, choice);
     let runtime = match tokio::runtime::Runtime::new() {
         Ok(rt) => rt,
@@ -54,7 +68,7 @@ pub fn run(args: PlaybookArgs) -> i32 {
         }
     };
     let profile = Arc::new(Profile::default());
-    let code = match runtime.block_on(run_all(&args, &mut out, &profile)) {
+    let code = match runtime.block_on(run_all(args, plays, &mut out, &profile)) {
         Ok(code) => code,
         Err(err) => {
             match err.downcast_ref::<Refusal>() {
@@ -84,71 +98,25 @@ pub fn run(args: PlaybookArgs) -> i32 {
 #[expect(clippy::too_many_lines)]
 async fn run_all(
     args: &PlaybookArgs,
+    plays: &Plays<'_>,
     out: &mut Renderer,
     profile: &Arc<Profile>,
 ) -> anyhow::Result<i32> {
-    let config = crate::runtime::resolve::configured(Config::load()?);
-    out.set_path_on_failure(config.show_task_path_on_failure);
-    playbook::set_deprecation_warnings(config.deprecation_warnings);
-    let choice = config.color_choice(args.no_color);
-    out.set_choice(choice);
-    crate::transport::trace::configure(args.verbose, choice);
-    announce(out);
-    python::set_module_path(module_path_dirs(args));
-    let secrets = match crate::vault::load(&crate::vault::Request {
-        ask: args.ask_vault_pass,
-        password_files: args.vault_password_file.clone(),
-        ids: args.vault_id.clone(),
-        config_file: config.vault_password_file.clone(),
-        config_ids: config.vault_identity_list.clone(),
-    }) {
-        Ok(secrets) => secrets,
-        Err(err) => {
-            eprintln!("[WARNING]: {}", err.warning);
-            eprintln!("[ERROR]: {}", err.message);
-            return Ok(1);
-        }
+    let SetUp {
+        config,
+        forks,
+        sources,
+        bridge,
+        mut inventory,
+    } = match set_up(args, out)? {
+        Ok(set) => set,
+        Err(code) => return Ok(code),
     };
-    crate::vault::install(secrets);
     let show_custom_stats = config.show_custom_stats;
-    // Refused before anything is loaded, the way the reference refuses it, whether it comes
-    // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
-    // exits 2 for `-f abc` or `-f -1` (clap's own default for a bad argument), so a refused `0`
-    // through this check stays on the same code rather than inventing a second one for the same
-    // flag; a refusal never prints a `PLAY` header or a recap, so it cannot be mistaken for a
-    // failed task, which is exit 2's other meaning.
-    let forks = args.forks.unwrap_or(config.forks);
-    if forks == 0 {
-        eprintln!("ERROR! The number of processes (--forks) must be >= 1");
-        return Ok(2);
-    }
-    let sources = inventory_sources(&args.inventory, &config);
-    // One helper for the run: the inventory's collection plugins, its refreshes, and the filters.
-    let bridge = Bridge::late();
-    let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));
-    for note in &loaded.notes {
-        match note {
-            Note::Verbose(level, text) => out.verbose(*level, text),
-            Note::Warning(text) => out.warning(text, false),
-            Note::Error(text) => eprintln!("[ERROR]: {text}"),
-            Note::Deprecation(text) => playbook::print_deprecation(text),
-        }
-    }
-    if let Some(fatal) = loaded.error {
-        if fatal.code == 4 {
-            return Err(Refusal::at(4, fatal.message));
-        }
-        eprintln!("[ERROR]: {}", fatal.message);
-        return Ok(fatal.code);
-    }
-    let mut inventory = loaded.inventory;
-    // The reference checks the whole inventory, before any `--limit` and any playbook, and the
-    // implicit `localhost` is not in `all`.
-    if config.localhost_warning && inventory.resolve("all").hosts.is_empty() {
-        out.warning(
-            "provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'",
-            false,
-        );
+    if let Plays::Adhoc(_) = plays
+        && let Err(code) = super::adhoc::result_format(&config, out)
+    {
+        return Ok(code);
     }
     announce_callbacks(out);
     let dump = if out.verbose_at(4) {
@@ -167,11 +135,19 @@ async fn run_all(
     let load_extra = crate::vars::parse_extra_vars(&args.extra_vars, &std::env::current_dir()?)
         .unwrap_or_default();
     let rendering = playbook::Rendering::new(Some(Arc::clone(&bridge)), &load_extra);
-    let mut playbooks = args
-        .playbooks
-        .iter()
-        .map(|p| playbook::load_rendering(p, &rendering))
-        .collect::<anyhow::Result<Vec<_>>>()?;
+    // The file each playbook was named by; an ad hoc play is written nowhere, and its directory
+    // is the working one.
+    let files: Vec<PathBuf> = match plays {
+        Plays::Files => args.playbooks.clone(),
+        Plays::Adhoc(_) => vec![PathBuf::new()],
+    };
+    let mut playbooks = match plays {
+        Plays::Files => files
+            .iter()
+            .map(|p| playbook::load_rendering(p, &rendering))
+            .collect::<anyhow::Result<Vec<_>>>()?,
+        Plays::Adhoc(adhoc) => vec![adhoc.playbook()?],
+    };
     // `--check` and `--diff` are each play's default: its own keyword wins, and every block,
     // role, task and handler under it inherits whichever applies, as in the reference.
     for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
@@ -313,8 +289,7 @@ async fn run_all(
     //
     // A collection's module the plays name is resolved by the same helper first, and refused
     // here, by name, when its collection is not installed or serves it through an action plugin.
-    let named_dirs: Vec<PathBuf> = args
-        .playbooks
+    let named_dirs: Vec<PathBuf> = files
         .iter()
         .map(PathBuf::as_path)
         .map(playbook::base_dir)
@@ -340,20 +315,32 @@ async fn run_all(
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    let (python, helper) = python::union_and_helper(
+    let built = python::union_and_helper(
         &python_modules,
         &named,
         &reach.plugin_dirs,
         &mut |warning| {
             out.warning(&warning, false);
         },
-    )
-    .map_err(|e| {
-        Refusal::or(
-            4,
-            preflight::locate_unresolved(e, compiled.iter().flatten()),
-        )
-    })?;
+    );
+    let (python, helper) = match built {
+        Ok(built) => built,
+        Err(e) => {
+            // The reference's ad hoc run fails each host with a module nothing answers to, rather
+            // than refusing the run.
+            if let Plays::Adhoc(adhoc) = plays
+                && adhoc.is_unresolved(&e)
+                && let Some(play) = playbooks.first().and_then(|pb| pb.plays.first())
+            {
+                let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned, true)?;
+                return Ok(adhoc.fail_unresolved(&hosts, out));
+            }
+            return Err(Refusal::or(
+                4,
+                preflight::locate_unresolved(e, compiled.iter().flatten()),
+            ));
+        }
+    };
     for play in compiled.iter().flatten() {
         preflight::check_collection_actions(play).map_err(|e| Refusal::or(4, e))?;
     }
@@ -408,11 +395,12 @@ async fn run_all(
     // `host_vars`, `--extra-vars` or a `set_fact` - is refused per task, as a failure, when
     // that task resolves its escalation.
     let become_method = args
+        .escalation
         .become_method
         .clone()
         .unwrap_or(config.become_method.clone());
     let all_hosts = inventory.resolve("all").hosts;
-    let escalates = args.r#become
+    let escalates = args.escalation.r#become
         || config.r#become
         || playbooks
             .iter()
@@ -464,16 +452,18 @@ async fn run_all(
     // password, those of a host variable's passwords too, is removed when it drops.
     let _askpass = crate::askpass::install(connection_password.as_deref())?;
     let defaults = ConnectionDefaults {
-        remote_user: args.user.clone().or(config.remote_user),
-        connection: args.connection.clone(),
-        private_key: args.private_key.clone().or(config.private_key_file),
+        remote_user: args.connect.user.clone().or(config.remote_user),
+        connection: args.connect.connection.clone(),
+        private_key: args.connect.private_key.clone().or(config.private_key_file),
         host_key_checking: config.host_key_checking,
         remote_tmp: config.remote_tmp,
         connect_timeout: args
+            .connect
             .timeout
             .map_or(config.timeout, std::time::Duration::from_secs),
-        r#become: args.r#become || config.r#become,
+        r#become: args.escalation.r#become || config.r#become,
         become_user: args
+            .escalation
             .become_user
             .clone()
             .unwrap_or(config.become_user.clone()),
@@ -481,8 +471,8 @@ async fn run_all(
         become_exe: config.become_exe,
         become_flags: config.become_flags,
         become_password,
-        ssh_common_args: ssh_words("--ssh-common-args", args.ssh_common_args.as_deref())?,
-        ssh_extra_args: ssh_words("--ssh-extra-args", args.ssh_extra_args.as_deref())?,
+        ssh_common_args: ssh_words("--ssh-common-args", args.connect.ssh_common_args.as_deref())?,
+        ssh_extra_args: ssh_words("--ssh-extra-args", args.connect.ssh_extra_args.as_deref())?,
         ssh_use_tty: config.ssh_usetty,
     };
     let mut stats = Stats::default();
@@ -507,7 +497,7 @@ async fn run_all(
         step: args.step.then(Arc::default),
     };
 
-    let playbook_dir = playbook::base_dir(&args.playbooks[0]);
+    let playbook_dir = playbook::base_dir(&files[0]);
     let cwd = std::env::current_dir()?;
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &cwd)?;
     // Kept for the local-agent check below, which runs before any host has an effective view
@@ -623,7 +613,7 @@ async fn run_all(
     // busy-polls for its agent for up to 200 ms, on the runtime thread and one link at a time,
     // so a `?` returning past the shutdown would pay that for every live link in series.
     let plays: anyhow::Result<()> = async {
-        'plays: for ((pb, steps), file) in playbooks.iter().zip(&compiled).zip(&args.playbooks) {
+        'plays: for ((pb, steps), file) in playbooks.iter().zip(&compiled).zip(&files) {
             out.playbook(file, pb.plays.len(), &dump);
             for (play, compiled) in pb.plays.iter().zip(steps) {
                 if *stop_rx.borrow() {

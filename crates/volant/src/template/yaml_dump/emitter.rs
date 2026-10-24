@@ -6,6 +6,9 @@ use minijinja::{Error, ErrorKind, Value};
 
 use super::scalar::{analyze, is_break, is_collection, is_printable, scalar_text};
 
+mod block;
+use block::lossy;
+
 pub(super) fn dump(
     value: &Value,
     indent: Option<usize>,
@@ -34,6 +37,20 @@ pub(super) fn dump(
     };
     let sort_keys = kwargs.get::<Option<bool>>("sort_keys")?.unwrap_or(true);
     kwargs.assert_all_used()?;
+    Ok(emit(value, indent, width, flow_style, sort_keys, false))
+}
+
+/// The dump of `value` with the settings read. `literal` is the callbacks' dumper
+/// (`_AnsibleCallbackDumper` with `lossy`): a string holding a line break is written as a literal
+/// block, cleaned the way `_munge_data_for_lossy_yaml` cleans it.
+pub(super) fn emit(
+    value: &Value,
+    indent: usize,
+    width: Option<usize>,
+    flow_style: Option<bool>,
+    sort_keys: bool,
+    literal: bool,
+) -> String {
     // PyYAML's own bounds on the two settings: anything outside them is its default.
     let best_indent = if (2..10).contains(&indent) { indent } else { 2 };
     let best_width = width.filter(|w| *w > best_indent * 2).unwrap_or(80);
@@ -49,18 +66,20 @@ pub(super) fn dump(
         best_width,
         flow_style,
         sort_keys,
+        literal,
     };
     // The value itself, not its JSON form: JSON has no `inf` or `nan`, and no integer keys.
     e.node(value, false, false);
     // Document end. libyaml writes no `...` after an open-ended plain root scalar.
     e.write_indent();
-    Ok(e.out)
+    e.out
 }
 
 enum Style {
     Plain,
     Single,
     Double,
+    Literal,
 }
 
 struct Emitter {
@@ -75,6 +94,7 @@ struct Emitter {
     best_width: usize,
     flow_style: Option<bool>,
     sort_keys: bool,
+    literal: bool,
 }
 
 impl Emitter {
@@ -232,7 +252,14 @@ impl Emitter {
     }
 
     fn scalar(&mut self, v: &Value, simple_key: bool) {
-        let (text, implicit) = scalar_text(v);
+        let (mut text, implicit) = scalar_text(v);
+        // `_should_use_block`: Python's line breaks, which leave out `\r`.
+        let block = self.literal
+            && v.kind() == ValueKind::String
+            && text.contains(['\n', '\u{85}', '\u{2028}', '\u{2029}']);
+        if block {
+            text = lossy(&text);
+        }
         let chars: Vec<char> = text.chars().collect();
         let a = analyze(&chars);
         let plain_here = if self.flow_level > 0 {
@@ -240,7 +267,15 @@ impl Emitter {
         } else {
             a.allow_block_plain
         };
-        let style = if implicit && !(simple_key && (a.empty || a.multiline)) && plain_here {
+        // libyaml's `yaml_emitter_select_scalar_style`: a block asked for where none is allowed is
+        // double-quoted.
+        let style = if block {
+            if a.allow_block && self.flow_level == 0 && !simple_key {
+                Style::Literal
+            } else {
+                Style::Double
+            }
+        } else if implicit && !(simple_key && (a.empty || a.multiline)) && plain_here {
             Style::Plain
         } else if a.allow_single_quoted && !(simple_key && a.multiline) {
             Style::Single
@@ -253,6 +288,7 @@ impl Emitter {
             Style::Plain => self.write_plain(&chars, split),
             Style::Single => self.write_single_quoted(&chars, split),
             Style::Double => self.write_double_quoted(&chars, split),
+            Style::Literal => self.write_literal(&chars),
         }
         self.pop_indent();
     }

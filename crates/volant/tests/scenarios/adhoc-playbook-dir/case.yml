@@ -1,0 +1,10 @@
+# `--playbook-dir` is where `group_vars/`, `host_vars/` and `playbook_dir` come from, in place of
+# the working directory.
+program: ansible
+needs: [ansible-core]
+stderr: true
+runs:
+  - args: [all, -i, "localhost,", -c, local, -m, debug, -a, var=x]
+  - args: [all, -i, "localhost,", -c, local, -m, debug, -a, var=x, --playbook-dir, base]
+  - args: [all, -i, "localhost,", -c, local, -m, debug, -a, var=y, --playbook-dir, base]
+  - args: [all, -i, "localhost,", -c, local, -m, debug, -a, var=playbook_dir, --playbook-dir, base]

@@ -61,6 +61,13 @@ pub(super) fn set_up(
     // failed task, which is exit 2's other meaning.
     let forks = args.forks.unwrap_or(config.forks);
     if forks == 0 {
+        // The ad hoc command's parser refuses it, whatever supplied the number.
+        if args.adhoc_pattern.is_some() {
+            return Ok(Err(super::adhoc_usage::refuse(
+                "The number of processes (--forks) must be >= 1",
+                false,
+            )));
+        }
         eprintln!("ERROR! The number of processes (--forks) must be >= 1");
         return Ok(Err(2));
     }
@@ -85,7 +92,12 @@ pub(super) fn set_up(
     let inventory = loaded.inventory;
     // The reference checks the whole inventory, before any `--limit` and any playbook, and the
     // implicit `localhost` is not in `all`.
-    if config.localhost_warning && inventory.resolve("all").hosts.is_empty() {
+    // The ad hoc command skips it for the pattern that names the implicit localhost.
+    let names_localhost = args
+        .adhoc_pattern
+        .as_deref()
+        .is_some_and(|pattern| ["127.0.0.1", "localhost", "::1"].contains(&pattern));
+    if config.localhost_warning && !names_localhost && inventory.resolve("all").hosts.is_empty() {
         out.warning(
             "provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'",
             false,

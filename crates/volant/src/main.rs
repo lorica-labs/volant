@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
 use volant::cli::{
-    AdhocArgs, InventoryArgs, PlaybookArgs, RuntimeCommand, ShimsCommand, VaultArgs,
+    AdhocArgs, DocArgs, InventoryArgs, PlaybookArgs, RuntimeCommand, ShimsCommand, VaultArgs,
 };
 
 /// Fast engine for Ansible playbooks.
@@ -18,6 +18,8 @@ enum Command {
     Playbook(Box<PlaybookArgs>),
     /// Run one module against the hosts of a pattern, with the arguments of ansible.
     Adhoc(Box<AdhocArgs>),
+    /// Browse plugin documentation, with the arguments of ansible-doc.
+    Doc(DocArgs),
     /// Print an inventory as JSON, with the arguments of ansible-inventory.
     Inventory(InventoryArgs),
     /// Install, show or remove the Python runtime Volant manages for ansible-core.
@@ -53,6 +55,11 @@ fn parse() -> Cli {
                 .try_get_matches_from(args)
                 .and_then(|matches| Cli::from_arg_matches(&matches));
             return parsed.unwrap_or_else(|err| {
+                if sub == "adhoc"
+                    && let Some(code) = volant::cli::adhoc_usage_error(&err)
+                {
+                    std::process::exit(code);
+                }
                 // clap names a subcommand's usage after its parent, `ansible-playbook playbook`.
                 let text = err
                     .render()
@@ -67,7 +74,14 @@ fn parse() -> Cli {
             });
         }
     }
-    Cli::parse()
+    Cli::try_parse().unwrap_or_else(|err| {
+        if std::env::args_os().nth(1).is_some_and(|arg| arg == "adhoc")
+            && let Some(code) = volant::cli::adhoc_usage_error(&err)
+        {
+            std::process::exit(code);
+        }
+        err.exit()
+    })
 }
 
 fn main() {
@@ -75,6 +89,7 @@ fn main() {
     let code = match parse().command {
         Command::Playbook(args) => volant::cli::run(*args),
         Command::Adhoc(args) => volant::cli::adhoc(*args),
+        Command::Doc(args) => volant::cli::doc(args),
         Command::Inventory(args) => volant::cli::inventory(args),
         Command::Runtime(command) => volant::cli::runtime(command),
         Command::Shims(command) => volant::cli::shims(command),

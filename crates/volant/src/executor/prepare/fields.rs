@@ -45,17 +45,21 @@ impl Fields {
 /// The `when`, the arguments and the per-item keywords of one item, against its variables.
 ///
 /// `loop_error` is a loop error kept until the task's `when` has decided: a conditional that
-/// cannot be evaluated yields to it, and it is raised once the task would run.
+/// cannot be evaluated yields to it, and it is raised once the task would run. `at` says where
+/// the profile notes the texts this item renders.
 pub(super) fn render_fields(
     task: &PlayTask,
     plan: &PlayPlan,
     templar: &Templar,
     vars: &HostVars,
+    at: &Noting<'_>,
     loop_error: &mut Option<TemplateError>,
     warnings: &mut Vec<String>,
 ) -> Result<Fields, TemplateError> {
     let mut skipped = None;
     for condition in &task.when {
+        crate::profile::count(crate::profile::Counter::RenderWhen, 1);
+        at.note(templar, condition, true);
         // A conditional that cannot be evaluated yields to a kept loop error, as there.
         let holds = templar
             .condition(condition, vars)
@@ -81,6 +85,12 @@ pub(super) fn render_fields(
     let (args, args_untrusted) = if skipped.is_some() {
         (Map::new(), BTreeSet::new())
     } else {
+        crate::profile::count(crate::profile::Counter::RenderArgs, 1);
+        if crate::profile::tracks_repeats() {
+            for value in task.args.values() {
+                note_texts(at, templar, value);
+            }
+        }
         render_args(task, plan, templar, vars)?
     };
     // Per item, against the item's own variables, and never for an item a `when` left out:
@@ -113,6 +123,47 @@ pub(super) fn render_fields(
         diff,
         environment,
     })
+}
+
+/// Where the profile notes what one item renders.
+pub(super) struct Noting<'a> {
+    /// This item's prepare, numbered across the run: see [`crate::profile::next_prepare`].
+    pub(super) prepare: u64,
+    pub(super) host: &'a str,
+    /// A loop item after the first.
+    pub(super) later_item: bool,
+    /// The names an item binds: a text that reads none of them renders alike for every item.
+    pub(super) loop_names: [&'a str; 3],
+}
+
+impl Noting<'_> {
+    /// Notes that this item renders `text`, a bare condition when `condition`.
+    fn note(&self, templar: &Templar, text: &str, condition: bool) {
+        if !crate::profile::tracks_repeats() {
+            return;
+        }
+        crate::profile::note_render(self.prepare, self.host, text);
+        if self.later_item {
+            let source = if condition && !Templar::is_template(text) {
+                std::borrow::Cow::Owned(format!("{{{{ {text} }}}}"))
+            } else {
+                std::borrow::Cow::Borrowed(text)
+            };
+            if !templar.may_read(&source, &self.loop_names) {
+                crate::profile::note_invariant(text);
+            }
+        }
+    }
+}
+
+/// Notes every template in `value` as a text this item renders, for the profile.
+fn note_texts(at: &Noting<'_>, templar: &Templar, value: &Value) {
+    match value {
+        Value::String(text) if Templar::is_template(text) => at.note(templar, text, false),
+        Value::Array(items) => items.iter().for_each(|item| note_texts(at, templar, item)),
+        Value::Object(map) => map.values().for_each(|item| note_texts(at, templar, item)),
+        _ => {}
+    }
 }
 
 /// The arguments of one item, rendered argument by argument rather than as one value, because a

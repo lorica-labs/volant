@@ -196,7 +196,7 @@ pub(super) fn start_from(
 
 /// The first candidate interpreter that has ansible-core; else, when `install` and the mode allow
 /// it, Volant's runtime installed now; else the refusal naming what was tried.
-pub(super) fn find_python(
+pub(crate) fn find_python(
     explicit: Option<&str>,
     virtual_env: Option<&str>,
     install: bool,

@@ -1,5 +1,5 @@
 ---
-sourceHash: c35040af6ced
+sourceHash: 1fb730d8eaca
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -10,6 +10,7 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
+volant doc [ARGS...]
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
@@ -17,11 +18,11 @@ volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-Jeder andere Befehl hat eine eigene Seite: [`volant adhoc`](/de/docs/reference/cli/adhoc/), [`volant inventory`](/de/docs/reference/cli/inventory/), [`volant runtime`](/de/docs/reference/cli/runtime/), [`volant shims`](/de/docs/reference/cli/shims/), [`volant vault`](/de/docs/reference/cli/vault/). Diese Seite behandelt `volant playbook`.
+Jeder andere Befehl hat eine eigene Seite: [`volant adhoc`](/de/docs/reference/cli/adhoc/), [`volant doc`](/de/docs/reference/cli/doc/), [`volant inventory`](/de/docs/reference/cli/inventory/), [`volant runtime`](/de/docs/reference/cli/runtime/), [`volant shims`](/de/docs/reference/cli/shims/), [`volant vault`](/de/docs/reference/cli/vault/). Diese Seite behandelt `volant playbook`.
 
 `volant playbook` nimmt dieselben Optionen wie `ansible-playbook`, soweit sie dort existieren. `volant-playbook` ist dasselbe Programm unter einem Namen, der dem vertrauten ähnelt. Playbooks, die zusammen angegeben werden, laufen der Reihe nach, und jedes gibt seinen eigenen Recap aus.
 
-Unter Linux und macOS richtet sich die `volant`-Binärdatei auch nach dem Namen, unter dem sie gestartet wurde (dem Dateinamen von `argv[0]`). Als `ansible-playbook`, `ansible-vault` oder `ansible-inventory` gestartet, über einen symbolischen oder einen harten Link, verhält sie sich wie `volant playbook`, `volant vault` oder `volant inventory`, mit denselben Argumenten, derselben Ausgabe und denselben Exit-Codes. Als `ansible` gestartet, verhält sie sich wie `volant adhoc`. Ein Aufruffehler endet mit 2 und nennt das Programm unter dem gestarteten Namen. Jeder andere Name behält das übliche `volant`-Verhalten.
+Unter Linux und macOS richtet sich die `volant`-Binärdatei auch nach dem Namen, unter dem sie gestartet wurde (dem Dateinamen von `argv[0]`). Als `ansible-playbook`, `ansible-vault`, `ansible-doc` oder `ansible-inventory` gestartet, über einen symbolischen oder einen harten Link, verhält sie sich wie `volant playbook`, `volant vault`, `volant doc` oder `volant inventory`, mit denselben Argumenten, derselben Ausgabe und denselben Exit-Codes. Als `ansible` gestartet, verhält sie sich wie `volant adhoc`. Ein Aufruffehler endet mit 2 und nennt das Programm unter dem gestarteten Namen. Jeder andere Name behält das übliche `volant`-Verhalten.
 
 Hat eine Option einen Schlüssel in der `ansible.cfg` oder eine Umgebungsvariable, nennt der Eintrag sie. Die Option gewinnt gegen beide; [Konfiguration](/de/docs/reference/configuration/) erklärt die Reihenfolge.
 

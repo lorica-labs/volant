@@ -1,5 +1,5 @@
 ---
-sourceHash: c35040af6ced
+sourceHash: 1fb730d8eaca
 title: Ligne de commande
 description: Chaque commande et option que Volant accepte, regroupées selon ce qu'elles changent, et les options d'ansible-playbook qu'il n'a pas encore.
 ---
@@ -10,6 +10,7 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
+volant doc [ARGS...]
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
@@ -17,11 +18,11 @@ volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-Chaque autre commande a sa propre page : [`volant adhoc`](/fr/docs/reference/cli/adhoc/), [`volant inventory`](/fr/docs/reference/cli/inventory/), [`volant runtime`](/fr/docs/reference/cli/runtime/), [`volant shims`](/fr/docs/reference/cli/shims/), [`volant vault`](/fr/docs/reference/cli/vault/). Cette page décrit `volant playbook`.
+Chaque autre commande a sa propre page : [`volant adhoc`](/fr/docs/reference/cli/adhoc/), [`volant doc`](/fr/docs/reference/cli/doc/), [`volant inventory`](/fr/docs/reference/cli/inventory/), [`volant runtime`](/fr/docs/reference/cli/runtime/), [`volant shims`](/fr/docs/reference/cli/shims/), [`volant vault`](/fr/docs/reference/cli/vault/). Cette page décrit `volant playbook`.
 
 `volant playbook` accepte les mêmes options qu'`ansible-playbook`, pour celles qui existent. `volant-playbook` est le même programme sous un nom qui ressemble à celui que vous connaissez. Les playbooks donnés ensemble s'exécutent dans l'ordre, et chacun affiche son propre récapitulatif.
 
-Sous Linux et macOS, le binaire `volant` choisit aussi son comportement d'après le nom sous lequel il a été lancé (le nom de fichier de `argv[0]`). Lancé comme `ansible-playbook`, `ansible-vault` ou `ansible-inventory`, par un lien symbolique ou un lien physique, il se comporte comme `volant playbook`, `volant vault` ou `volant inventory`, avec les mêmes arguments, la même sortie et les mêmes codes de sortie. Lancé comme `ansible`, il se comporte comme `volant adhoc`. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé. Tout autre nom garde le comportement habituel de `volant`.
+Sous Linux et macOS, le binaire `volant` choisit aussi son comportement d'après le nom sous lequel il a été lancé (le nom de fichier de `argv[0]`). Lancé comme `ansible-playbook`, `ansible-vault`, `ansible-doc` ou `ansible-inventory`, par un lien symbolique ou un lien physique, il se comporte comme `volant playbook`, `volant vault`, `volant doc` ou `volant inventory`, avec les mêmes arguments, la même sortie et les mêmes codes de sortie. Lancé comme `ansible`, il se comporte comme `volant adhoc`. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé. Tout autre nom garde le comportement habituel de `volant`.
 
 Quand une option a une clé d'`ansible.cfg` ou une variable d'environnement, l'entrée la nomme. L'option l'emporte sur les deux ; [Configuration](/fr/docs/reference/configuration/) explique l'ordre.
 

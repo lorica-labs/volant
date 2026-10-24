@@ -169,6 +169,133 @@ fn the_profile_stays_off_stdout_and_lands_in_its_file() {
     );
 }
 
+/// Runs `playbook` over the local hosts `hosts` with `forks` and gives the profile file's last
+/// line, the times and the byte counts of answers that carry times left out.
+#[cfg(unix)]
+fn counters_of(hosts: &[&str], playbook: &str, forks: &str) -> serde_json::Value {
+    let dir_guard = scratch();
+    let dir = dir_guard.path().to_path_buf();
+    std::fs::create_dir_all(&dir).unwrap();
+    let inventory = dir.join("hosts");
+    let lines: Vec<String> = hosts
+        .iter()
+        .map(|h| format!("{h} ansible_connection=local\n"))
+        .collect();
+    std::fs::write(&inventory, lines.concat()).unwrap();
+    let site = dir.join("site.yml");
+    std::fs::write(&site, playbook).unwrap();
+    let json = dir.join("profile.jsonl");
+    // The workspace's binaries, the agent's included, are built beside this test's `deps/`.
+    let exe = std::env::current_exe().unwrap();
+    let agents = exe.parent().and_then(std::path::Path::parent).unwrap();
+    unsafe {
+        std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+        std::env::set_var("VOLANT_PROFILE_JSON", &json);
+        std::env::set_var("VOLANT_AGENT_DIR", agents);
+    }
+    let (inventory, site) = (inventory.display().to_string(), site.display().to_string());
+    let args = ["volant", "--no-color", "-i", &inventory, "-f", forks, &site];
+    assert_eq!(run(PlaybookArgs::try_parse_from(args).unwrap()), 0);
+    let text = std::fs::read_to_string(&json).unwrap();
+    let mut last: serde_json::Value = serde_json::from_str(text.lines().last().unwrap()).unwrap();
+    for timed in ["bridge_nanos", "wire_out_bytes", "wire_in_bytes"] {
+        last["counters"].as_object_mut().unwrap().remove(timed);
+    }
+    last
+}
+
+/// The counters end the profile file and do not depend on the forks; a condition written twice
+/// is one repeat per host; without a profile nothing is kept and nothing shows.
+#[cfg(unix)]
+#[test]
+fn the_counters_end_the_profile_and_ignore_the_forks() {
+    let hosts = ["h1", "h2", "h3"];
+    let playbook = "- hosts: all
+  gather_facts: false
+  vars: {x: 1}
+  tasks:
+    - debug: {msg: '{{ x }}'}
+      when: [x == 1, x == 1]
+";
+    let one = counters_of(&hosts, playbook, "1");
+    assert_eq!(one["counters"]["render_when"], 6, "{one}");
+    assert_eq!(
+        one["repeats"],
+        serde_json::json!({"total": 3, "top": [["x == 1", 3]]}),
+        "{one}"
+    );
+    assert_eq!(counters_of(&hosts, playbook, "5"), one);
+
+    let dir_guard = scratch();
+    let site = dir_guard.path().join("site.yml");
+    std::fs::write(&site, playbook).unwrap();
+    unsafe {
+        std::env::remove_var("VOLANT_PROFILE_JSON");
+    }
+    let site = site.display().to_string();
+    let args = PlaybookArgs::try_parse_from(["volant", "--no-color", site.as_str()]).unwrap();
+    let plain = stdout_of(|| assert_eq!(run(args), 0));
+    assert!(
+        plain.contains("PLAY RECAP") && !plain.contains("counters"),
+        "{plain}"
+    );
+    assert_eq!(crate::profile::repeats(20), (0, Vec::new()));
+    assert_eq!(crate::profile::loop_invariant(20), (0, Vec::new()));
+}
+
+/// A repeat is a text rendered again inside one item; a loop-invariant render is a later item's
+/// text that never reads the item.
+#[cfg(unix)]
+#[rstest::rstest]
+#[case::when_ignores_the_item("loop: [1, 2, 3, 4, 5]\n      when: x == 1", 0, 4)]
+#[case::when_reads_the_item("loop: [1, 2, 3, 4, 5]\n      when: item > 0", 0, 0)]
+#[case::renamed_loop_var(
+    "loop: [1, 2, 3]\n      loop_control: {loop_var: n}\n      when: n > 0",
+    0,
+    0
+)]
+fn repeats_and_loop_invariants_are_told_apart(
+    #[case] keywords: &str,
+    #[case] repeats: u64,
+    #[case] invariant: u64,
+) {
+    let playbook = format!(
+        "- hosts: all
+  gather_facts: false
+  vars: {{x: 1}}
+  tasks:
+    - debug: {{msg: hi}}
+      {keywords}
+"
+    );
+    let last = counters_of(&["h1"], &playbook, "1");
+    assert_eq!(last["repeats"]["total"], repeats, "{last}");
+    assert_eq!(last["loop_invariant"]["total"], invariant, "{last}");
+}
+
+/// One template twice in one task is one repeat; the same first step in two plays is none.
+#[cfg(unix)]
+#[test]
+fn a_repeat_stays_inside_one_task() {
+    let play = "- hosts: all
+  gather_facts: false
+  vars: {x: 1}
+  tasks:
+    - set_fact: {a: '{{ x }}', b: '{{ x }}'}
+";
+    let last = counters_of(&["h1"], play, "1");
+    assert_eq!(last["repeats"]["total"], 1, "{last}");
+    let plays = "- hosts: all
+  gather_facts: false
+  vars: {x: 1}
+  tasks:
+    - debug: {msg: '{{ x }}'}
+"
+    .repeat(2);
+    let last = counters_of(&["h1"], &plays, "1");
+    assert_eq!(last["repeats"]["total"], 0, "{last}");
+}
+
 /// A password file gives its whole text, surrounding whitespace removed; a missing or
 /// empty one is refused in the reference's words.
 #[rstest::rstest]

@@ -1802,3 +1802,42 @@ fn program(dir: &Path, name: &str, source: &str) -> PathBuf {
     std::fs::set_permissions(&at, std::fs::Permissions::from_mode(0o755)).unwrap();
     at
 }
+
+/// A working directory the server cannot search, the ssh user's home under an unprivileged
+/// `become_user`, leaves the module cold instead of stopping the server after its first task:
+/// the next tasks are children of the same server.
+#[test]
+fn an_unsearchable_working_directory_keeps_the_server() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let blob = runpy_blob(&[]);
+    std::fs::write(
+        blob.path().join("ansible/modules/probe.py"),
+        "import json, os\nprint(json.dumps({\"pid\": os.getpid()}))\n",
+    )
+    .unwrap();
+    let home = scratch();
+    let before = std::env::current_dir().unwrap();
+    std::env::set_current_dir(home.path()).unwrap();
+    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o000)).unwrap();
+    // Root searches any directory: there is nothing to prove under it.
+    let searchable = std::fs::read_dir(".").is_ok();
+    let mut server = (!searchable).then(|| Server::start(HOST_PYTHON, blob.path(), &|| false));
+    let results: Vec<TaskResult> = match server.as_mut() {
+        Some(Ok(server)) => (0..3)
+            .map(|_| call(server, "ansible.modules.probe"))
+            .collect(),
+        _ => Vec::new(),
+    };
+    std::fs::set_permissions(home.path(), std::fs::Permissions::from_mode(0o700)).unwrap();
+    std::env::set_current_dir(before).unwrap();
+    if searchable {
+        return;
+    }
+    let mut server = server.unwrap().unwrap();
+    assert_eq!(results.len(), 3);
+    for result in &results {
+        assert!(!result.failed(), "{:?}", result.0);
+    }
+    assert!(server.alive(), "the server stopped after a task");
+}

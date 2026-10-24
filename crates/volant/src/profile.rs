@@ -1,7 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Where a run's time went. `--profile` prints it on stderr once the run is over, and
 //! `VOLANT_PROFILE_JSON=<file>` writes it one JSON object per line: the natives each host's agent
-//! reported first, then the phases, then one line per task an agent ran.
+//! reported first, then the phases, then one line per task an agent ran, then the counters.
+//!
+//! The counters are bumped from the template engine and the bridge, which never see the run's
+//! [`Profile`], so they live in statics. They always count, a relaxed add each; what costs more,
+//! the per-plugin bridge table and the repeated renders, is kept only once [`track_repeats`] is on.
 
 use std::collections::BTreeMap;
 use std::fmt::Write as _;
@@ -12,6 +16,13 @@ use std::time::Instant;
 
 use serde_json::{Value, json};
 use volant_protocol::{ExecPath, Ran};
+
+mod counters;
+pub use counters::{
+    Counter, bridge_call, count, counters, loop_invariant, next_prepare, note_invariant,
+    note_render, repeats, track_repeats, tracks_repeats,
+};
+use counters::{TOP_REPEATS, bridge_table, clipped};
 
 /// A stretch of the run the controller times.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord)]
@@ -87,6 +98,11 @@ struct Inner {
 #[derive(Debug, Default)]
 pub struct Profile(Mutex<Inner>);
 
+/// The file `VOLANT_PROFILE_JSON` names, when it names one.
+pub fn json_path() -> Option<std::ffi::OsString> {
+    std::env::var_os("VOLANT_PROFILE_JSON").filter(|p| !p.is_empty())
+}
+
 /// Microseconds since `start`.
 pub fn micros(start: Instant) -> u64 {
     u64::try_from(start.elapsed().as_micros()).unwrap_or(u64::MAX)
@@ -111,6 +127,12 @@ fn shown(value: Option<u64>) -> String {
 }
 
 impl Profile {
+    /// A run's profile, its counting started over: see [`track_repeats`].
+    pub fn started(track: bool) -> Self {
+        track_repeats(track);
+        Self::default()
+    }
+
     fn lock(&self) -> std::sync::MutexGuard<'_, Inner> {
         self.0
             .lock()
@@ -217,12 +239,35 @@ impl Profile {
             .map(|(path, n)| format!("{path}={n}"))
             .collect();
         let _ = writeln!(out, "tasks by path: {}", counts.join(" "));
+        let _ = writeln!(out, "counters");
+        for (name, value) in counters() {
+            let _ = writeln!(out, "{name:<24} {value:>14}");
+        }
+        let _ = writeln!(
+            out,
+            "{:<24} {:>14} {:>14}",
+            "bridge plugin", "calls", "nanos"
+        );
+        for (name, (calls, nanos)) in bridge_table() {
+            let _ = writeln!(out, "{name:<24} {calls:>14} {nanos:>14}");
+        }
+        for (title, (total, top)) in [
+            ("repeated renders", repeats(TOP_REPEATS)),
+            ("loop-invariant renders", loop_invariant(TOP_REPEATS)),
+        ] {
+            let _ = writeln!(out, "{title}: {total}");
+            for (text, n) in top {
+                let _ = writeln!(out, "{n:>8}  {}", clipped(&text));
+            }
+        }
         out
     }
 
     /// The JSON lines `VOLANT_PROFILE_JSON` names: `{"natives": {host: [...]}}` first, then
     /// `{"facts": ...}` once the run has decided it, then one
-    /// `{"phase", "host", "micros"}` per phase and host, then one [`TaskRecord`] per task.
+    /// `{"phase", "host", "micros"}` per phase and host, then one [`TaskRecord`] per task, then
+    /// `{"counters", "bridge": {name: {"calls", "nanos"}}, "repeats", "loop_invariant"}`, the last two
+    /// `{"total", "top": [[text, n], ...]}`.
     pub fn write_json(&self, path: &Path) -> std::io::Result<()> {
         let inner = self.lock();
         let mut out = std::io::BufWriter::new(std::fs::File::create(path)?);
@@ -250,6 +295,26 @@ impl Profile {
             line.insert("prepare_micros".into(), json!(record.prepare_micros));
             writeln!(out, "{}", Value::Object(line))?;
         }
+        let counted: serde_json::Map<String, Value> = counters()
+            .into_iter()
+            .map(|(name, value)| (name.to_string(), json!(value)))
+            .collect();
+        let bridge: serde_json::Map<String, Value> = bridge_table()
+            .into_iter()
+            .map(|(name, (calls, nanos))| (name, json!({ "calls": calls, "nanos": nanos })))
+            .collect();
+        let (total, top) = repeats(TOP_REPEATS);
+        let (invariant, invariant_top) = loop_invariant(TOP_REPEATS);
+        writeln!(
+            out,
+            "{}",
+            json!({
+                "counters": counted,
+                "bridge": bridge,
+                "repeats": { "total": total, "top": top },
+                "loop_invariant": { "total": invariant, "top": invariant_top },
+            })
+        )?;
         out.flush()
     }
 }

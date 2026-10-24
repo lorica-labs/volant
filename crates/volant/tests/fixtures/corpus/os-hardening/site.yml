@@ -1,0 +1,5 @@
+# devsec.hardening's os_hardening role with its defaults. Installed by `just corpus`.
+- hosts: corpus
+  become: true
+  roles:
+    - devsec.hardening.os_hardening

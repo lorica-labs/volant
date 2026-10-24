@@ -1,0 +1,15 @@
+# nginx on the [web] host, then haproxy on the [lb] host in front of it on *:8081.
+- hosts: web
+  become: true
+  roles:
+    - geerlingguy.nginx
+
+- hosts: lb
+  become: true
+  vars:
+    haproxy_frontend_port: 8081
+    haproxy_backend_servers:
+      - name: web1
+        address: "{{ hostvars[groups.web[0]].ansible_default_ipv4.address }}:80"
+  roles:
+    - geerlingguy.haproxy

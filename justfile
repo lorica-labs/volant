@@ -708,6 +708,7 @@ corpus name="" runs="3": _corpus-image
     reference_version="$("$core/ansible-playbook" --version | head -1)"
 
     err=""
+    local_line="localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3"
     fail() { err="$1"; return 1; }
     field() { "$py" -c 'import json,sys; v = json.load(open(sys.argv[1])).get(sys.argv[2]); print("" if v is None else v)' "$dir/entry.json" "$1"; }
     first_error() { { grep -h -m1 -E '^(fatal:|\[ERROR\]|ERROR)' "$@" 2>/dev/null || tail -qn1 "$@" 2>/dev/null; } | head -n1 | cut -c1-300; }
@@ -763,6 +764,7 @@ corpus name="" runs="3": _corpus-image
     start_nodes() {
       local engine="$1" count="$2" net="volant-corpus-$stamp-$1" i c port ok
       local lines=()
+      if [ "$where" = local ]; then write_ini "$dir/$engine.ini" "$local_line"; return 0; fi
       docker network create "$net" > /dev/null || fail "docker network create $net failed" || return 1
       for i in $(seq 1 "$count"); do
         c="volant-corpus-$stamp-$engine-node$i"
@@ -819,9 +821,10 @@ corpus name="" runs="3": _corpus-image
     }
 
     converged() {
-      [ -n "${VOLANT_TARGET_HOST:-}" ] || fail "VOLANT_TARGET_HOST is not set" || return 1
+      [ "$where" = local ] || [ -n "${VOLANT_TARGET_HOST:-}" ] || fail "VOLANT_TARGET_HOST is not set" || return 1
       local lines=("$VOLANT_TARGET_HOST ansible_host=$VOLANT_TARGET_HOST ansible_python_interpreter=/usr/bin/python3") i engine status=0
-      if [ "$hosts" -gt 1 ]; then
+      [ "$where" != local ] || lines=("$local_line")
+      if [ "$where" = local ]; then :; elif [ "$hosts" -gt 1 ]; then
         [ -n "${VOLANT_SECOND_HOST:-}" ] || fail "VOLANT_SECOND_HOST is not set" || return 1
         lines+=("$VOLANT_SECOND_HOST ansible_host=$VOLANT_SECOND_HOST ansible_python_interpreter=/usr/bin/python3")
       fi
@@ -865,8 +868,9 @@ corpus name="" runs="3": _corpus-image
       case "$where" in container|both|local) ;; *) fail "where must be container, both or local, got '$where'" || return 1 ;; esac
       "$py" -c '
     import json, sys
-    e = json.load(open(sys.argv[1])); s = e["source"]
-    if "galaxy_role" in s: print("role", s["galaxy_role"], s["version"], sep="\t")
+    e = json.load(open(sys.argv[1])); s = e.get("source") or {}
+    if not s: pass
+    elif "galaxy_role" in s: print("role", s["galaxy_role"], s["version"], sep="\t")
     elif "galaxy_collection" in s: print("collection", s["galaxy_collection"], s["version"], sep="\t")
     elif "git" in s: print("git", s["git"], s["sha"], sep="\t")
     else: sys.exit("source names none of galaxy_role, galaxy_collection, git")
@@ -879,14 +883,14 @@ corpus name="" runs="3": _corpus-image
       playbook="$(field playbook)"
       case "$playbook" in repo:*) playbook="$dir/src/repo/${playbook#repo:}" ;; *) playbook="$fixtures/$playbook" ;; esac
       [ -f "$playbook" ] || fail "playbook $playbook not found" || return 1
-      export ANSIBLE_ROLES_PATH="$dir/src/roles" ANSIBLE_COLLECTIONS_PATH="$dir/src/collections"
+      export CORPUS_DIR="$dir" ANSIBLE_ROLES_PATH="$dir/src/roles" ANSIBLE_COLLECTIONS_PATH="$dir/src/collections"
       generate="$(field generate)"
       if [ -n "$generate" ]; then (cd "$dir" && bash -c "$generate") > "$dir/generate.log" 2>&1 || fail "generate failed: $(first_error "$dir/generate.log")" || return 1; fi
       rm -f "$dir/key" "$dir/key.pub"
       ssh-keygen -q -t ed25519 -N '' -f "$dir/key" || fail "ssh-keygen failed" || return 1
       engine_passes reference || return 1
       engine_passes volant || return 1
-      if [ "$where" = both ]; then converged || return 1; fi
+      if [ "$where" != container ]; then converged || return 1; fi
     }
 
     write_result() {
@@ -899,10 +903,10 @@ corpus name="" runs="3": _corpus-image
             k, v = line.split(); t[k].append(float(v))
     except FileNotFoundError:
         pass
-    def one(k): return (t.get(k) or [None])[0]
+    def one(k): return (t.get(k) or [None])[-1]
     def pair(p): return {"reference_s": one("reference." + p), "volant_s": one("volant." + p)}
     def median(v): v = sorted(v); n = len(v); return v[n // 2] if n % 2 else (v[n // 2 - 1] + v[n // 2]) / 2
-    def timed(engine): return [x[0] for k, x in sorted(t.items()) if k.startswith(engine + ".converged-") and not k.endswith("warmup")]
+    def timed(engine): return [x[-1] for k, x in sorted(t.items()) if k.startswith(engine + ".converged-") and not k.endswith("warmup")]
     ref, vol = timed("reference"), timed("volant")
     conv = None
     if ref and vol and status != "error":
@@ -928,6 +932,34 @@ corpus name="" runs="3": _corpus-image
       esac
     done
     exit $exit_code
+
+# Write target/corpus/report.md from every result.json: one row per entry with its status (a
+# skipped entry shows its reason, or links the issue), the first pass of each engine, the converged
+# medians, their ratio and the number of lines in body-diff.txt.
+corpus-report:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    root="$PWD/target/corpus"
+    "$(uv tool dir)/ansible-core/bin/python" -c '
+    import glob, json, os, re, sys
+    root = sys.argv[1]
+    def s(v): return "-" if v is None else "%.1f" % v
+    rows = ["| entry | status | first ref / Volant (s) | converged median ref / Volant (s) | ratio | body diff lines |", "|---|---|---|---|---|---|"]
+    for path in sorted(glob.glob(root + "/*/result.json")):
+        r = json.load(open(path)); d = os.path.dirname(path)
+        status = r["status"]
+        if r.get("error"):
+            e = r["error"]
+            link = "[%s](%s)" % (status, e) if re.match(r"https://\S+$", e) else "%s: %s" % (status, e.replace("|", "/"))
+            status = link
+        c = r.get("converged") or {}
+        body = "-"
+        if os.path.exists(d + "/body-diff.txt"): body = str(len(open(d + "/body-diff.txt").read().splitlines()))
+        rows.append("| %s | %s | %s / %s | %s / %s | %s | %s |" % (r["name"], status, s(r["first"]["reference_s"]), s(r["first"]["volant_s"]),
+            s(c.get("reference_median")), s(c.get("volant_median")), c.get("ratio") or "-", body))
+    open(root + "/report.md", "w").write("\n".join(rows) + "\n")
+    print("\n".join(rows))
+    ' "$root"
 
 # Time the four pinned Galaxy roles under both engines and print the ratio the public speed claim
 # cites. Builds once, installs the roles the same way `proof-roles` does, then runs one uncounted
@@ -1505,16 +1537,48 @@ profile play hosts="local" name="":
     command -v inferno-flamegraph > /dev/null || { echo "inferno-flamegraph is not installed: run 'cargo binstall inferno'"; exit 1; }
     command -v inferno-collapse-perf > /dev/null || { echo "inferno-collapse-perf is not installed: run 'cargo binstall inferno'"; exit 1; }
     play="{{play}}"
-    [ -f "$play" ] || { echo "$play is not a playbook file (corpus entry names need fixtures/corpus/corpus.yml, which does not exist yet)"; exit 1; }
     name="{{name}}"
+    hosts_arg="{{hosts}}"
+    extra=()
+    group=targets
+    entry=""
+    if [ ! -f "$play" ]; then
+      # Not a file: a corpus entry. `just corpus <entry>` has installed its sources.
+      manifest="$PWD/crates/volant/tests/fixtures/corpus/corpus.yml"
+      py="$(uv tool dir)/ansible-core/bin/python"
+      [ -f "$manifest" ] || { echo "$play is not a playbook file and $manifest does not exist"; exit 1; }
+      entry="$("$py" -c 'import json,sys,yaml; m = [e for e in yaml.safe_load(open(sys.argv[1])) if e["name"] == sys.argv[2]]; print(json.dumps(m[0]) if m else "")' "$manifest" "$play")"
+      [ -n "$entry" ] || { echo "$play is neither a playbook file nor an entry of corpus.yml"; exit 1; }
+      edir="$PWD/target/corpus/$play"
+      efield() { printf '%s' "$entry" | "$py" -c 'import json,sys; v = json.load(sys.stdin).get(sys.argv[1]); print("" if v is None else v)' "$1"; }
+      case "$(efield where)" in
+        container) echo "$play runs in containers only (where: container): just profile needs a host it can run perf on"; exit 1 ;;
+        local) hosts_arg=local ;;
+        *) hosts_arg=remote ;;
+      esac
+      [ -z "$(efield skip_reason)" ] || { echo "$play is skipped: $(efield skip_reason)"; exit 1; }
+      if [ -n "$(printf '%s' "$entry" | "$py" -c 'import json,sys; print(1 if json.load(sys.stdin).get("source") else "")')" ]; then
+        [ -d "$edir/src" ] || { echo "$play has no installed sources: run 'just corpus $play' first"; exit 1; }
+      fi
+      play="$(efield playbook)"
+      case "$play" in repo:*) play="$edir/src/repo/${play#repo:}" ;; *) play="$PWD/crates/volant/tests/fixtures/corpus/$play" ;; esac
+      [ -f "$play" ] || { echo "playbook $play not found"; exit 1; }
+      printf '%s' "$entry" | "$py" -c 'import json,sys; json.dump(json.load(sys.stdin).get("vars") or {}, open(sys.argv[1], "w"))' "$edir/vars.json"
+      extra=(-e "@$edir/vars.json")
+      group=corpus
+      export CORPUS_DIR="$edir"
+      export ANSIBLE_ROLES_PATH="$edir/src/roles" ANSIBLE_COLLECTIONS_PATH="$edir/src/collections"
+      [ -n "$name" ] || name="$(basename "$edir")"
+    fi
+    [ -f "$play" ] || { echo "$play is not a playbook file or a corpus entry"; exit 1; }
     [ -n "$name" ] || { name="$(basename "$play")"; name="${name%.*}"; }
-    case "{{hosts}}" in
+    case "$hosts_arg" in
       local) hosts=(local) ;;
       remote)
         test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
         hosts=("$VOLANT_TARGET_HOST")
         [ -z "${VOLANT_SECOND_HOST:-}" ] || hosts+=("$VOLANT_SECOND_HOST") ;;
-      *) echo "hosts must be 'local' or 'remote', not '{{hosts}}'"; exit 1 ;;
+      *) echo "hosts must be 'local' or 'remote', not '$hosts_arg'"; exit 1 ;;
     esac
 
     # The agent is built with symbols into its own directory; `bench` keeps using target/agents.
@@ -1528,16 +1592,18 @@ profile play hosts="local" name="":
     mkdir -p "$out"
     inventory="$out/$name-inventory.ini"
     if [ "${hosts[0]}" = local ]; then
-      printf 'localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3\n' > "$inventory"
+      printf '[%s]\nlocalhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3\n' "$group" > "$inventory"
     else
-      { printf '[targets]\n'; for h in "${hosts[@]}"; do printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$h" "$h"; done; } > "$inventory"
+      { printf '[%s]\n' "$group"; for h in "${hosts[@]}"; do printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$h" "$h"; done
+        if [ -n "$entry" ] && [ "${#hosts[@]}" -gt 1 ]; then printf '[lb]\n%s\n[web]\n%s\n' "${hosts[0]}" "${hosts[1]}"; fi
+      } > "$inventory"
     fi
     # Roles pinned next to the playbook are installed into the directory `bench` uses.
     requirements="$(dirname "$play")/requirements.yml"
-    if [ -f "$requirements" ] && [ ! -d target/proof-roles ]; then
+    if [ -z "$entry" ] && [ -f "$requirements" ] && [ ! -d target/proof-roles ]; then
       "$(uv tool dir)/ansible-core/bin/ansible-galaxy" role install --force -r "$requirements" -p target/proof-roles
     fi
-    [ ! -d target/proof-roles ] || export ANSIBLE_ROLES_PATH="$PWD/target/proof-roles"
+    [ -n "$entry" ] || [ ! -d target/proof-roles ] || export ANSIBLE_ROLES_PATH="$PWD/target/proof-roles"
     export VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}"
     export VOLANT_AGENT_DIR="$PWD/$out/agents"
     volant=./target/profiling/volant
@@ -1553,7 +1619,7 @@ profile play hosts="local" name="":
     done
 
     # Warm-up: fills the agent's payload cache and the hosts' own caches.
-    "$volant" playbook -i "$inventory" "$play" > "$out/$name-warmup.log"
+    "$volant" playbook -i "$inventory" "$play" "${extra[@]}" > "$out/$name-warmup.log"
 
     for h in "${hosts[@]}"; do
       on "$h" "nohup sudo -n timeout 15m perf record -a -F 499 --call-graph dwarf,16384 -o $data > /dev/null 2>&1 < /dev/null &"
@@ -1566,7 +1632,7 @@ profile play hosts="local" name="":
     status=0
     VOLANT_PYTHON_PERF=1 VOLANT_PROFILE_JSON="$out/$name.jsonl" \
       perf record -F 999 --call-graph dwarf,16384 -o "$out/$name-controller.data" -- \
-      "$volant" playbook -i "$inventory" "$play" > "$out/$name.log" || status=$?
+      "$volant" playbook -i "$inventory" "$play" "${extra[@]}" > "$out/$name.log" || status=$?
     stop_agent_perf
 
     perf script -i "$out/$name-controller.data" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-controller.svg"

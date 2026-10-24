@@ -1,0 +1,12 @@
+# A thousand items through debug and set_fact. No host is touched.
+- hosts: corpus
+  gather_facts: false
+  tasks:
+    - name: Show each item
+      ansible.builtin.debug:
+        msg: "item {{ item }}"
+      loop: "{{ range(1000) | list }}"
+    - name: Set a fact for each item
+      ansible.builtin.set_fact:
+        last: "{{ item * 2 }}"
+      loop: "{{ range(1000) | list }}"

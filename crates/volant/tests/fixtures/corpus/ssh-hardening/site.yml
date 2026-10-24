@@ -1,0 +1,7 @@
+# devsec.hardening's ssh_hardening role; key login stays.
+- hosts: corpus
+  become: true
+  vars:
+    ssh_server_password_login: false
+  roles:
+    - devsec.hardening.ssh_hardening

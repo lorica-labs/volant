@@ -1,0 +1,6 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [outer : names] ***********************************************************\nok: [h1] => {\n    \"msg\": \"outer outer \"\n}\n\nTASK [include_role : inner] ****************************************************\nincluded: inner for h1\n\nTASK [inner : parents] *********************************************************\nok: [h1] => {\n    \"msg\": \"inner ['outer'] ['outer']\"\n}\n\nTASK [include_role : inner2] ***************************************************\nincluded: inner2 for h1\n\nTASK [inner2 : nested parents] *************************************************\nok: [h1] => {\n    \"msg\": \"['inner', 'outer'] ['inner', 'outer']\"\n}\n\nTASK [my.coll.cr : collection names] *******************************************\nok: [h1] => {\n    \"msg\": \"cr my.coll.cr my.coll\"\n}\n\nTASK [outside a role] **********************************************************\nok: [h1] => {\n    \"msg\": \"none none\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=7    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

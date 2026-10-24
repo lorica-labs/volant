@@ -1,0 +1,6 @@
+- ansible.builtin.set_fact:
+    included_a: 1
+- ansible.builtin.set_fact:
+    included_b: "{{ included_a + 1 }}"
+- ansible.builtin.debug:
+    msg: "{{ included_b }}"

@@ -1,0 +1,3 @@
+- name: collection names
+  debug:
+    msg: "{{ role_name }} {{ ansible_role_name }} {{ ansible_collection_name }}"

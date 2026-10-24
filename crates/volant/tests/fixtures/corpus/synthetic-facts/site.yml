@@ -1,0 +1,406 @@
+# 200 chained set_fact tasks, each reading the previous one. No host is touched.
+- hosts: corpus
+  gather_facts: false
+  tasks:
+    - ansible.builtin.set_fact:
+        chain_0: 0
+    - ansible.builtin.set_fact:
+        chain_1: "{{ chain_0 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_2: "{{ chain_1 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_3: "{{ chain_2 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_4: "{{ chain_3 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_5: "{{ chain_4 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_6: "{{ chain_5 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_7: "{{ chain_6 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_8: "{{ chain_7 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_9: "{{ chain_8 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_10: "{{ chain_9 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_11: "{{ chain_10 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_12: "{{ chain_11 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_13: "{{ chain_12 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_14: "{{ chain_13 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_15: "{{ chain_14 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_16: "{{ chain_15 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_17: "{{ chain_16 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_18: "{{ chain_17 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_19: "{{ chain_18 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_20: "{{ chain_19 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_21: "{{ chain_20 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_22: "{{ chain_21 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_23: "{{ chain_22 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_24: "{{ chain_23 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_25: "{{ chain_24 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_26: "{{ chain_25 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_27: "{{ chain_26 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_28: "{{ chain_27 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_29: "{{ chain_28 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_30: "{{ chain_29 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_31: "{{ chain_30 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_32: "{{ chain_31 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_33: "{{ chain_32 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_34: "{{ chain_33 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_35: "{{ chain_34 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_36: "{{ chain_35 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_37: "{{ chain_36 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_38: "{{ chain_37 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_39: "{{ chain_38 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_40: "{{ chain_39 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_41: "{{ chain_40 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_42: "{{ chain_41 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_43: "{{ chain_42 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_44: "{{ chain_43 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_45: "{{ chain_44 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_46: "{{ chain_45 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_47: "{{ chain_46 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_48: "{{ chain_47 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_49: "{{ chain_48 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_50: "{{ chain_49 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_51: "{{ chain_50 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_52: "{{ chain_51 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_53: "{{ chain_52 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_54: "{{ chain_53 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_55: "{{ chain_54 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_56: "{{ chain_55 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_57: "{{ chain_56 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_58: "{{ chain_57 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_59: "{{ chain_58 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_60: "{{ chain_59 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_61: "{{ chain_60 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_62: "{{ chain_61 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_63: "{{ chain_62 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_64: "{{ chain_63 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_65: "{{ chain_64 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_66: "{{ chain_65 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_67: "{{ chain_66 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_68: "{{ chain_67 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_69: "{{ chain_68 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_70: "{{ chain_69 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_71: "{{ chain_70 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_72: "{{ chain_71 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_73: "{{ chain_72 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_74: "{{ chain_73 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_75: "{{ chain_74 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_76: "{{ chain_75 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_77: "{{ chain_76 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_78: "{{ chain_77 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_79: "{{ chain_78 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_80: "{{ chain_79 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_81: "{{ chain_80 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_82: "{{ chain_81 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_83: "{{ chain_82 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_84: "{{ chain_83 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_85: "{{ chain_84 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_86: "{{ chain_85 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_87: "{{ chain_86 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_88: "{{ chain_87 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_89: "{{ chain_88 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_90: "{{ chain_89 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_91: "{{ chain_90 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_92: "{{ chain_91 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_93: "{{ chain_92 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_94: "{{ chain_93 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_95: "{{ chain_94 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_96: "{{ chain_95 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_97: "{{ chain_96 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_98: "{{ chain_97 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_99: "{{ chain_98 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_100: "{{ chain_99 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_101: "{{ chain_100 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_102: "{{ chain_101 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_103: "{{ chain_102 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_104: "{{ chain_103 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_105: "{{ chain_104 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_106: "{{ chain_105 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_107: "{{ chain_106 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_108: "{{ chain_107 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_109: "{{ chain_108 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_110: "{{ chain_109 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_111: "{{ chain_110 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_112: "{{ chain_111 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_113: "{{ chain_112 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_114: "{{ chain_113 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_115: "{{ chain_114 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_116: "{{ chain_115 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_117: "{{ chain_116 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_118: "{{ chain_117 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_119: "{{ chain_118 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_120: "{{ chain_119 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_121: "{{ chain_120 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_122: "{{ chain_121 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_123: "{{ chain_122 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_124: "{{ chain_123 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_125: "{{ chain_124 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_126: "{{ chain_125 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_127: "{{ chain_126 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_128: "{{ chain_127 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_129: "{{ chain_128 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_130: "{{ chain_129 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_131: "{{ chain_130 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_132: "{{ chain_131 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_133: "{{ chain_132 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_134: "{{ chain_133 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_135: "{{ chain_134 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_136: "{{ chain_135 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_137: "{{ chain_136 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_138: "{{ chain_137 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_139: "{{ chain_138 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_140: "{{ chain_139 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_141: "{{ chain_140 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_142: "{{ chain_141 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_143: "{{ chain_142 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_144: "{{ chain_143 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_145: "{{ chain_144 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_146: "{{ chain_145 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_147: "{{ chain_146 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_148: "{{ chain_147 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_149: "{{ chain_148 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_150: "{{ chain_149 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_151: "{{ chain_150 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_152: "{{ chain_151 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_153: "{{ chain_152 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_154: "{{ chain_153 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_155: "{{ chain_154 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_156: "{{ chain_155 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_157: "{{ chain_156 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_158: "{{ chain_157 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_159: "{{ chain_158 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_160: "{{ chain_159 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_161: "{{ chain_160 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_162: "{{ chain_161 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_163: "{{ chain_162 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_164: "{{ chain_163 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_165: "{{ chain_164 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_166: "{{ chain_165 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_167: "{{ chain_166 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_168: "{{ chain_167 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_169: "{{ chain_168 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_170: "{{ chain_169 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_171: "{{ chain_170 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_172: "{{ chain_171 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_173: "{{ chain_172 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_174: "{{ chain_173 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_175: "{{ chain_174 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_176: "{{ chain_175 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_177: "{{ chain_176 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_178: "{{ chain_177 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_179: "{{ chain_178 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_180: "{{ chain_179 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_181: "{{ chain_180 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_182: "{{ chain_181 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_183: "{{ chain_182 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_184: "{{ chain_183 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_185: "{{ chain_184 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_186: "{{ chain_185 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_187: "{{ chain_186 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_188: "{{ chain_187 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_189: "{{ chain_188 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_190: "{{ chain_189 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_191: "{{ chain_190 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_192: "{{ chain_191 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_193: "{{ chain_192 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_194: "{{ chain_193 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_195: "{{ chain_194 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_196: "{{ chain_195 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_197: "{{ chain_196 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_198: "{{ chain_197 | int + 1 }}"
+    - ansible.builtin.set_fact:
+        chain_199: "{{ chain_198 | int + 1 }}"
+    - ansible.builtin.debug:
+        msg: "{{ chain_199 }}"

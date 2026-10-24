@@ -1,0 +1,11 @@
+# node_exporter and prometheus with one static target. Installed by `just corpus`.
+- hosts: corpus
+  become: true
+  vars:
+    prometheus_targets:
+      node:
+        - targets:
+            - "localhost:9100"
+  roles:
+    - prometheus.prometheus.node_exporter
+    - prometheus.prometheus.prometheus

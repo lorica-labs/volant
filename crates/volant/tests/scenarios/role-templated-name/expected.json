@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [<golden-tmp>/tpl : from tpl, under a name long enough that its banner is never padded to the terminal width] ***\nok: [h1] => {\n    \"msg\": \"tpl\"\n}\n\nTASK [tpl : from tpl, under a name long enough that its banner is never padded to the terminal width] ***\nok: [h1] => {\n    \"msg\": \"tpl\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [<golden-tmp>/tpl : from tpl, under a name long enough that its banner is never padded to the terminal width] ***\nok: [h1] => {\n    \"msg\": \"tpl\"\n}\n\nTASK [byvar : from byvar] ******************************************************\nok: [h1] => {\n    \"msg\": \"byvar\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

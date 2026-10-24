@@ -1,0 +1,4 @@
+# Named past the banner width, so the path in front of it pads the same way wherever it runs.
+- name: from tpl, under a name long enough that its banner is never padded to the terminal width
+  debug:
+    msg: "{{ role_path | basename }}"

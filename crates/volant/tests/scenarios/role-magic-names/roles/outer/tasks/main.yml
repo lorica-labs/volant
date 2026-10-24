@@ -1,0 +1,6 @@
+- name: names
+  debug:
+    msg: "{{ role_name }} {{ ansible_role_name }} {{ ansible_collection_name }}"
+- include_role:
+    name: inner
+    tasks_from: check

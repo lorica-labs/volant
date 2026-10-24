@@ -8,7 +8,7 @@ use anyhow::bail;
 use serde_json::{Map, Value};
 
 use crate::playbook::{Play, PlayTask};
-use crate::roles::{RoleEntry, RoleSearch, RoleVars};
+use crate::roles::{RoleEntry, RoleKind, RoleSearch, RoleVars};
 use crate::template::Templar;
 
 use super::builder::{Builder, Seen};
@@ -49,7 +49,8 @@ pub(super) fn validation(
         "validate_args_context".to_string(),
         serde_json::json!({
             "argument_spec_name": entry.from.tasks,
-            "name": entry.name,
+            // `Role._role_name`: the role's own name, without its collection.
+            "name": crate::roles::identity(path, &entry.name).0,
             "path": path.display().to_string(),
             "type": "role",
         }),
@@ -311,7 +312,14 @@ pub(crate) fn compile(
     mark = builder.steps.len();
     let mut seen: Seen = Vec::new();
     for entry in &play.roles {
-        builder.role(entry, &empty, &mut seen, None, Section::Body)?;
+        builder.role(
+            entry,
+            &empty,
+            &mut seen,
+            None,
+            Section::Body,
+            RoleKind::Entry,
+        )?;
     }
     builder.items(&play.tasks, &empty, None, Section::Body, None)?;
     builder.flush_point(mark);

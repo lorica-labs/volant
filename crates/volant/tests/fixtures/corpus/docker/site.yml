@@ -1,0 +1,7 @@
+# geerlingguy.docker, with the login user in the docker group. Installed by `just corpus`.
+- hosts: corpus
+  become: true
+  vars:
+    docker_users: ["{{ ansible_user_id }}"]
+  roles:
+    - geerlingguy.docker

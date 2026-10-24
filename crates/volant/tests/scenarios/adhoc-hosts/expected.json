@@ -1,0 +1,102 @@
+[
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "  hosts (2):\n    h1\n    h2\n"
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n",
+    "stdout": "  hosts (1):\n    localhost\n"
+  },
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "  hosts (3):\n    h1\n    h2\n    h3\n"
+  },
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "  hosts (1):\n    h2\n"
+  },
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "  hosts (1):\n    h1\n"
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nomatch\n[WARNING]: No hosts matched, nothing to do\n",
+    "stdout": ""
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nomatch\n[WARNING]: No hosts matched, nothing to do\n",
+    "stdout": "  hosts (0):\n"
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nomatch\n",
+    "stdout": "  hosts (2):\n    h1\n    h2\n"
+  },
+  {
+    "code": 1,
+    "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nomatch\n[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.\n",
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nomatch\n[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.\n",
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stderr": "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.\n",
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stderr": "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.\n",
+    "stdout": ""
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: Unable to parse <golden-tmp>/nosuch.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'\n",
+    "stdout": ""
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: Unable to parse <golden-tmp>/nosuch.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'\n",
+    "stdout": "  hosts (0):\n"
+  },
+  {
+    "code": 5,
+    "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'\n[WARNING]: Could not match supplied host pattern, ignoring: web\n[ERROR]: No argument passed to command module\n",
+    "stdout": ""
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'\n[WARNING]: Could not match supplied host pattern, ignoring: web\n",
+    "stdout": "  hosts (0):\n"
+  },
+  {
+    "code": 5,
+    "stderr": "[WARNING]: No inventory was parsed, only implicit localhost is available\n[ERROR]: No argument passed to command module\n",
+    "stdout": ""
+  },
+  {
+    "code": 5,
+    "stderr": "[ERROR]: No argument passed to command module\n",
+    "stdout": ""
+  },
+  {
+    "code": 5,
+    "stderr": "[ERROR]: No argument passed to shell module\n",
+    "stdout": ""
+  },
+  {
+    "code": 0,
+    "stderr": "[WARNING]: Unable to parse <golden-tmp>/nosuch.ini as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'\n[WARNING]: Could not match supplied host pattern, ignoring: x\n",
+    "stdout": "  hosts (0):\n"
+  }
+]

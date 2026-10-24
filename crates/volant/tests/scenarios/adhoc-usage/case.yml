@@ -1,0 +1,12 @@
+# A usage error: the `usage:` block of the reference, then the error line, exit 2. The reference
+# adds its complete help after the errors argparse raises, and not after a forks count it refuses.
+program: ansible
+needs: [ansible-core]
+stderr: true
+forks: null
+runs:
+  - args: []
+  - args: [-f, "0", web]
+  - args: [-f, x, web]
+  - args: [-f, "-1", web]
+  - args: [--forks, "0", -i, inv.ini, all, -m, ping]

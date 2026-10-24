@@ -6,7 +6,9 @@ case.yml holds `args` (the argv after `ansible-playbook`), or `runs`, a list of 
 whose `expected.json` is then a list in the same order; `modes`, any of `check`, `check-diff`, `diff`: each run is
 recorded again with `--check`, `--check --diff` and `--diff` appended, in that order, after the run
 itself, and `expected.json` is then a list; `env`, extra environment for both engines;
-`forks`, 1 unless said, so that hosts print in the inventory's order under both engines; `program`,
+`forks`, 1 unless said, so that hosts print in the inventory's order under both engines, and `null` to
+pass no `--forks` at all, for a run that tests the option itself; `stderr`, true to record standard
+error too, with the copy's path read `<golden-tmp>`; `program`,
 `ansible` to run the ad hoc command in place of `ansible-playbook` (Volant's `adhoc`); `needs`,
 any of `ansible-core`, `sudo`, `systemd`; `unordered`, regexes of the lines whose order may differ
 once `forks` is above 1; `links`, a mapping of a path to the target of the link made there in each
@@ -25,7 +27,7 @@ from .redact import TMP
 from .run import EMPTY_CONFIG, Failed, run, scratch, write_json
 
 MODES = {"check": ["--check"], "check-diff": ["--check", "--diff"], "diff": ["--diff"]}
-KEYS = {"args", "runs", "modes", "env", "forks", "program", "needs", "unordered", "links"}
+KEYS = {"args", "runs", "modes", "env", "forks", "stderr", "program", "needs", "unordered", "links"}
 PROGRAMS = {"ansible-playbook", "ansible"}
 NEEDS = {"ansible-core", "sudo", "systemd"}
 
@@ -97,8 +99,11 @@ def load(directory):
     if not isinstance(env, dict) or not all(isinstance(k, str) and isinstance(v, str) for k, v in env.items()):
         raise Failed(f"scenario {name}: `env` is not a mapping of strings")
     forks = case.get("forks", 1)
-    if isinstance(forks, bool) or not isinstance(forks, int) or forks < 1:
+    if forks is not None and (isinstance(forks, bool) or not isinstance(forks, int) or forks < 1):
         raise Failed(f"scenario {name}: `forks` is not a positive integer")
+    stderr = case.get("stderr", False)
+    if not isinstance(stderr, bool):
+        raise Failed(f"scenario {name}: `stderr` is not true or false")
     program = case.get("program", "ansible-playbook")
     if program not in PROGRAMS:
         raise Failed(f"scenario {name}: `program` takes {', '.join(sorted(PROGRAMS))}, not {program!r}")
@@ -108,7 +113,7 @@ def load(directory):
     unordered = case.get("unordered") or []
     if not _strings(unordered):
         raise Failed(f"scenario {name}: `unordered` is not a list of regexes")
-    if unordered and forks == 1:
+    if unordered and (forks or 1) == 1:
         raise Failed(f"scenario {name}: `unordered` excuses nothing under `forks: 1`")
     for pattern in unordered:
         try:
@@ -122,6 +127,7 @@ def load(directory):
         "runs": runs,
         "env": env,
         "forks": forks,
+        "stderr": stderr,
         "program": program,
         "needs": needs,
         "links": links,
@@ -156,7 +162,8 @@ def record_one(directory):
                 os.symlink(target, os.path.join(copy, path))
             own = os.path.join(copy, "ansible.cfg")
             config = own if os.path.exists(own) else EMPTY_CONFIG
-            argv = [case["program"], *one["args"], "--forks", str(case["forks"])]
+            forks = [] if case["forks"] is None else ["--forks", str(case["forks"])]
+            argv = [case["program"], *one["args"], *forks]
             result = run(argv, cwd=copy, config=config, extra_env=case["env"])
             stdout = VERSION_BLOCK.sub("<golden-version>\n", result.stdout.replace(copy, TMP))
             stdout = ANSIBLE_TMP.sub("<golden-ansible-tmp>", stdout)
@@ -170,7 +177,10 @@ def record_one(directory):
                 "tags and hosts out of a Python set: reshape the fixture so the play carries one "
                 "tag and matches one host, or list it under a --limit that leaves one."
             )
-        results.append({"code": result.returncode, "stdout": stdout})
+        recorded = {"code": result.returncode, "stdout": stdout}
+        if case["stderr"]:
+            recorded["stderr"] = result.stderr.replace(copy, TMP)
+        results.append(recorded)
     write_json(os.path.join(directory, "expected.json"), results[0] if case["single"] else results)
     return len(results)
 

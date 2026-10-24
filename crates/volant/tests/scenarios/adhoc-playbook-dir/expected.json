@@ -1,0 +1,22 @@
+[
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "localhost | SUCCESS => {\n    \"x\": \"from-cwd\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "localhost | SUCCESS => {\n    \"x\": \"from-base\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "localhost | SUCCESS => {\n    \"y\": \"host-var-from-base\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stderr": "",
+    "stdout": "localhost | SUCCESS => {\n    \"playbook_dir\": \"<golden-tmp>/base\"\n}\n"
+  }
+]

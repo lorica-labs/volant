@@ -8,6 +8,9 @@ import starlightLlmsTxt from 'starlight-llms-txt';
 import starlightScrollToTop from 'starlight-scroll-to-top';
 import { readFileSync, readdirSync } from 'node:fs';
 import { sep } from 'node:path';
+import { locales } from './src/i18n/locales.ts';
+import { translateSidebar } from './src/i18n/sidebar.ts';
+import { anchorMap, staleTranslations } from './src/i18n/source-hash.mjs';
 
 const repo = 'https://github.com/lorica-labs/volant';
 // The header shows the release the documentation describes, read from the workspace manifest.
@@ -42,12 +45,22 @@ const merged = {
 };
 const redirects = { ...moved, ...merged };
 
+// Translated pages whose English page changed since they were translated show a notice.
+const stale = staleTranslations();
+if (stale.length) console.warn(`[i18n] ${stale.length} translated pages are behind their English page`);
+
 export default defineConfig({
   site: 'https://volant.sh',
   // The overview used to live here; old links land on the home page.
   // Old addresses keep working after pages were merged or moved.
   redirects,
-  vite: { define: { __VOLANT_VERSION__: JSON.stringify(version) } },
+  vite: {
+    define: {
+      __VOLANT_VERSION__: JSON.stringify(version),
+      __VOLANT_STALE__: JSON.stringify(stale),
+      __VOLANT_ANCHORS__: JSON.stringify(anchorMap()),
+    },
+  },
   integrations: [
     // Mermaid has to come before Starlight so its code fences are claimed first. The colors come
     // from the site's own tokens in custom.css, so one render serves both light and dark.
@@ -63,6 +76,12 @@ export default defineConfig({
     }),
     starlight({
       title: 'Volant',
+      // English is the source and lives at the root; every translation under its own prefix. A page
+      // not translated yet shows the English text with a notice.
+      defaultLocale: 'root',
+      locales: Object.fromEntries(
+        locales.map((l) => [l.code === 'en' ? 'root' : l.code, { label: l.label, lang: l.lang }]),
+      ),
       description: 'Run your Ansible playbooks with a fast engine written in Rust.',
       logo: { src: './assets/volant-mark.svg' },
       favicon: '/favicon.svg',
@@ -103,14 +122,15 @@ export default defineConfig({
       },
       plugins: [
         // Fails the build on a broken internal link or anchor.
-        starlightLinksValidator(),
+        // Links to a page not translated yet are fine: Starlight shows the English page there.
+        starlightLinksValidator({ errorOnFallbackPages: false }),
         // Renders CHANGELOG.md as pages under /changelog/.
         starlightChangelogs(),
         // Publishes /llms.txt and the full text of the site for tools that read documentation.
         starlightLlmsTxt({ projectName: 'Volant' }),
         starlightScrollToTop(),
       ],
-      sidebar: [
+      sidebar: translateSidebar([
         {
           label: 'Start here',
           items: [
@@ -184,7 +204,7 @@ export default defineConfig({
             { label: 'Security policy', link: `${repo}/blob/main/SECURITY.md`, attrs: { target: '_blank' } },
           ],
         },
-      ],
+      ]),
     }),
   ],
 });

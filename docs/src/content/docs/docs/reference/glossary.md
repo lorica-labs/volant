@@ -9,7 +9,7 @@ Code of ansible-core that runs on the controller and decides what to send to a h
 
 ### Agent
 
-A small static program that Volant uploads to each managed host and caches there. It receives tasks from the controller, runs them and streams results back. See [Connections and the agent](/docs/hosts/connections/).
+A small static program that Volant uploads to each managed host and caches there. It receives tasks from the controller, runs them and streams results back. See [Connections and become](/docs/hosts/connections/).
 
 ### Batch
 

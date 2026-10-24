@@ -1,0 +1,161 @@
+---
+sourceHash: bced5151937a
+title: Inventaires et cache de facts
+description: Le format d'inventaire que Volant lit, d'où viennent les variables de groupe et d'hôte, la grammaire des motifs d'hôtes, et comment les facts sont conservés entre deux exécutions.
+---
+
+Cette page répond à ces questions : d'où viennent vos hôtes, comment un motif en choisit certains, et comment conserver leurs facts d'une exécution à l'autre. Vos fichiers d'inventaire, `group_vars` et `host_vars` existants sont lus tels quels.
+
+Volant lit les inventaires comme ansible-core : une ou plusieurs sources, chacune analysée par le premier plugin activé qui l'accepte. Une exécution statique (INI, YAML, TOML, liste d'hôtes) ne démarre pas Python.
+
+## Sources
+
+`-i` (aussi `--inventory` et `--inventory-file`) prend une source et peut être répété. Sans `-i`, Volant lit `ANSIBLE_INVENTORY`, puis `inventory` dans `ansible.cfg`. Les deux acceptent une liste séparée par des virgules. Sans aucun des deux, Volant lit `/etc/ansible/hosts` comme ansible-core, et l'ignore sans message si le fichier n'existe pas. Sur une machine sans ce fichier, seul le `localhost` implicite existe.
+
+Une source est l'un des éléments suivants :
+
+| Source | Notes |
+|---|---|
+| Un fichier INI | Hôtes, `[group]`, `[group:children]`, `[group:vars]` et plages. Une plage compte des chiffres (`web[01:03]`, zéros de remplissage conservés), des lettres (`db[a:c]`) et peut prendre un pas (`n[1:10:3]`). |
+| Un fichier YAML ou TOML | Les formats `yaml` et `toml` d'Ansible. |
+| Un répertoire | Chaque fichier qu'il contient est une source, parcourue dans l'ordre alphabétique. Les fichiers dont l'extension est ignorée ou qui correspondent à un motif d'exclusion, ainsi que les répertoires `group_vars` et `host_vars`, sont ignorés. |
+| Une liste séparée par des virgules | `-i web1,web2,` est une liste d'hôtes (`host_list`). Un hôte seul demande une virgule finale. `advanced_host_list` est lu quand vous l'activez. |
+| Un fichier exécutable | Lancé comme script d'inventaire dynamique : `--list` une fois, puis `--host <name>` pour les hôtes auxquels la liste n'a donné aucune variable. |
+| Un fichier de plugin | Un fichier YAML avec `plugin:` qui nomme `constructed`, `generator` ou un plugin d'inventaire de collection (le plugin `auto`). |
+
+Plusieurs sources sont fusionnées dans l'ordre donné. Une source plus tardive l'emporte clé par clé, les membres de groupe sont réunis, et les hôtes et groupes gardent l'ordre de leur première apparition.
+
+### La chaîne de plugins
+
+La section `[inventory]` de `ansible.cfg` contrôle la façon dont une source est reconnue :
+
+- `enable_plugins` liste les plugins à essayer, dans l'ordre. La valeur par défaut est `host_list, script, auto, yaml, ini, toml`.
+- `ignore_extensions` et `ignore_patterns` ignorent des fichiers dans les répertoires.
+- `unparsed_is_failed` fait échouer l'exécution quand aucune source n'a pu être lue.
+- `any_unparsed_is_failed` fait échouer l'exécution dès la première source qu'aucun plugin n'a pu lire.
+
+Une source qu'aucun plugin ne lit est ignorée avec un avertissement, comme dans Ansible. `-vvv` affiche quel plugin a pris chaque source, et lesquels l'ont refusée.
+
+### Sources dynamiques
+
+Un script affiche son inventaire en JSON, dans le format qu'écrit `ansible-inventory --list`. `constructed` et `generator` construisent des groupes et des hôtes à partir de modèles.
+
+Le plugin d'inventaire d'une collection (un fournisseur cloud, par exemple) s'exécute dans ansible-core, via un processus Python que Volant ne démarre que lorsqu'une telle source est présente, voir [le chemin Python préchauffé](/fr/docs/internals/python/).
+
+Réglez `always_show_stderr` dans `[inventory_plugin_script]` pour contrôler ce que devient la sortie d'erreur d'un script. Il est activé par défaut : ce qu'un script y écrit apparaît sous la forme d'une ligne `[ERROR]:`, même quand le script réussit.
+
+## Un inventaire INI
+
+```ini title="inventory.ini"
+bastion ansible_host=198.51.100.7
+
+[web]
+web1 ansible_host=192.0.2.11
+web2 ansible_host=192.0.2.12
+
+[db]
+db1 ansible_host=192.0.2.21 ansible_user=postgres
+
+[prod:children]
+web
+db
+
+[prod:vars]
+ansible_user=deploy
+ansible_ssh_common_args=-o ProxyJump=bastion
+```
+
+Les commentaires commencent par `#` ou `;`.
+
+### Le localhost implicite
+
+Le contrôleur est un hôte sous trois noms : `localhost`, `127.0.0.1` et `::1`. Quand l'inventaire n'en définit aucun, Volant crée un hôte implicite. Il a une connexion locale et l'interpréteur Python du contrôleur comme `ansible_python_interpreter`, il n'est dans aucun groupe, et `all` ne le désigne pas. Un play qui le nomme (`hosts: localhost`), un `delegate_to: localhost` et `hostvars['localhost']` l'atteignent tous. Une boucle sur `hostvars` ne le liste pas.
+
+Quand l'inventaire définit l'un des trois noms, cet hôte répond aussi aux deux autres : `hosts: 127.0.0.1` s'exécute donc sur le `localhost` de l'inventaire, avec ses variables. Le premier défini l'emporte. Quand l'inventaire ne contient aucun hôte, Volant avertit que seul `localhost` est disponible. Réglez `localhost_warning` sur `false` pour le faire taire.
+
+## Variables de groupe et d'hôte
+
+Volant lit `group_vars/` et `host_vars/` à côté de chaque source, puis à côté du playbook, sous forme de fichiers (`group_vars/web.yml`) ou de répertoires (`group_vars/web/*.yml`). [Priorité et facts](/fr/docs/variables/precedence/) montre où se place chaque couche.
+
+Quand un hôte appartient à plusieurs groupes, le groupe le plus profond l'emporte. Entre groupes de même profondeur, `ansible_group_priority` décide (la valeur la plus haute l'emporte), puis le nom du groupe.
+
+Un nom qui est à la fois un hôte et un groupe désigne l'hôte. Volant avertit une fois par exécution quand un inventaire contient un tel nom, quel que soit le motif utilisé, car Ansible le détecte au chargement de l'inventaire.
+
+## Rechargement
+
+`meta: refresh_inventory` relit toutes les sources, voir [Délégation, tâches meta et environment](/fr/docs/playbooks/delegation/#recharger-linventaire).
+
+## Motifs d'hôtes
+
+Un motif dans le `hosts:` d'un play ou dans `--limit` suit la grammaire d'Ansible :
+
+| Motif | Sélectionne |
+|---|---|
+| `all` ou `*` | tous les hôtes |
+| `web:db` ou `web,db` | les hôtes de l'un ou l'autre groupe |
+| `web*`, `db?`, `host[abc]`, `host[a-z]` | jokers de type shell sur les noms d'hôtes et de groupes |
+| `web:&prod` | les hôtes de `web` qui sont aussi dans `prod` |
+| `web:!web2` | les hôtes de `web` sauf `web2` |
+| `~web\d+` | les hôtes et groupes dont le nom correspond à l'expression régulière, dès son premier caractère |
+| `web[0]`, `web[0:2]`, `web[1:]` | un indice ou une tranche des hôtes qu'un terme a produits |
+| `::1`, `fe80::1`, `[::1]:22` | un seul hôte : une adresse n'est pas coupée à ses deux-points |
+
+Les tranches incluent leur borne de fin, comme dans Ansible : `web[0:2]` désigne trois hôtes. `name[N-M]` est accepté comme ancienne écriture de `name[N:M]`. Un terme `~` qui n'est pas une expression régulière valide arrête l'exécution, comme dans ansible-core.
+
+Comment un motif est découpé en termes :
+
+| Motif | Termes |
+|---|---|
+| Contient une virgule, comme `web:db,cache` | Coupé aux virgules seulement : `web:db` et `cache`. |
+| Pas de virgule, et une adresse valide, un nom d'hôte avec un port, ou une plage | Un seul terme. |
+| Pas de virgule, tout autre cas | Coupé aux deux-points. |
+
+Les termes ne sont pas appliqués dans l'ordre où vous les écrivez. Les termes simples viennent d'abord, puis les termes `&`, puis les termes `!`, comme le fait Ansible. Un motif composé uniquement de termes `!` ou `&` part de `all`.
+
+`--limit` suit la même grammaire. Chaque terme qui ne correspond à aucun hôte affiche `Could not match supplied host pattern, ignoring: <term>` et l'exécution garde les hôtes que les autres termes ont trouvés. Une limite qui ne correspond à aucun hôte fait échouer l'exécution avec `Specified inventory, host pattern and/or --limit leaves us with no hosts to target.` et le code de sortie 1.
+
+## Le cache de facts
+
+Par défaut, les facts vivent en mémoire et disparaissent à la fin de l'exécution. Avec `fact_caching = jsonfile`, Volant écrit les facts de chaque hôte dans un fichier et les relit à l'exécution suivante, dans le format de fichier qu'utilise ansible-core 2.19. Un cache écrit par un outil est lu par l'autre.
+
+```ini title="ansible.cfg"
+[defaults]
+gathering = smart
+fact_caching = jsonfile
+fact_caching_connection = /var/cache/volant/facts
+fact_caching_timeout = 3600
+```
+
+### Paramètres du cache de facts
+
+| Paramètre | Variable d'environnement | Signification |
+|---|---|---|
+| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory` (la valeur par défaut, par exécution) ou `jsonfile`. `ansible.builtin.memory` et `ansible.builtin.jsonfile` fonctionnent aussi. |
+| `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | Le répertoire qui contient les fichiers. `jsonfile` en a besoin ; sans lui, l'exécution garde les facts en mémoire. |
+| `fact_caching_timeout` | `ANSIBLE_CACHE_PLUGIN_TIMEOUT` | Nombre de secondes pendant lesquelles un fichier reste frais. 86400 par défaut. `0` n'expire jamais. |
+| `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | Placé devant le nom de chaque fichier. Vide par défaut. |
+| `gathering` | `ANSIBLE_GATHERING` | `implicit` (par défaut), `explicit` ou `smart`. |
+
+Chaque hôte a un fichier, nommé `<prefix>s1_<host>`.
+
+Tout autre plugin de cache, comme `redis` ou `yaml`, termine l'exécution avec le code de sortie 4 et le message `fact cache plugin '<name>' (from '<origin>') is not supported yet; use 'memory' or 'jsonfile'`.
+
+### Collecte
+
+- `implicit` collecte les facts dans chaque play qui ne la désactive pas.
+- `explicit` ne collecte que dans les plays qui définissent `gather_facts: true`.
+- `smart` ne collecte que pour les hôtes qui n'ont aucune entrée fraîche dans le cache.
+
+Les facts en cache sont chargés au début de l'exécution : les tâches les voient donc même quand un play ne collecte pas.
+
+### set_fact
+
+`set_fact` avec `cacheable: true` écrit aussi la valeur dans l'entrée de cache de l'hôte, et l'exécution suivante la relit.
+
+### Vidage
+
+`--flush-cache` supprime les entrées des hôtes de l'inventaire avant l'exécution. Les fichiers des autres hôtes restent.
+
+### Erreurs du cache de facts
+
+Un répertoire de cache qui ne peut pas être créé, ou un `fact_caching_connection` manquant (`Required config '_uri' for 'jsonfile' cache plugin not provided.`), produit un avertissement et l'exécution continue avec le cache en mémoire. Un fichier qui n'est pas du JSON valide est supprimé et arrête l'exécution, avec le message d'ansible-core : `The cache file <path> was corrupt, or did not otherwise contain valid data. It has been removed, so you can re-run your command now.`

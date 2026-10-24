@@ -1,0 +1,78 @@
+---
+sourceHash: 65506ddc8a04
+title: Host-übergreifendes Batching
+description: Eine optionale Einstellung, mit der jeder Host durch Tasks vorauslaufen kann, die nicht von den anderen abhängen.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../../components/HostTimeline.astro';
+
+Batching lässt jeden Host durch die Tasks vorauslaufen, die nicht von anderen Hosts abhängen, sodass ein Play über viele Hosts früher fertig wird. Es ist optional: Es ist aus, bis Sie es einschalten.
+
+Standardmäßig führt Volant ein Play so aus wie die Strategie `linear` von Ansible: Die Hosts eines Batches treffen sich vor jedem Task. Diese Garantie erlaubt einem Playbook, sich auf Dinge zu verlassen, die seine Tasks nie erwähnen. Ein Host kann eine Datei schreiben, die ein anderer später liest, oder einen Dienst neu starten, zu dem sich ein anderer Host verbindet. Nichts davon steht im Text eines Tasks, daher ist die einzig sichere Annahme, dass jeder Task vom vorherigen abhängen kann, auf jedem Host.
+
+Diese Seite behandelt die Standardstrategie `linear`. Unter `strategy: free` und `host_pinned` läuft jeder Host in seinem eigenen Tempo, `run_once`, `any_errors_fatal` und `max_fail_percentage` werden mit einer Warnung ignoriert, und ein `pause`- oder `add_host`-Task beendet den Lauf. Die Hosts treffen sich nur an den `meta`-Tasks, die auf den ganzen Batch wirken (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` und `refresh_inventory`), an Handlern und an dynamischen Includes, was auch immer `batching` sagt. Siehe [Andere Strategien](/de/docs/playbooks/how-a-play-runs/#andere-strategien).
+
+## Was Batching ändert
+
+Ist `batching` an, läuft ein Host durch seine Tasks weiter, statt an jedem zu warten, und hält nur an einem Synchronisationspunkt an:
+
+- ein `run_once`- oder `pause`-Task
+- ein Task, dessen Text über `hostvars`, `ansible_play_hosts` oder `ansible_play_batch` den Zustand eines anderen Hosts nennt
+- ein Task, der einen solchen Namen indirekt liest: über den Rumpf eines Templates mit festem `src` oder über eine Variable, deren Definition einen anderen Host liest, durch beliebig viele Variablen der Kette
+- ein delegierter Task, da der Host, auf den er wirkt, möglicherweise noch nicht so weit ist
+- ein Task, der eine Controller-Datei liest, nachdem ein Task sie möglicherweise geschrieben hat, etwa ein `fetch`
+- eine Stelle, an der ein Include oder ein Handler-Flush dem Play Schritte hinzufügt
+- das Ende des Plays
+
+Ein Synchronisationspunkt gilt nach beiden Seiten: Kein Host läuft über ihn hinaus, bevor jeder Host den Schritt davor beendet hat.
+
+Solange ein Fact, den das Playbook während des Laufs geschrieben hat, noch ein Template ist, ist wieder jeder Schritt ein Synchronisationspunkt.
+
+Einige weitere Dinge beenden einen Batch, ohne dass jeder Host wartet: ein Task, der ein Ergebnis registriert, ein Modul, das Facts zurückgeben kann (`set_fact`, `setup`, `package_facts`, jedes Modul aus einer Collection oder dem `library/` einer Rolle) und ein Task, der ein Lookup aufruft. Die Tasks danach werden erst gerendert, wenn sie gelaufen sind.
+
+<HostTimeline />
+
+Es ändert die Reihenfolge, in der Tasks laufen, nicht was sie tun. Der Recap ist in beiden Fällen derselbe. Abweichen kann eine Abhängigkeit, die der Text nicht zeigt: Mit Batching kann ein Host Task fünf erreichen, bevor ein anderer Host Task eins ausgeführt hat.
+
+## Was es nicht sehen kann
+
+Batching entscheidet anhand des Texts des Playbooks. Eine Abhängigkeit, die der Text nie ausschreibt, hat keine Markierung, und nichts wartet auf sie:
+
+- ein Netzwerkdienst, den ein anderer Host noch installiert: `wait_for: host=db1 port=5432`, ein `uri`-Aufruf, `psql -h db1`, jeder Client, der einen Host wörtlich nennt;
+- eine Datei auf einem wörtlich genannten Host, ein gemeinsames Dateisystem oder eine Datenbank oder Warteschlange, an der sich die Tasks zweier Hosts treffen;
+- alles, was ein `shell`- oder `command`-Task mit einem anderen Rechner macht.
+
+Ein berechneter Zugriff wie `vars[name]` oder `lookup('vars', name)` behält den Synchronisationspunkt, weil der Text nicht sagen kann, welchen Host er liest. Unter ansible-core und unter dem Standard von Volant ist jeder Task ein Synchronisationspunkt, sodass diese Reihenfolgen gelten, ohne dass jemand sie aufschreibt. Schalten Sie Batching nur für Plays ein, deren Hosts nicht auf diese Weise voneinander abhängen.
+
+## Einschalten
+
+Es ist aus, solange Sie es nicht verlangen.
+
+<Tabs>
+  <TabItem label="ansible.cfg">
+    ```ini
+    [volant]
+    batching = true
+    ```
+  </TabItem>
+  <TabItem label="Umgebung">
+    ```sh
+    VOLANT_BATCHING=1 volant playbook -i inventory.ini site.yml
+    ```
+  </TabItem>
+</Tabs>
+
+Ansible ignoriert Abschnitte, die es nicht kennt. Gemessen mit ansible-core 2.19.12 und dem obigen Block: `ansible-playbook` führt das Play aus und endet ohne Warnung mit 0, und `ansible-config dump` führt den Abschnitt nicht auf. Eine `ansible.cfg` kann `[volant]` enthalten und trotzdem beide Engines steuern.
+
+<Aside type="caution">
+`ansible-config validate` bemerkt ihn dagegen: Es lehnt die Datei mit `Found unknown section 'volant'` ab und endet mit 1. Wenn Sie eine gemeinsam genutzte `ansible.cfg` validieren, setzen Sie die Option stattdessen über die Umgebung.
+</Aside>
+
+## Was es spart
+
+Gemessen mit Volant 0.1.0-alpha.5 auf einem Linux-Rechner, mit 200 Hosts, 20 Tasks, lokalen Verbindungen und `-f 50`: Ein Play, in dem kein Task einen anderen Host liest, braucht standardmäßig 1,28 s und mit `batching = true` 0,53 s, ist also 2,4-mal so schnell. Liest jeder Task `hostvars`, brauchen beide Einstellungen etwa 1,3 s, weil jeder Task in beiden Fällen ein Synchronisationspunkt ist. Über SSH zahlt jeder Task zusätzlich einen Netzwerk-Roundtrip, Ihr eigenes Verhältnis hängt also von Ihrer Latenz ab. Diese Zahlen wurden seit alpha.5 nicht neu gemessen.
+
+## Warum es kein Playbook-Keyword ist
+
+Ansible hat kein solches Keyword, und ein Playbook, das mit Volant läuft, muss ein Playbook bleiben, das `ansible-playbook` genauso ausführt. Batching beschreibt den Rechner, von dem aus Sie arbeiten, daher steht die Einstellung in der `ansible.cfg`. [Entscheidungsdokument 0005](/de/docs/decisions/0005-fork-permits-span-host-local-batches/) hält die Regel dahinter fest.

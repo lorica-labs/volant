@@ -1,0 +1,122 @@
+---
+sourceHash: 3c0df8cc1f8a
+title: 我的 playbook 能运行吗？
+description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+要知道一个 playbook 能不能运行，先对它运行 `--syntax-check`，再在一台主机上运行它。Volant 能读取 ansible-core 2.19 的全部语法，所以你的 playbook 在这里的解析结果和在 Ansible 下一样。在连接任何主机之前，还有第二项检查，即预检，它会查找这个版本尚不支持的内容，并用一条点名的消息停止运行。下面的[已知缺口](#已知缺口)是例外：在那些地方，运行可能忽略某个设置或给出错误的结果，而且没有任何报错。
+
+## 检查项目
+
+<Steps>
+
+1. 只读取，不运行。列表输出和 `--syntax-check` 遇到不支持的模块或关键字时从不停止，所以即使是这个版本还不能运行的 playbook，它们也能工作：
+
+   ```sh
+   volant playbook -i inventory.ini site.yml --syntax-check
+   volant playbook -i inventory.ini site.yml --list-tasks
+   ```
+
+   如果 task 列表与 `ansible-playbook --list-tasks` 打印的一致，说明 Volant 编译你的 role、import 和 tag 的方式与它相同。
+
+2. 在一台你可以动的主机上做一次真正的运行。`--check --diff` 除了缓存 agent 之外不会改动主机，所以它是安全的第一次运行：
+
+   ```sh
+   volant playbook -i inventory.ini site.yml --limit test1 --check --diff
+   volant playbook -i inventory.ini site.yml --limit test1
+   ```
+
+   这个版本无法执行的内容，大部分会在连接之前就让运行停止。消息会点出模块、关键字或值，运行以退出码 4 结束。[目前会拒绝什么](#目前会拒绝什么)列出了这些消息。
+
+3. 修改，或者等待。尚不支持的内容列在[关键字](/zh-cn/docs/reference/keywords/)、[模块](/zh-cn/docs/reference/modules/)和下面的[已知缺口](#已知缺口)中，大部分都有变通办法。
+
+</Steps>
+
+<Aside type="note">
+只由动态的 `include_tasks` 或 `include_role` 点名的文件，会在某台主机执行到那条语句时才被读取，所以其中不受支持的模块或关键字，会让运行在那一刻停止，而不是在它之前。见 [role、include 与 import](/zh-cn/docs/playbooks/roles/)。
+</Aside>
+
+## 常见问题
+
+| 问题 | 回答 |
+|---|---|
+| `community.general` 能用吗？ | 能，安装之后即可。Volant 不会在运行中安装 collection，所以请先运行 `volant runtime install --collections community.general`。如果插件需要托管运行时不带的 Python 包（例如依赖 `jmespath` 的 `json_query` 过滤器），就会失败。这种情况请用 `VOLANT_PYTHON` 指定你自己的 Python。见[托管运行时](/zh-cn/docs/reference/runtime/#collection)。 |
+| `copy` 能用吗？ | 能。控制节点读取文件，或使用 `content:`，再把它发送到主机。`src` 是目录也可以。见[模块](/zh-cn/docs/reference/modules/)。 |
+| `async` 能用吗？ | 能：`async`、`poll`，以及 `poll: 0` 搭配 `async_status`。ansible-core 无法在 `async` 下运行的模块，会在每台主机上失败，并给出 `This action (<name>) does not support async.`。见[运行 play](/zh-cn/docs/playbooks/how-a-play-runs/#异步任务)。 |
+| `--diff` 能用吗？ | 能，可以和 `--check` 一起用，也可以单独用。当运行要求检查或 diff 时，`apt`、`user`、`group`、`file`、`lineinfile` 和 `systemd` 需要主机上有 Python。见[检查模式、diff 与列表输出](/zh-cn/docs/playbooks/check-and-diff/)。 |
+| `become`、vault 和 `ansible.cfg` 能用吗？ | 通过 `sudo` 或 `su` 的 `become`、vault 和 `ansible.cfg` 都能用。`doas` 和其他方式不能。见[连接与 become](/zh-cn/docs/hosts/connections/)。 |
+| 我自己写的插件能用吗？ | 暂时不能。自己写的 action 插件会让运行停止，`callback_plugins/` 和 `vars_plugins/` 会被忽略。见[已知缺口](#已知缺口)。 |
+
+## 一览
+
+| 领域 | 目前可以运行 | 尚不支持 |
+|---|---|---|
+| Play | `pre_tasks`、role、`tasks`、`post_tasks`、handler、`serial`、`strategy`（`linear`、`free`、`host_pinned`、`debug`）、`order`、`throttle`、`timeout`、`debugger`、`any_errors_fatal`、`max_fail_percentage`、`ignore_errors`、`ignore_unreachable` | |
+| Task | `when`、`loop`、所有 `with_<lookup>` 形式、`register`、`until`、`retries`、`changed_when`、`failed_when`、`ignore_errors`、`ignore_unreachable`、`any_errors_fatal`、`no_log`、`environment`、`timeout`、`tags`、`async`、`poll`、`module_defaults` | |
+| 块 | `block`、`rescue`、`always` | |
+| 复用 | role 与依赖、`import_tasks`、`import_role`、`import_playbook`、`include_tasks`、`include_role`、`include_vars` | |
+| 委派 | `delegate_to`、`delegate_facts`、`local_action`、`run_once` | |
+| 模块 | ansible-core 面向 Linux 主机的模块，包括 `copy`、`template`、`dnf`、`service`、`uri` 和 `reboot`，以及已安装 collection 的模块和它们的 action 插件 | 需要 Windows 或网络设备的 collection action 插件，自己写的 action 插件 |
+| Inventory | INI、YAML 和 TOML 文件，目录，脚本，`constructed`、`generator` 和 collection 插件，多个 `-i`，`group_vars`，`host_vars`，`jsonfile` facts 缓存 | 无 |
+| 连接 | `ssh`（密钥、ssh-agent 或密码：`-k` 或 `ansible_password`，需要 OpenSSH 8.4 或更高版本），`local` | 其他连接插件，Windows，网络设备 |
+| 提权 | 通过 `sudo` 或 `su` 的 `become`，带密码或不带密码 | `doas` 和其他方式 |
+| 模板 | Jinja2 加上 Ansible 的过滤器、测试器和 lookup，`!unsafe`，来自 collection 的过滤器和 lookup | 部分过滤器参数，列在[模板](/zh-cn/docs/variables/templating/)中 |
+| 运行方式 | 普通运行，[`--check` 和 `--diff`](/zh-cn/docs/playbooks/check-and-diff/)，[vault](/zh-cn/docs/variables/vault/)，`--start-at-task`，`--step`，四个列表命令 | 无 |
+
+## 常见阻碍与对策
+
+| 尚不支持 | 原因 | 现在可以怎么做 |
+|---|---|---|
+| `action_plugins/` 里自己写的 action 插件 | Volant 运行 ansible-core 和已安装 collection 的 action 插件，不运行你自己的。 | 改写成模块，或者让这个 play 继续使用 `ansible-playbook`。 |
+| 没有安装的 collection | Volant 不会在运行中安装 collection。它会在第一次连接之前，向控制节点的 ansible-core 询问已安装了什么。 | 运行 `volant runtime install --collections NAME`，也就是错误消息给出的命令。见[托管运行时](/zh-cn/docs/reference/runtime/#collection)和 [来自 collection 的模块](/zh-cn/docs/internals/python/#来自-collection-的模块)。 |
+| 控制节点上没有带 ansible-core 的 Python | 首次需要时，Volant 会用 `curl` 或 `wget` 和 `tar` 安装自己的一份。 | 什么都不用做，或者提前运行 `volant runtime install`。没有网络时，使用 `volant runtime pack` 和 `install --from`。 |
+| 在没有 Python 的主机上，`--check` 或 `--diff` 下的 `apt`、`user`、`group` 或 `file` | 当运行要求检查或 diff 时，这些模块要通过主机上的 Python 来应答。 | 在主机上安装 Python，或者不带 `--check` 和 `--diff` 运行这个 play。 |
+| `!!binary`、重复的锚点，以及作为带类型值的日期或集合 | Volant 没有字节、日期或集合的类型。日期按它的 ISO 文本加载，`!!set`、`!!omap` 或 `!!pairs` 按其书写形式加载为映射或列表。`!!binary` 会让加载中止，同名的第二个 `&anchor` 则被接受。 | 把值写成普通字符串、列表或映射，并让每个锚点使用自己的名字。 |
+| 对宽于 128 位的整数做算术运算 | 运算符 `+`、`-`、`*`、`/`、`//`、`%` 和 `**`，以及 `abs` 和 `round` 过滤器，会拒绝宽操作数。见[模板](/zh-cn/docs/variables/templating/)。 | 在模块中做运算，或在 `command` 中使用 `python3 -c`，并把宽值保留为文本。 |
+
+## 目前会拒绝什么
+
+预检会在第一次连接之前、任何横幅和汇总之前让运行停止。没有它，漏过去的关键字会被悄悄忽略，运行会在跳过你要求的内容之后报告成功。[预检](/zh-cn/docs/internals/preflight/)说明了它的工作方式。
+
+| 内容 | 消息形式 | 退出码 |
+|---|---|---|
+| `strategy` 不是 `linear`、`free`、`host_pinned` 和 `debug` 之一 | `strategy 'x' is not supported yet` | 4 |
+| `include_tasks` 或 `include_role` 上的 `until`、`retries` 或 `delay` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
+| 标准输入是终端时，同时带 `prompt` 和 `seconds` 或 `minutes` 的 `pause` | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
+| ansible-core 有、而这个版本不处理的模块参数 | `argument 'x' is not supported yet on 'module'`，只有该值被拒绝时再加上 ` with 'v'` | 4 |
+| role 之外的 `end_role` | `Cannot execute 'end_role' from outside of a role` | 4 |
+| 这个版本不带的内置模块 | `module 'x' is not available in this release` | 4 |
+| 整个是一个模板的字符串参数 | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
+| 无法解析的模块或 collection | `couldn't resolve module/action 'x' ...`，缺少 collection 时还会附上安装命令 | 4 |
+| 需要 Windows 或网络设备 action 插件的 collection 模块 | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| `become_method` 不是 `sudo` 和 `su` | `become_method 'x' is not supported yet` | 2 |
+| `roles:` 或 `import_role` 中没有人能找到的 role | `the role 'x' was not found in ...` | 1 |
+
+`pause` 的拒绝只适用于总会运行的步骤。如果它外面包着 `when`、`loop` 或 `rescue`，检查会推迟到执行到该 `pause` 的时候。被预检停止的运行以退出码 4 结束，这是 Ansible 在无法加载 playbook 时使用的退出码。[退出码](/zh-cn/docs/reference/exit-codes/)列出了所有退出码。
+
+## 已知缺口
+
+这些情况与 `ansible-playbook` 不同，运行前没有消息，或者消息指向别的东西。每一行都说明会发生什么。
+
+| 内容 | 会发生什么 |
+|---|---|
+| `callback_plugins/`、`vars_plugins/`、`stdout_callback`、`callbacks_enabled`、`result_format` | 被忽略。输出是默认的输出。 |
+| `volant check`、`inventory`、`vault`、`doc`、`config`、`galaxy` 和 ad-hoc 命令 | 它们不存在。`volant` 只有 `playbook` 和 `runtime`。 |
+| 在两个 Python 无法排序的类型的字面量之间写比较，例如 `{{ 'a' < 1 }}` | 它会回答 `false` 或 `true`，而 ansible-core 会失败并报 `'<' not supported between instances of 'str' and 'int'`。模板库在 Volant 看到之前就算出了字面量的比较结果。任意一边是变量时，比较会像 ansible-core 一样失败。 |
+| 失败的带 `no_log: true` 的 task | 这是有意为之。Volant 打印 `[ERROR]: Task failed: Action failed: <error censored due to no log>`，不打印失败原因的其他内容。ansible-core 2.19.12 会打印原因：`[ERROR]: Task failed: Action failed: <the msg of fail or assert>`、模块的错误，以及 `<<< caused by >>>` 块。这些文字可能包含机密，例如点出密码的 `fail` 的 `msg`。[安全策略](https://github.com/lorica-labs/volant/blob/main/SECURITY.md)把在 ansible-core 里被 `no_log` 隐藏、却进入日志或终端的机密算作漏洞，所以 Volant 把它隐藏起来。`fatal:` 行、已注册的结果和汇总在两者中相同。要读到原因，请去掉 `no_log` 再运行这个 task。 |
+| SIGTERM | 这是有意为之。Volant 会干净地停止：取消正在运行的 task，删除存放连接密码的目录，打印汇总，并以退出码 99 退出，与 Ctrl-C 的处理相同。`ansible-playbook` 不捕获 SIGTERM，它会立刻以退出码 143 终止，并且不打印汇总。在 `command: sleep` 运行期间用 `kill -TERM` 测得：Volant 下是 99，ansible-core 2.19.12 下是 143。 |
+
+[模板](/zh-cn/docs/variables/templating/)列出了会失败的过滤器和参数。当某个过滤器的某个参数会失败时，[对等性页面](/zh-cn/docs/reference/parity/)把该过滤器标为 `partial`。
+
+如果一个 playbook 在 Volant 和 `ansible-playbook` 下表现不同，而又没有被报告为不支持，那就是 bug。请附上最小的 playbook，[提交兼容性报告](https://github.com/lorica-labs/volant/issues/new?template=compat.yml)。
+
+## 查找某个名称
+
+当你需要了解某个关键字、模块、过滤器或选项时，请打开对应的参考页面：
+
+- [关键字](/zh-cn/docs/reference/keywords/)列出所有 play、块、task 和循环关键字，以及 Volant 对它们的处理。
+- [模块](/zh-cn/docs/reference/modules/)列出在 agent 中、在控制节点上以及通过 Python 运行的模块，以及每个模块支持的参数。
+- [命令行](/zh-cn/docs/reference/cli/)列出 `volant playbook` 和 `volant runtime` 的所有选项。
+- [对等性](/zh-cn/docs/reference/parity/)是完整的对照矩阵：ansible-core 2.19.12 的每个关键字、选项和插件，以及 ansible 12.3.0 包中各 collection 的每个模块、过滤器、测试器和 lookup，状态为 `runs`、`partial`、`not yet` 或 `later`。

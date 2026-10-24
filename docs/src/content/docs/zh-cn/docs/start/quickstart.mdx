@@ -1,0 +1,137 @@
+---
+sourceHash: 7056b0dc3a70
+title: 快速上手
+description: 先在本机运行第一个 playbook，再通过 SSH 在远程主机上运行。
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+{/* A walkthrough video goes here once it is recorded:
+import Video from '../../../../../components/Video.astro';
+<Video title="第一次使用 Volant 运行" src="/videos/quickstart.mp4" poster="/videos/quickstart.jpg" />
+*/}
+
+本页假定 `volant` 已经在你的 `PATH` 上。如果还没有，请先看[安装](/zh-cn/docs/start/installation/)。
+
+## 在本机运行 playbook
+
+<Steps>
+
+1. 创建一个只有一台主机的 inventory，不通过 SSH 连接它：
+
+   ```ini title="inventory.ini"
+   localhost ansible_connection=local
+   ```
+
+2. 编写 playbook：
+
+   ```yaml title="site.yml"
+   - hosts: localhost
+     gather_facts: false
+     tasks:
+       - name: Who am I?
+         command: id -un
+         register: me
+
+       - name: Say hello
+         debug:
+           msg: "Hello from {{ me.stdout }}"
+   ```
+
+3. 运行它。`volant playbook` 接受与 `ansible-playbook` 相同的参数：
+
+   ```sh
+   volant playbook -i inventory.ini site.yml
+   ```
+
+</Steps>
+
+输出和你在 Ansible 里见到的一样：
+
+```text
+PLAY [localhost] ***************************************************************
+
+TASK [Who am I?] ***************************************************************
+changed: [localhost]
+
+TASK [Say hello] ***************************************************************
+ok: [localhost] => {
+    "msg": "Hello from alice"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+## 在远程主机上运行
+
+主机需要有 SSH 服务，以及一个可以用密钥登录的账户。它不需要安装 Volant：控制节点会随第一个 task 上传自己的 agent（一个大约 1.2 MB 的小程序），并把它保存在主机的 `~/.ansible/tmp` 里，供下一次运行使用。
+
+```ini title="inventory.ini"
+[web]
+web1 ansible_host=192.0.2.10 ansible_user=deploy
+```
+
+```yaml title="site.yml"
+- hosts: web
+  tasks:
+    - name: Show the distribution
+      debug:
+        msg: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Make sure the release directory exists
+      become: true
+      file:
+        path: /srv/app
+        state: directory
+        mode: "0755"
+```
+
+```sh
+volant playbook -i inventory.ini site.yml
+```
+
+<Aside type="tip">
+这个 playbook 的大部分内容由 agent 自己运行。agent 无法原生运行的模块（例如参数特殊的 `file`）会作为 Python 模块运行，所以请在主机上保留一个 Python 3。控制节点上不需要 Ansible：Volant 第一次需要时会下载自己的 ansible-core。双方各需要什么，见[安装](/zh-cn/docs/start/installation/#机器需要什么)。
+</Aside>
+
+你的 `~/.ssh/config` 会生效，因为 Volant 运行的就是你已有的 `ssh`。最简单的登录方式是密钥文件或 ssh-agent。如果要使用密码，传入 [`-k`](/zh-cn/docs/reference/cli/#ask-pass)，或设置 `ansible_password`。
+
+## 你现有的项目
+
+Volant 按原样读取 Ansible 项目。在项目目录中运行它，或者用 `-i` 指向 inventory：
+
+- `ansible.cfg` 从与 Ansible 相同的位置读取，`ANSIBLE_*` 变量同样生效。见[配置](/zh-cn/docs/reference/configuration/)。
+- INI、YAML 或脚本形式的 inventory，以及放在旁边的 `group_vars/` 和 `host_vars/`，无需修改即可使用。见 [Inventory](/zh-cn/docs/hosts/inventories/)和[优先级与 facts](/zh-cn/docs/variables/precedence/)。
+- 传入 `--ask-vault-pass` 或 vault 密码文件后，用 vault 加密的文件和变量会被解密。见 [Vault](/zh-cn/docs/variables/vault/)。
+- role 会在 `roles/` 和 `roles_path` 中查找，连同它们的 defaults、handler 和依赖。见 [role、include 与 import](/zh-cn/docs/playbooks/roles/)。
+- 用 `volant runtime install --collections` 安装 collection 之后，它们就可以使用。
+
+第一次真正运行之前，请用[我的 playbook 能运行吗？](/zh-cn/docs/start/compatibility/)检查这个版本做不到什么。它会读取 playbook，并列出一次运行会做什么，而不连接任何主机。
+
+## 一个可用的项目布局
+
+Volant 在 Ansible 查找 role、`group_vars` 和 `host_vars` 的位置找到它们：
+
+<FileTree>
+- ansible.cfg
+- inventory.ini
+- site.yml
+- group_vars/
+  - all.yml
+  - web.yml
+- host_vars/
+  - web1.yml
+- roles/
+  - nginx/
+    - defaults/main.yml
+    - handlers/main.yml
+    - tasks/main.yml
+</FileTree>
+
+## 下一步
+
+- [我的 playbook 能运行吗？](/zh-cn/docs/start/compatibility/)检查现有项目。
+- [Volant 会在你的机器上留下什么](/zh-cn/docs/#volant-会在你的机器上留下什么)列出它在控制节点和主机上写入的内容。
+- [运行 play](/zh-cn/docs/playbooks/how-a-play-runs/)解释从第一行到汇总之间发生了什么。
+- [命令行](/zh-cn/docs/reference/cli/)列出所有选项。

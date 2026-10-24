@@ -1,0 +1,125 @@
+---
+sourceHash: c9d640267c68
+title: Rendimiento
+description: Dos cargas de trabajo medidas, la configuración que hay detrás, los comandos que las reproducen y en qué se va el tiempo restante.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import BarChart from '../../../../../components/BarChart.astro';
+
+Volant se mide con dos cargas de trabajo reales, cada una ejecutada por una receta del repositorio. Todas las cifras de esta página salen de esas recetas.
+
+Con cuatro roles de Ansible Galaxy (`geerlingguy.security`, `nginx`, `git` y `pip`) aplicados a dos hosts Ubuntu 24.04 que ya habían convergido, Volant termina en 0.529 s donde ansible-core 2.19.12 con `pipelining = True` tarda 26.435 s, una proporción de 49.97. Con el `site.yml` oficial de k3s-ansible, contra un clúster ya instalado, Volant tarda 23.477 s y la referencia 50.519 s, una proporción de 2.15. Medido el 2026-09-27 con `just bench` y `just bench-k3s`, que reproducen estas cifras. No se han vuelto a medir desde entonces.
+
+<BarChart
+  title="Dos cargas de trabajo, dos hosts convergidos"
+  subtitle="Mediana de tres pasadas cronometradas, 2026-09-27. Referencia: ansible-core 2.19.12, <code>pipelining = True</code>. Menos es más rápido."
+  unit="s"
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12' }, { name: 'Volant', accent: true }]}
+  rows={[
+    { label: 'Cuatro roles de Galaxy', values: [26.435, 0.529] },
+    { label: 'k3s-ansible site.yml', values: [50.519, 23.477] },
+  ]}
+/>
+
+Las dos proporciones están muy separadas porque los roles no cambian nada en un host convergido, así que casi todo el tiempo de la referencia ahí se va en la maquinaria que rodea a cada módulo, y Volant elimina la mayor parte. El playbook de k3s reinicia servicios y ejecuta scripts de instalación en cada pasada, y ese trabajo tarda lo mismo con cualquiera de los dos motores. [Lo que queda](#lo-que-queda) lo desglosa.
+
+## Configuración
+
+| | |
+|---|---|
+| Hosts administrados | dos hosts Ubuntu 24.04, 4 núcleos cada uno, en una red overlay |
+| Controlador | Ubuntu 26.04, 8 núcleos |
+| Volant | compilación release de `e57fbe5` (`v0.1.0-alpha.7-74-ge57fbe5`), ajustes por defecto: módulos nativos activados, una conexión ssh por host, `--facts auto`, procesamiento por lotes desactivado |
+| Referencia | ansible-core 2.19.12, `pipelining = True`, `forks` en su valor por defecto de 5, todos los demás ajustes por defecto |
+| Carga de roles | `geerlingguy.security` 3.0.2, `geerlingguy.nginx` 3.3.1, `geerlingguy.git` 3.0.1 y `geerlingguy.pip` 3.1.2 en un play, `become: true`, facts recopilados, 56 tareas por host |
+| Carga de k3s | los playbooks de k3s-ansible en un commit fijado, k3s v1.31.12+k3s1, un servidor y un agente, con el clúster instalado antes por una pasada de la referencia |
+| Pasadas | una pasada de calentamiento sin cronometrar por motor, después tres pasadas cronometradas de cada uno, y se informa de la mediana |
+
+El `PLAY RECAP` de cada pasada cronometrada se compara con el de la primera, entre ambos motores. Una diferencia significaría que los motores hicieron trabajo distinto, y la receta fallaría. En los roles, todas las pasadas terminaron con `ok=28 changed=0 skipped=28` por host. En k3s, todas terminaron con `ok=34 changed=2 skipped=69` para el servidor y `ok=19 changed=3 skipped=54` para el agente. Las tareas `changed` son el trabajo real descrito en [Lo que queda](#lo-que-queda).
+
+Las pasadas individuales:
+
+| Carga | Volant (s) | ansible-core (s) |
+|---|---|---|
+| Cuatro roles de Galaxy | 0.530, 0.529, 0.524 | 26.408, 26.438, 26.435 |
+| k3s-ansible | 24.150, 23.448, 23.477 | 51.121, 50.519, 50.505 |
+
+## Reproducir las cifras
+
+Ambas recetas compilan Volant en modo release, se ejecutan contra los hosts que nombres e imprimen las medianas y la proporción. El controlador necesita ansible-core 2.19.12 instalado con `uv tool install`, y la cuenta de los hosts necesita `sudo` sin contraseña.
+
+```sh
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench 3
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench-k3s 3
+```
+
+<Aside type="caution">
+Ambas recetas modifican los hosts en los que se ejecutan. `just bench` instala los paquetes y la configuración de los cuatro roles. `just bench-k3s` instala k3s, mide y lo elimina. Usa máquinas que puedas borrar.
+</Aside>
+
+Cada pasada cronometrada de Volant escribe además su perfil mediante `VOLANT_PROFILE_JSON`, bajo `target/bench/`, de modo que una cifra sorprendente se puede rastrear hasta la tarea que la causó. Las tablas siguientes salen de esos archivos.
+
+## En qué se fue el tiempo
+
+Los tiempos son por host, de la pasada mediana del 2026-09-27. Las mismas cargas medidas el 2026-09-24, antes de los módulos nativos, tardaron 12.66 s en los roles (referencia 26.23 s) y 37.53 s en k3s (referencia 50.19 s). El [registro de decisión 0008](/es/docs/decisions/0008-native-modules-and-speed/) tiene el perfil de ese día.
+
+### Cuatro roles de Galaxy
+
+| Paso | Tiempo |
+|---|---|
+| Construir en el controlador la union de módulos de Python | 15.3 ms, leída de la caché |
+| `apt`, 8 tareas, paquetes instalados, caché al día | 38.4 ms, nativo |
+| `setup`, recopilación de facts | 47.6 ms, nativo |
+| `systemd`, 3 tareas | 52.4 ms, nativo |
+| `file` ×8, `lineinfile` ×8, `stat` ×5 | 52.8 ms, nativo |
+| Abrir las conexiones | 172.6 ms |
+| Preparar las tareas en el controlador | 25.0 ms |
+| Frames y blobs por el cable | 27.1 ms |
+| Esperar al otro host en cada tarea | 10.6 ms |
+| Tiempo total, dos hosts | 0.529 s (referencia 26.435 s) |
+
+Un módulo nativo respondió a las 66 tareas de módulo de la pasada mediana, 33 por host. Ninguna se devolvió, así que no se inició ningún servidor de Python en ninguno de los hosts.
+
+### k3s-ansible
+
+Donde los dos hosts difieren, las cifras son las del servidor.
+
+| Paso | Tiempo |
+|---|---|
+| Construir la union de módulos de Python, colecciones incluidas | 30.6 ms, leída de la caché |
+| Reiniciar el servicio k3s, servidor y agente | 8,269 + 4,763 ms, `systemd` nativo |
+| `service_facts` | 2,485 ms, nativo |
+| `package_facts` | 168 ms, nativo |
+| `apt: name=policycoreutils update_cache=true` | 2,205 ms, devuelto a Python |
+| Recopilación de facts | 55 ms, nativo |
+| Preparar las tareas en el controlador | 185 ms |
+| Abrir las conexiones | 350 ms |
+| Esperar al otro host en cada tarea (agente) | 253 ms |
+| Tiempo total, dos hosts | 23.477 s (referencia 50.519 s) |
+
+En la pasada mediana, 28 tareas se ejecutaron de forma nativa, 11 se devolvieron al módulo de Python y 5 ejecutaron un módulo sin versión nativa (`ansible.posix.sysctl` y `wait_for`).
+
+## Lo que queda
+
+En k3s, la mayor parte de los 23.5 segundos de Volant es trabajo que pide el propio playbook:
+
+- los reinicios del servicio k3s, unos 8.3 segundos en el servidor y 4.8 en el agente, que se van en `systemctl` y en el propio k3s;
+- el script de instalación de k3s, de 1.4 a 1.5 segundos por host;
+- 13 tareas `command`, como `k3s --version`, unos 3.1 segundos entre ambos hosts.
+
+Los dos motores pagan esto del mismo modo, porque son procesos que se ejecutan en el host.
+
+Dos pasos están frenados por lo que hace la propia referencia:
+
+- `service_facts` ejecuta los comandos que ejecuta ansible-core (`systemctl list-unit-files`, `service --status-all` y un `systemctl show` por unidad) para que su respuesta sea la misma. El módulo nativo los ejecuta en paralelo donde la referencia los ejecuta uno tras otro, y aun así suponen la mayor parte de sus 2.4 segundos. No puede bajar de ahí mientras lea las mismas fuentes.
+- La tarea `apt` del playbook define `update_cache` sin `cache_valid_time`, así que la referencia ejecuta `apt-get update` en cada pasada. El `apt` nativo solo responde a una tarea sin nada que hacer, así que esta va al módulo de Python, y la actualización de la caché es la mayor parte de sus 2.2 segundos.
+
+Esos dos pasos juntos cuestan de 4.5 a 4.7 segundos por host. Hacerlos más rápidos exigiría leer otras fuentes distintas de las que lee la referencia, y esa decisión se deja para una versión posterior.
+
+<Aside type="note">
+Estas cifras describen dos playbooks en dos hosts. Las tuyas dependen de la latencia de tu red, de lo que hagan tus tareas, de cuántas cubra un módulo nativo y de cuántos hosts gestiones a la vez. `--profile` muestra el reparto de tu propia ejecución: consulta [Línea de comandos](/es/docs/reference/cli/#ejecución-y-salida).
+</Aside>
+
+El [registro de decisión 0008](/es/docs/decisions/0008-native-modules-and-speed/) explica las decisiones que hay detrás de estas cifras y las opciones que se midieron y se descartaron.

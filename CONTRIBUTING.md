@@ -78,15 +78,17 @@ uv pip install --python "$(uv tool dir)/ansible-core/bin/python"   fqdn hashids 
 
 ## Documentation
 
-The documentation site lives in `docs/` and is built with [Starlight](https://starlight.astro.build). Pages are Markdown or MDX files under `docs/src/content/docs/`. To preview it:
+The site lives in `docs/` and is built with [Astro](https://astro.build): the project pages in `docs/src/pages/`, the documentation with [Starlight](https://starlight.astro.build). Documentation pages are Markdown or MDX files under `docs/src/content/docs/docs/`, served under `/docs/`. To preview it:
 
 ```sh
 just docs-dev
 ```
 
-A behavior change comes with its documentation in the same pull request. Two pages are generated from the source, `reference/keywords.md` and `reference/modules.md`: edit the tables in the code and run `just docs-keywords` or `just docs-modules`, never the page itself.
+A behavior change comes with its documentation in the same pull request. Three pages are generated from the source, `reference/keywords.md`, `reference/modules.md` and `reference/parity.md`: edit the tables in the code and run `just docs-keywords`, `just docs-modules` or `just docs-parity`, never the page itself.
 
 Write in American English, one paragraph per line, with sentence-case headings. `just docs-build` checks every internal link.
+
+English is the source. The site and the documentation are also in French, German, Spanish and Simplified Chinese: the documentation under `docs/src/content/docs/<lang>/`, the site's strings in `docs/src/i18n/ui/<lang>.ts`, the sidebar labels in `docs/src/i18n/sidebar.ts`. You can change an English page without touching its translations. Each translated page records which English text it came from, and once the English page changes, the translation shows a notice that it may be out of date. `just docs-i18n-check` lists those pages. After you bring a translation up to date, run `just docs-i18n-stamp`. The generated pages stay in English in every language.
 
 The install script is `docs/public/install.sh`, served from the site root. It is POSIX `sh` and must pass `shellcheck -s sh`.
 

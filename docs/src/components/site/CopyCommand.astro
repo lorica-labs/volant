@@ -1,30 +1,34 @@
 ---
 // A one-line command with a button that copies it.
-const { command } = Astro.props as { command: string };
+import { strings } from '../../i18n';
+
+const { command, code } = Astro.props as { command: string; code: string };
+const t = strings(code).copy;
 ---
 
 <div class="copy-command">
   <code class="mono"><span aria-hidden="true">$</span> {command}</code>
-  <button type="button" data-command={command} aria-label="Copy the command">
+  <button type="button" data-command={command} data-copied={t.copied} data-manual={t.manual} aria-label={t.label}>
     <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="1.75"
       stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
       <rect x="9" y="9" width="11" height="11" rx="2"></rect><path d="M5 15V5a2 2 0 0 1 2-2h10"></path>
     </svg>
-    <span class="label">Copy</span>
+    <span class="label">{t.copy}</span>
   </button>
 </div>
 
 <script>
   for (const button of document.querySelectorAll<HTMLButtonElement>('.copy-command button')) {
+    const label = button.querySelector('.label')!;
+    const copy = label.textContent;
     button.addEventListener('click', async () => {
-      const label = button.querySelector('.label')!;
       try {
         await navigator.clipboard.writeText(button.dataset.command!);
-        label.textContent = 'Copied';
+        label.textContent = button.dataset.copied!;
       } catch {
-        label.textContent = 'Select and copy';
+        label.textContent = button.dataset.manual!;
       }
-      setTimeout(() => (label.textContent = 'Copy'), 1800);
+      setTimeout(() => (label.textContent = copy), 1800);
     });
   }
 </script>

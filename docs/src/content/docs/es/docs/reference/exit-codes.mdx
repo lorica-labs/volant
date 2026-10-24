@@ -1,0 +1,55 @@
+---
+sourceHash: 3d7354233964
+title: Códigos de salida
+description: Qué significa cada código de salida y dónde coincide Volant con ansible-playbook.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+Volant sale con los códigos que usa `ansible-playbook`, así que los scripts y los trabajos de CI escritos para Ansible siguen funcionando.
+
+## Los códigos
+
+<Option name="0" id="code-0">
+  Todos los hosts terminaron sin ningún fallo.
+</Option>
+
+<Option name="1" id="code-1">
+  Un error general: un playbook o un rol que no se encuentra, un nombre de `notify` o una acción de `meta` desconocidos, o un patrón de hosts que no deja ningún host.
+</Option>
+
+<Option name="2" id="code-2">
+  Falló al menos un host, o la ejecución pidió un método de escalado que esta versión todavía no admite.
+</Option>
+
+<Option name="4" id="code-4">
+  Al menos un host fue inalcanzable, o el playbook se detuvo antes de la ejecución: no se interpreta, o usa algo que esta versión todavía no admite.
+</Option>
+
+<Option name="5" id="code-5">
+  Un ajuste tiene un valor que no puede tomar, como `forks = many`, una palabra desconocida para `gathering`, `runtime` o `host_named_paths`, o una palabra clave `order` que el play no conoce. El mensaje nombra la clave y el valor.
+</Option>
+
+<Option name="6" id="code-6">
+  Algunos hosts fallaron y otros fueron inalcanzables: 2 y 4 combinados.
+</Option>
+
+<Option name="99" id="code-99">
+  Ctrl-C o SIGTERM detuvieron la ejecución. Los lotes en curso se cancelan, se imprime el recap y Volant sale con 99, como hace `ansible-playbook`.
+</Option>
+
+<Option name="250" id="code-250">
+  `--step` no encontró ningún terminal en la entrada estándar. Volant se detiene antes de tocar ningún host.
+</Option>
+
+## Después de una ejecución
+
+Después de una ejecución, el código sale del recap: se suma 2 cuando algún host falló y 4 cuando algún host fue inalcanzable. Un play con `serial` se detiene en el primer lote que perdió todos los hosts vivos, con 2 si fallaron y con 4 si todos pasaron a ser inalcanzables.
+
+## Antes de una ejecución
+
+Un playbook detenido por la [comprobación previa](/es/docs/internals/preflight/) sale con 4 antes de cualquier conexión, que es lo que usa Ansible para un playbook que no puede cargar. Los casos cuyo código se midió en Ansible conservan ese código: 1 para un rol que falta, una acción de `meta` desconocida o un nombre de `notify` desconocido. Un nombre de `notify` desconocido en un archivo que trae un include dinámico solo se descubre durante la ejecución, y la termina allí también con 1.
+
+## Dónde falla Ansible
+
+En unos pocos casos ansible-core falla con código de salida 250, por ejemplo con un playbook que se importa a sí mismo o con `serial: abc`. Volant rechaza esos casos en su lugar, con un mensaje claro y uno de los códigos anteriores. Cada caso figura en *Diferencias con Ansible* de la página que lo trata.

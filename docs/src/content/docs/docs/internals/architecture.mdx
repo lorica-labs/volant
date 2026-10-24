@@ -41,7 +41,7 @@ The executor starts one driver per host, bounded by `forks`. The `linear` strate
 
 For Python modules, the controller asks a helper process running ansible-core to build the module payloads, and keeps the result in a cache between runs. The same helper runs the filters, tests and lookups that have no Rust version, the inventory plugins of collections, and the action plugins that Volant bridges, which run their jobs in parallel. Before the first connection it also reads the whole run to decide whether the agent may gather facts natively. See [The warm Python path](/docs/internals/python/).
 
-All the `ssh` runs for one inventory host share one OpenSSH connection, see [Connections and the agent](/docs/hosts/connections/#one-connection-per-host).
+All the `ssh` runs for one inventory host share one OpenSSH connection, see [Connections and become](/docs/hosts/connections/#one-connection-per-host).
 
 ## The agent
 

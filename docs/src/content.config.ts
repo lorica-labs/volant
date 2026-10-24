@@ -16,7 +16,11 @@ export const collections = {
       draft: z.boolean().default(false),
     }),
   }),
-  docs: defineCollection({ loader: docsLoader(), schema: docsSchema() }),
+  docs: defineCollection({
+    loader: docsLoader(),
+    // `sourceHash` marks which English text a translated page was made from: see src/i18n/source-hash.mjs.
+    schema: docsSchema({ extend: z.object({ sourceHash: z.string().optional() }) }),
+  }),
   changelogs: defineCollection({
     loader: changelogsLoader([
       { provider: 'keep-a-changelog', base: 'docs/changelog', changelog: '../CHANGELOG.md', title: 'Changelog' },

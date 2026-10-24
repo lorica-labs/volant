@@ -1,0 +1,78 @@
+---
+sourceHash: 65506ddc8a04
+title: Traitement par lots entre hôtes
+description: Un réglage facultatif qui laisse chaque hôte prendre de l'avance sur les tâches qui ne dépendent pas des autres.
+---
+
+import { Aside, Tabs, TabItem } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../../components/HostTimeline.astro';
+
+Le traitement par lots laisse chaque hôte prendre de l'avance sur les tâches qui ne dépendent pas des autres hôtes, si bien qu'un play sur de nombreux hôtes se termine plus vite. Il est facultatif : il est désactivé tant que vous ne l'activez pas.
+
+Par défaut, Volant exécute un play comme la stratégie `linear` d'Ansible : les hôtes d'un lot se retrouvent devant chaque tâche. Cette garantie permet à un playbook de dépendre de choses que ses tâches ne mentionnent jamais. Un hôte peut écrire un fichier qu'un autre lira plus tard, ou redémarrer un service auquel un autre se connecte. Rien de cela n'apparaît dans le texte d'une tâche : la seule hypothèse sûre est donc que toute tâche peut dépendre de la précédente, sur chaque hôte.
+
+Cette page traite de la stratégie `linear`, la valeur par défaut. Sous `strategy: free` et `host_pinned`, chaque hôte avance à son propre rythme, `run_once`, `any_errors_fatal` et `max_fail_percentage` sont ignorés avec un avertissement, et une tâche `pause` ou `add_host` arrête l'exécution. Les hôtes ne se retrouvent qu'aux tâches `meta` qui agissent sur tout le lot (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` et `refresh_inventory`), aux handlers et aux includes dynamiques, quelle que soit la valeur de `batching`. Voir [Autres stratégies](/fr/docs/playbooks/how-a-play-runs/#autres-stratégies).
+
+## Ce que change le traitement par lots
+
+Avec `batching` activé, un hôte poursuit ses tâches au lieu d'attendre à chacune, et ne s'arrête qu'à un point de synchronisation :
+
+- une tâche `run_once` ou `pause`
+- une tâche dont le texte nomme l'état d'un autre hôte par `hostvars`, `ansible_play_hosts` ou `ansible_play_batch`
+- une tâche qui lit un tel nom indirectement : par le corps d'un modèle dont le `src` est fixe, ou par une variable dont la définition lit un autre hôte, quel que soit le nombre de variables que traverse la chaîne
+- une tâche déléguée, puisque l'hôte sur lequel elle agit n'y est peut-être pas encore arrivé
+- une tâche qui lit un fichier du contrôleur après une tâche qui a pu en écrire un, comme un `fetch`
+- un point où un include ou un flush de handlers ajoute des étapes au play
+- la fin du play
+
+Un point de synchronisation vaut des deux côtés : aucun hôte ne le dépasse tant que tous n'ont pas terminé l'étape qui le précède.
+
+Tant qu'un fact que le playbook a écrit pendant l'exécution est encore un modèle, chaque étape redevient un point de synchronisation.
+
+Quelques autres cas terminent un lot sans faire attendre tous les hôtes : une tâche qui enregistre un résultat, un module qui peut renvoyer des facts (`set_fact`, `setup`, `package_facts`, tout module venant d'une collection ou du `library/` d'un rôle), et une tâche qui appelle un lookup. Les tâches qui les suivent ne sont rendues qu'une fois ceux-ci exécutés.
+
+<HostTimeline />
+
+Il change l'ordre dans lequel les tâches s'exécutent, pas ce qu'elles font. Le récapitulatif est le même dans les deux cas. Ce qui peut différer est une dépendance que le texte ne montre pas : avec le traitement par lots activé, un hôte peut atteindre la cinquième tâche avant qu'un autre ait exécuté la première.
+
+## Ce qu'il ne voit pas
+
+Le traitement par lots décide à partir du texte du playbook. Une dépendance que le texte n'écrit jamais n'a aucune marque, et rien ne l'attend :
+
+- un service réseau qu'un autre hôte est encore en train d'installer : `wait_for: host=db1 port=5432`, un appel `uri`, `psql -h db1`, tout client qui nomme un hôte littéralement ;
+- un fichier sur un hôte nommé littéralement, un système de fichiers partagé, ou une base de données ou une file où les tâches de deux hôtes se rejoignent ;
+- tout ce qu'une tâche `shell` ou `command` fait à une autre machine.
+
+Une lecture calculée comme `vars[name]` ou `lookup('vars', name)` garde le point de synchronisation, puisque le texte ne peut pas dire quel hôte elle lit. Sous ansible-core, et avec le comportement par défaut de Volant, chaque tâche est un point de synchronisation : ces ordres tiennent donc sans que personne ne les écrive. N'activez le traitement par lots que pour des plays dont les hôtes ne dépendent pas les uns des autres de ces façons.
+
+## L'activer
+
+Il est désactivé tant que vous ne le demandez pas.
+
+<Tabs>
+  <TabItem label="ansible.cfg">
+    ```ini
+    [volant]
+    batching = true
+    ```
+  </TabItem>
+  <TabItem label="Environnement">
+    ```sh
+    VOLANT_BATCHING=1 volant playbook -i inventory.ini site.yml
+    ```
+  </TabItem>
+</Tabs>
+
+Ansible ignore les sections qu'il ne connaît pas. Mesuré sur ansible-core 2.19.12 avec le bloc ci-dessus : `ansible-playbook` exécute le play et sort avec le code 0 sans avertissement, et `ansible-config dump` ne liste pas la section. Un même `ansible.cfg` peut porter `[volant]` et continuer à piloter les deux moteurs.
+
+<Aside type="caution">
+`ansible-config validate` le remarque : il rejette le fichier avec `Found unknown section 'volant'` et sort avec le code 1. Si vous validez un `ansible.cfg` partagé, définissez plutôt l'option par l'environnement.
+</Aside>
+
+## Ce qu'il fait gagner
+
+Mesuré avec Volant 0.1.0-alpha.5 sur une machine Linux, avec 200 hôtes, 20 tâches, des connexions locales et `-f 50` : un play dans lequel aucune tâche ne lit un autre hôte prend 1.28 s par défaut et 0.53 s avec `batching = true`, soit 2.4 fois plus vite. Quand chaque tâche lit `hostvars`, les deux réglages prennent environ 1.3 s, puisque chaque tâche est de toute façon un point de synchronisation. Sous SSH, chaque tâche paie aussi un aller-retour réseau : votre propre rapport dépend donc de votre latence. Ces chiffres n'ont pas été mesurés de nouveau depuis alpha.5.
+
+## Pourquoi ce n'est pas un mot-clé de playbook
+
+Ansible n'a pas de tel mot-clé, et un playbook exécuté avec Volant doit rester un playbook qu'`ansible-playbook` exécute de la même façon. Le traitement par lots décrit la machine depuis laquelle vous exécutez : le réglage vit donc dans `ansible.cfg`. La [fiche de décision 0005](/fr/docs/decisions/0005-fork-permits-span-host-local-batches/) consigne la règle qui le sous-tend.

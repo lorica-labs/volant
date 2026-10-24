@@ -1,0 +1,173 @@
+---
+sourceHash: 71da6f6cf85b
+title: 模板
+description: 控制节点上的 Jinja2、严格模式、条件、Volant 提供的过滤器、测试器和 lookup，以及模板文件如何渲染。
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+你的模板的工作方式与在 Ansible 中相同，只有下面这些例外。Volant 在控制节点上渲染 Jinja2，并在其上加入 Ansible 的过滤器、测试器和 lookup。
+
+- 未定义的变量是错误，见[默认严格](#默认严格)。
+- Volant 没有实现的过滤器、测试器或 lookup 会在 Python 中运行，可能需要安装额外的包，见[需要 Python 的过滤器、测试器和 lookup](#需要-python-的过滤器测试器和-lookup)。
+- 来自受管主机的值永远不会被当作模板渲染，见[来自主机的值绝不会被当作模板](#来自主机的值绝不会被当作模板)。
+- 少数参数、方法和模板文件选项尚未支持，见[尚未支持](#尚未支持)和[模板语言参考](/zh-cn/docs/reference/templates/)。
+
+## 默认严格
+
+模板在严格模式下渲染。未定义的变量是错误，而不是空字符串，除非你加以防护：
+
+```yaml
+- debug:
+    msg: "{{ release | default('latest') }}"
+  when: release is defined or use_latest | bool
+```
+
+值不是布尔值的 `when` 同样会被拒绝。
+
+未定义的变量或属性，其措辞和错误链都与 ansible-core 一致：`'nope' is undefined`，或 `object of type 'dict' has no attribute 'b'`。在 task 参数中，消息位于 `Finalization of task args for 'module' failed: Error while resolving value for 'arg'` 之下。由 `default` 或 `is defined` 防护的读取不会抛出任何错误。
+
+## 条件
+
+`when`、`changed_when`、`failed_when` 和 `until` 接受一个表达式或表达式列表。使用列表时，每个表达式都必须成立。
+
+```yaml
+- command: /opt/app/migrate.sh
+  register: migrate
+  changed_when: "'applied' in migrate.stdout"
+  failed_when:
+    - migrate.rc != 0
+    - "'already up to date' not in migrate.stderr"
+```
+
+包在 `{{ }}` 里、渲染结果为字符串的条件，会像 ansible-core 2.19 那样再作为条件求值一次。当 play 的 `vars` 中有 `healthy: "true"` 时，`when: "{{ healthy }}"` 会运行 task。如果第一次渲染读取了来自受管主机的值，这第二次求值就不会发生：task 会失败，并给出 `Encountered untrusted template or expression.`。见[来自主机的值绝不会被当作模板](#来自主机的值绝不会被当作模板)。
+
+## 包含模板的变量
+
+值是模板的变量，会在另一个模板读取它时渲染，所以过滤器或运算符总是看到最终的值：
+
+```yaml
+vars:
+  host: example.org
+  url: "http://{{ host }}:8080/x"
+  port: "{{ 8080 }}"
+tasks:
+  - debug:
+      msg: "{{ url | length }} {{ port | int + 1 }}"   # 25 8081
+```
+
+这适用于 play、块和 task 的 `vars`、`group_vars`、role 的 defaults、`vars_files`、`include_vars` 和额外变量，也适用于包含模板的列表或映射。渲染失败的成员，在有东西读取它之前不会抛出任何错误。
+
+读取一个没有值的名字的变量，自己也没有值：`default` 和 `is defined` 把它看作未定义。读取自身的变量，无论是直接还是通过其他变量，都会失败，并给出 `Recursive loop detected in template: maximum recursion depth exceeded`，在 `default` 后面也一样，与 ansible-core 一致。
+
+主机数据永远不会被渲染。来自受管主机的变量，以及由它构造出的变量，仍然是文本。见[来自主机的值绝不会被当作模板](#来自主机的值绝不会被当作模板)。
+
+读取 `vars`、或调用 `lookup` 或 `query` 的变量会保持原样，在 task 使用它时才渲染。`hostvars['other']['name']` 给出的是包含模板的变量的原始文本。
+
+## 可用内容
+
+
+
+| 类别 | 名称 |
+|---|---|
+| 过滤器 | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `extract`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
+| 测试器 | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed` / `change`, `failed` / `failure`, `succeeded` / `success` / `successful`, `skipped` / `skip`, `version`（以及 `version_compare`） |
+| Lookup | `env`, `file`, `vars`, `varnames`, `pipe`, `first_found`, `fileglob`, `template`, `inventory_hostnames`, `unvault`（以及 `query` 和 `q` 调用形式） |
+| 全局函数 | `now`, `lipsum` |
+| 来自 `ansible.utils` | `ansible.utils.ipwrap` 过滤器，只能用这个完整名称 |
+
+这个列表中的每个过滤器、测试器和 lookup，也都能以它的 `ansible.builtin.*` 名称应答，所以 `{{ data | ansible.builtin.to_json }}` 可以工作。不在这个列表里的过滤器、测试器或 lookup，会用 ansible-core 自己的代码在 Python 中运行，见[需要 Python 的过滤器、测试器和 lookup](#需要-python-的过滤器测试器和-lookup)。这也包括其他 collection 的插件。
+
+`first_found`、`fileglob` 和 `template` 沿着 `ansible_search_path` 查找文件。在 role 的 task 中，这条路径依次是 role 的目录、task 所在文件的目录，然后是 playbook 的目录。在 role 之外，则是 playbook 的目录。`role_path` 在 role 的 task 中设置，在 role 之外未定义。`fileglob` 先在每个条目的 `files/` 下尝试相对模式，然后在条目本身里尝试，第一个有匹配的条目胜出。它只返回文件，结果已排序，只有一个匹配时以字符串返回。
+
+`now()` 给出的是控制节点上的日期和时间，绝不是受管主机上的，`lipsum()` 给出随机的填充文本。它们的参数和结果见[模板语言参考](/zh-cn/docs/reference/templates/#日期与占位文本)。
+
+## 需要 Python 的过滤器、测试器和 lookup
+
+Volant 自己用 Rust 实现常用的过滤器、测试器和 lookup。ansible-core 2.19.12 或某个 collection 提供的其他所有过滤器、测试器和 lookup，都在控制节点上的 Python 进程中运行，使用插件自己的代码，所以结果与 ansible-core 给出的一致。
+
+只用 Rust 版本的 play，永远不会为模板启动 Python。Python 进程在第一次需要它的调用时启动，然后为运行的其余部分服务。启动大约需要 0.55 秒，每次运行只付一次，用 `hash` 测得。
+
+### 什么需要 Python
+
+Volant 没有某个名称的 Rust 版本时，这个名称就需要 Python。[对等性页面](/zh-cn/docs/reference/parity/)把这些行标为 `runs`，并附上说明 “through the Python helper; needs the plugin's Python libraries”。例子有 `hash`、`password_hash`、`json_query` 和 `ipaddr` 过滤器，以及 `lines` 和 `url` lookup。
+
+有 Rust 版本的名称，无论怎么称呼，都不会到达 Python。`ansible.utils.ipwrap` 仍在 Rust 中。vault 的过滤器、测试器和 lookup 同样绝不会交给 Python：vault 密码留在控制节点进程内。见 [Vault](/zh-cn/docs/variables/vault/)。
+
+### 要安装什么
+
+控制节点需要带有 `ansible-core` 的 Python 3。如果没有，Volant 会安装自己的[托管运行时](/zh-cn/docs/reference/runtime/)。
+
+插件还需要它导入的东西。`json_query` 需要 `jmespath`，`ipaddr` 需要 `netaddr`，`password_hash` 需要 `passlib`，collection 的插件需要那个 collection。所有这些都必须安装在 Volant 运行的那个解释器里。托管运行时只包含 ansible-core 及其依赖，没有别的，所以对于这些名称，请把 `VOLANT_PYTHON` 指向你自己装有这些包的环境。没有它们时，task 会失败，并给出插件自己的消息。
+
+设置了 `VOLANT_PYTHON` 时，Volant 只使用它，不用别的。否则它依次尝试托管运行时、当前激活的虚拟环境、`PATH` 上的 `python3`，都不可用时安装托管运行时。没有 `ansible-core` 的解释器会按名称被拒绝，消息会说明尝试过哪些解释器。调用需要 Python 的名称的 task 随后会失败，消息类似 `filter 'hash' needs the Python helper, which could not start: …`，后面跟着原因，运行以非零退出码结束。
+
+[在 Python 中运行的过滤器](/zh-cn/docs/reference/templates/#在-python-中运行的过滤器)列出了其他失败情形，以及 Python 收到的内容。
+
+## 来自主机的值绝不会被当作模板
+
+你写的模板是代码。受管主机发回的值是数据，永远不会在控制节点上作为模板运行。
+
+- 不可信的值是 `register` 和模块结果、收集到的 facts、`set_fact` 的值，以及 `lookup('file')`、`lookup('pipe')`、`lookup('env')` 和 `lookup('template')` 的结果。
+- 可信的值是 playbook 自带的那些：play 和 task 的 `vars`、`--extra-vars`、inventory 变量、`vars_files` 和 `include_vars`。`!unsafe` 把其中一个标记为数据。
+- 不可信的值只渲染一次。如果结果看起来又像模板，它仍然是文本。
+- 会把主机的值作为表达式求值的条件或 `debug: var:`，会失败，并给出 `Encountered untrusted template or expression.`
+
+[模板语言参考](/zh-cn/docs/reference/templates/#可信值与不可信值)有完整的规则和示例。
+
+<Aside type="caution">
+这是一条安全边界。如果你发现了让主机数据在控制节点上被当作模板求值的办法，请按[安全策略](https://github.com/lorica-labs/volant/blob/main/SECURITY.md)所述，私下报告。
+</Aside>
+
+## 渲染模板文件
+
+`template` 模块和 `lookup('template')` 共用同一次渲染，它与 task 参数的渲染有一点不同：它只渲染文件的文本**一次**。task 参数还要经过更多轮，这就是渲染后仍含有 `{{ ... }}` 的值可以被再次当作模板读取的原因。模板文件没有这第二轮，所以受管主机贡献的值会以纯文本的形式进入写出的文件，永远不会作为它自己的模板运行。
+
+它接受 `template` 模块读取的这些选项：
+
+| 选项 | 默认值 | 作用 |
+|---|---|---|
+| `trim_blocks` | 开 | 删除块标签之后的第一个换行。 |
+| `lstrip_blocks` | 关 | 去掉块标签所在行中，标签之前的空白。 |
+| `newline_sequence` | `\n` | 写出文件的换行符：`\n`、`\r` 或 `\r\n`，可以转义，也可以是字面字符。 |
+| `variable_start_string`、`variable_end_string` | `{{`、`}}` | 表达式两侧的标记。 |
+| `block_start_string`、`block_end_string` | `{%`、`%}` | 语句两侧的标记。 |
+| `comment_start_string`、`comment_end_string` | `{#`、`#}` | 注释两侧的标记。 |
+| `output_encoding` | `utf-8` | 写出文件的编码。仅适用于 `template`。 |
+
+`lookup('template')` 接受四个变量和注释分隔符以及 `trim_blocks`，别的都不接受。
+
+自定义分隔符会替换默认分隔符：设置了 `variable_start_string: '[['` 时，文件中的 `{{` 就是纯文本。三个起始字符串必须互不相同。不包含这三个起始字符串中任何一个的文本不是模板，会原样写出，包括换行符，无论 `newline_sequence` 怎么设置。
+
+模板文件的第一行可以覆盖这些选项。它以 `#jinja2:` 开头，包含按逗号分隔的 `key: value` 对，值是 Python 字面量：
+
+```jinja
+#jinja2: variable_start_string:'[%', variable_end_string:'%]', trim_blocks: False
+```
+
+可用的键是六个分隔符、`trim_blocks`、`lstrip_blocks`、`newline_sequence` 和 `keep_trailing_newline`。这一行优先于 task 的选项。错误的键、错误的类型或两个相同的起始字符串，会让渲染失败，消息与 ansible-core 一致。这一行会从输出中删除。不在文件最开头的 `#jinja2:` 是纯文本。
+
+`output_encoding` 可以写出 UTF-8、带签名的 UTF-8、Latin-1、ASCII、cp1252、ISO 8859-15、UTF-16 和 UTF-32，使用 Python 认识的名称和别名（`latin-1`、`iso8859_1`、`utf_16_le`、`windows-1252`）。没有指定字节序的 UTF-16 和 UTF-32 会写入字节顺序标记，之后使用小端序。编码无法容纳的字符会让 task 失败，消息来自 Python，指出该字符及其位置。其他任何编码都会按名称被拒绝。
+
+文件自己结尾的换行符在渲染后得以保留。[Action 插件](/zh-cn/docs/internals/action-plugins/#template)介绍了 `template` 模块做的其余事情。
+
+`raw` 块或表达式构造出的花括号如何保持字面不变，见[字面花括号](/zh-cn/docs/reference/templates/#字面花括号)。
+
+## 尚未支持
+
+这些缺口影响的 playbook 最多。[模板语言参考](/zh-cn/docs/reference/templates/#尚未支持)列出了渲染、模板文件和字节方面的缺口。
+
+### 过滤器和测试器
+
+- 这些过滤器参数不受支持：`round` 的 method、`sum` 的 `start` 和 `attribute`、`min` 和 `max` 的 `attribute`、`replace` 的 `count`、`to_json` 的 `sort_keys`，以及 `version` 测试器的 `strict` 和 `version_type`。
+- `b64encode` 和 `b64decode` 的 `encoding` 只接受 `utf-8`。其他任何编码都会按名称被拒绝。
+- `password_hash`、`json_query` 和 `ipaddr` 需要 Python 包 `passlib`、`jmespath` 和 `netaddr`。托管运行时不带它们，见[要安装什么](#要安装什么)。
+
+### 宽于 128 位的整数
+
+模块可能返回这样的整数，例如 RSA 密钥的模数。Volant 在结果、变量、`string`、`to_json` 和 `from_json` 中保留它的每一位数字。在比较运算符、`min`、`max`、`sort`、`unique` 和 `list.sort()` 中，它按值与任何数字比较。
+
+- 运算符 `+`、`-`、`*`、`/`、`//`、`%` 和 `**`，以及 `abs` 和 `round` 过滤器，会拒绝宽操作数。宽于 128 位的结果是错误。
+- 超过 4300 位数字的 YAML 整数会被拒绝。传给 `int` 的同样大小的文本也一样，此时 `int` 回答它的默认值，与 Python 3.11 及更高版本一致。
+
+要对这样的值做算术运算，请使用模块，或使用 `command` 配合 `python3 -c`，并把宽值保留为文本。

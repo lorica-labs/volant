@@ -1,11 +1,11 @@
 // The two measured workloads of the performance page in the documentation, where the configuration
-// and the recipes that reproduce them are described. Update both together.
+// and the recipes that reproduce them are described. Update both together. The name and detail of
+// each workload are in the site strings (`performance.workloads` in src/i18n/ui/en.ts), by id.
 export const measuredOn = '2026-09-27';
-export const reference = 'ansible-core 2.19.12 with pipelining = True';
+export const reference = 'ansible-core 2.19.12';
 
 export interface Workload {
-  name: string;
-  detail: string;
+  id: 'roles' | 'k3s';
   /** Median of three timed passes, in seconds. */
   volant: number;
   ansible: number;
@@ -14,15 +14,13 @@ export interface Workload {
 
 export const workloads: Workload[] = [
   {
-    name: 'Four Galaxy roles',
-    detail: 'geerlingguy.security, nginx, git and pip on two converged Ubuntu 24.04 hosts, 56 tasks per host',
+    id: 'roles',
     volant: 0.529,
     ansible: 26.435,
     recipe: 'just bench',
   },
   {
-    name: 'k3s-ansible site.yml',
-    detail: 'the official k3s-ansible playbook against an installed cluster, one server and one agent',
+    id: 'k3s',
     volant: 23.477,
     ansible: 50.519,
     recipe: 'just bench-k3s',

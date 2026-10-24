@@ -1,16 +1,16 @@
 ---
 // A search that opens the full support matrix already filtered on the name typed.
-const { id = 'lookup', label = 'Is it supported? Look up a module, collection, filter or option' } = Astro.props as {
-  id?: string;
-  label?: string;
-};
+import { localize, strings } from '../../i18n';
+
+const { code, id = 'lookup', label } = Astro.props as { code: string; id?: string; label?: string };
+const t = strings(code).lookup;
 ---
 
-<form class="lookup" action="/docs/reference/parity/" method="get" role="search">
-  <label for={id}>{label}</label>
+<form class="lookup" action={localize(code, '/docs/reference/parity/')} method="get" role="search">
+  <label for={id}>{label ?? t.label}</label>
   <div>
     <input id={id} name="q" type="search" required placeholder="copy, community.general, json_query, --diff" />
-    <button class="btn btn-brand" type="submit">Look up</button>
+    <button class="btn btn-brand" type="submit">{t.button}</button>
   </div>
 </form>
 

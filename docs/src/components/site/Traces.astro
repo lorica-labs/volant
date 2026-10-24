@@ -3,6 +3,10 @@
 // starts and falls when it ends, on one time axis per workload. Only the medians are drawn; a
 // cursor reads which runs are still going at the moment under it.
 import { measuredOn, reference, workloads } from '../../lib/bench';
+import { fill, strings } from '../../i18n';
+
+const { code } = Astro.props as { code: string };
+const t = strings(code);
 
 const W = 1000;
 const lane = 46;
@@ -12,9 +16,10 @@ const ticks = (total: number) => {
 };
 ---
 
-<div class="traces">
+<div class="traces" data-running={t.traces.running} data-done={t.traces.done}>
   {
     workloads.map((w) => {
+      const label = t.performance.workloads[w.id];
       const span = Math.ceil(w.ansible / 5) * 5;
       const x = (t: number) => (t / span) * W;
       const signals = [
@@ -26,12 +31,12 @@ const ticks = (total: number) => {
         <figure class="scope panel reveal" data-span={span} data-signals={JSON.stringify(signals)}>
           <div class="core">
             <figcaption>
-              <b>{w.name}</b>
-              <span>{w.detail}</span>
+              <b>{label.name}</b>
+              <span>{label.detail}</span>
             </figcaption>
             <div class="screen">
               <svg viewBox={`0 0 ${W} ${height}`} role="img"
-                aria-label={`${w.name}: ansible-core runs for ${w.ansible} seconds, Volant for ${w.volant} seconds`}>
+                aria-label={fill(t.traces.label, { workload: label.name, ansible: w.ansible, volant: w.volant })}>
                 {ticks(span).map((t) => (
                   <line class="grid" x1={x(t)} x2={x(t)} y1="0" y2={height - 26} />
                 ))}
@@ -59,20 +64,21 @@ const ticks = (total: number) => {
                   </span>
                 ))}
               </div>
-              <p class="readout mono" aria-live="polite">Move over the trace to read it.</p>
+              <p class="readout mono" aria-live="polite">{t.traces.hint}</p>
             </div>
           </div>
         </figure>
       );
     })
   }
-  <p class="caption">
-    Median of three timed passes on {measuredOn}, against {reference}. A line is high while that engine’s run is going.
-  </p>
+  <p class="caption">{fill(t.traces.caption, { date: measuredOn, reference })}</p>
 </div>
 
 <script>
   type Signal = { name: string; seconds: number };
+  const root = document.querySelector<HTMLElement>('.traces');
+  const running = root?.dataset.running ?? '';
+  const done = (seconds: number) => (root?.dataset.done ?? '').replace('{seconds}', seconds.toFixed(3));
   for (const scope of document.querySelectorAll<HTMLElement>('.scope')) {
     const span = Number(scope.dataset.span);
     const signals: Signal[] = JSON.parse(scope.dataset.signals!);
@@ -88,7 +94,7 @@ const ticks = (total: number) => {
       scope.classList.add('reading');
       readout.textContent =
         `t = ${t.toFixed(t < 1 ? 3 : 1)} s   ` +
-        signals.map((s) => `${s.name} ${t <= s.seconds ? 'running' : `done after ${s.seconds.toFixed(3)} s`}`).join('   ');
+        signals.map((s) => `${s.name} ${t <= s.seconds ? running : done(s.seconds)}`).join('   ');
     };
     svg.addEventListener('pointermove', (event) => read(event.clientX));
     svg.addEventListener('pointerdown', (event) => read(event.clientX));

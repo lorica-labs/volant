@@ -1,45 +1,49 @@
 ---
 import Mark from './Mark.astro';
 import { repo } from '../../nav';
+import { localize, strings } from '../../i18n';
 
+const { code } = Astro.props as { code: string };
+const t = strings(code);
+const f = t.footer;
 const columns = [
   {
-    title: 'Use',
+    title: f.use,
     links: [
-      ['Installation', '/docs/start/installation/'],
-      ['Quickstart', '/docs/start/quickstart/'],
-      ['Will my playbook run?', '/docs/start/compatibility/'],
-      ['When a run fails', '/docs/start/troubleshooting/'],
-      ['What it leaves on your machines', '/docs/#what-volant-leaves-on-your-machines'],
-      ['Uninstall', '/docs/start/installation/#uninstall'],
+      [f.installation, '/docs/start/installation/'],
+      [f.quickstart, '/docs/start/quickstart/'],
+      [f.willItRun, '/docs/start/compatibility/'],
+      [f.whenItFails, '/docs/start/troubleshooting/'],
+      [f.leaves, '/docs/#what-volant-leaves-on-your-machines'],
+      [f.uninstall, '/docs/start/installation/#uninstall'],
     ],
   },
   {
-    title: 'Reference',
+    title: f.reference,
     links: [
-      ['Command line', '/docs/reference/cli/'],
-      ['Configuration', '/docs/reference/configuration/'],
-      ['Support matrix', '/docs/reference/parity/'],
-      ['Changelog', '/docs/changelog/'],
+      [f.cli, '/docs/reference/cli/'],
+      [f.configuration, '/docs/reference/configuration/'],
+      [f.matrix, '/docs/reference/parity/'],
+      [f.changelog, '/docs/changelog/'],
     ],
   },
   {
-    title: 'Project',
+    title: f.project,
     links: [
-      ['Performance', '/performance/'],
-      ['Compatibility', '/compatibility/'],
-      ['Community', '/community/'],
-      ['Blog', '/blog/'],
-      ['Roadmap', '/docs/project/roadmap/'],
+      [t.nav.performance, '/performance/'],
+      [t.nav.compatibility, '/compatibility/'],
+      [t.nav.community, '/community/'],
+      [t.nav.blog, '/blog/'],
+      [f.roadmap, '/docs/project/roadmap/'],
     ],
   },
   {
-    title: 'Source',
+    title: f.source,
     links: [
       ['GitHub', repo],
-      ['Contributing', `${repo}/blob/main/CONTRIBUTING.md`],
-      ['Security policy', `${repo}/blob/main/SECURITY.md`],
-      ['License', `${repo}/blob/main/LICENSE`],
+      [f.contributing, `${repo}/blob/main/CONTRIBUTING.md`],
+      [f.security, `${repo}/blob/main/SECURITY.md`],
+      [f.license, `${repo}/blob/main/LICENSE`],
     ],
   },
 ];
@@ -48,23 +52,23 @@ const columns = [
 <footer>
   <div class="wrap grid">
     <div class="about">
-      <a class="logo" href="/" aria-label="Volant, home"><Mark size={22} /> <span>Volant</span></a>
-      <p>An engine for Ansible playbooks, written in Rust. Open source under GPL-3.0-or-later.</p>
+      <a class="logo" href={localize(code, '/')} aria-label={t.header.home}><Mark size={22} /> <span>Volant</span></a>
+      <p>{f.about}</p>
     </div>
     {
       columns.map((column) => (
         <nav aria-label={column.title}>
           <p class="title">{column.title}</p>
           {column.links.map(([label, href]) => (
-            <a href={href}>{label}</a>
+            <a href={localize(code, href)}>{label}</a>
           ))}
         </nav>
       ))
     }
   </div>
   <div class="wrap legal">
-    <span>Volant collects no telemetry.</span>
-    <span><i>Volant</i> is French for steering wheel.</span>
+    <span>{f.telemetry}</span>
+    <span set:html={f.name} />
   </div>
 </footer>
 

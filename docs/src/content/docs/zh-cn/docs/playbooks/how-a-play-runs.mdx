@@ -1,0 +1,127 @@
+---
+sourceHash: 72a9c6ae320c
+title: 运行 play
+description: 主机和 task 按什么顺序运行，策略、serial 批次、调试器、异步 task 和提示如何改变这个顺序，以及运行何时停止。
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../../components/HostTimeline.astro';
+
+本页回答一个问题：你的主机和 task 按什么顺序运行，什么会改变这个顺序？内容包括默认的 `linear` 策略、`serial` 批次、其他策略、调试器、异步 task 和提示。[关键字](/zh-cn/docs/reference/keywords/)说明了这个版本接受哪些关键字。Volant 与 ansible-core 2.19.12 行为不同的地方，在最后一节说明。
+
+## 主机步调一致
+
+默认情况下，Volant 遵循 Ansible 的 `linear` 策略：一个 play 的各台主机在每个 task 之前会合。只有所有主机都完成了 task 一，才会有主机开始 task 二，输出按 task 的顺序到达，因为运行本身就是按 task 的顺序进行的。
+
+<HostTimeline only="linear" />
+
+[跨主机批处理](/zh-cn/docs/hosts/batching/)是一个需要主动开启的设置，它让每台主机可以在互不依赖的 task 上先行一步。
+
+### 把 play 的 hosts 写成模板
+
+`hosts` 可以是模板，例如 `{{ groups['servers'] | first }}` 或 `{{ target | default('all') }}`。它在 play 开始时渲染，所以能看到前面的 play 通过 `add_host`、`set_fact` 和 `meta: refresh_inventory` 所做的改动。没有 `name` 的 play，以渲染后的模式作为名字。
+
+渲染时没有主机，所以它只能读取在任何主机存在之前就已经存在的内容：
+
+| 渲染时可以读取 | 渲染时不能读取 |
+|---|---|
+| `groups`、额外变量，以及不需要主机的魔法变量 | inventory 变量和 `group_vars` 文件 |
+| play 的 `vars:` 和 `vars_files`，以及 role 导出的变量 | facts 和 `inventory_hostname` |
+
+`hostvars` 只有在 play 运行之后才存在。`ansible_play_hosts_all` 列出 inventory 的所有主机，并受 `--limit` 的缩减。
+
+| 模板渲染为 | 会发生什么 |
+|---|---|
+| 字符串 | 一个模式。 |
+| 列表 | 一组模式。 |
+| 空列表 | 这个 play 不匹配任何主机，被跳过。 |
+| 未定义的变量、空字符串，或不是字符串的值 | 运行在横幅之前停止，退出码为 4。 |
+
+`--limit` 随后会缩减渲染出的主机。`--list-hosts`、`--list-tasks` 和 `--syntax-check` 以同样的方式渲染，只是背后没有 play。
+
+主机发回的文本是数据，永远不会被求值。其中包含 `{{ ... }}` 的已注册结果，就是由这些字面文字组成的模式。运行期间由 `add_host` 或 `group_by` 创建的主机或组也是如此：一旦运行创建了这样的主机或组，读取 `groups`、`hostvars` 或 `ansible_play_hosts_all` 的 `hosts` 就会渲染为数据。只含有花括号的文本，例如 `{{ '{{' }}x`，同样是由这些字面文字组成的模式。互相引用的变量最多解析一百层，出现环则让运行以退出码 4 停止。
+
+### 其他策略
+
+`strategy: free` 让每台主机按自己的节奏走完 play。每当 task 与上一行输出所属的 task 不同，就会打印一次横幅，所以输出跟随的是主机，而不是 task 列表。主机仍然会在作用于整个批次的 `meta` task（`end_play`、`end_batch`、`clear_facts`、`clear_host_errors` 和 `refresh_inventory`）、handler 以及动态 include 处会合。
+
+`strategy: host_pinned` 是 `free`，只不过每台主机从第一个 task 到最后一个 task 都固定由同一个 fork 负责，所以 `-f 1` 会让主机一台接一台地运行。fork 数少于主机数时，主机分波运行：结果与 ansible-core 一致，时序和输出行的顺序可能不同。
+
+在这两种策略下，与 ansible-core 一样，`max_fail_percentage`、`any_errors_fatal` 和 `run_once` 会被忽略并给出警告，所以 `run_once` 的 task 会在每台主机上运行。失败的 `run_once` task 只让它自己的主机失败。`pause` 或 `add_host` task 会让运行出错并停止。
+
+`strategy: debug` 是 `linear`，并在 task 失败后启动[调试器](#调试器)。
+
+`order` 设置一个 play 的主机运行顺序：`inventory`、`reverse_inventory`、`sorted`、`reverse_sorted` 或 `shuffle`。`throttle` 限制一个 task 同时运行的主机数。它按每个 task 做模板渲染，并作为数字读取。
+
+### 可使用模板的关键字
+
+play 的 `timeout` 是其 task 默认的 `timeout`。`timeout`、`async`、`poll`，以及布尔值的 `become`、`no_log`、`run_once`、`any_errors_fatal`、`ignore_unreachable` 和 `delegate_facts`，都可以是模板。每台主机在运行其 task 时渲染它们，与 `throttle` 一样。其中两个的读法不同：
+
+- `run_once` 模板会依次为批次中的每台主机渲染。第一台渲染结果为真的主机运行这个 task。如果模板在批次内给出不同的答案，运行以退出码 4 结束。在 `free` 和 `host_pinned` 下，模板被忽略，且不会像字面的 `run_once` 那样给出警告。
+- `any_errors_fatal` 模板无论渲染成什么，都按真处理，与 ansible-core 一致。
+
+见[关键字参考](/zh-cn/docs/reference/keywords/)。
+
+## serial 批次
+
+`serial` 按 inventory 顺序把一个 play 的主机分成若干批次，并依次运行每个批次。每个批次有自己的横幅、自己的 handler 刷新，以及自己的 `run_once` 选举。
+
+```yaml
+- hosts: web
+  serial:
+    - 1       # one canary first
+    - "25%"   # then a quarter of the hosts at a time
+  tasks:
+    - command: /opt/app/upgrade.sh
+```
+
+| 值 | 含义 |
+|---|---|
+| 数字 | 每批这么多台主机。 |
+| 以 `%` 结尾的字符串 | 占整个主机列表的比例，而不是占剩余主机的比例。向下取整而不是四舍五入，且每批至少一台主机。 |
+| 列表 | 每个批次一个大小。列表用完后，重复最后一个元素。 |
+| `0`、`-1`、`[]`，或超过主机数 | 一个包含所有主机的批次。 |
+
+### 运行何时停止
+
+运行会在第一个原本有存活主机、却把它们全部丢失的批次停止，Ansible 也在这里停止。主机因失败而全部丢失时，退出码为 2；全部变得不可达时，退出码为 4。
+
+如果一个批次的主机在更早的 play 中就已经失败，它不算这种情况。它会打印横幅，运行继续。
+
+在一个批次内，`ansible_play_batch` 和已弃用的 `play_hosts` 指这个批次，而 `ansible_play_hosts` 指整个 play。`vars_files` 会为每个批次重新渲染并读取。
+
+## 调试器
+
+调试器提示符在 task 失败后打开。有三个设置可以启用它：
+
+- `strategy: debug` 是 `linear`，并在 task 失败后出现提示符。
+- `debugger` 关键字可以写在 play、块或 task 上，取值为 `always`、`never`、`on_failed`、`on_unreachable` 或 `on_skipped`。无效的值会在运行时让该 task 失败。
+- `ansible.cfg` 中的 `enable_task_debugger`，或 `ANSIBLE_ENABLE_TASK_DEBUGGER`，在任何失败或不可达的 task 之后打开它。
+
+提示符接受 `p` 和 `pprint` 来打印值，`u` 更新 task 的参数，`h` 查看帮助，`r` 重新运行 task，`c` 继续，`q` 退出。`p` 以及不是命令的行，会对 Python 的一个子集求值：名称、字面量、索引、属性、赋值，以及提示符需要的调用。对 `task_vars` 的修改只有通过 `u` 才会影响重做。
+
+提示符从标准输入读取，来源可以是终端或管道。输入结束时，或在 `q` 之后，它会打印 `User interrupted execution`，运行以退出码 99 结束，与 ansible-core 一致。
+
+## 异步任务
+
+`async: <seconds>` 把 task 作为一个 job 在主机上启动，`poll: <seconds>` 等待它。`poll: 0` 立刻返回一个 `ansible_job_id`，之后可由 `async_status` 读取。
+
+连接断开时，job 继续运行，它把状态文件以原子方式写入 async 目录，并在 `async` 超时后连同其进程组一起被终止。`async_status` 配合 `mode: cleanup` 只删除该 job 的文件。
+
+ansible-core 能在 `async` 下运行的 action，在这里也能运行。其他任何 action 都会在运行时于每台主机上失败，并给出 `This action (<name>) does not support async.`。async 目录依次取 `ansible_async_dir`、`ANSIBLE_ASYNC_DIR`、`ansible.cfg` 中的 `async_dir`，最后是 `~/.ansible_async`。
+
+## vars_prompt 与 module_defaults
+
+`vars_prompt` 在 play 开始时为每个变量提问，除非 `-e` 已经给出了它。标准输入不是终端时，它使用 `default` 并警告一次，永远不会等待。
+
+`module_defaults` 从 play、块或 task 为模块补全缺少的参数，既针对模块自己的名字，也针对它所属的组，例如 `group/aws`。`collections` 以 ansible-core 的方式解析短名称。
+
+## 与 Ansible 的差异
+
+- 不是数字的 `serial`，例如 `serial: abc`，或带结尾空格的 `"50% "`，会被拒绝，退出码为 4，消息与 ansible-core 一致。Ansible 则会崩溃，退出码为 250，这是 Ansible 在报告自己的 bug，而不是在拒绝一个 playbook。
+- `serial` 中未定义的变量，会带着 ansible-core 的前缀和 Volant 自己的消息报告，退出码同样是 4。
+- `play_hosts` 的内容与 Ansible 放进去的相同，但 Volant 不为它打印弃用警告。
+
+<Aside type="tip">
+想了解引擎如何构建并运行这个顺序，见 [play 是如何编译的](/zh-cn/docs/internals/architecture/#play-是如何编译的)和 [一次运行的端到端过程](/zh-cn/docs/internals/architecture/#一次运行的端到端过程)。
+</Aside>

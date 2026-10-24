@@ -1,0 +1,221 @@
+---
+sourceHash: 2ef629a7b495
+title: Konfiguration
+description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
+---
+
+import { Steps } from '@astrojs/starlight/components';
+import Option from '../../../../../components/Option.astro';
+
+Volant liest dieselbe `ansible.cfg` wie `ansible-playbook` und hört bei der ersten Datei auf, die es findet:
+
+<Steps>
+
+1. die Datei, die `ANSIBLE_CONFIG` nennt
+2. `./ansible.cfg`
+3. `~/.ansible.cfg`
+4. `/etc/ansible/ansible.cfg`
+
+</Steps>
+
+Volant überspringt `./ansible.cfg`, wenn das Arbeitsverzeichnis für andere Benutzer beschreibbar ist (Modusbit `o+w`), wie es `ansible-playbook` tut. Ein anderer lokaler Benutzer könnte die Datei dort abgelegt haben. Das Sticky-Bit und der Besitzer des Verzeichnisses ändern daran nichts. Volant gibt auf der Standardfehlerausgabe `[WARNING]: Ansible is being run in a world writable directory (...), ignoring it as an ansible.cfg source.` aus und macht mit der nächsten Datei weiter. Eine Datei, die `ANSIBLE_CONFIG` nennt, wird unabhängig vom Modus des Arbeitsverzeichnisses gelesen.
+
+Für jede Einstellung schlägt die Umgebungsvariable die Datei, und die Kommandozeilenoption schlägt beide. Schlüssel, die Volant nicht verwendet, werden ignoriert, so wie Ansible die ignoriert, die es nicht verwendet.
+
+Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und der Lauf geht mit den Standardwerten weiter. Volant gibt zuvor eine Warnung aus, was Ansible nicht tut: Eine Datei, die Sie geschrieben haben und die der Prozess nicht öffnen kann, verdient eine Zeile, und eine Warnung ändert den Exit-Code nicht.
+
+## [defaults]
+
+<Option name="inventory" id="defaults-inventory" flag="-i" env="ANSIBLE_INVENTORY">
+  Die Inventory-Quellen als kommagetrennte Liste. Siehe [Inventories](/de/docs/hosts/inventories/#quellen).
+</Option>
+
+<Option name="timeout" id="defaults-timeout" default="10" flag="-T" env="ANSIBLE_TIMEOUT">
+  Sekunden, die auf eine Verbindung gewartet wird. Es wird in der `ssh`-Kommandozeile zu `ConnectTimeout`.
+</Option>
+
+<Option name="remote_user" id="defaults-remote-user" flag="-u" env="ANSIBLE_REMOTE_USER">
+  Der Benutzer, als der angemeldet wird. Ohne ihn wählt `ssh` einen.
+</Option>
+
+<Option name="private_key_file" id="defaults-private-key-file" flag="--private-key" env="ANSIBLE_PRIVATE_KEY_FILE">
+  Der private Schlüssel, mit dem sich `ssh` authentifiziert.
+</Option>
+
+<Option name="host_key_checking" id="defaults-host-key-checking" default="true" env="ANSIBLE_HOST_KEY_CHECKING">
+  Ist es an, macht ein unbekannter Host-Schlüssel den Host nicht erreichbar. Ist es aus, fügt Volant `StrictHostKeyChecking=no` und `UserKnownHostsFile=/dev/null` hinzu, sodass ein unbekannter Schlüssel akzeptiert und nicht gespeichert wird.
+</Option>
+
+<Option name="remote_tmp" id="defaults-remote-tmp" default="~/.ansible/tmp" env="ANSIBLE_REMOTE_TMP">
+  Das Verzeichnis auf jedem Host, das den [Agent-Cache](/de/docs/hosts/connections/#der-agent-cache) enthält.
+</Option>
+
+<Option name="forks" id="defaults-forks" default="5" flag="-f" env="ANSIBLE_FORKS">
+  Auf wie vielen Hosts ein Play gleichzeitig arbeitet. Null oder ein Wert, der keine Zahl ist, wird vor dem Start des Laufs abgelehnt. Playbooks lesen den aktuellen Wert als `ansible_forks`.
+</Option>
+
+<Option name="async_dir" id="defaults-async-dir" default="~/.ansible_async" env="ANSIBLE_ASYNC_DIR">
+  Das Verzeichnis auf jedem Host, das die Statusdateien von [Async-Tasks](/de/docs/playbooks/how-a-play-runs/#async-tasks) enthält. `ansible_async_dir` hat Vorrang.
+</Option>
+
+<Option name="enable_task_debugger" id="defaults-enable-task-debugger" default="false" env="ANSIBLE_ENABLE_TASK_DEBUGGER">
+  Öffnet den [Debugger](/de/docs/playbooks/how-a-play-runs/#der-debugger) nach jedem fehlgeschlagenen oder nicht erreichbaren Task.
+</Option>
+
+<Option name="show_task_path_on_failure" id="defaults-show-task-path-on-failure" default="false" env="ANSIBLE_SHOW_TASK_PATH_ON_FAILURE">
+  Gibt `task path: <file>:<line>` vor der `fatal:`-Zeile eines fehlgeschlagenen Tasks aus. Ab `-vv` folgt die Zeile ohnehin jedem Task-Banner, hier ändert es also nichts. Die `failed:`-Zeile eines Schleifenelements und ein nicht erreichbarer Host erhalten keine Pfadzeile. Wie in Ansible schalten `y`, `yes`, `on`, `true`, `t` und `1` es in jeder Schreibweise ein, und jedes andere Wort, auch eine leere Variable, lässt es aus.
+</Option>
+
+<Option name="force_color" id="defaults-force-color" default="false" env="ANSIBLE_FORCE_COLOR">
+  Färbt die Ausgabe auch dann, wenn sie kein Terminal ist, wie CI-Logs es brauchen. Es schlägt `nocolor`, `ANSIBLE_NOCOLOR` und `NO_COLOR`; nur `--no-color` schlägt es. In einem Diff sind nur die Zeilen gefärbt, die das `difflib` von Ansible aus `before` und `after` gemacht hat.
+</Option>
+
+<Option name="nocolor" id="defaults-nocolor" default="false" env="ANSIBLE_NOCOLOR">
+  Färbt die Ausgabe nie. `force_color` schlägt es.
+</Option>
+
+<Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
+  Gibt die `[DEPRECATION WARNING]`-Hinweise und die Zeile aus, die sagt, wie man sie abstellt. Mit `False` wird beides nicht ausgegeben.
+</Option>
+
+<Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
+  Warnt, wenn das Inventory keinen Host enthält und nur das implizite `localhost` übrig bleibt. `all` trifft diesen Host nicht.
+</Option>
+
+<Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
+  Führt benachrichtigte Handler auch auf Hosts aus, die fehlgeschlagen sind.
+</Option>
+
+<Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
+  Gibt die Statistiken, die `set_stats` gesammelt hat, nach dem Recap aus.
+</Option>
+
+<Option name="vault_password_file" id="defaults-vault-password-file" flag="--vault-password-file" env="ANSIBLE_VAULT_PASSWORD_FILE">
+  Eine Datei mit dem Vault-Passwort oder eine ausführbare Datei, die es ausgibt. Die Umgebungsvariable ersetzt den Wert der Datei, und die Kommandozeile ergänzt, was sich durchgesetzt hat. Siehe [Vault](/de/docs/variables/vault/).
+</Option>
+
+<Option name="vault_identity_list" id="defaults-vault-identity-list" flag="--vault-id" env="ANSIBLE_VAULT_IDENTITY_LIST">
+  Kommagetrennte Vault-Identitäten, jede als `label@source` geschrieben, wobei die Quelle eine Datei, eine ausführbare Datei oder `prompt` ist. Die Umgebungsvariable ersetzt die Liste der Datei, und die Kommandozeile ergänzt, was sich durchgesetzt hat.
+</Option>
+
+<Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">
+  Wo nach Rollen gesucht wird, nach `<playbook_dir>/roles` und vor `<playbook_dir>` selbst. Siehe [Rollen](/de/docs/playbooks/roles/#eine-rolle-finden).
+</Option>
+
+<Option name="collections_path" id="defaults-collections-path" default="~/.ansible/collections:/usr/share/ansible/collections" env="ANSIBLE_COLLECTIONS_PATH">
+  Wird auch als `collections_paths` gelesen und aus `ANSIBLE_COLLECTIONS_PATHS`, das `ANSIBLE_COLLECTIONS_PATH` schlägt. Wo nach einem dreiteiligen Rollennamen wie `acme.demo.hello` gesucht wird. Die Module einer Collection findet das ansible-core des Controllers in den Pfaden, mit denen es konfiguriert ist: siehe [Module aus Collections](/de/docs/internals/python/#module-aus-collections).
+</Option>
+
+<Option name="gathering" id="defaults-gathering" default="implicit" env="ANSIBLE_GATHERING">
+  `implicit`, `explicit` oder `smart`. Siehe [Der Fact-Cache](/de/docs/hosts/inventories/#sammeln).
+</Option>
+
+<Option name="fact_caching" id="defaults-fact-caching" default="memory" env="ANSIBLE_CACHE_PLUGIN">
+  `memory` hält Facts für den Lauf, `jsonfile` hält sie zwischen Läufen. Siehe [Der Fact-Cache](/de/docs/hosts/inventories/#der-fact-cache).
+</Option>
+
+<Option name="fact_caching_connection" id="defaults-fact-caching-connection" env="ANSIBLE_CACHE_PLUGIN_CONNECTION">
+  Das Verzeichnis des `jsonfile`-Caches.
+</Option>
+
+<Option name="fact_caching_timeout" id="defaults-fact-caching-timeout" default="86400" env="ANSIBLE_CACHE_PLUGIN_TIMEOUT">
+  Sekunden, die ein gecachter Eintrag frisch bleibt. `0` läuft nie ab.
+</Option>
+
+<Option name="fact_caching_prefix" id="defaults-fact-caching-prefix" env="ANSIBLE_CACHE_PLUGIN_PREFIX">
+  Wird jedem Cache-Dateinamen vorangestellt.
+</Option>
+
+## [inventory]
+
+<Option name="enable_plugins" id="inventory-enable-plugins" default="host_list, script, auto, yaml, ini, toml" env="ANSIBLE_INVENTORY_ENABLED">
+  Die Inventory-Plugins, die der Reihe nach probiert werden. Siehe [die Plugin-Kette](/de/docs/hosts/inventories/#die-plugin-kette).
+</Option>
+
+<Option name="ignore_extensions" id="inventory-ignore-extensions" default=".pyc, .pyo, .swp, .bak, ~, .rpm, .md, .txt, .rst, .orig, .cfg, .retry" env="ANSIBLE_INVENTORY_IGNORE">
+  Dateiendungen, die beim Lesen eines Verzeichnisses übersprungen werden. Ein Wert ersetzt die Standardliste. `[defaults] inventory_ignore_extensions` wird ebenfalls gelesen.
+</Option>
+
+<Option name="ignore_patterns" id="inventory-ignore-patterns" env="ANSIBLE_INVENTORY_IGNORE_REGEX">
+  Reguläre Ausdrücke für Dateinamen, die beim Lesen eines Verzeichnisses übersprungen werden. `[defaults] inventory_ignore_patterns` wird ebenfalls gelesen.
+</Option>
+
+<Option name="unparsed_is_failed" id="inventory-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_UNPARSED_FAILED">
+  Lässt den Lauf fehlschlagen, wenn keine Quelle gelesen werden konnte.
+</Option>
+
+<Option name="any_unparsed_is_failed" id="inventory-any-unparsed-is-failed" default="false" env="ANSIBLE_INVENTORY_ANY_UNPARSED_IS_FAILED">
+  Lässt den Lauf bei der ersten Quelle fehlschlagen, die kein Plugin lesen konnte.
+</Option>
+
+## [inventory_plugin_script]
+
+<Option name="always_show_stderr" id="inventory-plugin-script-always-show-stderr" default="true" env="ANSIBLE_INVENTORY_PLUGIN_SCRIPT_STDERR">
+  Zeigt, was ein erfolgreiches Inventory-Skript auf die Standardfehlerausgabe geschrieben hat, als Zeile `[ERROR]:`. Mit `false` wird nur die Standardfehlerausgabe eines Skripts gezeigt, das fehlschlägt.
+</Option>
+
+## [privilege_escalation]
+
+<Option name="become" id="privilege-escalation-become" default="false" flag="-b" env="ANSIBLE_BECOME">
+  Standardmäßig die Rechte ausweiten. Keywords im Playbook und Hostvariablen haben Vorrang, siehe [Rechteausweitung](/de/docs/hosts/connections/#welche-einstellung-gewinnt).
+</Option>
+
+<Option name="become_user" id="privilege-escalation-become-user" default="root" flag="--become-user" env="ANSIBLE_BECOME_USER">
+  Der Benutzer, auf den die Rechte ausgeweitet werden.
+</Option>
+
+<Option name="become_method" id="privilege-escalation-become-method" default="sudo" flag="--become-method" env="ANSIBLE_BECOME_METHOD">
+  Die Methode der Rechteausweitung: `sudo` oder `su`. Andere Methoden stoppen den Lauf vor dem Start.
+</Option>
+
+<Option name="become_exe" id="privilege-escalation-become-exe" env="ANSIBLE_BECOME_EXE">
+  Das Programm, das statt `sudo` oder `su` ausgeführt wird.
+</Option>
+
+<Option name="become_flags" id="privilege-escalation-become-flags" env="ANSIBLE_BECOME_FLAGS">
+  Die Flags, die diesem Programm übergeben werden, anstelle von `-H` bei `sudo` und von keinen bei `su`. Ein leerer Wert ergibt gar keine Flags.
+</Option>
+
+## [ssh_connection]
+
+<Option name="usetty" id="ssh-connection-usetty" default="true" env="ANSIBLE_SSH_USETTY">
+  Gibt `raw`, `script` und den Befehlen, die ein Modul-Plugin wie `reboot` ohne Eingabe sendet, ein Terminal, wie es `ssh -tt` tut. Setzen Sie es auf `False`, wenn eine `sudoers`-Regel `requiretty` hat oder ein Befehl auf einem Terminal Steuerzeichen ausgibt. Die Hostvariable `ansible_ssh_use_tty` schlägt die Umgebungsvariable, und die Umgebungsvariable schlägt die Datei. Ein anderes Wort als `y`, `yes`, `on`, `true`, `t` und `1` zählt als aus.
+</Option>
+
+## [tags]
+
+<Option name="run" id="tags-run" flag="--tags" env="ANSIBLE_RUN_TAGS">
+  Standardmäßig ausgewählte Tags. `--tags` ergänzt diese Liste, statt sie zu ersetzen.
+</Option>
+
+<Option name="skip" id="tags-skip" flag="--skip-tags" env="ANSIBLE_SKIP_TAGS">
+  Standardmäßig übersprungene Tags. `--skip-tags` ergänzt diese Liste.
+</Option>
+
+## [volant]
+
+Ansible ignoriert diesen Abschnitt, sodass eine `ansible.cfg` ihn enthalten und trotzdem beide Engines steuern kann. `ansible-config validate` ist die Ausnahme, siehe [Host-übergreifendes Batching](/de/docs/hosts/batching/#einschalten).
+
+<Option name="batching" id="volant-batching" default="false" env="VOLANT_BATCHING">
+  Standardmäßig aus. Mit `batching = true` geht ein Host zu seinen nächsten Tasks weiter, ohne auf die anderen Hosts zu warten, außer vor einem Task, dessen Text einen anderen Host liest (`hostvars`, `ansible_play_hosts`, `delegate_to`, ein Template oder eine Variable, die das tut). Auf eine Abhängigkeit, die das Playbook nicht ausschreibt, etwa einen Dienst, den ein anderer Host noch installiert, oder eine Datei auf einem wörtlich genannten Host, wird nicht gewartet. Schalten Sie es nur für Plays ein, deren Hosts nicht auf diese Weise voneinander abhängen. Siehe [Host-übergreifendes Batching](/de/docs/hosts/batching/).
+</Option>
+
+<Option name="native_modules" id="volant-native-modules" default="true" env="VOLANT_NATIVE_MODULES">
+  Lässt den Agent einen Task mit seiner nativen Version des Moduls beantworten, wenn die Argumente des Tasks innerhalb dessen bleiben, was diese Version umsetzt. Mit `false` geht jeder Task an das Python-Modul von ansible-core, auch `setup`, so vergleichen Sie beide Pfade in einem echten Lauf. Der Wert wird so gelesen, wie ansible-core einen booleschen Wert liest, und ein Wort, das es nicht kennt, stoppt den Lauf mit Exit-Code 5. Siehe [Native Module](/de/docs/internals/python/#native-module).
+</Option>
+
+<Option name="runtime" id="volant-runtime" default="auto" env="VOLANT_RUNTIME">
+  Woher das Python des Controllers kommt. `auto` verwendet `VOLANT_PYTHON`, dann die verwaltete Runtime, wenn installiert, dann die aktive virtuelle Umgebung und `python3`, und installiert die verwaltete Runtime, wenn keines davon funktioniert. `managed` verwendet nur `VOLANT_PYTHON` oder die verwaltete Runtime und installiert sie, wenn sie fehlt. `system` verwendet die verwaltete Runtime nie und installiert sie nie. Jedes andere Wort stoppt den Lauf mit Exit-Code 5. Siehe [Die verwaltete Runtime](/de/docs/reference/runtime/).
+</Option>
+
+<Option name="ssh_control_master" id="volant-ssh-control-master" default="true" env="VOLANT_SSH_CONTROL_MASTER">
+  Teilt eine OpenSSH-Verbindung zwischen allen `ssh`-Aufrufen eines Inventory-Hosts. Mit `false` öffnet jede Verbindung und jede Probe ihre eigene. Siehe [Eine Verbindung pro Host](/de/docs/hosts/connections/#eine-verbindung-pro-host).
+</Option>
+
+<Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">
+  Legt fest, was `template`, `copy`, `script`, `unarchive` und `assemble` mit einem Controller-`src` tun, den ein verwalteter Host genannt hat, und wohin ein `fetch` ein `dest` schreiben darf, das ein Host genannt hat: `allow`, `contained` oder `refuse`. Der Standard ist `allow`, das sich wie ansible-core verhält, und jedes andere Wort stoppt den Lauf mit Exit-Code 5. Was jedes Wort bewirkt, steht unter [Eine Quelldatei, die ein verwalteter Host genannt hat](/de/docs/internals/action-plugins/#eine-quelldatei-die-ein-verwalteter-host-benannt-hat).
+</Option>
+
+<Option name="host_named_dest_dirs" id="volant-host-named-dest-dirs" default="unset" env="VOLANT_HOST_NAMED_DEST_DIRS">
+  Eine durch Doppelpunkte getrennte Liste absoluter Controller-Verzeichnisse, unter denen `fetch` ein `dest` schreiben darf, das ein verwalteter Host genannt hat. Ein Eintrag, der relativ ist, `~` oder `..` verwendet oder `/` ist, stoppt den Lauf mit Exit-Code 5. Die Regeln stehen unter [Ein Ziel, das ein verwalteter Host genannt hat](/de/docs/internals/action-plugins/#ein-dest-das-ein-verwalteter-host-benannt-hat).
+</Option>

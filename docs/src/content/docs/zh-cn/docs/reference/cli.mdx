@@ -1,0 +1,258 @@
+---
+sourceHash: d4ad4ddc3da2
+title: 命令行
+description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
+---
+
+import Option from '../../../../../components/Option.astro';
+
+```sh
+volant playbook [OPTIONS] <PLAYBOOK>...
+volant-playbook [OPTIONS] <PLAYBOOK>...
+volant runtime <install|pack|status|path|remove>
+volant --version
+```
+
+`volant playbook` 接受与 `ansible-playbook` 相同的选项（对于存在的那些）。`volant-playbook` 是同一个程序，名字读起来就像你熟悉的那个。一起给出的多个 playbook 按顺序运行，每个都会打印自己的汇总。
+
+如果某个选项有对应的 `ansible.cfg` 键或环境变量，条目中会写明。选项优先于两者；顺序见[配置](/zh-cn/docs/reference/configuration/)。
+
+## 主机与连接
+
+<Option name="-i, --inventory, --inventory-file" arg="PATH" config="[defaults] inventory" env="ANSIBLE_INVENTORY">
+  一个 inventory 来源：文件、目录、脚本，或以逗号分隔的主机列表。重复使用可以合并多个来源，见 [Inventory](/zh-cn/docs/hosts/inventories/)。不指定时，只存在隐式的 `localhost`。
+</Option>
+
+<Option name="-l, --limit" arg="SUBSET">
+  只在匹配这个[模式](/zh-cn/docs/hosts/inventories/#主机模式)的主机上运行。没有匹配到任何主机的限制条件会给出警告，并把运行缩小到它实际匹配到的主机。
+</Option>
+
+<Option name="--start-at-task" arg="NAME">
+  从第一个名为 `NAME` 的 task 开始；`*` 和 `?` 可匹配任意文本。它前面的 task 会被略过（`Gathering Facts` 除外），包含它的 play 之前的 play 也一样。与 `ansible-playbook` 一样，只在 play 中写明的 task 里查找：运行过程中由 `include_tasks` 或 `include_role` 读入的 task 找不到。名字没有匹配到任何 task 时，会打印各个 play 和一个空的汇总，然后报错，并以 0 退出。
+</Option>
+
+<Option name="--step">
+  在每个 task 之前询问：`y` 运行它，`n` 或其他任何输入跳过它，`c` 运行它以及之后的每个 task，不再询问。它需要终端；没有终端时，运行会在接触任何主机之前以退出码 250 停止。
+</Option>
+
+<Option name="--flush-cache">
+  在运行前删除 inventory 中各主机的 [facts 缓存](/zh-cn/docs/hosts/inventories/#清空缓存)条目。
+</Option>
+
+<Option name="--version">
+  打印 Volant 的版本以及与之对应的 ansible-core 版本，然后停止。
+</Option>
+
+<Option name="-u, --user" arg="REMOTE_USER" config="[defaults] remote_user" env="ANSIBLE_REMOTE_USER">
+  以这个用户登录主机。不指定时，由 `ssh` 根据你的 `~/.ssh/config` 或本地账户来决定用户。
+</Option>
+
+<Option name="-c, --connection" arg="CONNECTION">
+  为没有指定连接的主机设置连接插件：`ssh` 或 `local`。主机的 `ansible_connection`，以及 play、block 或 task 的 `connection` 关键字，都优先于它。任何其他名字都会让 task 失败，并给出 `the connection plugin '<name>' was not found`。
+</Option>
+
+<Option name="--private-key, --key-file" arg="FILE" config="[defaults] private_key_file" env="ANSIBLE_PRIVATE_KEY_FILE">
+  `ssh` 用来认证的私钥，以 `ssh -i` 传入。
+</Option>
+
+<Option name="--ssh-common-args" arg="ARGS">
+  追加到每条 `ssh` 命令行的参数。Volant 像 shell 那样把它们拆分成词，引号不配对会让运行在开始前就停止。主机变量 `ansible_ssh_common_args` 会替换该主机上的这个值。
+</Option>
+
+<Option name="--ssh-extra-args" arg="ARGS">
+  追加到 `ssh` 命令行中通用参数之后的参数。主机变量 `ansible_ssh_extra_args` 会替换该主机上的这个值。
+</Option>
+
+<Option name="-T, --timeout" arg="SECONDS" default="10" config="[defaults] timeout" env="ANSIBLE_TIMEOUT">
+  等待连接的时间，以 `ConnectTimeout` 传给 `ssh`。
+</Option>
+
+<Option name="-f, --forks" arg="N" default="5" config="[defaults] forks" env="ANSIBLE_FORKS">
+  一个 play 同时处理多少台主机。零或不是数字的值会在运行开始前被拒绝。
+</Option>
+
+<Option name="-M, --module-path" arg="PATH">
+  在已配置的目录之前搜索模块的目录。用冒号分隔，可以重复使用。后面的 `-M` 排在前面的 `-M` 之前。
+</Option>
+
+## 变量与 tag
+
+<Option name="-e, --extra-vars" arg="VARS">
+  额外变量，位于[优先级顺序](/zh-cn/docs/variables/precedence/)的最顶端：`key=value` 键值对、内联的 JSON 或 YAML，或 `@file`。可以重复使用。
+</Option>
+
+<Option name="-t, --tags" arg="TAGS" config="[tags] run" env="ANSIBLE_RUN_TAGS">
+  只运行带有这些 tag 的 task。以逗号分隔，可以重复使用，并且是追加到已配置的默认值上，而不是替换它。见 [Tag 与列表输出](/zh-cn/docs/playbooks/check-and-diff/#tag)。
+</Option>
+
+<Option name="--skip-tags" arg="TAGS" config="[tags] skip" env="ANSIBLE_SKIP_TAGS">
+  跳过带有这些 tag 的 task。以逗号分隔，可以重复使用，并且追加到已配置的默认值上。
+</Option>
+
+## 只看不运行
+
+这些选项只读取 playbook，然后停止。它们从不连接主机，也从不因为不支持的模块而停止，所以对这个版本还不能运行的 playbook 也能使用。
+
+<Option name="--list-tasks">
+  以 Ansible 的格式列出这次运行会执行的 task。
+</Option>
+
+<Option name="--list-tags">
+  列出这次运行会选中的 tag。
+</Option>
+
+<Option name="--list-hosts">
+  按 inventory 的顺序列出每个 play 会运行的主机。
+</Option>
+
+<Option name="--syntax-check">
+  加载并编译 playbook，但不运行任何东西。
+</Option>
+
+## 权限提升
+
+<Option name="-b, --become" default="false" config="[privilege_escalation] become" env="ANSIBLE_BECOME">
+  以权限提升的方式运行 task。playbook 中的 `become` 关键字仍然决定它所在的 play、block 或 task。见[权限提升](/zh-cn/docs/hosts/connections/#become)。
+</Option>
+
+<Option name="--become-user" arg="USER" default="root" config="[privilege_escalation] become_user" env="ANSIBLE_BECOME_USER">
+  要提升到的用户。
+</Option>
+
+<Option name="--become-method" arg="METHOD" default="sudo" config="[privilege_escalation] become_method" env="ANSIBLE_BECOME_METHOD">
+  提升权限的方法：`sudo` 或 `su`。其他方法会让运行在开始前就停止。
+</Option>
+
+<Option name="-k, --ask-pass" id="ask-pass">
+  在终端上询问 SSH 密码，并关闭回显。`ssh` 通过 `SSH_ASKPASS` 获取密码，所以需要 OpenSSH 8.4 或更高版本。密码不会出现在任何命令行、发送给主机的环境或日志中。与 `ansible-playbook` 一样，使用 `-k` 之后，对 `-K` 提示给出空回答会复用 SSH 密码。
+</Option>
+
+<Option name="--connection-password-file, --conn-pass-file" arg="PATH">
+  从这个文件的第一行读取 SSH 密码。它与 `-k` 冲突。
+</Option>
+
+<Option name="--become-password-file, --become-pass-file" arg="PATH">
+  从这个文件的第一行读取提升权限的密码。它与 `-K` 冲突。
+</Option>
+
+<Option name="-K, --ask-become-pass">
+  在终端上询问提升权限的密码，并关闭回显。密码只会写入 `sudo` 一次，不会出现在任何命令行、日志或结果中。
+</Option>
+
+## Vault
+
+<Option name="-J, --ask-vault-pass, --ask-vault-password">
+  在终端上询问 vault 密码，并关闭回显。
+</Option>
+
+<Option name="--vault-password-file, --vault-pass-file" arg="PATH" config="[defaults] vault_password_file" env="ANSIBLE_VAULT_PASSWORD_FILE">
+  保存 vault 密码的文件，或打印该密码的可执行文件。可以重复使用。
+</Option>
+
+<Option name="--vault-id" arg="LABEL@SOURCE" config="[defaults] vault_identity_list" env="ANSIBLE_VAULT_IDENTITY_LIST">
+  一个 vault 标识：来源是文件、可执行文件或 `prompt`。可以重复使用。无论标签是什么，每个密码都会对每个 vault 加密的值尝试一遍。见 [Vault](/zh-cn/docs/variables/vault/)。
+</Option>
+
+## 运行与输出
+
+<Option name="--force-handlers" default="false" config="[defaults] force_handlers" env="ANSIBLE_FORCE_HANDLERS">
+  即使在失败的主机上，也运行已被 notify 的 handler。play 上的 `force_handlers` 关键字优先。见 [Handler](/zh-cn/docs/playbooks/blocks/#handler)。
+</Option>
+
+<Option name="-C, --check" default="false">
+  报告每个 task 会改变什么，但不实际改变。task 自己的 `check_mode` 关键字优先于这个选项，所以带有 `check_mode: false` 的 task 仍会真正运行。没有 Python 的主机在 `--check` 或 `--diff` 下无法处理 `apt`、`user`、`group` 或 `file`：这些模块需要 Python，task 会失败。见[检查模式、diff 与列表输出](/zh-cn/docs/playbooks/check-and-diff/)。
+</Option>
+
+<Option name="-D, --diff" default="false">
+  像 `ansible-playbook` 那样，打印模块对文件所做的改动。task 自己的 `diff` 关键字优先于这个选项，所以 `diff: false` 会让该 task 的改动不显示在屏幕上。没有 Python 的主机在 `--diff` 下无法处理 `apt`、`user`、`group` 或 `file`：这些模块需要 Python，task 会失败。见[检查模式、diff 与列表输出](/zh-cn/docs/playbooks/check-and-diff/)。
+</Option>
+
+<Option name="-v" id="verbose">
+  对成功的 task 也显示模块结果。可以重复使用，就像 Ansible 的 `-vvv`。结果中的 `invocation` 键（模块收到的参数）只有从 `-vvv` 起才会出现。在 `-vvvv` 下，运行还会打印它收到的每个选项、它加载的插件，以及它运行的 `ssh` 命令。
+</Option>
+
+<Option name="--no-color" config="[defaults] nocolor" env="ANSIBLE_NOCOLOR">
+  不使用颜色打印。该选项优先于 `force_color`（`ANSIBLE_FORCE_COLOR`），而 `force_color` 又优先于 `nocolor`。见[配置](/zh-cn/docs/reference/configuration/#defaults-force-color)。
+</Option>
+
+<Option name="--facts" arg="auto|python|native" default="auto">
+  收集到的 facts 来自哪里。`auto` 在 play 能读取的每个 fact 都由 agent 的原生 `setup` 产生时使用它，否则使用 ansible-core 的 `setup` 模块。`python` 始终运行 Python 模块，用于对比。`native` 始终询问 agent 的收集器，它不产生的 facts 则是未定义的。在 Debian 或 Ubuntu 以外的主机上，无论这个选项怎么设置，原生收集器都会把 task 交还给 Python 模块。见 [Facts](/zh-cn/docs/variables/precedence/#原生-facts)。
+</Option>
+
+<Option name="--profile">
+  在汇总之后，向标准错误输出这次运行的时间花在了哪里：先是控制节点在每台主机上的各个阶段，然后是每个模块的 task 走过的路径（`native`、`python` 或 `fallback`）、它们的耗时，以及原生模块为什么把 task 交还。第一行说明 facts 来自哪里以及原因。
+</Option>
+
+## 环境变量
+
+Volant 读取上面提到的 `ANSIBLE_*` 变量，以及它自己的几个变量。
+
+<Option name="VOLANT_PYTHON" arg="PATH">
+  控制节点用来构建模块 payload 的 Python 解释器。它需要 `ansible-core`。设置后，Volant 只使用它，不安装任何东西。完整的顺序见[运行使用哪个解释器](/zh-cn/docs/reference/runtime/#运行使用哪个解释器)。
+</Option>
+
+<Option name="VOLANT_RUNTIME" arg="auto|managed|system" config="[volant] runtime">
+  Volant 是否可以使用并安装它自己的 Python。见[托管运行时](/zh-cn/docs/reference/runtime/)。
+</Option>
+
+<Option name="VOLANT_AGENT_DIR" arg="DIR">
+  存放 agent 二进制文件的目录。它最先被检查，在发布版控制节点内置的 agent 和 `volant` 可执行文件所在目录之前。与从源码构建的控制节点配合使用，或测试你自己的 agent 时很有用。
+</Option>
+
+<Option name="VOLANT_BATCHING" arg="1" config="[volant] batching">
+  开启[跨主机批处理](/zh-cn/docs/hosts/batching/)。
+</Option>
+
+<Option name="VOLANT_HOST_NAMED_PATHS" arg="allow|contained|refuse" config="[volant] host_named_paths">
+  如何处理受管主机指定的控制节点 `src`。见 [`host_named_paths`](/zh-cn/docs/reference/configuration/#volant-host-named-paths)。
+</Option>
+
+<Option name="VOLANT_HOST_NAMED_DEST_DIRS" arg="/dir:/other" config="[volant] host_named_dest_dirs">
+  当受管主机指定了 `fetch` 的 `dest` 时，`fetch` 可以写入的控制节点目录。见 [`host_named_dest_dirs`](/zh-cn/docs/reference/configuration/#volant-host-named-dest-dirs)。
+</Option>
+
+<Option name="VOLANT_NATIVE_MODULES" arg="0" config="[volant] native_modules">
+  设为 `0` 时，每个 task 都运行 ansible-core 的 Python 模块，而不是 agent 的原生版本。见[原生模块](/zh-cn/docs/internals/python/#原生模块)。
+</Option>
+
+<Option name="VOLANT_SSH_CONTROL_MASTER" arg="0" config="[volant] ssh_control_master">
+  设为 `0` 时，每次 `ssh` 运行都会打开自己的连接，而不是每个 inventory 主机共享一个。
+</Option>
+
+<Option name="VOLANT_PROFILE_JSON" arg="FILE">
+  把这次运行的 profile 写入这个文件，每行一个 JSON 对象：先是每个 agent 报告的原生模块，然后是各个阶段，再是每个 task 一行，包含它的模块、路径、交还原因和以微秒为单位的耗时。无论运行结果如何都会写入，文件无法写入时只会打印一条警告。
+</Option>
+
+## runtime 命令
+
+`volant runtime` 管理 Volant 为自己安装的 Python 和 ansible-core。每一步做什么，见[托管运行时](/zh-cn/docs/reference/runtime/)。
+
+```sh
+volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
+volant runtime pack FILE
+volant runtime status
+volant runtime path
+volant runtime remove [ID | --all]
+```
+
+<Option name="install --collections" arg="NAME_OR_FILE...">
+  同时把 collection 安装到运行时中。每个值是一个名字，可以带版本（`community.general:13.4.0`），或是以 `.yml` 或 `.yaml` 结尾的 requirements 文件。
+</Option>
+
+<Option name="install --from" arg="FILE">
+  从 `volant runtime pack` 写出的文件安装，不下载任何东西。平台必须匹配。它会在一行 `sha256` 中打印该文件的 SHA-256。
+</Option>
+
+<Option name="install --sha256" arg="HASH">
+  与 `--from` 一起使用时，如果文件的 SHA-256 与 `HASH` 不同，就在解包前拒绝该文件。错误中会显示两个哈希值，退出码为 1。
+</Option>
+
+<Option name="remove --all">
+  删除所有运行时，而不只是当前的那个。
+</Option>
+
+## 尚未支持
+
+每个 `ansible-playbook` 选项都能接受。`--scp-extra-args` 和 `--sftp-extra-args` 没有效果，因为文件是通过 agent 链路传输的。[对等性页面](/zh-cn/docs/reference/parity/#ansible-playbook-option)列出了每个选项及其状态。
+
+`volant` 有两个子命令：`playbook` 和 `runtime`。其他 Ansible 工具暂时没有对应的命令：用于临时命令的 `ansible`、`ansible-inventory`、`ansible-vault`、`ansible-doc`、`ansible-config` 和 `ansible-galaxy`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。

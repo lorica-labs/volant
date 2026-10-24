@@ -1,0 +1,71 @@
+---
+sourceHash: e61565118f58
+title: "Native Module mit Python-Fallback und die übrigen Geschwindigkeitsentscheidungen"
+description: "Entscheidungsdokument 0008."
+sidebar:
+  label: "0008 · Native Module und Geschwindigkeit"
+  order: 8
+---
+
+| Status | Datum |
+|---|---|
+| akzeptiert | 2026-09-27 |
+
+## Kontext
+
+Am 2026-09-24 führte Volant die vier Galaxy-Rollen aus [Entscheidungsdokument 0007](/de/docs/decisions/0007-action-plugins/#ergebnisse) gegen zwei konvergierte Hosts in 12,66 s aus, gegen 26,23 s für ansible-core 2.19.12 mit Pipelining. Ein Profil dieses Laufs pro Schritt zeigte, wohin die Zeit ging, pro Host:
+
+- 5,5 s in acht `apt`-Tasks, bei denen nichts zu installieren war: 140 ms, um das Modul zu importieren, und 606 ms, um es auszuführen, bei jedem Aufruf;
+- 3,8 s, um die Union der Python-Module auf dem Controller neu zu bauen, obwohl sich in ansible-core seit dem letzten Lauf nichts geändert hatte;
+- 1,1 s in `setup`, davon etwa 300 ms für den Start des Python-Servers, dann 0,7 s in drei `systemd`-Tasks und 0,7 s in `file`, `lineinfile` und `stat`;
+- 0,6 s, um Verbindungen zu öffnen, weil die Probe und die Verbindung jeweils ihren eigenen ssh-Handshake bezahlten;
+- 0,2 s, um Tasks auf dem Controller vorzubereiten. Bei k3s brauchte derselbe Schritt 2 s, und ein CPU-Profil ordnete davon etwa 80 Prozent dem Kopieren und Freigeben von Variablentabellen zu.
+
+Die Frames selbst brauchten 30 ms, und das Serialisieren eines ganzen Laufs dauerte etwa 5 ms, das Wire-Format war also nicht der Ort, an dem die Zeit blieb.
+
+Dasselbe Profil des Playbooks k3s-ansible ergab zusätzlich `service_facts` (3,3 s), `package_facts` (2,1 s) und einen Union-Bau von 5,7 s, der Collections einschloss.
+
+## Entscheidung
+
+Gängige Module laufen nativ im Agent, mit einem Fallback auf Python. `setup`, `stat`, `file`, `apt`, `systemd` (und `systemd_service`), `lineinfile`, `copy`, `package_facts`, `service_facts`, `user` und `group` haben eine Rust-Version im Agent. Ein natives Modul bekommt die Argumente, die das Python-Modul bekommen hätte. Es antwortet mit dem Ergebnis des Referenzmoduls, wenn diese Argumente in dem liegen, was es implementiert, und gibt den Task sonst an das Python-Modul zurück. Es entscheidet lesend und handelt erst dann, sodass eine Rückgabe immer kommt, bevor sich auf dem Host etwas geändert hat. Sein Ergebnis gelangt über denselben Pfad in den Controller wie das eines Python-Moduls, als nicht vertrauenswürdige Daten.
+
+Der Golden-Vergleich ist das Tor: Ein natives Modul wird nur in der Änderung eingeschaltet, in der seine Antworten Schlüssel für Schlüssel mit der Referenz übereinstimmen, `changed`, `diff` und `invocation` eingeschlossen, in jedem Fall, den der Golden aufzeichnet. Derselbe Test prüft, welchen Pfad jeder Fall genommen hat, sodass ein natives Modul, das außerhalb seiner Teilmenge geantwortet hat, oder eines, das jeden Fall zurückgegeben hat, ihn nicht besteht.
+
+Facts werden nur dann nativ gesammelt, wenn das Playbook nachweislich nichts anderes braucht. Das native `setup` erzeugt die 17 Collectors von `gather_subset: min`, die Prozessor- und Speicher-Facts von `hardware` und die Standardrouten und Adresslisten von `network`. Ein Fact, den es nicht erzeugen kann, fehlt im Ergebnis. Vor dem Verbinden liest der Controller jedes Play, jede Rolle, jedes Template und jede Variablendefinition des Laufs und listet die Facts auf, die sie lesen können. Er verwendet das native `setup` nur, wenn jeder davon nativ erzeugt wird. Ein Lesen über einen berechneten Namen (`ansible_facts[item]`, `vars[...]`, `lookup('vars', ...)`, ein ganzes `hostvars[host]`) zählt als Lesen von allem und behält das Python-`setup`. `--facts python` erzwingt es in jedem Fall.
+
+Die Union wird auf dem Controller zwischengespeichert: Ein Eintrag liegt unter `$XDG_CACHE_HOME/volant/unions/`, geführt über alles, was der Bau gelesen hat und was keine Datei ist: die Volant-Version, den Interpreter, die angeforderten Module, die Umgebung `ANSIBLE_*` und `PYTHON*`, `ansible.cfg` und das Arbeitsverzeichnis. Er hält Größe und Änderungszeit jeder Quelldatei fest. Die 154 Dateien zu prüfen kostet etwa 1 ms. Jede Änderung baut neu, und ein Cache, der sich nicht lesen oder schreiben lässt, lässt nie einen Lauf fehlschlagen.
+
+Jeder Inventory-Host bekommt eine OpenSSH-Verbindung. Volant hängt `ControlMaster`, einen eigenen `ControlPath` und `ControlPersist=30s` an seine `ssh`-Kommandozeile an, außer die ssh-Konfiguration des Operators oder `ansible_ssh_*_args` sagen schon etwas zum Teilen von Verbindungen. Die Probe, die Upload-Prüfung, die Verbindung und die Verbindung mit erweiterten Rechten teilen sich dann einen Schlüsselaustausch. Der Socket gilt pro Inventory-Host statt pro Maschine: Fünfzig Aliase einer Maschine, die sich einen Master teilten, stießen an das `MaxSessions`-Limit des Servers von 10.
+
+Die Variablen eines Hosts sind ein Stapel gemeinsamer Schichten, von oben nach unten gelesen, statt einer Map, die für jeden Task zusammengeführt und kopiert wird. Gesammelte Facts werden einmal gehalten und von jedem Task geteilt, der sie liest, und ein Fact, den ein Host schreibt, macht nur die Sicht dieses Hosts ungültig.
+
+Die Barriere bleibt, und Batching bleibt optional. Batching sieht jetzt auch Lesezugriffe auf andere Hosts in Template-Texten und in den Definitionen von Variablen, bleibt aber standardmäßig aus. Es entscheidet anhand des Textes des Playbooks, und auf eine Abhängigkeit, die der Text nicht ausschreibt, etwa einen Dienst, den ein anderer Host noch installiert, würde nicht gewartet. Siehe [Host-übergreifendes Batching](/de/docs/hosts/batching/).
+
+Blobs sind binär und komprimiert. Protokollversion 6 sendet die Union und bereitgestellte Dateien als rohe Bytes im Frame nach der Ankündigung, nicht mehr als Base64 in JSON. Die Union wird einmal mit deflate komprimiert, wenn sie in den Cache des Controllers geschrieben wird. Eine bereitgestellte Datei wird komprimiert, wenn sie größer als 4 KiB ist und die Kompression sie kleiner macht. Der Agent dekomprimiert bis zur angekündigten Größe und prüft den BLAKE3-Hash des Ergebnisses. Die übrigen Frames bleiben JSON.
+
+Der Python-Server wärmt seine Importe auf. Nachdem er das Kind geforkt hat, das ein Modul ausführt, importiert er dieses Modul in sich selbst, während das Kind läuft, sodass das nächste Kind desselben Moduls es schon geladen vorfindet.
+
+## Erwogene und verworfene Optionen
+
+Ein Rust-ssh-Client (`russh`) wurde gegen einen Host gemessen: Ein neuer Kanal auf einer offenen `russh`-Verbindung brauchte 45 ms, eine neue Sitzung über ein OpenSSH-`ControlMaster` 53 ms. Der Gewinn von 8 ms hätte 115 weitere Crates im Abhängigkeitsbaum des Agents gekostet (63 auf 178), einen `cargo deny`-Fehler bei RUSTSEC-2023-0071 und die Unterstützung für die Konfiguration des Operators: `Match` ignoriert, `Include` lässt die ganze Datei scheitern, `ProxyJump` geparst, aber nicht verwendet, kein `HostKeyAlias`, keine `/etc/ssh/ssh_config` oder globale `known_hosts`, kein GSSAPI in einem statischen Build. OpenSSH zu behalten lässt jede `~/.ssh/config` so funktionieren wie bei `ansible-playbook`.
+
+Ein binäres Frame-Format hätte fast nichts gespart. Das Kodieren und Dekodieren der Frames eines ganzen Rollenlaufs dauerte 4,8 bis 5,3 ms in JSON, 3,9 bis 4,6 ms in MessagePack mit benannten Feldern und 5,9 bis 6,6 ms in CBOR, bei einem Lauf von 12,5 s. MessagePack ohne Feldnamen konnte seine eigene Ausgabe nicht zurücklesen. Protobuf hat keinen sauberen Weg, die `Map<String, Value>` zu tragen, die 80 Prozent der Bytes ausmacht. JSON bleibt; nur der Blob hat sich geändert.
+
+QUIC bräuchte einen Daemon und einen lauschenden Port auf jedem Host. Volants Versprechen ist ein statischer Agent, gestartet über den ssh-Zugang, den Sie schon haben.
+
+io_uring fände wenig zu beschleunigen, da der Agent selbst wenig I/O macht. Seine Zeit steckt in den Modulen, die er ausführt, und den Prozessen, die diese starten.
+
+`gc.freeze()` und ein im Voraus geforktes Kind wurden im Python-Server gemessen. Jedes sparte 1 ms oder weniger pro Task, und keines wurde umgesetzt.
+
+## Konsequenzen
+
+- Ein Task innerhalb einer nativen Teilmenge führt kein Python mehr aus. Ein Host, auf dem jeder Task innerhalb einer bleibt, startet den Python-Server überhaupt nie, wie bei der Rollen-Last.
+- Der Python-Pfad bleibt die Referenz für alles andere, und die Teilmenge jedes nativen Moduls ist in seiner Quelle dokumentiert. Eine Änderung der Argumente kann einen Task von einem Pfad auf den anderen verschieben, ohne sein Ergebnis zu ändern.
+- `[volant] native_modules = false` schickt jeden Task an Python, und `--facts python` erzwingt das Python-`setup`, um die beiden Pfade an einem echten Lauf zu vergleichen. `--profile` und `VOLANT_PROFILE_JSON` zeigen, welchen Pfad jeder Task genommen hat und warum er zurückgegeben hat.
+- Das ssh-Socket-Verzeichnis (`$XDG_RUNTIME_DIR/volant-cm` oder `/tmp/volant-cm-<uid>` mit Modus 0700) ist ein weiterer Ort, an den der Controller schreibt. Ein Master überlebt den Lauf um 30 Sekunden.
+- Beim Start hebt Volant sein Limit für offene Dateien bis zum harten Limit an, da jede Verbindung drei Deskriptoren hält. Ein hartes Limit von 1024 begrenzt einen Lauf weiterhin auf etwa 330 Verbindungen.
+- Ein Controller und ein Agent mit verschiedenen Protokollversionen lehnen einander ab, wie bisher. Volant lädt immer seinen eigenen Agent hoch, das spielt also nur bei einem von Hand gebauten Agent eine Rolle.
+
+## Ergebnisse
+
+Gemessen am 2026-09-27 mit `just bench` und `just bench-k3s`: die vier Rollen in 0,529 s gegen 26,435 s für ansible-core 2.19.12 mit `pipelining = True` (ein Verhältnis von 49,97), und k3s-ansible in 23,477 s gegen 50,519 s (2,15). Die Konfiguration, die Kommandozeilen und ein Schritt-für-Schritt-Vergleich mit dem 2026-09-24 stehen auf der [Performance-Seite](/de/docs/project/performance/).

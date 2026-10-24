@@ -1,0 +1,161 @@
+---
+sourceHash: bced5151937a
+title: Inventory 与 facts 缓存
+description: Volant 读取的 inventory 格式、组变量和主机变量的来源、主机模式的语法，以及 facts 如何在多次运行之间保留。
+---
+
+本页回答你的主机从哪里来、模式如何选出其中一部分，以及如何在多次运行之间保留它们的 facts。你现有的 inventory 文件、`group_vars` 和 `host_vars` 都会原样读取。
+
+Volant 读取 inventory 的方式与 ansible-core 相同：可以有一个或多个来源，每个来源由第一个接受它的已启用插件解析。静态运行（INI、YAML、TOML、主机列表）不会启动 Python。
+
+## 来源
+
+`-i`（也可写作 `--inventory` 和 `--inventory-file`）接受一个来源，并且可以重复使用。未指定 `-i` 时，Volant 先读取 `ANSIBLE_INVENTORY`，再读取 `ansible.cfg` 中的 `inventory`。两者都接受以逗号分隔的列表。这些都没有设置时，Volant 与 ansible-core 一样读取 `/etc/ansible/hosts`，文件不存在时不给出任何提示直接跳过。在没有这个文件的机器上，只存在隐式的 `localhost`。
+
+来源可以是以下之一：
+
+| 来源 | 说明 |
+|---|---|
+| INI 文件 | 主机、`[group]`、`[group:children]`、`[group:vars]` 和范围。范围可以按数字（`web[01:03]`，保留前导零）或字母（`db[a:c]`）展开，也可以带步长（`n[1:10:3]`）。 |
+| YAML 或 TOML 文件 | Ansible 的 `yaml` 和 `toml` 格式。 |
+| 目录 | 其中每个文件都是一个来源，按排序后的顺序遍历。扩展名被忽略或匹配忽略模式的文件，以及 `group_vars` 和 `host_vars` 目录，都会跳过。 |
+| 逗号列表 | `-i web1,web2,` 是一个主机列表（`host_list`）。只有一台主机时需要加结尾的逗号。启用后会读取 `advanced_host_list`。 |
+| 可执行文件 | 作为动态 inventory 脚本运行：先运行一次 `--list`，对列表中没有给出变量的主机再运行 `--host <name>`。 |
+| 插件文件 | 带有 `plugin:` 的 YAML 文件，指向 `constructed`、`generator` 或某个 collection 的 inventory 插件（`auto` 插件）。 |
+
+多个来源按给定顺序合并。后面的来源在同名键上优先，组成员取并集，主机和组保持它们第一次出现时的顺序。
+
+### 插件链
+
+`ansible.cfg` 的 `[inventory]` 段控制来源如何匹配：
+
+- `enable_plugins` 按顺序列出要尝试的插件。默认值是 `host_list, script, auto, yaml, ini, toml`。
+- `ignore_extensions` 和 `ignore_patterns` 用于跳过目录中的文件。
+- `unparsed_is_failed` 在没有任何来源能被读取时让运行失败。
+- `any_unparsed_is_failed` 在遇到第一个没有任何插件能读取的来源时就让运行失败。
+
+没有插件能读取的来源会被跳过并给出警告，与 Ansible 一致。`-vvv` 会打印每个来源由哪个插件接手，以及哪些插件拒绝了它。
+
+### 动态来源
+
+脚本以 JSON 格式打印它的 inventory，格式与 `ansible-inventory --list` 的输出相同。`constructed` 和 `generator` 根据模板构建组和主机。
+
+collection 的 inventory 插件（例如云服务商的插件）在 ansible-core 内部运行，通过一个 Python 进程完成，Volant 只在出现这类来源时才启动该进程，见[预热的 Python 路径](/zh-cn/docs/internals/python/)。
+
+在 `[inventory_plugin_script]` 中设置 `always_show_stderr`，可以控制脚本的标准错误输出如何处理。它默认开启：脚本写到那里的内容会显示为一行 `[ERROR]:`，即使脚本本身成功了也是如此。
+
+## INI inventory
+
+```ini title="inventory.ini"
+bastion ansible_host=198.51.100.7
+
+[web]
+web1 ansible_host=192.0.2.11
+web2 ansible_host=192.0.2.12
+
+[db]
+db1 ansible_host=192.0.2.21 ansible_user=postgres
+
+[prod:children]
+web
+db
+
+[prod:vars]
+ansible_user=deploy
+ansible_ssh_common_args=-o ProxyJump=bastion
+```
+
+注释以 `#` 或 `;` 开头。
+
+### 隐式 localhost
+
+控制节点是一台主机，有三个名字：`localhost`、`127.0.0.1` 和 `::1`。当 inventory 没有定义其中任何一个时，Volant 会生成一台隐式主机。它使用本地连接，并以控制节点的 Python 作为 `ansible_python_interpreter`，不属于任何组，`all` 也不会匹配它。指名它的 play（`hosts: localhost`）、`delegate_to: localhost` 和 `hostvars['localhost']` 都能访问到它。对 `hostvars` 的循环不会列出它。
+
+当 inventory 定义了这三个名字之一，这台主机也会响应另外两个名字，所以 `hosts: 127.0.0.1` 会在 inventory 的 `localhost` 上运行，并带上它的变量。先定义的那个生效。当 inventory 中一台主机都没有时，Volant 会警告只有 `localhost` 可用。把 `localhost_warning` 设为 `false` 可以关闭这条警告。
+
+## 组变量与主机变量
+
+Volant 会读取每个来源旁边的 `group_vars/` 和 `host_vars/`，然后是 playbook 旁边的，形式可以是文件（`group_vars/web.yml`）或目录（`group_vars/web/*.yml`）。[优先级](/zh-cn/docs/variables/precedence/)说明了每一层所处的位置。
+
+当一台主机属于多个组时，层级更深的组优先。同一层级的组之间由 `ansible_group_priority` 决定（值越大越优先），然后是组名。
+
+既是主机又是组的名字按主机处理。只要 inventory 中包含这样的名字，Volant 每次运行都会警告一次，不论本次运行使用什么模式，因为 Ansible 在加载 inventory 时就会检测到它。
+
+## 刷新
+
+`meta: refresh_inventory` 会重新读取每个来源，见[委派、meta 任务与 environment](/zh-cn/docs/playbooks/delegation/#刷新-inventory)。
+
+## 主机模式
+
+play 的 `hosts:` 或 `--limit` 中的模式遵循 Ansible 的语法：
+
+| 模式 | 选中 |
+|---|---|
+| `all` 或 `*` | 所有主机 |
+| `web:db` 或 `web,db` | 属于任一组的主机 |
+| `web*`、`db?`、`host[abc]`、`host[a-z]` | 对主机名和组名使用 shell 风格的通配符 |
+| `web:&prod` | `web` 中同时属于 `prod` 的主机 |
+| `web:!web2` | `web` 中除 `web2` 以外的主机 |
+| `~web\d+` | 名字从第一个字符起匹配该正则表达式的主机和组 |
+| `web[0]`、`web[0:2]`、`web[1:]` | 某个项所得主机的一个下标或一个切片 |
+| `::1`、`fe80::1`、`[::1]:22` | 一台主机：地址不会在冒号处被切开 |
+
+切片包含结束位置，与 Ansible 一致：`web[0:2]` 是三台主机。`name[N-M]` 作为 `name[N:M]` 的旧写法同样被接受。以 `~` 开头但不是有效正则表达式的项会让运行停止，与 ansible-core 相同。
+
+模式如何被切成项：
+
+| 模式 | 项 |
+|---|---|
+| 含有逗号，例如 `web:db,cache` | 只在逗号处切开：`web:db` 和 `cache`。 |
+| 没有逗号，且是有效的地址、带端口的主机名或范围 | 一个项。 |
+| 没有逗号，其他情况 | 在冒号处切开。 |
+
+各项不会按你写的顺序应用。普通项在前，然后是 `&` 项，最后是 `!` 项，这与 Ansible 的做法相同。只由 `!` 或 `&` 项组成的模式从 `all` 开始。
+
+`--limit` 遵循同样的语法。每个没有匹配到任何主机的项都会打印 `Could not match supplied host pattern, ignoring: <term>`，运行则继续使用其他项匹配到的主机。如果限制条件完全没有匹配到主机，运行会失败，并打印 `Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`，退出码为 1。
+
+## facts 缓存
+
+默认情况下，facts 保存在内存中，运行结束就消失。设置 `fact_caching = jsonfile` 后，Volant 会把每台主机的 facts 写入文件，并在下一次运行时读回，文件格式与 ansible-core 2.19 使用的相同。一个工具写下的缓存，另一个工具也能读取。
+
+```ini title="ansible.cfg"
+[defaults]
+gathering = smart
+fact_caching = jsonfile
+fact_caching_connection = /var/cache/volant/facts
+fact_caching_timeout = 3600
+```
+
+### facts 缓存设置
+
+| 设置 | 环境变量 | 含义 |
+|---|---|---|
+| `fact_caching` | `ANSIBLE_CACHE_PLUGIN` | `memory`（默认，每次运行独立）或 `jsonfile`。`ansible.builtin.memory` 和 `ansible.builtin.jsonfile` 同样可用。 |
+| `fact_caching_connection` | `ANSIBLE_CACHE_PLUGIN_CONNECTION` | 存放这些文件的目录。`jsonfile` 需要它；没有它时，运行把 facts 保留在内存中。 |
+| `fact_caching_timeout` | `ANSIBLE_CACHE_PLUGIN_TIMEOUT` | 文件保持有效的秒数。默认 86400。`0` 表示永不过期。 |
+| `fact_caching_prefix` | `ANSIBLE_CACHE_PLUGIN_PREFIX` | 加在每个文件名前面。默认为空。 |
+| `gathering` | `ANSIBLE_GATHERING` | `implicit`（默认）、`explicit` 或 `smart`。 |
+
+每台主机有一个文件，名为 `<prefix>s1_<host>`。
+
+其他任何缓存插件，例如 `redis` 或 `yaml`，都会让运行以退出码 4 结束，并给出消息 `fact cache plugin '<name>' (from '<origin>') is not supported yet; use 'memory' or 'jsonfile'`。
+
+### 收集
+
+- `implicit` 在每个没有关闭收集的 play 中收集 facts。
+- `explicit` 只在设置了 `gather_facts: true` 的 play 中收集。
+- `smart` 只为缓存中没有有效条目的主机收集。
+
+缓存的 facts 在运行开始时加载，所以即使某个 play 不收集 facts，task 也能看到它们。
+
+### set_fact
+
+带有 `cacheable: true` 的 `set_fact` 还会把值写入该主机的缓存条目，下一次运行会读回它。
+
+### 清空缓存
+
+`--flush-cache` 会在运行前删除 inventory 中各主机的条目。其他主机的文件保持不变。
+
+### facts 缓存错误
+
+如果缓存目录无法创建，或者缺少 `fact_caching_connection`（`Required config '_uri' for 'jsonfile' cache plugin not provided.`），会给出警告，运行继续使用内存缓存。不是有效 JSON 的文件会被删除，并让运行停止，消息与 ansible-core 一致：`The cache file <path> was corrupt, or did not otherwise contain valid data. It has been removed, so you can re-run your command now.`

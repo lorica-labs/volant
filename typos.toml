@@ -13,6 +13,17 @@ extend-exclude = [
   # The filler words of `lipsum`, which are Latin.
   "crates/volant/src/template/lipsum_words.txt",
   "docs/src/content/docs/docs/reference/parity.md",
+  # The translations of the documentation and the site: typos checks English only.
+  "docs/src/content/docs/fr/",
+  "docs/src/content/docs/de/",
+  "docs/src/content/docs/es/",
+  "docs/src/content/docs/zh-cn/",
+  "docs/src/i18n/ui/fr.ts",
+  "docs/src/i18n/ui/de.ts",
+  "docs/src/i18n/ui/es.ts",
+  "docs/src/i18n/ui/zh-cn.ts",
+  "docs/src/i18n/sidebar.ts",
+  "docs/src/products.ts",
 ]
 
 [default.extend-words]

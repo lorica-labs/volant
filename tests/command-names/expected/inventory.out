@@ -1,4 +1,4 @@
-$ ansible-inventory -i hosts.ini --list
+x$ ansible-inventory -i hosts.ini --list
 {
     "_meta": {
         "hostvars": {

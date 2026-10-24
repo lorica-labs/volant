@@ -15,6 +15,12 @@ export const sidebarLabels: Labels = {
     es: '¿Funcionará mi playbook?',
     'zh-cn': '我的 playbook 能运行吗？',
   },
+  'Ansible command names': {
+    fr: 'Les noms des commandes ansible',
+    de: 'Ansible-Befehlsnamen',
+    es: 'Nombres de comandos de ansible',
+    'zh-cn': 'ansible 命令名',
+  },
   'When a run fails': {
     fr: 'Quand une exécution échoue',
     de: 'Wenn ein Lauf fehlschlägt',

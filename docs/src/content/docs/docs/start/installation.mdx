@@ -51,7 +51,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 ```
 
-The script never installs them by default. It runs [`volant shims install`](/reference/cli/#the-shims-command), which leaves a file or link it did not make alone and says when a real Ansible on your `PATH` is hidden or still runs first. If a name could not be linked, the script prints `some ansible-* names were not linked, see above` and still exits 0, because Volant is installed.
+The script never installs them by default. It runs [`volant shims install`](/docs/reference/cli/#the-shims-command), which leaves a file or link it did not make alone and says when a real Ansible on your `PATH` is hidden or still runs first. If a name could not be linked, the script prints `some ansible-* names were not linked, see above` and still exits 0, because Volant is installed.
 
 ## What you get
 

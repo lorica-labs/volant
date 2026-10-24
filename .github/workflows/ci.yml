@@ -121,9 +121,11 @@ jobs:
           (cd "$RUNNER_TEMP/base" && just test-names) > "$RUNNER_TEMP/base.txt"
           diff "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
 
+  # Coverage is a figure to read on a pull request, not a gate on main: a push to main does not
+  # run it, so a dip below the floor cannot leave main red.
   coverage:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

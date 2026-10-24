@@ -1,5 +1,5 @@
 ---
-sourceHash: 2ef629a7b495
+sourceHash: 78c5934b9fa8
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -96,6 +96,10 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 
 <Option name="vault_identity_list" id="defaults-vault-identity-list" flag="--vault-id" env="ANSIBLE_VAULT_IDENTITY_LIST">
   Kommagetrennte Vault-Identitäten, jede als `label@source` geschrieben, wobei die Quelle eine Datei, eine ausführbare Datei oder `prompt` ist. Die Umgebungsvariable ersetzt die Liste der Datei, und die Kommandozeile ergänzt, was sich durchgesetzt hat.
+</Option>
+
+<Option name="vault_encrypt_identity" id="defaults-vault-encrypt-identity" flag="--encrypt-vault-id" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  Die Vault-ID, die `volant vault encrypt` verwendet, wenn `--encrypt-vault-id` nicht angegeben ist. Siehe [Vault](/de/docs/variables/vault/#dateien-verschlüsseln-und-anzeigen).
 </Option>
 
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">

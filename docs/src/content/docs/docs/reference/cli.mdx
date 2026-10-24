@@ -10,12 +10,13 @@ volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
 volant runtime <install|pack|status|path|remove>
+volant vault <encrypt|decrypt|view>
 volant --version
 ```
 
 `volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know. Playbooks given together run in order, and each one prints its own recap.
 
-On Linux and macOS the `volant` binary also dispatches on the name it was started as (the file name of `argv[0]`). Started as `ansible-playbook`, through a symlink or a hard link, it behaves as `volant playbook` with the same arguments, output and exit codes. Started as `ansible`, it behaves as `volant adhoc`. A usage error exits with 2 and names the program as started. Any other name keeps the usual `volant` behaviour.
+On Linux and macOS the `volant` binary also dispatches on the name it was started as (the file name of `argv[0]`). Started as `ansible-playbook` or `ansible-vault`, through a symlink or a hard link, it behaves as `volant playbook` or `volant vault` with the same arguments, output and exit codes. Started as `ansible`, it behaves as `volant adhoc`. A usage error exits with 2 and names the program as started. Any other name keeps the usual `volant` behaviour.
 
 Where an option has an `ansible.cfg` key or an environment variable, the entry names it. The option wins over both; [Configuration](/docs/reference/configuration/) explains the order.
 
@@ -277,6 +278,26 @@ volant runtime remove [ID | --all]
   Delete every runtime, not only the current one.
 </Option>
 
+## The vault command
+
+`volant vault` does what `ansible-vault encrypt`, `decrypt` and `view` do, on the same files, with the same messages and exit codes. `create`, `edit`, `rekey` and `encrypt_string` are not there yet. [Vault](/variables/vault/#encrypting-and-viewing-files) has the details.
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+```
+
+`OPTIONS` are `--vault-id`, `--vault-password-file` (also `--vault-pass-file`), `-J`/`--ask-vault-pass` and `-v`, described under [Vault](#vault) above. With none of them, and no `vault_password_file` setting, the command asks for the password.
+
+<Option name="--output" arg="FILE">
+  Write the result there and leave the source alone. `-` is standard output. Only one input file is accepted with it, or the exit code is 5.
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  The vault id `encrypt` uses. It is required when more than one `--vault-id` is given.
+</Option>
+
 ## The shims command
 
 `volant shims` links the ansible-core program names to `volant`, so `ansible-vault` and the others start Volant. Nothing creates these links unless you run it. It works on Linux and macOS.
@@ -317,4 +338,4 @@ Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extr
 
 `volant adhoc` does not have `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` or `-t` yet.
 
-Of the other Ansible tools, these have no counterpart yet: `ansible-inventory`, `ansible-vault`, `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.
+Of the other Ansible tools, these have no counterpart yet: `ansible-inventory`, `ansible-doc`, `ansible-config` and `ansible-galaxy`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.

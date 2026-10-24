@@ -34,6 +34,17 @@ Filters, tests and lookups that run in Python never see the vault password. The 
 
 A value that came back from a managed host is never decrypted with the run's secrets, and never templated again. See [Values from hosts are never templated](/docs/variables/templating/#values-from-hosts-are-never-templated).
 
+## Encrypting and viewing files
+
+`volant vault encrypt`, `decrypt` and `view` work on the same files as `ansible-vault`: a file encrypted by one is read by the other, with the default id and with a label.
+
+- `encrypt` replaces each file with its vault text and `decrypt` with its plaintext. Both leave the result at mode `0600` and print nothing; on a terminal they say `Encryption successful` or `Decryption successful` on standard error. A file without a final newline comes back without one.
+- The header is `$ANSIBLE_VAULT;1.1;AES256` for the default id and `$ANSIBLE_VAULT;1.2;AES256;LABEL` for another. `--vault-id LABEL@SOURCE` sets the label. With more than one `--vault-id`, `--encrypt-vault-id` (or `vault_encrypt_identity`, `ANSIBLE_VAULT_ENCRYPT_IDENTITY`) picks the one that encrypts; without it the command exits 5.
+- `--output FILE` writes there and leaves the source alone, `--output -` writes to standard output, and no file name, or `-`, reads standard input.
+- `view` prints each file's plaintext. On a terminal it goes through `ANSIBLE_PAGER`, `PAGER` or `less`; `ansible.cfg` has no say in the pager.
+- Without any password source the command asks for it. `encrypt` asks twice, as `New Vault password: ` and `Confirm New Vault password: `.
+- `-v` prints the configuration file in use and `-vv` the version. The extra lines of `-vvvv` are not printed.
+
 ## Known gaps
 
 - The `salt` and `wrap_object` arguments of the `vault` filter are refused as not supported yet.

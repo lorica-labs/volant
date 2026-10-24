@@ -53,7 +53,7 @@ pub struct PlaybookArgs {
     #[command(flatten)]
     pub escalation: BecomeArgs,
     #[command(flatten)]
-    pub vault: VaultArgs,
+    pub vault: VaultSecretArgs,
 
     /// Run handlers even if a task fails.
     #[arg(long = "force-handlers")]
@@ -180,7 +180,7 @@ pub struct BecomeArgs {
 
 /// The secrets that open vaulted values and files.
 #[derive(Args, Debug, Default, Clone)]
-pub struct VaultArgs {
+pub struct VaultSecretArgs {
     /// Ask for the vault password on the terminal.
     #[arg(
         short = 'J',
@@ -242,7 +242,7 @@ pub struct AdhocArgs {
     #[command(flatten)]
     pub escalation: BecomeArgs,
     #[command(flatten)]
-    pub vault: VaultArgs,
+    pub vault: VaultSecretArgs,
 }
 
 impl AdhocArgs {

@@ -69,6 +69,8 @@ pub struct Config {
     /// the command line.
     pub vault_password_file: Option<PathBuf>,
     pub vault_identity_list: Vec<String>,
+    /// `vault_encrypt_identity`: the vault id `ansible-vault encrypt` uses when none is given.
+    pub vault_encrypt_identity: Option<String>,
     /// Whether a host that failed still runs the handlers it notified. Measured on ansible-core
     /// 2.19.12: `[defaults] force_handlers = True` and `--force-handlers` give the same run, down
     /// to the recap.
@@ -183,6 +185,7 @@ impl Default for Config {
             become_flags: None,
             vault_password_file: None,
             vault_identity_list: Vec::new(),
+            vault_encrypt_identity: None,
             force_handlers: false,
             localhost_warning: true,
             show_custom_stats: false,
@@ -454,6 +457,11 @@ impl Config {
             && !path.is_empty()
         {
             config.vault_password_file = Some(PathBuf::from(path));
+        }
+        if let Ok(id) = std::env::var("ANSIBLE_VAULT_ENCRYPT_IDENTITY")
+            && !id.is_empty()
+        {
+            config.vault_encrypt_identity = Some(id);
         }
         if let Ok(list) = std::env::var("ANSIBLE_VAULT_IDENTITY_LIST") {
             config.vault_identity_list = tag_list(&list);

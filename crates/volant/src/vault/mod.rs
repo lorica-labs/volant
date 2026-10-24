@@ -14,7 +14,7 @@ mod format;
 mod load;
 
 pub use format::{decrypt, encrypt};
-pub use load::{Request, load};
+pub use load::{Request, absolute, load, load_labelled, normalize};
 
 const HEADER: &[u8] = b"$ANSIBLE_VAULT";
 

@@ -13,6 +13,20 @@ mod shared;
 mod store;
 
 pub(crate) use host_vars::PENDING_PYTHON;
+
+/// The `hostvars` map: every host's view, each one shared on its own. A host whose variables
+/// changed gets a new entry while a render still holding the previous map keeps it whole, and
+/// that copy is one pointer per host rather than every host's variables: measured on a thousand
+/// local hosts, copying the views themselves on each `set_fact` cost 11 s of a 15 s run.
+pub type HostvarsMap = indexmap::IndexMap<String, Arc<Value>>;
+
+/// A plain map of host views as a [`HostvarsMap`].
+#[cfg(test)]
+pub fn hostvars_map(map: Map<String, Value>) -> HostvarsMap {
+    map.into_iter()
+        .map(|(host, view)| (host, Arc::new(view)))
+        .collect()
+}
 pub use host_vars::{HostSettings, HostVars, host_setting, omit_token, settled, settled_all};
 pub use include_dir::{Chain, Failure, Scan, include_dir, join_path, read_failure};
 pub use layers::ListedOrigin;
@@ -116,7 +130,7 @@ pub struct VarStore {
     /// Every inventory host's view, as `hostvars` shows it. Built on demand; a write to one host's
     /// facts marks that host in `stale` and only its entry is rebuilt, while a rebase drops the
     /// whole map.
-    hostvars: Option<Arc<Map<String, Value>>>,
+    hostvars: Option<Arc<HostvarsMap>>,
     /// Hosts whose entry in `hostvars` no longer matches their facts.
     stale: BTreeSet<String>,
     /// Per host whose facts some layer above them outranks, the facts less those names, kept
@@ -134,7 +148,7 @@ pub struct VarStore {
     views_built: BTreeMap<String, usize>,
     /// The same view completed with a host the inventory does not carry - an implicit
     /// `localhost` - one map per such host. There is normally at most one of them in a run.
-    hostvars_with: BTreeMap<String, Arc<Map<String, Value>>>,
+    hostvars_with: BTreeMap<String, Arc<HostvarsMap>>,
     /// The spelling the implicit controller host answers to in `hostvars`: the first one a host
     /// ran under, `localhost` until one has. The reference makes one such host and names it after
     /// the first spelling asked for.

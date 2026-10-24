@@ -17,7 +17,7 @@ pub(crate) struct PlayView {
     /// `groups` and the three host lists.
     pub shared: Arc<Map<String, Value>>,
     /// Every host's view, once the run has a play behind it.
-    pub hostvars: Option<Arc<Map<String, Value>>>,
+    pub hostvars: Option<Arc<crate::vars::HostvarsMap>>,
     /// The names that are data. Reading one makes the render's result data, which is never
     /// evaluated again.
     pub untrusted: BTreeSet<String>,

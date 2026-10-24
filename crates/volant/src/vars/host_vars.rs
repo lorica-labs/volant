@@ -17,7 +17,7 @@ use crate::template::Vars;
 #[derive(Debug, Clone, Default)]
 pub struct HostVars {
     pub map: Map<String, Value>,
-    pub hostvars: Arc<Map<String, Value>>,
+    pub hostvars: Arc<crate::vars::HostvarsMap>,
     /// `groups` and the play's host lists, shared for the same reason and in the same way.
     pub shared: Arc<Map<String, Value>>,
     /// The host's gathered facts that answer, shared with the store rather than copied: read
@@ -60,7 +60,7 @@ pub fn settled(entry: &Value) -> std::borrow::Cow<'_, Value> {
 }
 
 /// `settled` for every entry of a `hostvars` map.
-pub fn settled_all(hostvars: &Map<String, Value>) -> Map<String, Value> {
+pub fn settled_all(hostvars: &crate::vars::HostvarsMap) -> Map<String, Value> {
     hostvars
         .iter()
         .map(|(host, entry)| (host.clone(), settled(entry).into_owned()))

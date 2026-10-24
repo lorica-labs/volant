@@ -213,7 +213,9 @@ fn hostvars_answers_alike_from_a_map_a_view_or_a_bare_map() {
     }
     {
         let t = templar();
-        let shared = Arc::new(vars(json!({"a": {"y": 1}, "b": {"y": 2}})));
+        let shared = Arc::new(crate::vars::hostvars_map(vars(
+            json!({"a": {"y": 1}, "b": {"y": 2}}),
+        )));
         let empty = Map::new();
         for (text, want) in hostvars_cases() {
             let vars = Vars {
@@ -252,12 +254,12 @@ fn hostvars_hides_the_unlisted_controller_from_iteration(
     #[case] want: Value,
 ) {
     let t = templar();
-    let hosts = Arc::new(vars(json!({
+    let hosts = Arc::new(crate::vars::hostvars_map(vars(json!({
         "h1": {"inventory_hostname": "h1"},
         "localhost": {"inventory_hostname": "localhost"},
         "127.0.0.1": {"inventory_hostname": "localhost"},
         "::1": {"inventory_hostname": "localhost"}
-    })));
+    }))));
     let shared = Arc::new(vars(json!({"groups": {"all": ["h1"]}})));
     let own = Map::new();
     let vars = Vars {
@@ -309,7 +311,7 @@ fn hostvars_gives_the_controller_python_to_every_host(
     #[case] want: Value,
 ) {
     crate::runtime::resolve::set_test_python(controller);
-    let hosts = Arc::new(vars(json!({ "h1": host })));
+    let hosts = Arc::new(crate::vars::hostvars_map(vars(json!({ "h1": host }))));
     let own = Map::new();
     let vars = Vars {
         map: &own,
@@ -339,7 +341,9 @@ fn ansible_playbook_python_with_no_interpreter_fails_when_read() {
 #[test]
 fn the_context_hands_out_the_shared_view_and_ranks_inventory_wide_names() {
     {
-        let shared = Arc::new(vars(json!({"a": {"y": 1}, "b": {"y": 2}})));
+        let shared = Arc::new(crate::vars::hostvars_map(vars(
+            json!({"a": {"y": 1}, "b": {"y": 2}}),
+        )));
         let empty = Map::new();
         let (ctx, _) = context_of(
             &templar(),
@@ -453,11 +457,11 @@ fn extract_reads_hostvars_by_host_name_and_taints_like_a_bare_read() {
       | map(attribute='ansible_facts.default_ipv4.address')
       | flatten | unique | list
     }}";
-        let view = Arc::new(vars(json!({
+        let view = Arc::new(crate::vars::hostvars_map(vars(json!({
             "h1": {"ansible_facts": {"default_ipv4": {"address": "192.0.2.1"}}},
             "h2": {"ansible_facts": {}},
             "h3": {"ansible_facts": {"default_ipv4": {"address": "192.0.2.3"}}},
-        })));
+        }))));
         let shared = Arc::new(vars(
             json!({"groups": {"server": ["h1"], "agent": ["h2", "h3"]}}),
         ));
@@ -480,7 +484,9 @@ fn extract_reads_hostvars_by_host_name_and_taints_like_a_bare_read() {
     }
     {
         let t = templar();
-        let view = Arc::new(vars(json!({"h2": {"x": "{{ 1 + 1 }}"}})));
+        let view = Arc::new(crate::vars::hostvars_map(vars(
+            json!({"h2": {"x": "{{ 1 + 1 }}"}}),
+        )));
         let empty = Map::new();
         let hosts = BTreeSet::from(["h2".to_string()]);
         let mut wrong = Vec::new();
@@ -514,10 +520,10 @@ fn extract_reads_hostvars_by_host_name_and_taints_like_a_bare_read() {
 #[test]
 fn a_host_name_from_data_taints_the_hostvars_listing_only() {
     let t = templar();
-    let view = Arc::new(vars(json!({
+    let view = Arc::new(crate::vars::hostvars_map(vars(json!({
         "{{ 1 + 1 }}": {},
         "h2": {"x": "{{ 40 + 2 }}"},
-    })));
+    }))));
     let empty = Map::new();
     let hosts = BTreeSet::from(["{{ 1 + 1 }}".to_string()]);
     let mut wrong = Vec::new();
@@ -573,7 +579,9 @@ fn conditions_need_a_boolean_and_never_evaluate_a_host_string() {
             "hello": "hello",
             "s": {"stdout": "1 == 1"},
         }));
-        let view = Arc::new(vars(json!({"h2": {"x": "1 == 1"}})));
+        let view = Arc::new(crate::vars::hostvars_map(vars(
+            json!({"h2": {"x": "1 == 1"}}),
+        )));
         assert!(t.condition("{{ healthy }}", &map).unwrap());
         assert!(t.condition("{{ cond_s }}", &map).unwrap());
         let boolean = "Conditionals must have a boolean result";
@@ -1359,10 +1367,10 @@ fn a_stored_template_still_renders_when_read(
 #[test]
 fn the_variables_of_another_host_render_and_built_braces_stay_text() {
     let t = templar();
-    let view = Arc::new(vars(json!({
+    let view = Arc::new(crate::vars::hostvars_map(vars(json!({
         "h2": {"x": "{{ 40 + 2 }}", "plain": "p"},
         "h3": {"plain": "q"},
-    })));
+    }))));
     let empty = Map::new();
     let hosts = BTreeSet::new();
     for (text, want) in [

@@ -52,7 +52,7 @@ const NO_DEADLINE: Duration = Duration::from_secs(60 * 60 * 24 * 365);
 pub(super) struct Bridged {
     name: &'static str,
     modules: &'static [&'static str],
-    hostvars: Arc<Map<String, Value>>,
+    hostvars: Arc<crate::vars::HostvarsMap>,
     /// The hosts holding a value a managed host sent, as the task's host and the host the module
     /// runs on see them.
     untrusted_hosts: [Arc<std::collections::BTreeSet<String>>; 2],

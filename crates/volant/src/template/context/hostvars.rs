@@ -16,7 +16,7 @@ use crate::inventory::is_localhost;
 /// costs one host.
 #[derive(Debug)]
 pub(in crate::template) struct Hostvars {
-    pub(in crate::template) hosts: Arc<Map<String, Value>>,
+    pub(in crate::template) hosts: Arc<crate::vars::HostvarsMap>,
     /// The inventory-wide values, whose `groups` say which hosts the inventory lists. The map
     /// answers for the three spellings of the controller whether they are listed or not, and an
     /// iteration shows only the listed ones, as the reference's does.

@@ -1,0 +1,27 @@
+$ ansible all -i inventory.yml -m ping -f 1
+h1 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+h2 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+rc=0
+$ ansible all -i inventory.yml -m command -a echo hi -f 1
+h1 | CHANGED | rc=0 >>
+hi
+h2 | CHANGED | rc=0 >>
+hi
+rc=0
+$ ansible all -i inventory.yml -a false -f 1
+[ERROR]: Task failed: Module failed: non-zero return code
+Origin: <adhoc 'command' task>
+
+{'action': 'command', 'args': {'_raw_params': 'false'}, 'timeout': 0, 'async_val': 0, 'poll': 15}
+
+h1 | FAILED | rc=1 >>
+non-zero return code
+h2 | FAILED | rc=1 >>
+non-zero return code
+rc=2

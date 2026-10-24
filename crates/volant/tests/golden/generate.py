@@ -4,12 +4,12 @@ none is named. `module:<case or group>` records only those module cases. The int
 """
 import sys
 
-from reference import inventory, module, scenario, template
+from reference import command_names, inventory, module, scenario, template
 from reference.run import Failed, check_reference
 
 # In this order when all run: `module` last, as the only kind that creates an account and a group
 # on the machine.
-KINDS = {"template": template, "inventory": inventory, "scenario": scenario, "module": module}
+KINDS = {"template": template, "inventory": inventory, "scenario": scenario, "command-names": command_names, "module": module}
 
 
 def main(names) -> int:

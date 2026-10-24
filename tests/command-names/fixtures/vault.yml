@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  vars_files:
+    - secret.yml
+    - inline.yml
+  tasks:
+    - ansible.builtin.debug:
+        msg: "{{ token }} {{ key }}"

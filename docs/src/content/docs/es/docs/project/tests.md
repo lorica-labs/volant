@@ -1,12 +1,12 @@
 ---
-sourceHash: 00b6cbd9dbbb
+sourceHash: 2e7bc4a7539f
 title: Tests
-description: Cómo se comprueba Volant contra ansible-core, los cuatro tipos de respuesta grabada y cómo añadir un escenario.
+description: Cómo se comprueba Volant contra ansible-core, los tipos de respuesta grabada y cómo añadir un escenario.
 ---
 
 Volant debe comportarse como ansible-core 2.19.12. Por eso, la mayor parte de la suite de tests es una comparación: ansible-core ejecutó algo una vez, su respuesta se grabó en el repositorio, y el test ejecuta Volant con la misma entrada y compara.
 
-## Los cuatro tipos
+## Los cinco tipos
 
 Cada tipo de grabación tiene un nombre, y `just golden <kind>` lo regenera.
 
@@ -16,8 +16,13 @@ Cada tipo de grabación tiene un nombre, y `just golden <kind>` lo regenera.
 | `inventory` | Hosts, variables y grupos de un inventario, y los hosts que selecciona cada patrón | Todos los jobs, con `reference.rs` |
 | `scenario` | Una ejecución de playbook: el código de salida y toda la salida estándar | Todos los jobs, con `reference.rs` |
 | `module` | Lo que respondió cada módulo nativo en una máquina real | El job `ssh` y `just test-reference`, con `reference_modules.rs` |
+| `command-names` | La salida de los scripts de `tests/command-names`, que llaman a `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` y `ansible-galaxy` | El job `command-names` |
 
 Nada de una grabación se edita a mano. Cambia la entrada, ejecuta `just golden <kind>` con ansible-core 2.19.12 instalado y lee el diff. Ejecutarlo en un árbol sin cambios deja los archivos exactamente como estaban. El tipo `module` necesita además `sudo`, systemd, apt y cron, porque crea una cuenta y una unidad en la máquina.
+
+## El job command-names
+
+El job `command-names` se ejecuta en un contenedor `debian:stable-slim` sin `ansible` y sin Python. Enlaza los nombres `ansible-*` con el `volant` estático mediante `volant shims install`, y luego ejecuta los scripts de `tests/command-names` exactamente como los escribiría un usuario para ansible. Cada script escribe su salida en un archivo y la compara con `tests/command-names/expected/<script>.out`, una grabación de ansible-core 2.19.12 hecha con `just golden command-names`. El job sube los archivos de salida cuando un script falla.
 
 ## Añadir un escenario
 

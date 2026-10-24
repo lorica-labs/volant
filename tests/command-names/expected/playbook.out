@@ -1,0 +1,48 @@
+$ ansible-playbook -i inventory.yml -f 1 site.yml
+
+PLAY [all] *********************************************************************
+
+TASK [Say hello] ***************************************************************
+ok: [h1] => {
+    "msg": "hello from h1"
+}
+ok: [h2] => {
+    "msg": "hello from h2"
+}
+
+TASK [Run a command] ***********************************************************
+changed: [h1]
+changed: [h2]
+
+TASK [Show it] *****************************************************************
+ok: [h1] => {
+    "said.stdout": "hi"
+}
+ok: [h2] => {
+    "said.stdout": "hi"
+}
+
+PLAY RECAP *********************************************************************
+h1                         : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+h2                         : ok=3    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+rc=0
+$ ansible-playbook -i inventory.yml -f 1 fails.yml
+
+PLAY [h1] **********************************************************************
+
+TASK [Fail] ********************************************************************
+[ERROR]: Task failed: Action failed: nope
+Origin: /tmp/command-names/playbook/fails.yml:4:7
+
+2   gather_facts: false
+3   tasks:
+4     - name: Fail
+        ^ column 7
+
+fatal: [h1]: FAILED! => {"changed": false, "msg": "nope"}
+
+PLAY RECAP *********************************************************************
+h1                         : ok=0    changed=0    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   
+
+rc=2

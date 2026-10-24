@@ -1,0 +1,91 @@
+$ ansible-doc ping
+> MODULE [1mansible.builtin.ping[0m (ping.py)
+
+  A trivial test module, this module always returns `pong' on
+  successful contact. It does not make sense in playbooks, but it is
+  useful from `/usr/bin/ansible' to verify the ability to login and
+  that a usable Python is configured.
+  This is NOT ICMP ping, this is just a trivial test module that
+  requires Python on the remote-node.
+  For Windows targets, use the ansible.windows.win_ping module
+  instead.
+  For Network targets, use the ansible.netcommon.net_ping module
+  instead.
+
+[1mOPTIONS[0m (red indicates it is required):
+
+   data    Data to return for the `ping' return value.
+           If this parameter is set to `crash', the module will cause
+           an exception.
+        default: pong
+        type: str
+
+[1mATTRIBUTES:[0m
+
+        [4mcheck_mode:[0m
+        description: Can run in check_mode and return changed status prediction without modifying
+          target, if not supported the action will be skipped.
+        support: full
+
+        [4mdiff_mode:[0m
+        description: Will return details on what has changed (or possibly needs changing in
+          check_mode), when in diff mode
+        support: none
+
+        [4mplatform:[0m
+        description: Target OS/families that can be operated against
+        platforms: posix
+        support: N/A
+
+[1mSEE ALSO:[0m
+      * Module ansible.netcommon.net_ping
+      * Module ansible.windows.win_ping
+
+[1mAUTHOR[0m: Ansible Core Team, Michael DeHaan
+
+[1mEXAMPLES:[0m
+# Test we can logon to 'webservers' and execute python with json lib.
+# ansible webservers -m ansible.builtin.ping
+
+- name: Example from an Ansible Playbook
+  ansible.builtin.ping:
+
+- name: Induce an exception to see what happens
+  ansible.builtin.ping:
+    data: crash
+
+[1mRETURN VALUES:[0m
+
+   ping    Value provided with the `data' parameter.
+        returned: success
+        sample: pong
+        type: str
+
+rc=0
+$ env ANSIBLE_FORKS=7 ansible-config dump --only-changed
+CONFIG_FILE() = None
+DEFAULT_FORKS(env: ANSIBLE_FORKS) = 7
+
+GALAXY_SERVERS:
+rc=0
+$ ansible-galaxy role init --init-path roles myrole
+- Role myrole was created successfully
+rc=0
+roles
+roles/myrole
+roles/myrole/README.md
+roles/myrole/defaults
+roles/myrole/defaults/main.yml
+roles/myrole/files
+roles/myrole/handlers
+roles/myrole/handlers/main.yml
+roles/myrole/meta
+roles/myrole/meta/main.yml
+roles/myrole/tasks
+roles/myrole/tasks/main.yml
+roles/myrole/templates
+roles/myrole/tests
+roles/myrole/tests/inventory
+roles/myrole/tests/test.yml
+roles/myrole/vars
+roles/myrole/vars/main.yml

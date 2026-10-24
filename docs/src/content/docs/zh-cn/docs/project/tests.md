@@ -1,12 +1,12 @@
 ---
-sourceHash: 00b6cbd9dbbb
+sourceHash: 2e7bc4a7539f
 title: 测试
-description: Volant 如何对照 ansible-core 进行检查，四种已记录的应答，以及如何添加场景。
+description: Volant 如何对照 ansible-core 进行检查，各种已记录的应答，以及如何添加场景。
 ---
 
 Volant 的行为必须与 ansible-core 2.19.12 一致。因此，测试套件的大部分是一种对比：ansible-core 运行过一次某个东西，它的应答被记录在仓库中，测试则用同样的输入运行 Volant 并进行比较。
 
-## 四种记录
+## 五种记录
 
 每种记录都有一个名字，`just golden <kind>` 会重新生成它。
 
@@ -16,8 +16,13 @@ Volant 的行为必须与 ansible-core 2.19.12 一致。因此，测试套件的
 | `inventory` | inventory 的主机、变量和组，以及每个模式选中的主机 | 每个 job，通过 `reference.rs` |
 | `scenario` | 一次 playbook 运行：退出码和完整的标准输出 | 每个 job，通过 `reference.rs` |
 | `module` | 每个原生模块在真实机器上的应答 | `ssh` job 和 `just test-reference`，通过 `reference_modules.rs` |
+| `command-names` | `tests/command-names` 中脚本的输出，这些脚本调用 `ansible`、`ansible-playbook`、`ansible-vault`、`ansible-inventory`、`ansible-doc`、`ansible-config` 和 `ansible-galaxy` | `command-names` job |
 
 记录中没有任何内容是手工编辑的。修改输入，在安装了 ansible-core 2.19.12 的情况下运行 `just golden <kind>`，然后阅读 diff。在未改动的树上运行它，文件会与原来完全一样。`module` 类别还需要 `sudo`、systemd、apt 和 cron，因为它会在机器上创建一个账户和一个 unit。
+
+## command-names job
+
+`command-names` job 运行在没有 `ansible` 也没有 Python 的 `debian:stable-slim` 容器中。它用 `volant shims install` 把 `ansible-*` 这些名字链接到静态的 `volant`，然后完全按用户为 ansible 编写的方式运行 `tests/command-names` 的脚本。每个脚本把输出写入一个文件，并与 `tests/command-names/expected/<script>.out` 比较，后者是 `just golden command-names` 录制的 ansible-core 2.19.12 的记录。脚本失败时，该 job 会上传输出文件。
 
 ## 添加场景
 

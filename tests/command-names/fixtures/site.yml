@@ -1,0 +1,12 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: Say hello
+      ansible.builtin.debug:
+        msg: "hello from {{ inventory_hostname }}"
+    - name: Run a command
+      ansible.builtin.command: echo hi
+      register: said
+    - name: Show it
+      ansible.builtin.debug:
+        var: said.stdout

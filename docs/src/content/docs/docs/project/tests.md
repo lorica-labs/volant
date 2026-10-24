@@ -1,11 +1,11 @@
 ---
 title: Tests
-description: How Volant is checked against ansible-core, the four kinds of recorded answer, and how to add a scenario.
+description: How Volant is checked against ansible-core, the kinds of recorded answer, and how to add a scenario.
 ---
 
 Volant must behave like ansible-core 2.19.12. Most of the test suite is therefore a comparison: ansible-core ran something once, its answer was recorded in the repository, and the test runs Volant on the same input and compares.
 
-## The four kinds
+## The five kinds
 
 Each kind of recording has a name, and `just golden <kind>` regenerates it.
 
@@ -14,9 +14,14 @@ Each kind of recording has a name, and `just golden <kind>` regenerates it.
 | `template` | The result of rendering each expression in `crates/volant/tests/golden/cases.yml` | Every job, with `reference.rs` |
 | `inventory` | Hosts, variables and groups of an inventory, and the hosts each pattern selects | Every job, with `reference.rs` |
 | `scenario` | A playbook run: the exit code and the whole standard output | Every job, with `reference.rs` |
+| `command-names` | The output of the scripts in `tests/command-names`, which call `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` and `ansible-galaxy` | The `command-names` job |
 | `module` | What each native module answered on a real machine | The `ssh` job and `just test-reference`, with `reference_modules.rs` |
 
 Nothing in a recording is edited by hand. Change the input, run `just golden <kind>` with ansible-core 2.19.12 installed, and read the diff. Running it on an unchanged tree leaves the files exactly as they were. The `module` kind also needs `sudo`, systemd, apt and cron, because it creates an account and a unit on the machine.
+
+## The command-names job
+
+The `command-names` job runs on a `debian:stable-slim` container with no `ansible` and no Python. It links the `ansible-*` names to the static `volant` with `volant shims install`, then runs the scripts of `tests/command-names` exactly as a user would write them for ansible. Each script writes its output to a file and compares it with `tests/command-names/expected/<script>.out`, a recording of ansible-core 2.19.12 made by `just golden command-names`. The job uploads the output files when a script fails.
 
 ## Add a scenario
 

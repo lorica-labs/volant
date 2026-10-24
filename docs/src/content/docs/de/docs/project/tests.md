@@ -1,12 +1,12 @@
 ---
-sourceHash: 00b6cbd9dbbb
+sourceHash: 2e7bc4a7539f
 title: Tests
-description: Wie Volant gegen ansible-core geprüft wird, die vier Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
+description: Wie Volant gegen ansible-core geprüft wird, die Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
 
 Volant muss sich wie ansible-core 2.19.12 verhalten. Der größte Teil der Testsuite ist deshalb ein Vergleich: ansible-core hat einmal etwas ausgeführt, seine Antwort wurde im Repository aufgezeichnet, und der Test führt Volant mit derselben Eingabe aus und vergleicht.
 
-## Die vier Arten
+## Die fünf Arten
 
 Jede Art von Aufzeichnung hat einen Namen, und `just golden <kind>` erzeugt sie neu.
 
@@ -16,8 +16,13 @@ Jede Art von Aufzeichnung hat einen Namen, und `just golden <kind>` erzeugt sie 
 | `inventory` | Hosts, Variablen und Gruppen eines Inventorys sowie die Hosts, die jedes Muster auswählt | In jedem Job, mit `reference.rs` |
 | `scenario` | Ein Playbook-Lauf: der Exit-Code und die gesamte Standardausgabe | In jedem Job, mit `reference.rs` |
 | `module` | Was jedes native Modul auf einem echten Rechner geantwortet hat | Im Job `ssh` und mit `just test-reference`, mit `reference_modules.rs` |
+| `command-names` | Die Ausgabe der Skripte in `tests/command-names`, die `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` und `ansible-galaxy` aufrufen | Der Job `command-names` |
 
 Nichts in einer Aufzeichnung wird von Hand bearbeitet. Ändern Sie die Eingabe, führen Sie `just golden <kind>` mit installiertem ansible-core 2.19.12 aus und lesen Sie den Diff. Auf einem unveränderten Baum ausgeführt, lässt es die Dateien genau so, wie sie waren. Die Art `module` braucht außerdem `sudo`, systemd, apt und cron, weil sie auf dem Rechner ein Konto und eine Unit anlegt.
+
+## Der Job command-names
+
+Der Job `command-names` läuft in einem Container `debian:stable-slim` ohne `ansible` und ohne Python. Er verlinkt die Namen `ansible-*` mit `volant shims install` auf das statische `volant` und führt dann die Skripte aus `tests/command-names` genau so aus, wie ein Benutzer sie für ansible schreiben würde. Jedes Skript schreibt seine Ausgabe in eine Datei und vergleicht sie mit `tests/command-names/expected/<script>.out`, einer Aufzeichnung von ansible-core 2.19.12, die `just golden command-names` erstellt hat. Der Job lädt die Ausgabedateien hoch, wenn ein Skript fehlschlägt.
 
 ## Ein Szenario hinzufügen
 

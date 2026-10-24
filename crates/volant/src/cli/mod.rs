@@ -12,6 +12,8 @@ mod runtime;
 mod shims;
 mod signals;
 mod vault;
+mod vault_args;
+mod vault_edit;
 
 pub use args::PlaybookArgs;
 pub use program::{TOOLS, subcommand_for};

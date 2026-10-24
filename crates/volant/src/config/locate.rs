@@ -102,3 +102,23 @@ pub(super) fn warn_once() {
         eprintln!("[WARNING]: {}", world_writable_warning(&cwd));
     });
 }
+
+/// The value of `key` in `[defaults]` of the configuration file in use, as written and trimmed;
+/// `None` when there is no file, no such key or an empty value.
+pub(crate) fn defaults_value(key: &str) -> Option<String> {
+    let text = std::fs::read_to_string(current().path?).ok()?;
+    let mut section = "";
+    for raw in text.lines() {
+        let line = raw.trim();
+        if let Some(name) = line.strip_prefix('[').and_then(|l| l.strip_suffix(']')) {
+            section = name.trim();
+        } else if section == "defaults"
+            && !line.starts_with(['#', ';'])
+            && let Some((name, value)) = line.split_once('=')
+            && name.trim() == key
+        {
+            return Some(value.trim().to_string()).filter(|v| !v.is_empty());
+        }
+    }
+    None
+}

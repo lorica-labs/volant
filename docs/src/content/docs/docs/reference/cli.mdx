@@ -255,12 +255,15 @@ volant runtime remove [ID | --all]
 
 ## The vault command
 
-`volant vault` does what `ansible-vault encrypt`, `decrypt` and `view` do, on the same files, with the same messages and exit codes. `create`, `edit`, `rekey` and `encrypt_string` are not there yet. [Vault](/variables/vault/#encrypting-and-viewing-files) has the details.
+`volant vault` does what `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit` and `rekey` do, on the same files, with the same messages and exit codes. `encrypt_string` is not there yet. [Vault](/docs/variables/vault/#encrypting-and-viewing-files) and [Vault](/docs/variables/vault/#creating-editing-and-rekeying-files) have the details.
 
 ```sh
 volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
 volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
 volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
 ```
 
 `OPTIONS` are `--vault-id`, `--vault-password-file` (also `--vault-pass-file`), `-J`/`--ask-vault-pass` and `-v`, described under [Vault](#vault) above. With none of them, and no `vault_password_file` setting, the command asks for the password.
@@ -270,7 +273,15 @@ volant vault view [FILE...] [OPTIONS]
 </Option>
 
 <Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  The vault id `encrypt` uses. It is required when more than one `--vault-id` is given.
+  The vault id `encrypt`, `create` and `rekey` use. `encrypt` and `create` require it when more than one `--vault-id` is given. `edit` accepts it and ignores it: a file keeps its own label.
+</Option>
+
+<Option name="--skip-tty-check">
+  `create` opens the editor even when standard output is not a terminal. Without it, `create` refuses with exit code 5.
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  The new secret for `rekey`. Give one of them. With neither, `rekey` asks for it.
 </Option>
 
 ## The shims command

@@ -3,94 +3,20 @@
 //! and exit codes (1 for an error of the data, 5 for a bad option).
 
 use std::io::{IsTerminal as _, Read as _, Write as _};
-use std::path::{Path, PathBuf};
-
-use clap::{Args, Subcommand};
+use std::path::Path;
 
 use super::announce::{config_line, version_line};
+pub use super::vault_args::{VaultArgs, VaultCommand};
+use super::vault_edit as edit;
 use crate::vault::{self, Request, Secrets};
 
-#[derive(Args, Debug)]
-#[command(disable_version_flag = true, subcommand_required = false)]
-pub struct VaultArgs {
-    /// Print the version and exit.
-    #[arg(long, exclusive = true)]
-    version: bool,
-    #[command(subcommand)]
-    command: Option<VaultCommand>,
-}
-
-/// Where the secrets come from, and how much to say.
-#[derive(Args, Debug)]
-pub struct Common {
-    /// The vault identity to use, `label@source` where the source is a file, an executable or
-    /// `prompt`. Repeatable.
-    #[arg(long = "vault-id", value_name = "VAULT_IDS")]
-    vault_id: Vec<String>,
-    /// Ask for the vault password on the terminal.
-    #[arg(
-        short = 'J',
-        long = "ask-vault-pass",
-        visible_alias = "ask-vault-password",
-        conflicts_with = "vault_password_file"
-    )]
-    ask_vault_pass: bool,
-    /// File, or executable printing the password, for the vault. Repeatable.
-    #[arg(
-        long = "vault-password-file",
-        alias = "vault-pass-file",
-        value_name = "VAULT_PASSWORD_FILES"
-    )]
-    vault_password_file: Vec<PathBuf>,
-    /// Print more: the configuration file at -v, the version at -vv.
-    #[arg(short, long, action = clap::ArgAction::Count)]
-    verbose: u8,
-}
-
-#[derive(Subcommand, Debug)]
-pub enum VaultCommand {
-    /// Encrypt files in place, or into the file given to --output.
-    Encrypt {
-        #[command(flatten)]
-        common: Common,
-        /// Write the vault text here instead of replacing the file; `-` is standard output.
-        #[arg(long, value_name = "OUTPUT_FILE")]
-        output: Option<String>,
-        /// The vault id to encrypt with, required when more than one is given.
-        #[arg(long, value_name = "ENCRYPT_VAULT_ID")]
-        encrypt_vault_id: Option<String>,
-        /// The files; none, or `-`, reads standard input.
-        #[arg(value_name = "file_name")]
-        files: Vec<String>,
-    },
-    /// Decrypt files in place, or into the file given to --output.
-    Decrypt {
-        #[command(flatten)]
-        common: Common,
-        /// Write the plaintext here instead of replacing the file; `-` is standard output.
-        #[arg(long, value_name = "OUTPUT_FILE")]
-        output: Option<String>,
-        /// The files; none, or `-`, reads standard input.
-        #[arg(value_name = "file_name")]
-        files: Vec<String>,
-    },
-    /// Print the plaintext of encrypted files, through the pager on a terminal.
-    View {
-        #[command(flatten)]
-        common: Common,
-        /// The files.
-        #[arg(value_name = "file_name")]
-        files: Vec<String>,
-    },
-}
-
 /// A message for `[ERROR]:` and the exit code it ends the command with.
-struct Failure {
-    message: String,
-    code: i32,
+pub(super) struct Failure {
+    pub(super) message: String,
+    pub(super) code: i32,
 }
 
-fn fail(message: impl Into<String>) -> Failure {
+pub(super) fn fail(message: impl Into<String>) -> Failure {
     Failure {
         message: message.into(),
         code: 1,
@@ -98,7 +24,7 @@ fn fail(message: impl Into<String>) -> Failure {
 }
 
 /// `AnsibleOptionsError`, which exits 5.
-fn bad_option(message: impl Into<String>) -> Failure {
+pub(super) fn bad_option(message: impl Into<String>) -> Failure {
     Failure {
         message: message.into(),
         code: 5,
@@ -145,6 +71,7 @@ pub fn vault(args: VaultArgs) -> i32 {
     }
 }
 
+#[expect(clippy::too_many_lines)]
 fn execute(command: VaultCommand) -> Result<(), Failure> {
     let (common, output, files) = match &command {
         VaultCommand::Encrypt {
@@ -158,7 +85,10 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
             output,
             files,
         } => (common, output.as_deref(), files),
-        VaultCommand::View { common, files } => (common, None, files),
+        VaultCommand::Create { common, files, .. }
+        | VaultCommand::Edit { common, files, .. }
+        | VaultCommand::Rekey { common, files, .. }
+        | VaultCommand::View { common, files } => (common, None, files),
     };
     if let Some(id) = common.vault_id.iter().find(|id| id.contains(';')) {
         return Err(bad_option(format!(
@@ -185,7 +115,10 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
             vault::absolute(Path::new(o)).to_string_lossy().into_owned()
         }
     });
-    let encrypting = matches!(command, VaultCommand::Encrypt { .. });
+    let encrypting = matches!(
+        command,
+        VaultCommand::Encrypt { .. } | VaultCommand::Create { .. }
+    );
     let labelled = vault::load_labelled(
         &Request {
             ask: common.ask_vault_pass,
@@ -200,6 +133,7 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
         eprintln!("[WARNING]: {}", err.warning);
         fail(err.message)
     })?;
+    let ask = common.ask_vault_pass;
     match command {
         VaultCommand::Encrypt {
             encrypt_vault_id,
@@ -217,6 +151,33 @@ fn execute(command: VaultCommand) -> Result<(), Failure> {
             if std::io::stdout().is_terminal() {
                 eprintln!("Encryption successful");
             }
+        }
+        VaultCommand::Create {
+            encrypt_vault_id,
+            skip_tty_check,
+            files,
+            ..
+        } => {
+            let wanted = encrypt_vault_id.or(config.vault_encrypt_identity);
+            let (label, secret) = encrypt_secret(&labelled, wanted.as_deref())?;
+            edit::create(&files, label, secret, skip_tty_check)?;
+        }
+        VaultCommand::Edit { files, .. } => edit::edit(&files, &labelled)?,
+        VaultCommand::Rekey {
+            encrypt_vault_id,
+            new_vault_password_file,
+            new_vault_id,
+            files,
+            ..
+        } => {
+            let wanted = encrypt_vault_id.or_else(|| config.vault_encrypt_identity.clone());
+            let new = edit::NewSecret {
+                ask,
+                file: new_vault_password_file,
+                id: new_vault_id,
+                wanted,
+            };
+            edit::rekey(&files, &labelled, new, &config)?;
         }
         VaultCommand::Decrypt { files, .. } => {
             let secrets = Secrets::new(labelled.into_iter().map(|(_, secret)| secret).collect());
@@ -255,7 +216,7 @@ fn inputs(files: Vec<String>) -> Vec<String> {
 }
 
 /// The secret that encrypts: the one `--encrypt-vault-id` names, else the only one.
-fn encrypt_secret<'a>(
+pub(super) fn encrypt_secret<'a>(
     labelled: &'a [(String, Vec<u8>)],
     wanted: Option<&str>,
 ) -> Result<(&'a str, &'a [u8]), Failure> {
@@ -303,14 +264,14 @@ fn encrypt_file(
 
 /// A vault error followed by the file it was about, the way the reference words it: the error
 /// ends in a full stop.
-fn named(error: &vault::VaultError, file: &str) -> String {
+pub(super) fn named(error: &vault::VaultError, file: &str) -> String {
     let message = &error.0;
     let stop = if message.ends_with('.') { "" } else { "." };
     format!("{message}{stop} for {file}")
 }
 
 /// `os.path.realpath`: links followed as far as the path exists, `-` left alone.
-fn realpath(name: &str) -> String {
+pub(super) fn realpath(name: &str) -> String {
     if name == "-" {
         return name.to_string();
     }
@@ -324,7 +285,7 @@ fn realpath(name: &str) -> String {
 }
 
 /// An OS error the way Python words it: `[Errno 2] No such file or directory: 'path'`.
-fn os_error(path: &str, error: &std::io::Error) -> String {
+pub(super) fn os_error(path: &str, error: &std::io::Error) -> String {
     let text = error.to_string();
     match error.raw_os_error() {
         Some(errno) => {
@@ -337,7 +298,7 @@ fn os_error(path: &str, error: &std::io::Error) -> String {
     }
 }
 
-fn read_data(name: &str) -> Result<Vec<u8>, Failure> {
+pub(super) fn read_data(name: &str) -> Result<Vec<u8>, Failure> {
     let (shown, read) = if name == "-" {
         let mut bytes = Vec::new();
         (
@@ -377,7 +338,7 @@ fn writable(_dir: &Path) -> bool {
 
 /// `VaultEditor.write_data`: standard output for `-`, else a new file of mode 0600 made after
 /// the old one is gone, its bytes overwritten first when `shred` is set.
-fn write_data(data: &[u8], target: &str, shred: bool) -> Result<(), Failure> {
+pub(super) fn write_data(data: &[u8], target: &str, shred: bool) -> Result<(), Failure> {
     if target == "-" {
         let mut out = std::io::stdout().lock();
         return out
@@ -459,10 +420,8 @@ fn show(plain: &[u8]) {
         let _ = out.flush();
         return;
     }
-    // `ANSIBLE_PAGER` before `PAGER`; the `pager` setting of `ansible.cfg` is not read.
-    let pager = ["ANSIBLE_PAGER", "PAGER"]
-        .iter()
-        .find_map(|name| std::env::var(name).ok().filter(|p| !p.is_empty()))
+    let pager = edit::setting(&["ANSIBLE_PAGER", "PAGER"], "pager")
+        .filter(|p| !p.is_empty())
         .unwrap_or_else(|| "less".to_string());
     let pager = pager.as_str();
     let mut command = std::process::Command::new("sh");

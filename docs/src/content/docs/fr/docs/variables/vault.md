@@ -1,5 +1,5 @@
 ---
-sourceHash: aaa01d3d7aed
+sourceHash: 72cf8b339b72
 title: Vault
 description: Comment Volant lit les données d'Ansible Vault, d'où il tire les mots de passe, et pourquoi ils ne quittent jamais le processus du contrôleur.
 ---
@@ -42,9 +42,19 @@ Une valeur revenue d'un hôte géré n'est jamais déchiffrée avec les secrets 
 - `encrypt` remplace chaque fichier par son texte vault et `decrypt` par son texte en clair. Les deux laissent le résultat en mode `0600` et n'affichent rien ; sur un terminal, ils écrivent `Encryption successful` ou `Decryption successful` sur l'erreur standard. Un fichier sans saut de ligne final revient sans saut de ligne.
 - L'en-tête est `$ANSIBLE_VAULT;1.1;AES256` pour l'id par défaut et `$ANSIBLE_VAULT;1.2;AES256;LABEL` pour un autre. `--vault-id LABEL@SOURCE` fixe le label. Avec plusieurs `--vault-id`, `--encrypt-vault-id` (ou `vault_encrypt_identity`, `ANSIBLE_VAULT_ENCRYPT_IDENTITY`) choisit celui qui chiffre ; sans lui, la commande sort avec le code 5.
 - `--output FILE` écrit à cet endroit et laisse la source intacte, `--output -` écrit sur la sortie standard, et sans nom de fichier, ou avec `-`, la commande lit l'entrée standard.
-- `view` affiche le texte en clair de chaque fichier. Sur un terminal, il passe par `ANSIBLE_PAGER`, `PAGER` ou `less` ; `ansible.cfg` n'a pas son mot à dire sur le pager.
+- `view` affiche le texte en clair de chaque fichier. Sur un terminal, il passe par le pager : `PAGER`, sinon `ANSIBLE_PAGER`, sinon `[defaults] pager`, sinon `less`.
 - Sans aucune source de mot de passe, la commande le demande. `encrypt` le demande deux fois, comme `New Vault password: ` et `Confirm New Vault password: `.
 - `-v` affiche le fichier de configuration utilisé et `-vv` la version. Les lignes supplémentaires de `-vvvv` ne sont pas affichées.
+
+## Créer, modifier et rechiffrer des fichiers
+
+`volant vault create`, `edit` et `rekey` travaillent sur les mêmes fichiers qu'`ansible-vault`.
+
+- `create` prend un seul nom de fichier. Il refuse avec le code de sortie 5 sauf si la sortie standard est un terminal ou si `--skip-tty-check` est donné, et avec le code de sortie 1 quand le fichier existe. Un répertoire manquant est créé, avec un avertissement. L'éditeur peut laisser le fichier vide : le résultat est un fichier vault valide qui contient un texte vide.
+- `edit` déchiffre chaque fichier, ouvre l'éditeur et chiffre le résultat avec le secret qui a ouvert le fichier et le label qu'il avait. Quand le texte n'a pas changé, le fichier n'est pas réécrit. Un fichier modifié garde son mode.
+- L'éditeur est `EDITOR`, sinon `ANSIBLE_EDITOR`, sinon `[defaults] editor`, sinon `vi`, découpé en mots comme le ferait un shell, avec le nom du fichier ajouté. Son statut de sortie n'est pas regardé, comme dans ansible-vault.
+- L'éditeur travaille sur une copie en mode `0600` dans un répertoire privé sous `ANSIBLE_LOCAL_TEMP` (`[defaults] local_tmp`, sinon `~/.ansible/tmp`). La copie est écrasée puis supprimée à chaque sortie, y compris avec un éditeur en échec et avec SIGTERM ou SIGHUP. Ctrl-C va à l'éditeur.
+- `rekey` déchiffre chaque fichier avec les anciens secrets et le réécrit avec le nouveau, en gardant son mode. Le nouveau secret vient de `--new-vault-password-file`, de `--new-vault-id LABEL@SOURCE`, ou des invites `New Vault password: ` et `Confirm New Vault password: `. Il affiche `Rekey successful` sur l'erreur standard, quelle que soit la sortie standard.
 
 ## Limites connues
 

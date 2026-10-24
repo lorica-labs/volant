@@ -104,7 +104,7 @@ A scratch image has no `ssh`, no Python, no shell and no `/etc/passwd`. With onl
 
     For the modules that run in Python, Volant uses a Python 3 with `ansible-core`. When it finds none, it downloads its own (about 155 MB), checks every file against a pinned hash and keeps it under `~/.local/share/volant/runtime`. A run that does this prints one line. If you already have such a Python, Volant can use it: [Which interpreter a run uses](/docs/reference/runtime/#which-interpreter-a-run-uses) gives the order. See [The managed runtime](/docs/reference/runtime/).
 
-    Volant has no `vault`, `galaxy`, `inventory` or `doc` command. For `ansible-vault` and the other tools of ansible-core, install ansible-core yourself.
+    Volant has `volant vault encrypt|decrypt|view|create|edit|rekey` and `volant inventory`, but no `galaxy`, `doc` or `config` command. For `ansible-galaxy`, `ansible-doc`, `ansible-config` and `ansible-vault encrypt_string`, install ansible-core yourself.
 
     A playbook made only of `command`, `shell`, `raw` and controller-side modules, with `gather_facts: false`, needs no Python at all.
   </TabItem>

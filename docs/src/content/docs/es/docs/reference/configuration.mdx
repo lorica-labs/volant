@@ -1,5 +1,5 @@
 ---
-sourceHash: 78c5934b9fa8
+sourceHash: dc0a39319bb0
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -100,6 +100,18 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 
 <Option name="vault_encrypt_identity" id="defaults-vault-encrypt-identity" flag="--encrypt-vault-id" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
   El id de vault que usa `volant vault encrypt` cuando no se da `--encrypt-vault-id`. Consulta [Vault](/es/docs/variables/vault/#cifrar-y-ver-archivos).
+</Option>
+
+<Option name="editor" id="defaults-editor" env="ANSIBLE_EDITOR, EDITOR">
+  El editor que ejecutan `volant vault create` y `edit`. Gana la última variable definida, luego el archivo, luego `vi`. Consulta [Vault](/es/docs/variables/vault/#crear-editar-y-recifrar-archivos).
+</Option>
+
+<Option name="local_tmp" id="defaults-local-tmp" default="~/.ansible/tmp" env="ANSIBLE_LOCAL_TEMP">
+  Dónde guardan `volant vault create` y `edit` la copia privada sobre la que trabaja el editor.
+</Option>
+
+<Option name="pager" id="defaults-pager" default="less" env="ANSIBLE_PAGER, PAGER">
+  El programa por el que `volant vault view` pasa la salida en un terminal. Gana la última variable definida, luego el archivo.
 </Option>
 
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">

@@ -98,7 +98,19 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="vault_encrypt_identity" id="defaults-vault-encrypt-identity" flag="--encrypt-vault-id" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  The vault id `volant vault encrypt` uses when `--encrypt-vault-id` is not given. See [Vault](/variables/vault/#encrypting-and-viewing-files).
+  The vault id `volant vault encrypt` uses when `--encrypt-vault-id` is not given. See [Vault](/docs/variables/vault/#encrypting-and-viewing-files).
+</Option>
+
+<Option name="editor" id="defaults-editor" env="ANSIBLE_EDITOR, EDITOR">
+  The editor `volant vault create` and `edit` run. The last variable set wins, then the file, then `vi`. See [Vault](/docs/variables/vault/#creating-editing-and-rekeying-files).
+</Option>
+
+<Option name="local_tmp" id="defaults-local-tmp" default="~/.ansible/tmp" env="ANSIBLE_LOCAL_TEMP">
+  Where `volant vault create` and `edit` keep the private copy the editor works on.
+</Option>
+
+<Option name="pager" id="defaults-pager" default="less" env="ANSIBLE_PAGER, PAGER">
+  The program `volant vault view` pipes through on a terminal. The last variable set wins, then the file.
 </Option>
 
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">

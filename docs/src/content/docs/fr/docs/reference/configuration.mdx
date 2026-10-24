@@ -1,5 +1,5 @@
 ---
-sourceHash: 78c5934b9fa8
+sourceHash: dc0a39319bb0
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -100,6 +100,18 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 
 <Option name="vault_encrypt_identity" id="defaults-vault-encrypt-identity" flag="--encrypt-vault-id" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
   L'identifiant vault que `volant vault encrypt` utilise quand `--encrypt-vault-id` n'est pas donné. Voir [Vault](/fr/docs/variables/vault/#chiffrer-et-afficher-des-fichiers).
+</Option>
+
+<Option name="editor" id="defaults-editor" env="ANSIBLE_EDITOR, EDITOR">
+  L'éditeur que `volant vault create` et `edit` lancent. La dernière variable définie l'emporte, puis le fichier, puis `vi`. Voir [Vault](/fr/docs/variables/vault/#créer-modifier-et-rechiffrer-des-fichiers).
+</Option>
+
+<Option name="local_tmp" id="defaults-local-tmp" default="~/.ansible/tmp" env="ANSIBLE_LOCAL_TEMP">
+  L'endroit où `volant vault create` et `edit` gardent la copie privée sur laquelle travaille l'éditeur.
+</Option>
+
+<Option name="pager" id="defaults-pager" default="less" env="ANSIBLE_PAGER, PAGER">
+  Le programme dans lequel `volant vault view` fait passer la sortie sur un terminal. La dernière variable définie l'emporte, puis le fichier.
 </Option>
 
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">

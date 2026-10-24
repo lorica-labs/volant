@@ -16,6 +16,8 @@ mod setup;
 mod shims;
 mod signals;
 mod vault;
+mod vault_args;
+mod vault_edit;
 
 pub use adhoc::adhoc;
 pub use args::{AdhocArgs, BecomeArgs, ConnectionArgs, HostsArgs, PlaybookArgs, VaultSecretArgs};

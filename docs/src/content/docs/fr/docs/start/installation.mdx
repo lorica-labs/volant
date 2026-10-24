@@ -1,5 +1,5 @@
 ---
-sourceHash: 3fc9a949d509
+sourceHash: 005064a69a67
 title: Installation
 description: Installez Volant en une commande, vérifiez ce dont le contrôleur et les hôtes ont besoin, et gardez-le à jour.
 ---
@@ -30,17 +30,29 @@ Si votre shell ne trouve pas `volant`, ajoutez `~/.local/bin` à votre `PATH`. L
 
 ### Options
 
-Le script lit trois variables d'environnement :
+Le script lit quatre variables d'environnement et prend une option, `--shims`, qui fait ce que fait `VOLANT_SHIMS=1` :
 
 | Variable | Valeur par défaut | Ce qu'elle change |
 |---|---|---|
 | `VOLANT_VERSION` | la dernière version | La version à installer, par exemple `v0.1.0-alpha.10`. |
 | `VOLANT_HOME` | `~/.local/share/volant` | L'endroit où les versions sont décompressées. |
 | `VOLANT_BIN_DIR` | `~/.local/bin` | L'endroit où vont les liens `volant` et `volant-playbook`. |
+| `VOLANT_SHIMS` | non défini | À `1`, lie aussi les noms `ansible-*`. Voir ci-dessous. |
 
 ```sh
 curl -fsSL https://volant.sh/install.sh | VOLANT_VERSION=v0.1.0-alpha.10 sh
 ```
+
+### Garder vos lignes de commande ansible
+
+Avec `--shims`, le script lie aussi les neuf noms de programmes d'ansible-core à `volant`, pour que vos lignes de commande existantes continuent de fonctionner : `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` et `ansible-vault`.
+
+```sh
+curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
+curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
+```
+
+Le script ne les installe jamais par défaut. Il lance [`volant shims install`](/fr/docs/reference/cli/#la-commande-shims), qui laisse intact un fichier ou un lien qu'il n'a pas créé et signale quand un vrai Ansible du `PATH` est masqué ou passe encore en premier. Si un nom n'a pas pu être lié, le script affiche `some ansible-* names were not linked, see above` et sort quand même avec 0, parce que Volant est installé.
 
 ## Ce que vous obtenez
 
@@ -93,7 +105,7 @@ Une image scratch n'a ni `ssh`, ni Python, ni shell, ni `/etc/passwd`. Avec le s
 
     Pour les modules qui s'exécutent en Python, Volant utilise un Python 3 avec `ansible-core`. S'il n'en trouve aucun, il télécharge le sien (environ 155 MB), vérifie chaque fichier par rapport à une empreinte fixée et le garde sous `~/.local/share/volant/runtime`. Une exécution qui le fait affiche une ligne. Si vous avez déjà un tel Python, Volant peut l'utiliser : [Quel interpréteur une exécution utilise](/fr/docs/reference/runtime/#quel-interpréteur-une-exécution-utilise) donne l'ordre. Voir [Le runtime géré](/fr/docs/reference/runtime/).
 
-    Volant n'a pas de commande `vault`, `galaxy`, `inventory` ni `doc`. Pour `ansible-vault` et les autres outils d'ansible-core, installez vous-même ansible-core.
+    Volant a `volant vault encrypt|decrypt|view|create|edit|rekey` et `volant inventory`, mais pas de commande `galaxy`, `doc` ni `config`. Pour `ansible-galaxy`, `ansible-doc`, `ansible-config` et `ansible-vault encrypt_string`, installez vous-même ansible-core.
 
     Un playbook composé uniquement de `command`, `shell`, `raw` et de modules côté contrôleur, avec `gather_facts: false`, n'a besoin d'aucun Python.
   </TabItem>
@@ -149,6 +161,7 @@ Supprimez le répertoire des versions, les liens et les caches du contrôleur. S
 
 ```sh
 volant runtime remove --all
+volant shims remove
 rm -rf ~/.local/share/volant ~/.local/bin/volant ~/.local/bin/volant-playbook ~/.cache/volant
 ssh web1 'rm -rf ~/.ansible/tmp/volant-*'
 ```

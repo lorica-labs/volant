@@ -6,6 +6,7 @@ use std::io;
 use std::io::{BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::{Child, ChildStdin, Command, Stdio};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{self, Receiver, RecvTimeoutError};
 use std::sync::{Arc, Mutex};
 use std::thread;
@@ -23,6 +24,25 @@ use crate::modules::{Context, Run};
 /// the agent already refuses to leave anything executable behind, and a file on a `noexec`
 /// `remote_tmp` could not be run anyway.
 pub(super) const SERVER: &str = include_str!("server.py");
+
+/// Set once by `Hello` and fixed for the agent's life, so it needs no place in the pool key.
+static PERF: AtomicBool = AtomicBool::new(false);
+
+pub fn set_perf(on: bool) {
+    PERF.store(on, Ordering::Relaxed);
+}
+
+/// What a server starts with: the task's environment, plus `PYTHONPERFSUPPORT=1` when profiling.
+pub(super) fn child_environment(
+    environment: &BTreeMap<String, String>,
+    perf: bool,
+) -> BTreeMap<String, String> {
+    let mut all = environment.clone();
+    if perf {
+        all.insert("PYTHONPERFSUPPORT".into(), "1".into());
+    }
+    all
+}
 
 /// How long a server gets to import `module_utils` and answer `ready`. Measured at 264 ms on the
 /// reference's own payload; the margin is for a host under load, and the bound exists so an
@@ -110,7 +130,7 @@ impl Server {
         cancelled: &dyn Fn() -> bool,
     ) -> io::Result<Server> {
         let mut child = Command::new(interpreter)
-            .envs(environment)
+            .envs(child_environment(environment, PERF.load(Ordering::Relaxed)))
             .arg("-c")
             .arg(SERVER)
             .arg(blob)

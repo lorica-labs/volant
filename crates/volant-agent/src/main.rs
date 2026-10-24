@@ -170,7 +170,11 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
             }
         };
         match msg {
-            ToAgent::Hello { protocol } => {
+            ToAgent::Hello {
+                protocol,
+                python_perf,
+            } => {
+                python::set_perf(python_perf);
                 if protocol != PROTOCOL_VERSION {
                     send(&FromAgent::Log {
                         level: LogLevel::Warn,

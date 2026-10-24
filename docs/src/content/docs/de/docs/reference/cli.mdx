@@ -1,5 +1,5 @@
 ---
-sourceHash: d021dcc2ad95
+sourceHash: 26c0ba36bd76
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -281,12 +281,15 @@ volant runtime remove [ID | --all]
 
 ## Der Befehl vault
 
-`volant vault` tut, was `ansible-vault encrypt`, `decrypt` und `view` tun, auf denselben Dateien, mit denselben Meldungen und denselben Exit-Codes. `create`, `edit`, `rekey` und `encrypt_string` gibt es noch nicht. Einzelheiten stehen unter [Vault](/de/docs/variables/vault/#dateien-verschlüsseln-und-anzeigen).
+`volant vault` tut, was `ansible-vault encrypt`, `decrypt`, `view`, `create`, `edit` und `rekey` tun, auf denselben Dateien, mit denselben Meldungen und denselben Exit-Codes. `encrypt_string` gibt es noch nicht. Einzelheiten stehen unter [Vault](/de/docs/variables/vault/#dateien-verschlüsseln-und-anzeigen) und [Vault](/de/docs/variables/vault/#dateien-anlegen-bearbeiten-und-neu-verschlüsseln).
 
 ```sh
 volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
 volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
 volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
 ```
 
 `OPTIONS` sind `--vault-id`, `--vault-password-file` (auch `--vault-pass-file`), `-J`/`--ask-vault-pass` und `-v`, oben unter [Vault](#vault) beschrieben. Ohne eine davon und ohne die Einstellung `vault_password_file` fragt der Befehl nach dem Passwort.
@@ -296,7 +299,15 @@ volant vault view [FILE...] [OPTIONS]
 </Option>
 
 <Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  Die Vault-ID, die `encrypt` verwendet. Sie ist erforderlich, wenn mehr als eine `--vault-id` angegeben wird.
+  Die Vault-ID, die `encrypt`, `create` und `rekey` verwenden. `encrypt` und `create` verlangen sie, wenn mehr als eine `--vault-id` angegeben wird. `edit` akzeptiert sie und ignoriert sie: Eine Datei behält ihr eigenes Label.
+</Option>
+
+<Option name="--skip-tty-check">
+  `create` öffnet den Editor auch dann, wenn die Standardausgabe kein Terminal ist. Ohne sie verweigert `create` mit Exit-Code 5.
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  Das neue Geheimnis für `rekey`. Geben Sie eine der beiden an. Ohne beide fragt `rekey` danach.
 </Option>
 
 ## Der Befehl shims

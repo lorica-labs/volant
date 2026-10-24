@@ -1,5 +1,5 @@
 ---
-sourceHash: aaa01d3d7aed
+sourceHash: 72cf8b339b72
 title: Vault
 description: Wie Volant Ansible-Vault-Daten liest, woher es die Passwörter bekommt und warum sie den Controller-Prozess nie verlassen.
 ---
@@ -42,9 +42,19 @@ Ein Wert, der von einem verwalteten Host zurückkam, wird nie mit den Geheimniss
 - `encrypt` ersetzt jede Datei durch ihren Vault-Text und `decrypt` durch ihren Klartext. Beide lassen das Ergebnis im Modus `0600` und geben nichts aus; in einem Terminal schreiben sie `Encryption successful` oder `Decryption successful` auf die Standardfehlerausgabe. Eine Datei ohne abschließenden Zeilenumbruch kommt ohne einen zurück.
 - Der Header lautet `$ANSIBLE_VAULT;1.1;AES256` für die Standard-ID und `$ANSIBLE_VAULT;1.2;AES256;LABEL` für eine andere. `--vault-id LABEL@SOURCE` setzt das Label. Bei mehr als einer `--vault-id` wählt `--encrypt-vault-id` (oder `vault_encrypt_identity`, `ANSIBLE_VAULT_ENCRYPT_IDENTITY`) die verschlüsselnde aus; ohne sie endet der Befehl mit Exit-Code 5.
 - `--output FILE` schreibt dorthin und lässt die Quelle unverändert, `--output -` schreibt auf die Standardausgabe, und ohne Dateiname oder mit `-` wird die Standardeingabe gelesen.
-- `view` gibt den Klartext jeder Datei aus. In einem Terminal läuft er über `ANSIBLE_PAGER`, `PAGER` oder `less`; die `ansible.cfg` hat beim Pager nichts zu sagen.
+- `view` gibt den Klartext jeder Datei aus. In einem Terminal läuft er über den Pager: `PAGER`, sonst `ANSIBLE_PAGER`, sonst `[defaults] pager`, sonst `less`.
 - Ohne jede Passwortquelle fragt der Befehl nach dem Passwort. `encrypt` fragt zweimal, als `New Vault password: ` und `Confirm New Vault password: `.
 - `-v` gibt die verwendete Konfigurationsdatei aus und `-vv` die Version. Die zusätzlichen Zeilen von `-vvvv` werden nicht ausgegeben.
+
+## Dateien anlegen, bearbeiten und neu verschlüsseln
+
+`volant vault create`, `edit` und `rekey` arbeiten mit denselben Dateien wie `ansible-vault`.
+
+- `create` nimmt einen Dateinamen. Es verweigert mit Exit-Code 5, wenn die Standardausgabe kein Terminal ist und `--skip-tty-check` fehlt, und mit Exit-Code 1, wenn die Datei existiert. Ein fehlendes Verzeichnis wird mit einer Warnung angelegt. Der Editor darf die Datei leer lassen: Das Ergebnis ist eine gültige Vault-Datei mit leerem Text.
+- `edit` entschlüsselt jede Datei, öffnet den Editor und verschlüsselt das Ergebnis mit dem Geheimnis, das die Datei geöffnet hat, und mit dem Label, das sie hatte. Hat sich der Text nicht geändert, wird die Datei nicht neu geschrieben. Eine geänderte Datei behält ihren Modus.
+- Der Editor ist `EDITOR`, sonst `ANSIBLE_EDITOR`, sonst `[defaults] editor`, sonst `vi`, so in Wörter zerlegt, wie es eine Shell täte, mit angehängtem Dateinamen. Sein Exit-Status wird nicht ausgewertet, wie bei ansible-vault.
+- Der Editor arbeitet an einer Kopie mit Modus `0600` in einem privaten Verzeichnis unter `ANSIBLE_LOCAL_TEMP` (`[defaults] local_tmp`, sonst `~/.ansible/tmp`). Die Kopie wird bei jedem Ausstieg überschrieben und entfernt, auch bei einem fehlschlagenden Editor und bei SIGTERM oder SIGHUP. Strg-C geht an den Editor.
+- `rekey` entschlüsselt jede Datei mit den alten Geheimnissen und schreibt sie mit dem neuen wieder, unter Beibehaltung des Modus. Das neue Geheimnis kommt aus `--new-vault-password-file`, aus `--new-vault-id LABEL@SOURCE` oder aus den Abfragen `New Vault password: ` und `Confirm New Vault password: `. Es gibt `Rekey successful` auf der Standardfehlerausgabe aus, was auch immer die Standardausgabe ist.
 
 ## Bekannte Lücken
 

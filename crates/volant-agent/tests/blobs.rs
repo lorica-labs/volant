@@ -692,6 +692,7 @@ fn started(remote_tmp: &Path) {
     let mut link = Link::open(remote_tmp);
     link.send(&ToAgent::Hello {
         protocol: volant_protocol::PROTOCOL_VERSION,
+        python_perf: false,
     });
     assert!(matches!(link.recv(), FromAgent::Ready { .. }));
 }

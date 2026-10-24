@@ -15,7 +15,7 @@ mod parse;
 mod paths;
 mod settings;
 
-pub(crate) use locate::is_world_writable;
+pub(crate) use locate::{defaults_value, is_world_writable};
 use parse::parse;
 use paths::{default_collections_path, default_roles_path, expand_home, path_list};
 pub use settings::HostNamedPaths;

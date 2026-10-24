@@ -1,5 +1,5 @@
 ---
-sourceHash: d021dcc2ad95
+sourceHash: 26c0ba36bd76
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -281,12 +281,15 @@ volant runtime remove [ID | --all]
 
 ## vault 命令
 
-`volant vault` 的作用与 `ansible-vault encrypt`、`decrypt` 和 `view` 相同，处理同样的文件，消息和退出码也一样。`create`、`edit`、`rekey` 和 `encrypt_string` 暂时还没有。详情见 [Vault](/zh-cn/docs/variables/vault/#加密和查看文件)。
+`volant vault` 的作用与 `ansible-vault encrypt`、`decrypt`、`view`、`create`、`edit` 和 `rekey` 相同，处理同样的文件，消息和退出码也一样。`encrypt_string` 暂时还没有。详情见 [Vault](/zh-cn/docs/variables/vault/#加密和查看文件) 和 [Vault](/zh-cn/docs/variables/vault/#创建编辑和更换文件密钥)。
 
 ```sh
 volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
 volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
 volant vault view [FILE...] [OPTIONS]
+volant vault create [--encrypt-vault-id ID] [--skip-tty-check] FILE [OPTIONS]
+volant vault edit FILE... [OPTIONS]
+volant vault rekey FILE... [--new-vault-password-file FILE | --new-vault-id ID] [OPTIONS]
 ```
 
 `OPTIONS` 指 `--vault-id`、`--vault-password-file`（也可写作 `--vault-pass-file`）、`-J`/`--ask-vault-pass` 和 `-v`，见上文 [Vault](#vault)。一个都不给，也没有 `vault_password_file` 设置时，命令会询问密码。
@@ -296,7 +299,15 @@ volant vault view [FILE...] [OPTIONS]
 </Option>
 
 <Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
-  `encrypt` 使用的 vault id。给出多个 `--vault-id` 时必须指定。
+  `encrypt`、`create` 和 `rekey` 使用的 vault id。给出多个 `--vault-id` 时，`encrypt` 和 `create` 必须指定它。`edit` 接受它但忽略它：文件保留自己的标签。
+</Option>
+
+<Option name="--skip-tty-check">
+  即使标准输出不是终端，`create` 也会打开编辑器。不给它时，`create` 以退出码 5 拒绝。
+</Option>
+
+<Option name="--new-vault-password-file, --new-vault-id" arg="FILE | LABEL@SOURCE">
+  `rekey` 的新密钥。二者给出其一。都不给时，`rekey` 会询问。
 </Option>
 
 ## shims 命令

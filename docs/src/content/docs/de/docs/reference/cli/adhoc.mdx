@@ -1,5 +1,5 @@
 ---
-sourceHash: b9d47fe3c8ae
+sourceHash: d50c2578bd7e
 title: volant adhoc
 description: Führt ein Modul auf jedem Host aus, der zu einem Muster passt, mit den Optionen und der Ausgabe von ansible.
 ---
@@ -11,7 +11,8 @@ import Option from '../../../../../../components/Option.astro';
 ```sh
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
+             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -20,6 +21,30 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-a, --args" arg="ARGS">
   Die Argumente des Moduls: `key=value`-Wörter oder ein JSON-Objekt, wenn der Wert mit `{` beginnt und mit `}` endet. Bei `command`, `shell`, `raw` und `script` bilden Wörter, die keine Option des Moduls sind, die Kommandozeile. Die Argumente werden mit den Variablen jedes Hosts und `-e` als Template gerendert. Ein Wert, der mit `{` beginnt, mit `}` endet und kein gültiges JSON ist, bricht den Befehl mit Exit-Code 250 ab; ein nicht geschlossenes Anführungszeichen bricht ihn mit Exit-Code 4 ab.
+</Option>
+
+<Option name="-C, --check">
+  Führt die Task im Check-Modus aus. Ein Modul, das nicht prüfen kann, meldet `SKIPPED`.
+</Option>
+
+<Option name="-D, --diff">
+  Gibt vor dem Ergebnis die Unterschiede aus, die eine Task an Dateien und Templates vornimmt. Mit `-C` wird die Datei nicht geändert.
+</Option>
+
+<Option name="-B, --background" arg="SECONDS">
+  Führt das Modul als asynchronen Job aus, der diese Zahl Sekunden zum Abschluss hat, und fragt ihn ab. Das Ergebnis enthält `ansible_job_id`, `started`, `finished` und `results_file`, und das `async_val` des Dictionarys `Origin:` ist dieser Wert. Ohne `-B` wird `-P` ignoriert.
+</Option>
+
+<Option name="-P, --poll" arg="SECONDS">
+  Sekunden zwischen zwei Abfragen des Jobs von `-B`. Standard: 15. Mit `0` wird der Job nur gestartet, und das Ergebnis enthält `"finished": false`. Das `poll` des Dictionarys `Origin:` ist dieser Wert.
+</Option>
+
+<Option name="--task-timeout" arg="SECONDS">
+  Lässt eine Task fehlschlagen, die länger als diese Zahl Sekunden läuft, mit Exit-Code 2 und der Meldung `Task failed: Timed out after N second(s).`. `0` bedeutet keine Grenze, und ein Wert über 100000000 lässt die Task mit `Timeout N is invalid, it must be between 0 and 100000000.` fehlschlagen. Das `timeout` des Dictionarys `Origin:` ist dieser Wert.
+</Option>
+
+<Option name="--version">
+  Gibt `ansible [core 2.19.12]`, die Konfigurationsdatei, den Modulsuchpfad, den Ort der Collections und den Pfad des gestarteten Programms aus und hält dann an. Findet Volant einen Interpreter mit ansible-core, folgen der Ort der Module und die Versionen von Python, Jinja und PyYAML, in den Zeilen der Referenz. Ohne ihn entfallen diese Zeilen: `--version` installiert nichts. Die Suchpfade lesen die Umgebung und die Standardwerte, nicht `library` oder `collections_path` der `ansible.cfg`.
 </Option>
 
 <Option name="--list-hosts">
@@ -38,4 +63,8 @@ Ein Aufruffehler endet mit 2. Die Standardfehlerausgabe enthält den `usage:`-Bl
 
 Jeder Host gibt ein Ergebnis aus, so wie es der `minimal`-Callback von ansible ausgibt. Ein Ergebnis von `command`, `shell` oder `raw` lautet `h1 | CHANGED | rc=0 >>`, dann folgen Stdout, Stderr und `msg` ohne Trennzeichen aneinandergehängt. Jedes andere Ergebnis lautet `h1 | SUCCESS => `, gefolgt vom Ergebnis als JSON, mit vier Leerzeichen eingerückt und Schlüsseln sortiert. Die Status sind `SUCCESS`, `CHANGED`, `FAILED` (Befehlsform), `FAILED!` (JSON-Form), `SKIPPED` und `UNREACHABLE!`. Vor einem fehlgeschlagenen oder nicht erreichbaren Ergebnis enthält die Standardausgabe denselben `[ERROR]`-Block, den ein Playbook ausgibt. Sein `Origin:` ist `<adhoc 'MODULE' task>`, gefolgt von der Task, wie ansible sie zeigt, auf 120 Zeichen gekürzt.
 
-Der Exit-Code ist 0, wenn jeder Host erfolgreich war oder übersprungen wurde, 2, wenn ein Host fehlgeschlagen ist, und 4, wenn ein Host nicht erreicht werden konnte, ob es fehlgeschlagene Hosts gibt oder nicht. `ANSIBLE_STDOUT_CALLBACK` ändert die Ausgabe nicht. Mit `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml` oder `callback_result_format = yaml` unter `[defaults]` in der `ansible.cfg` wird ein Ergebnis in JSON-Form stattdessen als YAML ausgegeben, in den Zeilen nach `=>`, mit vier Leerzeichen eingerückt. Ein String mit Zeilenumbrüchen wird zu einem Literalblock. Jeder andere Wert, auch der leere, bricht den Befehl mit Exit-Code 5 ab. `-vv` und höher werden mit Exit-Code 4 abgelehnt.
+Der Exit-Code ist 0, wenn jeder Host erfolgreich war oder übersprungen wurde, 2, wenn ein Host fehlgeschlagen ist, und 4, wenn ein Host nicht erreicht werden konnte, ob es fehlgeschlagene Hosts gibt oder nicht. `ANSIBLE_STDOUT_CALLBACK` ändert die Ausgabe nicht. Mit `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml` oder `callback_result_format = yaml` unter `[defaults]` in der `ansible.cfg` wird ein Ergebnis in JSON-Form stattdessen als YAML ausgegeben, in den Zeilen nach `=>`, mit vier Leerzeichen eingerückt. Ein String mit Zeilenumbrüchen wird zu einem Literalblock. Jeder andere Wert, auch der leere, bricht den Befehl mit Exit-Code 5 ab.
+
+`-vv` beginnt mit dem Block, den `--version` ausgibt, dann `Using PATH as config file` (oder `No config file found; using defaults`) und die Zeilen `Skipping callback 'default', as we already have a stdout callback.` und `Skipping callback 'oneline', as we already have a stdout callback.`. `-vvv` und höher fügen die Zeilen der Inventory-Plugins hinzu und die, die `volant playbook` ausgibt; die eigenen Zeilen `ESTABLISH LOCAL CONNECTION` und `EXEC` der Referenz beschreiben ihren Modul-Upload, den Volant nicht macht, daher werden sie nicht ausgegeben.
+
+Ein negatives `-B`, `-P` oder `--task-timeout` sowie `-C` zusammen mit `-B` beenden den Befehl mit Exit-Code 4 und sagen, was noch nicht unterstützt wird. `-B`, `-P` und `--task-timeout` nehmen eine ganze Zahl; alles andere ist ein Aufruffehler.

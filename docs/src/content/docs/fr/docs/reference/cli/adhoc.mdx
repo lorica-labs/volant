@@ -1,5 +1,5 @@
 ---
-sourceHash: b9d47fe3c8ae
+sourceHash: d50c2578bd7e
 title: volant adhoc
 description: Exécute un module sur chaque hôte qui correspond à un motif, avec les options et la sortie d'ansible.
 ---
@@ -11,7 +11,8 @@ import Option from '../../../../../../components/Option.astro';
 ```sh
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR]
+             [-C] [-D] [-B SECONDS] [-P SECONDS] [--task-timeout SECONDS] [--version] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -20,6 +21,30 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 <Option name="-a, --args" arg="ARGS">
   Les arguments du module : des mots `key=value`, ou un objet JSON quand la valeur commence par `{` et finit par `}`. Pour `command`, `shell`, `raw` et `script`, les mots qui ne sont pas une option du module forment la ligne de commande. Les arguments sont rendus comme modèles avec les variables de chaque hôte et `-e`. Une valeur qui commence par `{`, finit par `}` et n'est pas du JSON valide arrête la commande avec le code de sortie 250 ; un guillemet non fermé l'arrête avec le code 4.
+</Option>
+
+<Option name="-C, --check">
+  Exécute la tâche en mode check. Un module qui ne sait pas vérifier signale `SKIPPED`.
+</Option>
+
+<Option name="-D, --diff">
+  Affiche, avant son résultat, les différences qu'une tâche apporte aux fichiers et aux modèles. Avec `-C`, le fichier n'est pas modifié.
+</Option>
+
+<Option name="-B, --background" arg="SECONDS">
+  Exécute le module comme un job asynchrone qui dispose de ce nombre de secondes pour finir, et l'interroge. Le résultat porte `ansible_job_id`, `started`, `finished` et `results_file`, et le `async_val` du dictionnaire `Origin:` vaut cette valeur. Sans `-B`, `-P` est ignoré.
+</Option>
+
+<Option name="-P, --poll" arg="SECONDS">
+  Secondes entre deux consultations du job de `-B`. Par défaut : 15. Avec `0`, le job est seulement démarré, et le résultat porte `"finished": false`. Le `poll` du dictionnaire `Origin:` vaut cette valeur.
+</Option>
+
+<Option name="--task-timeout" arg="SECONDS">
+  Fait échouer une tâche qui dure plus de ce nombre de secondes, avec le code de sortie 2 et le message `Task failed: Timed out after N second(s).`. `0` signifie aucune limite, et une valeur supérieure à 100000000 fait échouer la tâche avec `Timeout N is invalid, it must be between 0 and 100000000.`. Le `timeout` du dictionnaire `Origin:` vaut cette valeur.
+</Option>
+
+<Option name="--version">
+  Affiche `ansible [core 2.19.12]`, le fichier de configuration, le chemin de recherche des modules, l'emplacement des collections et le chemin du programme qui a été lancé, puis s'arrête. Quand Volant trouve un interpréteur avec ansible-core, l'emplacement des modules et les versions de Python, Jinja et PyYAML suivent, dans les lignes de la référence. Sans interpréteur, ces lignes sont omises : `--version` n'installe rien. Les chemins de recherche lisent l'environnement et les valeurs par défaut, pas `library` ni `collections_path` d'`ansible.cfg`.
 </Option>
 
 <Option name="--list-hosts">
@@ -38,4 +63,8 @@ Une erreur d'usage sort avec 2. L'erreur standard porte le bloc `usage:` d'`ansi
 
 Chaque hôte affiche un résultat, comme le fait le callback `minimal` d'ansible. Un résultat de `command`, `shell` ou `raw` est `h1 | CHANGED | rc=0 >>`, puis sa sortie standard, son erreur standard et son `msg` collés sans rien entre eux. Tout autre résultat est `h1 | SUCCESS => ` suivi du résultat en JSON, indenté de quatre espaces, clés triées. Les statuts sont `SUCCESS`, `CHANGED`, `FAILED` (forme commande), `FAILED!` (forme JSON), `SKIPPED` et `UNREACHABLE!`. Avant un résultat en échec ou injoignable, la sortie standard porte le même bloc `[ERROR]` qu'affiche un playbook. Son `Origin:` est `<adhoc 'MODULE' task>`, suivi de la tâche telle qu'ansible la montre, coupée à 120 caractères.
 
-Le code de sortie est 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, et 4 quand un hôte n'a pas pu être joint, qu'il y ait ou non des hôtes en échec. `ANSIBLE_STDOUT_CALLBACK` ne change pas la sortie. Avec `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, ou `callback_result_format = yaml` sous `[defaults]` dans `ansible.cfg`, un résultat de forme JSON est affiché en YAML à la place, sur les lignes après `=>`, indenté de quatre espaces. Une chaîne avec des sauts de ligne devient un bloc littéral. Toute autre valeur, la valeur vide comprise, arrête la commande avec le code de sortie 5. `-vv` et plus sont refusés avec le code de sortie 4.
+Le code de sortie est 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, et 4 quand un hôte n'a pas pu être joint, qu'il y ait ou non des hôtes en échec. `ANSIBLE_STDOUT_CALLBACK` ne change pas la sortie. Avec `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, ou `callback_result_format = yaml` sous `[defaults]` dans `ansible.cfg`, un résultat de forme JSON est affiché en YAML à la place, sur les lignes après `=>`, indenté de quatre espaces. Une chaîne avec des sauts de ligne devient un bloc littéral. Toute autre valeur, la valeur vide comprise, arrête la commande avec le code de sortie 5.
+
+`-vv` ouvre par le bloc qu'affiche `--version`, puis `Using PATH as config file` (ou `No config file found; using defaults`), et les lignes `Skipping callback 'default', as we already have a stdout callback.` et `Skipping callback 'oneline', as we already have a stdout callback.`. `-vvv` et plus ajoutent les lignes des plugins d'inventaire et celles qu'affiche `volant playbook` ; les lignes `ESTABLISH LOCAL CONNECTION` et `EXEC` de la référence décrivent son envoi de module, que Volant ne fait pas, elles ne sont donc pas affichées.
+
+Un `-B`, `-P` ou `--task-timeout` négatif, et `-C` avec `-B`, arrêtent la commande avec le code de sortie 4 et disent ce qui n'est pas encore pris en charge. `-B`, `-P` et `--task-timeout` prennent un nombre entier ; toute autre valeur est une erreur d'usage.

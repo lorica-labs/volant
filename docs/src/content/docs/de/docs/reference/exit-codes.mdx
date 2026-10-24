@@ -1,5 +1,5 @@
 ---
-sourceHash: 3d7354233964
+sourceHash: 46781db2c359
 title: Exit-Codes
 description: Was jeder Exit-Code bedeutet und wo Volant mit ansible-playbook übereinstimmt.
 ---
@@ -53,3 +53,7 @@ Ein Playbook, das die [Vorabprüfung](/de/docs/internals/preflight/) stoppt, end
 ## Wo Ansible abstürzt
 
 In einigen Fällen stürzt ansible-core mit Exit-Code 250 ab, zum Beispiel bei einem Playbook, das sich selbst importiert, oder bei `serial: abc`. Volant lehnt diese Fälle stattdessen mit einer klaren Meldung und einem der obigen Codes ab. Jeder Fall steht unter *Unterschiede zu Ansible* auf der Seite, die ihn behandelt.
+
+## Die anderen Befehle
+
+`volant adhoc` (`ansible`) endet mit 0, wenn jeder Host erfolgreich war oder übersprungen wurde, mit 2, wenn ein Host fehlgeschlagen ist, mit 4, wenn ein Host nicht erreichbar war, mit 1, wenn `-l` keinen Host übrig lässt, und mit 5 bei einer ungültigen Einstellung. `volant vault` (`ansible-vault`) und `volant inventory` (`ansible-inventory`) enden bei Erfolg mit 0, bei einem Fehler wie `create` auf eine vorhandene Datei mit 1 und bei einer falschen Option oder Aktion mit 5. Ein Aufruffehler bei einem von ihnen endet mit 2. [Ansible-Befehlsnamen](/de/docs/start/ansible-command-names/#exit-codes) hat die Tabelle.

@@ -1,0 +1,18 @@
+- hosts: h1
+  gather_facts: false
+  pre_tasks:
+    - import_role:
+        name: pre
+  roles:
+    - entry
+  tasks:
+    - name: before the include
+      debug:
+        msg: "{{ role_names }} {{ ansible_play_role_names }} {{ ansible_dependent_role_names | sort }} {{ ansible_role_names | sort }}"
+    - import_role:
+        name: late
+    - include_role:
+        name: inc
+    - name: after the include
+      debug:
+        msg: "{{ role_names }} {{ ansible_play_role_names }} {{ ansible_dependent_role_names | sort }} {{ ansible_role_names | sort }}"

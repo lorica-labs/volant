@@ -152,11 +152,55 @@ fn parse_at(
                 }
                 plays.extend(imported);
             }
-            None => plays
-                .push(parse_play(entry, dir).with_context(|| format!("{source}: play {}", i + 1))?),
+            None => plays.push(
+                rendered_play(entry, dir, rendering)
+                    .with_context(|| format!("{source}: play {}", i + 1))?,
+            ),
         }
     }
     Ok(Playbook { plays })
+}
+
+/// A play, with the names of its `roles:` entries rendered where they are templates.
+///
+/// Measured on ansible-core 2.19.12: `role: "{{ playbook_dir }}"` runs the role in the
+/// playbook's own directory (`ansible-lockdown/UBUNTU24-CIS` applies itself that way). The
+/// reference renders the name while it loads the play, against the play's variables, the extra
+/// vars and `playbook_dir`; no host is known yet, so nothing of the inventory takes part.
+fn rendered_play(
+    entry: &Yaml,
+    dir: &Path,
+    rendering: &Rendering<'_>,
+) -> anyhow::Result<super::model::Play> {
+    let mut play = parse_play(entry, dir)?;
+    if !play.roles.iter().any(|r| Templar::is_template(&r.name)) {
+        return Ok(play);
+    }
+    let mut vars = play.vars.clone();
+    vars.extend(rendering.vars.iter().map(|(k, v)| (k.clone(), v.clone())));
+    vars.insert(
+        "playbook_dir".into(),
+        Value::String(dir.display().to_string()),
+    );
+    for role in play
+        .roles
+        .iter_mut()
+        .filter(|r| Templar::is_template(&r.name))
+    {
+        match rendering.templar.render(&role.name, &vars) {
+            Ok(Value::String(name)) => role.name = name,
+            Ok(other) => bail!(
+                "the role name {:?} renders to {other}, not a name",
+                role.name
+            ),
+            Err(err) => bail!(
+                "the role name {:?} cannot be rendered: {}",
+                role.name,
+                err.0
+            ),
+        }
+    }
+    Ok(play)
 }
 
 /// The file an `import_playbook` entry names, rendered.

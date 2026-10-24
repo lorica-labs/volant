@@ -9,7 +9,7 @@ use serde_json::{Map, Value};
 use volant_protocol::modules::short_name;
 
 use crate::playbook::{Block, PlayTask, TaskOrBlock};
-use crate::roles::{RoleEntry, RoleSearch, RoleVars};
+use crate::roles::{RoleEntry, RoleKind, RoleSearch, RoleVars};
 use crate::stats::Refusal;
 
 use super::compiled::{FLUSH_HANDLERS, beside_or_in_role, meta_action};
@@ -210,6 +210,7 @@ impl Builder<'_> {
                     &mut Vec::new(),
                     block,
                     section,
+                    RoleKind::Import,
                 );
             }
             // Measured: written as a task rather than in the list of plays, the reference fails
@@ -349,6 +350,7 @@ impl Builder<'_> {
         seen: &mut Seen,
         block: Option<usize>,
         section: Section,
+        kind: RoleKind,
     ) -> anyhow::Result<()> {
         let path = self.search.locate(&entry.name)?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
@@ -374,16 +376,20 @@ impl Builder<'_> {
         self.exporting = outer_exporting && entry.public;
         let exporting = self.exporting;
         self.parent_roles.insert(0, path.clone());
-        let dependencies: anyhow::Result<()> = role
-            .dependencies
-            .iter()
-            .try_for_each(|dependency| self.role(dependency, &kw, seen, block, section));
+        let dependencies: anyhow::Result<()> =
+            role.dependencies.iter().try_for_each(|dependency| {
+                self.role(dependency, &kw, seen, block, section, RoleKind::Dependency)
+            });
         self.parent_roles.remove(0);
         dependencies?;
         let index = self.roles.len();
         self.exporting = outer_exporting;
+        let (role_name, collection) = crate::roles::identity(&path, &entry.name);
         self.roles.push(RoleVars {
             name: entry.name.clone(),
+            role_name,
+            collection,
+            kind,
             defaults: role.defaults,
             vars: role.vars,
             params: entry.params.clone(),

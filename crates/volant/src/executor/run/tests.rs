@@ -5400,9 +5400,9 @@ fn a_name_from_a_hosts_text_is_data_whatever_it_holds() {
     let tmp = scratch();
     let inv = crate::inventory::Inventory::parse_ini("[g]\nh1\n").unwrap();
     let scope = crate::vars::Scope {
-        play_hosts: vec!["h1".into()],
-        batch_hosts: vec!["h1".into()],
-        all_play_hosts: vec!["h1".into()],
+        play_hosts: vec!["h1".into()].into(),
+        batch_hosts: vec!["h1".into()].into(),
+        all_play_hosts: vec!["h1".into()].into(),
         ..Default::default()
     };
     for mut case in origin_cases() {

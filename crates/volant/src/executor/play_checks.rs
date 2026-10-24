@@ -231,9 +231,9 @@ pub(super) fn load_play_vars_files(
     for host in hosts {
         let scope = Scope {
             play_vars: play.vars.clone(),
-            play_hosts: play_hosts.to_vec(),
-            batch_hosts: batch_hosts.to_vec(),
-            all_play_hosts: all_play_hosts.to_vec(),
+            play_hosts: play_hosts.into(),
+            batch_hosts: batch_hosts.into(),
+            all_play_hosts: all_play_hosts.into(),
             ..Scope::default()
         };
         let (layers, untrusted, untrusted_hosts) = {

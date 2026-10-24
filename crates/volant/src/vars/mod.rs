@@ -65,13 +65,13 @@ pub struct Scope {
     pub role_params: Map<String, Value>,
     /// Hosts of the whole play that have not failed, in inventory order - the hosts of the
     /// batches still to come included. This is `ansible_play_hosts`.
-    pub play_hosts: Vec<String>,
+    pub play_hosts: Arc<[String]>,
     /// Hosts of the batch being played that have not failed. Without `serial` a play is one
     /// batch and this is the same list as `play_hosts`; with it, the two part company as soon as
     /// the first batch ends. This is `ansible_play_batch`.
-    pub batch_hosts: Vec<String>,
+    pub batch_hosts: Arc<[String]>,
     /// Every host the play resolved, whether it is still in it or not.
-    pub all_play_hosts: Vec<String>,
+    pub all_play_hosts: Arc<[String]>,
 }
 
 /// Every variable source that does not depend on the play, resolved once per run, plus the
@@ -207,7 +207,7 @@ pub(crate) fn is_data_name(name: &str) -> bool {
 }
 
 /// The play and batch host lists one `shared` map was built from.
-type SharedKey = (Vec<String>, Vec<String>, Vec<String>);
+type SharedKey = (Arc<[String]>, Arc<[String]>, Arc<[String]>);
 
 /// One host's gathered facts less the names a layer above them answers for, and those names.
 #[derive(Debug)]

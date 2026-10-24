@@ -173,7 +173,7 @@ fn a_new_password_typed_twice_encrypts() {
     let out = sandbox.run(&["encrypt", "plain"], Some(b"pw\npw\n"));
     assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
     let out = sandbox.run(&["view", "plain", "--vault-password-file", "pw"], None);
-    assert_eq!(text(&out.stdout), "plain\n\n");
+    assert_eq!(text(&out.stdout), "plain\n");
 }
 
 /// Mode 0600 whatever the source had, the header of the id, silence, and a source without a final
@@ -324,7 +324,7 @@ fn the_secret_comes_from_the_environment_and_the_configuration() {
     let mut command = sandbox.command(&["view", "vaulted"]);
     command.env("ANSIBLE_VAULT_PASSWORD_FILE", sandbox.dir.join("pw"));
     let out = process::run_within(&mut command, DEADLINE, None);
-    assert_eq!(text(&out.stdout), "secret\n\n");
+    assert_eq!(text(&out.stdout), "secret\n");
 
     std::fs::write(
         sandbox.dir.join("ansible.cfg"),
@@ -332,7 +332,7 @@ fn the_secret_comes_from_the_environment_and_the_configuration() {
     )
     .expect("a config");
     let out = sandbox.run(&["view", "vaulted"], None);
-    assert_eq!(text(&out.stdout), "secret\n\n");
+    assert_eq!(text(&out.stdout), "secret\n");
     let out = sandbox.run(&["view", "vaulted", "-v"], None);
     assert!(text(&out.stdout).starts_with(&format!(
         "Using {}/ansible.cfg as config file\n",
@@ -647,7 +647,7 @@ fn create_writes_what_the_editor_leaves_encrypted() {
     );
     assert_eq!(sandbox.mode("sub/new.yml"), 0o600);
     let out = sandbox.run(&["view", "sub/new.yml", PW[0], PW[1]], None);
-    assert_eq!(text(&out.stdout), "hello\n\n");
+    assert_eq!(text(&out.stdout), "hello\n");
     assert_eq!(sandbox.left_behind(), Vec::<String>::new());
 }
 
@@ -777,7 +777,7 @@ fn edit_rewrites_only_what_changed_and_keeps_the_mode_and_the_label() {
     );
     assert_eq!(sandbox.mode("l.yml"), 0o640);
     let out = sandbox.run(&["view", "l.yml", "--vault-id", "other@pw"], None);
-    assert_eq!(text(&out.stdout), "changed\n\n");
+    assert_eq!(text(&out.stdout), "changed\n");
     assert_eq!(sandbox.left_behind(), Vec::<String>::new());
 }
 
@@ -814,7 +814,7 @@ fn rekey_changes_the_secret_and_nothing_else(
     assert_eq!(sandbox.mode("vaulted"), 0o640);
     let mut view = vec!["view", "vaulted"];
     view.extend(then);
-    assert_eq!(text(&sandbox.run(&view, None).stdout), "secret\n\n");
+    assert_eq!(text(&sandbox.run(&view, None).stdout), "secret\n");
     let old = sandbox.run(&["view", "vaulted", PW[0], PW[1]], None);
     assert_eq!(old.status.code(), Some(1));
 }
@@ -960,7 +960,7 @@ fn a_file_one_tool_rekeys_the_other_reads_under_the_new_secret() {
         ],
     );
     let out = sandbox.run(&["view", "vaulted", "--vault-password-file", "pw2"], None);
-    assert_eq!(text(&out.stdout), "secret\n\n");
+    assert_eq!(text(&out.stdout), "secret\n");
     let out = sandbox.run(
         &[
             "rekey",

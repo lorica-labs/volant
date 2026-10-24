@@ -1,0 +1,13 @@
+# geerlingguy.postgresql with one database and one user. Installed by `just corpus`, never
+# copied into this repository.
+- hosts: corpus
+  become: true
+  vars:
+    postgresql_databases:
+      - name: volantdb
+    postgresql_users:
+      - name: volantuser
+        password: volant-corpus-password
+        db: volantdb
+  roles:
+    - geerlingguy.postgresql

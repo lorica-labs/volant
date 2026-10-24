@@ -1,0 +1,21 @@
+---
+sourceHash: 54618d327674
+title: volant galaxy
+description: Installe et liste des rôles et des collections avec ansible-galaxy, lancé depuis le runtime Python de Volant.
+---
+
+`volant galaxy` lance l'`ansible-galaxy` d'ansible-core 2.19.12 avec l'interpréteur que Volant choisit pour une exécution de playbook : il fonctionne donc sans ansible-core installé. Il affiche ce qu'affiche le script et sort avec le même code.
+
+```sh
+volant galaxy [ARGS...]
+```
+
+Chaque argument va à `ansible-galaxy` tel quel, y compris `-h` et `--version`. Par exemple `volant galaxy collection list`, `volant galaxy collection install community.general`, `volant galaxy collection install file.tar.gz -p DIR`, `volant galaxy role install NAME` et `volant galaxy role init NAME`. Les opérations réseau, serveurs de `-s` et de `GALAXY_SERVERS` compris, se comportent comme avec `ansible-galaxy`.
+
+L'interpréteur, l'environnement, le terminal, le code de sortie et `--version` fonctionnent comme pour [`volant doc`](/fr/docs/reference/cli/doc/).
+
+## Où vont les collections
+
+`collection install` écrit dans la première entrée de `ANSIBLE_COLLECTIONS_PATH`, qui vaut `~/.ansible/collections` par défaut. Les playbooks de Volant lisent ce répertoire.
+
+Le répertoire `collections/` du runtime lui-même, celui que remplit `volant runtime install --collections`, est ajouté en dernier à ce chemin. `volant galaxy collection list` liste donc aussi ces collections, sous un en-tête `# <dir>` qui leur est propre. Un rôle s'installe là où `ansible-galaxy role install` le met, dans la première entrée de `roles_path`.

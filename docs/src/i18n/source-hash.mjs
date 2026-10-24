@@ -24,6 +24,9 @@ export function body(text) {
 
 export const hashOf = (text) => createHash('sha256').update(body(text)).digest('hex').slice(0, 12);
 
+/** A hash made only of digits, or digits around one `e`, would be read as a number in YAML. */
+const quoted = (hash) => (/^\d+(e\d+)?$/.test(hash) ? `"${hash}"` : hash);
+
 /** The English page a translated page comes from: `fr/docs/x.md` comes from `docs/x.md`. */
 export function sourceOf(file) {
   const rel = relative(content, file).split(sep);
@@ -47,7 +50,7 @@ export function staleTranslations() {
     for (const file of pages(root)) {
       const source = sourceOf(file);
       if (!source || !existsSync(source)) continue;
-      const have = readFileSync(file, 'utf8').match(/^sourceHash: (\S+)$/m)?.[1];
+      const have = readFileSync(file, 'utf8').match(/^sourceHash: "?(\w+)"?$/m)?.[1];
       if (have !== hashOf(readFileSync(source, 'utf8'))) {
         stale.push(relative(content, file).split(sep).join('/').replace(/\.mdx?$/, '').replace(/\/index$/, ''));
       }
@@ -103,14 +106,14 @@ if (process.argv[1] && fileURLToPath(import.meta.url) === process.argv[1]) {
       if (!source || !existsSync(source)) continue;
       const want = hashOf(readFileSync(source, 'utf8'));
       const text = readFileSync(file, 'utf8');
-      const have = text.match(/^sourceHash: (\S+)$/m)?.[1];
+      const have = text.match(/^sourceHash: "?(\w+)"?$/m)?.[1];
       if (have === want) continue;
       if (check) {
         stale++;
         console.log(`${relative(content, file)}: ${have ? 'source changed' : 'never stamped'}`);
       } else {
         const stamped = have
-          ? text.replace(/^sourceHash: \S+$/m, `sourceHash: ${want}`)
+          ? text.replace(/^sourceHash: \S+$/m, `sourceHash: ${quoted(want)}`)
           : text.replace(/^---\r?\n/, `---\nsourceHash: ${want}\n`);
         writeFileSync(file, stamped);
       }

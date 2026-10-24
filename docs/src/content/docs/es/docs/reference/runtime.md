@@ -1,5 +1,5 @@
 ---
-sourceHash: 0af7a10c461a
+sourceHash: "63370462e057"
 title: El runtime administrado
 description: El Python y el ansible-core que Volant instala para sí mismo, dónde viven, qué descargan y cómo administrarlos.
 ---
@@ -33,7 +33,7 @@ El primero de estos que se aplique:
 3. El entorno virtual activo y después `python3` de tu `PATH`, cuando tienen ansible-core.
 4. Un runtime administrado nuevo, que se instala ahora.
 
-Volant inicia el intérprete con `-P`, así que un archivo del directorio de trabajo, como `ansible.py` o `json.py`, nunca se importa en lugar del módulo real. `-P` necesita Python 3.11 o posterior, que es lo que necesita también ansible-core 2.19. Un intérprete propio conserva `PYTHONPATH` y su user site.
+Volant inicia el intérprete con `-P`, así que un archivo del directorio de trabajo, como `ansible.py` o `json.py`, nunca se importa en lugar del módulo real. `-P` necesita Python 3.11 o posterior, que es lo que necesita también ansible-core 2.19. Un intérprete propio conserva `PYTHONPATH` y su user site. [`volant doc`](/es/docs/reference/cli/doc/) también elige su intérprete con esta regla, y ejecuta en él el `ansible-doc` propio de ansible-core.
 
 `volant runtime status` muestra la elección que haría la ejecución siguiente, con cada candidato y de dónde salió. El [ajuste `runtime`](/es/docs/reference/configuration/#volant) cambia este orden.
 

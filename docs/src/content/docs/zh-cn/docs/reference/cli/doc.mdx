@@ -1,0 +1,29 @@
+---
+sourceHash: 3d2601aa9a9c
+title: volant doc
+description: 用 ansible-doc 显示插件文档，它在 Volant 的 Python 运行时中运行，因此不需要安装 ansible-core。
+---
+
+`volant doc` 运行 ansible-core 2.19.12 的 `ansible-doc`。它打印脚本打印的内容，并以相同的退出码结束，使用的是 Volant 为 playbook 运行选择的解释器，所以没有 ansible-core 的机器在 `volant runtime install` 之后也能浏览文档。
+
+```sh
+volant doc [ARGS...]
+```
+
+`doc` 之后的每个参数都原样交给 `ansible-doc`，包括 `-h`、`--version` 和它不认识的选项：`ansible-doc` 会自己报告它们。例如 `volant doc ping`、`volant doc -l`、`volant doc -s ping`、`volant doc --json ping` 和 `volant doc -t keyword -l`。
+
+## 解释器
+
+解释器与[playbook 运行所用的](/zh-cn/docs/reference/runtime/#运行使用哪个解释器)相同：`VOLANT_PYTHON`、托管运行时、当前激活的虚拟环境、`python3`。当它们都没有 ansible-core，且 `[volant] runtime` 不是 `system` 时，Volant 会安装自己的运行时，并先在标准错误输出打印 `Installing Volant's Python runtime (<id>) ...`。在 `system` 模式下，命令会被拒绝，消息与 playbook 运行相同，其中列出了尝试过的解释器。
+
+Volant 用 `-P` 启动解释器，并运行 ansible-core 的 `ansible.cli.doc` 模块的 `main()`，而不是 `ansible-doc` 脚本，因为后者的第一行写着构建运行时的目录。程序名 `ansible-doc` 保持不变。在托管运行时下，子进程使用常规的干净环境（没有 `PYTHONPATH`，没有用户 site），并保留你的其他变量，所以 `ANSIBLE_*`、`PAGER` 和 `TERM` 都会生效。用 `VOLANT_PYTHON` 指定的解释器保留它的全部环境。
+
+## Collection
+
+`ANSIBLE_COLLECTIONS_PATH` 被设为你的 collection 路径，并在运行时的 `collections/` 目录存在后把它加在最后。因此用 `volant runtime install --collections` 安装的 collection 对 `volant doc` 可见，而你自己路径中的 collection 优先于它。你的 `ansible.cfg` 和 `ANSIBLE_*` 变量在其他方面保持不变。
+
+## 终端、退出码和 `--version`
+
+标准输入、输出和错误就是该工具自己的，所以分页器可以工作。退出码就是该工具的退出码。被信号终止的工具给出 `128` 加上信号编号。如果无法启动解释器，`volant doc` 会打印 `[ERROR]:` 和原因，并以 1 退出。
+
+`volant doc --version` 中的 `executable location` 是 Volant 启动时的程序路径，即 `volant` 或名为 `ansible-doc` 的链接（见[命令行](/zh-cn/docs/reference/cli/)），所以它给出的是一个真实存在的文件。

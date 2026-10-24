@@ -1,5 +1,5 @@
 ---
-sourceHash: 0af7a10c461a
+sourceHash: "63370462e057"
 title: Le runtime géré
 description: Le Python et l'ansible-core que Volant installe pour lui-même, où ils se trouvent, ce qu'ils téléchargent, et comment les gérer.
 ---
@@ -33,7 +33,7 @@ Le premier de ceux-ci qui s'applique :
 3. L'environnement virtuel actif, puis `python3` dans votre `PATH`, quand ils ont ansible-core.
 4. Un nouveau runtime géré, installé à l'instant.
 
-Volant démarre l'interpréteur avec `-P` : un fichier du répertoire de travail, comme `ansible.py` ou `json.py`, n'est donc jamais importé à la place du vrai module. `-P` demande Python 3.11 ou plus récent, ce dont ansible-core 2.19 a aussi besoin. Un interpréteur de votre cru garde `PYTHONPATH` et son site utilisateur.
+Volant démarre l'interpréteur avec `-P` : un fichier du répertoire de travail, comme `ansible.py` ou `json.py`, n'est donc jamais importé à la place du vrai module. `-P` demande Python 3.11 ou plus récent, ce dont ansible-core 2.19 a aussi besoin. Un interpréteur de votre cru garde `PYTHONPATH` et son site utilisateur. [`volant doc`](/fr/docs/reference/cli/doc/) choisit lui aussi son interpréteur selon cette règle, et y lance le propre `ansible-doc` d'ansible-core.
 
 `volant runtime status` montre le choix que ferait la prochaine exécution, avec chaque candidat et son origine. Le [paramètre `runtime`](/fr/docs/reference/configuration/#volant) change cet ordre.
 

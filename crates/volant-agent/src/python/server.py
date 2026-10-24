@@ -352,8 +352,14 @@ def preimport(module_fqn, blob):
     Returns the module's spec, for `KnownSpec`, or `None` when it could not be found.
     """
     spec = None
+    try:
+        cwd = os.open(".", getattr(os, "O_PATH", os.O_RDONLY))
+    except OSError:
+        # A working directory this user cannot search, such as the ssh user's home under an
+        # unprivileged `become_user`: an import that moved it could not be put back, so the
+        # module stays cold, as it is in the child, and the server lives on for the next task.
+        return None
     outside = Outside(blob)
-    cwd = os.open(".", getattr(os, "O_PATH", os.O_RDONLY))
     sys.stdout.flush()
     sys.stderr.flush()
     saved = [os.dup(fd) for fd in (0, 1, 2)]

@@ -74,19 +74,7 @@ impl Inventory {
             "_meta".into(),
             serde_json::json!({ "hostvars": hostvars, "profile": "inventory_legacy" }),
         );
-        let nested: HashSet<&str> = self
-            .groups
-            .iter()
-            .filter(|g| g.name != "all")
-            .flat_map(|g| g.children.iter().map(String::as_str))
-            .collect();
-        let mut top = vec!["ungrouped".to_string()];
-        top.extend(
-            self.groups
-                .iter()
-                .map(|g| g.name.clone())
-                .filter(|n| n != "all" && n != "ungrouped" && !nested.contains(n.as_str())),
-        );
+        let top = self.top_groups();
         out.insert("all".into(), serde_json::json!({ "children": top }));
         for group in self.groups.iter().filter(|g| g.name != "all") {
             let mut body = serde_json::Map::new();
@@ -101,5 +89,114 @@ impl Inventory {
             }
         }
         Value::Object(out)
+    }
+
+    /// A group's own variables, as the inventory sources wrote them.
+    pub fn group_vars_of(&self, name: &str) -> BTreeMap<String, Value> {
+        let Some(group) = self.group(name) else {
+            return BTreeMap::new();
+        };
+        let mut vars = group.vars.clone();
+        // The reference keeps it among the group's variables, here it has a field of its own.
+        if let Some(priority) = group.priority {
+            vars.insert("ansible_group_priority".into(), priority.into());
+        }
+        vars
+    }
+
+    /// What `ansible-inventory --graph [GROUP]` prints, or `None` when `root` is not a group.
+    /// `lines` gives the `{name = value}` lines under a host or a group, none without `--vars`.
+    pub fn graph<E>(
+        &self,
+        root: &str,
+        lines: &mut dyn FnMut(GraphItem<'_>) -> Result<Vec<String>, E>,
+    ) -> Result<Option<String>, E> {
+        if self.detached {
+            return Inventory::default().graph(root, lines);
+        }
+        if root != "all" && root != "ungrouped" && self.group(root).is_none() {
+            return Ok(None);
+        }
+        let mut out = String::new();
+        self.graph_group(root, 0, &mut vec![root.to_string()], lines, &mut out)?;
+        Ok(Some(out))
+    }
+
+    fn graph_group<E>(
+        &self,
+        name: &str,
+        depth: usize,
+        path: &mut Vec<String>,
+        lines: &mut dyn FnMut(GraphItem<'_>) -> Result<Vec<String>, E>,
+        out: &mut String,
+    ) -> Result<(), E> {
+        push_line(out, depth, &format!("@{name}:"));
+        let (children, hosts) = if name == "all" {
+            (self.top_groups(), Vec::new())
+        } else {
+            self.group(name)
+                .map(|g| (g.children.clone(), g.hosts.clone()))
+                .unwrap_or_default()
+        };
+        for child in children {
+            // The sources refuse a group that would be its own ancestor, as the reference does, so this
+            // only guards the walk.
+            if path.contains(&child) {
+                continue;
+            }
+            path.push(child.clone());
+            self.graph_group(&child, depth + 1, path, lines, out)?;
+            path.pop();
+        }
+        for host in hosts {
+            push_line(out, depth + 1, &host);
+            for line in lines(GraphItem::Host(&host))? {
+                push_line(out, depth + 2, &line);
+            }
+        }
+        for line in lines(GraphItem::Group(name))? {
+            push_line(out, depth + 1, &line);
+        }
+        Ok(())
+    }
+
+    /// `all`'s children: `ungrouped`, then the groups no other group holds.
+    pub(super) fn top_groups(&self) -> Vec<String> {
+        let nested: HashSet<&str> = self
+            .groups
+            .iter()
+            .filter(|g| g.name != "all")
+            .flat_map(|g| g.children.iter().map(String::as_str))
+            .collect();
+        let mut top = vec!["ungrouped".to_string()];
+        top.extend(
+            self.groups
+                .iter()
+                .map(|g| g.name.clone())
+                .filter(|n| n != "all" && n != "ungrouped" && !nested.contains(n.as_str())),
+        );
+        top
+    }
+}
+
+/// What `--graph --vars` asks the variables of.
+pub enum GraphItem<'a> {
+    Host(&'a str),
+    Group(&'a str),
+}
+
+/// One line of the tree: `item` at `depth`.
+fn push_line(out: &mut String, depth: usize, item: &str) {
+    out.push_str(&graph_indent(depth));
+    out.push_str(item);
+    out.push(char::from(10));
+}
+
+/// The text in front of an item `depth` levels down: two spaces, `|  ` for each level above, `|--`.
+fn graph_indent(depth: usize) -> String {
+    if depth == 0 {
+        String::new()
+    } else {
+        format!("  {}|--", "|  ".repeat(depth - 1))
     }
 }

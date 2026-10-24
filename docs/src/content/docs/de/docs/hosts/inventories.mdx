@@ -1,5 +1,5 @@
 ---
-sourceHash: ddd165524228
+sourceHash: e261982fee7c
 title: Inventories und der Fact-Cache
 description: Das Inventory-Format, das Volant liest, woher Gruppen- und Hostvariablen kommen, die Grammatik der Host-Muster und wie Facts zwischen Läufen erhalten bleiben.
 ---
@@ -83,7 +83,7 @@ Ein Name, der zugleich Host und Gruppe ist, steht für den Host. Volant warnt pr
 
 ## Ein Inventory ausgeben
 
-`volant inventory --list` gibt als JSON aus, was Volant aus den Quellen gelesen hat, und `volant inventory --host NAME` gibt die Variablen eines Hosts aus, beides Byte für Byte wie `ansible-inventory`. Siehe [der Befehl inventory](/de/docs/reference/cli/inventory/).
+`volant inventory --list` gibt als JSON aus, was Volant aus den Quellen gelesen hat, und `volant inventory --host NAME` gibt die Variablen eines Hosts aus, beides Byte für Byte wie `ansible-inventory`. `volant inventory --graph [GROUP]` gibt den Gruppenbaum aus, und `--vars` fügt die Variablen hinzu. Siehe [der Befehl inventory](/de/docs/reference/cli/inventory/).
 
 ## Neu laden
 

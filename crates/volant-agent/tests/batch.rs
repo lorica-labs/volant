@@ -34,6 +34,7 @@ fn a_failure_stops_the_batch() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     assert!(matches!(agent.recv(), Some(FromAgent::Ready { .. })));
     agent.send(&ToAgent::RunBatch {
@@ -65,6 +66,7 @@ fn ignore_errors_lets_the_batch_continue() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     agent.recv();
     agent.send(&ToAgent::RunBatch {
@@ -89,6 +91,7 @@ fn cancel_interrupts_a_running_task() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     agent.recv();
     agent.send(&ToAgent::RunBatch {
@@ -115,6 +118,7 @@ fn a_broken_stdin_during_a_batch_is_logged_and_exits_non_zero() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     agent.recv();
     agent.send(&ToAgent::RunBatch {
@@ -146,6 +150,7 @@ fn a_task_timeout_fails_the_task_and_stops_the_batch() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     agent.recv();
     let mut slow = command("sleep 30", false);
@@ -175,6 +180,7 @@ fn a_vanished_controller_stops_the_batch() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     agent.recv();
     agent.send(&ToAgent::RunBatch {

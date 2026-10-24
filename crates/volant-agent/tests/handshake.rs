@@ -9,6 +9,7 @@ fn hello_gets_ready_and_eof_ends_the_agent() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     match agent.recv() {
         Some(FromAgent::Ready {
@@ -49,6 +50,7 @@ fn a_protocol_mismatch_is_logged_before_ready() {
     let mut agent = spawn_agent();
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION + 1,
+        python_perf: false,
     });
     assert!(matches!(agent.recv(), Some(FromAgent::Log { .. })));
     assert!(matches!(agent.recv(), Some(FromAgent::Ready { .. })));
@@ -72,6 +74,7 @@ fn ready_names_the_interpreter_on_the_path_the_agent_was_given() {
     let mut agent = common::spawn_agent_with_path(dir.as_os_str());
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     match agent.recv() {
         Some(FromAgent::Ready { interpreters, .. }) => assert_eq!(

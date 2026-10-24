@@ -290,6 +290,7 @@ impl Agent {
     fn hello(&mut self) -> Vec<String> {
         self.send(&ToAgent::Hello {
             protocol: PROTOCOL_VERSION,
+            python_perf: false,
         });
         match self.recv() {
             FromAgent::Ready { natives, .. } => natives,

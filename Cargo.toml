@@ -110,6 +110,12 @@ codegen-units = 1
 # an unwinding build can do. Measured on the musl agent: 6.6% larger, no speed difference.
 strip = true
 
+# Release with symbols, for `just profile`: perf needs line tables and unstripped binaries.
+[profile.profiling]
+inherits = "release"
+debug = "line-tables-only"
+strip = false
+
 # The profile that 'dist' will build with
 [profile.dist]
 inherits = "release"

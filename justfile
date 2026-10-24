@@ -1175,3 +1175,69 @@ bench-k3s runs="3":
       printf 'reference runs %s  median %s s\n' "${reference_times[*]}" "$reference_median"
       printf 'ratio %s\n' "$ratio"
     } | tee "$out"
+
+# Flamegraphs of one converged pass, for the controller and for the agent on each host, under
+# target/profile/. `play` is a playbook path (a corpus entry name will be accepted once
+# fixtures/corpus/corpus.yml exists). `hosts` is `local` (a local connection, perf run here) or
+# `remote` (VOLANT_TARGET_HOST and, when set, VOLANT_SECOND_HOST, as `bench` does). `name`
+# defaults to the playbook's file name without extension. The agent side records the whole host
+# with `sudo perf record -a` (some hosts set perf_event_paranoid=4) and keeps the comms
+# volant-agent and python3; Python frames are named because the controller sets
+# VOLANT_PYTHON_PERF=1, which makes the agent start interpreters with PYTHONPERFSUPPORT=1.
+# Needs `perf` on every host and `inferno-flamegraph` here (`cargo binstall inferno`).
+profile play hosts="local" name="":
+    #!/usr/bin/env bash
+    set -euo pipefail
+    command -v inferno-flamegraph > /dev/null || { echo "inferno-flamegraph is not installed: run 'cargo binstall inferno'"; exit 1; }
+    command -v inferno-collapse-perf > /dev/null || { echo "inferno-collapse-perf is not installed: run 'cargo binstall inferno'"; exit 1; }
+    play="{{play}}"
+    [ -f "$play" ] || { echo "$play is not a playbook file (corpus entry names need fixtures/corpus/corpus.yml, which does not exist yet)"; exit 1; }
+    name="{{name}}"
+    [ -n "$name" ] || { name="$(basename "$play")"; name="${name%.*}"; }
+    case "{{hosts}}" in
+      local) hosts=(local) ;;
+      remote)
+        test -n "${VOLANT_TARGET_HOST:-}" || { echo "VOLANT_TARGET_HOST is not set"; exit 1; }
+        hosts=("$VOLANT_TARGET_HOST")
+        [ -z "${VOLANT_SECOND_HOST:-}" ] || hosts+=("$VOLANT_SECOND_HOST") ;;
+      *) echo "hosts must be 'local' or 'remote', not '{{hosts}}'"; exit 1 ;;
+    esac
+
+    just agent-musl
+    cargo build --profile profiling -p volant
+    out=target/profile
+    mkdir -p "$out"
+    inventory="$out/$name-inventory.ini"
+    if [ "${hosts[0]}" = local ]; then
+      printf 'localhost ansible_connection=local ansible_python_interpreter=/usr/bin/python3\n' > "$inventory"
+    else
+      { printf '[targets]\n'; for h in "${hosts[@]}"; do printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$h" "$h"; done; } > "$inventory"
+    fi
+    [ ! -d target/proof-roles ] || export ANSIBLE_ROLES_PATH="$PWD/target/proof-roles"
+    export VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}"
+    export VOLANT_AGENT_DIR="$PWD/target/agents"
+    volant=./target/profiling/volant
+
+    on() { local h="$1"; shift; if [ "$h" = local ]; then bash -c "$*"; else ssh "$h" "$*"; fi; }
+    stop_agent_perf() { for h in "${hosts[@]}"; do on "$h" "sudo -n pkill -INT -f '[v]olant-profile.data'; while pgrep -f '[v]olant-profile.data' > /dev/null; do sleep 0.2; done" || true; done; }
+    cleanup() { stop_agent_perf; for h in "${hosts[@]}"; do on "$h" "sudo -n rm -f /tmp/volant-profile.data" || true; done; }
+    trap cleanup EXIT
+
+    # Warm-up: fills the agent's payload cache and the hosts' own caches.
+    "$volant" playbook -i "$inventory" "$play" > "$out/$name-warmup.log"
+
+    for h in "${hosts[@]}"; do
+      on "$h" "nohup sudo -n perf record -a -F 499 --call-graph dwarf,16384 -o /tmp/volant-profile.data > /dev/null 2>&1 < /dev/null &"
+    done
+    sleep 1
+    rm -f "$out/$name.jsonl"
+    VOLANT_PYTHON_PERF=1 VOLANT_PROFILE_JSON="$out/$name.jsonl" \
+      perf record -F 999 --call-graph dwarf,16384 -o "$out/$name-controller.data" -- \
+      "$volant" playbook -i "$inventory" "$play" > "$out/$name.log"
+    stop_agent_perf
+
+    perf script -i "$out/$name-controller.data" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-controller.svg"
+    for h in "${hosts[@]}"; do
+      on "$h" "sudo -n perf script -i /tmp/volant-profile.data --comms volant-agent,python3" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-agent-$h.svg"
+    done
+    ls -l "$out/$name"*.svg "$out/$name.jsonl"

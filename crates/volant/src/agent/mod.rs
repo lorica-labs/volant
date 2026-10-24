@@ -282,6 +282,7 @@ impl AgentLink {
     pub async fn handshake(&mut self) -> anyhow::Result<()> {
         self.send(&ToAgent::Hello {
             protocol: PROTOCOL_VERSION,
+            python_perf: std::env::var_os("VOLANT_PYTHON_PERF").is_some_and(|v| v == "1"),
         })
         .await
         .context("sending hello")?;

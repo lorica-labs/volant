@@ -52,6 +52,7 @@ impl Hung {
         let mut agent = common::spawn_agent_with_path(&path);
         agent.send(&ToAgent::Hello {
             protocol: PROTOCOL_VERSION,
+            python_perf: false,
         });
         match agent.recv() {
             Some(FromAgent::Ready { natives, .. }) => assert!(

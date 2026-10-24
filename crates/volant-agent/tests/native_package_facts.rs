@@ -98,6 +98,7 @@ fn python_apt() -> Option<Value> {
 fn hello(agent: &mut common::Agent) -> Vec<String> {
     agent.send(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     });
     match agent.recv() {
         Some(FromAgent::Ready { natives, .. }) => natives,

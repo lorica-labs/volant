@@ -178,11 +178,24 @@ fn the_native_fields_are_absent_on_the_wire_when_empty_and_default_on_the_way_in
 fn hello_has_a_snake_case_type_tag() {
     let text = serde_json::to_string(&ToAgent::Hello {
         protocol: PROTOCOL_VERSION,
+        python_perf: false,
     })
     .unwrap();
     assert_eq!(
         text,
         format!(r#"{{"type":"hello","protocol":{PROTOCOL_VERSION}}}"#)
+    );
+}
+
+#[test]
+fn hello_without_python_perf_decodes_as_false() {
+    let hello: ToAgent = serde_json::from_str(r#"{"type":"hello","protocol":8}"#).unwrap();
+    assert_eq!(
+        hello,
+        ToAgent::Hello {
+            protocol: 8,
+            python_perf: false
+        }
     );
 }
 

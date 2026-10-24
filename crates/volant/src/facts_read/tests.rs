@@ -572,3 +572,38 @@ fn a_play_handler_include_is_read() {
     let read = tree.read("h1\n");
     assert_eq!(keys(&read), &set(&["mounts"]));
 }
+
+/// A file name built from a part of a one-name fact is still a name: geerlingguy.postgresql's
+/// `include_vars` keeps the native `setup`, and an operation that is not one of those reads every
+/// fact.
+#[test]
+fn a_file_name_from_part_of_a_fact_is_followed() {
+    let role = |name: &str| {
+        let tree = Tree::new();
+        tree.file("site.yml", "- hosts: all\n  roles:\n    - db\n")
+            .file(
+                "roles/db/tasks/main.yml",
+                &format!(
+                    "- include_vars:\n    file: >-\n      {name}\n- debug: msg=\"{{{{ db_version }}}}\"\n"
+                ),
+            )
+            .file("roles/db/vars/Ubuntu-24.yml", "db_version: \"{{ ansible_hostname }}\"\n")
+            .file("roles/db/vars/Debian-12.yml", "db_version: '16'\n");
+        tree.read("h1\n")
+    };
+    for name in [
+        "{{ ansible_facts.distribution }}-{{ ansible_facts.distribution_version.split('.')[0] }}.yml",
+        "{{ ansible_distribution | lower }}-{{ ansible_facts['distribution_version'].split(\".\")[-1] }}.yml",
+        "{{ ansible_facts.distribution.upper() }}-{{ ansible_distribution_major_version | int }}.yml",
+    ] {
+        let read = role(name);
+        assert!(keys(&read).contains("hostname"), "{name}: {read:?}");
+    }
+    for name in [
+        "{{ ansible_facts.distribution_version.replace('.', '/') }}.yml",
+        "{{ ansible_facts.distribution_version.split('.') }}.yml",
+        "{{ ansible_facts.default_ipv4.address.split('.')[0] }}.yml",
+    ] {
+        assert!(matches!(role(name), FactsRead::All(_)), "{name}");
+    }
+}

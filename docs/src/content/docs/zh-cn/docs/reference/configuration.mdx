@@ -1,5 +1,5 @@
 ---
-sourceHash: 2ef629a7b495
+sourceHash: 78c5934b9fa8
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -96,6 +96,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="vault_identity_list" id="defaults-vault-identity-list" flag="--vault-id" env="ANSIBLE_VAULT_IDENTITY_LIST">
   以逗号分隔的 vault 标识，每个写作 `label@source`，其中来源是文件、可执行文件或 `prompt`。环境变量会替换文件中的列表，命令行则追加到胜出的那个列表上。
+</Option>
+
+<Option name="vault_encrypt_identity" id="defaults-vault-encrypt-identity" flag="--encrypt-vault-id" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  未给出 `--encrypt-vault-id` 时，`volant vault encrypt` 使用的 vault id。见 [Vault](/zh-cn/docs/variables/vault/#加密和查看文件)。
 </Option>
 
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">

@@ -1,5 +1,5 @@
 ---
-sourceHash: d4ad4ddc3da2
+sourceHash: 845dd11b012a
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -10,6 +10,7 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant runtime <install|pack|status|path|remove>
+volant vault <encrypt|decrypt|view>
 volant --version
 ```
 
@@ -251,8 +252,28 @@ volant runtime remove [ID | --all]
   Elimina todos los runtimes, no solo el actual.
 </Option>
 
+## El comando vault
+
+`volant vault` hace lo que hacen `ansible-vault encrypt`, `decrypt` y `view`, sobre los mismos archivos, con los mismos mensajes y los mismos códigos de salida. `create`, `edit`, `rekey` y `encrypt_string` todavía no existen. [Vault](/es/docs/variables/vault/#cifrar-y-ver-archivos) da los detalles.
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+```
+
+`OPTIONS` son `--vault-id`, `--vault-password-file` (también `--vault-pass-file`), `-J`/`--ask-vault-pass` y `-v`, descritas antes en [Vault](#vault). Sin ninguna de ellas, y sin el ajuste `vault_password_file`, el comando pide la contraseña.
+
+<Option name="--output" arg="FILE">
+  Escribe el resultado ahí y deja intacto el origen. `-` es la salida estándar. Con esta opción solo se acepta un archivo de entrada; si no, el código de salida es 5.
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  El id de vault que usa `encrypt`. Es obligatorio cuando se da más de un `--vault-id`.
+</Option>
+
 ## Todavía no disponible
 
 Se acepta cada opción de `ansible-playbook`. `--scp-extra-args` y `--sftp-extra-args` no tienen efecto, porque los archivos viajan por el enlace con el agente. La [página de paridad](/es/docs/reference/parity/#ansible-playbook-option) enumera cada opción con su estado.
 
-`volant` tiene dos subcomandos, `playbook` y `runtime`. Las demás herramientas de Ansible todavía no tienen equivalente: `ansible` para comandos ad hoc, `ansible-inventory`, `ansible-vault`, `ansible-doc`, `ansible-config` y `ansible-galaxy`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.
+`volant` tiene tres subcomandos, `playbook`, `runtime` y `vault`. Las demás herramientas de Ansible todavía no tienen equivalente: `ansible` para comandos ad hoc, `ansible-inventory`, `ansible-doc`, `ansible-config` y `ansible-galaxy`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.

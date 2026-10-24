@@ -1,5 +1,5 @@
 ---
-sourceHash: d4ad4ddc3da2
+sourceHash: 845dd11b012a
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -10,6 +10,7 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant runtime <install|pack|status|path|remove>
+volant vault <encrypt|decrypt|view>
 volant --version
 ```
 
@@ -251,8 +252,28 @@ volant runtime remove [ID | --all]
   删除所有运行时，而不只是当前的那个。
 </Option>
 
+## vault 命令
+
+`volant vault` 的作用与 `ansible-vault encrypt`、`decrypt` 和 `view` 相同，处理同样的文件，消息和退出码也一样。`create`、`edit`、`rekey` 和 `encrypt_string` 暂时还没有。详情见 [Vault](/zh-cn/docs/variables/vault/#加密和查看文件)。
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+```
+
+`OPTIONS` 指 `--vault-id`、`--vault-password-file`（也可写作 `--vault-pass-file`）、`-J`/`--ask-vault-pass` 和 `-v`，见上文 [Vault](#vault)。一个都不给，也没有 `vault_password_file` 设置时，命令会询问密码。
+
+<Option name="--output" arg="FILE">
+  把结果写到该处，源文件保持不变。`-` 表示标准输出。使用它时只接受一个输入文件，否则退出码为 5。
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  `encrypt` 使用的 vault id。给出多个 `--vault-id` 时必须指定。
+</Option>
+
 ## 尚未支持
 
 每个 `ansible-playbook` 选项都能接受。`--scp-extra-args` 和 `--sftp-extra-args` 没有效果，因为文件是通过 agent 链路传输的。[对等性页面](/zh-cn/docs/reference/parity/#ansible-playbook-option)列出了每个选项及其状态。
 
-`volant` 有两个子命令：`playbook` 和 `runtime`。其他 Ansible 工具暂时没有对应的命令：用于临时命令的 `ansible`、`ansible-inventory`、`ansible-vault`、`ansible-doc`、`ansible-config` 和 `ansible-galaxy`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。
+`volant` 有三个子命令：`playbook`、`runtime` 和 `vault`。其他 Ansible 工具暂时没有对应的命令：用于临时命令的 `ansible`、`ansible-inventory`、`ansible-doc`、`ansible-config` 和 `ansible-galaxy`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。

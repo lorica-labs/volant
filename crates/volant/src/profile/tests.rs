@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
+// The counters and the repeat tables are process statics, which these tests change: they rely on
+// nextest running every test in a process of its own.
 use super::*;
 use crate::testing::scratch;
 
@@ -69,8 +71,9 @@ ping                     unreported     1          -            0         -     
 setup                    python         1      12000        12000       900      8000      3000
 stat                     native         3         50          150         -         -         -
 tasks by path: fallback=3 native=3 python=1 unreported=1
+counters
 ";
-    assert_eq!(table, expected, "\n{table}");
+    assert!(table.starts_with(expected), "\n{table}");
 }
 
 /// Times a host reported are added without overflowing: the host is not trusted to send figures
@@ -107,7 +110,13 @@ fn the_json_starts_with_the_natives_and_has_a_line_per_task() {
         lines[2],
         json!({"phase": "connect", "host": "h1", "micros": 400})
     );
-    assert_eq!(lines.len(), 1 + 3 + 8);
+    assert_eq!(lines.len(), 1 + 3 + 8 + 1);
+    assert_eq!(lines[12]["counters"]["render_when"], json!(0), "{text}");
+    assert_eq!(
+        lines[12]["repeats"],
+        json!({"total": 0, "top": []}),
+        "{text}"
+    );
     assert_eq!(
         lines[4],
         json!({"host": "h1", "index": 1, "task": "t", "module": "stat", "path": "native",
@@ -118,4 +127,59 @@ fn the_json_starts_with_the_natives_and_has_a_line_per_task() {
         json!({"host": "h1", "index": 1, "task": "t", "module": "copy", "path": "fallback",
                "reason": "validate", "micros": 5000, "prepare_micros": 7})
     );
+}
+
+/// The counters come by name in declaration order, and the table carries them.
+#[test]
+fn the_counters_are_named_in_declaration_order() {
+    count(Counter::RenderWhen, 2);
+    count(Counter::WireInBytes, 9);
+    let all = counters();
+    assert_eq!(all.len(), 14);
+    assert_eq!(all[0], ("render_when", 2));
+    assert_eq!(all[13], ("wire_in_bytes", 9));
+    let table = Profile::default().render();
+    let row = format!("\n{:<24} {:>14}\n", "render_when", 2);
+    assert!(table.contains(&row), "{table}");
+}
+
+/// A text rendered twice for one step and one host is one repeat; the same text for another host
+/// or another step is not.
+#[test]
+fn a_text_rendered_again_for_one_step_and_host_is_a_repeat() {
+    track_repeats(true);
+    for (task, host) in [(3, "h1"), (3, "h1"), (3, "h2"), (4, "h1")] {
+        note_render(task, host, "{{ x }}");
+    }
+    note_render(5, "h1", "{{ y\n }}");
+    note_render(5, "h1", "{{ y\n }}");
+    bridge_call("to_yaml", 40);
+    bridge_call("to_yaml", 2);
+    assert_eq!(
+        repeats(20),
+        (2, vec![("{{ x }}".into(), 1), ("{{ y\n }}".into(), 1)])
+    );
+    assert_eq!(repeats(1).1.len(), 1);
+    note_invariant("{{ z }}");
+    note_invariant("{{ z }}");
+    assert_eq!(loop_invariant(20), (2, vec![("{{ z }}".into(), 2)]));
+    let table = Profile::default().render();
+    let block = table.split_once("bridge plugin").unwrap().1;
+    let row = format!("\n{:<24} {:>14} {:>14}\n", "to_yaml", 2, 42);
+    assert!(block.contains(&row), "{table}");
+    assert!(block.contains("\nrepeated renders: 2\n"), "{table}");
+    assert!(block.contains("\n       1  {{ y\\n }}\n"), "{table}");
+}
+
+/// Without tracking nothing is kept but the counters themselves.
+#[test]
+fn nothing_but_the_counters_is_kept_without_tracking() {
+    note_render(1, "h1", "{{ x }}");
+    note_render(1, "h1", "{{ x }}");
+    bridge_call("to_yaml", 40);
+    note_invariant("{{ z }}");
+    assert_eq!(repeats(20), (0, Vec::new()));
+    assert_eq!(loop_invariant(20), (0, Vec::new()));
+    assert!(bridge_table().is_empty());
+    assert_eq!(counters()[10], ("bridge_calls", 1));
 }

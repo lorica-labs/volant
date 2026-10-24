@@ -40,6 +40,7 @@ impl Object for Hostvars {
         }
         let found = self.memo.get(key, || {
             self.hosts.get(key).map(|entry| {
+                crate::profile::count(crate::profile::Counter::RenderHostvars, 1);
                 let entry =
                     super::read::with_playbook_python(crate::vars::settled(entry).into_owned());
                 self.deferred.mark_host(key, &entry);

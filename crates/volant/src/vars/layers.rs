@@ -227,6 +227,11 @@ impl VarStore {
         extend(&mut map, &self.extra);
         map.extend(magic);
         let facts = self.facts_for(host, shadowed);
+        crate::profile::count(crate::profile::Counter::LayersBuilt, 1);
+        crate::profile::count(
+            crate::profile::Counter::LayersEntries,
+            u64::try_from(map.len()).unwrap_or(u64::MAX),
+        );
         Layers { map, shared, facts }
     }
 

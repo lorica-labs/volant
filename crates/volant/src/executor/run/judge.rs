@@ -152,6 +152,7 @@ pub(in crate::executor) fn break_after(
         vars.insert_untrusted(name.clone(), Value::Object(result.0.clone()));
     }
     for condition in &task.break_when {
+        crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         match templar.condition(condition, &vars) {
             Ok(true) => {}
             Ok(false) => return false,
@@ -341,6 +342,7 @@ pub(super) fn all_hold(
     templar: &Templar,
 ) -> Result<bool, TemplateError> {
     for c in conditions {
+        crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         if !templar.condition(c, vars)? {
             return Ok(false);
         }

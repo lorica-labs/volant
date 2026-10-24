@@ -18,7 +18,7 @@ use crate::compile::{self, Compiled};
 use crate::executor::{self, Abort, RunOptions, RunState};
 use crate::inventory::Host;
 use crate::listing::{self, Listing};
-use crate::profile::{Phase, Profile, micros};
+use crate::profile::{Phase, Profile, json_path, micros};
 use crate::python::{Facts, Natives};
 use crate::render::Renderer;
 use crate::roles::RoleSearch;
@@ -67,7 +67,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
             return 250;
         }
     };
-    let profile = Arc::new(Profile::default());
+    let profile = Arc::new(Profile::started(args.profile || json_path().is_some()));
     let code = match runtime.block_on(run_all(args, plays, &mut out, &profile)) {
         Ok(code) => code,
         Err(err) => {
@@ -84,7 +84,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     if args.profile {
         eprint!("{}", profile.render());
     }
-    if let Some(path) = std::env::var_os("VOLANT_PROFILE_JSON").filter(|p| !p.is_empty())
+    if let Some(path) = json_path()
         && let Err(err) = profile.write_json(Path::new(&path))
     {
         eprintln!(

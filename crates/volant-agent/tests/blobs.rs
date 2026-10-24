@@ -255,10 +255,15 @@ fn a_staged_file_reaches_the_module_and_leaves_nothing_behind() {
     let cache = cache_dir(&scratch.0);
     let stage = link.stage_dir(&scratch.0);
     let stage_name = stage.file_name().unwrap().to_string_lossy().into_owned();
+    // Beside the union, the code its Python server compiled from it, named after it.
+    let compiled = format!("{union}.");
     assert_eq!(
-        entries(&cache),
+        entries(&cache)
+            .into_iter()
+            .filter(|name| !(name.starts_with(&compiled) && name.ends_with(".code")))
+            .collect::<Vec<_>>(),
         vec![union.clone(), stage_name],
-        "the cache keeps the union and the connection's own directory"
+        "the cache keeps the union, its compiled code and the connection's own directory"
     );
     assert_eq!(
         entries(&stage),

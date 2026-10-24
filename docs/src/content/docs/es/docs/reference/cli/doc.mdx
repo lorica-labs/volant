@@ -1,0 +1,29 @@
+---
+sourceHash: 3d2601aa9a9c
+title: volant doc
+description: Muestra la documentación de los plugins con ansible-doc, ejecutado desde el runtime de Python de Volant, de modo que no hace falta instalar ansible-core.
+---
+
+`volant doc` ejecuta el `ansible-doc` de ansible-core 2.19.12. Imprime lo que imprime el script y sale con el mismo código, con el intérprete que Volant elige para una ejecución de playbook: una máquina sin ansible-core puede consultar la documentación tras `volant runtime install`.
+
+```sh
+volant doc [ARGS...]
+```
+
+Cada argumento después de `doc` va a `ansible-doc` sin cambios, incluidos `-h`, `--version` y las opciones que no conoce: `ansible-doc` las notifica él mismo. Por ejemplo `volant doc ping`, `volant doc -l`, `volant doc -s ping`, `volant doc --json ping` y `volant doc -t keyword -l`.
+
+## El intérprete
+
+El intérprete es el que [usa una ejecución de playbook](/es/docs/reference/runtime/#qué-intérprete-usa-una-ejecución): `VOLANT_PYTHON`, el runtime administrado, el entorno virtual activo, `python3`. Cuando ninguno tiene ansible-core y `[volant] runtime` no es `system`, Volant instala su runtime e imprime antes `Installing Volant's Python runtime (<id>) ...` en el error estándar. En modo `system` el comando se rechaza con el mismo mensaje que una ejecución de playbook, que nombra los intérpretes probados.
+
+Volant inicia el intérprete con `-P` y ejecuta el `main()` del módulo `ansible.cli.doc` de ansible-core en lugar del script `ansible-doc`, cuya primera línea nombra el directorio en el que se construyó el runtime. El nombre del programa, `ansible-doc`, es el mismo. Bajo el runtime administrado, el proceso hijo recibe el entorno limpio habitual (sin `PYTHONPATH`, sin user site) y conserva tus demás variables, así que `ANSIBLE_*`, `PAGER` y `TERM` se aplican. Un intérprete fijado con `VOLANT_PYTHON` conserva todo su entorno.
+
+## Colecciones
+
+`ANSIBLE_COLLECTIONS_PATH` se fija a tu ruta de colecciones con el directorio `collections/` del runtime añadido al final, una vez que ese directorio existe. Una colección instalada con `volant runtime install --collections` es por tanto visible para `volant doc`, y una de tus propias rutas gana sobre ella. Tu `ansible.cfg` y las variables `ANSIBLE_*` no se tocan en lo demás.
+
+## Terminal, código de salida y `--version`
+
+La entrada, la salida y el error estándar son los de la herramienta, así que el paginador funciona. El código de salida es el de la herramienta. Una herramienta terminada por una señal da `128` más el número de la señal. Si no se puede iniciar el intérprete, `volant doc` imprime `[ERROR]:` y un motivo, y sale con 1.
+
+`executable location` en `volant doc --version` es la ruta del programa tal como se inició Volant, `volant` o un enlace llamado `ansible-doc` (consulta [Línea de comandos](/es/docs/reference/cli/)), de modo que nombra un archivo que existe.

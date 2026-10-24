@@ -9,6 +9,7 @@ pub(crate) mod install;
 pub(crate) mod manifest;
 pub(crate) mod pack;
 pub(crate) mod resolve;
+pub(crate) mod tool;
 
 pub use resolve::Mode;
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 0af7a10c461a
+sourceHash: "63370462e057"
 title: 托管运行时
 description: Volant 为自己安装的 Python 和 ansible-core，它们位于哪里、下载什么，以及如何管理。
 ---
@@ -33,7 +33,7 @@ volant runtime install
 3. 当前激活的虚拟环境，然后是 `PATH` 中的 `python3`，如果它们带有 ansible-core。
 4. 一个新的托管运行时，立即安装。
 
-Volant 用 `-P` 启动解释器，所以工作目录中的文件（例如 `ansible.py` 或 `json.py`）永远不会取代真正的模块被导入。`-P` 需要 Python 3.11 或更高版本，ansible-core 2.19 同样需要。你自己的解释器会保留 `PYTHONPATH` 和它的用户 site。
+Volant 用 `-P` 启动解释器，所以工作目录中的文件（例如 `ansible.py` 或 `json.py`）永远不会取代真正的模块被导入。`-P` 需要 Python 3.11 或更高版本，ansible-core 2.19 同样需要。你自己的解释器会保留 `PYTHONPATH` 和它的用户 site。[`volant doc`](/zh-cn/docs/reference/cli/doc/) 也按这条规则选择解释器，并在其中运行 ansible-core 自己的 `ansible-doc`。
 
 `volant runtime status` 会显示下一次运行将做出的选择，以及每个候选项和它的来源。[`runtime` 设置](/zh-cn/docs/reference/configuration/#volant)会改变这个顺序。
 

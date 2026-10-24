@@ -146,16 +146,17 @@ impl Scan {
         if e == task.loop_var {
             return self.items(task, depth);
         }
-        let fact = e
+        let base = name_kept(e);
+        let fact = base
             .strip_prefix("ansible_facts.")
             .filter(|k| k.bytes().all(is_word))
             .or_else(|| {
-                e.strip_prefix("ansible_facts[")
+                base.strip_prefix("ansible_facts[")
                     .and_then(|r| r.strip_suffix(']'))
                     .and_then(literal)
             })
             .or_else(|| {
-                e.strip_prefix("ansible_")
+                base.strip_prefix("ansible_")
                     .filter(|k| k.bytes().all(is_word))
             });
         if let Some(key) = fact {
@@ -228,4 +229,38 @@ impl Scan {
             _ => false,
         }
     }
+}
+
+/// `e` without the trailing operations that keep a one-name value a name with no `/` in it:
+/// `.split('<sep>')[<n>]`, `.lower()`, `.upper()` and the `lower`, `upper`, `string`, `int` and
+/// `trim` filters (`ansible_facts.distribution_version.split('.')[0]`, geerlingguy.postgresql).
+/// `e` itself when it ends in anything else.
+fn name_kept(e: &str) -> &str {
+    let mut e = e.trim();
+    loop {
+        let shorter = e
+            .strip_suffix(".lower()")
+            .or_else(|| e.strip_suffix(".upper()"))
+            .or_else(|| {
+                let (head, filter) = e.rsplit_once('|')?;
+                matches!(filter.trim(), "lower" | "upper" | "string" | "int" | "trim")
+                    .then_some(head)
+            })
+            .or_else(|| split_index(e));
+        match shorter {
+            Some(head) => e = head.trim_end(),
+            None => return e,
+        }
+    }
+}
+
+/// `head` of `head.split('<sep>')[<n>]`, the separator a literal and `n` a whole number.
+fn split_index(e: &str) -> Option<&str> {
+    let (call, index) = e.strip_suffix(']')?.rsplit_once('[')?;
+    let digits = index.strip_prefix('-').unwrap_or(index);
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return None;
+    }
+    let (head, sep) = call.strip_suffix(')')?.rsplit_once(".split(")?;
+    literal(sep).map(|_| head)
 }

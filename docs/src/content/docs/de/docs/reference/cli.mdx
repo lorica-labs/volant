@@ -1,5 +1,5 @@
 ---
-sourceHash: 7fc812957946
+sourceHash: b9099a4b9554
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -238,6 +238,6 @@ Volant liest die oben genannten `ANSIBLE_*`-Variablen sowie einige eigene.
 
 Jede `ansible-playbook`-Option wird akzeptiert. `--scp-extra-args` und `--sftp-extra-args` haben keine Wirkung, weil Dateien über die Agent-Verbindung übertragen werden. Die [Paritätsseite](/de/docs/reference/parity/#ansible-playbook-option) führt jede Option mit ihrem Status auf.
 
-`volant adhoc` hat `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` und `-t` noch nicht.
+`volant adhoc` hat `-o` und `-t` noch nicht.
 
 `volant` hat die Unterbefehle `playbook`, `adhoc`, `inventory`, `runtime`, `shims` und `vault`. Die anderen Ansible-Werkzeuge haben noch keine Entsprechung: `ansible-doc`, `ansible-config` und `ansible-galaxy`. Es gibt kein `volant check` und kein `volant lint`. Führen Sie diese Werkzeuge aus ansible-core aus oder nutzen Sie die Auflistungsoptionen von `volant playbook`.

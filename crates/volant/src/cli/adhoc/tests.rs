@@ -76,10 +76,3 @@ fn an_include_carries_no_async_keys() {
         "<adhoc 'include_tasks' task>\n\n{'action': 'include_tasks', 'args': {'file': 't.yml'}, 'timeout': 0}"
     );
 }
-
-#[test]
-fn more_than_one_v_is_refused_before_anything_runs() {
-    use clap::Parser as _;
-    let args = AdhocArgs::try_parse_from(["volant", "all", "-vv", "-m", "ping"]).unwrap();
-    assert_eq!(adhoc(args), 4);
-}

@@ -36,7 +36,7 @@ pub(super) fn set_up(
     let choice = config.color_choice(args.no_color);
     out.set_choice(choice);
     crate::transport::trace::configure(args.verbose, choice);
-    announce(out);
+    announce(out, args.adhoc_pattern.as_ref().map(|_| args));
     python::set_module_path(module_path_dirs(args));
     let secrets = match crate::vault::load(&crate::vault::Request {
         ask: args.vault.ask_vault_pass,

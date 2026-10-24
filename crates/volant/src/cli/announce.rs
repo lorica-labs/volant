@@ -19,22 +19,34 @@ pub(super) fn version_line() -> String {
     )
 }
 
+/// The configuration file the run reads, made absolute.
+pub(super) fn config_path() -> Option<PathBuf> {
+    let path = crate::config::locate()?;
+    Some(std::path::absolute(&path).unwrap_or(path))
+}
+
 /// The `-v` line about the configuration file.
 pub(super) fn config_line() -> String {
-    match crate::config::locate() {
-        Some(path) => format!(
-            "Using {} as config file",
-            std::path::absolute(&path).unwrap_or(path).display()
-        ),
+    match config_path() {
+        Some(path) => format!("Using {} as config file", path.display()),
         None => "No config file found; using defaults".to_string(),
     }
 }
 
 /// The lines the reference prints before it reads an inventory: the version at `-vv`, the
 /// configuration file at `-v`, and at `-vvvv` the plugin set-up.
-pub(super) fn announce(out: &mut Renderer) {
+pub(super) fn announce(out: &mut Renderer, adhoc: Option<&PlaybookArgs>) {
     if out.verbose_at(2) {
-        out.plain(2, &version_line());
+        // The ad hoc command opens with the reference's block; the playbook command with the
+        // engine's own line, per the decision on `--version`.
+        if let Some(args) = adhoc {
+            out.plain(
+                2,
+                &super::version::block("ansible", &module_path_dirs(args)),
+            );
+        } else {
+            out.plain(2, &version_line());
+        }
     }
     if out.verbose_at(1) {
         out.verbose(1, &config_line());
@@ -48,12 +60,20 @@ pub(super) fn announce(out: &mut Renderer) {
 /// The lines before the first playbook: the stdout callback loaded, and the two the reference
 /// sets aside. Its line names the plugin file, which has no counterpart here, so it names the
 /// engine's own callback.
-pub(super) fn announce_callbacks(out: &mut Renderer) {
+pub(super) fn announce_callbacks(out: &mut Renderer, adhoc: bool) {
+    // `ansible` loads the `minimal` callback as its stdout one and sets `default` aside.
+    let (stdout, skipped) = if adhoc {
+        ("minimal", ["default", "oneline"])
+    } else {
+        ("default", ["minimal", "oneline"])
+    };
     out.verbose(
         4,
-        "Loading callback plugin default of type stdout, v2.0 from the built-in callback",
+        &format!(
+            "Loading callback plugin {stdout} of type stdout, v2.0 from the built-in callback"
+        ),
     );
-    for callback in ["minimal", "oneline"] {
+    for callback in skipped {
         out.verbose(
             2,
             &format!("Skipping callback '{callback}', as we already have a stdout callback."),
@@ -225,7 +245,7 @@ pub(super) fn module_path_dirs(args: &PlaybookArgs) -> Vec<PathBuf> {
 }
 
 /// A Python `str`'s repr: single quotes unless the text holds one and no double quote.
-fn py_str(text: &str) -> String {
+pub(super) fn py_str(text: &str) -> String {
     let quote = if text.contains('\'') && !text.contains('"') {
         '"'
     } else {

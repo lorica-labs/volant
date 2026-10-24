@@ -37,13 +37,15 @@ NEEDS = {"ansible-core", "sudo", "systemd"}
 # by every run and under the recording user's home.
 ANSIBLE_TMP = re.compile(r"\S*/\.ansible/tmp/ansible-local-\w+/tmp\w+")
 # `-vvvv` names the callback plugin's file, which the engine has no counterpart of.
-CALLBACK_PATH = re.compile(r"^(Loading callback plugin default of type stdout, v2\.0 from ).*$", re.M)
+CALLBACK_PATH = re.compile(r"^(Loading callback plugin (?:default|minimal) of type stdout, v2\.0 from ).*$", re.M)
+# The status file of an async job, under the home of whoever runs it.
+RESULTS_FILE = re.compile(r'"results_file": "[^"]*"')
 PLAY_TAGS = re.compile(r"^  play #\d+ .*\tTAGS: \[(.*)\]$")
 HOST_COUNT = re.compile(r"^    hosts \((\d+)\):$")
 
 # The block `-vv` opens with, naming the machine's paths and interpreter. The test replaces
 # Volant's own version line with the same placeholder.
-VERSION_BLOCK = re.compile(r"^ansible-playbook \[core [^\]\n]*\]\n(?:  .*\n){8}", re.M)
+VERSION_BLOCK = re.compile(r"^ansible(?:-playbook)? \[core [^\]\n]*\]\n(?:  .*\n){8}", re.M)
 
 
 def unreproducible(stdout):
@@ -169,6 +171,7 @@ def record_one(directory):
             stdout = ANSIBLE_TMP.sub("<golden-ansible-tmp>", stdout)
             stdout = CALLBACK_PATH.sub(r"\1<golden-callback>", stdout)
             # The recording's own callback, which the reference sets aside like the two it ships.
+            stdout = RESULTS_FILE.sub('"results_file": "<results-file>"', stdout)
             stdout = stdout.replace("Skipping callback 'golden_json', as we already have a stdout callback.\n", "")
         bad = unreproducible(stdout)
         if bad:

@@ -170,7 +170,7 @@ pub struct VarStore {
 /// One change a play made to the inventory.
 #[derive(Debug)]
 enum Added {
-    Host(String, BTreeMap<String, Value>),
+    Host(String, Map<String, Value>),
     Member(String, String),
     Child(String, String),
 }

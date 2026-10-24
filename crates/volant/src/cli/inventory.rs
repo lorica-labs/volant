@@ -13,14 +13,13 @@ use serde_json::Value;
 use super::announce::{announce, inventory_sources};
 use crate::bridge::Bridge;
 use crate::config::Config;
-use crate::inventory::{GraphItem, Inventory, Note, VarsOf, load_sources_with};
+use crate::inventory::{GraphItem, Inventory, Note, VarsOf, load_sources_with, toml_dumps};
 use crate::render::Renderer;
 use crate::stats::error_code;
 use crate::template::{inventory_yaml, yaml_mapping, yaml_node};
 use crate::vars::{ListedOrigin, VarStore};
 
-/// The arguments of `ansible-inventory` this release reads. `--toml` is not here, so clap refuses
-/// it by name.
+/// The arguments of `ansible-inventory` this release reads.
 #[derive(Args, Debug)]
 pub struct InventoryArgs {
     /// Print the whole inventory as JSON.
@@ -38,6 +37,9 @@ pub struct InventoryArgs {
     /// Print `--list` and `--host` as YAML instead of JSON.
     #[arg(short = 'y', long)]
     yaml: bool,
+    /// Print `--list` and `--host` as TOML instead of JSON. `--yaml` wins when both are given.
+    #[arg(long)]
+    toml: bool,
     /// Keep each variable on the host or group that sets it instead of folding the groups'
     /// variables into every host. `--host` then prints only the host's own variables.
     #[arg(long)]
@@ -153,14 +155,16 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
             export,
         );
     }
-    let vars_of = |host: &str| -> BTreeMap<String, Value> {
-        let vars = if export {
+    // In the order the reference merges them, which TOML keeps and JSON and YAML sort.
+    let ordered = |host: &str| -> serde_json::Map<String, Value> {
+        if export {
             store.exported_vars(host)
         } else {
-            store.listed_vars(host)
-        };
-        vars.into_iter().collect()
+            store.listed_vars_ordered(host, &loaded.group_var_names(host))
+        }
     };
+    let vars_of = |host: &str| -> BTreeMap<String, Value> { ordered(host).into_iter().collect() };
+    let toml = args.toml && !args.yaml;
     let text = if let Some(name) = &args.host {
         // The reference leaves `--limit` out of `--host`.
         let resolution = loaded.resolve(name);
@@ -177,15 +181,16 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
             eprintln!("[ERROR]: You must pass a single valid host to --host parameter");
             return Ok(5);
         };
-        if args.yaml {
-            inventory_yaml(&yaml_node(&Value::Object(
-                vars_of(&host.name).into_iter().collect(),
-            )))
+        if toml {
+            match toml_text(&ordered(&host.name)) {
+                Ok(text) => text,
+                Err(code) => return Ok(code),
+            }
         } else {
-            to_json(&loaded.host_dump(&host.name, &vars_of))?
+            host_text(args, &loaded, &host.name, &vars_of)?
         }
     } else {
-        match list_text(args, &loaded, &store, export, &vars_of, &mut out)? {
+        match list_text(args, &loaded, &store, export, &vars_of, &ordered, &mut out)? {
             Ok(text) => text,
             Err(code) => return Ok(code),
         }
@@ -207,6 +212,7 @@ fn list_text(
     store: &VarStore,
     export: bool,
     vars_of: &VarsOf<'_>,
+    ordered: &dyn Fn(&str) -> serde_json::Map<String, Value>,
     out: &mut Renderer,
 ) -> anyhow::Result<Result<String, i32>> {
     let limited;
@@ -226,12 +232,52 @@ fn list_text(
             .into_iter()
             .collect()
     };
+    if args.toml && !args.yaml {
+        let mut groups = |name: &str| {
+            if export {
+                store.listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect())
+            } else {
+                serde_json::Map::new()
+            }
+        };
+        let mut hosts = ordered;
+        return Ok(toml_text(&shown.toml_document(&mut hosts, &mut groups)));
+    }
     Ok(Ok(if args.yaml {
         inventory_yaml(&yaml_list(shown, store, export, vars_of, &group_vars))
     } else {
         let group_vars: &VarsOf<'_> = &group_vars;
         to_json(&shown.dump_with(vars_of, export.then_some(group_vars)))?
     }))
+}
+
+/// What `--host` prints as JSON or YAML.
+fn host_text(
+    args: &InventoryArgs,
+    loaded: &Inventory,
+    host: &str,
+    vars_of: &VarsOf<'_>,
+) -> anyhow::Result<String> {
+    if args.yaml {
+        Ok(inventory_yaml(&yaml_node(&Value::Object(
+            vars_of(host).into_iter().collect(),
+        ))))
+    } else {
+        to_json(&loaded.host_dump(host, vars_of))
+    }
+}
+
+/// A TOML document as text. The reference prints nothing and exits 1 for an empty one, and
+/// exits 250 for a value TOML cannot hold.
+fn toml_text(table: &serde_json::Map<String, Value>) -> Result<String, i32> {
+    match toml_dumps(table) {
+        Ok(text) if text.is_empty() => Err(1),
+        Ok(text) => Ok(text),
+        Err(message) => {
+            eprintln!("[ERROR]: {message}");
+            Err(250)
+        }
+    }
 }
 
 /// The document `--list --yaml` dumps. Without `--export`, a variable that one group, one

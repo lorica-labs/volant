@@ -30,7 +30,7 @@ impl Inventory {
     }
 
     /// Adds a host, or merges `vars` into the one of that name.
-    pub fn add_host(&mut self, name: &str, vars: BTreeMap<String, Value>) {
+    pub fn add_host(&mut self, name: &str, vars: serde_json::Map<String, Value>) {
         match self.hosts.iter_mut().find(|h| h.name == name) {
             Some(host) => {
                 self.unsafe_vars
@@ -217,7 +217,7 @@ impl Inventory {
                         g.name.clone(),
                     )
                 });
-                let mut vars = BTreeMap::new();
+                let mut vars = serde_json::Map::new();
                 for group in groups {
                     vars.extend(group.vars.clone());
                 }

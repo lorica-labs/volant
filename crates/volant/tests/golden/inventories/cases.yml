@@ -112,3 +112,5 @@ graph_nested: {sources: [graph/nested.yml], cli: true}
 graph_cycle: {sources: [graph/cycle.yml]}
 shared: {sources: [shared/inv.yml], cli: true}
 shared_extra: {sources: [shared/inv.yml], cli: true, args: [-e, '{"ex": [5], "top": [8]}']}
+shared_priority: {sources: [shared_priority.yml]}
+toml_values: {sources: [toml_values.yml], no_graph: true}

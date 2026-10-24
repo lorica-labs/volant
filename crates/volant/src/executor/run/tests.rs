@@ -4677,7 +4677,7 @@ async fn a_connect_timeout_reaches_the_connection_as_ssh_s_connecttimeout() {
     {
         let host = crate::inventory::Host {
             name: "h1".to_string(),
-            vars: BTreeMap::from([("ansible_host".to_string(), json!("probe-hostname"))]),
+            vars: Map::from_iter([("ansible_host".to_string(), json!("probe-hostname"))]),
         };
         let defaults = ConnectionDefaults {
             remote_user: None,

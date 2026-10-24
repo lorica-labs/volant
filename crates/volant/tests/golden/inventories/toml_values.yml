@@ -1,0 +1,30 @@
+# Values the TOML dump writes by its own rules: escapes, floats, nested tables, arrays of tables.
+all:
+  children:
+    web:
+      hosts:
+        w1:
+          text: 'say "hi" \ done é 中'
+          ctrl: "a\u0001b\u007fc\nd\te\r"
+          ratio: 1.5
+          small: 0.0001
+          big: 1.0e16
+          count: 7
+          flag: true
+          nested: {k: {deep: [1, [2, 3]]}, "dotted.key": 1, "sp ace": 2}
+          rows: [{a: 1}, {b: [1, 2]}]
+          short_rows: [{a: 1}, {b: "x"}]
+          long_rows: [{t: "xxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"}, {u: 1}]
+          empty_list: []
+          empty_map: {}
+        w2:
+      vars:
+        shared: {port: 80}
+    db:
+      hosts:
+        d1:
+      children:
+        inner:
+          hosts:
+            w2:
+            i1:

@@ -2,7 +2,6 @@
 //! The `script` inventory plugin: an executable run with `--list`, and with `--host` for each
 //! host when it gives no `_meta.hostvars`.
 
-use std::collections::BTreeMap;
 use std::process::Command;
 
 use serde_json::{Map, Value};
@@ -414,7 +413,7 @@ fn group(
             if !hosts.contains(host) {
                 hosts.push(host.clone());
             }
-            into.add_source_host(host, None, BTreeMap::new(), Some(source.path()));
+            into.add_source_host(host, None, Map::new(), Some(source.path()));
             into.add_member(host, name);
         }
     }

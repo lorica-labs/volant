@@ -456,7 +456,7 @@ fn order_arranges_the_hosts(#[case] order: Option<&str>, #[case] want: Result<Ve
         .iter()
         .map(|name| Host {
             name: (*name).to_string(),
-            vars: std::collections::BTreeMap::new(),
+            vars: serde_json::Map::new(),
         })
         .collect();
     let got = order_hosts(&mut hosts, order);

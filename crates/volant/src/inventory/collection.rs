@@ -2,8 +2,6 @@
 //! An inventory plugin of a collection, named by an `auto` file: ansible-core runs it in the
 //! Python helper, which starts only then, and its answer is read here.
 
-use std::collections::BTreeMap;
-
 use serde_json::Value;
 
 use super::{Inventory, ParseCx, PluginError, Source, ini};
@@ -59,7 +57,7 @@ pub(super) fn read(
         return Err(failure(error.as_str().ok_or_else(bad)?.to_string()));
     }
     let origin = Some(source.path());
-    let vars_of = |value: &Value| -> Result<BTreeMap<String, Value>, PluginError> {
+    let vars_of = |value: &Value| -> Result<serde_json::Map<String, Value>, PluginError> {
         let vars = value
             .get("vars")
             .and_then(Value::as_object)

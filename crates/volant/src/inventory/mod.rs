@@ -16,11 +16,13 @@ pub mod ranges;
 mod script;
 mod sources;
 mod toml;
+mod toml_write;
 mod unsafe_text;
 mod yaml;
 
 pub use listed::{GraphItem, VarsOf};
 pub use patterns::Resolution;
+pub use toml_write::dumps as toml_dumps;
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::fmt;
@@ -57,7 +59,7 @@ pub fn plugin_names() -> impl Iterator<Item = &'static str> {
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct Host {
     pub name: String,
-    pub vars: BTreeMap<String, Value>,
+    pub vars: serde_json::Map<String, Value>,
 }
 
 #[derive(Debug, Default, Clone)]
@@ -65,7 +67,7 @@ struct Group {
     name: String,
     hosts: Vec<String>,
     children: Vec<String>,
-    vars: BTreeMap<String, Value>,
+    vars: serde_json::Map<String, Value>,
     /// `ansible_group_priority`, which the reference keeps out of the group's variables. A
     /// group without one ranks at 1.
     priority: Option<i64>,
@@ -153,7 +155,7 @@ impl Inventory {
         &mut self,
         name: &str,
         port: Option<i64>,
-        vars: BTreeMap<String, Value>,
+        vars: serde_json::Map<String, Value>,
         file: Option<&Path>,
     ) -> bool {
         if let Some(host) = self.hosts.iter_mut().find(|h| h.name == name) {
@@ -162,7 +164,7 @@ impl Inventory {
             host.vars.extend(vars);
             return false;
         }
-        let mut all = BTreeMap::new();
+        let mut all = serde_json::Map::new();
         if let Some(port) = port.filter(|p| *p != 0) {
             all.insert("ansible_port".to_string(), Value::from(port));
         }
@@ -205,7 +207,7 @@ impl Inventory {
     pub fn from_groups(groups: &BTreeMap<String, Vec<String>>) -> Self {
         let mut inv = Inventory::default();
         for name in groups.get("all").into_iter().flatten() {
-            inv.add_host(name, BTreeMap::new());
+            inv.add_host(name, serde_json::Map::new());
         }
         for (name, hosts) in groups {
             inv.group_mut(name).hosts.clone_from(hosts);
@@ -371,7 +373,7 @@ impl Inventory {
             .find(|h| h.name == name)
             .cloned()
             .unwrap_or_default();
-        let mut vars = BTreeMap::new();
+        let mut vars = serde_json::Map::new();
         for g in self.sorted_groups_of(name) {
             vars.extend(g.vars.clone());
         }
@@ -383,7 +385,7 @@ impl Inventory {
     }
 
     /// The variables set on the host line itself, before any group is merged in.
-    pub fn host_line_vars(&self, name: &str) -> Option<&BTreeMap<String, Value>> {
+    pub fn host_line_vars(&self, name: &str) -> Option<&serde_json::Map<String, Value>> {
         self.hosts.iter().find(|h| h.name == name).map(|h| &h.vars)
     }
 }
@@ -400,7 +402,7 @@ pub fn is_localhost(name: &str) -> bool {
 pub const LOCALHOST_NAMES: [&str; 3] = ["localhost", "127.0.0.1", "::1"];
 
 fn implicit_localhost(name: &str) -> Host {
-    let mut vars = BTreeMap::new();
+    let mut vars = serde_json::Map::new();
     vars.insert(
         "ansible_connection".to_string(),
         Value::String("local".into()),

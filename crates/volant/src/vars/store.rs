@@ -246,7 +246,7 @@ impl VarStore {
         // playbook did not write (a fact, a registered result): it is data, kept as an untrusted
         // fact of the host and never rendered again. The rest sits on the host's inventory line.
         let (data, line): (Vec<_>, Vec<_>) = vars.iter().partition(|(_, v)| holds_template(v));
-        let line: BTreeMap<String, Value> = line
+        let line: Map<String, Value> = line
             .into_iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();

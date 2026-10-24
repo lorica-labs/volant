@@ -302,6 +302,41 @@ impl VarStore {
         vars
     }
 
+    /// `listed_vars` with its names in the order the reference merges the layers, which the TOML
+    /// dump keeps: the inventory's groups (`group_names`, in their merge order), the
+    /// `group_vars` files, the host's own line, the `host_vars` files, then what is left. A
+    /// name keeps the place of the first layer that sets it.
+    pub fn listed_vars_ordered(&self, host: &str, group_names: &[String]) -> Map<String, Value> {
+        let vars = self.listed_vars(host);
+        let host = self.controller_alias(host).unwrap_or(host);
+        let mut order: Vec<String> = group_names.to_vec();
+        let mut push = |map: Option<&Map<String, Value>>| {
+            order.extend(map.into_iter().flat_map(Map::keys).cloned());
+        };
+        for files in &self.group_files {
+            push(files.get("all"));
+        }
+        for files in &self.group_files {
+            for name in self.group_names.get(host).into_iter().flatten() {
+                push(files.get(name.as_str()));
+            }
+        }
+        push(self.host_line_vars.get(host));
+        for files in &self.host_files {
+            push(files.get(host));
+        }
+        let mut out = Map::new();
+        for name in order {
+            if let Some(value) = vars.get(&name) {
+                out.entry(name).or_insert_with(|| value.clone());
+            }
+        }
+        for (name, value) in vars {
+            out.entry(name).or_insert(value);
+        }
+        out
+    }
+
     /// A group's own variables for `ansible-inventory --graph --vars`: what the inventory sources
     /// wrote for it, then its `group_vars` files, a later source's winning.
     pub fn listed_group_vars(&self, group: &str, own: &Map<String, Value>) -> Map<String, Value> {
@@ -358,6 +393,7 @@ impl VarStore {
             .rposition(|files| has(files.get("all")))
         {
             Some(index) => ListedOrigin::GroupFile(index, "all".to_string()),
+            // No layer sets it: the implicit localhost's own keys, which belong to the host.
             None => ListedOrigin::Host,
         }
     }

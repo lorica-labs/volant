@@ -1,5 +1,7 @@
 // The sidebar labels of the documentation in every language but English, keyed by the English
 // label. A label missing here shows in English.
+import { localeOf } from './locales';
+
 type Labels = Record<string, { fr: string; de: string; es: string; 'zh-cn': string }>;
 
 export const sidebarLabels: Labels = {
@@ -153,7 +155,10 @@ export function translateSidebar<T extends Item>(items: T[]): T[] {
     const labels = item.label ? sidebarLabels[item.label] : undefined;
     return {
       ...item,
-      ...(labels && { translations: labels }),
+      // Starlight looks the translations up by language tag (zh-CN), not by path prefix (zh-cn).
+      ...(labels && {
+        translations: Object.fromEntries(Object.entries(labels).map(([code, label]) => [localeOf(code).lang, label])),
+      }),
       ...(item.items && { items: translateSidebar(item.items) }),
     };
   });

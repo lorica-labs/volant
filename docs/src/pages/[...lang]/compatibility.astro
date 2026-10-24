@@ -179,34 +179,30 @@ const steps = [
     font-size: 0.925rem;
   }
 
-  /* The reference part of the page is printed on paper, as a datasheet. */
-  /* The paper fades in from the dark page and back out to it, so the page never flips from black
-     to white at a hard edge. The ruled lines follow the same fade. */
+  /* The reference part of the page reads as an instrument panel: the same dark ground as the rest
+     of the site, a faint ruled grid and a teal glow, so it stands apart without a light surface. */
   .sheet {
     position: relative;
     isolation: isolate;
-    padding-block: clamp(7rem, 12vw, 10rem);
-    background: linear-gradient(
-      var(--bg) 0,
-      var(--paper) 9rem,
-      var(--paper) calc(100% - 9rem),
-      var(--bg) 100%
-    );
-    color: var(--ink);
+    padding-block: clamp(4.5rem, 9vw, 7rem);
+    border-top: 1px solid var(--line);
+    background: radial-gradient(60% 50% at 50% 0%, color-mix(in srgb, var(--brand) 10%, transparent), transparent 75%);
   }
   .sheet::before {
     content: '';
     position: absolute;
     inset: 0;
     z-index: -1;
-    background: linear-gradient(var(--paper-2) 1px, transparent 1px) 0 0 / 100% 2rem;
-    mask-image: linear-gradient(transparent 0 9rem, #000 12rem, #000 calc(100% - 12rem), transparent calc(100% - 9rem));
+    background:
+      linear-gradient(rgb(255 255 255 / 0.03) 1px, transparent 1px) 0 0 / 100% 2rem,
+      linear-gradient(90deg, rgb(255 255 255 / 0.03) 1px, transparent 1px) 0 0 / 2rem 100%;
+    mask-image: radial-gradient(70% 80% at 50% 40%, #000, transparent);
   }
   .legend {
     display: flex;
     flex-wrap: wrap;
     gap: 0.5rem 1.75rem;
-    color: var(--ink-2);
+    color: var(--fg-2);
     font-size: 0.85rem;
   }
   .legend span {
@@ -220,15 +216,15 @@ const steps = [
     border-radius: 3px;
   }
   .runs {
-    background: var(--ink-brand);
+    background: var(--brand);
   }
   .partial {
-    background: var(--ink-partial);
+    background: var(--state-changed);
   }
   /* What comes later is hatched, so it reads as not there yet without a colour of its own. */
   .later {
-    background: repeating-linear-gradient(135deg, var(--ink-3) 0 2px, transparent 2px 5px);
-    box-shadow: inset 0 0 0 1px var(--ink-3);
+    background: repeating-linear-gradient(135deg, var(--fg-3) 0 2px, transparent 2px 5px);
+    box-shadow: inset 0 0 0 1px var(--fg-4);
   }
   .groups {
     display: grid;
@@ -236,22 +232,15 @@ const steps = [
     gap: 1rem;
     margin-top: 1.5rem;
   }
-  .group {
-    border-color: rgb(18 25 28 / 0.12);
-    background: rgb(18 25 28 / 0.03);
-  }
   .group .core {
     display: grid;
     align-content: start;
     gap: 0.6rem;
     padding: 1.5rem;
-    border-color: rgb(18 25 28 / 0.1);
-    background: #fff;
-    box-shadow: 0 1px 2px rgb(18 25 28 / 0.06);
   }
   .group h2 {
     margin-bottom: 0.5rem;
-    color: var(--ink);
+    color: var(--brand-hi);
     font-family: var(--f-mono);
     font-size: 0.95rem;
     font-weight: 600;
@@ -266,7 +255,7 @@ const steps = [
     font-size: 0.85rem;
   }
   .name {
-    color: var(--ink-2);
+    color: var(--fg-2);
   }
   .bar {
     display: flex;
@@ -283,11 +272,11 @@ const steps = [
   .count {
     display: grid;
     justify-items: end;
-    color: var(--ink);
+    color: var(--fg);
     text-align: end;
   }
   .count em {
-    color: var(--ink-3);
+    color: var(--fg-3);
     font-size: 0.75rem;
     font-style: normal;
   }

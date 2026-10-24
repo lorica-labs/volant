@@ -54,6 +54,13 @@ const t = strings(code).copy;
     color: var(--fg);
     font-size: 0.875rem;
     white-space: nowrap;
+    /* A command too long for the box scrolls without a scrollbar, and fades at its right edge. */
+    scrollbar-width: none;
+    padding-inline-end: 1.5rem;
+    mask-image: linear-gradient(to right, #000 calc(100% - 1.5rem), transparent);
+  }
+  code::-webkit-scrollbar {
+    display: none;
   }
   code span {
     color: var(--brand);

@@ -1,5 +1,5 @@
 ---
-sourceHash: bc8afbe14eea
+sourceHash: 37a3f4cfcd5c
 title: ansible 命令名
 description: Volant 的哪个命令取代 ansible-core 的哪个程序，哪些相同，哪些不同，以及如何保留你的命令行。
 ---
@@ -74,7 +74,7 @@ ansible-playbook -i hosts.ini site.yml
 - 帮助文本是 Volant 自己的，从不与参考实现比较。
 - `--version` 打印 `ansible [core 2.19.12]`（或程序名）和各路径。当 Volant 找不到带 ansible-core 的解释器时，Python、Jinja 和 PyYAML 的行会省略，因为 `--version` 不安装任何东西。见 [`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)。
 - `--version` 中的 `executable location` 是程序被启动时的样子：`volant`，或那个链接。见 [`volant doc`](/zh-cn/docs/reference/cli/doc/#终端退出码和---version)。
-- `ansible-inventory --toml` 暂时还没有，是未知选项。见 [`volant inventory`](/zh-cn/docs/reference/cli/inventory/)。
+- `ansible-inventory --toml` 不需要任何 Python 包（参考实现需要 `tomli-w`），遇到 `null` 值时只输出一行 `[ERROR]`，而不是回溯信息（两者都以 250 退出）。见 [`volant inventory`](/zh-cn/docs/reference/cli/inventory/)。
 - `volant pull` 在输出的第二行显示 `<cache>/volant/pull/ansible-pull`，而 `ansible-pull` 显示它脚本的路径。见 [`volant pull`](/zh-cn/docs/reference/cli/pull/)。
 - 运行时有了 `collections/` 目录之后，`volant config dump` 会把 `COLLECTIONS_PATHS` 显示为由环境变量设置。见 [`volant config`](/zh-cn/docs/reference/cli/config/#collection-路径)。
 - `ansible-vault view` 只在终端上才经过分页器，依次看 `PAGER`、`ANSIBLE_PAGER`、`[defaults] pager`，最后是 `less`。见 [Vault](/zh-cn/docs/variables/vault/)。

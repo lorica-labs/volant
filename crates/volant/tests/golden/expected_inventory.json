@@ -5578,7 +5578,7 @@
       "host": {
         "name": "v1",
         "rc": 0,
-        "stdout": "{\n    \"flag\": true,\n    \"none\": null,\n    \"ratio\": 1.5,\n    \"secret\": {\n        \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\\n3637386233643036363065386662666666383435343030660a\\n\"\n    },\n    \"tpl\": \"{{ inventory_hostname }}-x\",\n    \"uni\": \"café ü\"\n}\n"
+        "stdout": "{\n    \"flag\": true,\n    \"nothing\": null,\n    \"ratio\": 1.5,\n    \"secret\": {\n        \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\\n3637386233643036363065386662666666383435343030660a\\n\"\n    },\n    \"tpl\": \"{{ inventory_hostname }}-x\",\n    \"uni\": \"café ü\"\n}\n"
       },
       "hosts": [
         "v1"
@@ -5588,7 +5588,7 @@
           "hostvars": {
             "v1": {
               "flag": true,
-              "none": null,
+              "nothing": null,
               "ratio": 1.5,
               "secret": {
                 "__ansible_vault": "$ANSIBLE_VAULT;1.1;AES256\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\n3637386233643036363065386662666666383435343030660a\n"
@@ -5610,18 +5610,18 @@
           ]
         }
       },
-      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"v1\": {\n                \"flag\": true,\n                \"none\": null,\n                \"ratio\": 1.5,\n                \"secret\": {\n                    \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\\n3637386233643036363065386662666666383435343030660a\\n\"\n                },\n                \"tpl\": \"{{ inventory_hostname }}-x\",\n                \"uni\": \"café ü\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"v1\"\n        ]\n    }\n}\n",
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"v1\": {\n                \"flag\": true,\n                \"nothing\": null,\n                \"ratio\": 1.5,\n                \"secret\": {\n                    \"__ansible_vault\": \"$ANSIBLE_VAULT;1.1;AES256\\n66643539386365326631373938623365363363623263643666386136633466663534663339303034\\n3637386233643036363065386662666666383435343030660a\\n\"\n                },\n                \"tpl\": \"{{ inventory_hostname }}-x\",\n                \"uni\": \"café ü\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"v1\"\n        ]\n    }\n}\n",
       "needs": [],
       "nosuch": {
         "rc": 5,
-        "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Accepting inventory variable with invalid name 'none'. This feature will be removed from ansible-core version 2.23.\nOrigin: <golden-tmp>/values.yml:7:7\n\n5       tpl: \"{{ inventory_hostname }}-x\"\n6       flag: true\n7       none: null\n        ^ column 7\n\nVariable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.\n\n[WARNING]: Could not match supplied host pattern, ignoring: nosuch\n[ERROR]: You must pass a single valid host to --host parameter\n",
+        "stderr": "[WARNING]: Could not match supplied host pattern, ignoring: nosuch\n[ERROR]: You must pass a single valid host to --host parameter\n",
         "stdout": ""
       },
       "rc": 0,
       "sources": [
         "values.yml"
       ],
-      "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: Accepting inventory variable with invalid name 'none'. This feature will be removed from ansible-core version 2.23.\nOrigin: <golden-tmp>/values.yml:7:7\n\n5       tpl: \"{{ inventory_hostname }}-x\"\n6       flag: true\n7       none: null\n        ^ column 7\n\nVariable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.\n\n"
+      "stderr": ""
     },
     "yaml": {
       "cli_only": false,

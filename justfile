@@ -1649,7 +1649,9 @@ profile play hosts="local" name="":
 
     perf script -i "$out/$name-controller.data" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-controller.svg"
     for h in "${hosts[@]}"; do
-      on "$h" "sudo -n perf script -i $data --comms volant-agent,python3" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-agent-$h.svg"
+      on "$h" "sudo -n perf script -i $data --comms volant-agent,python3" | inferno-collapse-perf | inferno-flamegraph > "$out/$name-agent-$h.svg" || {
+        # A pass shorter than the sampling period leaves nothing to draw.
+        echo "$h: the agent left no samples, so there is no agent flamegraph"; rm -f "$out/$name-agent-$h.svg"; }
     done
     ls -l "$out/$name"*.svg "$out/$name.jsonl"
     exit "$status"

@@ -40,7 +40,7 @@ pub(super) fn verbose_always(result: &TaskResult, censored: bool) -> bool {
 impl Renderer {
     /// What a result line shows of `result`: the internal keys and what the reference's
     /// `TaskResult` and `_dump_results` drop taken off, and a `debug`'s cleaned when `dump` says so.
-    fn shown_body(
+    pub(super) fn shown_body(
         &self,
         result: &TaskResult,
         dump: Dump,
@@ -205,7 +205,25 @@ impl Renderer {
         } else {
             label
         };
-        self.print_diff(outcome, result, censored);
+        // The `oneline` callback has no `v2_on_file_diff`.
+        if !self.oneline {
+            self.print_diff(outcome, result, censored);
+        }
+        // The `tree` callback hears of every result but a skipped one.
+        if self.tree.is_some() && outcome != Outcome::Skipped {
+            let event = if matches!(outcome, Outcome::Ok | Outcome::Changed) {
+                "v2_runner_on_ok"
+            } else {
+                "v2_runner_on_failed"
+            };
+            let body = self.shown_body(result, Dump::No, censored);
+            let pretty = verbose_always(result, censored);
+            self.tree_file(host, event, body, pretty);
+        }
+        if self.oneline {
+            self.oneline_line(host, outcome, result, censored);
+            return;
+        }
         if self.minimal.is_some() {
             self.minimal_line(host, outcome, result, dump, censored);
             return;
@@ -318,6 +336,15 @@ impl Renderer {
     }
 }
 
+/// `result.get('rc', -1)` as `%s` prints it.
+pub(super) fn rc_text(body: &serde_json::Map<String, serde_json::Value>) -> String {
+    match body.get("rc") {
+        None => "-1".to_string(),
+        Some(serde_json::Value::String(s)) => s.clone(),
+        Some(other) => crate::playbook::python_repr(other),
+    }
+}
+
 impl Renderer {
     /// `_dump_results(result, indent=4)`: JSON with sorted keys, or with `result_format = yaml`
     /// a line break and the YAML dump indented by four (`textwrap.indent`), `stdout_lines` and
@@ -364,7 +391,7 @@ impl Renderer {
 
 /// `C.MODULE_NO_JSON` of ansible-core 2.19.12, its short names with their `ansible.builtin.` and
 /// `ansible.legacy.` forms: the actions whose `minimal` line is the command form.
-const MODULE_NO_JSON: [&str; 17] = [
+pub(super) const MODULE_NO_JSON: [&str; 17] = [
     "command",
     "ansible.builtin.command",
     "ansible.legacy.command",
@@ -397,10 +424,7 @@ fn command_text(
         Some(serde_json::Value::String(s)) => s.clone(),
         Some(other) => crate::playbook::python_repr(other),
     };
-    let rc = match body.get("rc") {
-        None => "-1".to_string(),
-        Some(_) => text("rc"),
-    };
+    let rc = rc_text(body);
     format!(
         "{host} | {caption} | rc={rc} >>
 {}{}{}",

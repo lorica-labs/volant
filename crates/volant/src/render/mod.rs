@@ -9,9 +9,11 @@ use anstyle::{AnsiColor, Style};
 use crate::stats::{CustomStats, Stats};
 
 mod error;
+mod oneline;
 mod recap_json;
 mod result;
 mod shorten;
+mod tree;
 
 pub(crate) use error::source_context;
 pub use error::{
@@ -60,6 +62,10 @@ pub struct Renderer {
     minimal: Option<String>,
     /// `result_format = yaml`: a result is dumped as YAML rather than JSON.
     yaml: bool,
+    /// `-o`: the `oneline` callback prints the results, not `minimal`.
+    oneline: bool,
+    /// `-t`: the directory the `tree` callback writes one file per host in.
+    tree: Option<std::path::PathBuf>,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -108,6 +114,8 @@ impl Renderer {
             path_on_failure: false,
             minimal: None,
             yaml: false,
+            oneline: false,
+            tree: None,
         }
     }
 
@@ -131,6 +139,8 @@ impl Renderer {
             path_on_failure: false,
             minimal: None,
             yaml: false,
+            oneline: false,
+            tree: None,
         }
     }
 
@@ -144,6 +154,19 @@ impl Renderer {
     /// the module of the run's one task, which picks the command form or the JSON form of a line.
     pub fn set_minimal(&mut self, action: &str) {
         self.minimal = Some(action.to_string());
+    }
+
+    /// Prints the results as the `oneline` callback does, and the `tree` callback's files into
+    /// `dir`: what `-o` and `-t` ask for. Both go with [`Renderer::set_minimal`].
+    pub fn set_oneline(&mut self, oneline: bool, tree: Option<std::path::PathBuf>) {
+        self.oneline = oneline;
+        self.tree = tree;
+    }
+
+    /// Whether the `oneline` callback prints the results, which shows neither the result notes
+    /// (warnings and deprecations a module raised) nor the `[ERROR]` block of a failure.
+    pub fn is_oneline(&self) -> bool {
+        self.oneline
     }
 
     /// Dumps results as YAML: the callbacks' `result_format = yaml`.

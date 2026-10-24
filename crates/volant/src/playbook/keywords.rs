@@ -140,8 +140,22 @@ pub(crate) fn set_deprecation_warnings(on: bool) {
 /// A `[DEPRECATION WARNING]:` block on stderr, after the line that says how to silence them,
 /// printed once per run; nothing when `deprecation_warnings` is off.
 pub(crate) fn print_deprecation(text: &str) {
+    if print_deprecation_header() {
+        eprintln!("[DEPRECATION WARNING]: {text}\n");
+    }
+}
+
+/// [`print_deprecation`] for a notice of one line, which the reference ends with no blank line.
+pub(crate) fn print_deprecation_line(text: &str) {
+    if print_deprecation_header() {
+        eprintln!("[DEPRECATION WARNING]: {text}");
+    }
+}
+
+/// Whether deprecations show at all; the line that says how to silence them goes out first, once.
+fn print_deprecation_header() -> bool {
     if !DEPRECATION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
-        return;
+        return false;
     }
     static HEADER: std::sync::Once = std::sync::Once::new();
     HEADER.call_once(|| {
@@ -149,7 +163,7 @@ pub(crate) fn print_deprecation(text: &str) {
             "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg."
         );
     });
-    eprintln!("[DEPRECATION WARNING]: {text}\n");
+    true
 }
 
 /// The deprecation the reference prints, on stderr, for a mapping given as an action.

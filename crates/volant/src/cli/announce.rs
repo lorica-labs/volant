@@ -60,12 +60,14 @@ pub(super) fn announce(out: &mut Renderer, adhoc: Option<&PlaybookArgs>) {
 /// The lines before the first playbook: the stdout callback loaded, and the two the reference
 /// sets aside. Its line names the plugin file, which has no counterpart here, so it names the
 /// engine's own callback.
-pub(super) fn announce_callbacks(out: &mut Renderer, adhoc: bool) {
-    // `ansible` loads the `minimal` callback as its stdout one and sets `default` aside.
-    let (stdout, skipped) = if adhoc {
-        ("minimal", ["default", "oneline"])
-    } else {
-        ("default", ["minimal", "oneline"])
+///
+/// `adhoc` is `(one_line, tree)` for `ansible`, which loads `minimal` as its stdout callback, or
+/// `oneline` for `-o`, and `tree` beside it for `-t`.
+pub(super) fn announce_callbacks(out: &mut Renderer, adhoc: Option<(bool, bool)>) {
+    let (stdout, skipped) = match adhoc {
+        Some((true, _)) => ("oneline", ["default", "minimal"]),
+        Some((false, _)) => ("minimal", ["default", "oneline"]),
+        None => ("default", ["minimal", "oneline"]),
     };
     out.verbose(
         4,
@@ -77,6 +79,12 @@ pub(super) fn announce_callbacks(out: &mut Renderer, adhoc: bool) {
         out.verbose(
             2,
             &format!("Skipping callback '{callback}', as we already have a stdout callback."),
+        );
+    }
+    if adhoc.is_some_and(|(_, tree)| tree) {
+        out.verbose(
+            4,
+            "Loading callback plugin tree of type aggregate, v2.0 from the built-in callback",
         );
     }
 }

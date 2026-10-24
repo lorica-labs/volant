@@ -15,7 +15,7 @@ pub use deferred::Deferred;
 pub use fields::Debugger;
 pub use keywords::{BECOME_METHODS, Flag, META, is_meta};
 pub(crate) use keywords::{
-    names_no_action, possibly_all_template, print_deprecation, python_repr,
+    names_no_action, possibly_all_template, print_deprecation, print_deprecation_line, python_repr,
     set_deprecation_warnings, stray_raw_params,
 };
 pub use load::{Rendering, load, load_rendering, parse};

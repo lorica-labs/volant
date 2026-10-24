@@ -1213,6 +1213,11 @@ profile play hosts="local" name="":
     else
       { printf '[targets]\n'; for h in "${hosts[@]}"; do printf '%s ansible_host=%s ansible_python_interpreter=/usr/bin/python3\n' "$h" "$h"; done; } > "$inventory"
     fi
+    # Roles pinned next to the playbook are installed into the directory `bench` uses.
+    requirements="$(dirname "$play")/requirements.yml"
+    if [ -f "$requirements" ] && [ ! -d target/proof-roles ]; then
+      "$(uv tool dir)/ansible-core/bin/ansible-galaxy" role install --force -r "$requirements" -p target/proof-roles
+    fi
     [ ! -d target/proof-roles ] || export ANSIBLE_ROLES_PATH="$PWD/target/proof-roles"
     export VOLANT_PYTHON="${VOLANT_PYTHON:-$(uv tool dir)/ansible-core/bin/python}"
     export VOLANT_AGENT_DIR="$PWD/target/agents"

@@ -33,7 +33,7 @@ pub fn set_perf(on: bool) {
 }
 
 /// What a server starts with: the task's environment, plus `PYTHONPERFSUPPORT=1` when profiling.
-fn child_environment(
+pub(super) fn child_environment(
     environment: &BTreeMap<String, String>,
     perf: bool,
 ) -> BTreeMap<String, String> {

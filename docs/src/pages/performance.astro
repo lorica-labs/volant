@@ -149,18 +149,18 @@ const ms = (v: number) => (v >= 1000 ? `${(v / 1000).toFixed(2)} s` : `${v} ms`)
         </p>
       </div>
       <div class="panel reveal">
-        <pre class="code core"><span class="c"># Your own run, split by step</span>
+        <pre class="code core"><span class="c"># Your own run, split by step</span>{' '}
 volant playbook -i inventory.ini site.yml <span class="k">--profile</span>
 
-<span class="c"># The two workloads of this page</span>
-VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench 3</span>
+<span class="c"># The two workloads of this page</span>{' '}
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench 3</span>{' '}
 VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 <span class="k">just bench-k3s 3</span></pre>
       </div>
     </div>
     <div class="wrap">
       <p class="why reveal">
         These figures describe two playbooks on two hosts. Yours depend on your network, on what your tasks do, on how
-        many of them a native module covers and on how many hosts you drive at once.
+        many of them a native module covers and on how many hosts you drive at once.{' '}
         <a class="text-link" href="/docs/project/performance/">The full measurement</a>
       </p>
     </div>

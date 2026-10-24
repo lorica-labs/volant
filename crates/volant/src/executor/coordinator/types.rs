@@ -2,6 +2,7 @@
 //! The state a batch shares: progress, events, meta effects and the batch's end.
 
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
+use std::sync::Arc;
 
 use volant_protocol::TaskResult;
 
@@ -24,11 +25,15 @@ pub struct Progress {
     /// opens on this list and on no other: the hosts of another batch have no driver running
     /// here - the batch before this one has joined, the batch after it has not started - so a
     /// barrier that counted them would wait for a report nobody is going to send.
-    pub live_hosts: Vec<String>,
+    ///
+    /// Shared rather than owned, as is `play_hosts_left`: every driver the publish wakes clones
+    /// the whole `Progress`, so a list of a thousand names owned here was copied a thousand times
+    /// per report, measured on a thousand local hosts.
+    pub live_hosts: Arc<[String]>,
     /// Hosts of the **whole play** that have not failed, the batches still to come included.
     /// This is what `ansible_play_hosts` reports, and it is read for that and for nothing else:
     /// no barrier, no splice and no frontier may open on it.
-    pub play_hosts_left: Vec<String>,
+    pub play_hosts_left: Arc<[String]>,
     /// The last flush point the coordinator has spliced the handler steps in behind. A driver
     /// that has reported a flush point waits for this to reach it before it reads the step list
     /// again: until then the list still ends that flush where the compilation ended it, and the

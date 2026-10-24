@@ -126,18 +126,17 @@ impl Coordinator<'_> {
     /// caller borrows mutably elsewhere in the same scope, and the second is a list that grows
     /// under the caller, read again at each call.
     pub(super) fn publish(&mut self, lost: &HashSet<String>, steps: &[Step]) {
-        let live_hosts: Vec<String> = self
-            .batch_hosts
-            .iter()
-            .filter(|h| !lost.contains(*h) && !self.removed.contains(*h))
-            .cloned()
-            .collect();
-        let play_hosts_left: Vec<String> = self
-            .all_hosts
-            .iter()
-            .filter(|h| !lost.contains(*h) && !self.removed.contains(*h))
-            .cloned()
-            .collect();
+        let staying = |h: &&String| !lost.contains(*h) && !self.removed.contains(*h);
+        let (live_hosts, play_hosts_left) = {
+            let current = self.tx.borrow();
+            (
+                shared(&current.live_hosts, self.batch_hosts.iter().filter(staying)),
+                shared(
+                    &current.play_hosts_left,
+                    self.all_hosts.iter().filter(staying),
+                ),
+            )
+        };
         // `max_fail_percentage`: once the step a host failed at is finished on every host still
         // live, the batch is lost if more of it failed than the limit allows - strictly more, so
         // one failure in four is within a limit of 25. Decided here, in the publish that would
@@ -156,7 +155,11 @@ impl Coordinator<'_> {
                 self.aborted_at = Some(step);
             }
         }
-        let live_hosts = if self.aborted { Vec::new() } else { live_hosts };
+        let live_hosts = if self.aborted {
+            Arc::default()
+        } else {
+            live_hosts
+        };
         // `None` sorts below every `Some`, so a live host that has reported nothing yet holds the
         // minimum at `None` and no barrier opens on it.
         let completed_through = live_hosts
@@ -210,7 +213,7 @@ impl Coordinator<'_> {
         {
             self.elected.insert(at, runner.clone());
         }
-        self.tx.send_replace(Progress {
+        let next = Progress {
             completed_through,
             live_hosts,
             play_hosts_left,
@@ -221,6 +224,17 @@ impl Coordinator<'_> {
             aborted: self.aborted,
             ending: self.ending.clone(),
             dismissed: self.dismissed.clone(),
+        };
+        // Sent only when it says something new. Every waiting driver wakes on a send and reads
+        // nothing but this value, so a report that moved no barrier, list or verdict - most of
+        // them, one per host per step - only cost each of them a wake and a copy: measured, that
+        // made a thousand local hosts seven times slower per task than a hundred.
+        self.tx.send_if_modified(|current| {
+            let modified = *current != next;
+            if modified {
+                *current = next;
+            }
+            modified
         });
     }
 }
@@ -464,5 +478,18 @@ impl<'a> Rendering<'a> {
         let settled = settled.clone();
         self.steps.send_replace(Arc::new(list));
         Some((settled, runner))
+    }
+}
+
+/// `hosts` as a shared list: the one `current` already holds when the names are the same, so an
+/// unchanged list costs a comparison and no copy.
+fn shared<'a>(
+    current: &Arc<[String]>,
+    hosts: impl Iterator<Item = &'a String> + Clone,
+) -> Arc<[String]> {
+    if current.iter().eq(hosts.clone()) {
+        Arc::clone(current)
+    } else {
+        hosts.cloned().collect()
     }
 }

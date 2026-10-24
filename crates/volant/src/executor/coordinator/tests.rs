@@ -49,7 +49,7 @@ fn progress_follows_the_slowest_live_host_and_forgets_the_others() {
 
     co.publish(&lost, &[]);
     assert_eq!(rx.borrow().completed_through, None, "nobody has reported");
-    assert_eq!(rx.borrow().live_hosts, hosts);
+    assert_eq!(*rx.borrow().live_hosts, *hosts);
 
     co.frontier.insert("beta".to_string(), 3);
     co.publish(&lost, &[]);
@@ -70,7 +70,7 @@ fn progress_follows_the_slowest_live_host_and_forgets_the_others() {
         Some(3),
         "a host out of the play no longer holds the barrier"
     );
-    assert_eq!(rx.borrow().live_hosts, vec!["beta".to_string()]);
+    assert_eq!(*rx.borrow().live_hosts, ["beta".to_string()]);
 
     lost.insert("beta".to_string());
     co.publish(&lost, &[]);
@@ -118,8 +118,8 @@ fn run_once_is_decided_once_and_survives_the_runner_leaving() {
     co.publish(&lost, &steps);
     let p = rx.borrow().clone();
     assert_eq!(
-        p.live_hosts,
-        vec!["h2".to_string()],
+        *p.live_hosts,
+        ["h2".to_string()],
         "the list a driver electing for itself would have read"
     );
     assert_eq!(

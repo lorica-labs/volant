@@ -101,7 +101,7 @@ impl Object for TaintSink {}
 #[derive(Clone, Copy)]
 pub struct Vars<'a> {
     pub map: &'a Map<String, Value>,
-    pub hostvars: Option<&'a Arc<Map<String, Value>>>,
+    pub hostvars: Option<&'a Arc<crate::vars::HostvarsMap>>,
     /// The values the whole inventory shares — `groups` and the play's host lists — read out of
     /// here rather than copied into every host's map for every task. Consulted *before* `map`,
     /// because these used to be written into it last and last is what wins. A name written into
@@ -179,7 +179,7 @@ impl Memo {
 pub(super) struct Context {
     pub(super) vars: Map<String, Value>,
     pub(super) base: Option<Arc<Map<String, Value>>>,
-    pub(super) hostvars: Option<Arc<Map<String, Value>>>,
+    pub(super) hostvars: Option<Arc<crate::vars::HostvarsMap>>,
     pub(super) shared: Option<Arc<Map<String, Value>>>,
     pub(super) facts: Option<Arc<Map<String, Value>>>,
     pub(super) untrusted: BTreeSet<String>,

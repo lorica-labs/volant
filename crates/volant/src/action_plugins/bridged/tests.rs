@@ -395,7 +395,7 @@ fn another_host_s_variables_say_whether_they_render(#[case] host: &str, #[case] 
     let (_, asks) = channel();
     let (replies, _) = channel();
     let entry = json!({"v": "{{ w }}"});
-    let hostvars = ["h2", "h3", "h4"].map(|h| (h.to_string(), entry.clone()));
+    let hostvars = ["h2", "h3", "h4"].map(|h| (h.to_string(), Arc::new(entry.clone())));
     let mut plugin = Bridged {
         name: "probe",
         modules: &[],

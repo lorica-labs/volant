@@ -6,7 +6,7 @@ use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
-use super::{Scope, VarStore};
+use super::{HostvarsMap, Scope, VarStore};
 use crate::inventory::{LOCALHOST_NAMES, is_localhost};
 
 impl VarStore {
@@ -23,7 +23,7 @@ impl VarStore {
     /// that one. The map is changed in place when nobody else holds it; a render still holding
     /// the previous map keeps it whole, which is what it saw when it took it, and the store
     /// then carries on with a copy.
-    pub fn hostvars_shared(&mut self, host: &str) -> Arc<Map<String, Value>> {
+    pub fn hostvars_shared(&mut self, host: &str) -> Arc<HostvarsMap> {
         // The reference keeps one implicit controller host, named after the first spelling that
         // asked for it, and answers the other two spellings with that same host.
         if self.implicit_controller.is_none() && self.is_implicit_localhost(host) {
@@ -38,7 +38,7 @@ impl VarStore {
             return Arc::clone(completed);
         }
         let mut map = (*base).clone();
-        map.insert(host.to_string(), self.view_value(host));
+        map.insert(host.to_string(), Arc::new(self.view_value(host)));
         let completed = Arc::new(map);
         self.hostvars_with
             .insert(host.to_string(), Arc::clone(&completed));
@@ -47,12 +47,12 @@ impl VarStore {
 
     /// `hostvars_shared` without a host to complete it for: the inventory's own hosts and the
     /// three spellings of the controller.
-    pub(super) fn hostvars_base(&mut self) -> Arc<Map<String, Value>> {
+    pub(super) fn hostvars_base(&mut self) -> Arc<HostvarsMap> {
         let base = if let Some(mut base) = self.hostvars.take() {
             let stale = std::mem::take(&mut self.stale);
             for name in &stale {
                 if base.contains_key(name) && self.controller_alias(name).is_none() {
-                    let view = self.view_value(name);
+                    let view = Arc::new(self.view_value(name));
                     Arc::make_mut(&mut base).insert(name.clone(), view);
                 }
             }
@@ -65,9 +65,9 @@ impl VarStore {
         } else {
             self.stale.clear();
             let names = self.groups["all"].clone();
-            let mut map = Map::new();
+            let mut map = HostvarsMap::new();
             for name in names {
-                let view = self.view_value(&name);
+                let view = Arc::new(self.view_value(&name));
                 map.insert(name, view);
             }
             self.add_controller_views(&mut map);
@@ -82,7 +82,7 @@ impl VarStore {
     /// them or not. A spelling stands for the first host of the inventory that has one of the
     /// three names, and for the one implicit host when there is none. None of them is in
     /// `groups`: `Hostvars` leaves them out of an iteration.
-    fn add_controller_views(&self, map: &mut Map<String, Value>) {
+    fn add_controller_views(&self, map: &mut HostvarsMap) {
         let implicit = self.implicit_controller.as_deref().unwrap_or("localhost");
         let mut implicit_view = None;
         for spelling in LOCALHOST_NAMES {
@@ -92,7 +92,7 @@ impl VarStore {
             let view = match self.controller_alias(spelling) {
                 Some(alias) => map.get(alias).cloned().unwrap_or_default(),
                 None => implicit_view
-                    .get_or_insert_with(|| Value::Object(self.host_view(implicit)))
+                    .get_or_insert_with(|| Arc::new(Value::Object(self.host_view(implicit))))
                     .clone(),
             };
             map.insert(spelling.to_string(), view);

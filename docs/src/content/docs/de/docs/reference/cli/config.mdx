@@ -1,5 +1,5 @@
 ---
-sourceHash: 925f05333589
+sourceHash: 93dba225fe9c
 title: volant config
 description: Zeigt die Konfiguration an, listet, validiert und initialisiert sie mit ansible-config, gestartet aus der Python-Runtime von Volant.
 ---
@@ -13,6 +13,10 @@ volant config [ARGS...]
 Jedes Argument geht unverändert an `ansible-config`, auch `-h` und `--version`. Zum Beispiel `volant config dump --only-changed`, `volant config list`, `volant config view`, `volant config validate -c ansible.cfg` und `volant config init`.
 
 Interpreter, Umgebung, Terminal, Exit-Code und `--version` funktionieren wie bei [`volant doc`](/de/docs/reference/cli/doc/). `ansible-config` findet die `ansible.cfg` selbst, nach den üblichen Regeln, es muss also nichts übergeben werden.
+
+## Der Collections-Pfad
+
+Sobald die Runtime ein Verzeichnis `collections/` hat, gibt Volant dem Werkzeug ein `ANSIBLE_COLLECTIONS_PATH`, das damit endet. `volant config dump` zeigt daher `COLLECTIONS_PATHS` als von der Umgebung gesetzt (`env: ANSIBLE_COLLECTIONS_PATH`), auch wenn der Wert aus `collections_path` in der `ansible.cfg` stammt. Ein direkt gestartetes `ansible-config` würde das nicht zeigen.
 
 ## Der Abschnitt `[volant]`
 

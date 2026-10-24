@@ -1,5 +1,5 @@
 ---
-sourceHash: 925f05333589
+sourceHash: 93dba225fe9c
 title: volant config
 description: 用 ansible-config 显示、列出、验证和初始化配置，它在 Volant 的 Python 运行时中运行。
 ---
@@ -13,6 +13,10 @@ volant config [ARGS...]
 每个参数都原样交给 `ansible-config`，包括 `-h` 和 `--version`。例如 `volant config dump --only-changed`、`volant config list`、`volant config view`、`volant config validate -c ansible.cfg` 和 `volant config init`。
 
 解释器、环境变量、终端、退出码和 `--version` 的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。`ansible-config` 会按通常的规则自己找到 `ansible.cfg`，所以不需要传任何东西。
+
+## collection 路径
+
+只要运行时有 `collections/` 目录，Volant 就会给工具一个以它结尾的 `ANSIBLE_COLLECTIONS_PATH`，所以 `volant config dump` 会把 `COLLECTIONS_PATHS` 显示为由环境变量设置（`env: ANSIBLE_COLLECTIONS_PATH`），即使该值来自 `ansible.cfg` 中的 `collections_path`。直接运行的 `ansible-config` 不会显示这一点。
 
 ## `[volant]` 小节
 

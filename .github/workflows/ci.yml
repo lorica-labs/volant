@@ -69,24 +69,29 @@ jobs:
       - uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # 1.7.12
       - run: zizmor .github/workflows
 
+  # The steps are skipped, not the job: a skipped matrix job reports as `test`, never as
+  # `test (ubuntu-latest)` or `test (macos-latest)`, the names the required checks wait for.
   test:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+      - if: needs.changes.outputs.code == 'true'
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
           persist-credentials: false
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
+      - if: needs.changes.outputs.code == 'true'
+        uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - if: needs.changes.outputs.code == 'true'
+        uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
           tool: nextest
       # Includes `reference.rs`: the template, inventory and scenario goldens, which need no host.
-      - run: cargo nextest run --workspace --no-tests=fail
+      - if: needs.changes.outputs.code == 'true'
+        run: cargo nextest run --workspace --no-tests=fail
 
   # A refactor or perf pull request changes no behaviour: no golden or snapshot moves, and the
   # list of tests is the one the merge base has, so a test is neither dropped nor renamed.

@@ -1,18 +1,18 @@
 ---
 sourceHash: db3c71c9f89f
 title: volant inventory
-description: 以 JSON 或 YAML 打印 inventory，与 ansible-inventory 一样。
+description: 以 JSON、YAML 或 TOML 打印 inventory，与 ansible-inventory 一样。
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant inventory` 以 JSON 或 YAML 打印 inventory，与 `ansible-inventory` 一样。以 `ansible-inventory` 的名字启动时（见 [shims 命令](/zh-cn/docs/reference/cli/shims/)），行为相同。
+`volant inventory` 以 JSON、YAML 或 TOML 打印 inventory，与 `ansible-inventory` 一样。以 `ansible-inventory` 的名字启动时（见 [shims 命令](/zh-cn/docs/reference/cli/shims/)），行为相同。
 
 ```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y] [--export] [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y | --toml] [--export] [--output FILE] [-v]
 ```
 
-`--list`、`--host` 和 `--graph` 必须恰好给出一个。`--toml` 暂时还没有，是未知选项。
+`--list`、`--host` 和 `--graph` 必须恰好给出一个。
 
 <Option name="--list" arg="">
   打印每台主机及其变量（已合并 `group_vars` 和 `host_vars` 文件以及所属组的变量），然后是各个组及其 `hosts` 和 `children`。键按字母顺序排序，缩进为四个空格，非 ASCII 文本按原样写出。属于数据的字符串打印为 `{"__ansible_unsafe": "..."}`，`!vault` 值打印为 `{"__ansible_vault": "..."}`；不会解密任何内容。
@@ -51,6 +51,12 @@ volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUB
   ```
 </Option>
 
+<Option name="--toml" arg="">
+  把 `--list` 和 `--host` 以 TOML 打印，布局与 `ansible-inventory` 借助 `tomli-w` 包打印的一致；Volant 为此不需要任何包。`--list` 为每个有内容可显示的组提供一张表：`[group]`，其中 `children` 是名字列表；以及带有主机变量的 `[group.hosts.host]`。没有 `all` 表，只有主机的组也没有 `[group]` 行。变量不排序：它们按参考实现合并的顺序出现，先是组的变量，最后是主机自己的。主机的变量写在遍历第一次到达它的位置，所以属于多个组的主机在其他组中是一张空表。数组每个元素占一行，带结尾逗号和四个空格的缩进。`--host` 把变量打印成一个平铺的文档。两者同时给出时 `--yaml` 优先，`--graph` 忽略 `--toml`。
+
+  没有任何内容的文档什么也不打印，并以 1 退出，与参考实现一致。`null` 无法写成 TOML：命令会打印 `[ERROR]: Object of type 'NoneType' is not TOML serializable` 并以 250 退出。参考实现也以 250 退出，并带有 Python 回溯，Volant 不复制它。
+</Option>
+
 <Option name="--export" arg="">
   让每个变量保留在它被设置的地方，而不是把组变量合并进每台主机。`--list` 给每个组一个 `vars` 条目，包含它自己的变量和它的 `group_vars` 文件。每台主机只保留它的 inventory 行和 `host_vars` 文件所设置的内容；额外变量被省略。与 `--yaml` 一起使用时不共用任何值，所以不会出现锚点。与 `--host` 一起使用时，只打印该主机自己的变量。`ansible.cfg` 的 `[inventory]` 小节中的 `export = true`，或 `ANSIBLE_INVENTORY_EXPORT`，会默认开启它。与 `--graph --vars` 一起使用时，主机的行只显示它自己的变量。
 </Option>
@@ -64,7 +70,7 @@ volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUB
 </Option>
 
 <Option name="--output" arg="FILE">
-  把文档写入 `FILE`，不打印任何内容。文件内容与标准输出相同。JSON 文档末尾没有换行；YAML 文档保留它的最后一个换行。
+  把文档写入 `FILE`，不打印任何内容。文件内容与标准输出相同。JSON 文档末尾没有换行；YAML 或 TOML 文档保留它的最后一个换行。
 </Option>
 
 `-i`、`-v` 和 vault 选项的用法与 `volant playbook` 相同。没有选择动作时，命令打印 `No action selected, at least one of --host, --graph or --list needs to be specified.`；给出两个动作时打印 `Conflicting options used, only one of --host, --graph or --list can be used at the same time.`；两者都以退出码 5 结束。

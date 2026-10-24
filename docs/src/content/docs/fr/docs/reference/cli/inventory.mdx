@@ -1,18 +1,18 @@
 ---
 sourceHash: db3c71c9f89f
 title: volant inventory
-description: Affiche un inventaire en JSON ou en YAML, comme le fait ansible-inventory.
+description: Affiche un inventaire en JSON, en YAML ou en TOML, comme le fait ansible-inventory.
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant inventory` affiche un inventaire en JSON ou en YAML, comme le fait `ansible-inventory`. Lancée sous le nom `ansible-inventory` (voir [la commande shims](/fr/docs/reference/cli/shims/)), elle se comporte de la même façon.
+`volant inventory` affiche un inventaire en JSON, en YAML ou en TOML, comme le fait `ansible-inventory`. Lancée sous le nom `ansible-inventory` (voir [la commande shims](/fr/docs/reference/cli/shims/)), elle se comporte de la même façon.
 
 ```
-volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y] [--export] [--output FILE] [-v]
+volant inventory (--list | --host HOST | --graph [GROUP]) [-i SOURCE]... [-l SUBSET] [-e VARS]... [--vars] [-y | --toml] [--export] [--output FILE] [-v]
 ```
 
-Exactement une des options `--list`, `--host` et `--graph` est requise. `--toml` n'existe pas encore et est une option inconnue.
+Exactement une des options `--list`, `--host` et `--graph` est requise.
 
 <Option name="--list" arg="">
   Affiche chaque hôte avec ses variables, y compris celles des fichiers `group_vars` et `host_vars` et de ses groupes, puis les groupes avec leurs `hosts` et `children`. Les clés sont triées, l'indentation est de quatre espaces et le texte non ASCII est écrit tel quel. Une chaîne qui est une donnée s'affiche `{"__ansible_unsafe": "..."}` et une valeur `!vault` `{"__ansible_vault": "..."}` ; rien n'est déchiffré.
@@ -51,6 +51,12 @@ Exactement une des options `--list`, `--host` et `--graph` est requise. `--toml`
   ```
 </Option>
 
+<Option name="--toml" arg="">
+  Affiche `--list` et `--host` en TOML, dans la disposition qu'`ansible-inventory` affiche avec le paquet `tomli-w` ; Volant n'a besoin d'aucun paquet pour cela. `--list` a une table par groupe qui a quelque chose à montrer : `[group]` avec `children` sous forme de noms, et `[group.hosts.host]` avec les variables de l'hôte. Il n'y a pas de table `all`, et un groupe qui n'a que des hôtes n'a pas de ligne `[group]`. Les variables ne sont pas triées : elles viennent dans l'ordre où la référence les fusionne, celles des groupes d'abord et celles de l'hôte en dernier. Les variables d'un hôte sont écrites là où le parcours l'atteint la première fois, si bien qu'un hôte qui est dans plusieurs groupes a une table vide dans les autres. Les tableaux sont écrits un élément par ligne, avec une virgule finale et une indentation de quatre espaces. `--host` affiche les variables comme un document plat. `--yaml` l'emporte quand les deux sont donnés, et `--graph` ignore `--toml`.
+
+  Un document vide n'affiche rien et sort avec 1, comme le fait la référence. Un `null` ne peut pas être écrit en TOML : la commande affiche `[ERROR]: Object of type 'NoneType' is not TOML serializable` et sort avec 250. La référence sort aussi avec 250, avec une trace Python, que Volant ne copie pas.
+</Option>
+
 <Option name="--export" arg="">
   Garde chaque variable là où elle est définie au lieu de fondre les variables de groupe dans chaque hôte. `--list` donne à chaque groupe une entrée `vars` avec ses propres variables et ses fichiers `group_vars`. Chaque hôte ne garde que ce que fixent sa ligne d'inventaire et ses fichiers `host_vars` ; les variables supplémentaires sont omises. Avec `--yaml`, aucune valeur n'est partagée, donc aucune ancre n'apparaît. Avec `--host`, seules les variables propres à cet hôte sont affichées. `export = true` dans la section `[inventory]` d'`ansible.cfg`, ou `ANSIBLE_INVENTORY_EXPORT`, l'active par défaut. Avec `--graph --vars`, les lignes d'un hôte ne montrent que ses propres variables.
 </Option>
@@ -64,7 +70,7 @@ Exactement une des options `--list`, `--host` et `--graph` est requise. `--toml`
 </Option>
 
 <Option name="--output" arg="FILE">
-  Écrit le document dans `FILE` et n'affiche rien. Le fichier contient ce que la sortie standard aurait contenu. Un document JSON n'a pas de saut de ligne final ; un document YAML garde le sien.
+  Écrit le document dans `FILE` et n'affiche rien. Le fichier contient ce que la sortie standard aurait contenu. Un document JSON n'a pas de saut de ligne final ; un document YAML ou TOML garde le sien.
 </Option>
 
 `-i`, `-v` et les options vault fonctionnent comme pour `volant playbook`. Sans action choisie, la commande affiche `No action selected, at least one of --host, --graph or --list needs to be specified.`, et avec deux actions elle affiche `Conflicting options used, only one of --host, --graph or --list can be used at the same time.` ; les deux sortent avec le code 5.

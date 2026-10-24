@@ -1,5 +1,5 @@
 ---
-sourceHash: e9d95d95a105
+sourceHash: c35040af6ced
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -13,7 +13,7 @@ volant adhoc [OPTIONS] <PATTERN>
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shims <install|remove>
-volant vault <encrypt|decrypt|view|create|edit|rekey>
+volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
@@ -21,7 +21,7 @@ Cada uno de los demás comandos tiene su propia página: [`volant adhoc`](/es/do
 
 `volant playbook` acepta las mismas opciones que `ansible-playbook`, en las que existen. `volant-playbook` es el mismo programa con un nombre que se parece al que conoces. Los playbooks que se pasan juntos se ejecutan en orden, y cada uno imprime su propio recap.
 
-En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook` o `ansible-vault`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook` o `volant vault`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
+En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook`, `ansible-vault` o `ansible-inventory`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook`, `volant vault` o `volant inventory`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
 
 Cuando una opción tiene una clave de `ansible.cfg` o una variable de entorno, la entrada la nombra. La opción gana a ambas; [Configuración](/es/docs/reference/configuration/) explica el orden.
 

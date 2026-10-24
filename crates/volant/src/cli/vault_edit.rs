@@ -22,22 +22,45 @@ pub(super) fn setting(envs: &[&str], key: &str) -> Option<String> {
 
 /// The controller's temporary directory: `ANSIBLE_LOCAL_TEMP`, `local_tmp`, else `tmp` under
 /// `ANSIBLE_HOME` or `~/.ansible`.
-fn local_tmp() -> PathBuf {
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .unwrap_or_default();
+fn local_tmp() -> Result<PathBuf, Failure> {
+    let home = || {
+        home_dir().ok_or_else(|| {
+            fail("Unable to find the home directory for the temporary files: HOME is not set")
+        })
+    };
     let chosen = setting(&["ANSIBLE_LOCAL_TEMP"], "local_tmp").or_else(|| {
         std::env::var("ANSIBLE_HOME")
             .ok()
             .map(|h| format!("{h}/tmp"))
     });
-    match chosen {
+    Ok(match chosen {
         Some(path) => match path.strip_prefix("~/") {
-            Some(rest) => home.join(rest),
+            Some(rest) => home()?.join(rest),
             None => PathBuf::from(path),
         },
-        None => home.join(".ansible/tmp"),
+        None => home()?.join(".ansible/tmp"),
+    })
+}
+
+/// `HOME`, else the home directory of the user's account, as Python's `expanduser` has it.
+fn home_dir() -> Option<PathBuf> {
+    if let Some(home) = std::env::var_os("HOME").filter(|h| !h.is_empty()) {
+        return Some(PathBuf::from(home));
     }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        // SAFETY: `getpwuid` returns null or a record that stays valid until the next call; the
+        // directory is copied out at once.
+        unsafe {
+            let entry = libc::getpwuid(libc::getuid());
+            if !entry.is_null() && !(*entry).pw_dir.is_null() {
+                let dir = std::ffi::CStr::from_ptr((*entry).pw_dir);
+                return Some(PathBuf::from(std::ffi::OsStr::from_bytes(dir.to_bytes())));
+            }
+        }
+    }
+    None
 }
 
 /// Zeros over a file, so the plaintext is not left in the blocks the removal frees.
@@ -60,7 +83,7 @@ struct Scratch {
 
 impl Scratch {
     fn new(suffix: &str, content: &[u8]) -> Result<Self, Failure> {
-        let base = local_tmp();
+        let base = local_tmp()?;
         let made = (|| {
             #[cfg(unix)]
             {
@@ -105,10 +128,59 @@ extern "C" fn note_signal(signal: libc::c_int) {
     CAUGHT.store(signal, std::sync::atomic::Ordering::SeqCst);
 }
 
-/// Runs the editor on `path` and waits. Ctrl-C belongs to the editor; SIGTERM and SIGHUP end it
-/// and return, so the caller's cleanup runs. The editor's exit status is not looked at, as in
-/// the reference.
-fn run_editor(path: &Path) -> Result<(), Failure> {
+#[cfg(unix)]
+const WATCHED: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
+
+/// The handlers in place from before the plaintext copy exists until the file is written: Ctrl-C
+/// belongs to the editor, SIGTERM and SIGHUP are noted and acted on at the next check, so the
+/// copy is removed by the code that made it. The old handlers come back on drop.
+struct Signals(#[cfg(unix)] [libc::sighandler_t; 3]);
+
+impl Signals {
+    #[cfg(unix)]
+    fn install() -> Self {
+        CAUGHT.store(0, std::sync::atomic::Ordering::SeqCst);
+        let note = note_signal as *const () as libc::sighandler_t;
+        let handlers = [libc::SIG_IGN, note, note];
+        // SAFETY: plain handler changes; `note_signal` only stores to an atomic.
+        let old = std::array::from_fn(|i| unsafe { libc::signal(WATCHED[i], handlers[i]) });
+        Self(old)
+    }
+
+    #[cfg(not(unix))]
+    fn install() -> Self {
+        Self()
+    }
+
+    /// An error ending the command when SIGTERM or SIGHUP has arrived: 128 plus the signal.
+    fn check(&self) -> Result<(), Failure> {
+        #[cfg(unix)]
+        {
+            let signal = CAUGHT.load(std::sync::atomic::Ordering::SeqCst);
+            if signal != 0 {
+                return Err(Failure {
+                    message: format!("Interrupted by signal {signal}"),
+                    code: 128 + signal,
+                });
+            }
+        }
+        Ok(())
+    }
+}
+
+#[cfg(unix)]
+impl Drop for Signals {
+    fn drop(&mut self) {
+        for (signal, old) in WATCHED.iter().zip(self.0) {
+            // SAFETY: puts back what `install` replaced.
+            unsafe { libc::signal(*signal, old) };
+        }
+    }
+}
+
+/// Runs the editor on `path` and waits. A signal noted while it runs stops it. The editor's exit
+/// status is not looked at, as in the reference.
+fn run_editor(path: &Path, signals: &Signals) -> Result<(), Failure> {
     let editor = setting(&["ANSIBLE_EDITOR", "EDITOR"], "editor").unwrap_or_else(|| "vi".into());
     let mut argv = shlex::split(&editor)
         .ok_or_else(|| fail(format!("No closing quotation in the editor: {editor}")))?;
@@ -128,8 +200,6 @@ fn run_editor(path: &Path) -> Result<(), Failure> {
             });
         }
     }
-    #[cfg(unix)]
-    let _signals = Signals::install();
     let mut child = command.spawn().map_err(|e| {
         fail(format!(
             "Unable to execute the command \"{}\": {}",
@@ -138,51 +208,17 @@ fn run_editor(path: &Path) -> Result<(), Failure> {
         ))
     })?;
     loop {
-        if !matches!(child.try_wait(), Ok(None)) {
-            return Ok(());
+        // The signal first: one sent to the whole process group ends the editor too, and that is
+        // a request to stop, not an editor that finished.
+        if let Err(stop) = signals.check() {
+            let _ = child.kill();
+            let _ = child.wait();
+            return Err(stop);
         }
-        #[cfg(unix)]
-        {
-            let signal = CAUGHT.load(std::sync::atomic::Ordering::SeqCst);
-            if signal != 0 {
-                let _ = child.kill();
-                let _ = child.wait();
-                return Err(Failure {
-                    message: format!("Interrupted by signal {signal}"),
-                    code: 128 + signal,
-                });
-            }
+        if !matches!(child.try_wait(), Ok(None)) {
+            return signals.check();
         }
         std::thread::sleep(std::time::Duration::from_millis(20));
-    }
-}
-
-#[cfg(unix)]
-const WATCHED: [libc::c_int; 3] = [libc::SIGINT, libc::SIGTERM, libc::SIGHUP];
-
-/// The handlers in place while the editor runs, and the old ones back afterwards.
-#[cfg(unix)]
-struct Signals([libc::sighandler_t; 3]);
-
-#[cfg(unix)]
-impl Signals {
-    fn install() -> Self {
-        CAUGHT.store(0, std::sync::atomic::Ordering::SeqCst);
-        let note = note_signal as *const () as libc::sighandler_t;
-        let handlers = [libc::SIG_IGN, note, note];
-        // SAFETY: plain handler changes; `note_signal` only stores to an atomic.
-        let old = std::array::from_fn(|i| unsafe { libc::signal(WATCHED[i], handlers[i]) });
-        Self(old)
-    }
-}
-
-#[cfg(unix)]
-impl Drop for Signals {
-    fn drop(&mut self) {
-        for (signal, old) in WATCHED.iter().zip(self.0) {
-            // SAFETY: puts back what `install` replaced.
-            unsafe { libc::signal(*signal, old) };
-        }
     }
 }
 
@@ -213,9 +249,14 @@ fn edit_helper(
     let suffix = Path::new(&realpath(path))
         .extension()
         .map_or_else(String::new, |e| format!(".{}", e.to_string_lossy()));
+    // Before the copy exists and until the file is written, so no signal finds plaintext on disk
+    // with the default action in place.
+    let signals = Signals::install();
     let scratch = Scratch::new(&suffix, existing.unwrap_or_default())?;
-    run_editor(scratch.file.path())?;
+    signals.check()?;
+    run_editor(scratch.file.path(), &signals)?;
     let edited = read_data(&scratch.file.path().to_string_lossy())?;
+    signals.check()?;
     if existing == Some(&edited[..]) {
         return Ok(());
     }
@@ -223,11 +264,12 @@ fn edit_helper(
     let before = std::fs::metadata(path)
         .ok()
         .filter(std::fs::Metadata::is_file);
+    signals.check()?;
     write_data(text.as_bytes(), path, false)?;
     if let Some(before) = before {
         restore(path, &before);
     }
-    Ok(())
+    signals.check()
 }
 
 /// `create`: one new file, edited, then encrypted.
@@ -256,6 +298,9 @@ pub(super) fn create(
     }
     if Path::new(file).is_file() {
         return Err(fail(format!("{file} exists, please use 'edit' instead")));
+    }
+    if Path::new(file).is_dir() {
+        return Err(fail(format!("{file} is a directory")));
     }
     let path = vault::normalize(Path::new(file))
         .to_string_lossy()

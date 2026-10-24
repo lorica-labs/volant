@@ -107,6 +107,11 @@ pub(super) fn warn_once() {
 /// `None` when there is no file, no such key or an empty value.
 pub(crate) fn defaults_value(key: &str) -> Option<String> {
     let text = std::fs::read_to_string(current().path?).ok()?;
+    value_in(&text, key)
+}
+
+/// [`defaults_value`] over the text of a file.
+fn value_in(text: &str, key: &str) -> Option<String> {
     let mut section = "";
     for raw in text.lines() {
         let line = raw.trim();
@@ -117,8 +122,40 @@ pub(crate) fn defaults_value(key: &str) -> Option<String> {
             && let Some((name, value)) = line.split_once('=')
             && name.trim() == key
         {
-            return Some(value.trim().to_string()).filter(|v| !v.is_empty());
+            // A `;` or `#` after whitespace starts a comment, as in ansible's own ini reading.
+            let end = value
+                .char_indices()
+                .zip(value.chars().skip(1))
+                .find(|((_, before), after)| before.is_whitespace() && matches!(after, ';' | '#'))
+                .map_or(value.len(), |((at, _), _)| at);
+            return Some(value[..end].trim().to_string()).filter(|v| !v.is_empty());
         }
     }
     None
+}
+
+#[cfg(test)]
+mod value_tests {
+    use super::value_in;
+    use rstest::rstest;
+
+    #[rstest]
+    #[case::found("[defaults]\neditor = nano\n", Some("nano"))]
+    #[case::trimmed("[defaults]\n  editor   =   nano -w  \n", Some("nano -w"))]
+    #[case::missing("[defaults]\nforks = 5\n", None)]
+    #[case::empty("[defaults]\neditor =\n", None)]
+    #[case::semicolon_comment("[defaults]\neditor = nano ; the usual one\n", Some("nano"))]
+    #[case::hash_comment("[defaults]\neditor = nano # the usual one\n", Some("nano"))]
+    #[case::no_space_no_comment("[defaults]\neditor = nano;x\n", Some("nano;x"))]
+    #[case::only_a_comment("[defaults]\neditor = # none\n", None)]
+    #[case::commented_line("[defaults]\n# editor = nano\n; editor = vim\n", None)]
+    #[case::other_section("[privilege_escalation]\neditor = nano\n", None)]
+    #[case::section_after(
+        "[ssh_connection]\neditor = vim\n[defaults]\neditor = nano\n",
+        Some("nano")
+    )]
+    #[case::no_file_text("", None)]
+    fn reads_one_key_of_defaults(#[case] text: &str, #[case] want: Option<&str>) {
+        assert_eq!(value_in(text, "editor").as_deref(), want);
+    }
 }

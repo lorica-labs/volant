@@ -980,3 +980,70 @@ fn a_file_one_tool_rekeys_the_other_reads_under_the_new_secret() {
     );
     assert_eq!(sandbox.read("vaulted"), b"secret\n");
 }
+
+/// A request to stop sent to the whole process group, as a closed terminal does: the editor dies
+/// with the command, and the file is left as it was with no copy behind.
+#[rstest]
+#[case::hangup(libc::SIGHUP)]
+#[case::terminate(libc::SIGTERM)]
+fn a_signal_to_the_process_group_stops_an_edit_without_writing(#[case] signal: i32) {
+    use std::os::unix::process::CommandExt as _;
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script(
+        "hang.sh",
+        "echo \"$1\" > started; echo changed > \"$1\"; exec sleep 60",
+    );
+    let before = sandbox.read("vaulted");
+    let mut command = sandbox.command(&["edit", "vaulted", PW[0], PW[1]]);
+    command
+        .env("EDITOR", &editor)
+        .stderr(Stdio::piped())
+        .process_group(0);
+    let child = command.spawn().expect("volant starts");
+    let started = sandbox.dir.join("started");
+    let begin = std::time::Instant::now();
+    while std::fs::read_to_string(&started).map_or(true, |s| !s.ends_with('\n')) {
+        assert!(begin.elapsed() < DEADLINE, "the editor never started");
+        std::thread::sleep(Duration::from_millis(20));
+    }
+    // The editor has changed its copy by now: that is what must not be written.
+    std::thread::sleep(Duration::from_millis(200));
+    let pgid = libc::pid_t::try_from(child.id()).expect("a pid");
+    // SAFETY: the group is our child's own, made by `process_group(0)`.
+    assert_eq!(unsafe { libc::kill(-pgid, signal) }, 0);
+    let (code, _, _) = finish(child);
+    assert_eq!(code, 128 + signal);
+    assert_eq!(sandbox.read("vaulted"), before);
+    assert_eq!(sandbox.left_behind(), Vec::<String>::new());
+}
+
+#[test]
+fn the_editor_comes_from_the_configuration_without_its_inline_comment() {
+    let sandbox = Sandbox::new();
+    let editor = sandbox.script("ed.sh", "echo hello > \"$1\"");
+    std::fs::write(
+        sandbox.dir.join("ansible.cfg"),
+        format!("[defaults]\neditor = {editor} ; the usual one\n"),
+    )
+    .expect("a config");
+    let out = sandbox.run(&["create", "fresh", "--skip-tty-check", PW[0], PW[1]], None);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+    assert!(sandbox.read("fresh").starts_with(b"$ANSIBLE_VAULT"));
+}
+
+#[test]
+fn create_refuses_a_directory_and_works_without_home() {
+    let sandbox = Sandbox::new();
+    std::fs::create_dir(sandbox.dir.join("adir")).expect("a directory");
+    let editor = sandbox.script("ed.sh", "echo hello > \"$1\"");
+    let out = sandbox.edit_with(
+        &editor,
+        &["create", "adir", "--skip-tty-check", PW[0], PW[1]],
+    );
+    assert_eq!(text(&out.stderr), "[ERROR]: adir is a directory\n");
+    assert_eq!(out.status.code(), Some(1));
+    let mut command = sandbox.command(&["create", "fresh", "--skip-tty-check", PW[0], PW[1]]);
+    command.env("EDITOR", &editor).env_remove("HOME");
+    let out = process::run_within(&mut command, DEADLINE, None);
+    assert_eq!(out.status.code(), Some(0), "{}", text(&out.stderr));
+}

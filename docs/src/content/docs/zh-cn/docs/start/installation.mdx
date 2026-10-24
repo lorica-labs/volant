@@ -1,5 +1,5 @@
 ---
-sourceHash: 005064a69a67
+sourceHash: 1ea7a1827bd0
 title: 安装
 description: 用一条命令安装 Volant，了解控制节点和主机各自需要什么，以及如何保持更新。
 ---
@@ -52,7 +52,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 ```
 
-脚本默认从不安装它们。它运行 [`volant shims install`](/zh-cn/docs/reference/cli/#shims-命令)，对不是它创建的文件或链接不做改动，并在 `PATH` 中真正的 Ansible 被遮蔽或仍然排在前面时给出提示。如果某个名字无法链接，脚本会打印 `some ansible-* names were not linked, see above`，仍以 0 退出，因为 Volant 已经安装好了。
+脚本默认从不安装它们。它运行 [`volant shims install`](/zh-cn/docs/reference/cli/shims/)，对不是它创建的文件或链接不做改动，并在 `PATH` 中真正的 Ansible 被遮蔽或仍然排在前面时给出提示。如果某个名字无法链接，脚本会打印 `some ansible-* names were not linked, see above`，仍以 0 退出，因为 Volant 已经安装好了。
 
 ## 你会得到什么
 

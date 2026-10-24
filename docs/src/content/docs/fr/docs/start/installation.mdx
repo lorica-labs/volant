@@ -1,5 +1,5 @@
 ---
-sourceHash: 005064a69a67
+sourceHash: 1ea7a1827bd0
 title: Installation
 description: Installez Volant en une commande, vérifiez ce dont le contrôleur et les hôtes ont besoin, et gardez-le à jour.
 ---
@@ -52,7 +52,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 ```
 
-Le script ne les installe jamais par défaut. Il lance [`volant shims install`](/fr/docs/reference/cli/#la-commande-shims), qui laisse intact un fichier ou un lien qu'il n'a pas créé et signale quand un vrai Ansible du `PATH` est masqué ou passe encore en premier. Si un nom n'a pas pu être lié, le script affiche `some ansible-* names were not linked, see above` et sort quand même avec 0, parce que Volant est installé.
+Le script ne les installe jamais par défaut. Il lance [`volant shims install`](/fr/docs/reference/cli/shims/), qui laisse intact un fichier ou un lien qu'il n'a pas créé et signale quand un vrai Ansible du `PATH` est masqué ou passe encore en premier. Si un nom n'a pas pu être lié, le script affiche `some ansible-* names were not linked, see above` et sort quand même avec 0, parce que Volant est installé.
 
 ## Ce que vous obtenez
 

@@ -1,0 +1,6 @@
+# The play's role lists: `role_names` and `ansible_play_role_names` (the play's `roles:` and every
+# `import_role`, and an `include_role` once it ran), `ansible_dependent_role_names` (their
+# `meta/main.yml` dependencies) and `ansible_role_names` (both). The last two are Python sets in
+# the reference, printed sorted here.
+runs:
+  - args: [-i, inv.ini, site.yml]

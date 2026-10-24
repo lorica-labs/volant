@@ -5,6 +5,19 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
+/// How a role instance came into the play, in the order ansible-core 2.19.12 lists them in
+/// `ansible_play_role_names`, measured: the play's `roles:` entries, then every `import_role` in
+/// the order the play was read, then each `include_role` once it ran. A `meta/main.yml`
+/// dependency is in `ansible_dependent_role_names` instead.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq, PartialOrd, Ord)]
+pub enum RoleKind {
+    #[default]
+    Entry,
+    Import,
+    Include,
+    Dependency,
+}
+
 /// One compiled role instance: the variables its own steps sit on, and the ones it lends to the
 /// rest of the play.
 #[derive(Debug, Clone, Default)]
@@ -14,6 +27,8 @@ pub struct RoleVars {
     /// [`identity`]): what `role_name`, `ansible_role_name` and `ansible_collection_name` read.
     pub role_name: String,
     pub collection: Option<String>,
+    /// How this instance came into the play: which of the play's role lists names it.
+    pub kind: RoleKind,
     pub defaults: Map<String, Value>,
     pub vars: Map<String, Value>,
     pub params: Map<String, Value>,

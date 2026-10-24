@@ -39,27 +39,27 @@ unnested_or_patterns = "warn"
 [workspace.dependencies]
 anstream = "1"
 anstyle = "1"
-aes = "0.8"
+aes = "0.9"
 anyhow = "1"
 blake3 = "1.8"
 clap = { version = "4", features = ["derive"] }
-ctr = "0.9"
-hmac = "0.12"
+ctr = "0.10"
+hmac = "0.13"
 indexmap = "2"
 insta = { version = "1", features = ["filters"] }
 libc = "0.2"
 miniz_oxide = "0.9.1"
-minijinja = { version = "=3.0.1", features = [
+minijinja = { version = "=3.0.3", features = [
   "preserve_order",
   "serde",
   "unstable_machinery",
 ] }
-minijinja-contrib = { version = "=3.0.1", default-features = false, features = [
+minijinja-contrib = { version = "=3.0.3", default-features = false, features = [
   "pycompat",
 ] }
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 regex = "1"
-rstest = "0.27"
+rstest = "0.28"
 saphyr = "0.2.0"
 saphyr-parser = "0.2.1"
 serde = { version = "1", features = ["derive"] }
@@ -69,7 +69,7 @@ serde_json = { version = "1", features = [
   "unbounded_depth",
 ] }
 sha1_smol = "1.0"
-sha2 = "0.10"
+sha2 = "0.11"
 shlex = "2"
 tempfile = "3"
 tokio = { version = "1", features = [

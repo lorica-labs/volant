@@ -196,9 +196,13 @@ fn the_counters_end_the_profile_and_ignore_the_forks() {
     )
     .unwrap();
     let json = dir.join("profile.jsonl");
+    // The workspace's binaries, the agent's included, are built beside this test's `deps/`.
+    let exe = std::env::current_exe().unwrap();
+    let agents = exe.parent().and_then(std::path::Path::parent).unwrap();
     unsafe {
         std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
         std::env::set_var("VOLANT_PROFILE_JSON", &json);
+        std::env::set_var("VOLANT_AGENT_DIR", agents);
     }
     let (inventory, playbook) = (
         inventory.display().to_string(),

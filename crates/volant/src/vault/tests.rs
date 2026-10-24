@@ -99,6 +99,7 @@ fn secrets_do_not_show_in_debug() {
 #[rstest]
 #[case::bare("pw1", "default")]
 #[case::labelled("dev@pw1", "dev")]
+#[case::empty_label("@pw1", "default")]
 fn a_spec_names_its_label(#[case] text: &str, #[case] label: &str) {
     assert_eq!(spec(text).0, label);
 }
@@ -107,6 +108,7 @@ fn a_spec_names_its_label(#[case] text: &str, #[case] label: &str) {
 fn prompt_is_the_only_source_that_is_not_a_file() {
     assert_eq!(spec("dev@prompt").1, Source::Prompt);
     assert_eq!(spec("prompt").1, Source::Prompt);
+    assert_eq!(spec("dev@prompt_ask_vault_pass").1, Source::AskPass);
     assert_eq!(spec("a@b").1, Source::File("b".into()));
 }
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: d4ad4ddc3da2
+sourceHash: 845dd11b012a
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -10,10 +10,13 @@ import Option from '../../../../../components/Option.astro';
 volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant runtime <install|pack|status|path|remove>
+volant vault <encrypt|decrypt|view>
 volant --version
 ```
 
 `volant playbook` acepta las mismas opciones que `ansible-playbook`, en las que existen. `volant-playbook` es el mismo programa con un nombre que se parece al que conoces. Los playbooks que se pasan juntos se ejecutan en orden, y cada uno imprime su propio recap.
+
+En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook` o `ansible-vault`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook` o `volant vault`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
 
 Cuando una opción tiene una clave de `ansible.cfg` o una variable de entorno, la entrada la nombra. La opción gana a ambas; [Configuración](/es/docs/reference/configuration/) explica el orden.
 
@@ -251,8 +254,62 @@ volant runtime remove [ID | --all]
   Elimina todos los runtimes, no solo el actual.
 </Option>
 
+## El comando vault
+
+`volant vault` hace lo que hacen `ansible-vault encrypt`, `decrypt` y `view`, sobre los mismos archivos, con los mismos mensajes y los mismos códigos de salida. `create`, `edit`, `rekey` y `encrypt_string` todavía no existen. [Vault](/es/docs/variables/vault/#cifrar-y-ver-archivos) da los detalles.
+
+```sh
+volant vault encrypt [FILE...] [--output FILE] [--encrypt-vault-id ID] [OPTIONS]
+volant vault decrypt [FILE...] [--output FILE] [OPTIONS]
+volant vault view [FILE...] [OPTIONS]
+```
+
+`OPTIONS` son `--vault-id`, `--vault-password-file` (también `--vault-pass-file`), `-J`/`--ask-vault-pass` y `-v`, descritas antes en [Vault](#vault). Sin ninguna de ellas, y sin el ajuste `vault_password_file`, el comando pide la contraseña.
+
+<Option name="--output" arg="FILE">
+  Escribe el resultado ahí y deja intacto el origen. `-` es la salida estándar. Con esta opción solo se acepta un archivo de entrada; si no, el código de salida es 5.
+</Option>
+
+<Option name="--encrypt-vault-id" arg="ID" config="[defaults] vault_encrypt_identity" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  El id de vault que usa `encrypt`. Es obligatorio cuando se da más de un `--vault-id`.
+</Option>
+
+## El comando shims
+
+`volant shims` enlaza los nombres de los programas de ansible-core con `volant`, de modo que `ansible-vault` y los demás inician Volant. Nada crea estos enlaces a menos que lo ejecutes. Funciona en Linux y macOS.
+
+```sh
+volant shims install [--dir DIR] [--force] [NAME...]
+volant shims remove [--dir DIR] [NAME...]
+```
+
+`NAME` es uno de `ansible`, `ansible-config`, `ansible-console`, `ansible-doc`, `ansible-galaxy`, `ansible-inventory`, `ansible-playbook`, `ansible-pull` y `ansible-vault`. Sin ninguno, el comando toma los nueve.
+
+<Option name="--dir" arg="DIR">
+  El directorio de los enlaces. Por defecto: `$VOLANT_BIN_DIR`, luego `~/.local/bin`. Un directorio que no existe es un error: `ERROR! DIR is not a directory`, código de salida 1.
+</Option>
+
+<Option name="install --force" arg="">
+  Sustituye un archivo o enlace con ese nombre que no sea un enlace de Volant.
+</Option>
+
+Un shim es un enlace simbólico. Su destino es el nombre relativo `volant` cuando `DIR` contiene una entrada llamada `volant`, así que actualizar ese enlace arrastra los shims. En otro caso es la ruta absoluta del binario en ejecución.
+
+`install` imprime una línea por nombre:
+
+| Línea | Significado |
+|---|---|
+| `ansible-vault: installed` | Se creó el enlace. |
+| `ansible-vault: already installed` | El enlace existe y apunta a `volant`. No cambió nada. |
+| `ansible-vault: replaced` | `--force` sustituyó otro archivo o enlace. |
+| `ansible-vault: not replaced, DIR/ansible-vault exists and is not a Volant link` | No se creó nada, y el código de salida es 1. |
+
+Cuando hay otro ejecutable con ese nombre en el `PATH`, una línea que creó un enlace añade una segunda frase: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`, o `note: /usr/bin/ansible-vault still runs first, DIR comes later in PATH`. Si `DIR` no está en el `PATH`, termina con `DIR is not in PATH`.
+
+`remove` elimina solo los enlaces simbólicos cuyo destino es un archivo llamado `volant`, e imprime `ansible-vault: removed`, `ansible-vault: not installed` o `ansible-vault: not a Volant link, left alone`. La última hace que el código de salida sea 1.
+
 ## Todavía no disponible
 
 Se acepta cada opción de `ansible-playbook`. `--scp-extra-args` y `--sftp-extra-args` no tienen efecto, porque los archivos viajan por el enlace con el agente. La [página de paridad](/es/docs/reference/parity/#ansible-playbook-option) enumera cada opción con su estado.
 
-`volant` tiene dos subcomandos, `playbook` y `runtime`. Las demás herramientas de Ansible todavía no tienen equivalente: `ansible` para comandos ad hoc, `ansible-inventory`, `ansible-vault`, `ansible-doc`, `ansible-config` y `ansible-galaxy`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.
+`volant` tiene tres subcomandos, `playbook`, `runtime` y `vault`. Las demás herramientas de Ansible todavía no tienen equivalente: `ansible` para comandos ad hoc, `ansible-inventory`, `ansible-doc`, `ansible-config` y `ansible-galaxy`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.

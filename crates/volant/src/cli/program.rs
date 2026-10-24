@@ -25,6 +25,7 @@ pub fn subcommand_for(program: &OsStr) -> Option<&'static str> {
     match name {
         "ansible-inventory" => Some("inventory"),
         "ansible-playbook" => Some("playbook"),
+        "ansible-vault" => Some("vault"),
         _ => None,
     }
 }
@@ -38,6 +39,7 @@ mod tests {
     #[case("ansible-inventory", Some("inventory"))]
     #[case("ansible-playbook", Some("playbook"))]
     #[case("/usr/local/bin/ansible-playbook", Some("playbook"))]
+    #[case("ansible-vault", Some("vault"))]
     #[case("volant", None)]
     #[case("volant-playbook", None)]
     #[case("ansible-test", None)]

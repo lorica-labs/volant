@@ -111,9 +111,11 @@ fn the_vault_settings_come_from_the_file_and_the_environment() {
         "[defaults]
 vault_password_file = pw
 vault_identity_list = a@x, b@prompt
+vault_encrypt_identity = b
 ",
         "/etc/x",
     );
+    assert_eq!(c.vault_encrypt_identity.as_deref(), Some("b"));
     assert_eq!(c.vault_password_file, Some(PathBuf::from("/etc/x/pw")));
     assert_eq!(c.vault_identity_list, ["a@x", "b@prompt"]);
     if let Some(home) = home() {
@@ -131,11 +133,14 @@ vault_password_file = ~/.vault_pass
         std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
         std::env::set_var("ANSIBLE_VAULT_PASSWORD_FILE", "/v/pw");
         std::env::set_var("ANSIBLE_VAULT_IDENTITY_LIST", "x@pw1, y@prompt");
+        std::env::set_var("ANSIBLE_VAULT_ENCRYPT_IDENTITY", "y");
     }
     let c = Config::load().unwrap();
     assert_eq!(c.vault_password_file, Some(PathBuf::from("/v/pw")));
     assert_eq!(c.vault_identity_list, ["x@pw1", "y@prompt"]);
+    assert_eq!(c.vault_encrypt_identity.as_deref(), Some("y"));
     unsafe {
+        std::env::remove_var("ANSIBLE_VAULT_ENCRYPT_IDENTITY");
         std::env::remove_var("ANSIBLE_VAULT_PASSWORD_FILE");
         std::env::remove_var("ANSIBLE_VAULT_IDENTITY_LIST");
         match saved_config {

@@ -10,7 +10,7 @@ use tokio::sync::watch;
 use super::adhoc::Adhoc;
 use super::announce::{announce_callbacks, banner_before_vars_refusal, options_dump, version_line};
 use super::args::PlaybookArgs;
-use super::hosts::{ListingHosts, play_hosts, rendered, resolve_limit, tag_selection};
+use super::hosts::{ListingHosts, limit_names, play_hosts, rendered, resolve_limit, tag_selection};
 use super::passwords::{ask_passwords, ssh_words};
 use super::setup::{SetUp, set_up};
 use super::signals::spawn_signal_watcher;
@@ -139,7 +139,7 @@ async fn run_all(
     // is the working one.
     let files: Vec<PathBuf> = match plays {
         Plays::Files => args.playbooks.clone(),
-        Plays::Adhoc(_) => vec![PathBuf::new()],
+        Plays::Adhoc(adhoc) => vec![adhoc.file()],
     };
     let mut playbooks = match plays {
         Plays::Files => files
@@ -208,7 +208,19 @@ async fn run_all(
     // The subset the whole run is narrowed to, resolved before anything else looks at a host.
     // The reference resolves it here too, before it reads a play: a `--limit` matching nothing
     // stops a listing as surely as it stops a run, measured, exit 1.
-    let limit = resolve_limit(args, &inventory, out)?;
+    let limit = match plays {
+        Plays::Files => resolve_limit(args, &inventory, out)?,
+        // The ad hoc command words the empty set itself, below.
+        Plays::Adhoc(_) => {
+            limit_names(args, &inventory, out).map_err(|e| Refusal::plain(1, format!("{e:#}")))?
+        }
+    };
+    if let Plays::Adhoc(adhoc) = plays
+        && let Some(play) = playbooks.first().and_then(|pb| pb.plays.first())
+        && let Some(code) = adhoc.settle_hosts(play, &inventory, limit.as_ref(), out)?
+    {
+        return Ok(code);
+    }
     // `resolve` recomputes inventory-load-time warnings (e.g. a host/group homonym) on every
     // call, matching Ansible's own semantics for a single resolution; but a playbook with N plays
     // calls `resolve` N times, and Ansible only ever prints such a warning once per run, at

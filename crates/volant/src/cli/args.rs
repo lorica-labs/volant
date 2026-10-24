@@ -84,6 +84,9 @@ pub struct PlaybookArgs {
     /// Remove the fact cache entries of the inventory hosts before the run.
     #[arg(long = "flush-cache")]
     pub flush_cache: bool,
+    /// The pattern of an ad hoc command, which runs through the same set-up as a playbook.
+    #[arg(skip)]
+    pub adhoc_pattern: Option<String>,
     /// Print the version and the ansible-core release it matches, and stop.
     #[arg(long = "version")]
     pub version: bool,
@@ -234,9 +237,25 @@ pub struct AdhocArgs {
     /// Directories searched for modules before the configured ones. Colon-separated, repeatable.
     #[arg(short = 'M', long = "module-path", value_name = "MODULE_PATH")]
     pub module_path: Vec<String>,
-    /// Number of hosts to run at once.
-    #[arg(short = 'f', long = "forks", value_name = "FORKS")]
-    pub forks: Option<usize>,
+    /// Number of hosts to run at once. Read as a signed number, so that `-f -1` reaches the
+    /// check that refuses it, as in the reference.
+    #[arg(
+        short = 'f',
+        long = "forks",
+        value_name = "FORKS",
+        allow_negative_numbers = true
+    )]
+    pub forks: Option<i64>,
+    /// List the hosts the pattern matches, and stop.
+    #[arg(long = "list-hosts")]
+    pub list_hosts: bool,
+    /// Clear the fact cache of every host in the inventory.
+    #[arg(long = "flush-cache")]
+    pub flush_cache: bool,
+    /// The directory `group_vars/`, `host_vars/`, relative paths and roles are found from, where
+    /// a playbook would have supplied it.
+    #[arg(long = "playbook-dir", value_name = "BASEDIR")]
+    pub playbook_dir: Option<PathBuf>,
     #[command(flatten)]
     pub connect: ConnectionArgs,
     #[command(flatten)]
@@ -253,7 +272,10 @@ impl AdhocArgs {
             extra_vars: self.extra_vars.clone(),
             verbose: self.verbose,
             module_path: self.module_path.clone(),
-            forks: self.forks,
+            // A negative number never gets here: the command refuses it first.
+            forks: self.forks.and_then(|forks| usize::try_from(forks).ok()),
+            flush_cache: self.flush_cache,
+            adhoc_pattern: Some(self.pattern.clone()),
             connect: self.connect.clone(),
             escalation: self.escalation.clone(),
             vault: self.vault.clone(),

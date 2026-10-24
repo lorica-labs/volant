@@ -53,6 +53,11 @@ fn parse() -> Cli {
                 .try_get_matches_from(args)
                 .and_then(|matches| Cli::from_arg_matches(&matches));
             return parsed.unwrap_or_else(|err| {
+                if sub == "adhoc"
+                    && let Some(code) = volant::cli::adhoc_usage_error(&err)
+                {
+                    std::process::exit(code);
+                }
                 // clap names a subcommand's usage after its parent, `ansible-playbook playbook`.
                 let text = err
                     .render()
@@ -67,7 +72,14 @@ fn parse() -> Cli {
             });
         }
     }
-    Cli::parse()
+    Cli::try_parse().unwrap_or_else(|err| {
+        if std::env::args_os().nth(1).is_some_and(|arg| arg == "adhoc")
+            && let Some(code) = volant::cli::adhoc_usage_error(&err)
+        {
+            std::process::exit(code);
+        }
+        err.exit()
+    })
 }
 
 fn main() {

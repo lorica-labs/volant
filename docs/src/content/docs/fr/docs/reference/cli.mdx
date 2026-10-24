@@ -1,5 +1,5 @@
 ---
-sourceHash: 26c0ba36bd76
+sourceHash: c33007652b94
 title: Ligne de commande
 description: Chaque commande et option que Volant accepte, regroupées selon ce qu'elles changent, et les options d'ansible-playbook qu'il n'a pas encore.
 ---
@@ -234,7 +234,7 @@ Volant lit les variables `ANSIBLE_*` citées plus haut, plus quelques-unes qui l
 ```sh
 volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f N] [-u USER] [-c CONN] [-T SECS]
              [-b --become-user --become-method -K --become-password-file] [-k --connection-password-file]
-             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [-v]
+             [--private-key --ssh-common-args --ssh-extra-args] [-J --vault-id --vault-password-file] [-M PATH] [--list-hosts] [--flush-cache] [--playbook-dir DIR] [-v]
 ```
 
 <Option name="-m, --module-name" arg="MODULE">
@@ -245,7 +245,19 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
   Les arguments du module : des mots `key=value`, ou un objet JSON quand la valeur commence par `{` et finit par `}`. Pour `command`, `shell`, `raw` et `script`, les mots qui ne sont pas une option du module forment la ligne de commande. Les arguments sont rendus comme modèles avec les variables de chaque hôte et `-e`. Une valeur qui commence par `{`, finit par `}` et n'est pas du JSON valide arrête la commande avec le code de sortie 250 ; un guillemet non fermé l'arrête avec le code 4.
 </Option>
 
-Les autres options ont le sens qu'elles ont pour `volant playbook`. `-f 1` exécute un hôte à la fois, dans l'ordre de l'inventaire.
+<Option name="--list-hosts">
+  Affiche les hôtes que le motif désigne, sous la forme `  hosts (2):` puis une ligne `    nom` par hôte, et n'exécute rien. Le code de sortie est 0.
+</Option>
+
+<Option name="--playbook-dir" arg="DIR">
+  Lit `group_vars/`, `host_vars/`, les chemins relatifs et les rôles depuis `DIR`, et y fixe `playbook_dir`, là où un playbook aurait fourni son propre répertoire. Par défaut : le répertoire courant.
+</Option>
+
+Les autres options ont le sens qu'elles ont pour `volant playbook`, `--flush-cache` et `-M` compris. `-f 1` exécute un hôte à la fois, dans l'ordre de l'inventaire.
+
+Un motif qui ne désigne aucun hôte affiche `[WARNING]: Could not match supplied host pattern, ignoring: PATTERN` et `[WARNING]: No hosts matched, nothing to do` sur l'erreur standard, et sort avec 0. Un `-l` qui ne laisse aucun hôte affiche son propre avertissement puis `[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target.`, et sort avec 1, avec ou sans `--list-hosts`. Un inventaire sans aucun hôte avertit une fois et n'exécute rien. Sans inventaire, le `localhost` implicite est le seul hôte qui existe, et seul un motif qui le nomme le désigne. Un `command`, `shell` ou `raw` lancé sans `-a` s'arrête avec `[ERROR]: No argument passed to command module` et le code de sortie 5.
+
+Une erreur d'usage sort avec 2. L'erreur standard porte le bloc `usage:` d'`ansible`, puis `ansible: error: ` et la raison. Un motif manquant ou un `-f` qui n'est pas un nombre est suivi de l'aide complète d'`ansible` ; un `-f` inférieur à 1 ne l'est pas.
 
 Chaque hôte affiche un résultat, comme le fait le callback `minimal` d'ansible. Un résultat de `command`, `shell` ou `raw` est `h1 | CHANGED | rc=0 >>`, puis sa sortie standard, son erreur standard et son `msg` collés sans rien entre eux. Tout autre résultat est `h1 | SUCCESS => ` suivi du résultat en JSON, indenté de quatre espaces, clés triées. Les statuts sont `SUCCESS`, `CHANGED`, `FAILED` (forme commande), `FAILED!` (forme JSON), `SKIPPED` et `UNREACHABLE!`. Avant un résultat en échec ou injoignable, la sortie standard porte le même bloc `[ERROR]` qu'affiche un playbook. Son `Origin:` est `<adhoc 'MODULE' task>`, suivi de la tâche telle qu'ansible la montre, coupée à 120 caractères.
 
@@ -380,6 +392,6 @@ Exactement une des options `--list`, `--host` et `--graph` est requise. `--graph
 
 Toutes les options d'`ansible-playbook` sont acceptées. `--scp-extra-args` et `--sftp-extra-args` n'ont aucun effet, parce que les fichiers circulent sur le lien de l'agent. La [page de parité](/fr/docs/reference/parity/#ansible-playbook-option) liste chaque option avec son statut.
 
-`volant adhoc` n'a pas encore `--list-hosts`, `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` ni `-t`.
+`volant adhoc` n'a pas encore `-C`, `-D`, `-B`, `-P`, `--task-timeout`, `-o` ni `-t`.
 
 `volant` a les sous-commandes `playbook`, `adhoc`, `inventory`, `runtime`, `shims` et `vault`. Les autres outils d'Ansible n'ont pas encore d'équivalent : `ansible-doc`, `ansible-config` et `ansible-galaxy`. Il n'y a pas de `volant check` ni de `volant lint`. Lancez ces outils depuis ansible-core, ou utilisez les options de liste de `volant playbook`.

@@ -177,12 +177,15 @@ fn our_yaml_loading_of_vars_matches_the_reference() {
 }
 
 /// `case.yml` of a scenario, as the generator's `scenario.py` reads it: the argv of each run,
-/// `modes`, `env`, `forks`, `program`, `needs`, `unordered` and `links`.
+/// `modes`, `env`, `forks`, `stderr`, `program`, `needs`, `unordered` and `links`.
 struct Case {
     runs: Vec<Vec<String>>,
     single: bool,
     env: Vec<(String, String)>,
-    forks: u64,
+    /// `None` for a case that passes no `--forks`, a `null` in its case.yml.
+    forks: Option<u64>,
+    /// Whether the recording holds standard error too.
+    stderr: bool,
     /// The Volant subcommand of the program the reference ran, `ansible-playbook` unless said.
     subcommand: &'static str,
     needs: Vec<String>,
@@ -191,12 +194,13 @@ struct Case {
 }
 
 /// The keys a case.yml takes.
-const KEYS: [&str; 9] = [
+const KEYS: [&str; 10] = [
     "args",
     "runs",
     "modes",
     "env",
     "forks",
+    "stderr",
     "program",
     "needs",
     "unordered",
@@ -240,6 +244,26 @@ fn links(name: &str, value: Option<&Value>) -> Vec<(String, String)> {
             (path.clone(), target.to_string())
         })
         .collect()
+}
+
+/// The `forks` of a case.yml (1 unless said, `None` for a `null`) and whether it records `stderr`.
+fn forks_and_stderr(name: &str, map: &Map<String, Value>) -> (Option<u64>, bool) {
+    let forks = match map.get("forks") {
+        None => Some(1),
+        Some(Value::Null) => None,
+        Some(forks) => Some(
+            forks
+                .as_u64()
+                .filter(|&forks| forks > 0)
+                .unwrap_or_else(|| panic!("{name}: forks is not a positive integer")),
+        ),
+    };
+    let stderr = match map.get("stderr") {
+        None => false,
+        Some(Value::Bool(stderr)) => *stderr,
+        Some(_) => panic!("{name}: stderr is not true or false"),
+    };
+    (forks, stderr)
 }
 
 impl Case {
@@ -315,12 +339,7 @@ impl Case {
                     .collect()
             })
             .unwrap_or_default();
-        let forks = map.get("forks").map_or(1, |forks| {
-            forks
-                .as_u64()
-                .filter(|&forks| forks > 0)
-                .unwrap_or_else(|| panic!("{name}: forks is not a positive integer"))
-        });
+        let (forks, stderr) = forks_and_stderr(name, map);
         let subcommand = match map.get("program").map(|p| p.as_str()) {
             None | Some(Some("ansible-playbook")) => "playbook",
             Some(Some("ansible")) => "adhoc",
@@ -340,6 +359,7 @@ impl Case {
             single: map.contains_key("args") && modes.is_empty(),
             env,
             forks,
+            stderr,
             subcommand,
             needs: list("needs"),
             unordered: list("unordered"),
@@ -526,7 +546,7 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
         return;
     }
     assert!(
-        spec.unordered.is_empty() || spec.forks > 1,
+        spec.unordered.is_empty() || spec.forks > Some(1),
         "{name}: `unordered` excuses nothing under `forks: 1`"
     );
     let unordered: Vec<regex::Regex> = spec
@@ -576,7 +596,11 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
                 command
                     .arg(spec.subcommand)
                     .args(args)
-                    .args(["--forks", &spec.forks.to_string()])
+                    .args(
+                        spec.forks
+                            .iter()
+                            .flat_map(|forks| ["--forks".to_string(), forks.to_string()]),
+                    )
                     .current_dir(&copy)
                     .env_remove("COLUMNS")
                     // The suite never installs Volant's runtime: the controller's Python is the machine's.
@@ -633,6 +657,13 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
                     normalise(wanted, unordered),
                     "stdout of {shown}"
                 );
+                if spec.stderr {
+                    let err = String::from_utf8_lossy(&out.stderr)
+                        .replace(&canonical.display().to_string(), "<golden-tmp>")
+                        .replace(&copy.display().to_string(), "<golden-tmp>");
+                    let wanted = want["stderr"].as_str().expect("a recorded stderr");
+                    assert_eq!(err, wanted, "stderr of {shown}");
+                }
             };
             if side_by_side {
                 scope.spawn(one);

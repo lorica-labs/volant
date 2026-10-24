@@ -2,13 +2,18 @@
 //! The `adhoc` command: one module run against the hosts of a pattern, as `ansible` of
 //! ansible-core 2.19.12 runs it (`cli/adhoc.py`), its results shown by the `minimal` callback.
 
+use std::collections::HashSet;
+use std::path::PathBuf;
+
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
+use super::adhoc_usage::refuse;
 use super::args::AdhocArgs;
+use super::hosts::play_hosts;
 use super::run::{Plays, drive};
 use crate::config::Config;
-use crate::inventory::Host;
+use crate::inventory::{Host, Inventory};
 use crate::playbook::{self, Origin, Playbook, TaskOrBlock};
 use crate::render::{Cause, Dump, ErrorBlock, Renderer, task_failed};
 use crate::splitter::{parse_kv, parse_kv_raw};
@@ -16,6 +21,9 @@ use crate::stats::{Outcome, Refusal};
 
 /// Runs `args` and returns the process exit code.
 pub fn adhoc(args: AdhocArgs) -> i32 {
+    if args.forks.is_some_and(|forks| forks < 1) {
+        return refuse("The number of processes (--forks) must be >= 1", false);
+    }
     // `-vv` and above print what the default callback prints at those levels, which is not the
     // reference's ad hoc output.
     if args.verbose > 1 {
@@ -23,7 +31,11 @@ pub fn adhoc(args: AdhocArgs) -> i32 {
         return 4;
     }
     let adhoc = match Adhoc::new(&args.pattern, &args.module_name, &args.module_args) {
-        Ok(adhoc) => adhoc,
+        Ok(mut adhoc) => {
+            adhoc.list_hosts = args.list_hosts;
+            adhoc.dir.clone_from(&args.playbook_dir);
+            adhoc
+        }
         Err((code, message)) => {
             eprintln!("[ERROR]: {message}");
             return code;
@@ -59,6 +71,12 @@ pub(super) struct Adhoc {
     pattern: String,
     module: String,
     args: Map<String, Value>,
+    /// `--list-hosts`: the hosts are listed and nothing runs.
+    list_hosts: bool,
+    /// `--playbook-dir`: where a playbook would have sat.
+    dir: Option<PathBuf>,
+    /// A module that reads `-a` as a command line, given none.
+    missing_args: bool,
 }
 
 /// `C.MODULE_REQUIRE_ARGS`: the modules whose `-a` is read with `check_raw`, so that only their
@@ -105,7 +123,65 @@ impl Adhoc {
             pattern: pattern.to_string(),
             module: module.to_string(),
             args: module_args(module, raw)?,
+            list_hosts: false,
+            dir: None,
+            missing_args: raw.is_empty() && REQUIRE_ARGS.contains(&module),
         })
+    }
+
+    /// The path the play is read from, so that its directory is `--playbook-dir`; nothing at all
+    /// when it was not given, and the directory is the working one.
+    pub(super) fn file(&self) -> PathBuf {
+        self.dir
+            .as_ref()
+            .map_or_else(PathBuf::new, |dir| dir.join("<adhoc>"))
+    }
+
+    /// What the reference settles once the pattern is resolved and before it runs anything:
+    /// `Some(code)` ends the command. The hosts are listed for `--list-hosts`; a pattern that
+    /// leaves no host is a warning, or the error of a `--limit` that leaves none (exit 1), unless
+    /// the inventory has no host at all; and a command module with no `-a` is refused (exit 5).
+    pub(super) fn settle_hosts(
+        &self,
+        play: &playbook::Play,
+        inventory: &Inventory,
+        limit: Option<&HashSet<String>>,
+        out: &mut Renderer,
+    ) -> anyhow::Result<Option<i32>> {
+        let found = inventory.resolve(&play.hosts);
+        let reaches = |host: &Host| limit.is_none_or(|allowed| allowed.contains(&host.name));
+        let empty = !found.hosts.iter().any(reaches);
+        if !empty && !self.list_hosts && !self.missing_args {
+            return Ok(None);
+        }
+        // Prints the warnings of the pattern, once: the run's own pass has not happened.
+        let hosts = play_hosts(inventory, play, limit, out, &mut HashSet::new(), false)?;
+        let bare = inventory.resolve("all").hosts.is_empty();
+        if empty && !bare && limit.is_some() {
+            return Err(Refusal::plain(
+                1,
+                "Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
+                    .into(),
+            ));
+        }
+        if empty && !bare && self.list_hosts {
+            out.warning("No hosts matched, nothing to do", false);
+        }
+        if self.list_hosts {
+            println!("  hosts ({}):", hosts.len());
+            for host in &hosts {
+                println!("    {}", host.name);
+            }
+            return Ok(Some(0));
+        }
+        if self.missing_args {
+            eprintln!("[ERROR]: No argument passed to {} module", self.module);
+            return Ok(Some(5));
+        }
+        if !bare {
+            out.warning("No hosts matched, nothing to do", false);
+        }
+        Ok(Some(0))
     }
 
     pub(super) fn module(&self) -> &str {
@@ -145,7 +221,11 @@ impl Adhoc {
             json(self.module.clone().into()),
             json(Value::Object(self.args.clone())),
         );
-        let mut parsed = playbook::parse(&text, "<adhoc>")?;
+        let source = match &self.dir {
+            Some(_) => self.file().display().to_string(),
+            None => "<adhoc>".to_string(),
+        };
+        let mut parsed = playbook::parse(&text, &source)?;
         for play in &mut parsed.plays {
             play.origin = None;
             for entry in &mut play.tasks {

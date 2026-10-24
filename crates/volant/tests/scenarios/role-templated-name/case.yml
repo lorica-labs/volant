@@ -1,0 +1,5 @@
+# A `roles:` entry named by a template is rendered while the play loads, against `playbook_dir`,
+# the play's variables and the extra vars: UBUNTU24-CIS applies itself as `role: "{{ playbook_dir }}"`.
+runs:
+  - args: [-i, inv.ini, site.yml]
+  - args: [-i, inv.ini, site.yml, -e, which=byvar]

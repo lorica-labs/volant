@@ -40,7 +40,11 @@ fn start(tool: &str, args: &[OsString]) -> anyhow::Result<i32> {
     let managed =
         resolve::managed().is_some_and(|done| done.python.display().to_string() == python);
     // `ansible-pull` starts `ansible` and `ansible-playbook` beside its own path: Volant's links.
-    let argv0 = if tool == "pull" {
+    // Asking for help or the version starts nothing, so it needs no links.
+    let asks_only = args
+        .iter()
+        .any(|a| ["-h", "--help", "--version"].iter().any(|w| a == w));
+    let argv0 = if tool == "pull" && !asks_only {
         super::pull_links::dir()
             .map_err(anyhow::Error::msg)?
             .join("ansible-pull")

@@ -7,7 +7,7 @@ use super::recap_json::{ansible_json, ansible_json_indented};
 impl Renderer {
     /// The `tree` callback's file for `host`: the result as JSON with no line break at its end,
     /// over whatever the last result left. `event` names the callback method, for the warning a
-    /// directory that cannot be made becomes. `pretty` is the result's own [`VERBOSE_ALWAYS`].
+    /// directory that cannot be made becomes. `pretty` is the result's own [`VERBOSE_ALWAYS`](super::VERBOSE_ALWAYS).
     pub(super) fn tree_file(
         &mut self,
         host: &str,

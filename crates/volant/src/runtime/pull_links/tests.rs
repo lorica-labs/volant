@@ -84,6 +84,24 @@ fn a_planted_directory_is_refused() {
     assert!(err.contains("symbolic link"), "{err}");
 }
 
+/// A parent that others can write is refused without the sticky bit and accepted with it.
+#[test]
+fn a_writable_parent_needs_the_sticky_bit() {
+    let (work, volant) = scratch();
+    let parent = work.path().join("shared");
+    std::fs::create_dir(&parent).unwrap();
+    mode(&parent, 0o777);
+    let err = prepare(&parent.join("volant"), &volant).unwrap_err();
+    assert!(
+        err.contains("XDG_CACHE_HOME") && err.contains("shared"),
+        "{err}"
+    );
+    mode(&parent, 0o1777);
+    prepare(&parent.join("volant"), &volant).unwrap();
+    mode(&parent, 0o755);
+    prepare(&parent.join("volant"), &volant).unwrap();
+}
+
 /// A binary that is gone, as after an in-place upgrade, is named rather than linked to.
 #[test]
 fn a_missing_binary_is_refused() {

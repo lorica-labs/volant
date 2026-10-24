@@ -48,6 +48,9 @@ fn prepare(root: &Path, volant: &Path) -> Result<PathBuf, String> {
         }
         check_private(place).map_err(failed)?;
     }
+    if let Some(parent) = root.parent() {
+        check_parent(parent)?;
+    }
     for name in CHILDREN {
         link(&dir.join(name), volant)
             .map_err(|e| format!("cannot link {} in {}: {e}", name, dir.display()))?;
@@ -58,6 +61,44 @@ fn prepare(root: &Path, volant: &Path) -> Result<PathBuf, String> {
 #[cfg(not(unix))]
 pub(crate) fn dir() -> Result<PathBuf, String> {
     Err("volant pull is not supported on this system yet".to_owned())
+}
+
+/// Refuses the directory that holds `root` unless it is this user's or root's, and, when others
+/// can write it, has the sticky bit: without it they could rename a checked directory away and
+/// put their own in its place before `ansible-pull` runs the programs in it. The rule OpenSSH
+/// applies to its paths.
+#[cfg(unix)]
+fn check_parent(parent: &Path) -> Result<(), String> {
+    use std::os::unix::fs::MetadataExt as _;
+
+    use std::os::unix::fs::PermissionsExt as _;
+
+    let failed =
+        |e: std::io::Error| format!("cannot use {} for ansible-pull: {e}", parent.display());
+    let mut meta = std::fs::metadata(parent).map_err(failed)?;
+    // SAFETY: `geteuid` reads the calling process's own credentials and cannot fail.
+    let euid = unsafe { libc::geteuid() };
+    // A home directory's `.cache` is `0775` under a umask of 002 and belongs to this user: only
+    // the group's write is taken off it, anything wider is for the check below.
+    if meta.uid() == euid && meta.mode() & 0o1022 == 0o020 {
+        std::fs::set_permissions(
+            parent,
+            std::fs::Permissions::from_mode(meta.mode() & 0o7755),
+        )
+        .map_err(failed)?;
+        meta = std::fs::metadata(parent).map_err(failed)?;
+    }
+    let mode = meta.mode() & 0o7777;
+    if (meta.uid() != euid && meta.uid() != 0) || (mode & 0o022 != 0 && mode & 0o1000 == 0) {
+        return Err(format!(
+            "{} (owner uid {}, mode {mode:o}) is not safe to keep the links of ansible-pull in, \
+             because others could replace what is inside it: set XDG_CACHE_HOME to a directory \
+             only you can write",
+            parent.display(),
+            meta.uid()
+        ));
+    }
+    Ok(())
 }
 
 /// Takes group and other write off a directory this user owns, which other code of Volant may

@@ -39,6 +39,7 @@ fn parse() -> Cli {
                 .chain(argv);
             let parsed = Cli::command()
                 .bin_name(started.clone())
+                .mut_subcommand(sub, |command| command.bin_name(started.clone()))
                 .try_get_matches_from(args)
                 .and_then(|matches| Cli::from_arg_matches(&matches));
             return parsed.unwrap_or_else(|err| {

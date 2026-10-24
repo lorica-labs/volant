@@ -7975,4 +7975,5 @@ fn a_link_named_ansible_playbook_behaves_as_the_playbook_subcommand() {
     assert_eq!(bad.status.code(), Some(2));
     let text = String::from_utf8_lossy(&bad.stderr);
     assert!(text.starts_with("ansible-playbook: error:"), "{text}");
+    assert!(!text.contains("ansible-playbook playbook"), "{text}");
 }

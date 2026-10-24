@@ -19,6 +19,35 @@ env:
   RUSTDOCFLAGS: -D warnings
 
 jobs:
+  # Whether the pull request changes anything but the hand-written documentation. When it does
+  # not, the Rust jobs below are skipped, which the required checks accept, and the Documentation
+  # workflow builds the site. The generated English pages stay out of that set: tests compare
+  # them with the code.
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      code: ${{ steps.diff.outputs.code }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          fetch-depth: 2
+          persist-credentials: false
+      - id: diff
+        run: |
+          set -euo pipefail
+          if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
+            echo code=true >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          # The checkout is the merge commit: its first parent is the base branch.
+          changed=$(git diff --name-only HEAD^1 HEAD)
+          generated='^docs/src/content/docs/docs/(reference/(keywords|parity|modules)|hosts/connections)\.md$'
+          if grep -Ev '^docs/' <<<"$changed" | grep -q . || grep -Eq "$generated" <<<"$changed"; then
+            echo code=true >> "$GITHUB_OUTPUT"
+          else
+            echo code=false >> "$GITHUB_OUTPUT"
+          fi
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -41,6 +70,8 @@ jobs:
       - run: zizmor .github/workflows
 
   test:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -86,6 +117,8 @@ jobs:
           diff "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
 
   coverage:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -110,6 +143,8 @@ jobs:
           fail_ci_if_error: false
 
   musl:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -122,6 +157,8 @@ jobs:
       - run: cargo build --workspace --target x86_64-unknown-linux-musl
 
   msrv:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     env:
       RUSTUP_TOOLCHAIN: "1.95"
@@ -135,6 +172,8 @@ jobs:
       - run: cargo check --workspace --all-targets
 
   publish-dry-run:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -145,6 +184,8 @@ jobs:
 
   # The controller as a release builds it: static, with the agent inside.
   runtime-binary:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -238,6 +279,8 @@ jobs:
   # The glibc controller as a release builds it: cargo-zigbuild, with the glibc floor of the
   # release in the target. aarch64 is built here too and checked on its ELF tables.
   glibc-floor:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -275,6 +318,8 @@ jobs:
         run: just link-check "$TARGET=target/$TARGET/release/volant" "$TARGET=target/$TARGET/release/volant-playbook"
 
   ssh:
+    needs: changes
+    if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

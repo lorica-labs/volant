@@ -52,3 +52,7 @@ A playbook stopped by the [pre-flight check](/docs/internals/preflight/) exits w
 ## Where Ansible crashes
 
 In a few cases ansible-core crashes with exit code 250, for example on a playbook that imports itself or on `serial: abc`. Volant rejects those cases instead, with a clear message and one of the codes above. Each case is listed under *Differences from Ansible* on the page that covers it.
+
+## The other commands
+
+`volant adhoc` (`ansible`) exits with 0 when every host succeeded or was skipped, 2 when a host failed, 4 when a host was unreachable, 1 when `-l` leaves no host, and 5 for an invalid setting. `volant vault` (`ansible-vault`) and `volant inventory` (`ansible-inventory`) exit with 0 on success, 1 on an error such as `create` on a file that exists, and 5 on a bad option or action. A usage error of any of them exits with 2. [Ansible command names](/docs/start/ansible-command-names/#exit-codes) has the table.

@@ -86,7 +86,7 @@ PLAY RECAP *********************************************************************
 localhost                  : ok=1    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
 ```
 
-`volant playbook` takes the same options as `ansible-playbook`. The [quickstart](https://volant.sh/docs/start/quickstart/) continues with a remote host over SSH.
+`volant playbook` takes the same options as `ansible-playbook`, and `volant shims install` links the `ansible-*` program names to `volant` if you want to keep your command lines; see [Ansible command names](https://volant.sh/docs/start/ansible-command-names/). The [quickstart](https://volant.sh/docs/start/quickstart/) continues with a remote host over SSH.
 
 ## What works today
 

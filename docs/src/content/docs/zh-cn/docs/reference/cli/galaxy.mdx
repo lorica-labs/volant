@@ -1,0 +1,21 @@
+---
+sourceHash: 54618d327674
+title: volant galaxy
+description: 用 ansible-galaxy 安装和列出角色与 collection，它在 Volant 的 Python 运行时中运行。
+---
+
+`volant galaxy` 用 Volant 为 playbook 运行选择的解释器运行 ansible-core 2.19.12 的 `ansible-galaxy`，所以不装 ansible-core 也能工作。它打印脚本打印的内容，并以相同的退出码结束。
+
+```sh
+volant galaxy [ARGS...]
+```
+
+每个参数都原样交给 `ansible-galaxy`，包括 `-h` 和 `--version`。例如 `volant galaxy collection list`、`volant galaxy collection install community.general`、`volant galaxy collection install file.tar.gz -p DIR`、`volant galaxy role install NAME` 和 `volant galaxy role init NAME`。网络操作，包括 `-s` 和 `GALAXY_SERVERS` 指定的服务器，行为与 `ansible-galaxy` 相同。
+
+解释器、环境变量、终端、退出码和 `--version` 的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。
+
+## collection 装到哪里
+
+`collection install` 写入 `ANSIBLE_COLLECTIONS_PATH` 的第一项，默认是 `~/.ansible/collections`。Volant 的 playbook 会读取该目录。
+
+运行时自己的 `collections/` 目录，也就是 `volant runtime install --collections` 填充的那个，被加在该路径的最后。因此 `volant galaxy collection list` 也会列出这些 collection，放在它们自己的 `# <dir>` 标题之下。角色安装到 `ansible-galaxy role install` 放置的位置，即 `roles_path` 的第一项。

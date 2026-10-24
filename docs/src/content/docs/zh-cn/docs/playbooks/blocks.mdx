@@ -1,0 +1,118 @@
+---
+sourceHash: dd334ed7fa20
+title: 块与 handler
+description: 失败如何在块中传递，rescue 和 always 做什么，以及 handler 何时运行。
+---
+
+本页回答两个问题：块里的 task 失败时，主机会怎样；以及你通知过的 handler 究竟什么时候运行。块把一组 task 放在一起，这样 `rescue` 可以捕获它们的失败，`always` 可以无论发生什么都运行。块上的关键字适用于块内的每个 task。
+
+```yaml
+- block:
+    - name: Deploy the new release
+      command: /opt/app/deploy.sh
+  rescue:
+    - name: Roll back
+      command: /opt/app/rollback.sh
+    - debug:
+        msg: "{{ ansible_failed_task.name }} failed: {{ ansible_failed_result.msg | default('') }}"
+  always:
+    - name: Clear the maintenance flag
+      command: rm -f /srv/app/MAINTENANCE
+```
+
+## task 失败时
+
+主机从失败的 task 开始向外寻找，找包含它、且 `rescue` 不为空的块。
+
+| 外层块有 rescue 吗 | 会发生什么 |
+|---|---|
+| 有 | 主机运行最近的那个 rescue。汇总里把它计为 `rescued`，它仍留在 play 中。 |
+| 没有 | 主机运行每个外层块的 `always`，由内向外，然后离开 play。 |
+
+在这个 rescue 内部，主机上会设置两个 fact：`ansible_failed_task`，即按原样书写的 task；以及 `ansible_failed_result`，即失败的那个结果。两者在块结束之后和后面的 play 中仍然可以读取。
+
+只有没有人 rescue 的失败，才会把主机从存活主机的集合中移除。
+
+`rescue` 内部的失败不会被同一个块捕获。它交给更外层的下一个 rescue。
+
+## always
+
+无论主体是成功、失败还是被 rescue，`always` 都会运行。在退出一个未被 rescue 的失败时它同样会运行，由最内层的块开始。
+
+`always` 内部的失败会结束该部分：其余内容被跳过，主机继续向外走，运行仍然包含它的每个块的 `always`。
+
+## 永远不会被 rescue 的情况
+
+- 从未进入 rescue 的主机，会跳过其中的每个 task，包括刷新点以及它后面的 handler。
+- 无法连接的主机会离开 play，除非 `ignore_unreachable` 覆盖了这个 task。已经没有可以运行 rescue 的地方了。
+- `run_once` 的 task 失败时，等待它的主机会离开 play，即使 rescue 保住了运行该 task 的那台主机。
+
+## 让多台主机失败
+
+- `any_errors_fatal`，可写在 play、块或 task 上：当一个 task 在某台主机上失败或无法连接到它时，批次中的所有主机都会在运行完这个 task 之后，在这个 task 处失败。围绕这个 task 的 `rescue` 会在每台主机上运行。只有失败的那台主机在汇总里被计为 `rescued`。
+- `max_fail_percentage`，写在 play 上：每个 task 之后，如果批次中失败的比例超过该值，运行就会停止。`NO MORE HOSTS LEFT` 会像 Ansible 一样打印两次，之后不再运行任何 play。恰好损失该比例的批次则会继续。
+- `ignore_unreachable`，可写在 play、块或 task 上：无法连接的主机会打印它的错误和 `...ignoring`，留在 play 中，并被计为 `ok` 和 `ignored`。play 的 `ignore_errors` 覆盖失败，但不覆盖不可达的主机。
+
+## Handler
+
+handler 在刷新点运行，无论有多少 task 通知过它，都只运行一次。刷新点是 play 中的一个位置，Volant 会在那里运行到目前为止已被通知的 handler。
+
+```yaml
+tasks:
+  - name: Update the nginx configuration
+    lineinfile:
+      path: /etc/nginx/nginx.conf
+      regexp: '^worker_processes'
+      line: 'worker_processes auto;'
+    notify: restart nginx
+
+handlers:
+  - name: restart nginx
+    systemd_service:
+      name: nginx
+      state: restarted
+```
+
+### 刷新点
+
+每个 play 有三个自动的刷新点：`pre_tasks` 之后、role 和 `tasks` 之后，以及 `post_tasks` 之后。`meta: flush_handlers` 会在你写下它的任何位置添加一个，并带有 Ansible 在那里打印的 `TASK [meta]` 横幅。见[委派、meta 任务与 environment](/zh-cn/docs/playbooks/delegation/#meta-任务)。
+
+`include_tasks` 文件内部的刷新点，只对自己的语句引入了该文件的主机运行。其他主机会报告这一步，不在那里运行任何 handler，并把它们的通知保留到下一个它们到达的刷新点。
+
+### notify 如何找到 handler
+
+`notify` 指定一个 handler 的名字。这个名字会命中第一个 `name` 相符的 handler，以及每个在 `listen` 下列出它的 handler。这种不对称来自 Ansible，也是为什么一个应用了三次的 role 只贡献一个 handler，而不是三个。
+
+handler 按定义的顺序运行，而不是按被通知的顺序。`roles:` 中或由 `import_role` 引入的 role，会把它的 handler 放在 play 自己的 handler 之前。由 `include_role` 引入的 role，则把它们放在后面，与 Ansible 一致。
+
+task 只有在报告 `changed` 时才会通知。对于循环，由整体结果决定，所以只要有一个 item 发生了变化就够了。刷新运行之后，通知会被清除，所以除非再次有东西通知它，handler 不会在下一次刷新时再运行。
+
+### 来自 play 的关键字
+
+play 的 `handlers:` 列表中的 handler，会像 task 一样、也像 role 中的 handler 一样，采用 play 的 task 关键字。这包括 `no_log`、`environment`、`ignore_errors`、`ignore_unreachable`、`any_errors_fatal`、`run_once`、`timeout`、`throttle`、`debugger`、`connection`、`port`、`remote_user`、`become` 关键字、`check_mode`、`diff`、`module_defaults` 和 `collections`。handler 自己设置的关键字优先。带有 `no_log: true` 的 play 也会隐藏它的 handler 的结果。
+
+### handler 失败时
+
+失败的 handler 像任何其他失败的 task 一样移除主机，并且让同一次刷新中排在它后面的 handler 停止。写在块内部的刷新属于该块，所以在那里失败的 handler 会被该块的 `rescue` 捕获。
+
+### force_handlers
+
+默认情况下，失败的主机不会运行它被通知过的 handler。下面任何一项都能让它运行：
+
+- play 上的 `force_handlers: true`
+- `ansible.cfg` 的 `[defaults]` 节中的 `force_handlers = true`
+- 命令行上的 `--force-handlers`
+
+play 关键字的优先级高于另外两项。在 `force_handlers` 下，失败的主机会走完 play 的其余部分，报告每个 task，并运行它被通知过的 handler。汇总仍然统计这次失败。
+
+Handler 不会出现在任何列表输出中，三个自动的刷新点也不会。
+
+## 与 Ansible 的差异
+
+- 在 `ansible_failed_task` 中，这个版本不执行的关键字读作 `null`，而不是 ansible-core 的默认值。像 `connection: "ssh"` 这样的默认值，描述的是 Volant 并不遵守的东西。
+- `ansible_failed_task` 每个关键字一个键，并省略 ansible-core 留给自己的六个键（`uuid`、`finalized`、`squashed`、`_resolved_action`、`async_val`、`loop_with`）。它的 `args` 保存的是 playbook 所写的内容，不含 ansible-core 添加的十九个 `_ansible_*` 键。
+- `ansible_connection` 指定了这个版本不支持的传输方式的主机，会被报告为不可达，所以 rescue 不会捕获它。Ansible 把它当作普通的 task 失败，并加以 rescue。
+- `notify` 和 handler 的 `name` 可以是模板。它们在 task 报告 `changed` 时按每台主机渲染，渲染为列表的模板会通知其中的每个名字。`listen` 始终是字面文字。无法渲染的 `notify` 会像在 Ansible 中一样，在 task 运行之前让它失败，rescue 或 `ignore_errors` 可以接住这个失败。在循环中，Volant 让整个 task 失败，而 Ansible 让那个 item 失败。
+- 没有指向任何 handler 的 `notify`，会让运行以退出码 1 结束，消息为 `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`，与 Ansible 一致：消息出现在 task 的横幅之后，没有汇总。只有 task 在没有失败的情况下报告 `changed` 时才会发生，`ignore_errors` 和 `rescue` 都捕获不了。
+- `handlers:` 列表内部的块会被拒绝。刷新没有地方放块的 `rescue`。
+- 既不是 true 也不是 false 的 `force_handlers` 值，会让这个设置保持不变。Ansible 把它读作 false。

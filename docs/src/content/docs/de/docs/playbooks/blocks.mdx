@@ -1,0 +1,118 @@
+---
+sourceHash: dd334ed7fa20
+title: Blöcke und Handler
+description: Wie ein Fehler durch Blöcke wandert, was rescue und always tun und wann Handler laufen.
+---
+
+Diese Seite beantwortet zwei Fragen: Was geschieht mit einem Host, wenn ein Task in einem Block fehlschlägt, und wann läuft ein Handler, den Sie benachrichtigt haben, tatsächlich? Ein Block fasst Tasks zusammen, damit `rescue` ihren Fehler auffangen kann und `always` läuft, was auch geschieht. Keywords am Block gelten für jeden Task darin.
+
+```yaml
+- block:
+    - name: Deploy the new release
+      command: /opt/app/deploy.sh
+  rescue:
+    - name: Roll back
+      command: /opt/app/rollback.sh
+    - debug:
+        msg: "{{ ansible_failed_task.name }} failed: {{ ansible_failed_result.msg | default('') }}"
+  always:
+    - name: Clear the maintenance flag
+      command: rm -f /srv/app/MAINTENANCE
+```
+
+## Wenn ein Task fehlschlägt
+
+Der Host sucht vom fehlgeschlagenen Task aus nach außen nach einem umgebenden Block mit einem nicht leeren `rescue`.
+
+| Ein umgebender Block hat ein rescue | Was geschieht |
+|---|---|
+| Ja | Der Host führt das nächstgelegene rescue aus. Es wird im Recap als `rescued` gezählt, und der Host bleibt im Play. |
+| Nein | Der Host führt das `always` jedes umgebenden Blocks aus, den innersten zuerst, und verlässt dann das Play. |
+
+In diesem rescue werden auf dem Host zwei Facts gesetzt: `ansible_failed_task`, der Task so, wie er geschrieben wurde, und `ansible_failed_result`, das Ergebnis, das fehlgeschlagen ist. Beide bleiben nach dem Block und in späteren Plays lesbar.
+
+Nur ein Fehler, den niemand aufgefangen hat, nimmt einen Host aus der Menge der aktiven Hosts.
+
+Ein Fehler in einem `rescue` wird nicht vom selben Block aufgefangen. Er geht an das nächste rescue weiter außen.
+
+## always
+
+`always` läuft, ob der Rumpf erfolgreich war, fehlgeschlagen ist oder aufgefangen wurde. Auf dem Weg hinaus aus einem nicht aufgefangenen Fehler läuft es ebenfalls, der innerste Block zuerst.
+
+Ein Fehler in einem `always` beendet diesen Abschnitt: Der Rest wird übersprungen, und der Host geht weiter nach außen und führt das `always` jedes Blocks aus, der ihn noch umgibt.
+
+## Was nie aufgefangen wird
+
+- Ein Host, der nie in ein rescue eingetreten ist, überspringt jeden Task darin, einschließlich eines Flush-Punkts und der Handler dahinter.
+- Ein Host, der nicht erreichbar ist, verlässt das Play, es sei denn, `ignore_unreachable` deckt den Task ab. Es bleibt nichts, worauf ein rescue laufen könnte.
+- Wenn ein `run_once`-Task fehlschlägt, verlassen die Hosts, die auf ihn gewartet haben, das Play, auch wenn ein rescue den Host behält, der ihn ausgeführt hat.
+
+## Mehrere Hosts fehlschlagen lassen
+
+- `any_errors_fatal`, an einem Play, Block oder Task: Schlägt ein Task auf einem Host fehl oder erreicht ihn nicht, schlagen alle Hosts des Batches an diesem Task fehl, sobald alle ihn ausgeführt haben. Ein `rescue` um den Task läuft auf jedem Host. Nur der Host, der fehlgeschlagen ist, wird im Recap als `rescued` gezählt.
+- `max_fail_percentage`, an einem Play: Ist nach einem Task mehr als dieser Anteil des Batches fehlgeschlagen, endet der Lauf. `NO MORE HOSTS LEFT` wird zweimal ausgegeben, wie Ansible es ausgibt, und kein späteres Play läuft. Ein Batch, der genau diesen Anteil verliert, läuft weiter.
+- `ignore_unreachable`, an einem Play, Block oder Task: Ein Host, der nicht erreichbar ist, gibt seinen Fehler und `...ignoring` aus, bleibt im Play und wird als `ok` und `ignored` gezählt. Das `ignore_errors` eines Plays deckt Fehler ab und deckt keinen nicht erreichbaren Host ab.
+
+## Handler
+
+Ein Handler läuft an einem Flush-Punkt, einmal, egal wie viele Tasks ihn benachrichtigt haben. Ein Flush-Punkt ist eine Stelle im Play, an der Volant die bisher benachrichtigten Handler ausführt.
+
+```yaml
+tasks:
+  - name: Update the nginx configuration
+    lineinfile:
+      path: /etc/nginx/nginx.conf
+      regexp: '^worker_processes'
+      line: 'worker_processes auto;'
+    notify: restart nginx
+
+handlers:
+  - name: restart nginx
+    systemd_service:
+      name: nginx
+      state: restarted
+```
+
+### Flush-Punkte
+
+Jedes Play hat drei automatische Flush-Punkte: nach `pre_tasks`, nach den Rollen und `tasks` und nach `post_tasks`. `meta: flush_handlers` fügt einen hinzu, wo immer Sie es schreiben, mit dem Banner `TASK [meta]`, das Ansible dort ausgibt. Siehe [Delegation, Meta-Tasks und Umgebungsvariablen](/de/docs/playbooks/delegation/#meta-tasks).
+
+Ein Flush-Punkt in einer `include_tasks`-Datei läuft nur für die Hosts, deren eigene Anweisung diese Datei eingebunden hat. Die anderen Hosts melden den Schritt, führen dort keine Handler aus und behalten ihre Benachrichtigungen für den nächsten Flush, den sie erreichen.
+
+### Wie notify einen Handler findet
+
+`notify` nennt einen Handler. Der Name erreicht den ersten Handler, dessen `name` passt, und jeden Handler, der ihn unter `listen` aufführt. Diese Asymmetrie stammt von Ansible, und sie ist der Grund, warum eine Rolle, die dreimal angewendet wird, einen Handler beisteuert statt drei.
+
+Handler laufen in der Reihenfolge, in der sie definiert sind, nicht in der Reihenfolge, in der sie benachrichtigt wurden. Eine Rolle, die in `roles:` oder per `import_role` genannt wird, stellt ihre Handler vor die des Plays. Eine Rolle, die per `include_role` eingebracht wird, stellt sie dahinter, wie in Ansible.
+
+Ein Task benachrichtigt nur, wenn er `changed` meldet. Bei einer Schleife entscheidet das Gesamtergebnis, ein geändertes Element genügt also. Nach einem Flush werden die Benachrichtigungen gelöscht, ein Handler läuft also beim nächsten Flush nicht erneut, es sei denn, etwas benachrichtigt ihn wieder.
+
+### Keywords aus dem Play
+
+Ein Handler in der Liste `handlers:` des Plays übernimmt die Task-Keywords des Plays wie ein Task und wie ein Handler aus einer Rolle. Das umfasst `no_log`, `environment`, `ignore_errors`, `ignore_unreachable`, `any_errors_fatal`, `run_once`, `timeout`, `throttle`, `debugger`, `connection`, `port`, `remote_user`, die `become`-Keywords, `check_mode`, `diff`, `module_defaults` und `collections`. Ein Keyword, das der Handler selbst setzt, gewinnt. Ein Play mit `no_log: true` verbirgt auch die Ergebnisse seiner Handler.
+
+### Wenn ein Handler fehlschlägt
+
+Ein fehlschlagender Handler nimmt den Host wie jeder andere fehlschlagende Task heraus, und er stoppt die Handler nach ihm im selben Flush. Ein Flush, der in einem Block geschrieben ist, gehört zu diesem Block, sodass ein Handler, der dort fehlschlägt, vom `rescue` des Blocks aufgefangen wird.
+
+### force_handlers
+
+Standardmäßig führt ein Host, der fehlgeschlagen ist, die Handler nicht aus, für die er benachrichtigt wurde. Eines der folgenden bewirkt, dass er sie ausführt:
+
+- `force_handlers: true` am Play
+- `force_handlers = true` im Abschnitt `[defaults]` der `ansible.cfg`
+- `--force-handlers` auf der Kommandozeile
+
+Das Keyword am Play hat Vorrang vor den beiden anderen. Unter `force_handlers` durchläuft ein fehlgeschlagener Host den Rest des Plays, meldet jeden Task und führt die Handler aus, für die er benachrichtigt wurde. Der Recap zählt den Fehler weiterhin.
+
+Handler erscheinen in keiner Auflistung, und die drei automatischen Flush-Punkte auch nicht.
+
+## Unterschiede zu Ansible
+
+- In `ansible_failed_task` wird ein Keyword, das dieses Release nicht ausführt, als `null` gelesen statt als Standardwert von ansible-core. Ein Standardwert wie `connection: "ssh"` würde etwas beschreiben, das Volant nicht beachtet.
+- `ansible_failed_task` hat einen Schlüssel pro Keyword und lässt die sechs aus, die ansible-core für sich behält (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`, `loop_with`). Sein `args` enthält, was das Playbook geschrieben hat, ohne die neunzehn `_ansible_*`-Schlüssel, die ansible-core hinzufügt.
+- Ein Host, dessen `ansible_connection` einen Transport nennt, den dieses Release nicht hat, wird als nicht erreichbar gemeldet, sodass ein rescue ihn nicht auffängt. Ansible behandelt das als gewöhnlichen Task-Fehler und fängt ihn auf.
+- Ein `notify` und der `name` eines Handlers können Templates sein. Sie werden für jeden Host gerendert, wenn der Task `changed` meldet, und ein Template, das zu einer Liste rendert, benachrichtigt jeden Namen darin. `listen` ist immer der literale Text. Ein `notify`, das sich nicht rendern lässt, lässt den Task wie in Ansible fehlschlagen, bevor er läuft, und ein rescue oder `ignore_errors` kann diesen Fehler übernehmen. In einer Schleife lässt Volant den ganzen Task fehlschlagen, wo Ansible das Element fehlschlagen lässt.
+- Ein `notify`, das keinen Handler nennt, beendet den Lauf wie in Ansible mit Exit-Code 1 und der Meldung `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`: nach dem Banner des Tasks, ohne Recap. Das geschieht nur, wenn der Task `changed` meldet, ohne fehlzuschlagen, und kein `ignore_errors` und kein `rescue` kann es auffangen.
+- Ein Block in einer Liste `handlers:` wird abgelehnt. Ein Flush hat keinen Platz für das `rescue` eines Blocks.
+- Ein `force_handlers`-Wert, der weder true noch false ist, lässt die Einstellung unverändert. Ansible liest ihn als false.

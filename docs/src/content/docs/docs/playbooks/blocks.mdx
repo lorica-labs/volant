@@ -1,0 +1,117 @@
+---
+title: Blocks and handlers
+description: How a failure travels through blocks, what rescue and always do, and when handlers run.
+---
+
+This page answers two questions: what happens to a host when a task fails inside a block, and when a handler you notified actually runs. A block groups tasks so that `rescue` can catch their failure and `always` can run whatever happened. Keywords on the block apply to every task inside it.
+
+```yaml
+- block:
+    - name: Deploy the new release
+      command: /opt/app/deploy.sh
+  rescue:
+    - name: Roll back
+      command: /opt/app/rollback.sh
+    - debug:
+        msg: "{{ ansible_failed_task.name }} failed: {{ ansible_failed_result.msg | default('') }}"
+  always:
+    - name: Clear the maintenance flag
+      command: rm -f /srv/app/MAINTENANCE
+```
+
+## When a task fails
+
+The host looks outward from the failed task for an enclosing block that has a non-empty `rescue`.
+
+| An enclosing block has a rescue | What happens |
+|---|---|
+| Yes | The host runs the nearest rescue. It is counted `rescued` in the recap and stays in the play. |
+| No | The host runs the `always` of each enclosing block, innermost first, then leaves the play. |
+
+Inside that rescue, two facts are set on the host: `ansible_failed_task`, the task as it was written, and `ansible_failed_result`, the result that failed. Both stay readable after the block and in later plays.
+
+Only a failure that nobody rescued removes a host from the set of live hosts.
+
+A failure inside a `rescue` is not caught by the same block. It goes to the next rescue further out.
+
+## always
+
+`always` runs whether the body succeeded, failed or was rescued. On the way out of an unrescued failure it runs too, innermost block first.
+
+A failure inside an `always` ends that section: the rest of it is skipped, and the host keeps going outward, running the `always` of every block that still encloses it.
+
+## What is never rescued
+
+- A host that never entered a rescue skips every task inside it, including a flush point and the handlers behind it.
+- A host that cannot be reached leaves the play, unless `ignore_unreachable` covers the task. There is nothing left to run a rescue on.
+- When a `run_once` task fails, the hosts that were waiting on it leave the play, even if a rescue keeps the host that ran it.
+
+## Failing more than one host
+
+- `any_errors_fatal`, on a play, a block or a task: when a task fails on one host or cannot reach it, every host of the batch fails at that task once all of them have run it. A `rescue` around the task runs on every host. Only the host that failed is counted `rescued` in the recap.
+- `max_fail_percentage`, on a play: after each task, if more than that share of the batch has failed, the run stops. `NO MORE HOSTS LEFT` prints twice, as Ansible prints it, and no later play runs. A batch that loses exactly that share carries on.
+- `ignore_unreachable`, on a play, a block or a task: a host that cannot be reached prints its error and `...ignoring`, stays in the play and is counted `ok` and `ignored`. A play's `ignore_errors` covers failures and does not cover an unreachable host.
+
+## Handlers
+
+A handler runs at a flush point, once, however many tasks notified it. A flush point is a place in the play where Volant runs the handlers that have been notified so far.
+
+```yaml
+tasks:
+  - name: Update the nginx configuration
+    lineinfile:
+      path: /etc/nginx/nginx.conf
+      regexp: '^worker_processes'
+      line: 'worker_processes auto;'
+    notify: restart nginx
+
+handlers:
+  - name: restart nginx
+    systemd_service:
+      name: nginx
+      state: restarted
+```
+
+### Flush points
+
+Every play has three automatic flush points: after `pre_tasks`, after the roles and `tasks`, and after `post_tasks`. `meta: flush_handlers` adds one wherever you write it, with the `TASK [meta]` banner Ansible prints there. See [Delegation, meta tasks and environment](/docs/playbooks/delegation/#meta-tasks).
+
+A flush point inside an `include_tasks` file runs only for the hosts whose own statement included that file. The other hosts report the step, run no handlers there, and keep their notifications for the next flush they reach.
+
+### How notify finds a handler
+
+`notify` names a handler. The name reaches the first handler whose `name` matches, and every handler that lists it under `listen`. This asymmetry comes from Ansible, and it is why a role applied three times contributes one handler rather than three.
+
+Handlers run in the order they are defined, not the order they were notified. A role named in `roles:` or by `import_role` puts its handlers in front of the play's own. A role brought in by `include_role` puts them behind, as in Ansible.
+
+A task notifies only when it reports `changed`. For a loop, the overall result decides, so one changed item is enough. Once a flush has run, the notifications are cleared, so a handler does not run again at the next flush unless something notifies it again.
+
+### Keywords from the play
+
+A handler in the play's `handlers:` list takes the play's task keywords as a task does, and as a handler from a role does. This covers `no_log`, `environment`, `ignore_errors`, `ignore_unreachable`, `any_errors_fatal`, `run_once`, `timeout`, `throttle`, `debugger`, `connection`, `port`, `remote_user`, the `become` keywords, `check_mode`, `diff`, `module_defaults` and `collections`. A keyword the handler sets itself wins. A play with `no_log: true` hides the results of its handlers too.
+
+### When a handler fails
+
+A failing handler removes the host like any other failing task, and it stops the handlers after it in the same flush. A flush written inside a block belongs to that block, so a handler that fails there is caught by the block's `rescue`.
+
+### force_handlers
+
+By default, a host that failed does not run the handlers it was notified for. Any of these makes it run them:
+
+- `force_handlers: true` on the play
+- `force_handlers = true` in the `[defaults]` section of `ansible.cfg`
+- `--force-handlers` on the command line
+
+The play keyword takes priority over the other two. Under `force_handlers`, a failed host walks the rest of the play, reports every task and runs the handlers it was notified for. The recap still counts the failure.
+
+Handlers do not appear in any listing, and neither do the three automatic flush points.
+
+## Differences from Ansible
+
+- In `ansible_failed_task`, a keyword this release does not execute reads as `null` rather than as ansible-core's default. A default such as `connection: "ssh"` would describe something Volant does not honor.
+- `ansible_failed_task` has one key per keyword and leaves out the six that ansible-core keeps for itself (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`, `loop_with`). Its `args` holds what the playbook wrote, without the nineteen `_ansible_*` keys that ansible-core adds.
+- A host whose `ansible_connection` names a transport this release does not have is reported unreachable, so a rescue does not catch it. Ansible treats that as an ordinary task failure and rescues it.
+- A `notify` and a handler `name` can be templates. They are rendered for each host when the task reports `changed`, and a template that renders to a list notifies every name in it. `listen` is always the literal text. A `notify` that cannot be rendered fails the task before it runs, as in Ansible, and a rescue or `ignore_errors` can take that failure. In a loop, Volant fails the whole task where Ansible fails the item.
+- A `notify` that names no handler ends the run with exit code 1 and the message `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`, as in Ansible: after the task's banner, with no recap. It happens only when the task reports `changed` without failing, and no `ignore_errors` and no `rescue` can catch it.
+- A block inside a `handlers:` list is rejected. A flush has nowhere to put a block's `rescue`.
+- A `force_handlers` value that is neither true nor false leaves the setting unchanged. Ansible reads it as false.

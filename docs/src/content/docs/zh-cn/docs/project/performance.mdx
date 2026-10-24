@@ -1,0 +1,125 @@
+---
+sourceHash: c9d640267c68
+title: 性能
+description: 两个实测的工作负载、背后的配置、复现它们的命令，以及剩余的时间花在了哪里。
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import BarChart from '../../../../../components/BarChart.astro';
+
+Volant 在两个真实的工作负载上做了测量，每个都由仓库中的一个 recipe 运行。本页的每个数字都来自这些 recipe。
+
+在已经收敛的两台 Ubuntu 24.04 主机上，应用四个 Ansible Galaxy role（`geerlingguy.security`、`nginx`、`git` 和 `pip`），Volant 用 0.529 秒完成，而启用 `pipelining = True` 的 ansible-core 2.19.12 需要 26.435 秒，比值为 49.97。在官方 k3s-ansible 的 `site.yml` 上，针对已安装的集群，Volant 用 23.477 秒，参照版本用 50.519 秒，比值为 2.15。测量日期为 2026-09-27，使用 `just bench` 和 `just bench-k3s`，它们可以复现这些数字。此后没有重新测量过。
+
+<BarChart
+  title="两个工作负载，两台已收敛的主机"
+  subtitle="三次计时运行的中位数，2026-09-27。参照版本：ansible-core 2.19.12，<code>pipelining = True</code>。越短越快。"
+  unit="s"
+  decimals={3}
+  series={[{ name: 'ansible-core 2.19.12' }, { name: 'Volant', accent: true }]}
+  rows={[
+    { label: '四个 Galaxy role', values: [26.435, 0.529] },
+    { label: 'k3s-ansible site.yml', values: [50.519, 23.477] },
+  ]}
+/>
+
+两个比值相差很大，是因为这些 role 在已收敛的主机上什么也不改变，参照版本在那里的大部分时间花在每个模块周围的机制上，而 Volant 去掉了其中的大部分。k3s playbook 每次都会重启服务并运行安装脚本，这部分工作在任何一个引擎下耗时都一样。[还剩下什么](#还剩下什么)对此做了细分。
+
+## 配置
+
+| | |
+|---|---|
+| 受管主机 | 两台 Ubuntu 24.04 主机，各 4 核，位于 overlay 网络中 |
+| 控制节点 | Ubuntu 26.04，8 核 |
+| Volant | `e57fbe5`（`v0.1.0-alpha.7-74-ge57fbe5`）的发布构建，默认设置：开启原生模块，每台主机一个 ssh 连接，`--facts auto`，关闭批处理 |
+| 参照版本 | ansible-core 2.19.12，`pipelining = True`，`forks` 保持默认值 5，其他设置全部使用默认值 |
+| role 工作负载 | `geerlingguy.security` 3.0.2、`geerlingguy.nginx` 3.3.1、`geerlingguy.git` 3.0.1 和 `geerlingguy.pip` 3.1.2 放在同一个 play 中，`become: true`，收集 facts，每台主机 56 个 task |
+| k3s 工作负载 | 固定提交的 k3s-ansible playbook，k3s v1.31.12+k3s1，一台 server 和一台 agent，集群先由参照版本运行一遍来安装 |
+| 运行次数 | 每个引擎先做一次不计时的预热运行，然后各做三次计时运行，报告中位数 |
+
+每次计时运行的 `PLAY RECAP` 都会与第一次运行的对比，两个引擎之间也是如此。出现差异就意味着两个引擎做了不同的工作，recipe 会失败。在 role 工作负载上，每次运行每台主机都以 `ok=28 changed=0 skipped=28` 结束。在 k3s 上，每次运行 server 都以 `ok=34 changed=2 skipped=69` 结束，agent 以 `ok=19 changed=3 skipped=54` 结束。`changed` 的 task 就是[还剩下什么](#还剩下什么)中描述的实际工作。
+
+各次运行的耗时：
+
+| 工作负载 | Volant（秒） | ansible-core（秒） |
+|---|---|---|
+| 四个 Galaxy role | 0.530, 0.529, 0.524 | 26.408, 26.438, 26.435 |
+| k3s-ansible | 24.150, 23.448, 23.477 | 51.121, 50.519, 50.505 |
+
+## 复现这些数字
+
+两个 recipe 都以 release 模式构建 Volant，针对你指定的主机运行，并打印中位数和比值。控制节点需要用 `uv tool install` 安装 ansible-core 2.19.12，主机上的账户需要无密码的 `sudo`。
+
+```sh
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench 3
+VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench-k3s 3
+```
+
+<Aside type="caution">
+两个 recipe 都会改动它们所运行的主机。`just bench` 会安装这四个 role 的软件包和配置。`just bench-k3s` 会安装 k3s，测量，然后再移除它。请使用可以清空的机器。
+</Aside>
+
+每次计时的 Volant 运行还会通过 `VOLANT_PROFILE_JSON` 把它的 profile 写到 `target/bench/` 下，所以出人意料的数字可以追溯到引起它的 task。下面的表格来自这些文件。
+
+## 时间花在哪里
+
+时间按每台主机计，取自 2026-09-27 的中位数运行。同样的工作负载在 2026-09-24（原生模块出现之前）的测量中，role 用了 12.66 秒（参照版本 26.23 秒），k3s 用了 37.53 秒（参照版本 50.19 秒）。那一天的 profile 见[决策记录 0008](/zh-cn/docs/decisions/0008-native-modules-and-speed/)。
+
+### 四个 Galaxy role
+
+| 步骤 | 耗时 |
+|---|---|
+| 在控制节点上构建 Python 模块并集 | 15.3 ms，从缓存读取 |
+| `apt`，8 个 task，软件包已安装，缓存是新的 | 38.4 ms，原生 |
+| `setup`，收集 facts | 47.6 ms，原生 |
+| `systemd`，3 个 task | 52.4 ms，原生 |
+| `file` ×8、`lineinfile` ×8、`stat` ×5 | 52.8 ms，原生 |
+| 打开连接 | 172.6 ms |
+| 在控制节点上准备 task | 25.0 ms |
+| 传输中的帧和 blob | 27.1 ms |
+| 在每个 task 上等待另一台主机 | 10.6 ms |
+| 总耗时，两台主机 | 0.529 秒（参照版本 26.435 秒） |
+
+中位数运行中的全部 66 个模块 task（每台主机 33 个）都由原生模块应答。没有一个被交还，所以两台主机上都没有启动 Python 服务进程。
+
+### k3s-ansible
+
+两台主机不同的地方，数字取 server 的。
+
+| 步骤 | 耗时 |
+|---|---|
+| 构建 Python 模块并集，包含 collection | 30.6 ms，从缓存读取 |
+| 重启 k3s 服务，server 和 agent | 8,269 + 4,763 ms，原生 `systemd` |
+| `service_facts` | 2,485 ms，原生 |
+| `package_facts` | 168 ms，原生 |
+| `apt: name=policycoreutils update_cache=true` | 2,205 ms，交还给 Python |
+| 收集 facts | 55 ms，原生 |
+| 在控制节点上准备 task | 185 ms |
+| 打开连接 | 350 ms |
+| 在每个 task 上等待另一台主机（agent） | 253 ms |
+| 总耗时，两台主机 | 23.477 秒（参照版本 50.519 秒） |
+
+在中位数运行中，28 个 task 以原生方式运行，11 个被交还给 Python 模块，5 个运行的是没有原生版本的模块（`ansible.posix.sysctl` 和 `wait_for`）。
+
+## 还剩下什么
+
+在 k3s 上，Volant 的 23.5 秒中大部分是 playbook 要求的工作：
+
+- k3s 服务的重启，server 上约 8.3 秒，agent 上约 4.8 秒，花在 `systemctl` 和 k3s 本身；
+- k3s 安装脚本，每台主机约 1.4 到 1.5 秒；
+- 13 个 `command` task，例如 `k3s --version`，两台主机合计约 3.1 秒。
+
+两个引擎为这些付出的代价相同，因为它们是在主机上运行的进程。
+
+有两个步骤受限于参照版本自身的做法：
+
+- `service_facts` 运行 ansible-core 运行的命令（`systemctl list-unit-files`、`service --status-all`，以及每个 unit 一次 `systemctl show`），以便让它的应答保持一致。原生模块并行运行这些命令，而参照版本逐个运行，但它们仍然占据了其 2.4 秒的大部分。只要读取同样的来源，它就无法低于这个水平。
+- playbook 的 `apt` task 设置了 `update_cache` 而没有 `cache_valid_time`，所以参照版本每次都运行 `apt-get update`。原生的 `apt` 只应答无事可做的 task，所以这个 task 交给了 Python 模块，缓存刷新占了它 2.2 秒的大部分。
+
+这两个步骤合计每台主机耗时 4.5 到 4.7 秒。要让它们更快，就意味着读取参照版本之外的其他来源，这个决定留给以后的版本。
+
+<Aside type="note">
+这些数字描述的是两台主机上的两个 playbook。你自己的数字取决于网络延迟、你的 task 做什么、其中有多少个被原生模块覆盖，以及你同时驱动多少台主机。`--profile` 会显示你自己这次运行的拆分：见[命令行](/zh-cn/docs/reference/cli/#运行与输出)。
+</Aside>
+
+[决策记录 0008](/zh-cn/docs/decisions/0008-native-modules-and-speed/)解释了这些数字背后的选择，以及测量过后被放弃的方案。

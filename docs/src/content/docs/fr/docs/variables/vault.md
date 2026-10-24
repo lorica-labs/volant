@@ -1,0 +1,44 @@
+---
+sourceHash: 06ef07eefbf0
+title: Vault
+description: Comment Volant lit les données d'Ansible Vault, d'où il tire les mots de passe, et pourquoi ils ne quittent jamais le processus du contrôleur.
+---
+
+Volant lit et écrit les formats vault 1.1 et 1.2 d'ansible-core 2.19.12. Les résultats, les messages d'erreur et les codes de sortie correspondent à ceux d'ansible-core.
+
+## D'où viennent les mots de passe
+
+| Source | Remarques |
+|---|---|
+| `-J`, `--ask-vault-pass` | Demandé sur le terminal, sans écho. |
+| `--vault-password-file`, `--vault-pass-file` | Un fichier, ou un exécutable qui affiche le mot de passe. Répétable. |
+| `--vault-id LABEL@SOURCE` | La source est un fichier, un exécutable ou `prompt`. Répétable. |
+| `[defaults] vault_password_file`, `vault_identity_list` | La même chose, depuis `ansible.cfg`. |
+| `ANSIBLE_VAULT_PASSWORD_FILE`, `ANSIBLE_VAULT_IDENTITY_LIST` | La même chose, depuis l'environnement. |
+
+Chaque mot de passe est essayé sur chaque valeur chiffrée, quel que soit son label.
+
+## Ce qui est déchiffré
+
+- Les valeurs `!vault` en ligne dans un playbook ou un fichier de variables. Elles se chargent sous forme chiffrée et se déchiffrent quand un modèle les lit. Une valeur déchiffrée garde la confiance qu'ansible-core lui accorde.
+- Les fichiers entièrement chiffrés : `vars_files`, `include_vars`, et les fichiers `group_vars` et `host_vars`. Un fichier chiffré qui ne peut pas être lu échoue avec le message d'ansible-core.
+- Les filtres `vault` et `unvault`, les tests `vault_encrypted` et `vaulted_file`, et le lookup `unvault`.
+- Un `src` chiffré de `copy`, `template` et `script`, et une archive chiffrée d'`unarchive`. L'exécution la déchiffre dans un répertoire temporaire privé avant que le plugin ne la lise. `decrypt: false` sur `copy` ou `unarchive` garde le texte chiffré.
+
+Une valeur `!vault` qu'aucun secret n'ouvre fait échouer la tâche qui la lit, avec les trois blocs qu'ansible-core affiche. `debug: var=x` se termine avec 2, avec la cause à la ligne où la valeur est écrite. `is vault_encrypted` répond pour les variables de l'hôte courant.
+
+## Les secrets restent sur le contrôleur
+
+Un mot de passe vault vit en mémoire dans le processus du contrôleur. Il n'est jamais écrit dans une ligne de commande, dans l'environnement d'un processus fils, dans un journal, dans un résultat ni dans le lien avec l'agent. Les mots de passe de connexion et d'élévation de privilèges suivent la même règle, et [Connexions](/fr/docs/hosts/connections/#types-de-connexion) explique comment le mot de passe SSH parvient à `ssh`.
+
+Les filtres, tests et lookups qui s'exécutent en Python ne voient jamais le mot de passe vault. Ceux de vault s'exécutent pour cette raison dans le processus du contrôleur. Voir [Filtres, tests et lookups qui nécessitent Python](/fr/docs/variables/templating/#filtres-tests-et-lookups-qui-nécessitent-python).
+
+Une valeur revenue d'un hôte géré n'est jamais déchiffrée avec les secrets de l'exécution, et n'est jamais rendue de nouveau comme modèle. Voir [Les valeurs venues des hôtes ne sont jamais rendues comme modèles](/fr/docs/variables/templating/#les-valeurs-venues-des-hôtes-ne-sont-jamais-rendues-comme-modèles).
+
+## Limites connues
+
+- Les arguments `salt` et `wrap_object` du filtre `vault` sont refusés comme non encore pris en charge.
+- Une valeur `!vault` écrite dans les propres `vars:` d'un play n'affiche aucune ligne `Origin:` quand aucun secret ne l'ouvre.
+- Un `set_fact` d'un simple `{{ x }}` qui contient une valeur chiffrée perd l'étiquette vault : `is vault_encrypted` répond donc faux sur le fact là où ansible-core répond vrai.
+
+La [page de la ligne de commande](/fr/docs/reference/cli/#vault) donne les options.

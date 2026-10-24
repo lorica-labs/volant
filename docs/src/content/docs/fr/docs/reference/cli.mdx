@@ -1,0 +1,258 @@
+---
+sourceHash: d4ad4ddc3da2
+title: Ligne de commande
+description: Chaque commande et option que Volant accepte, regroupées selon ce qu'elles changent, et les options d'ansible-playbook qu'il n'a pas encore.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+```sh
+volant playbook [OPTIONS] <PLAYBOOK>...
+volant-playbook [OPTIONS] <PLAYBOOK>...
+volant runtime <install|pack|status|path|remove>
+volant --version
+```
+
+`volant playbook` accepte les mêmes options qu'`ansible-playbook`, pour celles qui existent. `volant-playbook` est le même programme sous un nom qui ressemble à celui que vous connaissez. Les playbooks donnés ensemble s'exécutent dans l'ordre, et chacun affiche son propre récapitulatif.
+
+Quand une option a une clé d'`ansible.cfg` ou une variable d'environnement, l'entrée la nomme. L'option l'emporte sur les deux ; [Configuration](/fr/docs/reference/configuration/) explique l'ordre.
+
+## Hôtes et connexions
+
+<Option name="-i, --inventory, --inventory-file" arg="PATH" config="[defaults] inventory" env="ANSIBLE_INVENTORY">
+  Une source d'inventaire : un fichier, un répertoire, un script ou une liste d'hôtes séparés par des virgules. Répétez l'option pour en fusionner plusieurs, voir [Inventaires](/fr/docs/hosts/inventories/). Sans elle, seul le `localhost` implicite existe.
+</Option>
+
+<Option name="-l, --limit" arg="SUBSET">
+  N'exécute que sur les hôtes qui correspondent à ce [motif](/fr/docs/hosts/inventories/#motifs-dhôtes). Une limite qui ne correspond à aucun hôte avertit et restreint l'exécution à ce qui a correspondu.
+</Option>
+
+<Option name="--start-at-task" arg="NAME">
+  Démarre à la première tâche nommée `NAME` ; `*` et `?` correspondent à n'importe quel texte. Les tâches qui la précèdent sont écartées, `Gathering Facts` mis à part, tout comme les plays qui précèdent celui qui la contient. Seules les tâches écrites dans le play sont cherchées, comme dans `ansible-playbook` : une tâche qu'un `include_tasks` ou un `include_role` lit pendant l'exécution n'est pas trouvée. Un nom que rien ne reconnaît affiche les plays avec un récapitulatif vide, puis une erreur, et sort avec 0.
+</Option>
+
+<Option name="--step">
+  Demande avant chaque tâche : `y` l'exécute, `n` ou toute autre réponse l'ignore, `c` l'exécute ainsi que toutes les suivantes sans demander. Il faut un terminal ; sans terminal, l'exécution s'arrête avec le code de sortie 250 avant de toucher un hôte.
+</Option>
+
+<Option name="--flush-cache">
+  Supprime avant l'exécution les entrées du [cache de facts](/fr/docs/hosts/inventories/#vidage) des hôtes de l'inventaire.
+</Option>
+
+<Option name="--version">
+  Affiche la version de Volant et la version d'ansible-core à laquelle elle correspond, puis s'arrête.
+</Option>
+
+<Option name="-u, --user" arg="REMOTE_USER" config="[defaults] remote_user" env="ANSIBLE_REMOTE_USER">
+  Se connecte aux hôtes sous cet utilisateur. Sans lui, `ssh` choisit l'utilisateur, d'après votre `~/.ssh/config` ou votre compte local.
+</Option>
+
+<Option name="-c, --connection" arg="CONNECTION">
+  Le plugin de connexion des hôtes qui n'en nomment aucun : `ssh` ou `local`. L'`ansible_connection` d'un hôte et le mot-clé `connection` d'un play, d'un bloc ou d'une tâche l'emportent tous deux sur lui. Tout autre nom fait échouer la tâche avec `the connection plugin '<name>' was not found`.
+</Option>
+
+<Option name="--private-key, --key-file" arg="FILE" config="[defaults] private_key_file" env="ANSIBLE_PRIVATE_KEY_FILE">
+  La clé privée avec laquelle `ssh` s'authentifie, passée sous la forme `ssh -i`.
+</Option>
+
+<Option name="--ssh-common-args" arg="ARGS">
+  Arguments ajoutés à chaque ligne de commande `ssh`. Volant les découpe en mots comme le ferait un shell, et un guillemet non fermé arrête l'exécution avant son début. La variable d'hôte `ansible_ssh_common_args` remplace cette valeur pour cet hôte.
+</Option>
+
+<Option name="--ssh-extra-args" arg="ARGS">
+  Arguments ajoutés à la ligne de commande `ssh` après les arguments communs. La variable d'hôte `ansible_ssh_extra_args` remplace cette valeur pour cet hôte.
+</Option>
+
+<Option name="-T, --timeout" arg="SECONDS" default="10" config="[defaults] timeout" env="ANSIBLE_TIMEOUT">
+  Combien de temps attendre une connexion, passé à `ssh` sous la forme `ConnectTimeout`.
+</Option>
+
+<Option name="-f, --forks" arg="N" default="5" config="[defaults] forks" env="ANSIBLE_FORKS">
+  Le nombre d'hôtes sur lesquels un play travaille à la fois. Zéro, ou une valeur qui n'est pas un nombre, est rejeté avant le début de l'exécution.
+</Option>
+
+<Option name="-M, --module-path" arg="PATH">
+  Répertoires où chercher des modules avant ceux qui sont configurés. Séparés par des deux-points et répétables. Un `-M` plus tardif passe devant un `-M` plus ancien.
+</Option>
+
+## Variables et tags
+
+<Option name="-e, --extra-vars" arg="VARS">
+  Variables supplémentaires, tout en haut de l'[ordre de priorité](/fr/docs/variables/precedence/) : paires `key=value`, JSON ou YAML en ligne, ou `@file`. Répétable.
+</Option>
+
+<Option name="-t, --tags" arg="TAGS" config="[tags] run" env="ANSIBLE_RUN_TAGS">
+  N'exécute que les tâches qui portent ces tags. Séparés par des virgules et répétables, et ajoutés à la valeur par défaut configurée au lieu de la remplacer. Voir [Tags et listes](/fr/docs/playbooks/check-and-diff/#les-règles-des-tags).
+</Option>
+
+<Option name="--skip-tags" arg="TAGS" config="[tags] skip" env="ANSIBLE_SKIP_TAGS">
+  Ignore les tâches qui portent ces tags. Séparés par des virgules et répétables, et ajoutés à la valeur par défaut configurée.
+</Option>
+
+## Regarder sans exécuter
+
+Ces options lisent les playbooks puis s'arrêtent. Elles ne se connectent jamais à un hôte et ne s'arrêtent jamais sur un module non pris en charge : elles fonctionnent donc sur des playbooks que cette version ne peut pas encore exécuter.
+
+<Option name="--list-tasks">
+  Liste les tâches que l'exécution lancerait, dans le format d'Ansible.
+</Option>
+
+<Option name="--list-tags">
+  Liste les tags que l'exécution sélectionnerait.
+</Option>
+
+<Option name="--list-hosts">
+  Liste les hôtes sur lesquels chaque play s'exécuterait, dans l'ordre de l'inventaire.
+</Option>
+
+<Option name="--syntax-check">
+  Charge et compile les playbooks sans rien exécuter.
+</Option>
+
+## Élévation de privilèges
+
+<Option name="-b, --become" default="false" config="[privilege_escalation] become" env="ANSIBLE_BECOME">
+  Exécute les tâches avec élévation de privilèges. Un mot-clé `become` du playbook décide toujours pour son propre play, bloc ou tâche. Voir [Élévation de privilèges](/fr/docs/hosts/connections/#become).
+</Option>
+
+<Option name="--become-user" arg="USER" default="root" config="[privilege_escalation] become_user" env="ANSIBLE_BECOME_USER">
+  L'utilisateur vers lequel élever les privilèges.
+</Option>
+
+<Option name="--become-method" arg="METHOD" default="sudo" config="[privilege_escalation] become_method" env="ANSIBLE_BECOME_METHOD">
+  La méthode d'élévation : `sudo` ou `su`. Les autres méthodes arrêtent l'exécution avant son début.
+</Option>
+
+<Option name="-k, --ask-pass" id="ask-pass">
+  Demande le mot de passe SSH sur le terminal, avec l'écho désactivé. `ssh` le reçoit par `SSH_ASKPASS` : il faut donc OpenSSH 8.4 ou plus récent. Le mot de passe n'est dans aucune ligne de commande, aucun environnement envoyé à l'hôte et aucun journal. Après `-k`, une réponse vide à l'invite de `-K` réutilise le mot de passe SSH, comme dans `ansible-playbook`.
+</Option>
+
+<Option name="--connection-password-file, --conn-pass-file" arg="PATH">
+  Lit le mot de passe SSH sur la première ligne de ce fichier. Il est incompatible avec `-k`.
+</Option>
+
+<Option name="--become-password-file, --become-pass-file" arg="PATH">
+  Lit le mot de passe d'élévation sur la première ligne de ce fichier. Il est incompatible avec `-K`.
+</Option>
+
+<Option name="-K, --ask-become-pass">
+  Demande le mot de passe d'élévation sur le terminal, avec l'écho désactivé. Le mot de passe est écrit une seule fois dans `sudo` et n'apparaît dans aucune ligne de commande, aucun journal ni aucun résultat.
+</Option>
+
+## Vault
+
+<Option name="-J, --ask-vault-pass, --ask-vault-password">
+  Demande le mot de passe vault sur le terminal, avec l'écho désactivé.
+</Option>
+
+<Option name="--vault-password-file, --vault-pass-file" arg="PATH" config="[defaults] vault_password_file" env="ANSIBLE_VAULT_PASSWORD_FILE">
+  Un fichier qui contient le mot de passe vault, ou un exécutable qui l'affiche. Répétable.
+</Option>
+
+<Option name="--vault-id" arg="LABEL@SOURCE" config="[defaults] vault_identity_list" env="ANSIBLE_VAULT_IDENTITY_LIST">
+  Une identité vault : la source est un fichier, un exécutable ou `prompt`. Répétable. Chaque mot de passe est essayé sur chaque valeur chiffrée, quel que soit son label. Voir [Vault](/fr/docs/variables/vault/).
+</Option>
+
+## Exécution et sortie
+
+<Option name="--force-handlers" default="false" config="[defaults] force_handlers" env="ANSIBLE_FORCE_HANDLERS">
+  Exécute les handlers notifiés même sur les hôtes qui ont échoué. Un mot-clé `force_handlers` sur le play a priorité. Voir [Handlers](/fr/docs/playbooks/blocks/#handlers).
+</Option>
+
+<Option name="-C, --check" default="false">
+  Indique ce que chaque tâche changerait sans rien changer. Le mot-clé `check_mode` propre à une tâche l'emporte sur cette option : une tâche avec `check_mode: false` s'exécute donc pour de vrai. Un hôte sans Python ne peut pas répondre à `apt`, `user`, `group` ni `file` sous `--check` ou `--diff` : ces modules en ont besoin, et la tâche échoue. Voir [Mode check et diff](/fr/docs/playbooks/check-and-diff/).
+</Option>
+
+<Option name="-D, --diff" default="false">
+  Affiche les changements que les modules apportent aux fichiers, comme le fait `ansible-playbook`. Le mot-clé `diff` propre à une tâche l'emporte sur cette option : `diff: false` garde donc les changements d'une tâche hors de l'écran. Un hôte sans Python ne peut pas répondre à `apt`, `user`, `group` ni `file` sous `--diff` : ces modules en ont besoin, et la tâche échoue. Voir [Mode check et diff](/fr/docs/playbooks/check-and-diff/).
+</Option>
+
+<Option name="-v" id="verbose">
+  Affiche aussi les résultats de module pour les tâches réussies. Répétable, comme le `-vvv` d'Ansible. Un résultat ne porte sa clé `invocation`, les arguments que le module a reçus, qu'à partir de `-vvv`. À `-vvvv`, l'exécution affiche aussi chaque option qu'elle a reçue, les plugins qu'elle charge et les commandes `ssh` qu'elle lance.
+</Option>
+
+<Option name="--no-color" config="[defaults] nocolor" env="ANSIBLE_NOCOLOR">
+  Affiche sans couleurs. L'option l'emporte sur `force_color` (`ANSIBLE_FORCE_COLOR`), qui l'emporte sur `nocolor`. Voir [Configuration](/fr/docs/reference/configuration/#defaults-force-color).
+</Option>
+
+<Option name="--facts" arg="auto|python|native" default="auto">
+  D'où viennent les facts collectés. `auto` utilise le `setup` natif de l'agent quand chaque fact que les plays peuvent lire est un fact qu'il produit, et le module `setup` d'ansible-core sinon. `python` exécute toujours le module Python, pour comparer. `native` interroge toujours le collecteur de l'agent, et les facts qu'il ne produit pas sont alors indéfinis. Sur un hôte autre que Debian ou Ubuntu, le collecteur natif rend la tâche au module Python quelle que soit cette option. Voir [Facts](/fr/docs/variables/precedence/#facts-natifs).
+</Option>
+
+<Option name="--profile">
+  Après le récapitulatif, affiche sur la sortie d'erreur où est passé le temps de l'exécution : les phases du contrôleur par hôte, puis, pour chaque module, le chemin qu'ont pris ses tâches (`native`, `python` ou `fallback`), leurs durées, et pourquoi un module natif a rendu une tâche. La première ligne dit d'où venaient les facts et pourquoi.
+</Option>
+
+## Variables d'environnement
+
+Volant lit les variables `ANSIBLE_*` citées plus haut, plus quelques-unes qui lui sont propres.
+
+<Option name="VOLANT_PYTHON" arg="PATH">
+  L'interpréteur Python que le contrôleur utilise pour construire les charges utiles des modules. Il a besoin d'`ansible-core`. Quand elle est définie, Volant n'utilise que lui et n'installe rien. [Quel interpréteur une exécution utilise](/fr/docs/reference/runtime/#quel-interpréteur-une-exécution-utilise) donne l'ordre complet.
+</Option>
+
+<Option name="VOLANT_RUNTIME" arg="auto|managed|system" config="[volant] runtime">
+  Si Volant peut utiliser et installer son propre Python. Voir [Le runtime géré](/fr/docs/reference/runtime/).
+</Option>
+
+<Option name="VOLANT_AGENT_DIR" arg="DIR">
+  Un répertoire qui contient les binaires de l'agent. Il est vérifié en premier, avant les agents intégrés au contrôleur de la version publiée et le répertoire de l'exécutable `volant`. Utile avec un contrôleur compilé depuis les sources, ou pour tester un agent de votre cru.
+</Option>
+
+<Option name="VOLANT_BATCHING" arg="1" config="[volant] batching">
+  Active le [traitement par lots entre hôtes](/fr/docs/hosts/batching/).
+</Option>
+
+<Option name="VOLANT_HOST_NAMED_PATHS" arg="allow|contained|refuse" config="[volant] host_named_paths">
+  Comment est traité un `src` du contrôleur qu'un hôte géré a nommé. Voir [`host_named_paths`](/fr/docs/reference/configuration/#volant-host-named-paths).
+</Option>
+
+<Option name="VOLANT_HOST_NAMED_DEST_DIRS" arg="/dir:/other" config="[volant] host_named_dest_dirs">
+  Les répertoires du contrôleur sous lesquels un `fetch` peut écrire quand un hôte géré a nommé son `dest`. Voir [`host_named_dest_dirs`](/fr/docs/reference/configuration/#volant-host-named-dest-dirs).
+</Option>
+
+<Option name="VOLANT_NATIVE_MODULES" arg="0" config="[volant] native_modules">
+  Avec `0`, chaque tâche exécute le module Python d'ansible-core au lieu de la version native de l'agent. Voir [Modules natifs](/fr/docs/internals/python/#modules-natifs).
+</Option>
+
+<Option name="VOLANT_SSH_CONTROL_MASTER" arg="0" config="[volant] ssh_control_master">
+  Avec `0`, chaque lancement de `ssh` ouvre sa propre connexion au lieu d'en partager une par hôte de l'inventaire.
+</Option>
+
+<Option name="VOLANT_PROFILE_JSON" arg="FILE">
+  Écrit le profil de l'exécution dans ce fichier, un objet JSON par ligne : les modules natifs que chaque agent a signalés, puis les phases, puis une ligne par tâche avec son module, son chemin, la raison du renvoi et ses durées en microsecondes. Il est écrit quel que soit le sort de l'exécution, et un fichier qui ne peut pas être écrit n'affiche qu'un avertissement.
+</Option>
+
+## La commande runtime
+
+`volant runtime` gère le Python et l'ansible-core que Volant installe pour lui-même. [Le runtime géré](/fr/docs/reference/runtime/) décrit ce que fait chaque étape.
+
+```sh
+volant runtime install [--collections NAME_OR_FILE...] [--from FILE [--sha256 HASH]]
+volant runtime pack FILE
+volant runtime status
+volant runtime path
+volant runtime remove [ID | --all]
+```
+
+<Option name="install --collections" arg="NAME_OR_FILE...">
+  Installe aussi des collections dans le runtime. Chaque valeur est un nom, avec une version facultative (`community.general:13.4.0`), ou un fichier de dépendances qui se termine par `.yml` ou `.yaml`.
+</Option>
+
+<Option name="install --from" arg="FILE">
+  Installe depuis un fichier écrit par `volant runtime pack`, sans téléchargement. La plateforme doit correspondre. Il affiche le SHA-256 du fichier sur une ligne `sha256`.
+</Option>
+
+<Option name="install --sha256" arg="HASH">
+  Avec `--from`, refuse le fichier avant de le décompresser quand son SHA-256 diffère de `HASH`. L'erreur montre les deux empreintes et le code de sortie est 1.
+</Option>
+
+<Option name="remove --all">
+  Supprime tous les runtimes, pas seulement l'actuel.
+</Option>
+
+## Pas encore disponible
+
+Toutes les options d'`ansible-playbook` sont acceptées. `--scp-extra-args` et `--sftp-extra-args` n'ont aucun effet, parce que les fichiers circulent sur le lien de l'agent. La [page de parité](/fr/docs/reference/parity/#ansible-playbook-option) liste chaque option avec son statut.
+
+`volant` a deux sous-commandes, `playbook` et `runtime`. Les autres outils d'Ansible n'ont pas encore d'équivalent : `ansible` pour les commandes ad hoc, `ansible-inventory`, `ansible-vault`, `ansible-doc`, `ansible-config` et `ansible-galaxy`. Il n'y a pas de `volant check` ni de `volant lint`. Lancez ces outils depuis ansible-core, ou utilisez les options de liste de `volant playbook`.

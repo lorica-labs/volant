@@ -1,6 +1,6 @@
 # Getting help
 
-- Start with the [documentation](https://volant.sh/), in particular [Will my playbook run?](https://volant.sh/start/compatibility/).
+- Start with the [documentation](https://volant.sh/docs/), in particular [Will my playbook run?](https://volant.sh/docs/start/compatibility/).
 - Questions and ideas: [GitHub Discussions](https://github.com/lorica-labs/volant/discussions).
 - Bugs and feature requests: [GitHub Issues](https://github.com/lorica-labs/volant/issues), using the templates. A playbook that behaves differently under Volant and `ansible-playbook` has its own compatibility template.
 - Security problems: see [SECURITY.md](SECURITY.md).

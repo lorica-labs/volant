@@ -1,0 +1,58 @@
+---
+sourceHash: ad41e1075baf
+title: "Action plugin 作为由控制节点驱动的一串子 task 运行"
+description: "决策记录 0007。"
+sidebar:
+  label: "0007 · Action plugin"
+  order: 7
+---
+
+import BarChart from '../../../../../components/BarChart.astro';
+
+| 状态 | 日期 |
+|---|---|
+| 已接受 | 2026-09-23 |
+
+## 背景
+
+在参照版本里，`copy`、`package`、`service`、`template` 和 `unarchive` 并不是主机在控制节点发来的 payload 上运行的单个模块。`plugins/action/copy.py` 先在主机上运行 `stat`，再根据它的回答决定是运行 `file`，还是暂存源文件并运行 `copy`。`plugins/action/package.py` 和 `plugins/action/service.py` 读取一个 fact（主机的包管理器、它的初始化系统），然后才知道到底要运行哪个模块；当这个 fact 尚未收集时，它们会自己运行一个过滤过的 `setup` 来获取。`template` 在任何东西到达主机之前，先在控制节点上读取并渲染一个文件。在每一种情况下，playbook 所指名的，都不是单靠一个模块 payload 就能执行的：参照版本在一次主机往返和下一次之间所做的决定，是 task 的一部分。
+
+复现这一点有两种可选的形态。可以重写一个模块 payload，让它在主机上自己做出这个决定，就在已经运行 `stat` 或读取 fact 的那个进程里：把 `copy.py` 或 `package.py` 自己的逻辑搬进 agent 的 Python 一侧。或者，让 action plugin 自己的角色作为第二个模块运行，上传并在主机上执行，代替参照版本所用的控制节点进程。两者都会把控制节点挡在一个循环之外，而参照版本自己是把控制节点放在这个循环里的：参照版本在控制节点上用 Python 在子 task 之间做决定，先读取每个子 task 的结果，再选下一个。
+
+## 决策
+
+这五个中的每一个，都作为控制节点上的一个小型状态机运行：先被问到下一个子 task，再拿到上一个的结果，直到得出 task 自己的结果。每个子 task 都是本次运行 union 中的一个普通模块，单独通过该 task 已有的链路发送，并通过与任何其他模块结果相同的路径读回。子 task 的分发、参数或文件处理，没有任何一部分放在主机上；主机只运行它本来就知道如何运行的模块。
+
+`copy` 是把两次调用的形态明确表现出来的 plugin：先 `stat`，然后是 `file` 或暂存的 `copy`，与 `plugins/action/copy.py` 的做法完全一致。`package` 和 `service` 是把 fact 依赖明确表现出来的：实际运行的模块要等主机的包管理器或初始化系统已知才能确定，尚未成为 fact 时通过过滤过的 `setup` 收集。`template` 和 `unarchive` 都在发送子 task 之前读取控制节点上的文件，`template` 总是如此，`unarchive` 则除非 `remote_src` 说明文件已在主机上。
+
+## 后果
+
+- 子 task 需要的文件只传到主机一次，暂存在只属于发送它的那个连接的私有目录里，并由那一个 task 消耗掉：被模块读取，然后被删除，不管模块对它做了什么。见 [Action plugin](/zh-cn/docs/internals/action-plugins/#留在主机上的内容)。
+- `package` 和 `service` 把它们可能分发到的每个后端模块都带进本次运行的 union，而不只是主机最终需要的那一个，因为在 facts 到手之前对主机一无所知，之后又不会再构建任何东西。以 ansible-core 2.19.12 自己的 payload 构建器为基准测得，每条链路一次性发送的内容，比只带 `apt` 和 `systemd_service` 时多约 170 KB。
+- 渲染读取了受管主机内容的 `src`，除非 `[volant] host_named_paths` 为 `contained` 或 `refuse`，否则会像参照版本那样被读取。这是一个安全设置，而不是缺口：对照参照版本测得，`src` 为 register 值的 `copy`（或 `template`，或 `unarchive`）会把该值所指名的任何控制节点文件发送给主机，所以控制某个命令输出或某个 fact 的主机，也控制着它能收到操作者的哪个文件。`refuse` 会在查找之前就拒绝这样的 `src`，`copy`、`template` 和 `unarchive` 一律如此。见 [Action plugin](/zh-cn/docs/internals/action-plugins/#受管主机指定的源文件)。
+
+## 结果
+
+2026-09-23 用四个来自 Ansible Galaxy 的 role 测量，按发布的原样运行：`geerlingguy.security` 3.0.2、`geerlingguy.nginx` 3.3.1、`geerlingguy.git` 3.0.1 和 `geerlingguy.pip` 3.1.2，放在一个带 `become: true` 并收集 facts 的 play 里（`just proof-roles`）。受管主机是两台运行 Ubuntu 24.04 的机器。参照版本是 ansible-core 2.19.12。
+
+`just proof-roles-reset` 删除了这些 role 安装的包和文件，所以两个引擎从相同的状态开始。它们的第一遍以相同的汇总结束，`ok=30 changed=8 skipped=28`，第二遍以 `ok=28 changed=0 skipped=28` 结束。
+
+每个计时是对这些 role 已经收敛的主机运行三遍的中位数，使用 Volant 的发布构建。一遍每台主机显示 56 个 task。
+
+<BarChart
+  title="四个 Galaxy role，一台已收敛的主机"
+  subtitle="56 个 task，<code>become: true</code>，已收集 facts，三遍的中位数。越短越快。"
+  unit="秒"
+  decimals={2}
+  rows={[
+    { label: 'ansible-core，无 pipelining', value: 33.5, note: '对两台主机为 34.52 秒' },
+    { label: 'ansible-core，pipelining', value: 25.7, note: '对两台主机为 26.34 秒' },
+    { label: 'Volant', value: 12.49, highlight: true, note: '对两台主机为 12.64 秒' },
+  ]}
+/>
+
+对两台主机，数字是 34.52 秒、26.34 秒和 12.64 秒。Volant 在一台主机上用的是启用 pipelining 的参照版本的 49% 的时间，在两台主机上是 48%。控制节点每次运行构建一次 union。在对两台主机的第一遍中，它落入了每台主机的缓存，第二遍没有动缓存的文件。
+
+## 更新，2026-10-24
+
+上面提到的五个 plugin 现在是八个。`dnf` 和 `fetch` 于 2026-09-23 加入（[#213](https://github.com/lorica-labs/volant/pull/213)、[#215](https://github.com/lorica-labs/volant/pull/215)），`reboot` 于 2026-09-24 加入（[#219](https://github.com/lorica-labs/volant/pull/219)）。每一个都作为控制节点上同一类状态机运行。八个的说明见 [Action plugin](/zh-cn/docs/internals/action-plugins/)。ansible-core 和 collection 中没有 Rust 版本的 plugin 在 Python 辅助进程中运行，自 2026-10-24 起（[#776](https://github.com/lorica-labs/volant/pull/776)），这些桥接 plugin 的作业并行运行，并且只在 task 要求时才提权。

@@ -1,0 +1,74 @@
+---
+sourceHash: c49a21d239df
+title: "Usar un union blob por ejecución de Python en caliente"
+description: "Registro de decisión 0006."
+sidebar:
+  label: "0006 · Ruta de Python en caliente"
+  order: 6
+---
+
+import BarChart from '../../../../../components/BarChart.astro';
+
+
+| Estado | Fecha |
+|---|---|
+| aceptada | 2026-09-20 |
+
+## Contexto
+
+La ruta de Python debe ejecutar módulos de ansible-core en un host administrado sin instalar allí ansible-core. Un proceso por tarea cuesta 340 ms. Crear un fork desde un servidor de Python que no ha cargado nada cuesta 266 ms, lo que no basta para justificar la maquinaria.
+
+Cargar `module_utils` desde el zip de un módulo y crear después el fork cuesta 12.8 ms, pero ata el paquete `ansible` de Python a ese único zip. Entonces todos los demás módulos fallan al importar. Esto se midió, y falla de forma ruidosa y no silenciosa.
+
+Las entradas compartidas entre los zips de distintos módulos son idénticas byte a byte: cero conflictos en 146 entradas de diez módulos. Fusionarlas en un solo zip está bien definido, y el constructor trata un conflicto como un error grave.
+
+## Decisión
+
+Construir un union blob por ejecución, no un blob por módulo. El blob contiene todos los módulos y sus `module_utils` importados, se identifica por el hash BLAKE3 de su contenido y se guarda en caché en el host administrado. El servidor de Python lo carga una vez y crea un hijo con fork para cada tarea.
+
+El union blob de los cinco módulos golden pesa exactamente 631050 bytes, frente a 2307982 bytes de los zips separados. Eso es un ahorro del 72.7 por ciento. La ruta de fork con carga previa cuesta 12.8 ms por tarea, y cargar el blob cuesta 264.5 ms una vez por servidor.
+
+## Consecuencias
+
+- Una ejecución obtiene un único conjunto coherente de `module_utils`, de modo que los módulos no importan desde zips incompatibles.
+- El constructor debe detenerse ante una entrada compartida en conflicto en lugar de elegir una versión.
+- El host administrado guarda en caché el blob y lo verifica antes de usarlo.
+- El controlador necesita ansible-core; el host administrado no.
+
+## Medido con un play real
+
+Las cifras anteriores proceden de módulos sueltos en un bucle. Un playbook de treinta y cinco tareas contra un host administrado, ejecutado el 2026-09-21, dice lo que valen en un play real. Instala paquetes, crea directorios, escribe una configuración línea a línea, vuelve a leer archivos y mantiene un servicio iniciado, y escala privilegios, porque eso es lo que hace un play así.
+
+Tres pasadas cada uno contra un host en el que el play ya había convergido, de modo que cada pasada hace el mismo trabajo, con una compilación release. La mediana, tal como se midió por primera vez:
+
+<BarChart
+  title="Primera medición"
+  subtitle="Tres pasadas contra un host convergido, compilación release, mediana. Cuanto menos, más rápido."
+  unit="s"
+  decimals={2}
+  rows={[
+    { label: 'Volant', value: 30.2, highlight: true, note: '863 ms por tarea' },
+    { label: 'ansible-core, sin pipelining', value: 27.69, note: '791 ms por tarea' },
+    { label: 'ansible-core, con pipelining', value: 20.02, note: '572 ms por tarea' },
+  ]}
+/>
+
+Volant ejecuta ahora el play en el 40 por ciento del tiempo de la referencia con pipelining. Una pasada abre 3 sesiones ssh en el host en lugar de 58. El brazo anterior reproduce la primera tabla con una diferencia de un uno por ciento, así que la mejora viene de la corrección y no de un cambio en la máquina.
+
+La media por tarea sigue incluyendo trabajo real. `apt` pasa unos 755 ms hablando con `dpkg`, y recopilar facts es la tarea más cara del play. La ruta en caliente elimina la sobrecarga que rodea a un módulo, no el trabajo del propio módulo.
+
+Mantener el enlace tiene un coste. Mientras el permiso llevaba consigo el enlace, `forks` también acotaba cuántas conexiones con escalado de privilegios mantenía abiertas una ejecución. Ahora una ejecución puede mantener dos enlaces por host, así que, a tres descriptores de archivo por enlace, un controlador limitado a 1024 descriptores llega a su techo en unos 169 hosts con escalado de privilegios en lugar de unos 330.
+
+## Actualización, 2026-10-24
+
+La medición anterior se queda en el primer resultado, que fue una pérdida: Volant tardó 30.2 s frente a 20.02 s de la referencia con pipelining. Veintiuna tareas sin escalado de privilegios le costaron a Volant 17 ms cada una frente a 437 ms de la referencia, así que la ruta en caliente funcionaba. Las mismas tareas bajo `become: true` costaron 897 ms cada una frente a 464 ms. Un host que llegaba a un punto de sincronización devolvía su permiso de fork y cerraba su enlace con escalado de privilegios en el mismo paso, y un play de tareas de Python llega a uno en casi todas las tareas, de modo que cada tarea con escalado de privilegios pagaba una sesión `ssh` nueva, un `sudo` nuevo y un handshake nuevo. Una ejecución abrió 44 sesiones en el host donde una ejecución sin escalado de privilegios abrió 4.
+
+La corrección ([#178](https://github.com/lorica-labs/volant/pull/178), 2026-09-22) mantiene el enlace con escalado de privilegios a través de un punto de sincronización y devuelve solo el permiso, que es lo que espera otro host. Medido de nuevo en el mismo host con el mismo método:
+
+| Ejecución | Tiempo total | Por tarea |
+|---|---|---|
+| Volant, enlace cerrado en cada punto | 30.51 s | 872 ms |
+| Volant, enlace conservado | 7.90 s | 226 ms |
+| ansible-core, `pipelining = True` | 19.72 s | 564 ms |
+
+Volant ejecuta entonces el play en el 40 por ciento del tiempo de la referencia con pipelining, y una pasada abre 3 sesiones `ssh` en el host en lugar de 58. La primera fila coincide con la primera medición con una diferencia de un uno por ciento, así que la mejora viene de la corrección y no de un cambio en la máquina.

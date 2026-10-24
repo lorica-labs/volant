@@ -1,0 +1,74 @@
+---
+sourceHash: c49a21d239df
+title: "Utiliser un blob d'union par exécution Python préchauffée"
+description: "Fiche de décision 0006."
+sidebar:
+  label: "0006 · Chemin Python préchauffé"
+  order: 6
+---
+
+import BarChart from '../../../../../components/BarChart.astro';
+
+
+| Statut | Date |
+|---|---|
+| accepté | 2026-09-20 |
+
+## Contexte
+
+Le chemin Python doit exécuter des modules d'ansible-core sur un hôte géré sans y installer ansible-core. Un processus par tâche coûte 340 ms. Forker depuis un serveur Python qui n'a rien chargé coûte 266 ms, ce qui ne suffit pas à justifier la mécanique.
+
+Charger `module_utils` depuis le zip d'un seul module puis forker coûte 12.8 ms, mais cela attache le paquet `ansible` de Python à ce seul zip. Tous les autres modules échouent alors à l'import. Cela a été mesuré, et l'échec est bruyant plutôt que silencieux.
+
+Les entrées partagées entre les zips de différents modules sont identiques à l'octet près : zéro conflit sur 146 entrées de dix modules. Les fusionner en un seul zip est bien défini, et le constructeur traite un conflit comme une erreur fatale.
+
+## Décision
+
+Construire un blob d'union par exécution, et non un blob par module. Le blob contient chaque module et ses `module_utils` importés, est identifié par le hash BLAKE3 de son contenu et est mis en cache sur l'hôte géré. Le serveur Python le charge une fois et forke un fils pour chaque tâche.
+
+Le blob d'union des cinq modules golden pèse exactement 631050 octets, contre 2307982 octets pour des zips séparés. C'est une économie de 72.7 %. Le chemin de fork préchargé coûte 12.8 ms par tâche, et le chargement du blob coûte 264.5 ms une fois par serveur.
+
+## Conséquences
+
+- Une exécution obtient un seul jeu cohérent de `module_utils` : les modules n'importent donc pas depuis des zips incompatibles.
+- Le constructeur doit s'arrêter sur une entrée partagée en conflit plutôt que d'en choisir une version.
+- L'hôte géré met le blob en cache et le vérifie avant de l'utiliser.
+- Le contrôleur a besoin d'ansible-core ; l'hôte géré non.
+
+## Mesuré sur un vrai play
+
+Les chiffres ci-dessus viennent de modules isolés dans une boucle. Un playbook de trente-cinq tâches contre un hôte géré, exécuté le 2026-09-21, dit ce qu'ils valent pour un vrai play. Il installe des paquets, crée des répertoires, écrit une configuration ligne par ligne, relit des fichiers et maintient un service démarré, et il élève les privilèges, car c'est ce que fait un tel play.
+
+Trois passes chacune contre un hôte sur lequel le play avait déjà convergé, de sorte que chaque passe fait le même travail, build de release. La médiane, telle que mesurée au départ :
+
+<BarChart
+  title="Première mesure"
+  subtitle="Trois passes contre un hôte convergé, build de release, médiane. Plus court, c'est plus rapide."
+  unit="s"
+  decimals={2}
+  rows={[
+    { label: 'Volant', value: 30.2, highlight: true, note: '863 ms par tâche' },
+    { label: 'ansible-core, sans pipelining', value: 27.69, note: '791 ms par tâche' },
+    { label: 'ansible-core, avec pipelining', value: 20.02, note: '572 ms par tâche' },
+  ]}
+/>
+
+Volant exécute maintenant le play en 40 % du temps de la référence avec pipelining. Une passe ouvre 3 sessions ssh sur l'hôte au lieu de 58. Le bras « avant » reproduit le premier tableau à un pour cent près : le gain vient donc de la correction et non d'un changement de la machine.
+
+La moyenne par tâche inclut encore du vrai travail. `apt` passe environ 755 ms à parler à `dpkg`, et la collecte des facts est la tâche la plus coûteuse du play. Le chemin préchauffé supprime la charge autour d'un module, non le travail du module lui-même.
+
+Garder le lien a un coût. Tant que le jeton portait le lien avec lui, `forks` bornait aussi le nombre de connexions avec élévation qu'une exécution gardait ouvertes. Maintenant, une exécution peut tenir deux liens par hôte, et à trois descripteurs de fichier par lien, un contrôleur limité à 1024 descripteurs atteint son plafond à environ 169 hôtes avec élévation au lieu d'environ 330.
+
+## Mise à jour, 2026-10-24
+
+La mesure ci-dessus s'arrête au premier résultat, qui était une perte : Volant a pris 30.2 s contre 20.02 s pour la référence avec pipelining. Vingt et une tâches sans élévation ont coûté 17 ms chacune à Volant contre 437 ms à la référence : le chemin préchauffé fonctionnait donc. Les mêmes tâches sous `become: true` ont coûté 897 ms chacune contre 464 ms. Un hôte qui atteignait un point de synchronisation rendait son jeton de fork et fermait son lien avec élévation dans la même étape, et un play de tâches Python en atteint un presque à chaque tâche : chaque tâche avec élévation payait donc une nouvelle session `ssh`, un nouveau `sudo` et une nouvelle négociation. Une exécution a ouvert 44 sessions sur l'hôte là où une exécution sans élévation en ouvrait 4.
+
+La correction ([#178](https://github.com/lorica-labs/volant/pull/178), 2026-09-22) garde le lien avec élévation à travers un point de synchronisation et ne rend que le jeton, qu'un autre hôte attend. Mesuré de nouveau sur le même hôte avec la même méthode :
+
+| Exécution | Temps réel | Par tâche |
+|---|---|---|
+| Volant, lien fermé à chaque point | 30.51 s | 872 ms |
+| Volant, lien conservé | 7.90 s | 226 ms |
+| ansible-core, `pipelining = True` | 19.72 s | 564 ms |
+
+Volant exécute alors le play en 40 % du temps de la référence avec pipelining, et une passe ouvre 3 sessions `ssh` sur l'hôte au lieu de 58. La première ligne correspond à la première mesure à un pour cent près : le gain vient donc de la correction et non d'un changement de la machine.

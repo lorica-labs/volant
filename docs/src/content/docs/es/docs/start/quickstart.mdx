@@ -1,0 +1,137 @@
+---
+sourceHash: 7056b0dc3a70
+title: Guía rápida
+description: Ejecuta un primer playbook en tu propia máquina y después en un host remoto por SSH.
+---
+
+import { Steps, Aside, FileTree } from '@astrojs/starlight/components';
+
+{/* A walkthrough video goes here once it is recorded:
+import Video from '../../../../../components/Video.astro';
+<Video title="Your first run with Volant" src="/videos/quickstart.mp4" poster="/videos/quickstart.jpg" />
+*/}
+
+Esta página da por hecho que `volant` está en tu `PATH`. Si no es así, empieza por la [instalación](/es/docs/start/installation/).
+
+## Ejecuta un playbook en esta máquina
+
+<Steps>
+
+1. Crea un inventario con un host, al que se llega sin SSH:
+
+   ```ini title="inventory.ini"
+   localhost ansible_connection=local
+   ```
+
+2. Escribe un playbook:
+
+   ```yaml title="site.yml"
+   - hosts: localhost
+     gather_facts: false
+     tasks:
+       - name: Who am I?
+         command: id -un
+         register: me
+
+       - name: Say hello
+         debug:
+           msg: "Hello from {{ me.stdout }}"
+   ```
+
+3. Ejecútalo. `volant playbook` acepta los mismos argumentos que `ansible-playbook`:
+
+   ```sh
+   volant playbook -i inventory.ini site.yml
+   ```
+
+</Steps>
+
+La salida es la que ya conoces de Ansible:
+
+```text
+PLAY [localhost] ***************************************************************
+
+TASK [Who am I?] ***************************************************************
+changed: [localhost]
+
+TASK [Say hello] ***************************************************************
+ok: [localhost] => {
+    "msg": "Hello from alice"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0
+```
+
+## Ejecútalo en un host remoto
+
+El host necesita un servidor SSH y una cuenta en la que puedas iniciar sesión con una clave. No necesita Volant: el controlador sube su agente, un programa pequeño de unos 1.2 MB, con la primera tarea y lo guarda en `~/.ansible/tmp` del host para la ejecución siguiente.
+
+```ini title="inventory.ini"
+[web]
+web1 ansible_host=192.0.2.10 ansible_user=deploy
+```
+
+```yaml title="site.yml"
+- hosts: web
+  tasks:
+    - name: Show the distribution
+      debug:
+        msg: "{{ ansible_distribution }} {{ ansible_distribution_version }}"
+
+    - name: Make sure the release directory exists
+      become: true
+      file:
+        path: /srv/app
+        state: directory
+        mode: "0755"
+```
+
+```sh
+volant playbook -i inventory.ini site.yml
+```
+
+<Aside type="tip">
+El agente ejecuta por sí mismo la mayor parte de este playbook. Un módulo que no puede ejecutar de forma nativa, como `file` con algunos argumentos, se ejecuta como módulo de Python, así que mantén un Python 3 en el host. No necesitas Ansible en el controlador: Volant descarga su propio ansible-core la primera vez que lo necesita. La [instalación](/es/docs/start/installation/#qué-necesitan-las-máquinas) enumera lo que necesita cada lado.
+</Aside>
+
+Se aplica tu `~/.ssh/config`, porque Volant ejecuta el `ssh` que ya tienes. Un archivo de clave o un ssh-agent es la forma más sencilla de iniciar sesión. Para usar una contraseña, pasa [`-k`](/es/docs/reference/cli/#ask-pass) o define `ansible_password`.
+
+## Tu proyecto existente
+
+Volant lee un proyecto de Ansible tal como está. Ejecútalo desde el directorio del proyecto, o apunta `-i` al inventario:
+
+- `ansible.cfg` se lee de los mismos lugares que con Ansible, y las variables `ANSIBLE_*` se aplican. Consulta [Configuración](/es/docs/reference/configuration/).
+- Los inventarios en formato INI, YAML o script, con `group_vars/` y `host_vars/` a su lado, funcionan sin cambios. Consulta [Inventarios](/es/docs/hosts/inventories/) y [Precedencia y facts](/es/docs/variables/precedence/).
+- Los archivos y variables cifrados con vault se descifran cuando pasas `--ask-vault-pass` o un archivo con la contraseña de vault. Consulta [Vault](/es/docs/variables/vault/).
+- Los roles se encuentran en `roles/` y en `roles_path`, con sus defaults, handlers y dependencias. Consulta [Roles, includes e imports](/es/docs/playbooks/roles/).
+- Las colecciones funcionan una vez instaladas con `volant runtime install --collections`.
+
+Antes de la primera ejecución real, comprueba qué no puede hacer esta versión con [¿Se ejecutará mi playbook?](/es/docs/start/compatibility/). Lee el playbook y enumera lo que haría una ejecución sin conectarse a nada.
+
+## Una estructura de proyecto que funciona
+
+Volant encuentra los roles, `group_vars` y `host_vars` donde los encuentra Ansible:
+
+<FileTree>
+- ansible.cfg
+- inventory.ini
+- site.yml
+- group_vars/
+  - all.yml
+  - web.yml
+- host_vars/
+  - web1.yml
+- roles/
+  - nginx/
+    - defaults/main.yml
+    - handlers/main.yml
+    - tasks/main.yml
+</FileTree>
+
+## Siguientes pasos
+
+- [¿Se ejecutará mi playbook?](/es/docs/start/compatibility/) comprueba un proyecto existente.
+- [Lo que Volant deja en tus máquinas](/es/docs/#lo-que-volant-deja-en-tus-máquinas) enumera lo que escribe en el controlador y en los hosts.
+- [Ejecución de plays](/es/docs/playbooks/how-a-play-runs/) explica lo que ocurre entre la primera línea y el recap.
+- [Línea de comandos](/es/docs/reference/cli/) enumera todas las opciones.

@@ -1,0 +1,309 @@
+---
+// A recorded run, replayed: the terminal prints the real output line by line, each new line glowing
+// like fresh phosphor, while each spoke of the wheel takes the state its host just returned. A row
+// of host labels repeats the states in words, so nothing depends on colour alone.
+import AsciiWheel from './AsciiWheel.astro';
+import { hosts, inventory, output, playbook, recordedWith } from '../../lib/demo-run';
+import { fill, strings } from '../../i18n';
+
+const { code } = Astro.props as { code: string };
+const t = strings(code).console;
+
+const lines = output.split('\n').map((text) => {
+  const m = text.match(/^(ok|changed|skipping|failed|fatal): \[([^\]]+)\]/);
+  const state = m ? ({ skipping: 'skipped', fatal: 'failed' } as Record<string, string>)[m[1]] ?? m[1] : null;
+  return { text, state, host: m ? hosts.indexOf(m[2]) : -1, task: /^(TASK|PLAY|RUNNING HANDLER) \[/.test(text) };
+});
+---
+
+<div class="run-console" data-recap={JSON.stringify(hosts)} data-states={JSON.stringify(t.states)}>
+  <div class="wheel-side panel">
+    <div class="core">
+      <AsciiWheel mode="console" cols={96} rows={48} />
+      <ul class="hosts" aria-label={t.hosts}>
+        {
+          hosts.map((host, i) => (
+            <li data-host={i}>
+              <span class="dot" aria-hidden="true" />
+              <span class="mono">{host}</span>
+              <span class="state">{t.states.waiting}</span>
+            </li>
+          ))
+        }
+      </ul>
+    </div>
+  </div>
+  <figure class="term panel">
+    <div class="core">
+      <div class="bar">
+        <span></span><span></span><span></span>
+        <p class="mono">volant playbook -i inventory.ini site.yml</p>
+      </div>
+      <pre class="screen mono" aria-label={t.output}>{
+        lines.map((line) => (
+          <span
+            class:list={['line', line.state && `st-${line.state}`, { task: line.task }]}
+            data-state={line.state ?? undefined}
+            data-host={line.host >= 0 ? line.host : undefined}
+            data-task={line.task ? '' : undefined}
+          >{line.text}{'\n'}</span>
+        ))
+      }</pre>
+    </div>
+  </figure>
+  <details class="source">
+    <summary>{t.source}</summary>
+    <div class="files">
+      <pre class="code panel"><code class="core">{playbook}</code></pre>
+      <pre class="code panel"><code class="core">{inventory}</code></pre>
+    </div>
+  </details>
+  <p class="provenance">{fill(t.provenance, { version: recordedWith })}</p>
+</div>
+
+<script>
+  const wait = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
+
+  for (const root of document.querySelectorAll<HTMLElement>('.run-console')) {
+    const words: Record<string, string> = JSON.parse(root.dataset.states!);
+    const lines = [...root.querySelectorAll<HTMLElement>('.line')];
+    const chips = [...root.querySelectorAll<HTMLElement>('.hosts li')];
+    const screen = root.querySelector<HTMLElement>('.screen')!;
+    const tell = (spoke: number, state: string | null) =>
+      window.dispatchEvent(new CustomEvent('volant-run', { detail: { spoke, state } }));
+    const mark = (host: number, state: string | null) => {
+      const chip = chips[host];
+      chip.dataset.state = state ?? '';
+      chip.querySelector('.state')!.textContent = words[state ?? 'waiting'];
+      tell(host, state);
+    };
+
+    // Without motion the run is shown whole, with each host at the state it ended the run in.
+    const finish = () => {
+      lines.forEach((line) => {
+        line.hidden = false;
+        line.classList.remove('fresh');
+      });
+      chips.forEach((_, host) => {
+        const last = lines.filter((l) => l.dataset.host === String(host) && l.dataset.state !== 'skipped').at(-1);
+        mark(host, last?.dataset.state ?? null);
+      });
+    };
+    if (window.matchMedia('(prefers-reduced-motion: reduce)').matches) {
+      finish();
+      continue;
+    }
+
+    let playing = false;
+    let visible = false;
+    const play = async () => {
+      playing = true;
+      while (visible) {
+        lines.forEach((line) => (line.hidden = true));
+        chips.forEach((_, host) => mark(host, null));
+        tell(-1, null);
+        for (const line of lines) {
+          if (!visible) break;
+          line.hidden = false;
+          line.classList.remove('fresh');
+          void line.offsetWidth;
+          line.classList.add('fresh');
+          screen.scrollTop = screen.scrollHeight;
+          if (line.dataset.task !== undefined) {
+            chips.forEach((_, host) => mark(host, null));
+            await wait(520);
+          } else if (line.dataset.host !== undefined) {
+            mark(Number(line.dataset.host), line.dataset.state!);
+            await wait(170);
+          } else {
+            await wait(line.textContent!.trim() ? 120 : 60);
+          }
+        }
+        if (visible) finish();
+        await wait(5000);
+      }
+      playing = false;
+    };
+    new IntersectionObserver(
+      ([entry]) => {
+        visible = entry.isIntersecting;
+        if (visible && !playing) play();
+      },
+      { threshold: 0.35 },
+    ).observe(root);
+  }
+</script>
+
+<style>
+  .run-console {
+    display: grid;
+    grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+    gap: 1rem;
+    align-items: stretch;
+  }
+  .wheel-side .core {
+    display: grid;
+    grid-template-rows: 1fr auto;
+    gap: 1rem;
+    padding: 1.25rem;
+  }
+  .wheel-side :global(.ascii-wheel) {
+    aspect-ratio: 1.2;
+  }
+  .hosts {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 0.4rem;
+    margin: 0;
+    padding: 0;
+    list-style: none;
+  }
+  .hosts li {
+    display: inline-flex;
+    align-items: center;
+    gap: 0.45rem;
+    padding: 0.3rem 0.6rem;
+    border-radius: 999px;
+    background: var(--bg-3);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+    font-size: 0.78rem;
+    transition: box-shadow 0.3s var(--ease);
+  }
+  .dot {
+    width: 0.5rem;
+    height: 0.5rem;
+    border-radius: 999px;
+    background: var(--fg-4);
+    transition: background-color 0.3s var(--ease);
+  }
+  .state {
+    color: var(--fg-3);
+  }
+  .hosts li[data-state='ok'] .dot {
+    background: var(--state-ok);
+  }
+  .hosts li[data-state='changed'] .dot {
+    background: var(--state-changed);
+  }
+  .hosts li[data-state='skipped'] .dot {
+    background: var(--state-skipped);
+  }
+  .hosts li[data-state='failed'] .dot {
+    background: var(--state-failed);
+  }
+  .hosts li[data-state='changed'] {
+    box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--state-changed) 45%, transparent);
+  }
+  .term {
+    margin: 0;
+    min-width: 0;
+  }
+  .term .core {
+    display: grid;
+    grid-template-rows: auto 1fr;
+    overflow: hidden;
+  }
+  .bar {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+    padding: 0.7rem 1rem;
+    border-bottom: 1px solid var(--line);
+  }
+  .bar span {
+    width: 0.6rem;
+    height: 0.6rem;
+    border-radius: 999px;
+    background: var(--bg-3);
+    box-shadow: inset 0 0 0 1px var(--line-2);
+  }
+  .bar p {
+    margin-inline-start: 0.6rem;
+    overflow: hidden;
+    color: var(--fg-3);
+    font-size: 0.78rem;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+  .screen {
+    height: 30rem;
+    margin: 0;
+    padding: 1rem 1.25rem;
+    overflow: auto;
+    color: var(--fg-2);
+    font-size: 0.74rem;
+    line-height: 1.6;
+    scrollbar-width: thin;
+  }
+  .task {
+    color: var(--fg);
+  }
+  .st-ok {
+    color: var(--state-ok);
+  }
+  .st-changed {
+    color: var(--state-changed);
+  }
+  .st-skipped {
+    color: var(--state-skipped);
+  }
+  .st-failed {
+    color: var(--state-failed);
+  }
+  /* A new line is written bright and settles to its colour, as on a phosphor screen. */
+  .fresh {
+    animation: phosphor 1.4s var(--ease) both;
+  }
+  @keyframes phosphor {
+    from {
+      color: #f4fffb;
+      text-shadow:
+        0 0 6px color-mix(in srgb, var(--brand) 80%, transparent),
+        0 0 14px color-mix(in srgb, var(--brand) 40%, transparent);
+    }
+  }
+  .source {
+    grid-column: 1 / -1;
+    color: var(--fg-2);
+    font-size: 0.9rem;
+  }
+  .source summary {
+    width: max-content;
+    min-height: 2.75rem;
+    display: flex;
+    align-items: center;
+    cursor: pointer;
+  }
+  .files {
+    display: grid;
+    grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr);
+    gap: 1rem;
+    margin-top: 0.5rem;
+  }
+  .files pre {
+    padding: 0.375rem;
+  }
+  .files code {
+    display: block;
+    padding: 1rem;
+    overflow-x: auto;
+    background: var(--bg-2);
+    box-shadow: none;
+    font-size: 0.78rem;
+    white-space: pre;
+  }
+  .provenance {
+    grid-column: 1 / -1;
+    color: var(--fg-3);
+    font-size: 0.85rem;
+  }
+  @media (max-width: 60rem) {
+    .run-console,
+    .files {
+      grid-template-columns: minmax(0, 1fr);
+    }
+    .screen {
+      height: 22rem;
+    }
+  }
+</style>

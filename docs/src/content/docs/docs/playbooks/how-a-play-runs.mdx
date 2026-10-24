@@ -1,0 +1,126 @@
+---
+title: Running plays
+description: In what order hosts and tasks run, how strategies, serial batches, the debugger, async tasks and prompts change that, and when a run stops.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+import HostTimeline from '../../../../components/HostTimeline.astro';
+
+This page answers one question: in what order do your hosts and tasks run, and what changes that order? It covers the default `linear` strategy, `serial` batches, the other strategies, the debugger, async tasks and prompts. [Keywords](/docs/reference/keywords/) says which keywords this release accepts. Where Volant behaves differently from ansible-core 2.19.12, the last section says so.
+
+## Hosts move together
+
+By default Volant follows Ansible's `linear` strategy: the hosts of a play meet in front of every task. No host starts task two until every host has finished task one, and the output arrives in task order because the run happens in task order.
+
+<HostTimeline only="linear" />
+
+[Cross-host batching](/docs/hosts/batching/) is an opt-in setting that lets each host run ahead through tasks that do not depend on the others.
+
+### A play's hosts as a template
+
+`hosts` can be a template, such as `{{ groups['servers'] | first }}` or `{{ target | default('all') }}`. It renders when the play starts, so it sees what the plays before it did with `add_host`, `set_fact` and `meta: refresh_inventory`. A play with no `name` is named by the rendered pattern.
+
+The render has no host, so it reads only what exists before any host does:
+
+| The render reads | The render does not read |
+|---|---|
+| `groups`, the extra variables and the magic variables that need no host | inventory variables and `group_vars` files |
+| the play's `vars:` and `vars_files`, and the variables roles export | facts and `inventory_hostname` |
+
+`hostvars` exists only after a play has run. `ansible_play_hosts_all` lists every host of the inventory, narrowed by `--limit`.
+
+| The template renders to | What happens |
+|---|---|
+| a string | One pattern. |
+| a list | A list of patterns. |
+| an empty list | The play matches no host and is skipped. |
+| an undefined variable, an empty string or a value that is not a string | The run stops with exit 4 before the banner. |
+
+`--limit` narrows the rendered hosts afterwards. `--list-hosts`, `--list-tasks` and `--syntax-check` render the same way, with no play behind them.
+
+Text a host sent back is data and is never evaluated. A registered result that holds `{{ ... }}` is a pattern of its own words. So is a host or group that `add_host` or `group_by` made during the run: once the run has made one, a `hosts` that reads `groups`, `hostvars` or `ansible_play_hosts_all` renders to data. Text that only holds braces, such as `{{ '{{' }}x`, is also a pattern of its own words. Variables that name each other settle up to a hundred links deep, and a ring stops the run with exit 4.
+
+### Other strategies
+
+`strategy: free` lets every host walk the play at its own pace. A banner is printed whenever the task changes from the one the last line belonged to, so the output follows the hosts, not the task list. Hosts still meet at the `meta` tasks that act on the whole batch (`end_play`, `end_batch`, `clear_facts`, `clear_host_errors` and `refresh_inventory`), at handlers and at dynamic includes.
+
+`strategy: host_pinned` is `free` with a host held by one fork from its first task to its last, so `-f 1` runs the hosts one after the other. With fewer forks than hosts the hosts run in waves: the results match ansible-core, and timing and line order can differ.
+
+Under both strategies, as in ansible-core, `max_fail_percentage`, `any_errors_fatal` and `run_once` are ignored with a warning, so a `run_once` task runs for every host. A `run_once` task that fails fails only its own host. A `pause` or `add_host` task stops the run with an error.
+
+`strategy: debug` is `linear` with the [debugger](#the-debugger) after a failed task.
+
+`order` sets the order a play's hosts run in: `inventory`, `reverse_inventory`, `sorted`, `reverse_sorted` or `shuffle`. `throttle` limits a task to that many hosts at a time. It is templated for each task and read as a number.
+
+### Templated keywords
+
+A play's `timeout` is the default `timeout` of its tasks. `timeout`, `async`, `poll` and the booleans `become`, `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable` and `delegate_facts` may be templates. Each host renders them when its task runs, as for `throttle`. Two of them read differently:
+
+- A `run_once` template renders for each host of the batch in turn. The first host for which it is true runs the task. A template that answers differently across the batch ends the run with exit 4. Under `free` and `host_pinned` the template is ignored, without the warning a literal `run_once` gets.
+- An `any_errors_fatal` template counts as true whatever it renders to, as in ansible-core.
+
+See the [keyword reference](/docs/reference/keywords/).
+
+## Serial batches
+
+`serial` splits a play's hosts into batches, in inventory order, and plays each batch in turn. Each batch gets its own banner, its own handler flushes and its own `run_once` election.
+
+```yaml
+- hosts: web
+  serial:
+    - 1       # one canary first
+    - "25%"   # then a quarter of the hosts at a time
+  tasks:
+    - command: /opt/app/upgrade.sh
+```
+
+| Value | Meaning |
+|---|---|
+| A number | That many hosts per batch. |
+| A string ending in `%` | A share of the whole host list, not of what is left. Truncated rather than rounded, and never less than one host. |
+| A list | One size per batch. The last element repeats once the list runs out. |
+| `0`, `-1`, `[]`, or more than the host count | One batch holding every host. |
+
+### When the run stops
+
+The run stops at the first batch that had live hosts and lost all of them, which is where Ansible stops too. The exit code is 2 when they failed and 4 when they all became unreachable.
+
+A batch whose hosts had already failed in an earlier play does not count as that. It prints its banner and the run carries on.
+
+Inside a batch, `ansible_play_batch` and the deprecated `play_hosts` name the batch, while `ansible_play_hosts` names the whole play. `vars_files` is rendered and read again for each batch.
+
+## The debugger
+
+The debugger prompt opens after a failed task. Three settings turn it on:
+
+- `strategy: debug` is `linear` with the prompt after a failed task.
+- The `debugger` keyword, on a play, a block or a task, takes `always`, `never`, `on_failed`, `on_unreachable` or `on_skipped`. A value that is not valid fails the task when it runs.
+- `enable_task_debugger` in `ansible.cfg`, or `ANSIBLE_ENABLE_TASK_DEBUGGER`, opens it after any failed or unreachable task.
+
+The prompt takes `p` and `pprint` to print a value, `u` to update the task's arguments, `h` for help, `r` to run the task again, `c` to continue and `q` to quit. `p` and a line that is not a command evaluate a subset of Python: names, literals, indexing, attributes, assignments and the calls the prompt needs. A change to `task_vars` reaches a redo only through `u`.
+
+The prompt reads standard input, from a terminal or a pipe. At the end of input, or after `q`, it prints `User interrupted execution` and the run ends with exit code 99, as in ansible-core.
+
+## Async tasks
+
+`async: <seconds>` starts the task as a job on the host and `poll: <seconds>` waits for it. `poll: 0` returns at once with an `ansible_job_id` that `async_status` reads later.
+
+The job keeps running if the connection drops, writes its status file atomically in the async directory, and is killed with its process group when `async` runs out. `async_status` with `mode: cleanup` removes that job's file only.
+
+An action that ansible-core runs under `async` runs here too. Any other action fails at run time on each host with `This action (<name>) does not support async.` The async directory is `ansible_async_dir`, else `ANSIBLE_ASYNC_DIR`, else `async_dir` in `ansible.cfg`, else `~/.ansible_async`.
+
+## vars_prompt and module_defaults
+
+`vars_prompt` asks for each variable when the play starts, unless `-e` already gave it. When standard input is not a terminal it takes the `default` and warns once, and never waits.
+
+`module_defaults` fills a module's missing arguments from the play, block or task, for the module's own name and for its group, such as `group/aws`. `collections` resolves short names the way ansible-core does.
+
+## Differences from Ansible
+
+- A `serial` that is not a number, such as `serial: abc` or `"50% "` with a trailing space, is rejected with exit code 4 and ansible-core's message. Ansible crashes with exit code 250, which is Ansible reporting a bug in itself rather than rejecting a playbook.
+- An undefined variable in `serial` is reported with ansible-core's prefix and Volant's own message, with the same exit code 4.
+- `play_hosts` holds what Ansible puts there, but Volant prints no deprecation warning for it.
+
+<Aside type="tip">
+For how the engine builds and runs this order, see [How a play is compiled](/docs/internals/architecture/#how-a-play-is-compiled) and [A run, end to end](/docs/internals/architecture/#a-run-end-to-end).
+</Aside>

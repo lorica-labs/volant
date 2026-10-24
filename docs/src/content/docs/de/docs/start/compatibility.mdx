@@ -1,0 +1,122 @@
+---
+sourceHash: 3c0df8cc1f8a
+title: Läuft mein Playbook?
+description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
+---
+
+import { Steps, Aside } from '@astrojs/starlight/components';
+
+Um herauszufinden, ob ein Playbook läuft, führen Sie darauf `--syntax-check` aus und lassen es dann auf einem Host laufen. Volant liest die gesamte Grammatik von ansible-core 2.19, Ihr Playbook wird hier also so geparst wie unter Ansible. Bevor Volant sich mit irgendetwas verbindet, sucht eine zweite Prüfung, die Vorabprüfung, nach dem, was dieses Release noch nicht unterstützt, und bricht den Lauf mit einer Meldung ab, die es benennt. Die [bekannten Lücken](#bekannte-lücken) weiter unten sind die Ausnahmen: Dort kann ein Lauf eine Einstellung ignorieren oder ein falsches Ergebnis liefern, ohne einen Fehler zu melden.
+
+## Ein Projekt prüfen
+
+<Steps>
+
+1. Lesen Sie es, ohne es auszuführen. Auflistungen und `--syntax-check` brechen nie wegen eines nicht unterstützten Moduls oder Keywords ab, sie funktionieren also auch bei einem Playbook, das dieses Release noch nicht ausführen kann:
+
+   ```sh
+   volant playbook -i inventory.ini site.yml --syntax-check
+   volant playbook -i inventory.ini site.yml --list-tasks
+   ```
+
+   Stimmt die Task-Liste mit der Ausgabe von `ansible-playbook --list-tasks` überein, hat Volant Ihre Rollen, Imports und Tags genauso kompiliert.
+
+2. Fordern Sie einen echten Lauf gegen einen Host an, den Sie gefahrlos anfassen können. `--check --diff` lässt den Host unverändert, bis auf den zwischengespeicherten Agent, und ist deshalb ein sicherer erster Lauf:
+
+   ```sh
+   volant playbook -i inventory.ini site.yml --limit test1 --check --diff
+   volant playbook -i inventory.ini site.yml --limit test1
+   ```
+
+   Das meiste, was dieses Release nicht ausführen kann, bricht den Lauf ab, bevor er sich verbindet. Die Meldung nennt das Modul, das Keyword oder den Wert, und der Lauf endet mit Exit-Code 4. [Was heute abgelehnt wird](#was-heute-abgelehnt-wird) listet die Meldungen auf.
+
+3. Beheben Sie es oder warten Sie. Was noch nicht unterstützt wird, steht in [Keywords](/de/docs/reference/keywords/), [Module](/de/docs/reference/modules/) und den [bekannten Lücken](#bekannte-lücken) weiter unten, und für das meiste gibt es einen Workaround.
+
+</Steps>
+
+<Aside type="note">
+Eine Datei, die nur ein dynamisches `include_tasks` oder `include_role` nennt, wird gelesen, wenn ein Host diese Anweisung erreicht. Ein nicht unterstütztes Modul oder Keyword darin bricht den Lauf daher erst an dieser Stelle ab statt davor. Siehe [Rollen, Includes und Imports](/de/docs/playbooks/roles/).
+</Aside>
+
+## Häufige Fragen
+
+| Frage | Antwort |
+|---|---|
+| Funktioniert `community.general`? | Ja, sobald es installiert ist. Volant installiert während eines Laufs keine Collection, führen Sie also zuerst `volant runtime install --collections community.general` aus. Ein Plugin, das ein Python-Paket braucht, das die verwaltete Runtime nicht mitbringt, etwa der Filter `json_query` mit `jmespath`, schlägt fehl. Verwenden Sie dafür Ihr eigenes Python mit `VOLANT_PYTHON`. Siehe [Die verwaltete Runtime](/de/docs/reference/runtime/#collections). |
+| Funktioniert `copy`? | Ja. Der Controller liest die Datei oder nimmt `content:` und sendet sie an den Host. Ein Verzeichnis als `src` funktioniert ebenfalls. Siehe [Module](/de/docs/reference/modules/). |
+| Funktioniert `async`? | Ja: `async`, `poll` und `poll: 0` mit `async_status`. Ein Modul, das ansible-core nicht unter `async` ausführen kann, schlägt auf jedem Host mit `This action (<name>) does not support async.` fehl. Siehe [Plays ausführen](/de/docs/playbooks/how-a-play-runs/#async-tasks). |
+| Funktioniert `--diff`? | Ja, mit `--check` oder allein. Ein Host braucht Python für `apt`, `user`, `group`, `file`, `lineinfile` und `systemd`, wenn ein Lauf einen Check oder einen Diff verlangt. Siehe [Check-Modus, Diff und Auflistungen](/de/docs/playbooks/check-and-diff/). |
+| Funktionieren `become`, Vault und `ansible.cfg`? | `become` über `sudo` oder `su`, Vault und `ansible.cfg` funktionieren. `doas` und andere Methoden nicht. Siehe [Verbindungen und become](/de/docs/hosts/connections/). |
+| Funktionieren eigene Plugins? | Noch nicht. Eigene Action-Plugins brechen den Lauf ab, und `callback_plugins/` und `vars_plugins/` werden ignoriert. Siehe die [bekannten Lücken](#bekannte-lücken). |
+
+## Auf einen Blick
+
+| Bereich | Läuft heute | Noch nicht |
+|---|---|---|
+| Plays | `pre_tasks`, Rollen, `tasks`, `post_tasks`, Handler, `serial`, `strategy` (`linear`, `free`, `host_pinned`, `debug`), `order`, `throttle`, `timeout`, `debugger`, `any_errors_fatal`, `max_fail_percentage`, `ignore_errors`, `ignore_unreachable` | |
+| Tasks | `when`, `loop`, jede Form `with_<lookup>`, `register`, `until`, `retries`, `changed_when`, `failed_when`, `ignore_errors`, `ignore_unreachable`, `any_errors_fatal`, `no_log`, `environment`, `timeout`, `tags`, `async`, `poll`, `module_defaults` | |
+| Blöcke | `block`, `rescue`, `always` | |
+| Wiederverwendung | Rollen und Abhängigkeiten, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
+| Delegation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
+| Module | die Module von ansible-core für Linux-Hosts, darunter `copy`, `template`, `dnf`, `service`, `uri` und `reboot`, sowie die Module installierter Collections mit ihren Action-Plugins | das Action-Plugin einer Collection, das Windows oder ein Netzwerkgerät braucht, eigene Action-Plugins |
+| Inventories | INI-, YAML- und TOML-Dateien, Verzeichnisse, Skripte, `constructed`, `generator` und Collection-Plugins, mehrere `-i`, `group_vars`, `host_vars`, der Fact-Cache `jsonfile` | nichts mehr offen |
+| Verbindungen | `ssh` mit Schlüsseln, einem ssh-agent oder einem Passwort (`-k` oder `ansible_password`, braucht OpenSSH 8.4 oder neuer), `local` | andere Connection-Plugins, Windows, Netzwerkgeräte |
+| Rechteausweitung | `become` über `sudo` oder `su`, mit oder ohne Passwort | `doas` und andere Methoden |
+| Templating | Jinja2 mit den Filtern, Tests und Lookups von Ansible, `!unsafe`, Filter und Lookups aus Collections | einige Filterargumente, aufgeführt unter [Templating](/de/docs/variables/templating/) |
+| Laufmodi | normale Läufe, [`--check` und `--diff`](/de/docs/playbooks/check-and-diff/), [Vault](/de/docs/variables/vault/), `--start-at-task`, `--step`, die vier Auflistungsbefehle | nichts mehr offen |
+
+## Häufige Hindernisse und was Sie tun können
+
+| Noch nicht unterstützt | Warum | Was Sie heute tun können |
+|---|---|---|
+| Ein eigenes Action-Plugin in `action_plugins/` | Volant führt die Action-Plugins von ansible-core und installierter Collections aus, nicht Ihre. | Schreiben Sie ein Modul, oder lassen Sie das Play unter `ansible-playbook`. |
+| Eine Collection, die nicht installiert ist | Volant installiert während eines Laufs keine. Es fragt vor der ersten Verbindung das ansible-core des Controllers, was installiert ist. | Führen Sie `volant runtime install --collections NAME` aus, den Befehl, den der Fehler nennt. Siehe [Die verwaltete Runtime](/de/docs/reference/runtime/#collections) und [Module aus Collections](/de/docs/internals/python/#module-aus-collections). |
+| Kein Python mit ansible-core auf dem Controller | Volant installiert bei Bedarf ein eigenes, mit `curl` oder `wget` und `tar`. | Nichts, oder `volant runtime install` vorab. Ohne Netzwerk verwenden Sie `volant runtime pack` und `install --from`. |
+| `apt`, `user`, `group` oder `file` unter `--check` oder `--diff` auf einem Host ohne Python | Diese Module antworten über Python auf dem Host, wenn der Lauf einen Check oder einen Diff verlangt. | Installieren Sie Python auf dem Host, oder führen Sie das Play ohne `--check` und `--diff` aus. |
+| `!!binary`, ein doppelter Anchor oder ein Datum oder eine Menge als typisierter Wert | Volant hat keinen Typ für Bytes, Daten oder Mengen. Ein Datum wird als sein ISO-Text geladen, ein `!!set`, `!!omap` oder `!!pairs` als das Mapping oder die Liste, als die es geschrieben ist. `!!binary` bricht das Laden ab, und ein zweiter `&anchor` desselben Namens wird akzeptiert. | Schreiben Sie den Wert als einfachen String, Liste oder Mapping, und geben Sie jedem Anchor einen eigenen Namen. |
+| Arithmetik mit einer Ganzzahl, die breiter als 128 Bit ist | Die Operatoren `+`, `-`, `*`, `/`, `//`, `%` und `**` sowie die Filter `abs` und `round` lehnen einen breiten Operanden ab. Siehe [Templating](/de/docs/variables/templating/). | Rechnen Sie in einem Modul oder in `command` mit `python3 -c`, und behalten Sie den breiten Wert als Text. |
+
+## Was heute abgelehnt wird
+
+Die Vorabprüfung bricht den Lauf vor der ersten Verbindung ab, vor jedem Banner und vor jedem Recap. Ohne sie würde ein Keyword, das durchgerutscht ist, stillschweigend ignoriert, und der Lauf würde Erfolg melden, nachdem er übersprungen hat, was Sie verlangt haben. [Die Vorabprüfung](/de/docs/internals/preflight/) beschreibt, wie sie funktioniert.
+
+| Was | Form der Meldung | Exit-Code |
+|---|---|---|
+| Eine `strategy` außer `linear`, `free`, `host_pinned` und `debug` | `strategy 'x' is not supported yet` | 4 |
+| `until`, `retries` oder `delay` bei `include_tasks` oder `include_role` | `keyword 'until' is not supported yet on 'include_tasks'` | 4 |
+| Ein `pause` mit `prompt` und `seconds` oder `minutes`, wenn die Standardeingabe ein Terminal ist | `pause cannot wait for a prompt and a duration together on a terminal ...` | 4 |
+| Ein Modulargument, das ansible-core hat und das dieses Release nicht umsetzt | `argument 'x' is not supported yet on 'module'`, mit ` with 'v'`, wenn nur dieser Wert abgelehnt wird | 4 |
+| `end_role` außerhalb einer Rolle | `Cannot execute 'end_role' from outside of a role` | 4 |
+| Ein eingebautes Modul, das dieses Release nicht mitbringt | `module 'x' is not available in this release` | 4 |
+| Ein String-Argument, das ein einziges Template ist | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
+| Ein Modul oder eine Collection, die sich nicht auflösen lässt | `couldn't resolve module/action 'x' ...`, mit dem Installationsbefehl für eine fehlende Collection | 4 |
+| Ein Collection-Modul, das ein Action-Plugin für Windows oder ein Netzwerkgerät braucht | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| Eine `become_method` außer `sudo` und `su` | `become_method 'x' is not supported yet` | 2 |
+| Eine Rolle in `roles:` oder `import_role`, die niemand findet | `the role 'x' was not found in ...` | 1 |
+
+Die Ablehnung bei `pause` gilt nur für einen Schritt, der immer läuft. Ein `when`, ein `loop` oder ein `rescue` darum herum verschiebt die Prüfung auf den Moment, in dem das `pause` erreicht wird. Ein Lauf, den die Prüfung abbricht, endet mit Exit-Code 4, dem Code, den Ansible für ein Playbook verwendet, das es nicht laden kann. [Exit-Codes](/de/docs/reference/exit-codes/) listet jeden Code auf.
+
+## Bekannte Lücken
+
+Diese Punkte weichen von `ansible-playbook` ab, ohne eine Meldung vor dem Lauf oder mit einer Meldung, die etwas anderes nennt. Jede Zeile sagt, was geschieht.
+
+| Was | Was geschieht |
+|---|---|
+| `callback_plugins/`, `vars_plugins/`, `stdout_callback`, `callbacks_enabled`, `result_format` | Werden ignoriert. Die Ausgabe ist die Standardausgabe. |
+| `volant check`, `inventory`, `vault`, `doc`, `config`, `galaxy` und Ad-hoc-Befehle | Sie existieren nicht. `volant` hat `playbook` und `runtime`. |
+| Ein Vergleich zwischen zwei Literalen von Typen, die Python nicht ordnen kann, etwa `{{ 'a' < 1 }}` | Er liefert `false` oder `true`, wo ansible-core mit `'<' not supported between instances of 'str' and 'int'` fehlschlägt. Die Template-Bibliothek wertet einen Vergleich von Literalen aus, bevor Volant ihn sieht. Steht auf einer Seite eine Variable, schlägt der Vergleich wie in ansible-core fehl. |
+| Ein Task mit `no_log: true`, der fehlschlägt | Absicht. Volant gibt `[ERROR]: Task failed: Action failed: <error censored due to no log>` aus und sonst nichts von der Ursache. ansible-core 2.19.12 gibt die Ursache aus: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, den Fehler des Moduls und die Blöcke `<<< caused by >>>`. Dieser Text kann ein Geheimnis enthalten, etwa die `msg` eines `fail`, die ein Passwort nennt. Die [Sicherheitsrichtlinie](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) wertet ein Geheimnis, das in einem Log oder Terminal landet, wo `no_log` es in ansible-core verbirgt, als Sicherheitslücke, deshalb verbirgt Volant es. Die Zeile `fatal:`, das registrierte Ergebnis und der Recap sind in beiden gleich. Um die Ursache zu lesen, führen Sie den Task ohne `no_log` aus. |
+| SIGTERM | Absicht. Volant beendet sich sauber: Es bricht die laufenden Tasks ab, entfernt das Verzeichnis mit dem Verbindungspasswort, gibt den Recap aus und endet mit Exit-Code 99, wie bei Strg-C. `ansible-playbook` fängt SIGTERM nicht ab. Es stirbt sofort mit Code 143 und gibt keinen Recap aus. Gemessen mit `kill -TERM` während eines `command: sleep`: 99 unter Volant, 143 unter ansible-core 2.19.12. |
+
+[Templating](/de/docs/variables/templating/) listet die Filter und Argumente auf, die fehlschlagen. Die [Paritätsseite](/de/docs/reference/parity/) markiert einen Filter als `partial`, wenn eines seiner Argumente fehlschlägt.
+
+Verhält sich ein Playbook unter Volant und `ansible-playbook` unterschiedlich, ohne als nicht unterstützt gemeldet zu werden, ist das ein Bug. [Eröffnen Sie bitte einen Kompatibilitätsbericht](https://github.com/lorica-labs/volant/issues/new?template=compat.yml) mit einem minimalen Playbook.
+
+## Einen Namen nachschlagen
+
+Wenn Sie etwas über ein bestimmtes Keyword, Modul, einen Filter oder eine Option wissen möchten, öffnen Sie die zugehörige Referenzseite:
+
+- [Keywords](/de/docs/reference/keywords/) listet jedes Keyword von Plays, Blöcken, Tasks und Schleifen auf und sagt, was Volant damit tut.
+- [Module](/de/docs/reference/modules/) listet die Module auf, die im Agent, auf dem Controller und über Python laufen, mit den Argumenten, die jedes unterstützt.
+- [Kommandozeile](/de/docs/reference/cli/) listet jede Option von `volant playbook` und `volant runtime` auf.
+- [Parität](/de/docs/reference/parity/) ist die vollständige Matrix: jedes Keyword, jede Option und jedes Plugin von ansible-core 2.19.12 sowie jedes Modul, jeder Filter, Test und Lookup der Collections im Paket ansible 12.3.0, mit dem Status `runs`, `partial`, `not yet` oder `later`.

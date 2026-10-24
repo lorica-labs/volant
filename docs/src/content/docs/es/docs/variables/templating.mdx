@@ -1,0 +1,173 @@
+---
+sourceHash: 71da6f6cf85b
+title: Plantillas
+description: Jinja2 en el controlador, el modo estricto, las condiciones, los filtros, tests y lookups que ofrece Volant, y cómo se renderizan los archivos de plantilla.
+---
+
+import { Aside } from '@astrojs/starlight/components';
+
+Tus plantillas funcionan como en Ansible, con estas excepciones. Volant renderiza Jinja2 en el controlador y le añade encima los filtros, tests y lookups de Ansible.
+
+- Las variables sin definir son errores, consulta [Estricto por defecto](#estricto-por-defecto).
+- Un filtro, test o lookup que Volant no implementa se ejecuta en Python, y puede necesitar paquetes instalados, consulta [Filtros, tests y lookups que necesitan Python](#filtros-tests-y-lookups-que-necesitan-python).
+- Un valor que viene de un host administrado nunca se renderiza como plantilla, consulta [Los valores de los hosts nunca se renderizan](#los-valores-de-los-hosts-nunca-se-renderizan).
+- Algunos argumentos, métodos y opciones de archivos de plantilla todavía no están, consulta [Todavía no disponible](#todavía-no-disponible) y la [referencia del lenguaje de plantillas](/es/docs/reference/templates/).
+
+## Estricto por defecto
+
+Las plantillas se renderizan en modo estricto. Una variable sin definir es un error, no una cadena vacía, salvo que la protejas:
+
+```yaml
+- debug:
+    msg: "{{ release | default('latest') }}"
+  when: release is defined or use_latest | bool
+```
+
+Un `when` cuyo valor no es booleano también se rechaza.
+
+Una variable o un atributo sin definir se expresa y se encadena como lo hace ansible-core: `'nope' is undefined`, u `object of type 'dict' has no attribute 'b'`. En un argumento de tarea, el mensaje aparece bajo `Finalization of task args for 'module' failed: Error while resolving value for 'arg'`. Una lectura protegida con `default` o `is defined` no lanza nada.
+
+## Condiciones
+
+`when`, `changed_when`, `failed_when` y `until` aceptan una expresión o una lista de ellas. Con una lista, deben cumplirse todas las expresiones.
+
+```yaml
+- command: /opt/app/migrate.sh
+  register: migrate
+  changed_when: "'applied' in migrate.stdout"
+  failed_when:
+    - migrate.rc != 0
+    - "'already up to date' not in migrate.stderr"
+```
+
+Una condición envuelta en `{{ }}` que se renderiza como cadena se evalúa una vez más como condición, como hace ansible-core 2.19. Con `healthy: "true"` en las `vars` del play, `when: "{{ healthy }}"` ejecuta la tarea. Esta segunda evaluación nunca ocurre cuando el primer renderizado leyó un valor de un host administrado: la tarea falla en su lugar con `Encountered untrusted template or expression.` Consulta [Los valores de los hosts nunca se renderizan](#los-valores-de-los-hosts-nunca-se-renderizan).
+
+## Variables que contienen plantillas
+
+Una variable cuyo valor es una plantilla se renderiza cuando otra plantilla la lee, así que un filtro o un operador siempre ve el valor final:
+
+```yaml
+vars:
+  host: example.org
+  url: "http://{{ host }}:8080/x"
+  port: "{{ 8080 }}"
+tasks:
+  - debug:
+      msg: "{{ url | length }} {{ port | int + 1 }}"   # 25 8081
+```
+
+Esto vale en las `vars` de play, de bloque y de tarea, en `group_vars`, en los defaults de rol, en `vars_files`, en `include_vars` y en las variables extra, y para una lista o un mapa que contenga plantillas. Un miembro que no se renderiza no lanza nada hasta que algo lo lee.
+
+Una variable que lee un nombre sin valor tampoco tiene valor: `default` e `is defined` la ven como sin definir. Una variable que se lee a sí misma, directamente o a través de otras, falla con `Recursive loop detected in template: maximum recursion depth exceeded`, también detrás de `default`, como en ansible-core.
+
+Los datos de un host nunca se renderizan. Una variable de un host administrado, y una variable construida a partir de una, sigue siendo texto. Consulta [Los valores de los hosts nunca se renderizan](#los-valores-de-los-hosts-nunca-se-renderizan).
+
+Una variable que lee `vars`, o que llama a `lookup` o `query`, se deja como está escrita y se renderiza cuando una tarea la usa. `hostvars['other']['name']` da el texto en bruto de una variable que contiene una plantilla.
+
+## Qué hay disponible
+
+
+
+| Tipo | Nombres |
+|---|---|
+| Filtros | `default` / `d`, `bool`, `int`, `float`, `mandatory`, `ternary`, `combine`, `dict2items`, `items2dict`, `to_json`, `to_nice_json`, `from_json`, `to_yaml`, `to_nice_yaml`, `from_yaml`, `basename`, `dirname`, `split`, `regex_replace`, `regex_search`, `regex_findall`, `regex_escape`, `extract`, `b64encode`, `b64decode`, `comment`, `difference`, `intersect`, `union`, `flatten`, `to_uuid`, `type_debug`, `quote` |
+| Tests | `truthy`, `falsy`, `match`, `search`, `regex`, `contains`, `changed` / `change`, `failed` / `failure`, `succeeded` / `success` / `successful`, `skipped` / `skip`, `version` (y `version_compare`) |
+| Lookups | `env`, `file`, `vars`, `varnames`, `pipe`, `first_found`, `fileglob`, `template`, `inventory_hostnames`, `unvault` (y las formas de llamada `query` y `q`) |
+| Globales | `now`, `lipsum` |
+| De `ansible.utils` | el filtro `ansible.utils.ipwrap`, solo con ese nombre |
+
+Todos los filtros, tests y lookups de esta lista responden también con su nombre `ansible.builtin.*`, así que `{{ data | ansible.builtin.to_json }}` funciona. Un filtro, test o lookup que no está en esta lista se ejecuta en Python con el propio código de ansible-core, consulta [Filtros, tests y lookups que necesitan Python](#filtros-tests-y-lookups-que-necesitan-python). Eso incluye los plugins de otras colecciones.
+
+`first_found`, `fileglob` y `template` buscan archivos a lo largo de `ansible_search_path`. En la tarea de un rol, es el directorio del rol, el directorio del archivo de la tarea y después el directorio del playbook. Fuera de un rol, es el directorio del playbook. `role_path` está definida en la tarea de un rol y sin definir fuera de uno. `fileglob` prueba un patrón relativo bajo `files/` de cada entrada y después en la propia entrada, y gana la primera entrada con coincidencia. Devuelve solo archivos, ordenados, y una única coincidencia vuelve como cadena.
+
+`now()` da la fecha y la hora del controlador, nunca de un host administrado, y `lipsum()` da texto de relleno aleatorio. Sus argumentos y resultados están en la [referencia del lenguaje de plantillas](/es/docs/reference/templates/#fecha-y-texto-de-relleno).
+
+## Filtros, tests y lookups que necesitan Python
+
+Volant implementa por sí mismo, en Rust, los filtros, tests y lookups habituales. Todos los demás que incluyen ansible-core 2.19.12 o una colección se ejecutan en un proceso de Python en el controlador, con el propio código del plugin, así que el resultado es el que da ansible-core.
+
+Un play que usa solo los de Rust nunca inicia Python para las plantillas. El proceso de Python arranca en la primera llamada que lo necesita y después atiende el resto de la ejecución. Arrancarlo tarda unos 0.55 s, que se pagan una vez por ejecución, medido con `hash`.
+
+### Qué necesita Python
+
+Un nombre necesita Python cuando Volant no tiene una versión en Rust. La [página de paridad](/es/docs/reference/parity/) marca esas filas como `runs` con la nota "through the Python helper; needs the plugin's Python libraries". Ejemplos son los filtros `hash`, `password_hash`, `json_query` e `ipaddr`, y los lookups `lines` y `url`.
+
+Un nombre con versión en Rust nunca llega a Python, se llame como se llame. `ansible.utils.ipwrap` se queda en Rust. Los filtros, tests y el lookup de vault tampoco van nunca a Python: la contraseña de vault se queda en el proceso del controlador. Consulta [Vault](/es/docs/variables/vault/).
+
+### Qué instalar
+
+El controlador necesita un Python 3 con `ansible-core`. Si no tiene ninguno, Volant instala su propio [runtime administrado](/es/docs/reference/runtime/).
+
+Un plugin necesita además lo que importa. `json_query` necesita `jmespath`, `ipaddr` necesita `netaddr`, `password_hash` necesita `passlib`, y el plugin de una colección necesita esa colección. Todos deben estar instalados para el intérprete que ejecuta Volant. El runtime administrado contiene ansible-core y sus dependencias y nada más, así que para estos nombres apunta `VOLANT_PYTHON` a un entorno propio que tenga los paquetes. Sin ellos la tarea falla con el mensaje propio del plugin.
+
+Volant usa `VOLANT_PYTHON` cuando está definida, y nada más. Si no, prueba su runtime administrado, después el entorno virtual activo y después `python3` en tu `PATH`, e instala el runtime administrado cuando ninguno funciona. Un intérprete sin `ansible-core` se rechaza por su nombre, y el mensaje dice qué intérpretes se probaron. Una tarea que llama a un nombre que necesita Python falla entonces con un mensaje como `filter 'hash' needs the Python helper, which could not start: …`, seguido del motivo, y la ejecución termina con un código distinto de cero.
+
+[Filtros que se ejecutan en Python](/es/docs/reference/templates/#filtros-que-se-ejecutan-en-python) enumera los demás fallos y lo que recibe Python.
+
+## Los valores de los hosts nunca se renderizan
+
+Una plantilla que escribiste es código. Un valor que devolvió un host administrado son datos, y nunca se ejecuta como plantilla en el controlador.
+
+- Son valores no fiables `register` y los resultados de módulos, los facts recopilados, los valores de `set_fact` y los resultados de `lookup('file')`, `lookup('pipe')`, `lookup('env')` y `lookup('template')`.
+- Son valores fiables los que lleva el playbook: `vars` de play y de tarea, `--extra-vars`, variables del inventario, `vars_files` e `include_vars`. `!unsafe` marca uno de ellos como datos.
+- Un valor no fiable se renderiza una vez. Si el resultado vuelve a parecer una plantilla, se queda como texto.
+- Una condición o un `debug: var:` que evaluaría un valor del host como expresión falla con `Encountered untrusted template or expression.`
+
+La [referencia del lenguaje de plantillas](/es/docs/reference/templates/#valores-fiables-y-no-fiables) tiene las reglas completas y ejemplos.
+
+<Aside type="caution">
+Esto es una frontera de seguridad. Si encuentras una forma de que los datos de un host se evalúen como plantilla en el controlador, infórmalo en privado como describe la [política de seguridad](https://github.com/lorica-labs/volant/blob/main/SECURITY.md).
+</Aside>
+
+## Renderizar un archivo de plantilla
+
+El módulo `template` y `lookup('template')` comparten un mismo renderizado, que se diferencia del de un argumento de tarea en un aspecto: renderiza el texto del archivo **una vez**. Un argumento de tarea pasa por más pasadas, y así un valor que aún contiene `{{ ... }}` tras renderizarse puede leerse de nuevo como plantilla. Un archivo de plantilla no recibe esa segunda pasada, así que un valor que aportó un host administrado llega al archivo escrito como texto plano y nunca se ejecuta como plantilla propia.
+
+Acepta las opciones que lee el módulo `template`:
+
+| Opción | Valor por defecto | Efecto |
+|---|---|---|
+| `trim_blocks` | activada | Elimina el primer salto de línea tras una etiqueta de bloque. |
+| `lstrip_blocks` | desactivada | Quita el espacio en blanco anterior a una etiqueta de bloque en su línea. |
+| `newline_sequence` | `\n` | Finales de línea del archivo escrito: `\n`, `\r` o `\r\n`, con escape o literales. |
+| `variable_start_string`, `variable_end_string` | `{{`, `}}` | Las marcas alrededor de una expresión. |
+| `block_start_string`, `block_end_string` | `{%`, `%}` | Las marcas alrededor de una sentencia. |
+| `comment_start_string`, `comment_end_string` | `{#`, `#}` | Las marcas alrededor de un comentario. |
+| `output_encoding` | `utf-8` | La codificación del archivo escrito. Solo `template`. |
+
+`lookup('template')` acepta los cuatro delimitadores de variable y de comentario y `trim_blocks`, y nada más.
+
+Un delimitador personalizado reemplaza al predeterminado: con `variable_start_string: '[['`, un `{{` del archivo es texto plano. Las tres cadenas de inicio deben ser distintas entre sí. Un texto que no contiene ninguna de las tres cadenas de inicio no es una plantilla, y se escribe tal cual, finales de línea incluidos, diga lo que diga `newline_sequence`.
+
+La primera línea de un archivo de plantilla puede sobrescribir las opciones. Empieza con `#jinja2:` y contiene pares `key: value`, separados por comas, con un literal de Python como valor:
+
+```jinja
+#jinja2: variable_start_string:'[%', variable_end_string:'%]', trim_blocks: False
+```
+
+Las claves son los seis delimitadores, `trim_blocks`, `lstrip_blocks`, `newline_sequence` y `keep_trailing_newline`. La línea gana a las opciones de la tarea. Una clave incorrecta, un tipo incorrecto o dos cadenas de inicio iguales hacen fallar el renderizado con el mensaje de ansible-core. La línea se elimina de la salida. Un `#jinja2:` que no está al principio mismo del archivo es texto plano.
+
+`output_encoding` escribe UTF-8, UTF-8 con firma, Latin-1, ASCII, cp1252, ISO 8859-15, UTF-16 y UTF-32, con los nombres y alias que conoce Python (`latin-1`, `iso8859_1`, `utf_16_le`, `windows-1252`). UTF-16 y UTF-32 sin orden escriben una marca de orden de bytes y después little-endian. Un carácter que la codificación no puede contener hace fallar la tarea con el mensaje de Python, que nombra el carácter y su posición. Cualquier otra codificación se rechaza por su nombre.
+
+El salto de línea final del propio archivo sobrevive al renderizado. [Plugins de acción](/es/docs/internals/action-plugins/#template) cubre el resto de lo que hace el módulo `template`.
+
+Cómo se mantienen literales las llaves que construye un bloque `raw` o una expresión está en [Llaves literales](/es/docs/reference/templates/#llaves-literales).
+
+## Todavía no disponible
+
+Estas carencias afectan a la mayoría de los playbooks. La [referencia del lenguaje de plantillas](/es/docs/reference/templates/#todavía-no-disponible) enumera las carencias de renderizado, de archivos de plantilla y de bytes.
+
+### Filtros y tests
+
+- Estos argumentos de filtros no se admiten: el método de `round`, `start` y `attribute` de `sum`, `attribute` de `min` y `max`, `count` de `replace`, `sort_keys` de `to_json`, y `strict` y `version_type` del test `version`.
+- `b64encode` y `b64decode` aceptan `encoding` solo como `utf-8`. Cualquier otra codificación se rechaza por su nombre.
+- `password_hash`, `json_query` e `ipaddr` necesitan los paquetes de Python `passlib`, `jmespath` y `netaddr`. El runtime administrado no los incluye, consulta [Qué instalar](#qué-instalar).
+
+### Enteros de más de 128 bits
+
+Un módulo puede devolver un entero así, como el *modulus* de una clave RSA. Volant conserva todos los dígitos en resultados, variables, `string`, `to_json` y `from_json`. Compara un entero ancho con cualquier número por su valor, en los operadores de comparación, `min`, `max`, `sort`, `unique` y `list.sort()`.
+
+- Los operadores `+`, `-`, `*`, `/`, `//`, `%` y `**` y los filtros `abs` y `round` rechazan un operando ancho. Un resultado de más de 128 bits es un error.
+- Un entero YAML de más de 4300 dígitos se rechaza. También un texto de ese tamaño pasado a `int`, que responde con su valor por defecto, como en Python 3.11 y posteriores.
+
+Para hacer aritmética con un valor así, usa un módulo, o `command` con `python3 -c`, y conserva el valor ancho como texto.

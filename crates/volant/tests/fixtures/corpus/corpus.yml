@@ -119,7 +119,9 @@
   hosts: 2
   where: both
   vars: {}
-  volatile: []
+  volatile: [After, Before, MemoryAvailable, StateChangeTimestamp, StateChangeTimestampMonotonic, ExecMainPID,
+             ControlGroupId, CPUUsageNSec, ConditionTimestamp, ConditionTimestampMonotonic, AssertTimestamp,
+             AssertTimestampMonotonic, InactiveEnterTimestamp, InactiveEnterTimestampMonotonic]
   generate: null
   skip_reason: null
 - name: synthetic-loop

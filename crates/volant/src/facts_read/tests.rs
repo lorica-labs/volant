@@ -607,3 +607,30 @@ fn a_file_name_from_part_of_a_fact_is_followed() {
         assert!(matches!(role(name), FactsRead::All(_)), "{name}");
     }
 }
+
+/// `include_vars` over `with_first_found` or `lookup('first_found', ...)` reads the files it can
+/// find, out of the role too; a term with a part not known reads every fact.
+#[test]
+fn include_vars_follows_first_found() {
+    let role = |tasks: &str| {
+        let tree = Tree::new();
+        tree.file("site.yml", "- hosts: all\n  roles:\n    - db\n")
+            .file("roles/db/tasks/main.yml", tasks)
+            .file("roles/db/vars/Debian.yml", "__db_daemon: mariadb\n")
+            .file("roles/db/vars/RedHat.yml", "__db_daemon: mysqld\n")
+            .file("vars/Ubuntu-mariadb.yml", "x: \"{{ ansible_lsb }}\"\n");
+        tree.read("h1\n")
+    };
+    let lookup = "- include_vars: \"{{ lookup('first_found', params) }}\"\n  vars:\n    params:\n      files:\n        - '{{ ansible_facts.distribution }}-mariadb.yml'\n        - main.yml\n      paths:\n        - vars\n";
+    let looped = "- set_fact:\n    db_daemon: \"{{ __db_daemon }}\"\n- include_vars: \"{{ item }}\"\n  with_first_found:\n    - files:\n        - \"vars/{{ ansible_facts.distribution }}-{{ db_daemon }}.yml\"\n        - \"vars/{{ ansible_facts.os_family }}.yml\"\n      skip: true\n";
+    let getent = "- debug: msg=x
+  when: item not in ansible_facts.getent_group['docker'][2]
+";
+    for tasks in [lookup, looped, &format!("{lookup}{getent}")] {
+        let read = role(tasks);
+        assert!(keys(&read).contains("lsb"), "{tasks}: {read:?}");
+        assert!(!keys(&read).contains("getent_group"), "{tasks}: {read:?}");
+    }
+    let unknown = looped.replace("{{ db_daemon }}", "{{ db_daemon | basename }}");
+    assert!(matches!(role(&unknown), FactsRead::All(_)));
+}

@@ -18,7 +18,22 @@ pub struct DocArgs {
 }
 
 /// Runs `ansible-doc` and returns its exit code.
+///
+/// clap drops a leading `--`, which `ansible-doc` reads as the end of its options, so the
+/// arguments are taken again from the command line: everything after `doc`, or after the
+/// program name when started as `ansible-doc`.
 #[must_use]
 pub fn doc(args: DocArgs) -> i32 {
-    crate::runtime::tool::run_tool("doc", &args.args)
+    let mut raw = std::env::args_os();
+    let started = raw.next().unwrap_or_default();
+    if super::subcommand_for(&started).is_none() {
+        raw.next();
+    }
+    let raw: Vec<OsString> = raw.collect();
+    let tail = if raw.len() >= args.args.len() {
+        raw
+    } else {
+        args.args
+    };
+    crate::runtime::tool::run_tool("doc", &tail)
 }

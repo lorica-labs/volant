@@ -21,41 +21,37 @@ importlib.import_module('ansible.cli.' + tool).main()\n";
 pub fn run_tool(tool: &str, args: &[OsString]) -> i32 {
     match start(tool, args) {
         Ok(code) => code,
-        Err(message) => {
-            eprintln!("[ERROR]: {message}");
-            1
+        Err(err) => {
+            // The words and code of a failed `volant playbook` setup.
+            eprintln!("ERROR! {err:#}");
+            crate::stats::error_code(&err)
         }
     }
 }
 
-fn start(tool: &str, args: &[OsString]) -> Result<i32, String> {
-    let config = crate::config::Config::load().map_err(|e| format!("{e:#}"))?;
+fn start(tool: &str, args: &[OsString]) -> anyhow::Result<i32> {
+    let config = crate::config::Config::load()?;
     resolve::configured(config);
     let explicit = std::env::var("VOLANT_PYTHON").ok();
     let virtual_env = std::env::var("VIRTUAL_ENV").ok();
-    let python = crate::python::find_python(explicit.as_deref(), virtual_env.as_deref(), true)
-        .map_err(|e| format!("{e:#}"))?;
-    let mut command = command(&python, explicit.is_some(), tool, &started_as(), args);
+    let python = crate::python::find_python(explicit.as_deref(), virtual_env.as_deref(), true)?;
+    // Only Volant's own runtime is cleaned up; any other interpreter is the user's and is
+    // started as the playbook helper starts it.
+    let managed =
+        resolve::managed().is_some_and(|done| done.python.display().to_string() == python);
+    let mut command = command(&python, managed, tool, &started_as(), args);
     if let Some(paths) = collections::helper_env() {
         command.env("ANSIBLE_COLLECTIONS_PATH", paths);
     }
-    run(&mut command, &python)
+    run(&mut command, &python).map_err(anyhow::Error::msg)
 }
 
 /// The command line: the interpreter without the working directory on its module path. Under
 /// the managed runtime, the environment of the runtime's other children plus the user's own, bar
-/// the variables that change what the interpreter loads; under `VOLANT_PYTHON`, the user's whole
-/// environment, as the interpreter is theirs.
-fn command(
-    python: &str,
-    user_python: bool,
-    tool: &str,
-    argv0: &Path,
-    args: &[OsString],
-) -> Command {
-    let mut command = if user_python {
-        Command::new(python)
-    } else {
+/// the variables that change what the interpreter loads; any other interpreter keeps the user's
+/// whole environment, as the interpreter is theirs.
+fn command(python: &str, managed: bool, tool: &str, argv0: &Path, args: &[OsString]) -> Command {
+    let mut command = if managed {
         let mut command = python_command(Path::new(python));
         // Nothing but the terminal, the pager and the `ANSIBLE_*` settings is what the tool reads.
         for (name, value) in std::env::vars_os() {
@@ -65,6 +61,8 @@ fn command(
         }
         command.stdin(Stdio::inherit());
         command
+    } else {
+        Command::new(python)
     };
     command
         .arg("-P")
@@ -105,22 +103,58 @@ fn absolute(path: PathBuf) -> PathBuf {
     std::path::absolute(&path).unwrap_or(path)
 }
 
+/// The tool's pid while it runs, for the signals this process forwards.
+#[cfg(unix)]
+static CHILD: std::sync::atomic::AtomicI32 = std::sync::atomic::AtomicI32::new(0);
+
+#[cfg(unix)]
+extern "C" fn ignore(_: libc::c_int) {}
+
+#[cfg(unix)]
+extern "C" fn forward(signal: libc::c_int) {
+    let pid = CHILD.load(std::sync::atomic::Ordering::Relaxed);
+    if pid > 0 {
+        // SAFETY: `kill` is async-signal-safe.
+        unsafe {
+            libc::kill(pid, signal);
+        }
+    }
+}
+
+/// Sets `handler` for `signal` unless it was started ignored (`nohup`, a background job), in
+/// which case it stays ignored and the tool inherits that. A handler, never `SIG_IGN`, because
+/// an ignored signal stays ignored in the child.
+#[cfg(unix)]
+fn handle(signal: libc::c_int, handler: extern "C" fn(libc::c_int)) {
+    // SAFETY: the handlers only call `kill` or do nothing, so they are async-signal-safe.
+    unsafe {
+        let before = libc::signal(signal, libc::SIG_IGN);
+        if before != libc::SIG_IGN {
+            libc::signal(signal, handler as *const () as libc::sighandler_t);
+        }
+    }
+}
+
 #[cfg(unix)]
 fn run(command: &mut Command, python: &str) -> Result<i32, String> {
     use std::os::unix::process::ExitStatusExt as _;
 
-    extern "C" fn ignore(_: libc::c_int) {}
-    // The terminal sends ^C and ^\ to the whole group: the tool handles them, and this process
-    // waits for it. A handler, not SIG_IGN, because an ignored signal stays ignored in the child.
-    // SAFETY: `ignore` does nothing, so it is async-signal-safe.
-    unsafe {
-        let handler = ignore as *const () as libc::sighandler_t;
-        libc::signal(libc::SIGINT, handler);
-        libc::signal(libc::SIGQUIT, handler);
-    }
-    let status = command
-        .status()
+    // The terminal sends ^C and ^\ to the whole group: the tool handles them and this process
+    // waits for it. SIGTERM and SIGHUP reach only this process, so they go on to the tool.
+    handle(libc::SIGINT, ignore);
+    handle(libc::SIGQUIT, ignore);
+    handle(libc::SIGTERM, forward);
+    handle(libc::SIGHUP, forward);
+    let mut child = command
+        .spawn()
         .map_err(|e| format!("cannot run {python}: {e}"))?;
+    CHILD.store(
+        i32::try_from(child.id()).unwrap_or(0),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let status = child
+        .wait()
+        .map_err(|e| format!("cannot wait for {python}: {e}"))?;
     Ok(status
         .code()
         .or_else(|| status.signal().map(|signal| 128 + signal))

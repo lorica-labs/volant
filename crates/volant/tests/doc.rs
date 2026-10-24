@@ -51,6 +51,14 @@ fn every_argument_after_doc_reaches_the_tool() {
     assert_eq!(lines[2..], ["-h", "--bogus", "-t", "keyword", "--", "x"]);
 }
 
+/// A leading `--` is the tool's to read, not clap's.
+#[test]
+fn a_leading_double_dash_reaches_the_tool() {
+    let (out, _dir) = volant_doc("exit 0", &["--", "-l"]);
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(text.lines().skip(2).collect::<Vec<_>>(), ["--", "-l"]);
+}
+
 /// The tool's exit code is Volant's, and a signal is `128 + signal`.
 #[test]
 fn the_exit_code_and_a_signal_pass_through() {
@@ -85,7 +93,7 @@ fn the_output_is_the_references_for_the_same_runtime() {
         return;
     };
     let volant = env!("CARGO_BIN_EXE_volant");
-    let cases: [&[&str]; 7] = [
+    let cases: [&[&str]; 9] = [
         &["ping"],
         &["-l"],
         &["-s", "ping"],
@@ -93,6 +101,8 @@ fn the_output_is_the_references_for_the_same_runtime() {
         &["-t", "keyword", "-l"],
         &["nosuch"],
         &["--version"],
+        &["--", "-l"],
+        &["--bogus"],
     ];
     for args in cases {
         let mut command = Command::new(volant);

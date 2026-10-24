@@ -80,6 +80,10 @@ When a host is in several groups, the deeper group wins. Between groups at the s
 
 A name that is both a host and a group means the host. Volant warns once per run when an inventory contains such a name, whatever pattern the run uses, because Ansible detects it when it loads the inventory.
 
+## Printing an inventory
+
+`volant inventory --list` prints what Volant read from the sources as JSON, and `volant inventory --host NAME` prints one host's variables, both in the bytes `ansible-inventory` prints. See [the inventory command](/reference/cli/#the-inventory-command).
+
 ## Refreshing
 
 `meta: refresh_inventory` reads every source again, see [Delegation, meta tasks and environment](/playbooks/delegation/#refreshing-the-inventory).

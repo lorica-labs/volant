@@ -1,5 +1,5 @@
 ---
-sourceHash: 06ef07eefbf0
+sourceHash: aaa01d3d7aed
 title: Vault
 description: Cómo lee Volant los datos de Ansible Vault, de dónde obtiene las contraseñas y por qué nunca salen del proceso del controlador.
 ---
@@ -34,6 +34,17 @@ Una contraseña de vault vive en memoria en el proceso del controlador. Nunca se
 Los filtros, tests y lookups que se ejecutan en Python nunca ven la contraseña de vault. Por eso los de vault se ejecutan en el proceso del controlador. Consulta [Filtros, tests y lookups que necesitan Python](/es/docs/variables/templating/#filtros-tests-y-lookups-que-necesitan-python).
 
 Un valor que volvió de un host administrado nunca se descifra con los secretos de la ejecución, y nunca se vuelve a renderizar como plantilla. Consulta [Los valores de los hosts nunca se renderizan](/es/docs/variables/templating/#los-valores-de-los-hosts-nunca-se-renderizan).
+
+## Cifrar y ver archivos
+
+`volant vault encrypt`, `decrypt` y `view` trabajan sobre los mismos archivos que `ansible-vault`: un archivo cifrado por uno lo lee el otro, con el id por defecto y con una etiqueta.
+
+- `encrypt` sustituye cada archivo por su texto de vault y `decrypt` por su texto en claro. Ambos dejan el resultado con modo `0600` y no imprimen nada; en un terminal escriben `Encryption successful` o `Decryption successful` en el error estándar. Un archivo sin salto de línea final vuelve sin él.
+- La cabecera es `$ANSIBLE_VAULT;1.1;AES256` para el id por defecto y `$ANSIBLE_VAULT;1.2;AES256;LABEL` para otro. `--vault-id LABEL@SOURCE` fija la etiqueta. Con más de un `--vault-id`, `--encrypt-vault-id` (o `vault_encrypt_identity`, `ANSIBLE_VAULT_ENCRYPT_IDENTITY`) elige el que cifra; sin él, el comando sale con el código 5.
+- `--output FILE` escribe ahí y deja intacto el origen, `--output -` escribe en la salida estándar, y sin nombre de archivo, o con `-`, lee la entrada estándar.
+- `view` imprime el texto en claro de cada archivo. En un terminal pasa por `ANSIBLE_PAGER`, `PAGER` o `less`; `ansible.cfg` no influye en el paginador.
+- Sin ninguna fuente de contraseña, el comando la pide. `encrypt` la pide dos veces, como `New Vault password: ` y `Confirm New Vault password: `.
+- `-v` imprime el archivo de configuración en uso y `-vv` la versión. Las líneas adicionales de `-vvvv` no se imprimen.
 
 ## Carencias conocidas
 

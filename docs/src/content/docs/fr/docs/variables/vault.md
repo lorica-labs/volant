@@ -1,5 +1,5 @@
 ---
-sourceHash: 06ef07eefbf0
+sourceHash: aaa01d3d7aed
 title: Vault
 description: Comment Volant lit les données d'Ansible Vault, d'où il tire les mots de passe, et pourquoi ils ne quittent jamais le processus du contrôleur.
 ---
@@ -34,6 +34,17 @@ Un mot de passe vault vit en mémoire dans le processus du contrôleur. Il n'est
 Les filtres, tests et lookups qui s'exécutent en Python ne voient jamais le mot de passe vault. Ceux de vault s'exécutent pour cette raison dans le processus du contrôleur. Voir [Filtres, tests et lookups qui nécessitent Python](/fr/docs/variables/templating/#filtres-tests-et-lookups-qui-nécessitent-python).
 
 Une valeur revenue d'un hôte géré n'est jamais déchiffrée avec les secrets de l'exécution, et n'est jamais rendue de nouveau comme modèle. Voir [Les valeurs venues des hôtes ne sont jamais rendues comme modèles](/fr/docs/variables/templating/#les-valeurs-venues-des-hôtes-ne-sont-jamais-rendues-comme-modèles).
+
+## Chiffrer et afficher des fichiers
+
+`volant vault encrypt`, `decrypt` et `view` travaillent sur les mêmes fichiers qu'`ansible-vault` : un fichier chiffré par l'un est lu par l'autre, avec l'id par défaut comme avec un label.
+
+- `encrypt` remplace chaque fichier par son texte vault et `decrypt` par son texte en clair. Les deux laissent le résultat en mode `0600` et n'affichent rien ; sur un terminal, ils écrivent `Encryption successful` ou `Decryption successful` sur l'erreur standard. Un fichier sans saut de ligne final revient sans saut de ligne.
+- L'en-tête est `$ANSIBLE_VAULT;1.1;AES256` pour l'id par défaut et `$ANSIBLE_VAULT;1.2;AES256;LABEL` pour un autre. `--vault-id LABEL@SOURCE` fixe le label. Avec plusieurs `--vault-id`, `--encrypt-vault-id` (ou `vault_encrypt_identity`, `ANSIBLE_VAULT_ENCRYPT_IDENTITY`) choisit celui qui chiffre ; sans lui, la commande sort avec le code 5.
+- `--output FILE` écrit à cet endroit et laisse la source intacte, `--output -` écrit sur la sortie standard, et sans nom de fichier, ou avec `-`, la commande lit l'entrée standard.
+- `view` affiche le texte en clair de chaque fichier. Sur un terminal, il passe par `ANSIBLE_PAGER`, `PAGER` ou `less` ; `ansible.cfg` n'a pas son mot à dire sur le pager.
+- Sans aucune source de mot de passe, la commande le demande. `encrypt` le demande deux fois, comme `New Vault password: ` et `Confirm New Vault password: `.
+- `-v` affiche le fichier de configuration utilisé et `-vv` la version. Les lignes supplémentaires de `-vvvv` ne sont pas affichées.
 
 ## Limites connues
 

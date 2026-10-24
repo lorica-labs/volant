@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
-use volant::cli::{PlaybookArgs, RuntimeCommand, ShimsCommand};
+use volant::cli::{PlaybookArgs, RuntimeCommand, ShimsCommand, VaultArgs};
 
 /// Fast engine for Ansible playbooks.
 #[derive(Parser)]
@@ -20,6 +20,8 @@ enum Command {
     /// Link the ansible-core program names to volant, or remove those links.
     #[command(subcommand)]
     Shims(ShimsCommand),
+    /// Encrypt, decrypt and view vault files, with the arguments of ansible-vault.
+    Vault(VaultArgs),
 }
 
 /// Parses the command line. Started under an ansible-core program name, the process behaves as
@@ -68,6 +70,7 @@ fn main() {
         Command::Playbook(args) => volant::cli::run(*args),
         Command::Runtime(command) => volant::cli::runtime(command),
         Command::Shims(command) => volant::cli::shims(command),
+        Command::Vault(args) => volant::cli::vault(args),
     };
     std::process::exit(code);
 }

@@ -97,6 +97,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Comma-separated vault identities, each written `label@source` where the source is a file, an executable or `prompt`. The environment variable replaces the file's list, and the command line adds to whichever won.
 </Option>
 
+<Option name="vault_encrypt_identity" id="defaults-vault-encrypt-identity" flag="--encrypt-vault-id" env="ANSIBLE_VAULT_ENCRYPT_IDENTITY">
+  The vault id `volant vault encrypt` uses when `--encrypt-vault-id` is not given. See [Vault](/variables/vault/#encrypting-and-viewing-files).
+</Option>
+
 <Option name="roles_path" id="defaults-roles-path" default="~/.ansible/roles:/usr/share/ansible/roles:/etc/ansible/roles" env="ANSIBLE_ROLES_PATH">
   Where roles are looked for, after `<playbook_dir>/roles` and before `<playbook_dir>` itself. See [Roles](/docs/playbooks/roles/#finding-a-role).
 </Option>

@@ -341,6 +341,7 @@ pub(super) fn all_hold(
     templar: &Templar,
 ) -> Result<bool, TemplateError> {
     for c in conditions {
+        crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         if !templar.condition(c, vars)? {
             return Ok(false);
         }

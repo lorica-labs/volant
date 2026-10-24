@@ -67,6 +67,8 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
             return 250;
         }
     };
+    let json_path = std::env::var_os("VOLANT_PROFILE_JSON").filter(|p| !p.is_empty());
+    crate::profile::track_repeats(args.profile || json_path.is_some());
     let profile = Arc::new(Profile::default());
     let code = match runtime.block_on(run_all(args, plays, &mut out, &profile)) {
         Ok(code) => code,
@@ -84,7 +86,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     if args.profile {
         eprint!("{}", profile.render());
     }
-    if let Some(path) = std::env::var_os("VOLANT_PROFILE_JSON").filter(|p| !p.is_empty())
+    if let Some(path) = json_path
         && let Err(err) = profile.write_json(Path::new(&path))
     {
         eprintln!(

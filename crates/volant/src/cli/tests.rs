@@ -169,6 +169,87 @@ fn the_profile_stays_off_stdout_and_lands_in_its_file() {
     );
 }
 
+/// The counters end the profile file and do not depend on the forks; a condition written twice
+/// is one repeat per host; without a profile nothing is kept and nothing shows.
+#[cfg(unix)]
+#[test]
+fn the_counters_end_the_profile_and_ignore_the_forks() {
+    let dir_guard = scratch();
+    let dir = dir_guard.path().to_path_buf();
+    std::fs::create_dir_all(&dir).unwrap();
+    let inventory = dir.join("hosts");
+    std::fs::write(
+        &inventory,
+        "h1 ansible_connection=local\nh2 ansible_connection=local\nh3 ansible_connection=local\n",
+    )
+    .unwrap();
+    let playbook = dir.join("site.yml");
+    std::fs::write(
+        &playbook,
+        "- hosts: all
+  gather_facts: false
+  vars: {x: 1}
+  tasks:
+    - debug: {msg: '{{ x }}'}
+      when: [x == 1, x == 1]
+",
+    )
+    .unwrap();
+    let json = dir.join("profile.jsonl");
+    unsafe {
+        std::env::set_var("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg");
+        std::env::set_var("VOLANT_PROFILE_JSON", &json);
+    }
+    let (inventory, playbook) = (
+        inventory.display().to_string(),
+        playbook.display().to_string(),
+    );
+    let args = |forks: &str| {
+        PlaybookArgs::try_parse_from([
+            "volant",
+            "--no-color",
+            "-i",
+            inventory.as_str(),
+            "-f",
+            forks,
+            playbook.as_str(),
+        ])
+        .unwrap()
+    };
+    let counted = |forks: &str| {
+        assert_eq!(run(args(forks)), 0);
+        let text = std::fs::read_to_string(&json).unwrap();
+        let mut last: serde_json::Value =
+            serde_json::from_str(text.lines().last().unwrap()).unwrap();
+        // Times, and the byte counts of answers that carry times.
+        for timed in ["bridge_nanos", "wire_out_bytes", "wire_in_bytes"] {
+            last["counters"].as_object_mut().unwrap().remove(timed);
+        }
+        last
+    };
+    let one = counted("1");
+    assert_eq!(one["counters"]["render_when"], 6, "{one}");
+    assert_eq!(
+        one["repeats"],
+        serde_json::json!({"total": 3, "top": [["x == 1", 3]]}),
+        "{one}"
+    );
+    assert_eq!(counted("5"), one);
+
+    std::fs::remove_file(&json).unwrap();
+    unsafe {
+        std::env::remove_var("VOLANT_PROFILE_JSON");
+    }
+    let plain = stdout_of(|| assert_eq!(run(args("5")), 0));
+    assert!(
+        plain.contains("PLAY RECAP") && !plain.contains("counters"),
+        "{plain}"
+    );
+    assert!(!json.exists());
+    assert_eq!(crate::profile::repeats(20), (0, Vec::new()));
+    assert!(crate::profile::counters().contains(&("render_when", 6)));
+}
+
 /// A password file gives its whole text, surrounding whitespace removed; a missing or
 /// empty one is refused in the reference's words.
 #[rstest::rstest]

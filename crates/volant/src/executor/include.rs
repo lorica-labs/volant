@@ -62,6 +62,7 @@ pub(super) struct IncludeGroup {
 pub(super) fn resolve_include(
     compiled: &Compiled,
     step: &Step,
+    index: usize,
     kind: IncludeKind,
     host: &str,
     plan: &PlayPlan,
@@ -77,7 +78,9 @@ pub(super) fn resolve_include(
     std::time::Duration,
     Option<Box<Step>>,
 ) {
-    let items = match prepare(step, host, plan, live, templar, store, defaults, warnings) {
+    let items = match prepare(
+        step, index, host, plan, live, templar, store, defaults, warnings,
+    ) {
         Ok(
             Prepared::Skipped(items)
             | Prepared::Local(items, _)

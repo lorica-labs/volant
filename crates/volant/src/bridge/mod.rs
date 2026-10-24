@@ -179,11 +179,17 @@ impl Bridge {
         kwargs: &Map<String, Value>,
         vars: Option<&Map<String, Value>>,
     ) -> Result<Value, BridgeError> {
-        self.request(
+        let start = Instant::now();
+        let answer = self.request(
             kind,
             name,
             json!({"kind": kind.as_str(), "name": name, "args": args, "kwargs": kwargs, "vars": vars}),
-        )
+        );
+        crate::profile::bridge_call(
+            name,
+            u64::try_from(start.elapsed().as_nanos()).unwrap_or(u64::MAX),
+        );
+        answer
     }
 
     /// The variables the lookup `name` reads, so that a call sends those and not the whole host.

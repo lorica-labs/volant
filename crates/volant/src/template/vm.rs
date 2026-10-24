@@ -326,6 +326,7 @@ pub(super) fn eval_expr(
     expr: &str,
     ctx: &minijinja::Value,
 ) -> Result<minijinja::Value, minijinja::Error> {
+    crate::profile::count(crate::profile::Counter::Compile, 1);
     let ast = no_panic(|| parse_expr(expr))?;
     let mut codegen = CodeGenerator::new("<expression>", expr);
     codegen.compile_expr(&ast);

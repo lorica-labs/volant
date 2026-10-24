@@ -45,17 +45,21 @@ impl Fields {
 /// The `when`, the arguments and the per-item keywords of one item, against its variables.
 ///
 /// `loop_error` is a loop error kept until the task's `when` has decided: a conditional that
-/// cannot be evaluated yields to it, and it is raised once the task would run.
+/// cannot be evaluated yields to it, and it is raised once the task would run. `at` is the step's
+/// index and the host, which the profile's repeated renders are counted under.
 pub(super) fn render_fields(
     task: &PlayTask,
     plan: &PlayPlan,
     templar: &Templar,
     vars: &HostVars,
+    at: (usize, &str),
     loop_error: &mut Option<TemplateError>,
     warnings: &mut Vec<String>,
 ) -> Result<Fields, TemplateError> {
     let mut skipped = None;
     for condition in &task.when {
+        crate::profile::count(crate::profile::Counter::RenderWhen, 1);
+        crate::profile::note_render(at.0, at.1, condition);
         // A conditional that cannot be evaluated yields to a kept loop error, as there.
         let holds = templar
             .condition(condition, vars)
@@ -81,6 +85,12 @@ pub(super) fn render_fields(
     let (args, args_untrusted) = if skipped.is_some() {
         (Map::new(), BTreeSet::new())
     } else {
+        crate::profile::count(crate::profile::Counter::RenderArgs, 1);
+        if crate::profile::tracks_repeats() {
+            for value in task.args.values() {
+                note_texts(at, value);
+            }
+        }
         render_args(task, plan, templar, vars)?
     };
     // Per item, against the item's own variables, and never for an item a `when` left out:
@@ -113,6 +123,18 @@ pub(super) fn render_fields(
         diff,
         environment,
     })
+}
+
+/// Notes every template in `value` as a text this item renders, for the profile.
+fn note_texts(at: (usize, &str), value: &Value) {
+    match value {
+        Value::String(text) if Templar::is_template(text) => {
+            crate::profile::note_render(at.0, at.1, text);
+        }
+        Value::Array(items) => items.iter().for_each(|item| note_texts(at, item)),
+        Value::Object(map) => map.values().for_each(|item| note_texts(at, item)),
+        _ => {}
+    }
 }
 
 /// The arguments of one item, rendered argument by argument rather than as one value, because a

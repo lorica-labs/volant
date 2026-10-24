@@ -179,8 +179,10 @@ impl Templar {
             .lock()
             .unwrap_or_else(PoisonError::into_inner);
         if let Some(known) = table.get(text) {
+            crate::profile::count(crate::profile::Counter::ReadsHit, 1);
             return known.clone();
         }
+        crate::profile::count(crate::profile::Counter::ReadsMiss, 1);
         let found = template_reads(text).map(Arc::new);
         if table.len() >= MAX_READS {
             table.clear();

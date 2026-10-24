@@ -242,6 +242,10 @@ impl AgentLink {
     /// Writes `bytes` as one frame, as they are: a message's JSON, or the blob a `put_blob` is
     /// followed by.
     pub async fn send_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()> {
+        crate::profile::count(
+            crate::profile::Counter::WireOutBytes,
+            u64::try_from(bytes.len()).unwrap_or(u64::MAX),
+        );
         self.stdin().write_all(&header(bytes.len())?).await?;
         self.stdin().write_all(bytes).await?;
         self.stdin().flush().await
@@ -252,6 +256,10 @@ impl AgentLink {
     pub async fn recv(&mut self) -> std::io::Result<Option<FromAgent>> {
         match self.frames.recv().await {
             Some(Ok(payload)) => {
+                crate::profile::count(
+                    crate::profile::Counter::WireInBytes,
+                    u64::try_from(payload.len()).unwrap_or(u64::MAX),
+                );
                 let waits = |batch: u64, index: usize| {
                     self.batch.as_ref().is_some_and(|(id, answered)| {
                         *id == batch && answered.get(index) == Some(&false)

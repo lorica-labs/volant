@@ -113,6 +113,8 @@ pub(crate) struct Reach {
     /// Every module a task names, with how many of `plugin_dirs` the reference had added when
     /// that task runs.
     modules: Vec<(String, usize)>,
+    /// Whether a task loops over a lookup only ansible-core runs (`with_subelements`, `with_dict`).
+    pub(crate) bridged_loop: bool,
     /// Every task read from a file, with that file and where it resolves its relative paths.
     pub(crate) tasks: Vec<(
         std::path::PathBuf,
@@ -305,6 +307,10 @@ impl Reach {
         role_dir: Option<&std::path::Path>,
         search: &crate::roles::RoleSearch,
     ) -> anyhow::Result<()> {
+        self.bridged_loop |= task
+            .loop_with
+            .as_deref()
+            .is_some_and(|lookup| !crate::template::lookup_supported(lookup));
         let literal = |key: &str| task.args.get(key).and_then(Value::as_str);
         match short_name(&task.module) {
             "include_tasks" | "import_tasks" => {

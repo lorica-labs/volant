@@ -159,6 +159,25 @@ impl Bridge {
         }
     }
 
+    /// Starts the helper on a thread of its own, so the run's first call does not wait for the
+    /// whole start. A call made meanwhile waits for that start and never makes another.
+    pub fn warm(self: &Arc<Self>) {
+        let bridge = Arc::clone(self);
+        std::thread::spawn(move || {
+            let mut guard = bridge.lock();
+            if matches!(guard.0, State::Idle) {
+                guard.0 = bridge.started();
+            }
+        });
+    }
+
+    fn started(&self) -> State {
+        match (self.start)() {
+            Ok(helper) => State::Running(helper),
+            Err(err) => State::Dead(BridgeError::Start(format!("{err:#}"))),
+        }
+    }
+
     fn lock(&self) -> MutexGuard<'_, (State, u64)> {
         self.state
             .lock()
@@ -356,10 +375,7 @@ impl Bridge {
     ) -> Result<Value, BridgeError> {
         let (state, next) = guard;
         if matches!(state, State::Idle) {
-            *state = match (self.start)() {
-                Ok(helper) => State::Running(helper),
-                Err(err) => State::Dead(BridgeError::Start(format!("{err:#}"))),
-            };
+            *state = self.started();
         }
         let helper = match state {
             State::Running(helper) => helper,

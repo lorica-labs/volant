@@ -9,9 +9,10 @@ use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
 use super::adhoc_usage::refuse;
-use super::args::AdhocArgs;
-use super::hosts::play_hosts;
-use super::run::{Plays, drive};
+use super::args::{AdhocArgs, PlaybookArgs};
+use super::hosts::{limit_names, play_hosts};
+use super::plays::Plays;
+use super::run::drive;
 use crate::config::Config;
 use crate::inventory::{Host, Inventory};
 use crate::playbook::{self, Origin, Playbook, TaskOrBlock};
@@ -137,11 +138,31 @@ impl Adhoc {
             .map_or_else(PathBuf::new, |dir| dir.join("<adhoc>"))
     }
 
-    /// What the reference settles once the pattern is resolved and before it runs anything:
-    /// `Some(code)` ends the command. The hosts are listed for `--list-hosts`; a pattern that
-    /// leaves no host is a warning, or the error of a `--limit` that leaves none (exit 1), unless
-    /// the inventory has no host at all; and a command module with no `-a` is refused (exit 5).
+    /// What `--limit` names, and what the reference settles once the pattern is resolved, before
+    /// it runs anything. `Err(code)` ends the command. The hosts are listed for `--list-hosts`; a
+    /// pattern that leaves no host is a warning, or the error of a `--limit` that leaves none
+    /// (exit 1), unless the inventory has no host at all; and a command module with no `-a` is
+    /// refused (exit 5).
     pub(super) fn settle_hosts(
+        &self,
+        args: &PlaybookArgs,
+        playbooks: &[Playbook],
+        inventory: &Inventory,
+        out: &mut Renderer,
+    ) -> anyhow::Result<Result<Option<HashSet<String>>, i32>> {
+        let limit =
+            limit_names(args, inventory, out).map_err(|e| Refusal::plain(1, format!("{e:#}")))?;
+        let Some(play) = playbooks.first().and_then(|pb| pb.plays.first()) else {
+            return Ok(Ok(limit));
+        };
+        let limit_ref = limit.as_ref();
+        Ok(match self.settle(play, inventory, limit_ref, out)? {
+            Some(code) => Err(code),
+            None => Ok(limit),
+        })
+    }
+
+    fn settle(
         &self,
         play: &playbook::Play,
         inventory: &Inventory,

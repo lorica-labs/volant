@@ -7,11 +7,11 @@ use std::sync::{Arc, Mutex};
 use anstream::ColorChoice;
 use tokio::sync::watch;
 
-use super::adhoc::Adhoc;
 use super::announce::{announce_callbacks, banner_before_vars_refusal, options_dump, version_line};
 use super::args::PlaybookArgs;
-use super::hosts::{ListingHosts, limit_names, play_hosts, rendered, resolve_limit, tag_selection};
+use super::hosts::{ListingHosts, play_hosts, rendered, resolve_limit, tag_selection};
 use super::passwords::{ask_passwords, ssh_words};
+use super::plays::Plays;
 use super::setup::{SetUp, set_up};
 use super::signals::spawn_signal_watcher;
 use crate::compile::{self, Compiled};
@@ -35,14 +35,6 @@ pub fn run(args: PlaybookArgs) -> i32 {
         return 0;
     }
     drive(&args, &Plays::Files)
-}
-
-/// Where a run's plays come from.
-pub(super) enum Plays<'a> {
-    /// The playbook files `args.playbooks` names.
-    Files,
-    /// The one play `volant adhoc` builds, shown through the `minimal` callback.
-    Adhoc(&'a Adhoc),
 }
 
 /// Runs `plays` with `args` and returns the process exit code: the runtime, the run, and what is
@@ -135,19 +127,8 @@ async fn run_all(
     let load_extra = crate::vars::parse_extra_vars(&args.extra_vars, &std::env::current_dir()?)
         .unwrap_or_default();
     let rendering = playbook::Rendering::new(Some(Arc::clone(&bridge)), &load_extra);
-    // The file each playbook was named by; an ad hoc play is written nowhere, and its directory
-    // is the working one.
-    let files: Vec<PathBuf> = match plays {
-        Plays::Files => args.playbooks.clone(),
-        Plays::Adhoc(adhoc) => vec![adhoc.file()],
-    };
-    let mut playbooks = match plays {
-        Plays::Files => files
-            .iter()
-            .map(|p| playbook::load_rendering(p, &rendering))
-            .collect::<anyhow::Result<Vec<_>>>()?,
-        Plays::Adhoc(adhoc) => vec![adhoc.playbook()?],
-    };
+    let files = plays.files(args);
+    let mut playbooks = plays.load(&files, &rendering)?;
     // `--check` and `--diff` are each play's default: its own keyword wins, and every block,
     // role, task and handler under it inherits whichever applies, as in the reference.
     for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
@@ -210,17 +191,11 @@ async fn run_all(
     // stops a listing as surely as it stops a run, measured, exit 1.
     let limit = match plays {
         Plays::Files => resolve_limit(args, &inventory, out)?,
-        // The ad hoc command words the empty set itself, below.
-        Plays::Adhoc(_) => {
-            limit_names(args, &inventory, out).map_err(|e| Refusal::plain(1, format!("{e:#}")))?
-        }
+        Plays::Adhoc(adhoc) => match adhoc.settle_hosts(args, &playbooks, &inventory, out)? {
+            Ok(limit) => limit,
+            Err(code) => return Ok(code),
+        },
     };
-    if let Plays::Adhoc(adhoc) = plays
-        && let Some(play) = playbooks.first().and_then(|pb| pb.plays.first())
-        && let Some(code) = adhoc.settle_hosts(play, &inventory, limit.as_ref(), out)?
-    {
-        return Ok(code);
-    }
     // `resolve` recomputes inventory-load-time warnings (e.g. a host/group homonym) on every
     // call, matching Ansible's own semantics for a single resolution; but a playbook with N plays
     // calls `resolve` N times, and Ansible only ever prints such a warning once per run, at

@@ -10,6 +10,7 @@ mod args;
 mod hosts;
 mod inventory;
 mod passwords;
+mod plays;
 mod program;
 mod run;
 mod runtime;

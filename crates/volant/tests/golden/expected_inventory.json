@@ -5543,6 +5543,232 @@
       ],
       "stderr": ""
     },
+    "host_all_first": {
+      "args": [],
+      "cli_only": false,
+      "dumps": {
+        "export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ],\n        \"vars\": {\n            \"ansible_connection\": \"local\"\n        }\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"all\"\n        ]\n    }\n}\n"
+        },
+        "host_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "{}\n"
+        },
+        "host_toml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "ansible_connection = \"local\"\n"
+        },
+        "host_toml_export": {
+          "rc": 1,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": ""
+        },
+        "host_yaml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "ansible_connection: local\n"
+        },
+        "host_yaml_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "{}\n"
+        },
+        "toml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "[ungrouped.hosts.all]\nansible_connection = \"local\"\n"
+        },
+        "toml_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "[all.vars]\nansible_connection = \"local\"\n\n[ungrouped.hosts.all]\n"
+        },
+        "yaml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "all:\n  children:\n    ungrouped:\n      hosts:\n        all:\n          ansible_connection: local\n"
+        },
+        "yaml_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "all:\n  children:\n    ungrouped:\n      hosts:\n        all: {}\n  vars:\n    ansible_connection: local\n"
+        }
+      },
+      "env": {},
+      "graphs": {
+        "graph": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--all\n  |  |--w1\n  |--@web:\n  |  |--w2\n  |--@db:\n  |  |--d1\n"
+        },
+        "graph_vars": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--all\n  |  |  |--{ansible_connection = local}\n  |  |--w1\n  |  |  |--{ansible_connection = local}\n  |--@web:\n  |  |--w2\n  |  |  |--{ansible_connection = local}\n  |--@db:\n  |  |--d1\n  |  |  |--{ansible_connection = local}\n  |--{ansible_connection = local}\n"
+        },
+        "graph_vars_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--all\n  |  |--w1\n  |--@web:\n  |  |--w2\n  |--@db:\n  |  |--d1\n  |--{ansible_connection = local}\n"
+        }
+      },
+      "host": {
+        "name": "all",
+        "rc": 0,
+        "stdout": "{\n    \"ansible_connection\": \"local\"\n}\n"
+      },
+      "hosts": [
+        "all"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "all": {
+              "ansible_connection": "local"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "all"
+          ]
+        }
+      },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"all\": {\n                \"ansible_connection\": \"local\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"all\"\n        ]\n    }\n}\n",
+      "needs": [],
+      "nosuch": null,
+      "rc": 0,
+      "sources": [
+        "host_all.ini",
+        "web_db.ini"
+      ],
+      "stderr": "[WARNING]: Found both group and host with same name: all\n"
+    },
+    "host_all_second": {
+      "args": [],
+      "cli_only": false,
+      "dumps": {
+        "export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "{\n    \"_meta\": {\n        \"hostvars\": {},\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ],\n        \"vars\": {\n            \"ansible_connection\": \"local\"\n        }\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"all\"\n        ]\n    }\n}\n"
+        },
+        "host_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "{}\n"
+        },
+        "host_toml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "ansible_connection = \"local\"\n"
+        },
+        "host_toml_export": {
+          "rc": 1,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": ""
+        },
+        "host_yaml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "ansible_connection: local\n"
+        },
+        "host_yaml_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "{}\n"
+        },
+        "toml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "[ungrouped.hosts.all]\nansible_connection = \"local\"\n"
+        },
+        "toml_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "[all.vars]\nansible_connection = \"local\"\n\n[ungrouped.hosts.all]\n"
+        },
+        "yaml": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "all:\n  children:\n    ungrouped:\n      hosts:\n        all:\n          ansible_connection: local\n"
+        },
+        "yaml_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "all:\n  children:\n    ungrouped:\n      hosts:\n        all: {}\n  vars:\n    ansible_connection: local\n"
+        }
+      },
+      "env": {},
+      "graphs": {
+        "graph": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--w1\n  |  |--all\n  |--@web:\n  |  |--w2\n  |--@db:\n  |  |--d1\n"
+        },
+        "graph_vars": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--w1\n  |  |  |--{ansible_connection = local}\n  |  |--all\n  |  |  |--{ansible_connection = local}\n  |--@web:\n  |  |--w2\n  |  |  |--{ansible_connection = local}\n  |--@db:\n  |  |--d1\n  |  |  |--{ansible_connection = local}\n  |--{ansible_connection = local}\n"
+        },
+        "graph_vars_export": {
+          "rc": 0,
+          "stderr": "[WARNING]: Found both group and host with same name: all\n",
+          "stdout": "@all:\n  |--@ungrouped:\n  |  |--w1\n  |  |--all\n  |--@web:\n  |  |--w2\n  |--@db:\n  |  |--d1\n  |--{ansible_connection = local}\n"
+        }
+      },
+      "host": {
+        "name": "all",
+        "rc": 0,
+        "stdout": "{\n    \"ansible_connection\": \"local\"\n}\n"
+      },
+      "hosts": [
+        "all"
+      ],
+      "list": {
+        "_meta": {
+          "hostvars": {
+            "all": {
+              "ansible_connection": "local"
+            }
+          },
+          "profile": "inventory_legacy"
+        },
+        "all": {
+          "children": [
+            "ungrouped",
+            "web",
+            "db"
+          ]
+        },
+        "ungrouped": {
+          "hosts": [
+            "all"
+          ]
+        }
+      },
+      "list_stdout": "{\n    \"_meta\": {\n        \"hostvars\": {\n            \"all\": {\n                \"ansible_connection\": \"local\"\n            }\n        },\n        \"profile\": \"inventory_legacy\"\n    },\n    \"all\": {\n        \"children\": [\n            \"ungrouped\",\n            \"web\",\n            \"db\"\n        ]\n    },\n    \"ungrouped\": {\n        \"hosts\": [\n            \"all\"\n        ]\n    }\n}\n",
+      "needs": [],
+      "nosuch": null,
+      "rc": 0,
+      "sources": [
+        "web_db.ini",
+        "host_all.ini"
+      ],
+      "stderr": "[WARNING]: Found both group and host with same name: all\n"
+    },
     "host_list": {
       "args": [],
       "cli_only": false,

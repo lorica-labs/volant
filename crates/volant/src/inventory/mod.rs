@@ -236,7 +236,7 @@ impl Inventory {
             .hosts
             .iter()
             .map(|h| h.name.as_str())
-            .filter(|n| group_names.contains(n))
+            .filter(|n| group_names.contains(n) || matches!(*n, "all" | "ungrouped"))
         {
             res.warnings
                 .push(format!("Found both group and host with same name: {name}"));

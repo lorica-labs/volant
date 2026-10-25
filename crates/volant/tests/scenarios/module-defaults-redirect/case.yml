@@ -1,0 +1,3 @@
+# A module_defaults group applies to a task naming its module by a runtime.yml redirect.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

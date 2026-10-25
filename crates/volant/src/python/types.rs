@@ -105,6 +105,16 @@ impl Union {
         }
     }
 
+    /// The collection name `module` resolves to, when the run built it from a collection: a
+    /// `runtime.yml` redirect leads from the name a task wrote to this one.
+    pub fn resolved_fqcn(&self, module: &str) -> Option<String> {
+        let imported = &self.modules.get(payload_key(module))?.module_fqn;
+        let (collection, name) = imported
+            .strip_prefix("ansible_collections.")?
+            .split_once(".plugins.modules.")?;
+        Some(format!("{collection}.{name}"))
+    }
+
     /// The module's half of the payload a task naming `module` runs with, when the run built one.
     pub fn payload(&self, module: &str) -> Option<ModulePayload> {
         let facts = self.modules.get(payload_key(module))?;

@@ -215,8 +215,13 @@ fn render_args(
     // mapping. A task's argument wins, `omit` included.
     if !task.module_defaults.is_empty() {
         let mut from_default = BTreeSet::new();
+        let resolved = plan
+            .python
+            .as_deref()
+            .and_then(|u| u.resolved_fqcn(&task.module));
         let mut defaults = crate::collection::defaults_for(
             &task.module,
+            resolved.as_deref(),
             &task.module_defaults,
             &plan.steps().resolved.groups(),
             &mut |key, value| {

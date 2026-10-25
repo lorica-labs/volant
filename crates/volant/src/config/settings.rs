@@ -88,6 +88,37 @@ pub(super) fn gathering(value: &str, origin: &str) -> anyhow::Result<String> {
     }
 }
 
+/// `[volant] shadow_runs`: a whole number of at least 1, refused otherwise.
+pub(super) fn shadow_runs(value: &str, origin: &str) -> anyhow::Result<u32> {
+    value.trim().parse::<u32>().ok().filter(|n| *n > 0).ok_or_else(|| {
+        crate::stats::Refusal::at(
+            5,
+            format!(
+                "Config 'VOLANT_SHADOW_RUNS' from '{origin}' has an invalid value: '{}'; expected a whole number of at least 1",
+                value.trim()
+            ),
+        )
+    })
+}
+
+/// `[volant] shadow_coverage`: a share from 0 to 1, kept in thousandths, refused otherwise.
+pub(super) fn shadow_coverage(value: &str, origin: &str) -> anyhow::Result<u32> {
+    let share = value
+        .trim()
+        .parse::<f64>()
+        .ok()
+        .filter(|x| (0.0..=1.0).contains(x));
+    share.map(|x| (x * 1000.0).round() as u32).ok_or_else(|| {
+        crate::stats::Refusal::at(
+            5,
+            format!(
+                "Config 'VOLANT_SHADOW_COVERAGE' from '{origin}' has an invalid value: '{}'; expected a number from 0 to 1",
+                value.trim()
+            ),
+        )
+    })
+}
+
 /// `[volant] runtime`: one of its three words, refused otherwise.
 pub(super) fn runtime_mode(value: &str, origin: &str) -> anyhow::Result<crate::runtime::Mode> {
     crate::runtime::Mode::parse(value.trim()).ok_or_else(|| {

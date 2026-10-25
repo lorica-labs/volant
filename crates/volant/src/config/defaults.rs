@@ -43,6 +43,8 @@ impl Default for Config {
             native_modules: true,
             runtime: crate::runtime::Mode::Auto,
             ssh_control_master: true,
+            shadow_runs: 5,
+            shadow_coverage: 900,
             fact_caching: "memory".to_string(),
             fact_caching_connection: None,
             fact_caching_timeout: 86400,

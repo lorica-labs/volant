@@ -1,5 +1,5 @@
 ---
-sourceHash: f541f96267bc
+sourceHash: c80b79a9a509
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -230,6 +230,14 @@ Ansible ignore cette section : un même `ansible.cfg` peut donc la porter et co
 
 <Option name="ssh_control_master" id="volant-ssh-control-master" default="true" env="VOLANT_SSH_CONTROL_MASTER">
   Partage une connexion OpenSSH entre tous les lancements de `ssh` d'un hôte de l'inventaire. Avec `false`, chaque lien et chaque sonde ouvrent leur propre connexion. Voir [Une connexion par hôte](/fr/docs/hosts/connections/#une-connexion-par-hôte).
+</Option>
+
+<Option name="shadow_runs" id="volant-shadow-runs" default="5">
+  Combien de rejeux propres d'affilée [`volant shadow status`](/fr/docs/reference/cli/shadow/#le-registre-et-le-verdict) attend d'un playbook avant de le déclarer `ready`. Un nombre entier d'au moins 1 ; toute autre valeur arrête le run avec le code de sortie 5.
+</Option>
+
+<Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">
+  La part des tâches d'un playbook que ces rejeux doivent avoir comparées, de 0 à 1, avant que `volant shadow status` le déclare `ready`. Toute autre valeur arrête le run avec le code de sortie 5.
 </Option>
 
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">

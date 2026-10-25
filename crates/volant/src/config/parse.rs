@@ -7,7 +7,7 @@ use std::time::Duration;
 use super::paths::{expand_home, path_list};
 use super::settings::{
     boolean, cache_plugin, callback_flag, forks, gathering, host_named_dest_dirs, host_named_paths,
-    integer, runtime_mode, switch, timeout_secs,
+    integer, runtime_mode, shadow_coverage, shadow_runs, switch, timeout_secs,
 };
 use super::{Config, tag_list};
 
@@ -93,6 +93,8 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                         config.ssh_control_master = on;
                     }
                 }
+                "shadow_runs" => config.shadow_runs = shadow_runs(value, origin)?,
+                "shadow_coverage" => config.shadow_coverage = shadow_coverage(value, origin)?,
                 _ => {}
             }
             continue;

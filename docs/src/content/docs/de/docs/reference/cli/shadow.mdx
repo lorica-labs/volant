@@ -1,5 +1,5 @@
 ---
-sourceHash: 18ca274cc7a2
+sourceHash: 581fc6ef8549
 title: volant shadow
 description: Einen Lauf, den ansible-playbook aufgezeichnet hat, ohne Kontakt zu einem Host wiederholen und sehen, was Volant anders gemacht hätte.
 ---
@@ -9,11 +9,20 @@ import Option from '../../../../../../components/Option.astro';
 `volant shadow replay` liest eine Aufzeichnung des Callbacks `volant.compat.record` (siehe [Aufzeichnungen von Läufen](/de/docs/reference/recording/)). Es führt dieselben Playbooks mit denselben Optionen in Volant aus und beantwortet jeden Task, der einen Host erreichen würde, mit dem Ergebnis, das ansible-core aufgezeichnet hat. Dann vergleicht es, was Volant entschieden hat, mit dem, was ansible-core getan hat. Kein Host wird kontaktiert und kein Agent gestartet.
 
 ```sh
-volant shadow replay RECORDING [--json]
+volant shadow replay RECORDING [--json] [--ledger PATH]
+volant shadow status [--json] [--require-ready] [--ledger PATH]
 ```
 
 <Option name="--json">
   Den Bericht als JSON Lines schreiben: ein Objekt pro Abweichung, dann ein Zusammenfassungsobjekt.
+</Option>
+
+<Option name="--ledger" arg="PATH">
+  Das Register, an das angehängt oder aus dem gelesen wird, statt `.volant/shadow.jsonl` neben der geltenden `ansible.cfg` (im Arbeitsverzeichnis, wenn es keine gibt).
+</Option>
+
+<Option name="status --require-ready">
+  Mit 1 beenden, außer jedes Playbook im Register ist `ready`.
 </Option>
 
 ## Vor der Wiederholung
@@ -80,6 +89,23 @@ Die letzte Zeile ist die Zusammenfassung:
 
 Die Gründe in `not_compared` sind `after_flow` (nach einer `flow`-Abweichung auf diesem Host), `no_log` (nur nach dem Status verglichen) und `unknown: <Grund>` (ein unbekanntes Schleifenelement). Die Gründe in `arguments_not_compared` sind `no_log`, `not_recorded` (ansible-core hat dem Callback kein `invocation` übergeben, wie bei `debug` oder wie ansible-core 2.21 bei jedem Task) `controller` (Volant hat den Task auf dem Controller ausgeführt und nichts gesendet) und `unknown: <Grund>`, pro Argument gezählt.
 
+## Das Register und das Urteil
+
+Eine einzelne saubere Wiederholung beweist wenig. Jede Wiederholung, die nicht abgelehnt wird, hängt eine Zeile an das Register `.volant/shadow.jsonl` neben der geltenden `ansible.cfg` an: das Datum, die Playbooks und ihre Hashes, die Volant-Version, ansible-core und Hash der Aufzeichnung, den Hash von `volant.lock`, falls vorhanden, `--limit` und `--tags` des Laufs, die Anzahl der Hosts, die verglichenen und nicht verglichenen Tasks, `Datei:Zeile` jedes verglichenen und jedes von der Wiederholung kompilierten Tasks, die Abweichungen nach Art und `clean`, `dirty` oder `out-of-profile`. Volant entscheidet nicht, wo das Register zwischen den Läufen liegt: Versionieren Sie es oder halten Sie es im CI-Cache.
+
+`volant shadow status` liest es und gibt eine Zeile pro Playbook aus:
+
+- Die Serie ist die Anzahl der `clean`-Wiederholungen in Folge. Eine `dirty`-Wiederholung setzt sie zurück, ebenso eine neue Volant-Version. Ein geändertes Playbook oder eine geänderte Collection setzt sie nicht zurück, weil beide Engines dieselben Dateien ausführen. `out-of-profile`-Wiederholungen zählen in keine Richtung.
+- Die Abdeckung ist der Anteil der Tasks des Playbooks, alle Zweige eingeschlossen, den die Wiederholungen der Serie mindestens einmal verglichen haben. Nie verglichene Tasks werden mit Namen aufgeführt.
+- Das Urteil ist `ready`, wenn die Serie `shadow_runs` (standardmäßig 5) und die Abdeckung `shadow_coverage` (standardmäßig 0.9) erreicht, beide aus dem [Abschnitt `[volant]`](/de/docs/reference/configuration/) der `ansible.cfg` gelesen. Es ist `diverged`, wenn die letzte Wiederholung `dirty` war, und sonst `not-ready`, mit Begründung.
+
+```text
+site.yml  not-ready  streak 2/5, coverage 96% of 25 tasks (1 never compared), no divergence
+  2 clean replays in a row, 5 wanted
+```
+
+Mit `--json` ist jede Zeile ein Objekt mit `playbook`, `verdict`, `streak`, `coverage`, `tasks`, `never_compared`, `last_divergence` und `reasons`. Eine unlesbare Registerzeile wird mit einer Warnung, die ihre Zeilennummer nennt, ausgelassen.
+
 ## Exit-Codes
 
 | Code | Bedeutung |
@@ -87,3 +113,5 @@ Die Gründe in `not_compared` sind `after_flow` (nach einer `flow`-Abweichung au
 | 0 | Keine Abweichung. |
 | 1 | Mindestens eine Abweichung. |
 | 4 | Die Aufzeichnung lässt sich in diesem Repository nicht wiederholen: ein neueres Format oder eine geänderte Datei. |
+
+`volant shadow status` endet mit 0, oder unter `--require-ready` mit 1, wenn ein Playbook nicht `ready` oder das Register leer ist.

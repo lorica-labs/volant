@@ -17,7 +17,7 @@ use crate::stats::HostStats;
 pub(super) const KINDS: [&str; 5] = ["inventory", "flow", "loop", "args", "judgment"];
 
 /// Statements that run no module, whose result lines the two engines do not share.
-const NOT_TASKS: [&str; 6] = [
+pub(super) const NOT_TASKS: [&str; 6] = [
     "ansible.builtin.include_tasks",
     "ansible.builtin.include_role",
     "ansible.builtin.meta",
@@ -52,6 +52,8 @@ pub(super) struct Divergence {
 pub(super) struct Report {
     pub(super) divergences: Vec<Divergence>,
     pub(super) compared: usize,
+    /// The `file:line` of every task compared.
+    pub(super) paths: std::collections::BTreeSet<String>,
     pub(super) hosts: usize,
     /// Tasks not compared, or compared on their status alone, by reason.
     pub(super) skipped: BTreeMap<String, usize>,
@@ -272,6 +274,7 @@ fn compare_host(
             return false;
         }
         report.compared += 1;
+        report.paths.insert(a.path.clone());
         if a.lines.iter().any(|l| l.status == "unreachable") {
             return false;
         }

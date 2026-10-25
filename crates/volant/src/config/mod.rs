@@ -155,6 +155,12 @@ pub struct Config {
     /// `[volant] ssh_control_master`, or `VOLANT_SSH_CONTROL_MASTER`: whether the `ssh` runs
     /// of one inventory host share one connection. On by default.
     pub ssh_control_master: bool,
+    /// `[volant] shadow_runs`: how many clean replays in a row `volant shadow status` wants of a
+    /// playbook before it calls it ready. 5 by default.
+    pub shadow_runs: u32,
+    /// `[volant] shadow_coverage`: the share of a playbook's tasks those replays must have
+    /// compared, written from 0 to 1 and kept in thousandths. 0.9 by default.
+    pub shadow_coverage: u32,
     /// `fact_caching` (`ANSIBLE_CACHE_PLUGIN`): `memory`, the default, or `jsonfile`.
     pub fact_caching: String,
     /// `fact_caching_connection`: the directory `jsonfile` keeps its files in.

@@ -125,6 +125,7 @@ pub async fn run_play(
         if let Some(replay) = &options.replay {
             stats.replay = Some(Arc::clone(replay));
             replay.saw_inventory(store.groups());
+            replay.saw_tasks(compiled);
         }
         store.play_scope(&play.vars)
     };

@@ -29,6 +29,40 @@ fn the_volant_section_carries_the_batching_switch() {
     assert_eq!(c.forks, 9);
 }
 
+/// What `volant shadow status` wants of a playbook: 5 clean replays and 90% of its tasks by
+/// default, read from `[volant]`, and a value it cannot read refused.
+#[test]
+fn the_volant_section_carries_the_shadow_thresholds() {
+    let c = Config::default();
+    assert_eq!((c.shadow_runs, c.shadow_coverage), (5, 900));
+    let c = cfg(
+        "[volant]
+shadow_runs = 3
+shadow_coverage = 0.75
+",
+        ".",
+    );
+    assert_eq!((c.shadow_runs, c.shadow_coverage), (3, 750));
+    for bad in [
+        "shadow_runs = 0",
+        "shadow_runs = many",
+        "shadow_coverage = 1.5",
+        "shadow_coverage = x",
+    ] {
+        let err = parse(
+            &format!(
+                "[volant]
+{bad}
+"
+            ),
+            Path::new("."),
+            "ansible.cfg",
+        )
+        .unwrap_err();
+        assert!(err.to_string().contains("VOLANT_SHADOW_"), "{bad}: {err}");
+    }
+}
+
 /// Natives are on unless the section or the environment turns them off, and a value that is no
 /// switch is refused rather than read as one.
 #[test]

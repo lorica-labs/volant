@@ -1,5 +1,5 @@
 ---
-sourceHash: 18ca274cc7a2
+sourceHash: 581fc6ef8549
 title: volant shadow
 description: Rejouer un run qu'ansible-playbook a enregistré, sans contacter d'hôte, et voir ce que Volant aurait fait autrement.
 ---
@@ -9,11 +9,20 @@ import Option from '../../../../../../components/Option.astro';
 `volant shadow replay` lit un enregistrement du callback `volant.compat.record` (voir [Enregistrements de runs](/fr/docs/reference/recording/)). Il exécute les mêmes playbooks avec les mêmes options dans Volant et répond à chaque tâche qui atteindrait un hôte avec le résultat enregistré par ansible-core. Puis il compare ce que Volant a décidé avec ce qu'ansible-core a fait. Aucun hôte n'est contacté et aucun agent ne démarre.
 
 ```sh
-volant shadow replay RECORDING [--json]
+volant shadow replay RECORDING [--json] [--ledger PATH]
+volant shadow status [--json] [--require-ready] [--ledger PATH]
 ```
 
 <Option name="--json">
   Écrire le rapport en JSON Lines : un objet par divergence, puis un objet de résumé.
+</Option>
+
+<Option name="--ledger" arg="PATH">
+  Le registre où ajouter ou lire, au lieu de `.volant/shadow.jsonl` à côté de l'`ansible.cfg` en vigueur (dans le répertoire de travail s'il n'y en a pas).
+</Option>
+
+<Option name="status --require-ready">
+  Sortir avec 1 sauf si chaque playbook du registre est `ready`.
 </Option>
 
 ## Avant le rejeu
@@ -80,6 +89,23 @@ La dernière ligne est le résumé :
 
 Les raisons de `not_compared` sont `after_flow` (après une divergence `flow` sur cet hôte), `no_log` (comparée sur le seul statut) et `unknown: <raison>` (un élément de boucle inconnu). Les raisons de `arguments_not_compared` sont `no_log`, `not_recorded` (ansible-core n'a passé aucun `invocation` au callback, comme pour `debug`, ou comme ansible-core 2.21 le fait pour toutes les tâches) `controller` (Volant a exécuté la tâche sur le contrôleur et n'a rien envoyé) et `unknown: <raison>`, compté par argument.
 
+## Le registre et le verdict
+
+Un seul rejeu propre prouve peu de chose. Chaque rejeu qui n'est pas refusé ajoute une ligne au registre, `.volant/shadow.jsonl` à côté de l'`ansible.cfg` en vigueur : la date, les playbooks et leurs empreintes, la version de Volant, l'ansible-core et l'empreinte de l'enregistrement, l'empreinte de `volant.lock` s'il existe, le `--limit` et les `--tags` du run, le nombre d'hôtes, les tâches comparées et non comparées, le `fichier:ligne` de chaque tâche comparée et de chaque tâche compilée par le rejeu, les divergences par sorte, et `clean`, `dirty` ou `out-of-profile`. Volant ne décide pas où vit le registre entre deux runs : versionnez-le, ou gardez-le dans le cache de votre CI.
+
+`volant shadow status` le lit et donne une ligne par playbook :
+
+- La série est le nombre de rejeux `clean` d'affilée. Un rejeu `dirty` la remet à zéro, comme une nouvelle version de Volant. Un playbook ou une collection modifiés ne la remettent pas à zéro, car les deux moteurs exécutent les mêmes fichiers. Les rejeux `out-of-profile` ne comptent ni dans un sens ni dans l'autre.
+- La couverture est la part des tâches du playbook, toutes branches comprises, que les rejeux de la série ont comparées au moins une fois. Les tâches jamais comparées sont listées par nom.
+- Le verdict est `ready` quand la série atteint `shadow_runs` (5 par défaut) et la couverture `shadow_coverage` (0.9 par défaut), tous deux lus dans la [section `[volant]`](/fr/docs/reference/configuration/) de l'`ansible.cfg`. Il est `diverged` quand le dernier rejeu était `dirty`, et `not-ready` sinon, avec la raison.
+
+```text
+site.yml  not-ready  streak 2/5, coverage 96% of 25 tasks (1 never compared), no divergence
+  2 clean replays in a row, 5 wanted
+```
+
+Avec `--json`, chaque ligne est un objet avec `playbook`, `verdict`, `streak`, `coverage`, `tasks`, `never_compared`, `last_divergence` et `reasons`. Une ligne du registre illisible est ignorée, avec un avertissement qui donne son numéro.
+
 ## Codes de sortie
 
 | Code | Signification |
@@ -87,3 +113,5 @@ Les raisons de `not_compared` sont `after_flow` (après une divergence `flow` su
 | 0 | Aucune divergence. |
 | 1 | Au moins une divergence. |
 | 4 | L'enregistrement ne peut pas être rejoué sur ce dépôt : un format plus récent, ou un fichier qui a changé. |
+
+`volant shadow status` sort avec 0, ou avec 1 sous `--require-ready` quand un playbook n'est pas `ready` ou que le registre est vide.

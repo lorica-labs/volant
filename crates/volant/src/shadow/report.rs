@@ -78,7 +78,7 @@ impl Report {
     }
 
     /// The number of divergences of each kind found, most serious first.
-    fn by_kind(&self) -> BTreeMap<&'static str, usize> {
+    pub(super) fn by_kind(&self) -> BTreeMap<&'static str, usize> {
         let mut kinds = BTreeMap::new();
         for d in &self.divergences {
             *kinds.entry(d.kind).or_default() += 1;

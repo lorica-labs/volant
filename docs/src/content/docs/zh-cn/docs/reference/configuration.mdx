@@ -1,5 +1,5 @@
 ---
-sourceHash: f541f96267bc
+sourceHash: c80b79a9a509
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -230,6 +230,14 @@ Ansible 会忽略这个段，所以同一个 `ansible.cfg` 可以包含它，并
 
 <Option name="ssh_control_master" id="volant-ssh-control-master" default="true" env="VOLANT_SSH_CONTROL_MASTER">
   让一台 inventory 主机的所有 `ssh` 运行共享同一个 OpenSSH 连接。设为 `false` 时，每个链路和探测都会打开自己的连接。见[每台主机一个连接](/zh-cn/docs/hosts/connections/#每台主机一个连接)。
+</Option>
+
+<Option name="shadow_runs" id="volant-shadow-runs" default="5">
+  [`volant shadow status`](/zh-cn/docs/reference/cli/shadow/#记录簿与结论) 在判定一个 playbook 为 `ready` 之前，要求连续多少次干净的重放。至少为 1 的整数；其他任何值都会以退出码 5 终止运行。
+</Option>
+
+<Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">
+  这些重放必须比较过的 playbook 任务所占比例，取值 0 到 1，达到后 `volant shadow status` 才判定为 `ready`。其他任何值都会以退出码 5 终止运行。
 </Option>
 
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">

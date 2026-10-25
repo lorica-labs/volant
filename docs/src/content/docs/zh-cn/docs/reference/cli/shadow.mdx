@@ -1,5 +1,5 @@
 ---
-sourceHash: 18ca274cc7a2
+sourceHash: 581fc6ef8549
 title: volant shadow
 description: 在不连接任何主机的情况下重放 ansible-playbook 记录的一次运行，看看 Volant 会有哪些不同的做法。
 ---
@@ -9,11 +9,20 @@ import Option from '../../../../../../components/Option.astro';
 `volant shadow replay` 读取 `volant.compat.record` 回调写下的记录（参见[运行记录](/zh-cn/docs/reference/recording/)）。它在 Volant 中以相同的选项运行相同的 playbook，对每个本会连到主机的任务，都用 ansible-core 记录的结果作答。然后它把 Volant 的决定与 ansible-core 的实际行为进行比较。不连接任何主机，也不启动任何 agent。
 
 ```sh
-volant shadow replay RECORDING [--json]
+volant shadow replay RECORDING [--json] [--ledger PATH]
+volant shadow status [--json] [--require-ready] [--ledger PATH]
 ```
 
 <Option name="--json">
   以 JSON Lines 输出报告：每个差异一个对象，最后是一个汇总对象。
+</Option>
+
+<Option name="--ledger" arg="PATH">
+  要追加或读取的记录簿，代替当前生效的 `ansible.cfg` 旁边的 `.volant/shadow.jsonl`（没有 `ansible.cfg` 时位于工作目录）。
+</Option>
+
+<Option name="status --require-ready">
+  除非记录簿中每个 playbook 都是 `ready`，否则以 1 退出。
 </Option>
 
 ## 重放之前
@@ -80,6 +89,23 @@ judgment  local  site.yml:30  fails
 
 `not_compared` 中的原因有 `after_flow`（该主机出现 `flow` 差异之后）、`no_log`（只比较状态）以及 `unknown: <原因>`（未知的循环元素）。`arguments_not_compared` 中的原因有 `no_log`、`not_recorded`（ansible-core 没有把 `invocation` 传给回调，例如 `debug`，或 ansible-core 2.21 对所有任务都是如此）`controller`（Volant 在控制端运行了该任务，没有发送任何内容）以及按参数计数的 `unknown: <原因>`。
 
+## 记录簿与结论
+
+一次干净的重放说明不了太多。每次未被拒绝的重放都会向记录簿追加一行，即当前生效的 `ansible.cfg` 旁边的 `.volant/shadow.jsonl`：日期、playbook 及其哈希、Volant 版本、记录的 ansible-core 及其哈希、存在时 `volant.lock` 的哈希、本次运行的 `--limit` 和 `--tags`、主机数、比较过和未比较的任务、每个比较过的任务以及重放编译出的每个任务的 `文件:行号`、按类型统计的差异，以及 `clean`、`dirty` 或 `out-of-profile`。Volant 不决定记录簿在两次运行之间存放在哪里：可以把它纳入版本控制，也可以放在 CI 缓存中。
+
+`volant shadow status` 读取记录簿，并为每个 playbook 给出一行：
+
+- 连续次数是连续 `clean` 重放的次数。一次 `dirty` 重放会将其清零，新的 Volant 版本也会。playbook 或 collection 的修改不会清零，因为两个引擎运行的是同样的文件。`out-of-profile` 重放不计入。
+- 覆盖率是该 playbook 的任务（包括所有分支）中，被这段连续重放至少比较过一次的比例。从未比较过的任务按名称列出。
+- 当连续次数达到 `shadow_runs`（默认 5）且覆盖率达到 `shadow_coverage`（默认 0.9）时，结论为 `ready`；这两个值都从 `ansible.cfg` 的 [`[volant]` 小节](/zh-cn/docs/reference/configuration/)读取。最后一次重放为 `dirty` 时结论为 `diverged`，否则为 `not-ready`，并给出原因。
+
+```text
+site.yml  not-ready  streak 2/5, coverage 96% of 25 tasks (1 never compared), no divergence
+  2 clean replays in a row, 5 wanted
+```
+
+使用 `--json` 时，每行是一个对象，包含 `playbook`、`verdict`、`streak`、`coverage`、`tasks`、`never_compared`、`last_divergence` 和 `reasons`。无法读取的记录簿行会被跳过，并给出写明其行号的警告。
+
 ## 退出码
 
 | 退出码 | 含义 |
@@ -87,3 +113,5 @@ judgment  local  site.yml:30  fails
 | 0 | 没有差异。 |
 | 1 | 至少有一个差异。 |
 | 4 | 无法在当前仓库中重放该记录：格式更新，或有文件发生了变化。 |
+
+`volant shadow status` 以 0 退出；在 `--require-ready` 下，若有 playbook 不是 `ready` 或记录簿为空，则以 1 退出。

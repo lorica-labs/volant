@@ -64,6 +64,7 @@ pub(super) fn target(
         unavailable: found
             .is_none()
             .then(|| format!("{exe} command not found in PATH")),
+        quiet_stderr: false,
         copy: None,
         user_probe: None,
         prefix: vec![chroot, dir.clone()],

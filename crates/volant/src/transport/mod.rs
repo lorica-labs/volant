@@ -5,6 +5,7 @@
 
 mod agent_dir;
 mod bootstrap;
+mod buildah;
 mod choose;
 mod chroot;
 mod control;
@@ -27,7 +28,7 @@ pub mod trace;
 pub use bootstrap::{space_needed_kib, triple_for};
 pub use chroot::ChrootSettings;
 pub use control::{control_dir, raise_open_file_limit};
-pub use copy::CopyInto;
+pub use copy::{CopyInto, Feed};
 pub use defaults::{
     BecomeMethod, ConnectError, ConnectionDefaults, ConnectionFailsTask, ConnectionKeywords,
     Escalation, EscalationProgram, HostOwn, INCORRECT_SU_PASSWORD, INCORRECT_SUDO_PASSWORD,

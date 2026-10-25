@@ -109,11 +109,11 @@ Volant has its own version of eight of these plugins: `copy`, `dnf`, `fetch`, `p
 
 ## The union cache
 
-Building the union costs a Python start, an ansible-core import and a build of every module: 3.8 seconds on the four Galaxy roles of the [performance page](/docs/project/performance/). The controller keeps the result under `$XDG_CACHE_HOME/volant/unions/`, or `~/.cache/volant/unions/`, in a directory private to your account.
+Building the union costs a Python start, an ansible-core import and a build of every module. ansible-core reads every `module_utils` file a module imports, and the modules of one run share most of them, so the helper reads each file once for the whole union: 1.5 to 1.8 seconds on the four Galaxy roles of the [performance page](/docs/project/performance/), against 3.7 to 4.4 seconds when each module read them again. The controller keeps the result under `$XDG_CACHE_HOME/volant/unions/`, or `~/.cache/volant/unions/`, in a directory private to your account.
 
 An entry is looked up by everything the build read that is not a file: the Volant version, the interpreter, the modules and collections asked for, the `ANSIBLE_*` and `PYTHON*` environment, the `ansible.cfg` ansible-core would read, and the working directory. It also lists every source file the helper read, with its size and modification time. A run reuses the entry only if each of those files is unchanged and the zip still has its recorded hash. Upgrading ansible-core or a collection in place therefore rebuilds the union.
 
-A cache that cannot be read, is corrupt or cannot be written never fails a run: the union is rebuilt, and a directory that cannot be written prints one warning per run. To clear it, remove the directory.
+A cache that cannot be read, is corrupt or cannot be written never fails a run: the union is rebuilt, and a directory that cannot be written prints one warning per run. The cache holds up to 1 GiB. Past that, the entries no run has used for longest go first, and an entry no run has used for 30 days is removed. To clear it, remove the directory.
 
 ## Native modules
 

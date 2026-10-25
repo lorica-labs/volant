@@ -110,11 +110,11 @@ Volant hat eine eigene Version von acht dieser Plugins: `copy`, `dnf`, `fetch`, 
 
 ## Der Union-Cache
 
-Die Union zu bauen kostet einen Python-Start, einen Import von ansible-core und einen Bau jedes Moduls: 3,8 Sekunden bei den vier Galaxy-Rollen der [Performance-Seite](/de/docs/project/performance/). Der Controller legt das Ergebnis unter `$XDG_CACHE_HOME/volant/unions/` oder `~/.cache/volant/unions/` ab, in einem Verzeichnis, das Ihrem Konto vorbehalten ist.
+Die Union zu bauen kostet einen Python-Start, einen Import von ansible-core und einen Bau jedes Moduls. ansible-core liest jede `module_utils`-Datei, die ein Modul importiert, und die Module eines Laufs teilen sich die meisten davon. Der Helfer liest deshalb jede Datei einmal für die ganze Union: 1,5 bis 1,8 Sekunden bei den vier Galaxy-Rollen der [Performance-Seite](/de/docs/project/performance/), gegenüber 3,7 bis 4,4 Sekunden, als jedes Modul sie erneut las. Der Controller legt das Ergebnis unter `$XDG_CACHE_HOME/volant/unions/` oder `~/.cache/volant/unions/` ab, in einem Verzeichnis, das Ihrem Konto vorbehalten ist.
 
 Ein Eintrag wird über alles gefunden, was der Bau gelesen hat und was keine Datei ist: die Volant-Version, den Interpreter, die angeforderten Module und Collections, die Umgebung `ANSIBLE_*` und `PYTHON*`, die `ansible.cfg`, die ansible-core lesen würde, und das Arbeitsverzeichnis. Er listet außerdem jede Quelldatei auf, die der Hilfsprozess gelesen hat, mit Größe und Änderungszeit. Ein Lauf verwendet den Eintrag nur dann wieder, wenn jede dieser Dateien unverändert ist und das Zip noch seinen aufgezeichneten Hash hat. Ein Upgrade von ansible-core oder einer Collection an Ort und Stelle baut die Union daher neu.
 
-Ein Cache, der sich nicht lesen lässt, beschädigt ist oder nicht geschrieben werden kann, lässt nie einen Lauf fehlschlagen: Die Union wird neu gebaut, und ein Verzeichnis, das sich nicht beschreiben lässt, gibt eine Warnung pro Lauf aus. Zum Leeren entfernen Sie das Verzeichnis.
+Ein Cache, der sich nicht lesen lässt, beschädigt ist oder nicht geschrieben werden kann, lässt nie einen Lauf fehlschlagen: Die Union wird neu gebaut, und ein Verzeichnis, das sich nicht beschreiben lässt, gibt eine Warnung pro Lauf aus. Der Cache fasst bis zu 1 GiB. Darüber hinaus gehen zuerst die Einträge, die am längsten kein Lauf benutzt hat, und ein Eintrag, den 30 Tage lang kein Lauf benutzt hat, wird entfernt. Zum Leeren entfernen Sie das Verzeichnis.
 
 ## Native Module
 

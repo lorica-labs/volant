@@ -74,3 +74,18 @@ impl Object for Vars {
         }
     }
 }
+
+/// `dict(vars)`: a copy of every variable, each rendered, as the reference's copy reads them all.
+/// A variable that renders to nothing fails the copy, as it fails the reference's. `None` for any
+/// other value.
+pub(in crate::template) fn copied(source: &Value) -> Option<Result<Value, Error>> {
+    let vars = source.downcast_object::<Vars>()?;
+    let mut pairs = Vec::new();
+    for key in vars.try_iter().into_iter().flatten() {
+        match vars.get_value(&key) {
+            Some(value) if !value.is_undefined() => pairs.push((key, value)),
+            _ => return Some(Err(Error::from(ErrorKind::UndefinedError))),
+        }
+    }
+    Some(Ok(pairs.into_iter().collect()))
+}

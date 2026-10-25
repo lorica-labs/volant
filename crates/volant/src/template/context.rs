@@ -13,6 +13,8 @@ mod hostvars;
 mod read;
 mod vars;
 
+pub(in crate::template) use vars::copied;
+
 use super::env::{chained_attr, fresh_const, mutable_attr, mutable_var};
 use super::pymethods::mutable::{identity, mutable};
 use super::templar::Templar;

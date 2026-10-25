@@ -1,0 +1,5 @@
+{
+  "code": 4,
+  "stderr": "[ERROR]: YAML parsing failed: Found duplicate mapping key 'a'.\nOrigin: <golden-tmp>/play.yml:5:5\n\n3   vars:\n4     a: 1\n5     a: 2\n      ^ column 5\n\n",
+  "stdout": ""
+}

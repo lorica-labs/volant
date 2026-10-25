@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    a: 1
+    a: 2
+  tasks:
+    - debug:
+        var: a

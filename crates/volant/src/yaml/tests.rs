@@ -1279,3 +1279,14 @@ fn origins_survive_a_merge_key() {
     let value = field(&items[1], "y").unwrap();
     assert_eq!(origins.of_value(value), Some((2, 15)));
 }
+
+/// Escapes in the string literals of `{{ }}` stay as written; `{% %}` and text outside keep theirs.
+#[rstest::rstest]
+#[case(r#"{{ "a\nb" | length }}"#, r#"{{ "a\\nb" | length }}"#)]
+#[case(r"{{ 'a\'b' }}", r"{{ 'a\\\'b' }}")]
+#[case(r#"{{ "a\\b" }}"#, r#"{{ "a\\\\b" }}"#)]
+#[case(r#"{% set x = "a\nb" %}{{ x }}"#, r#"{% set x = "a\nb" %}{{ x }}"#)]
+#[case(r"plain \n text", r"plain \n text")]
+fn template_literals_keep_their_escapes(#[case] text: &str, #[case] want: &str) {
+    assert_eq!(walk::literal_escapes(text), want);
+}

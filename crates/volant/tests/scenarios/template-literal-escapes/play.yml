@@ -1,0 +1,22 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    lines: [a, b]
+    text: "x\ny"
+  tasks:
+    - debug:
+        msg:
+          - '{{ "a\nb" | length }}'
+          - '{{ lines | join("\n") | length }}'
+          - '{{ "\n".join(lines) | length }}'
+          - '{{ text.split("\n") | length }}'
+          - '{{ text.replace("\n", " ") }}'
+          - '{{ "a b" | regex_replace("\s", "_") }}'
+          - '{{ "a\tb" | length }}'
+          - '{{ "a\b" | length }}'
+          - '{{ "\x41" | length }}'
+          - '{% set s = "a\nb" %}{{ s | length }}'
+          - "{{ 'a\nb' | length }}"
+    - debug: msg="{{ 'a\nb' | length }}"
+    - debug: {msg: bare}
+      when: ("a\nb" | length) == 3

@@ -401,7 +401,7 @@
       "changed": true
     },
     "compare": "exact",
-    "expect": "fallback",
+    "expect": "native",
     "group": "apt",
     "module": "apt",
     "patterns": {},
@@ -555,7 +555,7 @@
       "cache_updated": true
     },
     "compare": "exact",
-    "expect": "fallback",
+    "expect": "native",
     "group": "apt",
     "module": "apt",
     "patterns": {},

@@ -38,7 +38,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     } else {
         ColorChoice::Auto
     };
-    let mut out = Renderer::new(choice, args.verbose);
+    let mut out = plays.renderer(choice, args.verbose);
     if let Plays::Adhoc(adhoc) = plays {
         out.set_minimal(adhoc.module());
         adhoc.show(&mut out);

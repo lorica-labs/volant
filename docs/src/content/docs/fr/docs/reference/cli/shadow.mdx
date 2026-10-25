@@ -1,0 +1,83 @@
+---
+sourceHash: 4b6700dd2257
+title: volant shadow
+description: Rejouer un run qu'ansible-playbook a enregistré, sans contacter d'hôte, et voir ce que Volant aurait fait autrement.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant shadow replay` lit un enregistrement du callback `volant.compat.record` (voir [Enregistrements de runs](/fr/docs/reference/recording/)). Il exécute les mêmes playbooks avec les mêmes options dans Volant et répond à chaque tâche qui atteindrait un hôte avec le résultat enregistré par ansible-core. Puis il compare ce que Volant a décidé avec ce qu'ansible-core a fait. Aucun hôte n'est contacté et aucun agent ne démarre.
+
+```sh
+volant shadow replay RECORDING [--json]
+```
+
+<Option name="--json">
+  Écrire le rapport en JSON Lines : un objet par divergence, puis un objet de résumé.
+</Option>
+
+## Avant le rejeu
+
+L'enregistrement nomme les fichiers que le run a lus. Chacun est cherché depuis le répertoire de travail de l'enregistrement : lancez donc le rejeu au même endroit de votre dépôt. Le rejeu refuse de démarrer, avec le code de sortie 4, quand :
+
+- le format de l'enregistrement est plus récent que ce que lit cette version de Volant ; le message nomme les deux versions ;
+- un playbook ou un fichier d'inventaire diffère de celui enregistré (`site.yml changed since the recording`) ;
+- un fichier nommé par un argument `-e @fichier` a changé.
+
+Un enregistrement d'un ansible-core hors de la série 2.19 est rejoué avec un avertissement `out-of-profile`. Un enregistrement coupé par un run tué est rejoué jusqu'à sa dernière ligne complète, et les hôtes s'arrêtent là où il s'arrête.
+
+## Ce que le rejeu exécute
+
+Les options du run viennent de l'enregistrement : inventaire, variables extra, tags, limite, modes check et diff, élévation de privilèges, identifiants de vault et forks. Vous ne les redonnez pas.
+
+Les tâches qui atteignent un hôte reçoivent le résultat enregistré à la place. Volant applique ensuite lui-même `changed_when`, `failed_when`, `register`, les boucles et `until`. Un `until` reçoit dans l'ordre les tentatives échouées enregistrées. Un `pause` prend la réponse que son prompt a reçue et n'attend pas. Un hôte enregistré comme injoignable est injoignable. Les tâches exécutées sur le contrôleur, comme `debug`, `set_fact`, les includes et `meta`, sont calculées par Volant comme d'habitude.
+
+Les lookups et les filtres qui donnent une valeur différente à chaque run, comme `now`, `password`, `pipe` ou `lookup('env')`, s'exécutent réellement : un playbook qui les utilise peut donc montrer des divergences qui ne sont que du bruit. Un playbook avec des modules Python ou une collecte de facts a toujours besoin d'ansible-core sur le contrôleur pour les préparer, par `VOLANT_PYTHON` ou le [runtime géré](/fr/docs/reference/runtime/).
+
+## Le rapport
+
+Le run rejoué s'affiche sur stderr, exactement comme `volant playbook` le ferait. Le rapport va sur stdout. Il commence par un résumé : combien de tâches ont été comparées, sur combien d'hôtes, et les divergences par sorte. Il liste ensuite ce qui n'a pas été comparé et pourquoi, puis chaque divergence avec son hôte, son `fichier:ligne`, le nom de sa tâche, ce qu'ansible-core a fait, ce que Volant a fait et la différence :
+
+```text
+Shadow replay: 23 tasks compared on 2 hosts, 1 divergence: judgment 1.
+Arguments not compared: no_log 2, not in the recording 8.
+
+judgment  local  site.yml:30  fails
+  ansible: {"status":"ok"}
+  volant:  {"status":"failed"}
+  diff:    status: "ok" -> "failed"
+```
+
+Une divergence est de l'une des cinq sortes suivantes, de la plus grave à la moins grave :
+
+| Sorte | Ce qu'elle détecte |
+|---|---|
+| `inventory` | Un hôte manque, ou appartient à d'autres groupes que dans l'enregistrement. |
+| `flow` | Une tâche qu'un moteur a exécutée et l'autre non, un ordre différent, ou un handler exécuté d'un seul côté. |
+| `loop` | Un nombre d'éléments différent, ou une valeur d'élément différente. |
+| `args` | Un argument que Volant envoie à un module avec une autre valeur que celle avec laquelle le module a tourné. Les arguments présents seulement dans l'enregistrement sont les valeurs par défaut du module et ne sont pas comparés. |
+| `judgment` | Un statut différent (`ok`, `changed`, `failed`, `skipped`), une autre condition qui a sauté la tâche, un nombre de tentatives différent, ou un récapitulatif différent. |
+
+Après la première divergence `flow` sur un hôte, la suite de cet hôte n'est pas comparée, car toutes les tâches suivantes sont décalées. Les autres hôtes restent comparés. Une tâche `no_log` est comparée sur son seul statut, puisque l'enregistrement n'en garde rien d'autre.
+
+Avec `--json`, chaque divergence tient sur une ligne :
+
+```json
+{"host":"local","task":{"path":"site.yml:30","name":"fails"},"kind":"judgment","ansible":{"status":"ok"},"volant":{"status":"failed"},"diff":"status: \"ok\" -> \"failed\""}
+```
+
+La dernière ligne est le résumé :
+
+```json
+{"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
+```
+
+Les raisons de `not_compared` sont `after_flow` (après une divergence `flow` sur cet hôte) et `no_log` (comparée sur le seul statut). Les raisons de `arguments_not_compared` sont `no_log`, `not_recorded` (ansible-core n'a passé aucun `invocation` au callback, comme pour `debug`, ou comme ansible-core 2.21 le fait pour toutes les tâches) et `controller` (Volant a exécuté la tâche sur le contrôleur et n'a rien envoyé).
+
+## Codes de sortie
+
+| Code | Signification |
+|---|---|
+| 0 | Aucune divergence. |
+| 1 | Au moins une divergence. |
+| 4 | L'enregistrement ne peut pas être rejoué sur ce dépôt : un format plus récent, ou un fichier qui a changé. |

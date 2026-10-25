@@ -226,6 +226,11 @@ impl VarStore {
         self.dynamic.clone()
     }
 
+    /// Every group with its member hosts, as the `groups` magic variable reads them.
+    pub fn groups(&self) -> &BTreeMap<String, Vec<String>> {
+        &self.groups
+    }
+
     /// `add_host`: the host joins the inventory with `vars` on its line and the groups named,
     /// or, when it is already there, gains them. Visible to `hostvars` and `groups` at once;
     /// the hosts of the play being run are not changed by it. Whether it changed the inventory:

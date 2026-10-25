@@ -1,0 +1,82 @@
+---
+title: volant shadow
+description: Replay a run that ansible-playbook recorded, without contacting a host, and see what Volant would have done differently.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+`volant shadow replay` reads a recording of the `volant.compat.record` callback (see [Run recordings](/docs/reference/recording/)). It runs the same playbooks with the same options through Volant and answers every task that would reach a host with the result ansible-core recorded. Then it compares what Volant decided with what ansible-core did. No host is contacted and no agent starts.
+
+```sh
+volant shadow replay RECORDING [--json]
+```
+
+<Option name="--json">
+  Write the report as JSON Lines: one object per divergence, then a summary object.
+</Option>
+
+## Before the replay
+
+The recording names the files the run read. Each is looked up from the recording's working directory, so run the replay at the same place in your checkout. The replay refuses to start, with exit code 4, when:
+
+- the recording's format is newer than this Volant reads; the message names both versions;
+- a playbook or an inventory file differs from the recorded one (`site.yml changed since the recording`);
+- a file an `-e @file` argument names has changed.
+
+A recording of an ansible-core outside the 2.19 series replays with an `out-of-profile` warning. A recording cut short by a run that was killed replays up to its last complete line, and the hosts stop where it stops.
+
+## What the replay runs
+
+The run's options come from the recording: inventory, extra variables, tags, limit, check and diff modes, escalation, vault ids and forks. You do not give them again.
+
+Tasks that reach a host get the recorded result instead. Volant then applies `changed_when`, `failed_when`, `register`, loops and `until` itself. An `until` gets the recorded failed attempts in order. A `pause` takes the answer its prompt got and does not wait. A host recorded as unreachable is unreachable. Tasks that run on the controller, such as `debug`, `set_fact`, includes and `meta`, are computed by Volant as usual.
+
+Lookups and filters that give a different value on each run, like `now`, `password`, `pipe` or `lookup('env')`, run for real, so a playbook that uses them can show divergences that are only noise. A playbook with Python modules or fact gathering still needs ansible-core on the controller to prepare them, through `VOLANT_PYTHON` or the [managed runtime](/docs/reference/runtime/).
+
+## The report
+
+The replayed run prints on stderr, exactly as `volant playbook` would. The report goes to stdout. It starts with a summary: how many tasks were compared, on how many hosts, and the divergences by kind. Then it lists what was not compared and why, and each divergence with its host, its `file:line`, its task name, what ansible-core did, what Volant did and the difference:
+
+```text
+Shadow replay: 23 tasks compared on 2 hosts, 1 divergence: judgment 1.
+Arguments not compared: no_log 2, not in the recording 8.
+
+judgment  local  site.yml:30  fails
+  ansible: {"status":"ok"}
+  volant:  {"status":"failed"}
+  diff:    status: "ok" -> "failed"
+```
+
+A divergence is one of five kinds, from the most serious:
+
+| Kind | What it catches |
+|---|---|
+| `inventory` | A host is missing, or is in other groups than in the recording. |
+| `flow` | A task one engine ran and the other did not, a different order, or a handler that ran on one side only. |
+| `loop` | A different number of items, or a different item value. |
+| `args` | An argument Volant sends to a module with another value than the one the module ran with. Arguments only in the recording are the module's defaults and are not compared. |
+| `judgment` | A different status (`ok`, `changed`, `failed`, `skipped`), a different condition that skipped the task, a different number of attempts, or a different recap. |
+
+After the first `flow` divergence on a host, the rest of that host is not compared, because every task after it is shifted. The other hosts are still compared. A `no_log` task is compared on its status alone, since the recording keeps nothing else of it.
+
+With `--json`, each divergence is one line:
+
+```json
+{"host":"local","task":{"path":"site.yml:30","name":"fails"},"kind":"judgment","ansible":{"status":"ok"},"volant":{"status":"failed"},"diff":"status: \"ok\" -> \"failed\""}
+```
+
+The last line is the summary:
+
+```json
+{"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
+```
+
+The reasons in `not_compared` are `after_flow` (after a `flow` divergence on that host) and `no_log` (compared on the status alone). The reasons in `arguments_not_compared` are `no_log`, `not_recorded` (ansible-core passed no `invocation` to the callback, as for `debug`, or as ansible-core 2.21 does for every task) and `controller` (Volant ran the task on the controller and sent nothing).
+
+## Exit codes
+
+| Code | Meaning |
+|---|---|
+| 0 | No divergence. |
+| 1 | At least one divergence. |
+| 4 | The recording cannot be replayed against this checkout: a newer format, or a file that changed. |

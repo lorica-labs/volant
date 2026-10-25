@@ -66,6 +66,8 @@ pub struct Renderer {
     oneline: bool,
     /// `-t`: the directory the `tree` callback writes one file per host in.
     tree: Option<std::path::PathBuf>,
+    /// Writing to stderr, which `set_choice` keeps.
+    on_stderr: bool,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -93,6 +95,16 @@ const WARNING: Style = AnsiColor::BrightMagenta.on_default();
 const DEBUG: Style = AnsiColor::BrightBlack.on_default();
 pub(crate) const VERBOSE: Style = AnsiColor::Blue.on_default();
 
+/// `stream` with colour as `choice` and the terminal decide, and whether it is coloured.
+fn auto<S: anstream::stream::RawStream + anstream::stream::AsLockedWrite + 'static>(
+    stream: S,
+    choice: ColorChoice,
+) -> (Box<dyn Write>, bool) {
+    let stream = AutoStream::new(stream, choice);
+    let color = stream.current_choice() != ColorChoice::Never;
+    (Box::new(stream), color)
+}
+
 impl Renderer {
     /// Stdout renderer. Colour follows the terminal, `NO_COLOR`, `CLICOLOR_FORCE`, or the caller.
     pub fn new(choice: ColorChoice, verbosity: u8) -> Self {
@@ -116,14 +128,24 @@ impl Renderer {
             yaml: false,
             oneline: false,
             tree: None,
+            on_stderr: false,
         }
     }
 
     /// Settles the colour once the configuration is read.
     pub fn set_choice(&mut self, choice: ColorChoice) {
-        let stream = AutoStream::new(std::io::stdout(), choice);
-        self.color = stream.current_choice() != ColorChoice::Never;
-        self.out = Box::new(stream);
+        (self.out, self.color) = if self.on_stderr {
+            auto(std::io::stderr(), choice)
+        } else {
+            auto(std::io::stdout(), choice)
+        };
+    }
+
+    /// The same renderer writing to stderr: a replay keeps stdout for its own report.
+    pub fn on_stderr(mut self, choice: ColorChoice) -> Self {
+        self.on_stderr = true;
+        self.set_choice(choice);
+        self
     }
 
     #[cfg(test)]
@@ -141,6 +163,7 @@ impl Renderer {
             yaml: false,
             oneline: false,
             tree: None,
+            on_stderr: false,
         }
     }
 

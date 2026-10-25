@@ -1,0 +1,83 @@
+---
+sourceHash: 4b6700dd2257
+title: volant shadow
+description: Einen Lauf, den ansible-playbook aufgezeichnet hat, ohne Kontakt zu einem Host wiederholen und sehen, was Volant anders gemacht hätte.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant shadow replay` liest eine Aufzeichnung des Callbacks `volant.compat.record` (siehe [Aufzeichnungen von Läufen](/de/docs/reference/recording/)). Es führt dieselben Playbooks mit denselben Optionen in Volant aus und beantwortet jeden Task, der einen Host erreichen würde, mit dem Ergebnis, das ansible-core aufgezeichnet hat. Dann vergleicht es, was Volant entschieden hat, mit dem, was ansible-core getan hat. Kein Host wird kontaktiert und kein Agent gestartet.
+
+```sh
+volant shadow replay RECORDING [--json]
+```
+
+<Option name="--json">
+  Den Bericht als JSON Lines schreiben: ein Objekt pro Abweichung, dann ein Zusammenfassungsobjekt.
+</Option>
+
+## Vor der Wiederholung
+
+Die Aufzeichnung nennt die Dateien, die der Lauf gelesen hat. Jede wird vom Arbeitsverzeichnis der Aufzeichnung aus gesucht, starten Sie die Wiederholung also an derselben Stelle Ihres Repositorys. Die Wiederholung startet nicht und endet mit Exit-Code 4, wenn:
+
+- das Format der Aufzeichnung neuer ist, als diese Volant-Version liest; die Meldung nennt beide Versionen;
+- ein Playbook oder eine Inventardatei von der aufgezeichneten abweicht (`site.yml changed since the recording`);
+- sich eine Datei geändert hat, die ein `-e @datei`-Argument nennt.
+
+Eine Aufzeichnung einer ansible-core-Version außerhalb der Reihe 2.19 wird mit einer `out-of-profile`-Warnung wiederholt. Eine Aufzeichnung, die ein abgebrochener Lauf unvollständig hinterlassen hat, wird bis zu ihrer letzten vollständigen Zeile wiederholt, und die Hosts halten dort an, wo sie endet.
+
+## Was die Wiederholung ausführt
+
+Die Optionen des Laufs stammen aus der Aufzeichnung: Inventar, Extra-Variablen, Tags, Limit, Check- und Diff-Modus, Rechteausweitung, Vault-IDs und Forks. Sie geben sie nicht erneut an.
+
+Tasks, die einen Host erreichen, erhalten stattdessen das aufgezeichnete Ergebnis. Volant wendet danach `changed_when`, `failed_when`, `register`, Schleifen und `until` selbst an. Ein `until` erhält die aufgezeichneten fehlgeschlagenen Versuche der Reihe nach. Ein `pause` übernimmt die Antwort, die sein Prompt bekommen hat, und wartet nicht. Ein als unerreichbar aufgezeichneter Host ist unerreichbar. Tasks, die auf dem Controller laufen, etwa `debug`, `set_fact`, Includes und `meta`, berechnet Volant wie gewohnt.
+
+Lookups und Filter, die bei jedem Lauf einen anderen Wert liefern, etwa `now`, `password`, `pipe` oder `lookup('env')`, laufen tatsächlich. Ein Playbook, das sie verwendet, kann daher Abweichungen zeigen, die nur Rauschen sind. Ein Playbook mit Python-Modulen oder Fact-Erfassung braucht weiterhin ansible-core auf dem Controller, um sie vorzubereiten, über `VOLANT_PYTHON` oder die [verwaltete Laufzeit](/de/docs/reference/runtime/).
+
+## Der Bericht
+
+Der wiederholte Lauf erscheint auf stderr, genau wie bei `volant playbook`. Der Bericht geht auf stdout. Er beginnt mit einer Zusammenfassung: wie viele Tasks auf wie vielen Hosts verglichen wurden und die Abweichungen nach Art. Danach listet er, was nicht verglichen wurde und warum, und jede Abweichung mit Host, `Datei:Zeile`, Task-Name, dem, was ansible-core getan hat, dem, was Volant getan hat, und dem Unterschied:
+
+```text
+Shadow replay: 23 tasks compared on 2 hosts, 1 divergence: judgment 1.
+Arguments not compared: no_log 2, not in the recording 8.
+
+judgment  local  site.yml:30  fails
+  ansible: {"status":"ok"}
+  volant:  {"status":"failed"}
+  diff:    status: "ok" -> "failed"
+```
+
+Eine Abweichung gehört zu einer von fünf Arten, von der schwersten an:
+
+| Art | Was sie erkennt |
+|---|---|
+| `inventory` | Ein Host fehlt oder gehört zu anderen Gruppen als in der Aufzeichnung. |
+| `flow` | Ein Task, den eine Engine ausgeführt hat und die andere nicht, eine andere Reihenfolge oder ein Handler, der nur auf einer Seite lief. |
+| `loop` | Eine andere Anzahl von Elementen oder ein anderer Elementwert. |
+| `args` | Ein Argument, das Volant mit einem anderen Wert an ein Modul sendet als dem, mit dem das Modul lief. Argumente, die nur in der Aufzeichnung stehen, sind Standardwerte des Moduls und werden nicht verglichen. |
+| `judgment` | Ein anderer Status (`ok`, `changed`, `failed`, `skipped`), eine andere Bedingung, die den Task übersprungen hat, eine andere Anzahl von Versuchen oder eine andere Zusammenfassung. |
+
+Nach der ersten `flow`-Abweichung auf einem Host wird der Rest dieses Hosts nicht verglichen, weil jeder folgende Task verschoben ist. Die anderen Hosts werden weiter verglichen. Ein `no_log`-Task wird nur nach seinem Status verglichen, da die Aufzeichnung nichts anderes von ihm behält.
+
+Mit `--json` steht jede Abweichung in einer Zeile:
+
+```json
+{"host":"local","task":{"path":"site.yml:30","name":"fails"},"kind":"judgment","ansible":{"status":"ok"},"volant":{"status":"failed"},"diff":"status: \"ok\" -> \"failed\""}
+```
+
+Die letzte Zeile ist die Zusammenfassung:
+
+```json
+{"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
+```
+
+Die Gründe in `not_compared` sind `after_flow` (nach einer `flow`-Abweichung auf diesem Host) und `no_log` (nur nach dem Status verglichen). Die Gründe in `arguments_not_compared` sind `no_log`, `not_recorded` (ansible-core hat dem Callback kein `invocation` übergeben, wie bei `debug` oder wie ansible-core 2.21 bei jedem Task) und `controller` (Volant hat den Task auf dem Controller ausgeführt und nichts gesendet).
+
+## Exit-Codes
+
+| Code | Bedeutung |
+|---|---|
+| 0 | Keine Abweichung. |
+| 1 | Mindestens eine Abweichung. |
+| 4 | Die Aufzeichnung lässt sich in diesem Repository nicht wiederholen: ein neueres Format oder eine geänderte Datei. |

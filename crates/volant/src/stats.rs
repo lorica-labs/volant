@@ -46,6 +46,17 @@ pub struct Stats {
     /// recap line as it was. Measured on ansible-core 2.19.12: `failed=1` in the recap and exit 0.
     failing: std::collections::BTreeSet<String>,
     dark: std::collections::BTreeSet<String>,
+    /// Under `volant shadow replay`, the replay every result line is also shown to.
+    pub(crate) replay: Option<std::sync::Arc<crate::shadow::replay::Replay>>,
+}
+
+/// A replay reads the recap the run ends with, which is this one's when it is dropped.
+impl Drop for Stats {
+    fn drop(&mut self) {
+        if let Some(replay) = self.replay.take() {
+            replay.saw_recap(self);
+        }
+    }
 }
 
 impl Stats {

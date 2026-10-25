@@ -1995,7 +1995,7 @@ pub(super) async fn drive_host(
                         attempt += 1;
                         batch_id += 1;
                         let (mut flat, ended_one) = if let Some(replayed) = &replayed {
-                            replayed.attempt(ii, attempt)
+                            replayed.attempt(ii, attempt, item)
                         } else {
                             run_agent_batch(
                                 link,
@@ -2165,7 +2165,7 @@ pub(super) async fn drive_host(
                 let (flat, ended) = if let Some(replay) = options.replay.as_deref() {
                     let steps: Vec<_> = batch
                         .iter()
-                        .map(|b| (b.0, &step_at(&c, &rendered, b.0).task))
+                        .map(|b| (b.0, &step_at(&c, &rendered, b.0).task, &b.1[..]))
                         .collect();
                     replayed::batch(replay, seen.as_ref(), &name, &steps, &origin)
                 } else {

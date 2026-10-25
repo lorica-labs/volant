@@ -19,6 +19,20 @@ pub(super) enum Plays<'a> {
 }
 
 impl Plays<'_> {
+    /// The run's renderer: on stderr for a replay, whose report is what stdout carries.
+    pub(super) fn renderer(
+        &self,
+        choice: anstream::ColorChoice,
+        verbosity: u8,
+    ) -> crate::render::Renderer {
+        let out = crate::render::Renderer::new(choice, verbosity);
+        if matches!(self, Plays::Replay(_)) {
+            out.on_stderr(choice)
+        } else {
+            out
+        }
+    }
+
     /// The recording a replay answers the hosts from; a replay starts no agent at all.
     pub(super) fn replay(&self) -> Option<std::sync::Arc<crate::shadow::replay::Replay>> {
         match self {

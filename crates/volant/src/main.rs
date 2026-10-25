@@ -38,9 +38,9 @@ enum Command {
     Shims(ShimsCommand),
     /// Encrypt, decrypt and view vault files, with the arguments of ansible-vault.
     Vault(VaultArgs),
-    /// Replay runs the volant.compat.record callback recorded. Hidden until the replay engine
-    /// answers tasks from the recording.
-    #[command(subcommand, hide = true)]
+    /// Replay a run the volant.compat.record callback recorded and report what Volant does
+    /// differently.
+    #[command(subcommand)]
     Shadow(volant::shadow::ShadowCommand),
 }
 

@@ -32,6 +32,8 @@ pub(crate) struct Replay {
     /// Whether the recording stops before the run's end: a task it has no result for is where
     /// it stops, not a task ansible-core never ran.
     truncated: bool,
+    /// What Volant did, gathered while the run reports it, for the comparison afterwards.
+    pub(super) watched: std::sync::Mutex<super::watch::Watched>,
 }
 
 /// Under a replay, which time each task's `file:line` has reached one host, and the occurrence
@@ -120,6 +122,7 @@ impl Replay {
             answers,
             root: root.to_path_buf(),
             truncated: recording.truncated,
+            watched: std::sync::Mutex::default(),
         }
     }
 
@@ -178,7 +181,7 @@ impl Replay {
     }
 
     /// `origin`'s `file:line`, relative to the replay's directory as the recording's paths are.
-    fn path_of(&self, origin: Option<&Origin>) -> String {
+    pub(super) fn path_of(&self, origin: Option<&Origin>) -> String {
         let Some(origin) = origin else {
             return String::new();
         };

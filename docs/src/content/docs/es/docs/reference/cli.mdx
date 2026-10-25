@@ -1,5 +1,5 @@
 ---
-sourceHash: 6bc9ad5a2398
+sourceHash: c8d1a4701202
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -17,12 +17,13 @@ volant galaxy [ARGS...]
 volant pull [ARGS...]
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
+volant shadow replay RECORDING [--json]
 volant shims <install|remove>
 volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-Cada uno de los demás comandos tiene su propia página: [`volant adhoc`](/es/docs/reference/cli/adhoc/), [`volant config`](/es/docs/reference/cli/config/), [`volant console`](/es/docs/reference/cli/console/), [`volant doc`](/es/docs/reference/cli/doc/), [`volant galaxy`](/es/docs/reference/cli/galaxy/), [`volant pull`](/es/docs/reference/cli/pull/), [`volant inventory`](/es/docs/reference/cli/inventory/), [`volant runtime`](/es/docs/reference/cli/runtime/), [`volant shims`](/es/docs/reference/cli/shims/), [`volant vault`](/es/docs/reference/cli/vault/). [Nombres de comandos de ansible](/es/docs/start/ansible-command-names/) los une. Esta página trata de `volant playbook`.
+Cada uno de los demás comandos tiene su propia página: [`volant adhoc`](/es/docs/reference/cli/adhoc/), [`volant config`](/es/docs/reference/cli/config/), [`volant console`](/es/docs/reference/cli/console/), [`volant doc`](/es/docs/reference/cli/doc/), [`volant galaxy`](/es/docs/reference/cli/galaxy/), [`volant pull`](/es/docs/reference/cli/pull/), [`volant inventory`](/es/docs/reference/cli/inventory/), [`volant runtime`](/es/docs/reference/cli/runtime/), [`volant shadow`](/es/docs/reference/cli/shadow/), [`volant shims`](/es/docs/reference/cli/shims/), [`volant vault`](/es/docs/reference/cli/vault/). [Nombres de comandos de ansible](/es/docs/start/ansible-command-names/) los une. Esta página trata de `volant playbook`.
 
 `volant playbook` acepta las mismas opciones que `ansible-playbook`, en las que existen. `volant-playbook` es el mismo programa con un nombre que se parece al que conoces. Los playbooks que se pasan juntos se ejecutan en orden, y cada uno imprime su propio recap.
 
@@ -240,4 +241,4 @@ Volant lee las variables `ANSIBLE_*` nombradas arriba, además de algunas propia
 
 Se acepta cada opción de `ansible-playbook`. `--scp-extra-args` y `--sftp-extra-args` no tienen efecto, porque los archivos viajan por el enlace con el agente. La [página de paridad](/es/docs/reference/parity/#ansible-playbook-option) enumera cada opción con su estado.
 
-`volant` tiene los subcomandos `playbook`, `adhoc`, `inventory`, `runtime`, `shims`, `vault`, `doc`, `config`, `galaxy`, `console` y `pull`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.
+`volant` tiene los subcomandos `playbook`, `adhoc`, `inventory`, `runtime`, `shadow`, `shims`, `vault`, `doc`, `config`, `galaxy`, `console` y `pull`. No hay `volant check` ni `volant lint`. Ejecuta esas herramientas desde ansible-core, o usa las opciones de listado de `volant playbook`.

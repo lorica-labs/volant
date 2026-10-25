@@ -34,18 +34,18 @@ pub(in crate::executor) fn sent<T, E>(
 }
 
 /// A flat batch answered from the recording, shaped as [`super::run_agent_batch`] returns it:
-/// `origin` maps each answer to its step in `steps` and its item. A host the recording has as
-/// unreachable ends the batch there.
+/// `origin` maps each answer to its step in `steps`, with that step's items, and its item. A host
+/// the recording has as unreachable ends the batch there.
 pub(in crate::executor) fn batch(
     replay: &Replay,
     seen: Option<&Seen>,
     host: &str,
-    steps: &[(usize, &PlayTask)],
+    steps: &[(usize, &PlayTask, &[Item])],
     origin: &[(usize, usize)],
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
     let mut flat = Vec::new();
     for &(step, item) in origin {
-        let (pos, task) = steps[step];
+        let (pos, task, items) = steps[step];
         let occurrence = Seen::of(seen, pos);
         let replayed = Replayed {
             replay,
@@ -53,7 +53,7 @@ pub(in crate::executor) fn batch(
             task,
             occurrence,
         };
-        let (mut one, outcome) = replayed.attempt(item, 1);
+        let (mut one, outcome) = replayed.attempt(item, 1, &items[item]);
         flat.push(one.pop().flatten());
         if outcome.is_err() {
             return (flat, outcome);
@@ -102,12 +102,16 @@ impl<'a> Replayed<'a> {
         })
     }
 
-    /// The answer of one attempt, shaped as [`super::run_agent_batch`] returns one task's.
+    /// The answer of one attempt of `unit`, the item at `item`, shaped as
+    /// [`super::run_agent_batch`] returns one task's.
     pub(in crate::executor) fn attempt(
         &self,
         item: usize,
         attempt: u32,
+        unit: &Item,
     ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
+        self.replay
+            .sent(self.host, self.task, self.occurrence, item, &unit.args);
         match self.answer(item, attempt) {
             Ok(result) => (vec![Some(result)], Ok(BatchOutcome::Completed)),
             Err(unreachable) => (vec![None], Err(unreachable)),
@@ -124,6 +128,8 @@ impl<'a> Replayed<'a> {
         templar: &Templar,
         lefts: &mut Vec<RetryLine>,
     ) -> Result<Option<TaskResult>, Result<BatchOutcome, String>> {
+        self.replay
+            .sent(self.host, self.task, self.occurrence, item, &unit.args);
         let mut attempt = 0;
         loop {
             attempt += 1;

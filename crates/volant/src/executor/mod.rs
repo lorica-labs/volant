@@ -122,6 +122,10 @@ pub async fn run_play(
     }
     let play_vars = {
         let store = state.vars.lock().expect("vars lock");
+        if let Some(replay) = &options.replay {
+            stats.replay = Some(Arc::clone(replay));
+            replay.saw_inventory(store.groups());
+        }
         store.play_scope(&play.vars)
     };
     let batches =

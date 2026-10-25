@@ -18,8 +18,8 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use super::super::runtime::{self, Clock, Root, Stop};
-use super::policy;
 use super::status::{bin_path, cache_mtime, from_timestamp};
+use super::{cache, policy};
 
 /// What the plan leaves to run.
 pub(super) struct Act {
@@ -64,16 +64,26 @@ pub(super) fn act(
         .ok_or("the module reads this apt-get path differently")?
         .to_string();
     let env = apt_env(task_env, clock)?;
+    let private = cache::options(&env, task_env, clock)?;
     // Asked before anything changes; asked again only after an update, which can move them.
     let mut pins = if act.missing.is_empty() {
         None
     } else {
-        Some(candidates(&act.missing, &act.arch, &env, task_env, clock)?)
+        Some(candidates(
+            &act.missing,
+            &act.arch,
+            &private,
+            &env,
+            task_env,
+            clock,
+        )?)
     };
     let mut cache_updated = false;
     let mut cache_time = act.cache_time;
     if act.update {
-        let (rc, _, _) = output(&env, clock, Path::new(&apt_get), &["update"])?;
+        let mut args: Vec<&str> = private.iter().map(String::as_str).collect();
+        args.push("update");
+        let (rc, _, _) = output(&env, clock, Path::new(&apt_get), &args)?;
         if rc != 0 {
             return Err("apt-get update failed, which the module retries".into());
         }
@@ -97,7 +107,7 @@ pub(super) fn act(
     } else {
         let pins = match pins.take() {
             Some(pins) if !act.update => pins,
-            _ => candidates(&act.missing, &act.arch, &env, task_env, clock)?,
+            _ => candidates(&act.missing, &act.arch, &private, &env, task_env, clock)?,
         };
         let cmd = install_command(&apt_get, &act.params, &pins);
         let policy = match act.policy_rc_d {
@@ -107,7 +117,7 @@ pub(super) fn act(
             },
             None => None,
         };
-        let ran = run_line(&cmd, &env, clock);
+        let ran = run_line(&cmd, &private, &env, clock);
         if let Some(policy) = policy
             && let Err(msg) = policy::exit(policy, root)
         {
@@ -125,12 +135,12 @@ pub(super) fn act(
     // `mark_installed_manually`, whatever the install did; its failure is the task's.
     let apt_mark = bin_path(task_env, "apt-mark").ok_or("apt-mark is not on PATH")?;
     let mut cmd = format!("{} manual {}", apt_mark.display(), act.names.join(" "));
-    let (mut rc, mut out, mut err) = run_line(&cmd, &env, clock)?;
+    let (mut rc, mut out, mut err) = run_line(&cmd, &private, &env, clock)?;
     if err.contains("Invalid operation")
         || err.contains("Usage: apt-mark [options] {markauto|unmarkauto} packages")
     {
         cmd = format!("{} unmarkauto {}", apt_mark.display(), act.names.join(" "));
-        (rc, out, err) = run_line(&cmd, &env, clock)?;
+        (rc, out, err) = run_line(&cmd, &private, &env, clock)?;
     }
     if rc != 0 {
         result.extend(failure(&cmd, out, err, rc));
@@ -169,12 +179,14 @@ fn apt_env(
 fn candidates(
     missing: &[String],
     arch: &str,
+    cache: &[String],
     env: &BTreeMap<String, String>,
     task_env: &BTreeMap<String, String>,
     clock: Clock,
 ) -> Result<Vec<String>, Stop> {
     let apt_cache = bin_path(task_env, "apt-cache").ok_or("apt-cache is not on PATH")?;
-    let mut args = vec!["policy"];
+    let mut args: Vec<&str> = cache.iter().map(String::as_str).collect();
+    args.push("policy");
     args.extend(missing.iter().map(String::as_str));
     let (rc, out, _) = output(env, clock, &apt_cache, &args)?;
     if rc != 0 {
@@ -260,15 +272,17 @@ fn install_command(apt_get: &str, params: &Map<String, Value>, pins: &[String]) 
     cmd
 }
 
-/// `run_command(cmd)` of a command line, which the module splits with `shlex`.
+/// `run_command(cmd)` of a command line, which the module splits with `shlex`, with `cache`
+/// after the program: the line stays the one the module's messages quote.
 fn run_line(
     cmd: &str,
+    cache: &[String],
     env: &BTreeMap<String, String>,
     clock: Clock,
 ) -> Result<(i32, String, String), Stop> {
     let argv = shlex::split(cmd).ok_or("the module would split this command line otherwise")?;
     let (program, args) = argv.split_first().ok_or("an empty command line")?;
-    let args: Vec<&str> = args.iter().map(String::as_str).collect();
+    let args: Vec<&str> = cache.iter().chain(args).map(String::as_str).collect();
     output(env, clock, Path::new(program), &args)
 }
 

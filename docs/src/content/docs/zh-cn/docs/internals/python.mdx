@@ -137,6 +137,8 @@ agent 自带这些模块的 Rust 版本：
 
 原生模块接收的参数，就是 Python 模块本来会接收的参数。它先通过只读来判断，自己能否给出参照模块会给出的答案。如果不能，它会在接触主机之前就把 task 交还，由 Python 模块来做真正的工作。它的结果，包括 `invocation`，就是参照模块返回的那一个，逐键一致，并且有测试对它覆盖的每种情形做比较。结果作为不可信数据回来，走的路径与 Python 模块的相同。
 
+如果主机的配置关闭了 apt 的软件包缓存（Docker 的 Debian 和 Ubuntu 镜像就是这样），apt 每次调用都会从软件包列表重新构建缓存：在 Ubuntu 24.04 上每次 1.3 秒。这时原生 `apt` 会让它对 `apt-get`、`apt-cache` 和 `apt-mark` 的调用使用连接自己目录中的缓存，连接结束时删除。它们的输出以及留在主机上的内容都不变。
+
 设置 `[volant] native_modules = false` 或 `VOLANT_NATIVE_MODULES=0`，可以把每个 task 都发给 Python。`--profile` 会显示每个 task 走了哪条路径，对于交还的情形还会给出原因。见[命令行](/zh-cn/docs/reference/cli/#运行与输出)。
 
 <Aside type="note">

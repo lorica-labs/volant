@@ -34,7 +34,10 @@ use serde_json::{Map, Value};
 ///
 /// 8 added `PutFile`: a staged blob moved to a path of the host. An agent that does not know the
 /// message would drop it as malformed and leave the controller waiting for an answer.
-pub const PROTOCOL_VERSION: u32 = 8;
+///
+/// 9 added `Warm`: start the Python server for a payload ahead of the task that needs it. An
+/// agent that did not know the message would read it as malformed.
+pub const PROTOCOL_VERSION: u32 = 9;
 
 /// How the frame after a `PutBlob` carries the blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -93,6 +96,14 @@ pub enum ToAgent {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mode: Option<u32>,
+    },
+    /// Start the Python server for the payload `blob` under `interpreter` now, so that it
+    /// imports while the tasks before the first one that needs it run. Never answered: the
+    /// first task that needs the server waits for it, and one the agent could not start is
+    /// started again there, with its error.
+    Warm {
+        interpreter: String,
+        blob: String,
     },
 }
 

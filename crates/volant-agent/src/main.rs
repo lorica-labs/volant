@@ -202,6 +202,7 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
             ToAgent::PutFile { hash, path, mode } => {
                 put_file::answer(remote_tmp, &hash, &path, mode, &mut send)?;
             }
+            ToAgent::Warm { interpreter, blob } => python::warm(remote_tmp, &interpreter, &blob),
         }
     }
     Ok(())

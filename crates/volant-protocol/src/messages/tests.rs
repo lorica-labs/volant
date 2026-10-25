@@ -169,7 +169,7 @@ fn the_native_fields_are_absent_on_the_wire_when_empty_and_default_on_the_way_in
     );
     assert_eq!(serde_json::from_str::<Ran>(&text).unwrap(), ran);
     assert_eq!(
-        PROTOCOL_VERSION, 8,
+        PROTOCOL_VERSION, 9,
         "additive fields do not move the version"
     );
 }
@@ -400,8 +400,22 @@ fn skipped_is_read_by_truthiness() {
 
 /// The version moves with the shape.
 #[test]
-fn the_protocol_version_is_eight() {
-    assert_eq!(PROTOCOL_VERSION, 8);
+fn the_protocol_version_is_nine() {
+    assert_eq!(PROTOCOL_VERSION, 9);
+}
+
+#[test]
+fn warm_has_a_snake_case_type_tag() {
+    let warm = ToAgent::Warm {
+        interpreter: "/usr/bin/python3".into(),
+        blob: "ab".into(),
+    };
+    let text = serde_json::to_string(&warm).unwrap();
+    assert_eq!(
+        text,
+        r#"{"type":"warm","interpreter":"/usr/bin/python3","blob":"ab"}"#
+    );
+    assert_eq!(serde_json::from_str::<ToAgent>(&text).unwrap(), warm);
 }
 
 #[test]

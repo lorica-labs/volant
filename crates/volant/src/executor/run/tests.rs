@@ -2973,6 +2973,23 @@ async fn a_batch_goes_out_only_with_the_blob_its_payload_needs() {
         .await
         .expect("the blob went first");
         assert_eq!(agent.puts(), 1, "{:?}", agent.sent);
+        // The server is started once per link, under the payload's interpreter.
+        let warm = ToAgent::Warm {
+            interpreter: "/usr/bin/python3".into(),
+            blob: "ab".into(),
+        };
+        assert_eq!(agent.sent.last(), Some(&warm), "{:?}", agent.sent);
+        blob_preflight(
+            &mut agent,
+            "h1",
+            &tasks,
+            Some(&union_named("ab")),
+            &[],
+            &mut logs,
+        )
+        .await
+        .expect("the blob is known");
+        assert_eq!(agent.sent.iter().filter(|m| **m == warm).count(), 1);
     }
     {
         let mut logs = Vec::new();

@@ -1957,3 +1957,38 @@ fn the_payload_s_compiled_code_is_kept_for_the_next_server() {
         "a cache others can write was read"
     );
 }
+
+/// A server `warm` started is the one the first task runs in: it was running before the task was
+/// asked for.
+#[test]
+#[cfg(target_os = "linux")]
+fn the_first_task_runs_in_the_server_warm_started() {
+    let start_ticks = |pid: &str| -> u64 {
+        let stat = std::fs::read_to_string(format!("/proc/{pid}/stat")).unwrap();
+        let after = &stat[stat.rfind(')').unwrap() + 2..];
+        after.split(' ').nth(19).unwrap().parse().unwrap()
+    };
+    let root = scratch();
+    let tmp = root.path().to_str().unwrap().to_string();
+    let payload = cached_payload(
+        root.path(),
+        "\n    import os\n    print(json.dumps({\"parent\": str(os.getppid())}))\n",
+    );
+    batch_started();
+    super::warm(&tmp, &payload.interpreter, &payload.blob);
+    std::thread::sleep(Duration::from_millis(50));
+    let mut marker = Command::new("sleep").arg("5").spawn().unwrap();
+    let marked = start_ticks(&marker.id().to_string());
+    let context = Context {
+        remote_tmp: tmp.clone(),
+        ..Context::default()
+    };
+    let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
+    let _ = marker.kill();
+    assert!(!result.failed(), "{:?}", result.0);
+    let server = result.0["parent"].as_str().unwrap().to_string();
+    assert!(
+        start_ticks(&server) <= marked,
+        "the task started a server of its own"
+    );
+}

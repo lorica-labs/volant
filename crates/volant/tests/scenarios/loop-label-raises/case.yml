@@ -1,0 +1,4 @@
+# A `loop_control.label` that raises on the third item: the items before it print their lines,
+# the third runs, then the task fails with the error at the label and the fourth never runs.
+stderr: true
+args: [-i, inv.ini, play.yml]

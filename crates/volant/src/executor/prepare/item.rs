@@ -5,7 +5,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
-use volant_protocol::modules::short_name;
 
 use crate::action_plugins::Kind;
 use crate::playbook::{Flag, PlayTask, python_repr};
@@ -100,7 +99,11 @@ pub(super) const KEYWORD_ERROR: &str = "Error processing keyword ";
 /// The text a task that dies before it runs reports: the reference's `Task failed: ` prefix,
 /// except on a keyword error, which it states as it is.
 pub(in crate::executor) fn failure_text(err: &TemplateError) -> String {
-    if err.0.starts_with(KEYWORD_ERROR)
+    // A task keyword read as a boolean is worded with the prefix, measured for `check_mode`.
+    let task_keyword = ["check_mode", "diff", "ignore_errors"]
+        .iter()
+        .any(|key| err.0.starts_with(&format!("{KEYWORD_ERROR}'{key}'")));
+    if (err.0.starts_with(KEYWORD_ERROR) && !task_keyword)
         || err.0.starts_with(NOTIFY_FAILED)
         || err.0.starts_with("Task failed: ")
         || is_loop_lookup_failure(err)
@@ -178,52 +181,9 @@ pub(in crate::executor) struct Item {
     /// The message of a `loop_control.label` that failed to render, for an item that runs: the
     /// reference renders the label after the item ran, and fails the item with it then.
     pub(in crate::executor) label_error: Option<String>,
-}
-
-/// The `(item=...)` label of one item and, when its `loop_control.label` fails on an undefined
-/// variable, the message the item fails with instead. Measured on ansible-core 2.19.12: `failed:
-/// [h] (item=2) => {..., "msg": "Failed to template loop_control.label: 'nope' is undefined"}`,
-/// after the module ran, and the items after it run. The line then shows the item itself, which a
-/// `debug` result no longer holds once it is cleaned for display: `(item=None)` there.
-///
-/// Any other error, a lookup that raises for one, ends the reference's whole task once the item
-/// ran. That is not done item by item yet: the error fails the task before any item runs.
-pub(super) fn label_for(
-    task: &PlayTask,
-    element: Option<&Value>,
-    vars: &HostVars,
-    templar: &Templar,
-) -> Result<(Option<String>, Option<String>), TemplateError> {
-    Ok(match (element, &task.loop_label) {
-        (None, _) => (None, None),
-        (Some(el), None) => (Some(display(el)), None),
-        (Some(el), Some(template)) => match templar.render(template, vars) {
-            Ok(label) => (Some(display(&label)), None),
-            Err(e) if e.is_undefined() => (
-                Some(if short_name(&task.module) == "debug" {
-                    "None".to_string()
-                } else {
-                    display(el)
-                }),
-                Some(format!(
-                    "Failed to template loop_control.label: {}",
-                    undefined_name(template, e.0)
-                )),
-            ),
-            Err(e) => return Err(e),
-        },
-    })
-}
-
-/// `result` failed by a label that did not render, as the reference's `res.update` fails it.
-pub(in crate::executor) fn label_failed(message: &str, result: &mut TaskResult) {
-    result.0.insert("failed".into(), Value::Bool(true));
-    result
-        .0
-        .insert("msg".into(), Value::String(message.to_string()));
-    result
-        .0
-        .insert(crate::render::NO_BLOCK_KEY.into(), Value::Bool(true));
+    /// The message of a `loop_control.label` that raised on anything but an undefined name. The
+    /// item runs, then the task fails with this error, and no item behind it runs.
+    pub(in crate::executor) label_raised: Option<String>,
 }
 
 /// What an item whose fields failed to render reports once the loop reaches it. Measured on
@@ -239,9 +199,15 @@ pub(super) fn item_failure(task: &PlayTask, err: &TemplateError) -> TaskResult {
     };
     let mut result = TaskResult::failed_with(message);
     result.0.insert("changed".into(), Value::Bool(false));
-    if let Some(Value::Array(mut causes)) =
-        crate::executor::prepare::undefined::finalization_causes(task, &err.0)
-    {
+    result
+        .0
+        .insert("exception".into(), "(traceback unavailable)".into());
+    use crate::executor::prepare::undefined::{conditional_causes, finalization_causes};
+    // A `when` or a keyword that failed is chained as for a task with no loop: `Task failed.` at
+    // the task, then the sentence at the value.
+    if let Some(causes) = conditional_causes(task, &err.0) {
+        result.0.insert(crate::render::CHAIN_KEY.into(), causes);
+    } else if let Some(Value::Array(mut causes)) = finalization_causes(task, &err.0) {
         // A head that already leads the block stays; a plain one becomes the lead.
         if let Some(head) = causes.first_mut()
             && head.get("lead").is_none()

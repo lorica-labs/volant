@@ -20,6 +20,7 @@ mod connect;
 mod escalation;
 mod fields;
 mod item;
+mod label;
 mod late;
 mod loops;
 mod plan;
@@ -29,9 +30,10 @@ mod vars;
 pub(in crate::executor) use escalation::retry_name;
 pub(in crate::executor) use item::strict_boolean;
 pub(in crate::executor) use item::{
-    FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, label_failed, pause_of,
+    FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, pause_of,
     undefined_name,
 };
+pub(in crate::executor) use label::{label_failed, label_raised_result, raised_by_label};
 pub(in crate::executor) use late::{hide_after_failure, resolve, strategy_reads_as_true};
 pub(in crate::executor) use plan::{Gate, PlayPlan, Strategy};
 pub(in crate::executor) use vars::host_vars;
@@ -41,7 +43,8 @@ use carry::Carry;
 use connect::{connect_for, delegate_for};
 use escalation::become_for;
 use fields::{Fields, render_fields};
-use item::{item_failure, label_for, notify_for};
+use item::{item_failure, notify_for};
+use label::label_for;
 pub(in crate::executor) use loops::undefined_causes;
 use loops::{LoopOptions, loop_list, loop_options, named_undefined, with_lookup_items};
 
@@ -219,7 +222,8 @@ pub(super) fn prepare(
             vars.map = resolved;
             vars.untrusted = untrusted;
         }
-        let (label, label_error) = label_for(task, element.as_ref(), &vars, templar)?;
+        let (label, label_error, label_raised) =
+            raises(label_for(task, element.as_ref(), &vars, templar))?;
         // A field of a loop item that fails to render fails that item alone, when the loop
         // reaches it. Measured on ansible-core 2.19.12: `failed: [h] (item=2)` between two items
         // that ran, then `One or more items failed`; an item behind a `break_when` that ended
@@ -244,7 +248,19 @@ pub(super) fn prepare(
             warnings,
         ) {
             Ok(fields) => fields,
-            Err(err) if element.is_some() => Fields::failed(item_failure(task, &err)),
+            Err(err) if element.is_some() => {
+                let mut failed = Fields::failed(item_failure(task, &err));
+                // Measured on ansible-core 2.19.12: an item whose `ignore_errors` failed to
+                // render counts as ignored, so the loop prints `...ignoring` unless another
+                // item failed for good.
+                if err
+                    .0
+                    .starts_with("Error processing keyword 'ignore_errors'")
+                {
+                    failed.ignore_errors = Some(true);
+                }
+                failed
+            }
             Err(err) => return Err(err),
         };
         // As `environment`: a keyword the reference renders before the module runs, so an
@@ -281,6 +297,7 @@ pub(super) fn prepare(
             set_fact_names: std::sync::OnceLock::new(),
             notify,
             label_error,
+            label_raised,
         };
         if let Some(carry) = &mut carry {
             carry.take(&item, templar);
@@ -289,8 +306,8 @@ pub(super) fn prepare(
             if task.loop_label.is_some() {
                 let mut after = item.vars.clone();
                 carry.lay_over(&mut after);
-                (item.label, item.label_error) =
-                    label_for(task, item.element.as_ref(), &after, templar)?;
+                (item.label, item.label_error, item.label_raised) =
+                    raises(label_for(task, item.element.as_ref(), &after, templar))?;
             }
         }
         // An item that runs nothing reports its label's failure over its result now.
@@ -299,7 +316,17 @@ pub(super) fn prepare(
         {
             label_failed(&message, result);
         }
+        if let Some(result) = item.skipped.as_mut()
+            && let Some(message) = &item.label_raised
+        {
+            *result = label_raised_result(task, message);
+        }
+        let ends = item.label_raised.is_some();
         items.push(item);
+        // The task ends at this item: nothing behind it is rendered or runs.
+        if ends {
+            break;
+        }
     }
     // Every item failing to render its `notify` is the task's own failure.
     if let Some(err) = first_notify_error.filter(|_| notify_failures == items.len()) {
@@ -376,6 +403,20 @@ pub(super) fn prepare(
     Ok(Prepared::Remote(
         items, escalation, delegate, payload, None, connect,
     ))
+}
+
+/// An item's label, the message it fails with, and the error that ends the task after it.
+type Labelled = (Option<String>, Option<String>, Option<String>);
+
+/// A label's render as `prepare` keeps it: its error, which an item reports after it ran, is
+/// carried rather than raised.
+fn raises(
+    rendered: Result<(Option<String>, Option<String>), TemplateError>,
+) -> Result<Labelled, TemplateError> {
+    match rendered {
+        Ok((label, error)) => Ok((label, error, None)),
+        Err(err) => Ok((None, None, Some(err.0))),
+    }
 }
 
 fn is_local(module: &str) -> bool {

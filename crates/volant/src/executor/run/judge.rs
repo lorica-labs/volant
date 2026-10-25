@@ -4,7 +4,7 @@ use serde_json::{Map, Value, json};
 use volant_protocol::modules::short_name;
 use volant_protocol::{TaskResult, failed_when_decides};
 
-use crate::executor::prepare::{Item, label_failed};
+use crate::executor::prepare::{Item, label_failed, label_raised_result};
 use crate::playbook::PlayTask;
 use crate::template::{Templar, TemplateError};
 use crate::vars::HostVars;
@@ -34,6 +34,9 @@ pub(in crate::executor) fn finish(
     };
     if let Some(message) = &item.label_error {
         label_failed(message, &mut r);
+    }
+    if let Some(message) = &item.label_raised {
+        r = label_raised_result(task, message);
     }
     r
 }

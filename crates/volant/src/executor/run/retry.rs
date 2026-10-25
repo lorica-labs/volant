@@ -295,6 +295,9 @@ pub(in crate::executor) fn judge_attempt(
             if let Some(message) = &item.label_error {
                 crate::executor::prepare::label_failed(message, &mut r);
             }
+            if let Some(message) = &item.label_raised {
+                r = crate::executor::prepare::label_raised_result(task, message);
+            }
             Attempt::Done(r)
         }
         Attempt::Again(left, mut r) => {

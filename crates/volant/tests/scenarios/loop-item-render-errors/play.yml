@@ -1,0 +1,19 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{{ item }}"}
+      loop: [1, 2, 3]
+      when: (item == 2) | ternary(nope | int, true)
+      ignore_errors: true
+    - debug: {msg: "{{ item }}"}
+      loop: [1, 2]
+      check_mode: "{{ nope if item == 2 else false }}"
+      ignore_errors: true
+    - debug: {msg: "{{ item }}"}
+      loop: [1, 2, 3]
+      ignore_errors: "{{ nope if item == 2 else false }}"
+      register: r
+    - debug: {var: "r.results[1]"}
+    - debug: {msg: x}
+      check_mode: "{{ nope }}"
+      ignore_errors: true

@@ -32,6 +32,8 @@ use fs_guard::{
 };
 use incoming::decoded;
 pub use incoming::{Incoming, read_incoming};
+#[cfg(unix)]
+pub use stage::connection_dir;
 #[cfg(test)]
 use stage::host_component;
 use stage::stage_dir;

@@ -1,0 +1,4 @@
+# Under DUPLICATE_YAML_DICT_KEY=error a key written twice refuses the playbook at exit 4.
+stderr: true
+args: [-i, inv.ini, play.yml]
+env: {ANSIBLE_DUPLICATE_YAML_DICT_KEY: error}

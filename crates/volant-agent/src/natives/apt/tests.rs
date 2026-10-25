@@ -749,3 +749,53 @@ echo done",
     );
     assert_eq!(failed.0["rc"], json!(100));
 }
+
+/// A host whose configuration turns apt's cache off has the native's commands name one of the
+/// connection's own; the failure message still quotes the module's command line.
+#[test]
+fn a_host_without_apt_cache_gets_a_private_one() {
+    let host = Host::new("private-cache");
+    let log = host.fake.0.join("apt.log");
+    host.fake
+        .script("/bin/apt-config", "printf \"P=''\nS=''\n\"")
+        .script(
+            "/bin/apt-get",
+            &format!(
+                "echo \"$*\" >> '{}'\n[ -n \"$FAIL\" ] && {{ echo 'E: boom' >&2; exit 100; }}\nexit 0",
+                log.display()
+            ),
+        )
+        .script(
+            "/bin/apt-cache",
+            &format!(
+                "echo \"$*\" >> '{}'\nprintf 'newpkg:\n  Candidate: 1.0\n'",
+                log.display()
+            ),
+        );
+    host.done(&json!({"name": "newpkg"}));
+    let calls = std::fs::read_to_string(&log).unwrap();
+    let lines: Vec<&str> = calls.lines().collect();
+    assert_eq!(lines.len(), 2, "{calls}");
+    for line in &lines {
+        assert!(
+            line.starts_with("-o Dir::Cache::srcpkgcache=/")
+                && line.contains("/apt/srcpkgcache.bin -o Dir::Cache::pkgcache=/"),
+            "{line}"
+        );
+    }
+    assert!(lines[0].ends_with(" policy newpkg"), "{calls}");
+    assert!(host.calls()[0].starts_with("-o Dir::Cache::srcpkgcache="));
+
+    let mut context = host.context();
+    context.environment.insert("FAIL".into(), "1".into());
+    let NativeRun::Done(failed) = host.answer_at(&json!({"name": "newpkg"}), &context, soon())
+    else {
+        panic!("a failed install handed back");
+    };
+    let msg = failed.0["msg"].as_str().unwrap();
+    assert!(msg.starts_with(&format!(
+        "'{} -y ",
+        host.fake.0.join("bin/apt-get").display()
+    )));
+    assert!(!msg.contains("Dir::Cache"), "{msg}");
+}

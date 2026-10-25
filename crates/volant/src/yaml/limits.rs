@@ -189,10 +189,68 @@ pub(super) fn feed<'a, R: SpannedEventReceiver<'a>>(
     receiver: &mut R,
 ) -> Result<(), ScanError> {
     let mut guard = Guard::default();
+    let mut keys = Keys::default();
     for event in Parser::new_from_str(text) {
         let (event, span) = event?;
         guard.admit(&event, span.start)?;
+        keys.see(&event, span.start);
         receiver.on_event(event, span);
     }
+    DUPLICATES.with(|d| d.borrow_mut().extend(keys.duplicates));
     Ok(())
+}
+
+/// A key written twice in one mapping: the key, and the line and column of the second one, both
+/// counted from 1.
+pub(super) type Duplicate = (String, usize, usize);
+
+std::thread_local! {
+    /// The duplicate keys of the texts this thread fed, taken by [`take_duplicates`].
+    static DUPLICATES: std::cell::RefCell<Vec<Duplicate>> =
+        const { std::cell::RefCell::new(Vec::new()) };
+}
+
+/// The duplicate keys [`feed`] found since the last call.
+pub(super) fn take_duplicates() -> Vec<Duplicate> {
+    DUPLICATES.with(|d| std::mem::take(&mut *d.borrow_mut()))
+}
+
+/// The scalar keys of every open mapping, to find one written twice as PyYAML's constructor
+/// does: the same text as a key of the same mapping, a merge key `<<` aside.
+#[derive(Default)]
+struct Keys {
+    /// One entry per open collection: a mapping's keys and how many of its nodes are done.
+    open: Vec<Option<(std::collections::HashSet<String>, usize)>>,
+    duplicates: Vec<Duplicate>,
+}
+
+impl Keys {
+    fn see(&mut self, event: &Event<'_>, at: Marker) {
+        match event {
+            Event::Scalar(text, ..) => {
+                if let Some(Some((keys, done))) = self.open.last_mut() {
+                    if *done % 2 == 0 && text.as_ref() != "<<" && !keys.insert(text.to_string()) {
+                        self.duplicates
+                            .push((text.to_string(), at.line(), at.col() + 1));
+                    }
+                    *done += 1;
+                }
+            }
+            Event::Alias(_) => self.done(),
+            Event::MappingStart(..) => self.open.push(Some(Default::default())),
+            Event::SequenceStart(..) => self.open.push(None),
+            Event::MappingEnd | Event::SequenceEnd => {
+                self.open.pop();
+                self.done();
+            }
+            _ => {}
+        }
+    }
+
+    /// A node of the innermost collection is complete.
+    fn done(&mut self) {
+        if let Some(Some((_, done))) = self.open.last_mut() {
+            *done += 1;
+        }
+    }
 }

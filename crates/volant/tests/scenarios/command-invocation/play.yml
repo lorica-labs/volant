@@ -1,0 +1,16 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - command: "echo {{ item }}"
+      loop: [a]
+      register: c
+    - shell: "echo {{ item }}"
+      loop: [a]
+      register: s
+    - command:
+        argv: [echo, "{{ item }}"]
+        chdir: /tmp
+      loop: [a]
+      register: v
+    - debug:
+        msg: "{{ [c, s, v] | map(attribute='results') | map('first') | map(attribute='invocation') }}"

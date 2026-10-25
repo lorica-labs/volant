@@ -8,6 +8,9 @@ host_list: {sources: ["a:2222,,b,[::1]:22,b:x,"]}
 directory: {sources: [dir]}
 two_sources: {sources: [one.ini, two.ini]}
 two_sources_reversed: {sources: [two.ini, one.ini]}
+# A host named all: the pattern all matches it alone, so --list drops the other groups' hosts.
+host_all_first: {sources: [host_all.ini, web_db.ini]}
+host_all_second: {sources: [web_db.ini, host_all.ini]}
 host_list_then_file: {sources: ["h1,h9,", one.ini]}
 bad: {sources: [bad.ini]}
 bad_then_good: {sources: [bad.ini, one.ini]}

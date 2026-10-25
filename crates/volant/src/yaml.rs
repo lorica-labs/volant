@@ -55,10 +55,61 @@ fn marked<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<MarkedYaml<'a>>
     let mut loader = YamlLoader::<MarkedYaml>::default();
     loader.early_parse(false);
     loader.allow_duplicate_keys(true);
+    limits::take_duplicates();
     merge::parse(text, source, &mut loader)
         .and_then(|()| loader.error().cloned().map_or(Ok(()), |e| Err(e.into())))
         .with_context(|| format!("{source}: invalid YAML"))?;
+    duplicate_keys(source)?;
     Ok(loader.into_documents())
+}
+
+/// What a key written twice gets: `DUPLICATE_YAML_DICT_KEY`, read by the configuration. 0 warns
+/// (the default), 1 refuses the file, 2 says nothing.
+static DUPLICATE_KEYS: std::sync::atomic::AtomicU8 = std::sync::atomic::AtomicU8::new(0);
+
+/// Sets what a key written twice gets: `warn`, `error` or `ignore`, the setting's words.
+pub fn set_duplicate_keys(mode: &str) {
+    let mode = match mode {
+        "error" => 1,
+        "ignore" => 2,
+        _ => 0,
+    };
+    DUPLICATE_KEYS.store(mode, std::sync::atomic::Ordering::Relaxed);
+}
+
+/// Warns about, or refuses, the keys the text just parsed wrote twice. Measured on ansible-core
+/// 2.19.12: the last value is kept, with a warning at the second key, or `YAML parsing failed:`
+/// and exit 4 under `error`.
+fn duplicate_keys(source: &str) -> anyhow::Result<()> {
+    let mode = DUPLICATE_KEYS.load(std::sync::atomic::Ordering::Relaxed);
+    for (key, line, col) in limits::take_duplicates() {
+        if mode == 2 {
+            continue;
+        }
+        let path = std::fs::canonicalize(source)
+            .map_or_else(|_| source.to_string(), |p| p.display().to_string());
+        let origin = crate::playbook::Origin {
+            path: path.into(),
+            line,
+            col,
+        };
+        let message = format!("Found duplicate mapping key '{key}'.");
+        if mode == 1 {
+            return Err(anyhow::Error::new(crate::playbook::Located {
+                message: format!("YAML parsing failed: {message}"),
+                origin,
+            }));
+        }
+        let located = crate::playbook::Located { message, origin };
+        // Once, as the reference loads a file once: this engine reads some files again.
+        static SAID: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+            std::sync::LazyLock::new(Default::default);
+        let text = located.text();
+        if SAID.lock().expect("said lock").insert(text.clone()) {
+            eprintln!("[WARNING]: {text}\nUsing last defined value only.\n");
+        }
+    }
+    Ok(())
 }
 
 /// Where each mapping of a loaded document starts, as `(line, column)`, both counted from 1:

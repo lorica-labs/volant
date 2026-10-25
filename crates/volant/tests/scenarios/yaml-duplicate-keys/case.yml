@@ -1,0 +1,3 @@
+# A key written twice keeps its last value, with a warning at the second key.
+stderr: true
+args: [-i, inv.ini, play.yml]

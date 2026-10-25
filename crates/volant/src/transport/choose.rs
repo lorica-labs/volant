@@ -202,7 +202,12 @@ impl Transport {
             super::chroot::PLUGIN => Ok(Transport::Exec(super::chroot::target(
                 host_name, vars, defaults,
             )?)),
-            other => bail!("host '{host_name}': connection '{other}' is not supported"),
+            other => match super::lxd::Flavor::of(other) {
+                Some(flavor) => Ok(Transport::Exec(super::lxd::target(
+                    flavor, host_name, vars, defaults, keywords,
+                )?)),
+                None => bail!("host '{host_name}': connection '{other}' is not supported"),
+            },
         }
     }
 

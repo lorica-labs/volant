@@ -863,3 +863,44 @@ fn deprecation_warnings_are_on_unless_the_file_turns_them_off() {
 fn the_ssh_terminal_setting_is_read_from_its_section(#[case] text: &str, #[case] on: bool) {
     assert_eq!(cfg(text, ".").ssh_usetty, on);
 }
+
+/// The container connections' settings come from their own sections, and `podman_extra_args`
+/// and `executable` from `[defaults]`.
+#[test]
+fn the_container_connections_read_their_sections() {
+    let config = cfg(
+        "[docker_connection]\nextra_cli_args = --host tcp://h\nprivileged = yes\nworking_dir = /srv\ntimeout = 30\n\
+         [chroot_connection]\nexe = /usr/sbin/chroot\ndisable_root_check = true\n\
+         [defaults]\npodman_extra_args = --remote\nexecutable = /bin/bash\n",
+        ".",
+    );
+    let docker = &config.plugins.docker;
+    assert_eq!(docker.extra_cli_args.as_deref(), Some("--host tcp://h"));
+    assert_eq!(docker.privileged, Some(true));
+    assert_eq!(docker.working_dir.as_deref(), Some("/srv"));
+    assert_eq!(docker.timeout, Some(Duration::from_secs(30)));
+    assert_eq!(
+        config.plugins.chroot.exe.as_deref(),
+        Some("/usr/sbin/chroot")
+    );
+    assert_eq!(config.plugins.chroot.disable_root_check, Some(true));
+    assert_eq!(
+        config.plugins.chroot.executable.as_deref(),
+        Some("/bin/bash")
+    );
+    assert_eq!(
+        config.plugins.podman.extra_args.as_deref(),
+        Some("--remote")
+    );
+}
+
+#[rstest::rstest]
+#[case("[docker_connection]\nprivileged = maybe\n")]
+#[case("[docker_connection]\ntimeout = soon\n")]
+#[case("[chroot_connection]\ndisable_root_check = sometimes\n")]
+fn a_container_setting_that_does_not_read_is_refused(#[case] text: &str) {
+    assert!(
+        parse(text, Path::new("."), "ansible.cfg").is_err(),
+        "{text}"
+    );
+}

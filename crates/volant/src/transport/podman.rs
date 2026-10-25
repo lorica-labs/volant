@@ -76,6 +76,8 @@ pub(super) fn target(
             .is_none()
             .then(|| format!("{executable} command not found in PATH")),
         quiet_stderr: false,
+        failures: Vec::new(),
+        info: None,
         copy: Some(super::CopyInto {
             command: command(&["cp", "-", &format!("{container}:{{dir}}")]),
             feed: super::Feed::TarStdin,

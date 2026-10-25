@@ -20,6 +20,7 @@ Volant erreicht einen verwalteten Host, legt dort einen kleinen statischen Agent
 | `podman` | Startet den Agent über `podman exec -i` in einem laufenden Podman-Container, rootless oder nicht, wie `containers.podman.podman`. Siehe [Podman-Container](#podman-container). |
 | `chroot` | Startet den Agent über `chroot` in einem Verzeichnisbaum auf dem Controller, wie `community.general.chroot`. Siehe [Chroot-Verzeichnisse](#chroot-verzeichnisse). |
 | `buildah` | Startet den Agent über `buildah run` in einem Buildah-Arbeitscontainer, wie `containers.podman.buildah`. Siehe [Buildah-Arbeitscontainer](#buildah-arbeitscontainer). |
+| `lxd` | Startet den Agent über `lxc exec` in einer LXD-Instanz, wie `community.general.lxd`; `community.general.incus` tut dasselbe für Incus. Siehe [LXD- und Incus-Instanzen](#lxd--und-incus-instanzen). |
 
 Jeder andere Name wird vom ansible-core des Controllers aufgelöst, so wie `ansible-playbook` ihn auflöst, einmal pro Name und Lauf. `ansible.builtin.ssh` und `ansible.builtin.local` lösen sich zu den beiden Plugins oben auf und laufen. Ein kurzer Name, den eine Collection von ansible-core übernommen hat, wird zu dieser Collection geleitet, wenn sie installiert ist:
 
@@ -92,6 +93,19 @@ Bevor irgendetwas läuft, schlägt der Task fehl, wie unter ansible-core, bei ei
 `ansible_connection: buildah` oder `containers.podman.buildah` konfiguriert den Arbeitscontainer, den `buildah from <image>` anlegt, sodass ein Play ein Image Schicht für Schicht baut, das `buildah commit` dann speichert. Beide Namen brauchen containers.podman auf dem Controller. Wie bei podman ist der Container `ansible_host`, sonst der Inventory-Name, und der Benutzer ist `ansible_user`, das Schlüsselwort `remote_user` oder `-u`; `root` fügt keine Option hinzu. Das Programm ist das `buildah` aus Ihrem `PATH`, und die `BUILDAH_*`-Variablen erreichen es über die Umgebung.
 
 Der Agent startet mit `buildah run [--user U] <container> -- <agent>`. Volant startet nie `buildah mount`, das für einen rootless Benutzer `buildah unshare` braucht: Ein Arbeitscontainer ohne Shell bekommt den Agent über `buildah copy`. Rootless buildah schreibt bei jedem Befehl Warnungen über Capabilities, deshalb wird das stderr des Agents nicht angezeigt. Mit `-vvvv` erscheint jeder Befehl als `RUN [...]`-Zeile, ohne `ESTABLISH`-Zeile.
+
+## LXD- und Incus-Instanzen
+
+`ansible_connection: lxd` oder `community.general.lxd` führt ein Play in einer LXD-Instanz aus, lokal oder auf einem entfernten Server, über den Befehl `lxc`. `community.general.incus` tut dasselbe für Incus mit dem Befehl `incus`; es hat in ansible-core keinen kurzen Namen. Beide brauchen community.general auf dem Controller.
+
+| Variable | Wirkung |
+|---|---|
+| `ansible_lxd_host`, `ansible_incus_host` | Die Instanz, bis zum ersten Punkt: `web.example.com` ist `web`. Sie hat Vorrang vor `ansible_host`, das Vorrang vor dem Inventory-Namen hat. |
+| `ansible_lxd_remote`, `ansible_incus_remote` | Der entfernte Server, standardmäßig `local`. |
+| `ansible_lxd_project`, `ansible_incus_project` | Das Projekt. Incus übergibt immer eines, standardmäßig `default`. |
+| `ansible_lxd_executable`, `ansible_incus_executable` | Die Shell, unter der die Befehle laufen. Sie hat Vorrang vor `ansible_executable`; standardmäßig `/bin/sh`. |
+
+Der Benutzer ist `ansible_user`, das Schlüsselwort `remote_user` oder `-u`, standardmäßig `root`. Für jeden anderen Benutzer läuft jeder Befehl über die become-Methode, `/bin/su <user> -c`, außer `lxd_become_method` oder `incus_become_method` nennt eine andere. Eine Instanz ohne Shell bekommt den Agent über `lxc file push` oder `incus file push`, wenn der Benutzer root ist. Eine fehlende oder angehaltene Instanz macht den Host nicht erreichbar, mit den Worten des Plugins, etwa `instance not running: web`; Incus fügt den entfernten Server und das Projekt hinzu. Mit `-vvvv` zeigen die Zeilen `ESTABLISH LXD CONNECTION FOR USER: <user>` (`Incus` für Incus), die `INFO:`-Zeile des Plugins für einen Benutzer außer root, dann eine `EXEC [...]`-Zeile pro Befehl.
 
 ## Hostvariablen
 

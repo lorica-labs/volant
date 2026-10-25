@@ -133,7 +133,6 @@ pub(crate) fn contained_refusal(arg: &str, name: &str) -> String {
 /// `true` and `t` in any case and with spaces around, the numbers 1 and 1.0, and `true` are
 /// true; everything else, `no`, `n`, `0`, `1.0` as text and `2` included, is false.
 pub(crate) fn ansible_bool(value: &Value) -> bool {
-    use serde_json::Value;
     match value {
         Value::Bool(b) => *b,
         Value::String(text) => matches!(

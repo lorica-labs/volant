@@ -111,6 +111,12 @@ export const sidebarLabels: Labels = {
     es: 'Runtime gestionado',
     'zh-cn': '托管运行时',
   },
+  'Run recordings': {
+    fr: 'Enregistrements de runs',
+    de: 'Aufzeichnungen von Läufen',
+    es: 'Grabaciones de ejecuciones',
+    'zh-cn': '运行记录',
+  },
   Glossary: { fr: 'Glossaire', de: 'Glossar', es: 'Glosario', 'zh-cn': '术语表' },
   'Under the hood': { fr: 'Sous le capot', de: 'Unter der Haube', es: 'Bajo el capó', 'zh-cn': '内部机制' },
   Architecture: { fr: 'Architecture', de: 'Architektur', es: 'Arquitectura', 'zh-cn': '架构' },

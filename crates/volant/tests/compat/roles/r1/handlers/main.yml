@@ -1,0 +1,2 @@
+- name: h
+  ansible.builtin.debug: {msg: handler}

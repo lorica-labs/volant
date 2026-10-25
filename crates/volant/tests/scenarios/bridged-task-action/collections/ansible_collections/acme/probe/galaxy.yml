@@ -1,0 +1,5 @@
+namespace: acme
+name: probe
+version: 1.0.0
+readme: README.md
+authors: [x]

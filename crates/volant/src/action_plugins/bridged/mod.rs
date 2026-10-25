@@ -258,6 +258,9 @@ pub(super) fn start(
     if let Some(delegate) = &ctx.link.delegate {
         task.insert("delegate_to".into(), json!(delegate));
     }
+    // Measured on ansible-core 2.19.12: a plugin reads the name the task wrote in
+    // `self._task.action`, a redirected one included, and `_execute_module()` runs that name.
+    task.insert("_volant_action".into(), json!(ctx.action));
     task.insert("check_mode".into(), Value::Bool(ctx.check_mode));
     task.insert("diff".into(), Value::Bool(ctx.diff));
     // What `ActionBase.run` reads to refuse an action that does not support it, and what a plugin

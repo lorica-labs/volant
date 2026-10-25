@@ -55,6 +55,7 @@ fn start_mode(
         check_mode: false,
         diff: false,
         async_val: 0,
+        action: "probe",
     })
 }
 

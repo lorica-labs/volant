@@ -5106,6 +5106,7 @@ async fn a_link_another_driver_keeps_is_checked_again_after_a_reboot() {
         reboots: Arc::default(),
         profile: Arc::default(),
         step: None,
+        replay: None,
     };
     let to_h1 = local_key("h1", None);
     // `h2`'s driver: its link to `h1`, proved alive once this play.

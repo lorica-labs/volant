@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use anstream::ColorChoice;
 use tokio::sync::watch;
 
-use super::announce::{announce_callbacks, banner_before_vars_refusal, options_dump, version_line};
+use super::announce::{announce_callbacks, banner_before_vars_refusal, options_dump};
 use super::args::PlaybookArgs;
 use super::hosts::{ListingHosts, play_hosts, rendered, resolve_limit, tag_selection};
 use super::passwords::{ask_passwords, ssh_words};
@@ -27,15 +27,6 @@ use crate::template::Templar;
 use crate::transport::{ConnectionDefaults, Transport};
 use crate::vars::VarStore;
 use crate::{agent, collection, facts_read, playbook, preflight, python};
-
-/// Runs the playbooks and returns the process exit code.
-pub fn run(args: PlaybookArgs) -> i32 {
-    if args.version {
-        println!("{}", version_line());
-        return 0;
-    }
-    drive(&args, &Plays::Files)
-}
 
 /// Runs `plays` with `args` and returns the process exit code: the runtime, the run, and what is
 /// printed after it.
@@ -117,7 +108,7 @@ async fn run_all(
         out,
         match plays {
             Plays::Adhoc(adhoc) => Some(adhoc.callbacks()),
-            Plays::Files => None,
+            Plays::Files | Plays::Replay(_) => None,
         },
     );
     let dump = if out.verbose_at(4) {
@@ -199,7 +190,7 @@ async fn run_all(
     // The reference resolves it here too, before it reads a play: a `--limit` matching nothing
     // stops a listing as surely as it stops a run, measured, exit 1.
     let limit = match plays {
-        Plays::Files => resolve_limit(args, &inventory, out)?,
+        Plays::Files | Plays::Replay(_) => resolve_limit(args, &inventory, out)?,
         Plays::Adhoc(adhoc) => match adhoc.settle_hosts(args, &playbooks, &inventory, out)? {
             Ok(limit) => limit,
             Err(code) => return Ok(code),
@@ -495,6 +486,7 @@ async fn run_all(
         reboots: Arc::default(),
         profile: Arc::clone(profile),
         step: args.step.then(Arc::default),
+        replay: plays.replay(),
     };
 
     let playbook_dir = playbook::base_dir(&files[0]);
@@ -642,7 +634,7 @@ async fn run_all(
                 let rendered = rendered(&prompted, compiled, &state, &inventory, limit.as_ref())?;
                 let play = &*rendered;
                 let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned, true)?;
-                if !local_agent_checked && hosts.iter().any(&is_local) {
+                if !local_agent_checked && options.replay.is_none() && hosts.iter().any(&is_local) {
                     agents.local()?;
                     local_agent_checked = true;
                 }

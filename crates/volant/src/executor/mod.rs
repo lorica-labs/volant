@@ -87,6 +87,9 @@ pub struct RunOptions {
     /// `--step`: present when each task is asked about, and set once the operator answers `c`,
     /// which ends the questions for the rest of the run.
     pub step: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// `volant shadow replay`: every task that would reach a host is answered from the
+    /// recording, and no host is contacted.
+    pub replay: Option<Arc<crate::shadow::replay::Replay>>,
 }
 
 /// Runs one play, batch by batch.

@@ -3,8 +3,10 @@
 
 use serde_json::Value;
 use volant_protocol::TaskResult;
+use volant_protocol::modules::short_name;
 
 use crate::executor::coordinator::{Event, MetaEffect};
+use crate::playbook::PlayTask;
 use crate::render::Dump;
 use crate::stats::Outcome;
 
@@ -121,5 +123,14 @@ impl Driver<'_> {
                 index,
             })
             .await;
+    }
+}
+
+/// How the reference's callback cleans this task's result lines.
+pub(super) fn dump_of(task: &PlayTask) -> Dump {
+    match short_name(&task.module) {
+        "debug" => Dump::Debug,
+        "setup" | "gather_facts" => Dump::Setup,
+        _ => Dump::No,
     }
 }

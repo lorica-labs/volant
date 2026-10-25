@@ -1,0 +1,35 @@
+- hosts: all
+  gather_facts: false
+  roles: [r1]
+  tasks:
+    - name: loop
+      ansible.builtin.command: "echo {{ item }}"
+      loop: [a, b]
+    - name: until
+      ansible.builtin.shell: test -e attempted || { touch attempted; false; }
+      register: out
+      until: out.rc == 0
+      retries: 2
+      delay: 0
+    - name: register
+      ansible.builtin.command: echo registered
+      register: reg
+      changed_when: false
+    - name: when
+      ansible.builtin.debug: {msg: "{{ reg.stdout }}"}
+      when: reg.rc == 0
+    - name: secret
+      ansible.builtin.command: echo hidden
+      no_log: true
+    - name: delegated
+      ansible.builtin.command: "true"
+      delegate_to: other
+      run_once: true
+    - ansible.builtin.include_tasks: inc.yml
+      loop: [1, 2]
+    - name: fails
+      ansible.builtin.command: "false"
+      ignore_errors: true
+    - name: skipped
+      ansible.builtin.command: "true"
+      when: false

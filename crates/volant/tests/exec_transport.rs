@@ -85,6 +85,7 @@ impl Runtime {
             ],
             user: None,
             user_probe: None,
+            unavailable: None,
             remote_tmp: "~/.ansible/tmp".into(),
             connect_timeout: Duration::from_secs(1),
         })

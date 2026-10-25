@@ -34,6 +34,9 @@ pub struct ExecTarget {
     /// With no user set, the command whose output names the user the target runs as, for the
     /// `ESTABLISH` line: `docker inspect --format {{.Config.User}}`.
     pub user_probe: Option<Vec<String>>,
+    /// Why the target cannot be reached at all, said when a link is asked for rather than when
+    /// the connection is read: the runtime's program is not installed here.
+    pub unavailable: Option<String>,
     pub remote_tmp: String,
     /// How long the runtime may take to answer the first command before the target is
     /// reported unreachable.
@@ -62,6 +65,9 @@ impl ExecTarget {
         agents: &AgentSource,
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
+        if let Some(why) = &self.unavailable {
+            return Err(ConnectError::Unreachable(why.clone()));
+        }
         if super::trace::connection_lines() {
             let user = match (&self.user, &self.user_probe) {
                 (Some(user), _) => user.clone(),

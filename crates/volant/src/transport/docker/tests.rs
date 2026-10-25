@@ -192,3 +192,16 @@ fn a_controller_without_docker_says_so() {
         Some(dir.path().join("docker"))
     );
 }
+
+/// The connection is read wherever docker is installed, so the parity page and a play's
+/// pre-flight agree on every machine; the link is what fails.
+#[test]
+fn a_controller_without_docker_fails_the_link_not_the_lookup() {
+    // nextest gives each test a process of its own, so no other thread reads the variable.
+    unsafe { std::env::set_var("PATH", "/nonexistent") };
+    let target = target(json!({}), &crate::testing::defaults()).unwrap();
+    assert_eq!(
+        target.unavailable.as_deref(),
+        Some("docker command not found in PATH")
+    );
+}

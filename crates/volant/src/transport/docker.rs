@@ -71,10 +71,14 @@ pub(super) fn target(
         })?),
         None => defaults.docker.timeout,
     };
-    let docker = program(std::env::var_os("PATH").as_deref())
-        .ok_or_else(|| anyhow::anyhow!("host '{host_name}': docker command not found in PATH"))?;
-    let docker = docker.display().to_string();
+    let found = program(std::env::var_os("PATH").as_deref());
+    let docker = found
+        .as_ref()
+        .map_or_else(|| "docker".to_string(), |path| path.display().to_string());
     Ok(ExecTarget {
+        unavailable: found
+            .is_none()
+            .then(|| "docker command not found in PATH".to_string()),
         user_probe: options
             .user
             .is_none()

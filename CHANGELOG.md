@@ -6,6 +6,38 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.12](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) - 2026-10-25
+
+### Added
+
+- *(transport)* start a cached agent in the same ssh as the probe ([#923](https://github.com/lorica-labs/volant/pull/923))
+- *(executor)* run the items of a copy or template loop side by side ([#919](https://github.com/lorica-labs/volant/pull/919))
+- *(shadow)* keep a ledger and give a verdict per playbook ([#918](https://github.com/lorica-labs/volant/pull/918))
+- *(agent)* send the copy plugin's stat and file in one trip ([#917](https://github.com/lorica-labs/volant/pull/917))
+- *(shadow)* an unknown value for what changes between runs ([#916](https://github.com/lorica-labs/volant/pull/916))
+- *(shadow)* report divergences by kind, with host, task and values ([#886](https://github.com/lorica-labs/volant/pull/886))
+- *(agent)* start the Python server ahead of the first module ([#885](https://github.com/lorica-labs/volant/pull/885))
+- *(shadow)* answer pause prompts and count skipped steps in a replay ([#882](https://github.com/lorica-labs/volant/pull/882))
+- *(template)* run the dict, together, nested and subelements lookups ([#883](https://github.com/lorica-labs/volant/pull/883))
+- *(shadow)* replay a recorded run without contacting a host ([#881](https://github.com/lorica-labs/volant/pull/881))
+- *(agent)* run apt cache updates and installs natively ([#879](https://github.com/lorica-labs/volant/pull/879))
+- *(shadow)* read recordings and check them against the checkout
+- *(compat)* add the volant.compat collection with a record callback ([#877](https://github.com/lorica-labs/volant/pull/877))
+- *(facts)* follow a template src from a loop item attribute ([#875](https://github.com/lorica-labs/volant/pull/875))
+- *(facts)* follow first_found in include_vars ([#874](https://github.com/lorica-labs/volant/pull/874))
+- *(agent)* answer file links, SELinux options and string booleans ([#880](https://github.com/lorica-labs/volant/pull/880))
+- *(agent)* share a Python server across task environments ([#873](https://github.com/lorica-labs/volant/pull/873))
+
+### Changed
+
+- *(controller)* allocate with mimalloc ([#871](https://github.com/lorica-labs/volant/pull/871))
+
+### Fixed
+
+- *(python)* scan each module_utils file once per union build ([#941](https://github.com/lorica-labs/volant/pull/941))
+- *(executor)* give items staging the same file separate rounds ([#925](https://github.com/lorica-labs/volant/pull/925))
+- *(bridge)* start the helper before the first bridged loop ([#876](https://github.com/lorica-labs/volant/pull/876))
+
 ## [0.1.0-alpha.11](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.10...v0.1.0-alpha.11) - 2026-10-24
 
 ### Added

@@ -90,6 +90,8 @@ pub(super) fn target(
             .is_none()
             .then(|| "docker command not found in PATH".to_string()),
         quiet_stderr: false,
+        failures: Vec::new(),
+        info: None,
         copy: Some(copy_into(&docker, &options)),
         user_probe: options
             .user

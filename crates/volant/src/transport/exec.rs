@@ -55,6 +55,13 @@ pub struct ExecTarget {
     /// Whether the agent's stderr is dropped rather than shown: rootless buildah writes a dozen
     /// warnings about capabilities there for every command it runs.
     pub quiet_stderr: bool,
+    /// The plugin's own words for a runtime refusal of the first command: when the runtime's
+    /// output holds the first text, the target is unreachable with the second, rather than with
+    /// what the runtime said.
+    pub failures: Vec<(String, String)>,
+    /// A `-vvvv` line the plugin prints after its `ESTABLISH` line, such as lxd's note on a user
+    /// other than root.
+    pub info: Option<String>,
     pub remote_tmp: String,
     /// How long the runtime may take to answer the first command before the target is
     /// reported unreachable.
@@ -105,6 +112,9 @@ impl ExecTarget {
                 (None, None) => "None".to_string(),
             };
             super::trace::established_as(&self.name, &self.kind, Some(&user));
+            if let Some(info) = &self.info {
+                super::trace::note(&self.name, info);
+            }
         }
         if let Some(e) = escalation
             && e.method == BecomeMethod::Su
@@ -251,6 +261,10 @@ impl Reach for ExecTarget {
 
     /// A container that does not exist or is stopped: the runtime said so on stderr.
     fn probe_failure(&self, probe: &Captured) -> Option<ConnectError> {
+        let said = format!("{}\n{}", probe.stderr, probe.stdout);
+        if let Some((_, message)) = self.failures.iter().find(|(text, _)| said.contains(text)) {
+            return Some(ConnectError::Unreachable(message.clone()));
+        }
         Some(ConnectError::Unreachable(format!(
             "{} could not run a command in {}: {}",
             self.prefix[0],

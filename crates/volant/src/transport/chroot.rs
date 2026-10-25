@@ -65,6 +65,8 @@ pub(super) fn target(
             .is_none()
             .then(|| format!("{exe} command not found in PATH")),
         quiet_stderr: false,
+        failures: Vec::new(),
+        info: None,
         copy: None,
         user_probe: None,
         prefix: vec![chroot, dir.clone()],

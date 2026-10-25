@@ -1,0 +1,83 @@
+---
+sourceHash: 4b6700dd2257
+title: volant shadow
+description: 在不连接任何主机的情况下重放 ansible-playbook 记录的一次运行，看看 Volant 会有哪些不同的做法。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant shadow replay` 读取 `volant.compat.record` 回调写下的记录（参见[运行记录](/zh-cn/docs/reference/recording/)）。它在 Volant 中以相同的选项运行相同的 playbook，对每个本会连到主机的任务，都用 ansible-core 记录的结果作答。然后它把 Volant 的决定与 ansible-core 的实际行为进行比较。不连接任何主机，也不启动任何 agent。
+
+```sh
+volant shadow replay RECORDING [--json]
+```
+
+<Option name="--json">
+  以 JSON Lines 输出报告：每个差异一个对象，最后是一个汇总对象。
+</Option>
+
+## 重放之前
+
+记录中写明了运行读取过的文件。每个文件都从记录的工作目录出发查找，因此请在仓库中相同的位置运行重放。出现以下情况时，重放拒绝开始，退出码为 4：
+
+- 记录的格式比当前 Volant 能读取的更新；消息会写明两个版本；
+- 某个 playbook 或清单文件与记录中的不同（`site.yml changed since the recording`）；
+- 某个 `-e @文件` 参数指向的文件发生了变化。
+
+对 2.19 系列之外的 ansible-core 的记录，重放时会给出 `out-of-profile` 警告。被中断的运行留下的不完整记录，会重放到其最后一个完整行，主机也会在记录结束处停下。
+
+## 重放会执行什么
+
+运行的选项来自记录：清单、extra 变量、tags、limit、check 和 diff 模式、权限提升、vault id 以及 forks。无需再次提供。
+
+本会连到主机的任务，改为得到记录中的结果。之后由 Volant 自己应用 `changed_when`、`failed_when`、`register`、循环和 `until`。`until` 会按顺序得到记录中失败的尝试。`pause` 采用其提示当时得到的回答，并且不会等待。记录为不可达的主机在重放中也不可达。在控制端运行的任务，例如 `debug`、`set_fact`、include 和 `meta`，照常由 Volant 计算。
+
+每次运行都会给出不同值的 lookup 和过滤器，例如 `now`、`password`、`pipe` 或 `lookup('env')`，会真实执行，因此使用它们的 playbook 可能出现只是噪声的差异。带有 Python 模块或收集 facts 的 playbook，仍需要控制端上的 ansible-core 来准备它们，可通过 `VOLANT_PYTHON` 或[托管运行时](/zh-cn/docs/reference/runtime/)提供。
+
+## 报告
+
+重放的运行输出到 stderr，与 `volant playbook` 完全一样。报告输出到 stdout。报告开头是汇总：比较了多少个任务、涉及多少台主机，以及按类型统计的差异。然后列出哪些内容未比较及原因，再列出每个差异：主机、`文件:行号`、任务名、ansible-core 的做法、Volant 的做法以及两者的区别：
+
+```text
+Shadow replay: 23 tasks compared on 2 hosts, 1 divergence: judgment 1.
+Arguments not compared: no_log 2, not in the recording 8.
+
+judgment  local  site.yml:30  fails
+  ansible: {"status":"ok"}
+  volant:  {"status":"failed"}
+  diff:    status: "ok" -> "failed"
+```
+
+差异分为五种，按严重程度从高到低：
+
+| 类型 | 检测的内容 |
+|---|---|
+| `inventory` | 缺少某台主机，或主机所属的组与记录中不同。 |
+| `flow` | 一个引擎运行了而另一个没有运行的任务、不同的顺序，或只在一侧运行的 handler。 |
+| `loop` | 元素数量不同，或元素的值不同。 |
+| `args` | Volant 发给模块的某个参数，其值与模块实际运行时的值不同。只出现在记录中的参数是模块的默认值，不做比较。 |
+| `judgment` | 状态不同（`ok`、`changed`、`failed`、`skipped`）、跳过任务的条件不同、尝试次数不同，或最终汇总不同。 |
+
+某台主机出现第一个 `flow` 差异后，该主机余下的部分不再比较，因为之后的每个任务都已错位。其他主机继续比较。`no_log` 任务只比较其状态，因为记录中没有保留它的其他内容。
+
+使用 `--json` 时，每个差异占一行：
+
+```json
+{"host":"local","task":{"path":"site.yml:30","name":"fails"},"kind":"judgment","ansible":{"status":"ok"},"volant":{"status":"failed"},"diff":"status: \"ok\" -> \"failed\""}
+```
+
+最后一行是汇总：
+
+```json
+{"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
+```
+
+`not_compared` 中的原因有 `after_flow`（该主机出现 `flow` 差异之后）和 `no_log`（只比较状态）。`arguments_not_compared` 中的原因有 `no_log`、`not_recorded`（ansible-core 没有把 `invocation` 传给回调，例如 `debug`，或 ansible-core 2.21 对所有任务都是如此）以及 `controller`（Volant 在控制端运行了该任务，没有发送任何内容）。
+
+## 退出码
+
+| 退出码 | 含义 |
+|---|---|
+| 0 | 没有差异。 |
+| 1 | 至少有一个差异。 |
+| 4 | 无法在当前仓库中重放该记录：格式更新，或有文件发生了变化。 |

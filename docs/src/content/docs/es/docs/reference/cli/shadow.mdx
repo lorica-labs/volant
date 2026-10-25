@@ -1,0 +1,83 @@
+---
+sourceHash: 4b6700dd2257
+title: volant shadow
+description: Reproducir una ejecución que ansible-playbook grabó, sin contactar ningún host, y ver qué habría hecho Volant de otra manera.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant shadow replay` lee una grabación del callback `volant.compat.record` (ver [Grabaciones de ejecuciones](/es/docs/reference/recording/)). Ejecuta los mismos playbooks con las mismas opciones en Volant y responde a cada tarea que llegaría a un host con el resultado que grabó ansible-core. Después compara lo que decidió Volant con lo que hizo ansible-core. No se contacta ningún host y no arranca ningún agente.
+
+```sh
+volant shadow replay RECORDING [--json]
+```
+
+<Option name="--json">
+  Escribir el informe como JSON Lines: un objeto por divergencia y, al final, un objeto de resumen.
+</Option>
+
+## Antes de la reproducción
+
+La grabación nombra los archivos que leyó la ejecución. Cada uno se busca desde el directorio de trabajo de la grabación, así que lanza la reproducción en el mismo lugar de tu repositorio. La reproducción se niega a empezar, con el código de salida 4, cuando:
+
+- el formato de la grabación es más reciente del que lee esta versión de Volant; el mensaje nombra las dos versiones;
+- un playbook o un archivo de inventario difiere del grabado (`site.yml changed since the recording`);
+- ha cambiado un archivo que nombra un argumento `-e @archivo`.
+
+Una grabación de un ansible-core fuera de la serie 2.19 se reproduce con un aviso `out-of-profile`. Una grabación cortada por una ejecución interrumpida se reproduce hasta su última línea completa, y los hosts se detienen donde ella termina.
+
+## Qué ejecuta la reproducción
+
+Las opciones de la ejecución salen de la grabación: inventario, variables extra, tags, límite, modos check y diff, escalada de privilegios, identificadores de vault y forks. No hace falta volver a darlas.
+
+Las tareas que llegan a un host reciben en su lugar el resultado grabado. Después Volant aplica por sí mismo `changed_when`, `failed_when`, `register`, los bucles y `until`. Un `until` recibe en orden los intentos fallidos grabados. Un `pause` toma la respuesta que recibió su prompt y no espera. Un host grabado como inalcanzable es inalcanzable. Las tareas que se ejecutan en el controlador, como `debug`, `set_fact`, los includes y `meta`, las calcula Volant como de costumbre.
+
+Los lookups y filtros que dan un valor distinto en cada ejecución, como `now`, `password`, `pipe` o `lookup('env')`, se ejecutan de verdad, así que un playbook que los usa puede mostrar divergencias que solo son ruido. Un playbook con módulos Python o recogida de facts sigue necesitando ansible-core en el controlador para prepararlos, mediante `VOLANT_PYTHON` o el [runtime gestionado](/es/docs/reference/runtime/).
+
+## El informe
+
+La ejecución reproducida se muestra en stderr, exactamente como lo haría `volant playbook`. El informe va a stdout. Empieza con un resumen: cuántas tareas se compararon, en cuántos hosts, y las divergencias por tipo. Después lista lo que no se comparó y por qué, y cada divergencia con su host, su `archivo:línea`, el nombre de su tarea, lo que hizo ansible-core, lo que hizo Volant y la diferencia:
+
+```text
+Shadow replay: 23 tasks compared on 2 hosts, 1 divergence: judgment 1.
+Arguments not compared: no_log 2, not in the recording 8.
+
+judgment  local  site.yml:30  fails
+  ansible: {"status":"ok"}
+  volant:  {"status":"failed"}
+  diff:    status: "ok" -> "failed"
+```
+
+Una divergencia es de uno de estos cinco tipos, del más grave al menos grave:
+
+| Tipo | Qué detecta |
+|---|---|
+| `inventory` | Falta un host, o pertenece a grupos distintos de los de la grabación. |
+| `flow` | Una tarea que un motor ejecutó y el otro no, un orden distinto, o un handler que solo se ejecutó en un lado. |
+| `loop` | Un número de elementos distinto, o un valor de elemento distinto. |
+| `args` | Un argumento que Volant envía a un módulo con un valor distinto del que usó el módulo. Los argumentos que solo están en la grabación son los valores por defecto del módulo y no se comparan. |
+| `judgment` | Un estado distinto (`ok`, `changed`, `failed`, `skipped`), otra condición que saltó la tarea, un número de intentos distinto, o un resumen final distinto. |
+
+Tras la primera divergencia `flow` en un host, el resto de ese host no se compara, porque todas las tareas siguientes quedan desplazadas. Los demás hosts se siguen comparando. Una tarea `no_log` se compara solo por su estado, ya que la grabación no guarda nada más de ella.
+
+Con `--json`, cada divergencia ocupa una línea:
+
+```json
+{"host":"local","task":{"path":"site.yml:30","name":"fails"},"kind":"judgment","ansible":{"status":"ok"},"volant":{"status":"failed"},"diff":"status: \"ok\" -> \"failed\""}
+```
+
+La última línea es el resumen:
+
+```json
+{"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
+```
+
+Los motivos de `not_compared` son `after_flow` (tras una divergencia `flow` en ese host) y `no_log` (comparada solo por el estado). Los motivos de `arguments_not_compared` son `no_log`, `not_recorded` (ansible-core no pasó ningún `invocation` al callback, como ocurre con `debug`, o como hace ansible-core 2.21 con todas las tareas) y `controller` (Volant ejecutó la tarea en el controlador y no envió nada).
+
+## Códigos de salida
+
+| Código | Significado |
+|---|---|
+| 0 | Ninguna divergencia. |
+| 1 | Al menos una divergencia. |
+| 4 | La grabación no se puede reproducir en este repositorio: un formato más reciente, o un archivo que cambió. |

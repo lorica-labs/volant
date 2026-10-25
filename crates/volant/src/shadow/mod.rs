@@ -3,8 +3,11 @@
 //! callback, to show what Volant would have done differently.
 
 mod args;
+mod compare;
 mod recording;
 pub(crate) mod replay;
+mod report;
+mod watch;
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
@@ -23,16 +26,21 @@ pub enum ShadowCommand {
     Replay {
         /// The recording, `.jsonl` or `.jsonl.gz`.
         recording: PathBuf,
+        /// Report as JSON Lines: one object per divergence, then a summary object.
+        #[arg(long)]
+        json: bool,
     },
 }
 
 pub fn shadow(command: ShadowCommand) -> i32 {
     match command {
-        ShadowCommand::Replay { recording } => replay(&recording),
+        ShadowCommand::Replay { recording, json } => replay(&recording, json),
     }
 }
 
-fn replay(path: &Path) -> i32 {
+/// Replays `path` and reports what differs: exit 0 for nothing, 1 for at least one divergence.
+/// The replayed run prints on stderr, so the report alone is on stdout.
+fn replay(path: &Path, json: bool) -> i32 {
     let ready = recording::read(path).and_then(|recording| {
         check(&recording.header, Path::new("."))?;
         let args = args::playbook_args(&recording.header)?;
@@ -58,7 +66,11 @@ fn replay(path: &Path) -> i32 {
         );
     }
     let root = std::env::current_dir().unwrap_or_default();
-    crate::cli::replay(&args, &Arc::new(replay::Replay::new(&recording, &root)))
+    let replay = Arc::new(replay::Replay::new(&recording, &root));
+    crate::cli::replay(&args, &replay);
+    let report = compare::compare(&recording, &replay);
+    print!("{}", if json { report.json() } else { report.human() });
+    i32::from(!report.divergences.is_empty())
 }
 
 /// Whether a recording of ansible-core `version` is one Volant follows.

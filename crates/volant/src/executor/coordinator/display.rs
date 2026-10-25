@@ -157,6 +157,7 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
         out.ignoring();
         return;
     }
+    watch(&event, stats);
     let Event::Result {
         host,
         outcome,
@@ -206,5 +207,31 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
         // A loop's aggregate prints no line of its own, but the failure it swallowed still has
         // to say so.
         out.ignoring();
+    }
+}
+
+/// Shows a result line to the replay this run answers for, under `volant shadow replay`.
+fn watch(event: &Event, stats: &Stats) {
+    if let (
+        Some(replay),
+        Event::Result {
+            host,
+            index,
+            outcome,
+            result,
+            counts,
+            task_origin,
+            ..
+        },
+    ) = (&stats.replay, event)
+    {
+        replay.observe(
+            host,
+            task_origin.as_ref(),
+            *index,
+            !counts,
+            *outcome,
+            result,
+        );
     }
 }

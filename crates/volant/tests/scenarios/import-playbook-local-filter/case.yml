@@ -1,0 +1,3 @@
+# An import_playbook name rendered with a filter of the playbook's own filter_plugins/.
+args: [-i, inv.ini, play.yml, -e, env=prod]
+needs: [ansible-core]

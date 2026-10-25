@@ -59,6 +59,21 @@ impl<'a> Rendering<'a> {
     }
 }
 
+impl Rendering<'_> {
+    /// Gives the helper the plugin directories beside `files` before any of their imports is
+    /// named: measured on ansible-core 2.19.12, a filter of the playbook's `filter_plugins/`
+    /// renders an `import_playbook` name.
+    ///
+    /// # Errors
+    /// Why the running helper refused the directories.
+    pub fn add_plugin_dirs(&self, files: &[PathBuf]) -> anyhow::Result<()> {
+        match self.templar.bridge() {
+            Some(bridge) => bridge.set_plugin_dirs(files.iter().map(|f| base_dir(f)).collect()),
+            None => Ok(()),
+        }
+    }
+}
+
 impl Default for Rendering<'static> {
     fn default() -> Self {
         static NONE: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);

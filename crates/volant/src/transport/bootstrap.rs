@@ -88,7 +88,11 @@ pub(super) async fn run_bootstrap<T: Reach + ?Sized>(
     let command = match escalated {
         None => command.to_string(),
         // The messages `escalation_outcome` matches are `sudo`'s English ones.
-        Some(_) => format!("LC_ALL=C {}", escalated_command(escalated, command)),
+        Some(_) => format!(
+            "{}LC_ALL=C {}",
+            target.login_tmp(),
+            escalated_command(escalated, command)
+        ),
     };
     run_capturing(target, &command, stdin.as_deref(), offered).await
 }

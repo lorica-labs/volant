@@ -640,16 +640,20 @@ fn ssh_become_over_ssh() {
     // The fixture targets `localhost`, and an inventory that defines that name wins over the
     // implicit local one: the run goes over `ssh` to 127.0.0.1 like every other test here.
     let inv = inventory(&dir, &[("localhost", "")]);
-    // Both accounts keep an agent directory of their own in `remote_tmp`. A `remote_tmp` that
-    // does not exist yet is made by the first account that needs it, root here, and is then
-    // closed to the other, so this test makes it first, as it is on a host that has been set up.
-    std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
-    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
+    // Both accounts keep an agent directory of their own in `remote_tmp`, which does not exist
+    // yet: the login user makes it, mode 0700, as ansible-core 2.19.12 does, though root needs
+    // it first.
     let out = volant(&["playbook", "-i", &inv, &fixture("become.yml")]);
     let text = both(&out);
     assert_eq!(out.status.code(), Some(0), "{text}");
     assert!(
         text.contains(&format!(r#""msg": "root then {}""#, user())),
+        "{text}"
+    );
+    let made = std::fs::metadata(remote_tmp(&dir)).unwrap();
+    assert_eq!(
+        (made.uid(), made.mode() & 0o7777),
+        (std::fs::metadata(&dir).unwrap().uid(), 0o700),
         "{text}"
     );
     let _ = std::fs::remove_dir_all(&dir);
@@ -1196,10 +1200,6 @@ fn ssh_a_command_that_must_not_escalate_runs_as_the_connection_user() {
     assert_passwordless_sudo("the play escalates to root");
     let dir = tmp("sudoable");
     let inv = inventory(&dir, &[("box", "")]);
-    // The connection user's own, as on a host it has logged in to before: the escalated link
-    // would otherwise make it as root, and the plain link could not put its agent there.
-    std::fs::create_dir_all(remote_tmp(&dir)).unwrap();
-    std::fs::set_permissions(remote_tmp(&dir), std::fs::Permissions::from_mode(0o700)).unwrap();
     let local = private_local_tmp(&dir);
     let out = volant_env_within(
         &["playbook", "-i", &inv, &fixture("ssh/sudoable/whoami.yml")],

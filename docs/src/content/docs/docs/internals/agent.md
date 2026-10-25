@@ -41,12 +41,12 @@ The agent travels through `ssh -C`, so OpenSSH compresses it on the wire and not
 Volant runs the cached agent only from a directory that no other account can change. It checks this on the probe, after an upload and again just before the start:
 
 - The directory and the program are not symbolic links. The account that runs the agent owns both, and neither has a group or other write bit.
-- `remote_tmp` belongs to that account, to root or, under `sudo`, to the account that ran `sudo`. Other accounts cannot write to it, or it has the sticky bit, as `/tmp` has.
+- `remote_tmp` belongs to that account, to root or, under `sudo` or `su`, to the account that logged in. Other accounts cannot write to it, or it has the sticky bit, as `/tmp` has.
 - A `remote_tmp` that the account owns may be open to its group when that group is the account's own primary group, as a umask of 002 with a group per user makes it. It may not when an ACL entry shows on it (a `+` after the mode in `ls -l`), because that entry can grant write access to another account. Volant reads only the mode bits, so ACLs that are not in them (NFSv4, ZFS, macOS) are not seen.
 
 Any other state stops the host with an `UNREACHABLE` error that names the path, its permissions and its owner. An upload is created with `umask 077`. If the directory is yours but too open, the upload empties it of Volant's files and makes it again. If another account owns it, Volant leaves it alone and reports it. Only the directories of other versions that the same account owns and that no other account can write are removed.
 
-A `remote_tmp` that does not exist is created by the first account that needs it, with mode 0700, and then belongs to that account. Create it first when several accounts share it. The default `~/.ansible/tmp` needs nothing.
+A `remote_tmp` that does not exist is created by the account that logged in, with mode 0700, as ansible-core does, even when an escalated task needs it first. A `become_user` other than root cannot enter it then: give such an account its own `remote_tmp`, or create a shared one with the sticky bit. The default `~/.ansible/tmp` needs nothing, since `~` names each account's own home.
 
 The checks use `ls -ldn`, so they need no `stat` option. Volant does not check the directories above `remote_tmp`. An account that can replace one of them can still swap the path in the short time between the last check and the start of the agent.
 

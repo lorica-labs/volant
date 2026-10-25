@@ -1,5 +1,5 @@
 ---
-sourceHash: 58f2d335264c
+sourceHash: 3819217d77a5
 title: Der Agent auf Ihren Hosts
 description: Wie Volant den Agent, den es auf jedem Host zwischenspeichert, hochlädt, prüft und repariert, und wie die ssh-Verbindungen zu einem Host geteilt werden.
 ---
@@ -42,12 +42,12 @@ Der Agent reist durch `ssh -C`, sodass OpenSSH ihn auf der Leitung komprimiert u
 Volant führt den zwischengespeicherten Agent nur aus einem Verzeichnis aus, das kein anderes Konto ändern kann. Es prüft das bei der Probe, nach einem Upload und noch einmal kurz vor dem Start:
 
 - Das Verzeichnis und das Programm sind keine symbolischen Links. Das Konto, das den Agent ausführt, besitzt beide, und keines hat ein Schreibbit für Gruppe oder andere.
-- `remote_tmp` gehört diesem Konto, root oder, unter `sudo`, dem Konto, das `sudo` aufgerufen hat. Andere Konten können nicht hineinschreiben, oder es hat das Sticky-Bit, wie `/tmp`.
+- `remote_tmp` gehört diesem Konto, root oder, unter `sudo` oder `su`, dem Konto, das sich angemeldet hat. Andere Konten können nicht hineinschreiben, oder es hat das Sticky-Bit, wie `/tmp`.
 - Ein `remote_tmp`, das dem Konto gehört, darf für seine Gruppe offen sein, wenn diese Gruppe die primäre Gruppe des Kontos ist, wie es eine umask von 002 mit einer Gruppe pro Benutzer ergibt. Das gilt nicht, wenn ein ACL-Eintrag darauf sichtbar ist (ein `+` hinter dem Modus in `ls -l`), weil dieser Eintrag einem anderen Konto Schreibzugriff geben kann. Volant liest nur die Modusbits, ACLs, die nicht darin stehen (NFSv4, ZFS, macOS), sieht es also nicht.
 
 Jeder andere Zustand stoppt den Host mit einem `UNREACHABLE`-Fehler, der den Pfad, seine Berechtigungen und seinen Eigentümer nennt. Ein Upload wird mit `umask 077` angelegt. Gehört das Verzeichnis Ihnen und ist zu offen, leert der Upload es von Volants Dateien und legt es neu an. Gehört es einem anderen Konto, lässt Volant es in Ruhe und meldet es. Entfernt werden nur die Verzeichnisse anderer Versionen, die dasselbe Konto besitzt und die kein anderes Konto beschreiben kann.
 
-Ein `remote_tmp`, das nicht existiert, legt das erste Konto an, das es braucht, mit Modus 0700, und es gehört dann diesem Konto. Legen Sie es vorher an, wenn mehrere Konten es teilen. Das Standard-`~/.ansible/tmp` braucht nichts.
+Ein `remote_tmp`, das nicht existiert, legt das angemeldete Konto mit Modus 0700 an, wie ansible-core, auch wenn ein Task mit Rechteausweitung es zuerst braucht. Ein anderer `become_user` als root kann es dann nicht betreten: Geben Sie einem solchen Konto ein eigenes `remote_tmp`, oder legen Sie ein gemeinsames mit Sticky-Bit an. Das Standard-`~/.ansible/tmp` braucht nichts, weil `~` das Home jedes Kontos bezeichnet.
 
 Die Prüfungen verwenden `ls -ldn` und brauchen daher keine `stat`-Option. Volant prüft die Verzeichnisse über `remote_tmp` nicht. Ein Konto, das eines davon ersetzen kann, kann den Pfad in der kurzen Zeit zwischen der letzten Prüfung und dem Start des Agents immer noch austauschen.
 

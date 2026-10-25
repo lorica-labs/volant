@@ -1,0 +1,12 @@
+[
+  {
+    "code": 4,
+    "stderr": "[ERROR]: conflicting action statements: debug, bogus_kw\nOrigin: <golden-tmp>/static.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - debug: msg=in\n        ^ column 7\n\n",
+    "stdout": ""
+  },
+  {
+    "code": 4,
+    "stderr": "[ERROR]: conflicting action statements: debug, bogus_kw\nOrigin: <golden-tmp>/roles/r/tasks/main.yml:1:3\n\n1 - debug: msg=in\n    ^ column 3\n\n",
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"before\"\n}\n\nTASK [include_role : r] ********************************************************\n"
+  }
+]

@@ -17,7 +17,7 @@ mod tree;
 
 pub(crate) use error::source_context;
 pub use error::{
-    AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, cause,
+    AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, block_text, cause,
     concat_message, lead, task_failed,
 };
 pub(crate) use recap_json::ansible_json;

@@ -324,41 +324,7 @@ impl Renderer {
         if self.oneline {
             return;
         }
-        let mut text = format!("[ERROR]: {}", block.message);
-        if block.causes.is_empty() {
-            if let Some(origin) = &block.origin {
-                text.push('\n');
-                text.push_str(&source_context(origin));
-            } else if let Some(data) = &block.unknown {
-                text.push_str("\nOrigin: <unknown>\n\n");
-                text.push_str(data);
-            }
-        } else {
-            // `format_event_verbose_message`: the brief message, then one segment per link.
-            let mut first = block
-                .lead
-                .clone()
-                .unwrap_or_else(|| "Task failed.".to_string());
-            if let Some(origin) = &block.origin {
-                first.push('\n');
-                first.push_str(&source_context(origin));
-            }
-            let mut segments = vec![first];
-            for cause in &block.causes {
-                let mut segment = cause.msg.clone();
-                if let Some(origin) = &cause.origin {
-                    segment.push('\n');
-                    segment.push_str(&source_context(origin));
-                }
-                if let Some(help) = &cause.help {
-                    segment.push_str("\n\n");
-                    segment.push_str(help);
-                }
-                segments.push(segment);
-            }
-            text.push_str("\n\n");
-            text.push_str(&segments.join("\n\n<<< caused by >>>\n\n"));
-        }
+        let mut text = block_text(block);
         if !self.errored.insert(text.clone()) {
             return;
         }
@@ -372,7 +338,49 @@ impl Renderer {
             let _ = writeln!(self.out, "{}", self.paint(FAILED, &text));
         }
     }
+}
 
+/// The text of a block, `[ERROR]: ` first, without the blank line that ends one of several lines.
+pub fn block_text(block: &ErrorBlock) -> String {
+    let mut text = format!("[ERROR]: {}", block.message);
+    if block.causes.is_empty() {
+        if let Some(origin) = &block.origin {
+            text.push('\n');
+            text.push_str(&source_context(origin));
+        } else if let Some(data) = &block.unknown {
+            text.push_str("\nOrigin: <unknown>\n\n");
+            text.push_str(data);
+        }
+    } else {
+        // `format_event_verbose_message`: the brief message, then one segment per link.
+        let mut first = block
+            .lead
+            .clone()
+            .unwrap_or_else(|| "Task failed.".to_string());
+        if let Some(origin) = &block.origin {
+            first.push('\n');
+            first.push_str(&source_context(origin));
+        }
+        let mut segments = vec![first];
+        for cause in &block.causes {
+            let mut segment = cause.msg.clone();
+            if let Some(origin) = &cause.origin {
+                segment.push('\n');
+                segment.push_str(&source_context(origin));
+            }
+            if let Some(help) = &cause.help {
+                segment.push_str("\n\n");
+                segment.push_str(help);
+            }
+            segments.push(segment);
+        }
+        text.push_str("\n\n");
+        text.push_str(&segments.join("\n\n<<< caused by >>>\n\n"));
+    }
+    text
+}
+
+impl Renderer {
     /// `censored` is the `no_log` of the task whose batch could not be sent. Measured on
     /// ansible-core 2.19.12: the reference censors this line too, so the reason the host could
     /// not be reached is hidden along with everything else the task would have printed.

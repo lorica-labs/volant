@@ -84,11 +84,15 @@ const RESTRICTED_FACTS: [&str; 39] = [
 /// removes one from in `cleanup`: a host that named it for itself would choose where the agent,
 /// escalated or not, writes and deletes.
 ///
+/// `ansible_executable` is the shell a chroot's commands run under: a tree that named its own
+/// would choose the program its next task starts with.
+///
 /// `ansible_sudo_*`, `ansible_su_*` and `ansible_su_prompt_l10n` are the escalation settings of
 /// one method, read like their `ansible_become_*` twins: a host must not name its own `exe`,
 /// `user` or password.
-const ENGINE_RESTRICTED_FACTS: [&str; 12] = [
+const ENGINE_RESTRICTED_FACTS: [&str; 13] = [
     "ansible_remote_tmp",
+    "ansible_executable",
     "ansible_package_use",
     "ansible_async_dir",
     "ansible_sudo_exe",

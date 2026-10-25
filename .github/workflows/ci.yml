@@ -94,9 +94,10 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
-      # Many tests spend their time waiting on a child process or a timer, not on a core: more
-      # test threads than the runner has cores keeps the cores busy.
-      NEXTEST_TEST_THREADS: 8
+      # Many tests spend their time waiting on a child process or a timer, not on a core. On the
+      # three-core macOS runner eight test threads cut the run from 286 s to 172 s. The Linux leg
+      # runs under llvm-cov and keeps its four cores busy already: eight threads changed nothing.
+      NEXTEST_TEST_THREADS: ${{ matrix.os == 'macos-latest' && '8' || 'num-cpus' }}
     steps:
       - if: needs.changes.outputs.code == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

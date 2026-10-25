@@ -3,6 +3,8 @@
 
 use std::path::{Component, Path, PathBuf};
 
+use serde_json::Value;
+use volant_protocol::TaskResult;
 use volant_protocol::encoding::b64_encode;
 use volant_protocol::frame::MAX_FRAME_LEN;
 
@@ -130,7 +132,7 @@ pub(crate) fn contained_refusal(arg: &str, name: &str) -> String {
 /// A value as ansible-core's `boolean(value, strict=False)` reads it: `y`, `yes`, `on`, `1`,
 /// `true` and `t` in any case and with spaces around, the numbers 1 and 1.0, and `true` are
 /// true; everything else, `no`, `n`, `0`, `1.0` as text and `2` included, is false.
-pub(crate) fn ansible_bool(value: &serde_json::Value) -> bool {
+pub(crate) fn ansible_bool(value: &Value) -> bool {
     use serde_json::Value;
     match value {
         Value::Bool(b) => *b,
@@ -205,3 +207,33 @@ pub(crate) fn blob_of(name: &str, bytes: &[u8]) -> Result<FileBlob, String> {
 
 #[cfg(test)]
 mod tests;
+
+/// How the reference's loader words a source file it cannot read.
+const UNREADABLE: &str = "an error occurred while trying to read the file ";
+
+/// Why the controller file `found` could not be read: the loader's sentence with Python's
+/// `OSError` behind it, measured on ansible-core 2.19.12.
+pub(super) fn unreadable(found: &Path, err: &std::io::Error) -> String {
+    match err.raw_os_error() {
+        Some(errno) => {
+            let shown = found.display();
+            let text = err.to_string();
+            let reason = text.split(" (os error").next().unwrap_or(&text);
+            format!("{UNREADABLE}'{shown}': [Errno {errno}] {reason}: b'{shown}'")
+        }
+        None => format!("could not read src={}: {err}", found.display()),
+    }
+}
+
+/// The failure of a source [`unreadable`] worded: raised by the plugin, so `Task failed: ` and
+/// the sentence, `changed: false`, and no interpreter discovered.
+pub(super) fn unreadable_failure(msg: &str) -> Option<TaskResult> {
+    msg.starts_with(UNREADABLE).then(|| {
+        let mut failed = TaskResult::failed_with(format!("Task failed: {msg}"));
+        failed.0.insert("changed".into(), Value::Bool(false));
+        failed
+            .0
+            .insert(crate::executor::RAISED_KEY.into(), Value::Bool(true));
+        failed
+    })
+}

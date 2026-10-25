@@ -16,7 +16,10 @@ use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 use volant_protocol::encoding::sha1_hex;
 
-use super::files::{ansible_bool, blob_of, check_host_named, fits, not_found, search_paths};
+use super::files::{
+    ansible_bool, blob_of, check_host_named, fits, not_found, search_paths, unreadable,
+    unreadable_failure,
+};
 use super::{Context, Plugin, Step, Sub, lost};
 use crate::executor::as_bool_value;
 
@@ -88,6 +91,7 @@ pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
         // Measured: with `remote_src` the module runs alone, with the task's arguments as they
         // are, and no `stat` before it.
         Ok(None) => Box::new(Then(Some(Sub::run("copy", ctx.args.clone())))),
+        Err(msg) if let Some(failed) = unreadable_failure(&msg) => failing_with(failed),
         Err(msg) => failing(msg),
     }
 }
@@ -151,7 +155,7 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
     if found.is_dir() {
         return Err(format!("copying a directory is not supported yet: {src}"));
     }
-    let unreadable = |err: std::io::Error| format!("could not read src={}: {err}", found.display());
+    let unreadable = |err: std::io::Error| unreadable(found, &err);
     let basename = found
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())

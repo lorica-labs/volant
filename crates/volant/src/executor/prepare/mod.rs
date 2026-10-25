@@ -20,6 +20,7 @@ mod connect;
 mod escalation;
 mod fields;
 mod item;
+mod label;
 mod late;
 mod loops;
 mod plan;
@@ -29,9 +30,10 @@ mod vars;
 pub(in crate::executor) use escalation::retry_name;
 pub(in crate::executor) use item::strict_boolean;
 pub(in crate::executor) use item::{
-    FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, label_failed,
-    label_raised_result, pause_of, raised_by_label, undefined_name,
+    FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, pause_of,
+    undefined_name,
 };
+pub(in crate::executor) use label::{label_failed, label_raised_result, raised_by_label};
 pub(in crate::executor) use late::{hide_after_failure, resolve, strategy_reads_as_true};
 pub(in crate::executor) use plan::{Gate, PlayPlan, Strategy};
 pub(in crate::executor) use vars::host_vars;
@@ -41,7 +43,8 @@ use carry::Carry;
 use connect::{connect_for, delegate_for};
 use escalation::become_for;
 use fields::{Fields, render_fields};
-use item::{item_failure, label_for, notify_for};
+use item::{item_failure, notify_for};
+use label::label_for;
 pub(in crate::executor) use loops::undefined_causes;
 use loops::{LoopOptions, loop_list, loop_options, named_undefined, with_lookup_items};
 

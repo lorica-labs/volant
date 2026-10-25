@@ -16,6 +16,10 @@ pub(in crate::executor) fn registered_value(
     task: &PlayTask,
     results: &[(Option<Value>, TaskResult)],
 ) -> Value {
+    // A label that raised fails the whole task: its failure is what is registered.
+    if let Some(r) = crate::executor::prepare::raised_by_label(results) {
+        return Value::Object(crate::executor::report::without_error(r).0);
+    }
     if !loops(task, results.first().map(|(element, _)| element)) {
         return results.first().map_or(Value::Null, |(_, r)| {
             Value::Object(crate::executor::report::without_error(r).0)

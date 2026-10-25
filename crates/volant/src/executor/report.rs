@@ -59,7 +59,15 @@ pub(super) async fn report_task(
     delegate: Option<&str>,
     hold: Hold<'_>,
 ) -> Option<TaskResult> {
-    let is_loop = loops(task, results.first().map(|(element, _)| element));
+    // A label that raised ends the task after the items before it: they print their lines, and
+    // the failure stands for the whole task in place of the loop's aggregate.
+    let raised = crate::executor::prepare::raised_by_label(results).cloned();
+    let results = if raised.is_some() {
+        &results[..results.len() - 1]
+    } else {
+        results
+    };
+    let is_loop = loops(task, results.first().map(|(element, _)| element)) || raised.is_some();
     let censored = task.censors();
     let ignores = |i: usize| {
         ignored
@@ -75,9 +83,11 @@ pub(super) async fn report_task(
     let failure_stands = results
         .iter()
         .enumerate()
-        .any(|(i, (_, r))| r.is_failed_among(decided) && !ignores(i));
+        .any(|(i, (_, r))| r.is_failed_among(decided) && !ignores(i))
+        || (raised.is_some() && !task.ignores_errors());
     let any_failed = results.iter().any(|(_, r)| r.is_failed_among(decided));
-    let aggregate = is_loop.then(|| aggregate(task, results, dump, any_failed, censored));
+    let aggregate =
+        (is_loop && raised.is_none()).then(|| aggregate(task, results, dump, any_failed, censored));
     // The result the debugger judges: the task's own, or the loop's aggregate.
     let judged = match &aggregate {
         Some((aggregate, _)) => Some(classify_as(
@@ -191,6 +201,26 @@ pub(super) async fn report_task(
         say_saved().await;
     }
     let mut failure = first_failure.map(|r| without_error(&r));
+    if let Some(r) = raised {
+        let outcome = classify(&r, task.ignores_errors(), rescuable);
+        failure = Some(without_error(&r));
+        let _ = tx
+            .send(Event::Result {
+                host: host.to_string(),
+                index,
+                label: None,
+                outcome,
+                error: Some(ErrorBlock::of(&r, task.origin.as_ref(), censored)),
+                result: r,
+                dump,
+                show: true,
+                counts: true,
+                censored,
+                delegate: delegate.map(str::to_string),
+                task_origin: task.origin.clone(),
+            })
+            .await;
+    }
     if let Some((aggregate, show)) = aggregate {
         let outcome = classify_as(&aggregate, any_failed, !failure_stands, rescuable);
         // Measured on ansible-core 2.19.12: a rescue reading `ansible_failed_result.results`

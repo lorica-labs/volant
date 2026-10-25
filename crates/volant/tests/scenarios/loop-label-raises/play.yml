@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - command: "true"
+      loop: [1, 2, 3, 4]
+      register: r
+      ignore_errors: true
+      loop_control:
+        label: "{{ lookup('file', 'nonexistent') if item == 3 else item }}"
+    - debug: {var: r}
+    - debug: {msg: "{{ item }}"}
+      loop: [1, 2, 3, 4]
+      loop_control:
+        label: "{{ lookup('file', 'nonexistent') if item == 3 else item }}"
+    - debug: {msg: not reached}

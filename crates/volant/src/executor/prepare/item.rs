@@ -182,6 +182,40 @@ pub(in crate::executor) struct Item {
     /// The message of a `loop_control.label` that failed to render, for an item that runs: the
     /// reference renders the label after the item ran, and fails the item with it then.
     pub(in crate::executor) label_error: Option<String>,
+    /// The message of a `loop_control.label` that raised on anything but an undefined name. The
+    /// item runs, then the task fails with this error, and no item behind it runs.
+    pub(in crate::executor) label_raised: Option<String>,
+}
+
+/// The key a result carries when its item's label raised: the task's failure, standing for the
+/// whole loop. Taken off with the other `_volant_` keys.
+pub(in crate::executor) const LABEL_RAISED_KEY: &str = "_volant_label_raised";
+
+/// The task failure a label that raised leaves. Measured on ansible-core 2.19.12: the items before
+/// it print their lines, then `fatal: [h]: FAILED! => {"msg": ...}` with the error at the label's
+/// value, and the task registers `exception`, `failed` and `msg` alone.
+pub(in crate::executor) fn label_raised_result(task: &PlayTask, message: &str) -> TaskResult {
+    let mut r = TaskResult::failed_with(message);
+    r.0.insert("exception".into(), "(traceback unavailable)".into());
+    r.0.insert(crate::render::ERROR_KEY.into(), message.into());
+    if let Some(at) = task.value_origins.get("loop_control.label") {
+        r.0.insert(
+            crate::render::AT_KEY.into(),
+            crate::render::cause("", Some(at), None),
+        );
+    }
+    r.0.insert(LABEL_RAISED_KEY.into(), Value::Bool(true));
+    r
+}
+
+/// The result a label that raised left at the end of `results`, if one did.
+pub(in crate::executor) fn raised_by_label(
+    results: &[(Option<Value>, TaskResult)],
+) -> Option<&TaskResult> {
+    results
+        .last()
+        .map(|(_, r)| r)
+        .filter(|r| r.0.contains_key(LABEL_RAISED_KEY))
 }
 
 /// The `(item=...)` label of one item and, when its `loop_control.label` fails on an undefined
@@ -191,7 +225,7 @@ pub(in crate::executor) struct Item {
 /// `debug` result no longer holds once it is cleaned for display: `(item=None)` there.
 ///
 /// Any other error, a lookup that raises for one, ends the reference's whole task once the item
-/// ran. That is not done item by item yet: the error fails the task before any item runs.
+/// ran: the caller keeps it as the item's `label_raised`.
 pub(super) fn label_for(
     task: &PlayTask,
     element: Option<&Value>,

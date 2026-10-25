@@ -112,7 +112,7 @@ pub(in crate::executor) async fn poll_job<C: AgentChannel>(
             host: host.to_string(),
             index,
             line,
-            debug: true,
+            shade: crate::executor::coordinator::Shade::Debug,
             banner: true,
         })
     };

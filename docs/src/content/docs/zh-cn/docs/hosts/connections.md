@@ -17,9 +17,24 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 | `ssh` | 运行 `PATH` 中的 OpenSSH 客户端。Volant 自己构建命令行，不使用包装脚本，也不使用 Rust 的 SSH 库，所以你的 `~/.ssh/config` 会生效。 |
 | `local` | 在控制节点上把 agent 作为子进程运行，不经过网络。 |
 
-其他所有连接都会被拒绝。这包括 `paramiko_ssh`、`winrm`、`psrp`，`docker`、`podman`、`kubectl` 和 `aws_ssm` 这类容器和云插件，以及两个受支持连接的完全限定写法：`ansible.builtin.ssh`、`ansible.builtin.local` 和 `ansible.legacy.*`。任何含有点的值都会被拒绝，所以 `community.docker.docker` 这类 collection 的插件也是如此。该主机会被报告为不可达，消息为 `connection '<name>' is not supported`，其余的运行继续。
+其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
-不属于任何插件的裸名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。`docker` 以及 collection 从 ansible-core 手中接管的其他名字也是如此，因为那个 collection 并不在这里。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
+| 短名字 | 解析为 | `ansible` 12.3.0 包中的 collection |
+|---|---|---|
+| `docker` | `community.docker.docker` | community.docker 4.8.5 |
+| `podman` | `containers.podman.podman` | containers.podman 1.18.0 |
+| `buildah` | `containers.podman.buildah` | containers.podman 1.18.0 |
+| `kubectl` | `kubernetes.core.kubectl` | kubernetes.core 6.2.0 |
+| `lxd` | `community.general.lxd` | community.general 11.4.2 |
+| `chroot` | `community.general.chroot` | community.general 11.4.2 |
+| `aws_ssm` | `community.aws.aws_ssm`，`community.aws` 10.0.0 再把它转到 `amazon.aws.aws_ssm` | amazon.aws 10.1.2 |
+| `incus` | 没有短名字：写 `community.general.incus` | community.general 11.4.2 |
+
+使用 `-vvv` 时，被转向的名字会在某台主机上第一个使用它的 task 下打印 `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot`，每一跳一行。
+
+解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `community.docker.docker`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
+
+什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
 密码来自 `-k`、`--connection-password-file` 或 `ansible_password` 变量。Volant 通过 `SSH_ASKPASS` 和一个运行结束时会删除的私有临时文件把它交给 `ssh`，这需要 OpenSSH 8.4 或更高版本。随后 `ssh` 以 `BatchMode=no` 和 `NumberOfPasswordPrompts=1` 运行，所以一次错误的回答就会结束这次尝试。密码绝不会出现在命令行、程序的环境或输出中，`-vvvv` 也不例外。用 vault 加密的 `ansible_password` 与任何 vault 加密的变量一样工作。没有密码时，`ssh` 以 `BatchMode=yes` 运行，从不提示，所以需要密码或口令的主机会被报告为不可达，而不是让运行卡住。
 
@@ -173,7 +188,7 @@ Volant 会询问 `sudo` 该用哪种形式，而不是假设其中一种。它�
 ## 尚未支持
 
 - Windows 主机和网络设备。
-- 连接类型一节中点名的那些连接插件。
+- `ssh` 和 `local` 之外的连接插件，列在[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)中。
 - `doas`、`pbrun` 以及其他 become 方法。它们可以作为启动 agent 的其他方式添加，无需更改协议。
 
 完整列表见[关键字](/zh-cn/docs/reference/keywords/)，它由引擎读取的表格生成。

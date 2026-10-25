@@ -465,6 +465,7 @@ async fn run_all(
         ssh_common_args: ssh_words("--ssh-common-args", args.connect.ssh_common_args.as_deref())?,
         ssh_extra_args: ssh_words("--ssh-extra-args", args.connect.ssh_extra_args.as_deref())?,
         ssh_use_tty: config.ssh_usetty,
+        names: crate::transport::ConnectionNames::through(Arc::clone(&bridge) as _),
     };
     let mut stats = Stats::default();
 
@@ -588,10 +589,7 @@ async fn run_all(
         for (key, value) in &extra_for_check {
             vars.insert(key.clone(), value.clone());
         }
-        matches!(
-            Transport::for_vars(&host.name, &vars, &options.defaults),
-            Ok(Transport::Local)
-        )
+        Transport::is_local_before_run(&host.name, &vars, &options.defaults)
     };
     let mut local_agent_checked = false;
     // The reference's display says a warning once for the run, however many plays repeat it.

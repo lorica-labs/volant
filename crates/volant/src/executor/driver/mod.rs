@@ -1187,7 +1187,7 @@ pub(super) async fn drive_host(
                                                 host: name.clone(),
                                                 index: pos,
                                                 line,
-                                                debug: false,
+                                                shade: crate::executor::coordinator::Shade::Plain,
                                                 banner: true,
                                             })
                                             .await;
@@ -1343,106 +1343,106 @@ pub(super) async fn drive_host(
                     // The host's own map is enough here: every connection setting is a name a
                     // gather strips, so none of them is ever in the facts layer beside it.
                     let vars = &*target_vars.own_variables();
-                    let transport =
-                        match Transport::for_task(&target, vars, &options.defaults, &connect) {
-                            Ok(transport) => transport.shared(
-                                options.control_dir.as_deref(),
+                    let transport = match driver.reach(pos, &target, vars, &options, &connect).await
+                    {
+                        Ok(transport) => transport.shared(
+                            options.control_dir.as_deref(),
+                            &name,
+                            delegate_name.as_deref(),
+                        ),
+                        // The tasks in hand ran under a connection that was resolved; this
+                        // one is the next batch's first, where the same failure ends the
+                        // host with its own message.
+                        Err(_) if !batch.is_empty() => break,
+                        // A plugin nobody has fails the task itself, item by item, through
+                        // the ordinary failure path: a `rescue` takes it, `ignore_errors`
+                        // swallows it, and the host is not unreachable.
+                        Err(ref err)
+                            if let Some(missing) =
+                                err.downcast_ref::<crate::transport::ConnectionNotFound>() =>
+                        {
+                            if let Some(message) = missing.warning() {
+                                driver.warn(pos, message).await;
+                            }
+                            let msg = format!("Task failed: {missing}");
+                            let results: Vec<(Option<Value>, TaskResult)> = items
+                                .iter()
+                                .map(|item| {
+                                    let mut r = TaskResult::failed_with(msg.clone());
+                                    r.0.insert("changed".into(), Value::Bool(false));
+                                    (item.element.clone(), r)
+                                })
+                                .collect();
+                            let labels: Vec<Option<String>> =
+                                items.iter().map(|i| i.label.clone()).collect();
+                            record_registered(
+                                &mut store.lock().expect("vars lock"),
+                                task,
+                                &register_hosts,
+                                &results,
+                                &[],
+                            );
+                            let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
+                            if let Some(result) = report_task(
+                                &tx,
                                 &name,
+                                pos,
+                                task,
+                                &results,
+                                &labels,
+                                &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
+                                &[],
+                                &[],
+                                dump_of(task),
+                                rescuable,
                                 delegate_name.as_deref(),
-                            ),
-                            // The tasks in hand ran under a connection that was resolved; this
-                            // one is the next batch's first, where the same failure ends the
-                            // host with its own message.
-                            Err(_) if !batch.is_empty() => break,
-                            // A plugin nobody has fails the task itself, item by item, through
-                            // the ordinary failure path: a `rescue` takes it, `ignore_errors`
-                            // swallows it, and the host is not unreachable.
-                            Err(ref err)
-                                if let Some(missing) =
-                                    err.downcast_ref::<crate::transport::ConnectionNotFound>() =>
+                                Hold::new(&plan, &mut permit),
+                            )
+                            .await
                             {
-                                if let Some(message) = missing.warning() {
-                                    driver.warn(pos, message).await;
-                                }
-                                let msg = format!("Task failed: {missing}");
-                                let results: Vec<(Option<Value>, TaskResult)> = items
-                                    .iter()
-                                    .map(|item| {
-                                        let mut r = TaskResult::failed_with(msg.clone());
-                                        r.0.insert("changed".into(), Value::Bool(false));
-                                        (item.element.clone(), r)
-                                    })
-                                    .collect();
-                                let labels: Vec<Option<String>> =
-                                    items.iter().map(|i| i.label.clone()).collect();
-                                record_registered(
-                                    &mut store.lock().expect("vars lock"),
-                                    task,
-                                    &register_hosts,
-                                    &results,
-                                    &[],
-                                );
-                                let rescuable = !handlers_only && rescue_target(&c, pos).is_some();
-                                if let Some(result) = report_task(
+                                failed |= !rescuable;
+                                failed_at = Some((pos, result));
+                                break;
+                            }
+                            let Some(next) = driver.advance(pos).await else {
+                                break 'run;
+                            };
+                            pos = next;
+                            continue;
+                        }
+                        // The batch this task would have opened never formed, so the two
+                        // fields the `UNREACHABLE!` line reads are set here rather than
+                        // below: the arrow names the delegate this task asked for, and
+                        // `no_log` censors the reason.
+                        Err(err) => {
+                            // The task said an unreachable host stays: the reason is
+                            // shown and the host moves on to the next step.
+                            if task.ignores_unreachable() {
+                                ignore_unreachable(
                                     &tx,
                                     &name,
                                     pos,
                                     task,
-                                    &results,
-                                    &labels,
-                                    &items.iter().map(|i| i.ignore_errors).collect::<Vec<_>>(),
-                                    &[],
-                                    &[],
-                                    dump_of(task),
-                                    rescuable,
+                                    format!("{err:#}"),
                                     delegate_name.as_deref(),
-                                    Hold::new(&plan, &mut permit),
+                                    &store,
+                                    &register_hosts,
                                 )
-                                .await
-                                {
-                                    failed |= !rescuable;
-                                    failed_at = Some((pos, result));
-                                    break;
-                                }
+                                .await;
                                 let Some(next) = driver.advance(pos).await else {
                                     break 'run;
                                 };
                                 pos = next;
                                 continue;
                             }
-                            // The batch this task would have opened never formed, so the two
-                            // fields the `UNREACHABLE!` line reads are set here rather than
-                            // below: the arrow names the delegate this task asked for, and
-                            // `no_log` censors the reason.
-                            Err(err) => {
-                                // The task said an unreachable host stays: the reason is
-                                // shown and the host moves on to the next step.
-                                if task.ignores_unreachable() {
-                                    ignore_unreachable(
-                                        &tx,
-                                        &name,
-                                        pos,
-                                        task,
-                                        format!("{err:#}"),
-                                        delegate_name.as_deref(),
-                                        &store,
-                                        &register_hosts,
-                                    )
-                                    .await;
-                                    let Some(next) = driver.advance(pos).await else {
-                                        break 'run;
-                                    };
-                                    pos = next;
-                                    continue;
-                                }
-                                unreachable_censored = task.censors();
-                                unreachable_origin = task.origin.clone();
-                                unreachable_delegate = delegate_name;
-                                unreachable_index = Some(pos);
-                                unreachable = Some(format!("{err:#}"));
-                                continue 'run;
-                            }
-                        };
+                            unreachable_censored = task.censors();
+                            unreachable_origin = task.origin.clone();
+                            unreachable_delegate = delegate_name;
+                            unreachable_index = Some(pos);
+                            unreachable = Some(format!("{err:#}"));
+                            continue 'run;
+                        }
+                    };
                     if !batch.is_empty()
                         && (escalation != batch_escalation
                             || delegate_name != batch_delegate

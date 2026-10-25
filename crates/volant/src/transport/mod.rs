@@ -11,6 +11,7 @@ mod defaults;
 mod escalation;
 mod fused;
 mod names;
+mod resolve;
 mod session;
 mod shell;
 mod ssh;
@@ -27,6 +28,7 @@ pub use defaults::{
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;
 pub(crate) use names::{first_set, secret_text};
+pub use resolve::{ConnectionNames, Resolution, ResolveConnection};
 pub(crate) use shell::validate_remote_tmp;
 pub(crate) use trace::shell_quote;
 

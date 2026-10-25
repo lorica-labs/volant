@@ -21,6 +21,7 @@ use super::defaults::{
 use super::escalation::check_local_escalation;
 use super::escalation::{local_argv, local_su, preamble};
 use super::names::{self, first_set, secret_text};
+use super::resolve::{ConnectionNames, Resolution};
 use super::shell::validate_remote_tmp;
 
 /// The destination `ssh` gets for a host: `ansible_ssh_host` or `ansible_host`, given with the
@@ -41,6 +42,29 @@ fn ssh_address(host_name: &str, ansible_host: Option<(&str, String)>) -> anyhow:
         );
     }
     Ok(address)
+}
+
+/// The plugin a connection name stands for: its full name when the controller's ansible-core
+/// was asked, else the name as written. `local` and `ssh` are ansible-core's own and never asked.
+/// A name the controller cannot be asked about, because the run has no ansible-core to ask, is
+/// answered as before resolution existed: ansible-core's own plugins this release does not drive,
+/// and any dotted name, are kept so they are refused by name, and any other name is no plugin at
+/// all, which the reference fails the task for.
+fn plugin_of(host_name: &str, name: &str, names: &ConnectionNames) -> anyhow::Result<String> {
+    if matches!(name, "local" | "ssh") {
+        return Ok(name.to_string());
+    }
+    match names.resolve(host_name, name).unwrap_or(None) {
+        Some(Resolution::Found { fqcn, .. }) => Ok(fqcn),
+        Some(Resolution::Unusable(why)) => {
+            bail!("host '{host_name}': connection '{name}' cannot be used: {why}")
+        }
+        None if KNOWN_CONNECTIONS.contains(&name) || name.contains('.') => Ok(name.to_string()),
+        Some(Resolution::Missing { warning }) => {
+            Err(ConnectionNotFound(name.to_string(), warning).into())
+        }
+        None => Err(ConnectionNotFound(name.to_string(), None).into()),
+    }
 }
 
 impl Transport {
@@ -87,9 +111,10 @@ impl Transport {
         let connection = setting_text("ansible_connection")
             .or_else(|| keywords.connection.clone())
             .or_else(|| defaults.connection.clone());
-        match connection.as_deref().unwrap_or("ssh") {
-            "local" => Ok(Transport::Local),
-            "ssh" => Ok(Transport::Ssh(SshTarget {
+        let name = connection.as_deref().unwrap_or("ssh");
+        match plugin_of(host_name, name, &defaults.names)?.as_str() {
+            "local" | "ansible.builtin.local" => Ok(Transport::Local),
+            "ssh" | "ansible.builtin.ssh" => Ok(Transport::Ssh(SshTarget {
                 address: ssh_address(host_name, first_named(&names::HOST))?,
                 port: port_of(vars).or(keywords.port),
                 user: first_text(&names::USER)
@@ -158,13 +183,26 @@ impl Transport {
                     },
                 ),
             })),
-            // ansible-core's own plugins this release does not drive, and a collection's, are
-            // refused; any other name is no plugin at all, which the reference fails the task for.
-            other if KNOWN_CONNECTIONS.contains(&other) || other.contains('.') => {
-                bail!("host '{host_name}': connection '{other}' is not supported")
-            }
-            other => Err(ConnectionNotFound(other.to_string()).into()),
+            other => bail!("host '{host_name}': connection '{other}' is not supported"),
         }
+    }
+
+    /// Whether a host's connection is `local`, read before the run. Nothing is asked of the
+    /// controller's ansible-core: a name only it can resolve is no `local`, and asking would print
+    /// its redirect lines before the play that uses it.
+    pub fn is_local_before_run(
+        host_name: &str,
+        vars: &Map<String, Value>,
+        defaults: &ConnectionDefaults,
+    ) -> bool {
+        let unasked = ConnectionDefaults {
+            names: ConnectionNames::default(),
+            ..defaults.clone()
+        };
+        matches!(
+            Self::for_vars(host_name, vars, &unasked),
+            Ok(Transport::Local)
+        )
     }
 
     /// The same, from the inventory object's own variables alone. Nothing on the run's own path

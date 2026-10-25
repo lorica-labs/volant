@@ -16,9 +16,24 @@ Volant reaches a managed host, puts a small static agent there (a program that r
 | `ssh` | Runs the OpenSSH client from your `PATH`. Volant builds the command line itself, without a wrapper and without a Rust SSH library, so your `~/.ssh/config` applies. |
 | `local` | Runs the agent as a child process on the controller, with no network. |
 
-Every other connection is refused. That covers `paramiko_ssh`, `winrm`, `psrp`, the container and cloud plugins such as `docker`, `podman`, `kubectl` and `aws_ssm`, and the fully qualified spellings of the two supported ones: `ansible.builtin.ssh`, `ansible.builtin.local` and `ansible.legacy.*`. Any value with a dot in it is refused, so a collection's plugin such as `community.docker.docker` is too. The host is reported unreachable with `connection '<name>' is not supported`, and the rest of the run continues.
+Any other name is resolved by the controller's ansible-core, the way `ansible-playbook` resolves it, once per name and per run. `ansible.builtin.ssh` and `ansible.builtin.local` resolve to the two plugins above and run. A short name that a collection took over from ansible-core is routed to that collection when it is installed:
 
-A bare name that no plugin carries fails the task with `the connection plugin '<name>' was not found`, as Ansible does. The same happens for `docker` and the other names a collection took over from ansible-core, because the collection is not there. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
+| Short name | Resolves to | Collection in the `ansible` 12.3.0 package |
+|---|---|---|
+| `docker` | `community.docker.docker` | community.docker 4.8.5 |
+| `podman` | `containers.podman.podman` | containers.podman 1.18.0 |
+| `buildah` | `containers.podman.buildah` | containers.podman 1.18.0 |
+| `kubectl` | `kubernetes.core.kubectl` | kubernetes.core 6.2.0 |
+| `lxd` | `community.general.lxd` | community.general 11.4.2 |
+| `chroot` | `community.general.chroot` | community.general 11.4.2 |
+| `aws_ssm` | `community.aws.aws_ssm`, which `community.aws` 10.0.0 sends on to `amazon.aws.aws_ssm` | amazon.aws 10.1.2 |
+| `incus` | no short name: write `community.general.incus` | community.general 11.4.2 |
+
+With `-vvv`, a routed name prints `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` under the first task that uses it on a host, one line per hop.
+
+A name that resolves to a plugin Volant does not drive yet, such as `winrm`, `psrp` or `community.docker.docker`, makes the host unreachable with `connection '<full name>' is not supported`, and the rest of the run continues. The [support matrix](/docs/reference/parity/#collection-connection) lists every connection plugin of the collections in the package.
+
+A name that resolves to nothing fails the task with `the connection plugin '<name>' was not found`, as Ansible does. That includes a short name routed to a collection that is not installed, such as `docker` without community.docker, after the warning ansible-core prints for it, and `paramiko`, which ansible-core 2.19.12 does not carry under that name. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
 
 A password comes from `-k`, from `--connection-password-file` or from the `ansible_password` variable. Volant hands it to `ssh` through `SSH_ASKPASS` and a private temporary file that is removed at the end of the run, which needs OpenSSH 8.4 or later. `ssh` then runs with `BatchMode=no` and `NumberOfPasswordPrompts=1`, so one wrong answer ends the attempt. The password is never on a command line, in the environment of a program or in the output, `-vvvv` included. A vaulted `ansible_password` works like any vaulted variable. Without a password, `ssh` runs with `BatchMode=yes` and never prompts, so a host that would ask for a password or a passphrase is reported unreachable instead of hanging the run.
 
@@ -172,7 +187,7 @@ Over a `local` connection `su` runs on a terminal of its own. A wrong password f
 ## Not there yet
 
 - Windows hosts and network devices.
-- The connection plugins named under Connection types.
+- The connection plugins other than `ssh` and `local`, listed in the [support matrix](/docs/reference/parity/#collection-connection).
 - `doas`, `pbrun` and the other become methods. They can be added as other ways to start the agent, without a protocol change.
 
 [Keywords](/docs/reference/keywords/) is the full list, generated from the tables the engine reads.

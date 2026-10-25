@@ -17,9 +17,24 @@ Volant llega a un host administrado, le deja un pequeño agente estático (un pr
 | `ssh` | Ejecuta el cliente OpenSSH de tu `PATH`. Volant construye la línea de comandos él mismo, sin envoltorio y sin una biblioteca SSH de Rust, así que se aplica tu `~/.ssh/config`. |
 | `local` | Ejecuta el agente como proceso hijo en el controlador, sin red. |
 
-Cualquier otra conexión se rechaza. Eso incluye `paramiko_ssh`, `winrm`, `psrp`, los plugins de contenedores y de nube como `docker`, `podman`, `kubectl` y `aws_ssm`, y los nombres completos de las dos conexiones admitidas: `ansible.builtin.ssh`, `ansible.builtin.local` y `ansible.legacy.*`. Se rechaza cualquier valor con un punto, así que también el plugin de una colección como `community.docker.docker`. El host se marca como inalcanzable con `connection '<name>' is not supported` y el resto de la ejecución continúa.
+Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resuelve `ansible-playbook`, una vez por nombre y por ejecución. `ansible.builtin.ssh` y `ansible.builtin.local` se resuelven en los dos plugins de arriba y se ejecutan. Un nombre corto que una colección heredó de ansible-core se dirige a esa colección cuando está instalada:
 
-Un nombre simple que ningún plugin tiene hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Lo mismo ocurre con `docker` y con los demás nombres que una colección heredó de ansible-core, porque la colección no está. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
+| Nombre corto | Se resuelve en | Colección en el paquete `ansible` 12.3.0 |
+|---|---|---|
+| `docker` | `community.docker.docker` | community.docker 4.8.5 |
+| `podman` | `containers.podman.podman` | containers.podman 1.18.0 |
+| `buildah` | `containers.podman.buildah` | containers.podman 1.18.0 |
+| `kubectl` | `kubernetes.core.kubectl` | kubernetes.core 6.2.0 |
+| `lxd` | `community.general.lxd` | community.general 11.4.2 |
+| `chroot` | `community.general.chroot` | community.general 11.4.2 |
+| `aws_ssm` | `community.aws.aws_ssm`, que `community.aws` 10.0.0 reenvía a `amazon.aws.aws_ssm` | amazon.aws 10.1.2 |
+| `incus` | sin nombre corto: escribe `community.general.incus` | community.general 11.4.2 |
+
+Con `-vvv`, un nombre redirigido muestra `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` bajo la primera tarea que lo usa en un host, una línea por salto.
+
+Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `community.docker.docker`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
+
+Un nombre que no se resuelve en nada hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Eso incluye un nombre corto dirigido a una colección que no está instalada, como `docker` sin community.docker, tras el aviso que ansible-core muestra para él, y `paramiko`, que ansible-core 2.19.12 no tiene con ese nombre. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
 
 Una contraseña viene de `-k`, de `--connection-password-file` o de la variable `ansible_password`. Volant se la entrega a `ssh` mediante `SSH_ASKPASS` y un archivo temporal privado que se elimina al final de la ejecución, lo que exige OpenSSH 8.4 o posterior. Entonces `ssh` se ejecuta con `BatchMode=no` y `NumberOfPasswordPrompts=1`, de modo que una respuesta incorrecta termina el intento. La contraseña nunca aparece en una línea de comandos, en el entorno de un programa ni en la salida, ni siquiera con `-vvvv`. Un `ansible_password` cifrado con vault funciona como cualquier variable cifrada. Sin contraseña, `ssh` se ejecuta con `BatchMode=yes` y nunca pregunta, así que un host que pediría una contraseña o una frase de paso se marca como inalcanzable en lugar de bloquear la ejecución.
 
@@ -173,7 +188,7 @@ En una conexión `local`, `su` se ejecuta en un terminal propio. Una contraseña
 ## Todavía no disponible
 
 - Hosts Windows y dispositivos de red.
-- Los plugins de conexión nombrados en Tipos de conexión.
+- Los plugins de conexión distintos de `ssh` y `local`, enumerados en la [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection).
 - `doas`, `pbrun` y los demás métodos de become. Se pueden añadir como otras formas de iniciar el agente, sin cambiar el protocolo.
 
 [Palabras clave](/es/docs/reference/keywords/) es la lista completa, generada a partir de las tablas que lee el motor.

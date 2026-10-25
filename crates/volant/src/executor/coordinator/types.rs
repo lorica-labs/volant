@@ -147,8 +147,8 @@ pub(in crate::executor) enum Event {
         host: String,
         index: usize,
         line: String,
-        /// Printed in the reference's debug colour, as the `ASYNC` lines are.
-        debug: bool,
+        /// The colour it is printed in, and from how many `-v`s.
+        shade: Shade,
         /// Whether the step's banner goes above it. False for the `NOTIFIED HANDLER` lines of a
         /// flush, which the reference prints in front of the first handler's banner and under
         /// no banner of their own.
@@ -241,6 +241,17 @@ pub(in crate::executor) enum Event {
     },
 }
 
+/// How an [`Event::Display`] line is printed.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(in crate::executor) enum Shade {
+    /// As it is, as `pause` prints `Pausing for N seconds`.
+    Plain,
+    /// In the reference's debug colour, as the `ASYNC` lines are.
+    Debug,
+    /// In the verbose colour, from this many `-v`s up.
+    Verbose(u8),
+}
+
 /// What a `meta` action asks of the batch, besides the banner it shows.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(in crate::executor) enum MetaEffect {
@@ -277,6 +288,21 @@ impl Unreached {
             self.censored,
         ));
         out.unreachable(host, &self.msg, self.censored, self.delegate.as_deref());
+    }
+
+    /// [`Unreached::show`], after what the host showed at that step before it went, such as a
+    /// warning or a `-vvv` line, which reads above why it went.
+    pub(super) fn show_after(
+        &self,
+        said: Option<Vec<Event>>,
+        host: &str,
+        stats: &mut crate::stats::Stats,
+        out: &mut Renderer,
+    ) {
+        for event in said.unwrap_or_default() {
+            super::display::report_result(event, stats, out);
+        }
+        self.show(host, out);
     }
 }
 

@@ -19,6 +19,7 @@ use volant_protocol::frame::MAX_FRAME_LEN;
 
 use crate::python::{ActionHelper, PythonBuilder};
 
+mod connections;
 mod conversation;
 mod wire;
 

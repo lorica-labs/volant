@@ -1,0 +1,3 @@
+# A division by zero fails the task with Python's sentence, for / and //, ints and floats.
+stderr: true
+args: [-i, inv.ini, play.yml]

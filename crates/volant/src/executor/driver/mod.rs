@@ -1359,7 +1359,7 @@ pub(super) async fn drive_host(
                         // swallows it, and the host is not unreachable.
                         Err(ref err)
                             if let Some(missing) =
-                                err.downcast_ref::<crate::transport::ConnectionNotFound>() =>
+                                err.downcast_ref::<crate::transport::ConnectionFailsTask>() =>
                         {
                             if let Some(message) = missing.warning() {
                                 driver.warn(pos, message).await;

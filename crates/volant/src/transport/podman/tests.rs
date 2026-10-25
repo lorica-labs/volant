@@ -64,7 +64,7 @@ fn the_command_line_follows_the_plugin_s_source() {
     assert_eq!(target.unavailable, None);
     let copy = target.copy.expect("a copy command");
     assert_eq!(
-        copy.tar_into,
+        copy.command,
         [
             &podman,
             "--remote",

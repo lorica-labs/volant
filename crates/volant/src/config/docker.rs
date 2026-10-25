@@ -2,11 +2,13 @@
 //! The settings the collections' container connections read besides host variables:
 //! `[docker_connection]` and `ANSIBLE_DOCKER_*` for community.docker 4.8.5's
 //! `community.docker.docker`, `ANSIBLE_PODMAN_*` for containers.podman 1.18.0's
-//! `containers.podman.podman`, whose `[defaults] podman_extra_args` the `[defaults]` reader takes.
+//! `containers.podman.podman`, whose `[defaults] podman_extra_args` the `[defaults]` reader takes,
+//! and `[chroot_connection]` and `ANSIBLE_CHROOT_*` for community.general 11.4.2's
+//! `community.general.chroot`.
 
 use std::time::Duration;
 
-use crate::transport::{DockerSettings, PodmanSettings};
+use crate::transport::{ChrootSettings, DockerSettings, PodmanSettings};
 
 use super::settings::{boolean, integer, timeout_secs};
 
@@ -64,4 +66,41 @@ pub(super) fn podman_env(podman: &mut PodmanSettings) {
     if let Ok(args) = std::env::var("ANSIBLE_PODMAN_EXTRA_ARGS") {
         podman.extra_args = Some(args);
     }
+}
+
+/// One key of `[chroot_connection]`.
+pub(super) fn chroot_ini(
+    chroot: &mut ChrootSettings,
+    key: &str,
+    value: &str,
+    origin: &str,
+) -> anyhow::Result<()> {
+    match key {
+        "exe" => chroot.exe = Some(value.trim().to_string()),
+        "disable_root_check" => {
+            chroot.disable_root_check =
+                Some(boolean("CHROOT_DISABLE_ROOT_CHECK", origin, value.trim())?);
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+/// `ANSIBLE_CHROOT_EXE`, `ANSIBLE_CHROOT_DISABLE_ROOT_CHECK` and `ANSIBLE_EXECUTABLE`, which win
+/// over the file.
+pub(super) fn chroot_env(chroot: &mut ChrootSettings) -> anyhow::Result<()> {
+    if let Ok(exe) = std::env::var("ANSIBLE_CHROOT_EXE") {
+        chroot.exe = Some(exe);
+    }
+    if let Ok(flag) = std::env::var("ANSIBLE_CHROOT_DISABLE_ROOT_CHECK") {
+        chroot.disable_root_check = Some(boolean(
+            "CHROOT_DISABLE_ROOT_CHECK",
+            "env: ANSIBLE_CHROOT_DISABLE_ROOT_CHECK",
+            flag.trim(),
+        )?);
+    }
+    if let Ok(executable) = std::env::var("ANSIBLE_EXECUTABLE") {
+        chroot.executable = Some(executable);
+    }
+    Ok(())
 }

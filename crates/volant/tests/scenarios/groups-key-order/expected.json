@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [z1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [z1] => {\n    \"msg\": {\n        \"all\": [\n            \"z1\",\n            \"a1\",\n            \"b1\",\n            \"m1\",\n            \"a2\"\n        ],\n        \"as_list\": [\n            \"all\",\n            \"ungrouped\",\n            \"zeta\",\n            \"alpha\",\n            \"mid\",\n            \"prod\"\n        ],\n        \"first\": \"all\",\n        \"keys\": [\n            \"all\",\n            \"ungrouped\",\n            \"zeta\",\n            \"alpha\",\n            \"mid\",\n            \"prod\"\n        ]\n    }\n}\n\nPLAY RECAP *********************************************************************\nz1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

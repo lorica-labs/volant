@@ -123,7 +123,7 @@ The agent carries Rust versions of these modules:
 |---|---|
 | `setup` | on Debian and Ubuntu, for the facts listed under [Facts](/docs/variables/precedence/#native-facts) |
 | `stat` | the path is plain and absolute, and the checksum is SHA-1 |
-| `file` | `state` is `file`, `directory` or `absent`, or unset, and `link` when the link is already there and points at `src` |
+| `file` | `state` is `file`, `directory` or `absent`, or unset, and `link` when nothing is at the path yet, or the link is already there and points at `src` |
 | `apt` | packages named exactly, without a version: a fresh cache and packages already installed or absent are only read; a stale cache is updated and missing packages are installed with the same `apt-get` commands the module runs, under `policy_rc_d` when the task sets it; a package marked automatically installed is marked manual, as the module marks it |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` and `daemon_reload` on the system scope |
 | `lineinfile` | the regular expression means the same in Rust as in Python, and `backrefs` is off |
@@ -135,6 +135,8 @@ The agent carries Rust versions of these modules:
 Anything outside that goes to ansible-core's Python module. A task `environment`, SELinux, extended attributes, `remote_src`, a regular expression only Python understands, or a package half installed all hand back, among other cases. `dnf` and every other module always run in Python.
 
 A native module receives the arguments the Python module would have received. It first decides, by reading only, whether it can give the answer the reference would give. If it cannot, it hands the task back before touching the host, and the Python module does the real work. Its result, `invocation` included, is the one the reference module returns, key for key, and a test compares them for every case the module covers. The result comes back as untrusted data, through the same path as a Python module's.
+
+On a host whose configuration turns apt's package cache off, as Docker's Debian and Ubuntu images do, apt builds it again from the package lists on every call: 1.3 seconds each on Ubuntu 24.04. The native `apt` then points its `apt-get`, `apt-cache` and `apt-mark` calls at a cache in the connection's own directory, removed when the connection ends. What they print and what they leave on the host do not change.
 
 Set `[volant] native_modules = false`, or `VOLANT_NATIVE_MODULES=0`, to send every task to Python. `--profile` shows which path each task took and, for a hand-back, the reason. See [Command line](/docs/reference/cli/#run-and-output).
 

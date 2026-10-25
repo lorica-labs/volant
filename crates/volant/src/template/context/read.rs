@@ -237,6 +237,13 @@ impl Context {
                 tainted: Arc::clone(&self.tainted),
                 deferred: Arc::clone(&self.deferred),
                 memo: Memo::default(),
+                templar: self.templar.clone(),
+                listed_untrusted: self
+                    .untrusted
+                    .iter()
+                    .filter(|name| self.shared.as_ref().is_some_and(|s| s.contains_key(*name)))
+                    .cloned()
+                    .collect(),
             });
             return Some((view, true));
         }

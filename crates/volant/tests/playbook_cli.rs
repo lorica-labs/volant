@@ -4708,27 +4708,28 @@ m.exit_json(changed=False, who='probe-col')
         python.is_some() || std::env::var_os("VOLANT_PYTHON").is_none(),
         "VOLANT_PYTHON is set but names no ansible-core: the bridged loop probes cannot run"
     );
-    let mut failures = Vec::new();
-    for probe in RUNS_PROBES {
+    std::fs::write(
+        dir.join("probe.csv"),
+        "bob,2
+",
+    )
+    .expect("the probe's csv is written");
+    std::fs::write(
+        dir.join("probe.ini"),
+        "[main]
+name = vol
+",
+    )
+    .expect("the probe's ini is written");
+    // Each probe writes only files named after it, so the probes run side by side, one thread
+    // per core: most of a probe's time is a process starting and waiting.
+    let run_row = |probe: &RunsProbe| -> Option<String> {
         let body = probe.body;
         let name = format!("{}-{}", probe.table, probe.kw);
         if probe.kw == "vars_files" {
             std::fs::write(dir.join(format!("{name}.vars.yml")), "probe: file-value\n")
                 .expect("the probe's vars file is written");
         }
-        std::fs::write(
-            dir.join("probe.csv"),
-            "bob,2
-",
-        )
-        .expect("the probe's csv is written");
-        std::fs::write(
-            dir.join("probe.ini"),
-            "[main]
-name = vol
-",
-        )
-        .expect("the probe's ini is written");
         let body = body.replace("vars_files.vars.yml", &format!("{name}.vars.yml"));
         let path = match (is_become_user_probe(probe), probe.kw) {
             (true, _) => Some(sudo_dir.as_path()),
@@ -4745,7 +4746,7 @@ name = vol
         // against an inventory of two written beside the probe rather than against the implicit
         // localhost.
         let mut args: Vec<&str> = probe.args.to_vec();
-        let inventory = dir.join("serial.inv.ini").display().to_string();
+        let inventory = dir.join(format!("{name}.inv.ini")).display().to_string();
         if matches!(
             probe.kw,
             "serial"
@@ -4798,17 +4799,39 @@ name = vol
         // other reference-dependent test is.
         let mut envs: Vec<(&str, &str)> = Vec::new();
         if BRIDGED_LOOPS.contains(&probe.kw) || matches!(probe.kw, "collections" | "diff") {
-            let Some(python) = &python else { continue };
+            let python = python.as_ref()?;
             envs.push(("VOLANT_PYTHON", python));
         }
         let (code, text) = run_probe_env(&dir, &name, &body, &args, path, &envs);
-        if code != probe.code || !text.contains(probe.expect) {
-            failures.push(format!(
+        (code != probe.code || !text.contains(probe.expect)).then(|| {
+            format!(
                 "{name}: wanted exit {} and {:?}, got exit {code}:\n{text}",
                 probe.code, probe.expect
-            ));
-        }
-    }
+            )
+        })
+    };
+    let next = std::sync::atomic::AtomicUsize::new(0);
+    let threads = std::thread::available_parallelism().map_or(4, std::num::NonZeroUsize::get);
+    let mut failures: Vec<String> = std::thread::scope(|scope| {
+        let workers: Vec<_> = (0..threads)
+            .map(|_| {
+                scope.spawn(|| {
+                    let mut failures = Vec::new();
+                    while let Some(row) =
+                        RUNS_PROBES.get(next.fetch_add(1, std::sync::atomic::Ordering::Relaxed))
+                    {
+                        failures.extend(run_row(row));
+                    }
+                    failures
+                })
+            })
+            .collect();
+        workers
+            .into_iter()
+            .flat_map(|worker| worker.join().unwrap())
+            .collect()
+    });
+    failures.sort();
     assert!(
         failures.is_empty(),
         "{} keyword(s) stopped doing what the table says:\n{}",
@@ -4868,14 +4891,18 @@ fn a_role_is_found_next_to_the_playbook_and_named_in_every_banner() {
 }
 
 /// A role nobody can find stops the run before the first banner, naming every directory it looked
-/// in, and exits **1**.
+/// in at the entry that named it, and exits **1**.
 #[test]
 fn a_missing_role_names_every_directory_searched_and_exits_1() {
     let out = volant(&["playbook", &fixture("roles/missing.yml")]);
     let err = String::from_utf8(out.stderr).unwrap();
     assert_eq!(out.status.code(), Some(1), "{err}");
     assert!(
-        err.contains("the role 'nosuchrole' was not found in "),
+        err.contains("[ERROR]: the role 'nosuchrole' was not found in "),
+        "{err}"
+    );
+    assert!(
+        err.contains("\nOrigin: ") && err.contains("^ column"),
         "{err}"
     );
     // Matched by their tails: the compiler resolves the playbook's directory, so the prefix a
@@ -4883,7 +4910,13 @@ fn a_missing_role_names_every_directory_searched_and_exits_1() {
     assert!(err.contains("fixtures/roles/roles:"), "{err}");
     assert!(err.contains("/usr/share/ansible/roles"), "{err}");
     assert!(err.contains("/etc/ansible/roles"), "{err}");
-    assert!(err.trim_end().ends_with("fixtures/roles"), "{err}");
+    assert!(
+        err.lines()
+            .find(|line| line.starts_with("[ERROR]: "))
+            .unwrap_or_default()
+            .ends_with("fixtures/roles"),
+        "{err}"
+    );
     assert!(
         !String::from_utf8_lossy(&out.stdout).contains("PLAY ["),
         "nothing runs before a role is found"

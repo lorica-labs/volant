@@ -124,7 +124,7 @@ Der Agent trägt Rust-Versionen dieser Module:
 |---|---|
 | `setup` | auf Debian und Ubuntu, für die Facts unter [Facts](/de/docs/variables/precedence/#native-facts) |
 | `stat` | der Pfad einfach und absolut ist und die Prüfsumme SHA-1 ist |
-| `file` | `state` den Wert `file`, `directory` oder `absent` hat oder nicht gesetzt ist, und `link`, wenn der Link schon da ist und auf `src` zeigt |
+| `file` | `state` den Wert `file`, `directory` oder `absent` hat oder nicht gesetzt ist, und `link`, wenn unter dem Pfad noch nichts liegt oder der Link schon da ist und auf `src` zeigt |
 | `apt` | die Pakete mit exaktem Namen ohne Version angegeben sind: Ein frischer Cache und schon installierte oder abwesende Pakete werden nur gelesen; ein veralteter Cache wird aktualisiert, und fehlende Pakete werden mit denselben `apt-get`-Befehlen installiert, die das Modul ausführt, unter `policy_rc_d`, wenn die Aufgabe es setzt; ein als automatisch installiert markiertes Paket wird wie im Modul als manuell markiert |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` und `daemon_reload` im System-Scope |
 | `lineinfile` | der reguläre Ausdruck in Rust dasselbe bedeutet wie in Python und `backrefs` aus ist |
@@ -136,6 +136,8 @@ Der Agent trägt Rust-Versionen dieser Module:
 Alles außerhalb davon geht an das Python-Modul von ansible-core. Ein Task-`environment`, SELinux, erweiterte Attribute, `remote_src`, ein regulärer Ausdruck, den nur Python versteht, oder ein halb installiertes Paket geben unter anderem alle zurück. `dnf` und jedes andere Modul laufen immer in Python.
 
 Ein natives Modul bekommt die Argumente, die das Python-Modul bekommen hätte. Es entscheidet zuerst, rein lesend, ob es die Antwort geben kann, die die Referenz geben würde. Wenn nicht, gibt es den Task zurück, bevor es den Host anfasst, und das Python-Modul erledigt die eigentliche Arbeit. Sein Ergebnis, `invocation` eingeschlossen, ist das, was das Referenzmodul zurückgibt, Schlüssel für Schlüssel, und ein Test vergleicht beide für jeden Fall, den das Modul abdeckt. Das Ergebnis kommt als nicht vertrauenswürdige Daten zurück, über denselben Pfad wie das eines Python-Moduls.
+
+Auf einem Host, dessen Konfiguration den Paket-Cache von apt abschaltet, wie die Debian- und Ubuntu-Images von Docker, baut apt ihn bei jedem Aufruf neu aus den Paketlisten: 1,3 Sekunden pro Aufruf unter Ubuntu 24.04. Das native `apt` lässt seine Aufrufe von `apt-get`, `apt-cache` und `apt-mark` dann einen Cache im eigenen Verzeichnis der Verbindung nutzen, das mit dem Ende der Verbindung entfernt wird. Was sie ausgeben und was sie auf dem Host hinterlassen, ändert sich nicht.
 
 Setzen Sie `[volant] native_modules = false` oder `VOLANT_NATIVE_MODULES=0`, um jeden Task an Python zu schicken. `--profile` zeigt, welchen Pfad jeder Task genommen hat, und bei einer Rückgabe den Grund. Siehe [Kommandozeile](/de/docs/reference/cli/#lauf-und-ausgabe).
 

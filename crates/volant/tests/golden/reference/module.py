@@ -401,7 +401,7 @@ def _record(only):
         {"path": f"{t}/f.txt", "owner": "root"},
         failed("chown failed"),
     )
-    case("file-link", "file", {"path": f"{t}/l2", "src": f"{t}/f.txt", "state": "link"}, changed, "fallback", "state link")
+    case("file-link", "file", {"path": f"{t}/l2", "src": f"{t}/f.txt", "state": "link"}, changed)
     case(
         "file-recurse",
         "file",

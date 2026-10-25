@@ -124,7 +124,7 @@ agent 自带这些模块的 Rust 版本：
 |---|---|
 | `setup` | 在 Debian 和 Ubuntu 上，针对[原生 facts](/zh-cn/docs/variables/precedence/#原生-facts)下列出的 facts |
 | `stat` | 路径是普通的绝对路径，且校验和是 SHA-1 |
-| `file` | `state` 是 `file`、`directory` 或 `absent`，或者未设置；链接已存在且指向 `src` 时也包括 `link` |
+| `file` | `state` 是 `file`、`directory` 或 `absent`，或者未设置；路径上还没有任何东西，或链接已存在且指向 `src` 时，也包括 `link` |
 | `apt` | 包按精确名称给出、不带版本：缓存是新的、包都已安装或都已不存在时只读取；缓存过期时执行更新，缺少的包用与模块相同的 `apt-get` 命令安装，任务设置了 `policy_rc_d` 时在其下安装；标记为自动安装的包会像模块那样被标记为手动安装 |
 | `systemd`、`systemd_service` | 系统范围内的 `name`、`state`、`enabled` 和 `daemon_reload` |
 | `lineinfile` | 正则表达式在 Rust 中与在 Python 中含义相同，且 `backrefs` 关闭 |
@@ -136,6 +136,8 @@ agent 自带这些模块的 Rust 版本：
 此外的一切都交给 ansible-core 的 Python 模块。task 的 `environment`、SELinux、扩展属性、`remote_src`、只有 Python 才懂的正则表达式，或装了一半的包，以及其他情况，都会交还。`dnf` 和其他所有模块总是在 Python 中运行。
 
 原生模块接收的参数，就是 Python 模块本来会接收的参数。它先通过只读来判断，自己能否给出参照模块会给出的答案。如果不能，它会在接触主机之前就把 task 交还，由 Python 模块来做真正的工作。它的结果，包括 `invocation`，就是参照模块返回的那一个，逐键一致，并且有测试对它覆盖的每种情形做比较。结果作为不可信数据回来，走的路径与 Python 模块的相同。
+
+如果主机的配置关闭了 apt 的软件包缓存（Docker 的 Debian 和 Ubuntu 镜像就是这样），apt 每次调用都会从软件包列表重新构建缓存：在 Ubuntu 24.04 上每次 1.3 秒。这时原生 `apt` 会让它对 `apt-get`、`apt-cache` 和 `apt-mark` 的调用使用连接自己目录中的缓存，连接结束时删除。它们的输出以及留在主机上的内容都不变。
 
 设置 `[volant] native_modules = false` 或 `VOLANT_NATIVE_MODULES=0`，可以把每个 task 都发给 Python。`--profile` 会显示每个 task 走了哪条路径，对于交还的情形还会给出原因。见[命令行](/zh-cn/docs/reference/cli/#运行与输出)。
 

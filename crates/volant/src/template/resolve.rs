@@ -75,8 +75,10 @@ impl Templar {
         // text, not the wrapper, and the name is data so no pass renders it.
         let mut vaulted = Vec::new();
         for (k, v) in &mut current {
-            if matches!(v, Value::String(s) if crate::yaml::vault_text(s).is_some()) {
-                vaulted.push(k.clone());
+            if let Value::String(s) = v
+                && crate::yaml::vault_text(s).is_some()
+            {
+                vaulted.push((k.clone(), s.clone()));
             }
             if !untrusted.contains(k) && unwrap_unsafe(v) {
                 untrusted.insert(k.clone());

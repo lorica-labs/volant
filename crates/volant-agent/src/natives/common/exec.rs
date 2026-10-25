@@ -106,11 +106,28 @@ pub fn popen_error(errno: i32, program: &str) -> Value {
     } else {
         format!("[Errno {errno}] {strerror}: {}", bytes_repr(program))
     };
+    caused("Error executing command.", &cause)
+}
+
+/// The `exception` of `fail_json(msg=..., exception=ex)` for an `OSError` on `path`: the
+/// message, caused by `[Errno N] strerror: b'path'`.
+pub fn os_error_summary(msg: &str, errno: i32, path: &str) -> Value {
+    let text = io::Error::from_raw_os_error(errno).to_string();
+    let strerror =
+        strerror(errno).unwrap_or_else(|| text.split(" (os error").next().unwrap_or(&text));
+    caused(
+        msg,
+        &format!("[Errno {errno}] {strerror}: {}", bytes_repr(path)),
+    )
+}
+
+/// An error summary: `msg`, caused by `cause`.
+fn caused(msg: &str, cause: &str) -> Value {
     serde_json::json!({
         "__ansible_type": "ErrorSummary",
         "event": {
             "__ansible_type": "Event",
-            "msg": "Error executing command.",
+            "msg": msg,
             "chain": {
                 "__ansible_type": "EventChain",
                 "msg_reason": "<<< caused by >>>",

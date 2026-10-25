@@ -76,6 +76,16 @@ pub(super) fn stage_dir(remote_tmp: &str) -> io::Result<PathBuf> {
     Ok(dir)
 }
 
+/// A directory of this connection's own for a native's scratch files, `name` inside its stage
+/// directory: removed with it when the connection ends, or by the next agent's sweep.
+#[cfg(unix)]
+pub fn connection_dir(name: &str) -> io::Result<PathBuf> {
+    let dir = stage_dir(&super::remote_tmp())?.join(name);
+    create_private(&dir)?;
+    check_private(&dir)?;
+    Ok(dir)
+}
+
 /// Takes a file this connection put for one task, and hands back where it now is.
 ///
 /// Looked for in this connection's directory only, never in the shared cache. Renamed rather

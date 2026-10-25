@@ -167,13 +167,14 @@ pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
     enum Work<'t, 'a> {
         Node(&'t MarkedYaml<'a>),
         Entry(&'t MarkedYaml<'a>, &'t MarkedYaml<'a>),
+        Item(&'t MarkedYaml<'a>),
     }
     let at = |n: &MarkedYaml<'_>| (n.span.start.line(), n.span.start.col() + 1);
     let mut work = vec![Work::Node(root)];
     while let Some(item) = work.pop() {
         match item {
             Work::Node(node) => match &node.data {
-                YamlData::Sequence(items) => work.extend(items.iter().rev().map(Work::Node)),
+                YamlData::Sequence(items) => work.extend(items.iter().rev().map(Work::Item)),
                 YamlData::Mapping(map) => {
                     out.0.push(at(node));
                     let entries: Vec<_> = map.iter().map(|(k, v)| Work::Entry(k, v)).collect();
@@ -188,6 +189,12 @@ pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
                 work.push(Work::Node(value));
                 work.push(Work::Node(key));
             }
+            // An item of a sequence is placed like a value, its own start standing for its key.
+            Work::Item(item) => {
+                out.1.push(at(item));
+                out.2.push(at(item));
+                work.push(Work::Node(item));
+            }
         }
     }
 }
@@ -198,12 +205,13 @@ pub(super) fn mapping_addresses(root: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usiz
     enum Work<'t, 'a> {
         Node(&'t Yaml<'a>),
         Entry(&'t Yaml<'a>, &'t Yaml<'a>),
+        Item(&'t Yaml<'a>),
     }
     let mut work = vec![Work::Node(root)];
     while let Some(item) = work.pop() {
         match item {
             Work::Node(node) => match node {
-                Yaml::Sequence(items) => work.extend(items.iter().rev().map(Work::Node)),
+                Yaml::Sequence(items) => work.extend(items.iter().rev().map(Work::Item)),
                 Yaml::Mapping(map) => {
                     out.0.push(std::ptr::from_ref(map).addr());
                     let entries: Vec<_> = map.iter().map(|(k, v)| Work::Entry(k, v)).collect();
@@ -217,6 +225,10 @@ pub(super) fn mapping_addresses(root: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usiz
                 work.push(Work::Node(value));
                 work.push(Work::Node(key));
             }
+            Work::Item(item) => {
+                out.1.push(std::ptr::from_ref(item).addr());
+                work.push(Work::Node(item));
+            }
         }
     }
 }
@@ -225,21 +237,74 @@ fn is_scalar(node: &Yaml<'_>) -> bool {
     matches!(node, Yaml::Value(_))
 }
 
-fn scalar_json(scalar: &Scalar<'_>) -> Value {
+fn scalar_json(scalar: &Scalar<'_>, unsafe_text: bool) -> Value {
     match scalar {
         Scalar::Null => Value::Null,
         Scalar::Boolean(b) => Value::Bool(*b),
         Scalar::Integer(i) => Value::from(*i),
         Scalar::FloatingPoint(f) => serde_json::Number::from_f64(f.into_inner())
             .map_or_else(|| Value::String(f.to_string()), Value::Number),
-        Scalar::String(s) => Value::String(s.to_string()),
+        Scalar::String(s) if unsafe_text => Value::String(s.to_string()),
+        Scalar::String(s) => Value::String(literal_escapes(s)),
     }
+}
+
+/// `text` with the backslashes of the string literals inside its `{{ }}` doubled, so that the
+/// engine reads each escape as the two characters written. Measured on ansible-core 2.19.12: in a
+/// YAML string value, `{{ "a\nb" | length }}` is 4 and `'\x41'` stays four characters, while
+/// `{% %}`, a bare expression and a template file decode them.
+pub(crate) fn literal_escapes(text: &str) -> String {
+    if !text.contains('\\') || !text.contains("{{") {
+        return text.to_string();
+    }
+    let mut out = String::with_capacity(text.len() + 8);
+    let mut chars = text.chars().peekable();
+    // Inside `{{ }}`, and inside a string literal there, opened by this quote.
+    let mut expression = false;
+    let mut quote: Option<char> = None;
+    while let Some(c) = chars.next() {
+        match (expression, quote, c) {
+            (false, _, '{') if chars.peek() == Some(&'{') => {
+                chars.next();
+                out.push_str("{{");
+                expression = true;
+            }
+            (true, None, '}') if chars.peek() == Some(&'}') => {
+                chars.next();
+                out.push_str("}}");
+                expression = false;
+            }
+            (true, None, '"' | '\'') => {
+                quote = Some(c);
+                out.push(c);
+            }
+            // `\q` (the closing quote or a backslash) becomes `\\\q`, any other `\x` becomes
+            // `\\x`: either decodes to the two characters written.
+            (true, Some(open), '\\') => match chars.next() {
+                Some(next) if next == open || next == '\\' => {
+                    out.push_str("\\\\\\");
+                    out.push(next);
+                }
+                Some(next) => {
+                    out.push_str("\\\\");
+                    out.push(next);
+                }
+                None => out.push('\\'),
+            },
+            (true, Some(open), _) if c == open => {
+                quote = None;
+                out.push(c);
+            }
+            _ => out.push(c),
+        }
+    }
+    out
 }
 
 /// A sequence of scalars as JSON.
 fn scalar_array(items: &[Yaml<'_>]) -> Value {
     let scalars = items.iter().filter_map(|n| match n {
-        Yaml::Value(scalar) => Some(scalar_json(scalar)),
+        Yaml::Value(scalar) => Some(scalar_json(scalar, false)),
         _ => None,
     });
     Value::Array(scalars.collect())
@@ -253,7 +318,7 @@ fn scalar_object(map: &Mapping<'_>) -> anyhow::Result<Value> {
             .as_str()
             .ok_or_else(|| anyhow!("mapping keys must be strings"))?;
         if let Yaml::Value(scalar) = v {
-            out.insert(key.to_string(), scalar_json(scalar));
+            out.insert(key.to_string(), scalar_json(scalar, false));
         }
     }
     Ok(Value::Object(out))
@@ -285,12 +350,15 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
     loop {
         if let Some(node) = next.take() {
             match node {
-                Yaml::Value(scalar) => done = Some(scalar_json(scalar)),
+                Yaml::Value(scalar) => done = Some(scalar_json(scalar, unsafe_levels > 0)),
                 // A collection of scalars, the usual one, is converted at once, with no frame.
-                Yaml::Sequence(items) if items.iter().all(is_scalar) => {
+                Yaml::Sequence(items) if unsafe_levels == 0 && items.iter().all(is_scalar) => {
                     done = Some(scalar_array(items));
                 }
-                Yaml::Mapping(map) if map.iter().all(|(k, v)| is_scalar(k) && is_scalar(v)) => {
+                Yaml::Mapping(map)
+                    if unsafe_levels == 0
+                        && map.iter().all(|(k, v)| is_scalar(k) && is_scalar(v)) =>
+                {
                     done = Some(scalar_object(map)?);
                 }
                 Yaml::Sequence(items) => open.push(Converting::Array {

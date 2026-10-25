@@ -1,0 +1,6 @@
+# A variable of another host that holds a template renders with that host's variables, also
+# through `extract`, and a variable that holds none is handed out as it is: text the reader
+# builds around it is not rendered again.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, braces.yml]

@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - block:
+        - copy: {content: secret, dest: "{{ playbook_dir }}/secret.txt", mode: "0000"}
+        - copy: {src: "{{ playbook_dir }}/secret.txt", dest: "{{ playbook_dir }}/out.txt"}
+          register: r
+          ignore_errors: true
+        - debug: {var: r}
+      always:
+        - file: {path: "{{ playbook_dir }}/secret.txt", mode: "0644"}

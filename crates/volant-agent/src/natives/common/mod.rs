@@ -33,7 +33,8 @@ pub use backup::{BackupError, backup_local, chown_if_permitted};
 #[cfg(test)]
 use exec::heuristic_log_sanitize;
 pub use exec::{
-    bin_path, bytes_repr, clean_args, popen_error, shlex_quote, strerror, validate_runs_as_python,
+    bin_path, bytes_repr, clean_args, os_error_summary, popen_error, shlex_quote, strerror,
+    validate_runs_as_python,
 };
 pub use fsattrs::{
     APPEND, AUTOMATIC, FsError, IMMUTABLE, access, add_path_info, failure, has_flags, has_xattrs,

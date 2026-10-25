@@ -35,7 +35,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
-| collection connection | 2 | 0 | 0 | 28 |
+| collection connection | 6 | 0 | 0 | 24 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -709,13 +709,13 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `community.docker.docker` | <span class="kw kw-runs">runs</span> |  |
 | `community.docker.docker_api` | <span class="kw kw-no">later</span> | another connection |
 | `community.docker.nsenter` | <span class="kw kw-no">later</span> | another connection |
-| `community.general.chroot` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.chroot` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.funcd` | <span class="kw kw-no">later</span> | another connection |
-| `community.general.incus` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.incus` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.iocage` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.jail` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.lxc` | <span class="kw kw-no">later</span> | another connection |
-| `community.general.lxd` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.lxd` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.qubes` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.saltstack` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.wsl` | <span class="kw kw-no">later</span> | another connection |
@@ -725,7 +725,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `community.okd.oc` | <span class="kw kw-no">later</span> | another connection |
 | `community.proxmox.proxmox_pct_remote` | <span class="kw kw-no">later</span> | another connection |
 | `community.vmware.vmware_tools` | <span class="kw kw-no">later</span> | another connection |
-| `containers.podman.buildah` | <span class="kw kw-no">later</span> | another connection |
+| `containers.podman.buildah` | <span class="kw kw-runs">runs</span> |  |
 | `containers.podman.podman` | <span class="kw kw-runs">runs</span> |  |
 | `google.cloud.iap` | <span class="kw kw-no">later</span> | another connection |
 | `kubernetes.core.kubectl` | <span class="kw kw-no">later</span> | another connection |

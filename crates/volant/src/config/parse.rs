@@ -130,11 +130,18 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
         if section == "docker_connection" {
             super::docker::ini(&mut config.plugins.docker, key.trim(), value, origin)?;
         }
+        if section == "chroot_connection" {
+            super::docker::chroot_ini(&mut config.plugins.chroot, key.trim(), value, origin)?;
+        }
         if section != "defaults" {
             continue;
         }
-        if key.trim() == "podman_extra_args" {
-            config.plugins.podman.extra_args = Some(value.trim().to_string());
+        match key.trim() {
+            "podman_extra_args" => {
+                config.plugins.podman.extra_args = Some(value.trim().to_string());
+            }
+            "executable" => config.plugins.chroot.executable = Some(value.trim().to_string()),
+            _ => {}
         }
         match key.trim() {
             "inventory" => {
@@ -187,6 +194,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             "localhost_warning" => {
                 config.localhost_warning = boolean("LOCALHOST_WARNING", origin, value.trim())?;
             }
+            "duplicate_dict_key" => config.duplicate_dict_key = Some(value.trim().to_string()),
             "show_custom_stats" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.show_custom_stats = on;

@@ -1,5 +1,5 @@
 ---
-sourceHash: 71da6f6cf85b
+sourceHash: c4107e9762a5
 title: Templating
 description: Jinja2 sur le contrôleur, mode strict, conditions, filtres, tests et lookups fournis par Volant, et rendu des fichiers modèles.
 ---
@@ -62,7 +62,7 @@ Une variable qui lit un nom sans valeur n'en a pas non plus : `default` et `is 
 
 Les données d'hôte ne sont jamais rendues. Une variable venue d'un hôte géré, et une variable construite à partir d'une telle variable, restent du texte. Voir [Les valeurs venues des hôtes ne sont jamais rendues comme modèles](#les-valeurs-venues-des-hôtes-ne-sont-jamais-rendues-comme-modèles).
 
-Une variable qui lit `vars`, ou appelle `lookup` ou `query`, est laissée telle qu'elle est écrite et rendue quand une tâche l'utilise. `hostvars['other']['name']` donne le texte brut d'une variable qui contient un modèle.
+Une variable qui lit `vars`, ou appelle `lookup` ou `query`, est laissée telle qu'elle est écrite et rendue quand une tâche l'utilise. `hostvars['other']['name']` rend le modèle que contient cette variable avec les variables de l'autre hôte, comme le fait ansible-core. Ce rendu n'a pas de `hostvars`. Un hôte qui contient des valeurs venues d'un hôte géré, comme des faits collectés, donne le texte brut à la place.
 
 ## Ce qui est disponible
 

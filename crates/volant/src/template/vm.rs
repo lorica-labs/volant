@@ -361,6 +361,9 @@ pub(super) fn convert_error(err: minijinja::Error) -> TemplateError {
     if undefined_operand {
         return convert_error(minijinja::Error::from(ErrorKind::UndefinedError));
     }
+    if let Some(python) = zero_division(&err) {
+        return TemplateError(format!("Error rendering template: {python}"));
+    }
     // A bridged call's failure is worded in full where it is raised, as the reference words it.
     if let Some(said) = bridged::said(&err) {
         return TemplateError(said.to_string());
@@ -370,6 +373,29 @@ pub(super) fn convert_error(err: minijinja::Error) -> TemplateError {
         return TemplateError(format!("{UNDEFINED} The error was: {text}"));
     }
     TemplateError(text)
+}
+
+/// Python's `ZeroDivisionError` for a `/` or a `//` minijinja could not calculate, which it can
+/// only refuse for a zero divisor: `division by zero` between integers, `float division by zero`
+/// with a float, and the floor division's own two sentences.
+fn zero_division(err: &minijinja::Error) -> Option<&'static str> {
+    if err.kind() != ErrorKind::InvalidOperation {
+        return None;
+    }
+    let rest = err.detail()?.strip_prefix("unable to calculate ")?;
+    let (floor, (lhs, rhs)) = match rest.split_once(" // ") {
+        Some(sides) => (true, sides),
+        None => (false, rest.split_once(" / ")?),
+    };
+    let float = [lhs, rhs]
+        .iter()
+        .any(|side| side.contains(['.', 'e', 'E']) || side.contains("inf"));
+    Some(match (floor, float) {
+        (false, false) => "division by zero",
+        (false, true) => "float division by zero",
+        (true, false) => "integer division or modulo by zero",
+        (true, true) => "float floor division by zero",
+    })
 }
 
 /// Notes that a pass left text that must stay as it is, when the result still holds a template

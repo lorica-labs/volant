@@ -1,0 +1,5 @@
+# A stat of a path under a directory the user cannot enter: the error block gives the
+# errno cause. Run as a user other than root.
+stderr: true
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

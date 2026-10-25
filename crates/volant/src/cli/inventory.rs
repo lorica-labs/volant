@@ -219,7 +219,11 @@ fn list_text(
     out: &mut Renderer,
 ) -> anyhow::Result<Result<String, i32>> {
     let limited;
-    let shown = match &args.limit {
+    // A host named `all` is all the pattern `all` matches: see `Inventory::dump_with`, which the
+    // YAML and TOML forms do not go through.
+    let named_all = loaded.all_host_names().len() > 1
+        && loaded.all_host_names().iter().any(|name| name == "all");
+    let shown = match args.limit.as_deref().or(named_all.then_some("all")) {
         Some(pattern) => match limit(loaded, pattern, out) {
             Ok(inventory) => {
                 limited = inventory;
@@ -353,6 +357,10 @@ pub(super) fn load(
     if let Some(fatal) = loaded.error {
         eprintln!("[ERROR]: {}", fatal.message);
         return Err(fatal.code);
+    }
+    // Said once the inventory is read, whatever is asked of it, as the reference says it.
+    for warning in loaded.inventory.resolve("all").warnings {
+        out.warning(&warning, false);
     }
     Ok(loaded.inventory)
 }

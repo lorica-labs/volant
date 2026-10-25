@@ -197,9 +197,32 @@ pub(super) fn set_fact_data(task: &PlayTask, item: &Item, templar: &Templar) -> 
     set_fact_names(item, templar)
         .unwrap_or_default()
         .into_iter()
-        .filter(|(_, _, data)| *data)
-        .map(|(name, _, _)| name)
+        .zip(written_keys(item))
+        .filter(|((_, _, data), key)| *data && vaulted_fact(task, item, key).is_none())
+        .map(|((name, _, _), _)| name)
         .collect()
+}
+
+/// The keys of a `set_fact` as written, in the order [`set_fact_names`] gives the names.
+fn written_keys(item: &Item) -> Vec<String> {
+    item.set_fact_names
+        .get()
+        .and_then(|names| names.as_ref().ok())
+        .map(|names| names.iter().map(|(key, _, _)| key.clone()).collect())
+        .unwrap_or_default()
+}
+
+/// The `!vault` value a `set_fact` key takes as it is, when its value is a bare `{{ x }}` of a
+/// vaulted `x`. Measured on ansible-core 2.19.12: the fact keeps the vault mark, so `is
+/// vault_encrypted` holds for it, where a filter or a concatenation drops it.
+fn vaulted_fact(task: &PlayTask, item: &Item, key: &str) -> Option<String> {
+    let text = task.args.get(key)?.as_str()?;
+    let name = text.trim().strip_prefix("{{")?.strip_suffix("}}")?.trim();
+    if name.is_empty() || !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
+        return None;
+    }
+    let host = item.vars.get("inventory_hostname")?.as_str()?;
+    crate::vault::vaulted_value(host, name)
 }
 
 /// ansible-core's `validate_variable_name`: why this value cannot name a variable, or `None`.
@@ -270,7 +293,12 @@ fn local_result(
             };
             let facts: Map<String, Value> = names
                 .into_iter()
-                .map(|(name, value, _)| (name, value.clone()))
+                .zip(written_keys(item))
+                .map(|((name, value, _), key)| {
+                    let value =
+                        vaulted_fact(task, item, &key).map_or_else(|| value.clone(), Value::String);
+                    (name, value)
+                })
                 .collect();
             r.insert("ansible_facts".into(), Value::Object(facts));
             r.insert("changed".into(), json!(false));

@@ -124,7 +124,7 @@ El agente incluye versiones en Rust de estos módulos:
 |---|---|
 | `setup` | en Debian y Ubuntu, para los facts enumerados en [Facts](/es/docs/variables/precedence/#facts-nativos) |
 | `stat` | la ruta es simple y absoluta, y el checksum es SHA-1 |
-| `file` | `state` es `file`, `directory` o `absent`, o no está definido, y `link` cuando el enlace ya existe y apunta a `src` |
+| `file` | `state` es `file`, `directory` o `absent`, o no está definido, y `link` cuando aún no hay nada en la ruta, o el enlace ya existe y apunta a `src` |
 | `apt` | los paquetes se nombran exactamente, sin versión: una caché al día y paquetes ya instalados o ausentes solo se leen; una caché vieja se actualiza y los paquetes que faltan se instalan con los mismos comandos `apt-get` que ejecuta el módulo, bajo `policy_rc_d` cuando la tarea lo indica; un paquete marcado como instalado automáticamente se marca como manual, igual que en el módulo |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` y `daemon_reload` en el ámbito del sistema |
 | `lineinfile` | la expresión regular significa lo mismo en Rust que en Python, y `backrefs` está desactivado |
@@ -136,6 +136,8 @@ El agente incluye versiones en Rust de estos módulos:
 Todo lo que queda fuera de eso va al módulo de Python de ansible-core. Un `environment` de tarea, SELinux, los atributos extendidos, `remote_src`, una expresión regular que solo entiende Python o un paquete a medio instalar devuelven la tarea, entre otros casos. `dnf` y todos los demás módulos se ejecutan siempre en Python.
 
 Un módulo nativo recibe los argumentos que habría recibido el módulo de Python. Primero decide, solo leyendo, si puede dar la respuesta que daría la referencia. Si no puede, devuelve la tarea antes de tocar el host, y el módulo de Python hace el trabajo real. Su resultado, `invocation` incluido, es el que devuelve el módulo de referencia, clave por clave, y una prueba los compara en cada caso que el módulo cubre. El resultado vuelve como datos no fiables, por el mismo camino que el de un módulo de Python.
+
+En un host cuya configuración desactiva la caché de paquetes de apt, como hacen las imágenes de Debian y Ubuntu de Docker, apt la vuelve a construir a partir de las listas de paquetes en cada llamada: 1.3 segundos cada una en Ubuntu 24.04. El `apt` nativo hace entonces que sus llamadas a `apt-get`, `apt-cache` y `apt-mark` usen una caché en el directorio propio de la conexión, que se elimina cuando la conexión termina. Lo que imprimen y lo que dejan en el host no cambia.
 
 Define `[volant] native_modules = false`, o `VOLANT_NATIVE_MODULES=0`, para enviar todas las tareas a Python. `--profile` muestra qué camino tomó cada tarea y, en una devolución, el motivo. Consulta [Línea de comandos](/es/docs/reference/cli/#ejecución-y-salida).
 

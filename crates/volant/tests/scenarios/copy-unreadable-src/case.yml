@@ -1,0 +1,5 @@
+# copy of a src the user cannot read: the loader's sentence and its errno, raised by the
+# plugin. Run as a user other than root.
+stderr: true
+needs: [ansible-core]
+args: [-i, inv.ini, play.yml]

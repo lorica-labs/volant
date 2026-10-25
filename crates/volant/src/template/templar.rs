@@ -327,6 +327,8 @@ impl Templar {
                     if bridged::is_plugin_failure(&err.0)
                         || err.is_undefined()
                         || err.0.starts_with(super::NO_FILTER)
+                        || (err.0.starts_with("Error rendering template: ")
+                            && err.0.ends_with(" by zero"))
                     {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
                     } else if err.0.starts_with(crate::vault::UNDECRYPTABLE) {

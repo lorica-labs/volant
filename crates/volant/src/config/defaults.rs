@@ -26,6 +26,7 @@ impl Default for Config {
             force_handlers: false,
             localhost_warning: true,
             show_custom_stats: false,
+            duplicate_dict_key: None,
             show_task_path_on_failure: false,
             callback_result_format: None,
             force_color: false,

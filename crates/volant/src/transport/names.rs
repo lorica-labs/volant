@@ -39,6 +39,27 @@ pub(super) const PODMAN_USER: [&str; 1] = ["ansible_user"];
 pub(super) const PODMAN_EXECUTABLE: [&str; 1] = ["ansible_podman_executable"];
 pub(super) const PODMAN_EXTRA_ARGS: [&str; 1] = ["ansible_podman_extra_args"];
 
+/// community.general 11.4.2's `community.general.chroot`; its directory is the address, as
+/// podman's container is.
+pub(super) const CHROOT_EXE: [&str; 1] = ["ansible_chroot_exe"];
+pub(super) const CHROOT_DISABLE_ROOT_CHECK: [&str; 1] = ["ansible_chroot_disable_root_check"];
+pub(super) const CHROOT_EXECUTABLE: [&str; 1] = ["ansible_executable"];
+
+/// community.general 11.4.2's `community.general.lxd` and `community.general.incus`, in the order
+/// host, remote, project, executable.
+pub(super) const LXD: [&str; 4] = [
+    "ansible_lxd_host",
+    "ansible_lxd_remote",
+    "ansible_lxd_project",
+    "ansible_lxd_executable",
+];
+pub(super) const INCUS: [&str; 4] = [
+    "ansible_incus_host",
+    "ansible_incus_remote",
+    "ansible_incus_project",
+    "ansible_incus_executable",
+];
+
 /// Every name above, for the scan that checks a managed host cannot set any of them through
 /// the facts it returns.
 #[cfg(test)]
@@ -59,6 +80,11 @@ pub(crate) fn all() -> impl Iterator<Item = &'static str> {
         .chain(DOCKER_TIMEOUT)
         .chain(PODMAN_EXECUTABLE)
         .chain(PODMAN_EXTRA_ARGS)
+        .chain(CHROOT_EXE)
+        .chain(CHROOT_DISABLE_ROOT_CHECK)
+        .chain(CHROOT_EXECUTABLE)
+        .chain(LXD)
+        .chain(INCUS)
 }
 
 /// The value of the first of `names` the host sets.

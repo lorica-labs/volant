@@ -124,7 +124,7 @@ L'agent embarque des versions Rust de ces modules :
 |---|---|
 | `setup` | sur Debian et Ubuntu, pour les facts listés sous [Facts](/fr/docs/variables/precedence/#facts-natifs) |
 | `stat` | le chemin est simple et absolu, et la somme de contrôle est SHA-1 |
-| `file` | `state` vaut `file`, `directory` ou `absent`, ou n'est pas défini, et `link` quand le lien existe déjà et pointe vers `src` |
+| `file` | `state` vaut `file`, `directory` ou `absent`, ou n'est pas défini, et `link` quand rien n'est encore au chemin, ou que le lien existe déjà et pointe vers `src` |
 | `apt` | les paquets sont nommés exactement, sans version : un cache à jour et des paquets déjà installés ou absents sont seulement lus ; un cache périmé est mis à jour et les paquets manquants sont installés avec les mêmes commandes `apt-get` que le module, sous `policy_rc_d` quand la tâche le donne ; un paquet marqué comme installé automatiquement est marqué manuel, comme le fait le module |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` et `daemon_reload` sur la portée système |
 | `lineinfile` | l'expression régulière a le même sens en Rust qu'en Python, et `backrefs` est désactivé |
@@ -136,6 +136,8 @@ L'agent embarque des versions Rust de ces modules :
 Tout ce qui sort de là va au module Python d'ansible-core. Un `environment` de tâche, SELinux, les attributs étendus, `remote_src`, une expression régulière que seul Python comprend ou un paquet à moitié installé rendent tous la main, entre autres cas. `dnf` et tous les autres modules s'exécutent toujours en Python.
 
 Un module natif reçoit les arguments que le module Python aurait reçus. Il décide d'abord, en lisant seulement, s'il peut donner la réponse que donnerait la référence. S'il ne le peut pas, il rend la tâche avant de toucher à l'hôte, et le module Python fait le vrai travail. Son résultat, `invocation` compris, est celui que renvoie le module de référence, clé pour clé, et un test les compare pour chaque cas que le module couvre. Le résultat revient comme donnée non fiable, par le même chemin que celui d'un module Python.
+
+Sur un hôte dont la configuration désactive le cache de paquets d'apt, comme les images Debian et Ubuntu de Docker, apt le reconstruit à partir des listes de paquets à chaque appel : 1.3 seconde par appel sous Ubuntu 24.04. Le `apt` natif fait alors utiliser à ses appels de `apt-get`, `apt-cache` et `apt-mark` un cache placé dans le répertoire propre à la connexion, supprimé à la fin de celle-ci. Ce qu'ils affichent et ce qu'ils laissent sur l'hôte ne change pas.
 
 Définissez `[volant] native_modules = false`, ou `VOLANT_NATIVE_MODULES=0`, pour envoyer chaque tâche à Python. `--profile` montre quel chemin chaque tâche a pris et, pour un retour de main, la raison. Voir [Ligne de commande](/fr/docs/reference/cli/#exécution-et-sortie).
 

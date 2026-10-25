@@ -18,6 +18,9 @@ Volant atteint un hôte géré, y dépose un petit agent statique (un programme 
 | `local` | Lance l'agent comme processus fils sur le contrôleur, sans réseau. |
 | `docker` | Lance l'agent dans un conteneur en marche via `docker exec -i`, comme `community.docker.docker`. Voir [Conteneurs Docker](#conteneurs-docker). |
 | `podman` | Lance l'agent dans un conteneur Podman en marche via `podman exec -i`, rootless ou non, comme `containers.podman.podman`. Voir [Conteneurs Podman](#conteneurs-podman). |
+| `chroot` | Lance l'agent dans une arborescence du contrôleur via `chroot`, comme `community.general.chroot`. Voir [Répertoires chroot](#répertoires-chroot). |
+| `buildah` | Lance l'agent dans un conteneur de travail Buildah via `buildah run`, comme `containers.podman.buildah`. Voir [Conteneurs de travail Buildah](#conteneurs-de-travail-buildah). |
+| `lxd` | Lance l'agent dans une instance LXD via `lxc exec`, comme `community.general.lxd` ; `community.general.incus` fait de même pour Incus. Voir [Instances LXD et Incus](#instances-lxd-et-incus). |
 
 Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-playbook` le résout, une fois par nom et par exécution. `ansible.builtin.ssh` et `ansible.builtin.local` se résolvent vers les deux plugins ci-dessus et s'exécutent. Un nom court qu'une collection a repris à ansible-core est routé vers cette collection quand elle est installée :
 
@@ -72,6 +75,37 @@ Volant lit les options comme les lit le code source du plugin, qui diffère de s
 | `ansible_podman_extra_args` | Des arguments placés après `podman` et avant la sous-commande, découpés comme le ferait un shell. La valeur par défaut vient de `ANSIBLE_PODMAN_EXTRA_ARGS` ou de `[defaults] podman_extra_args`. |
 
 Le plugin lance `podman exec` sans `-i`, il ne peut donc pas passer son stdin à une commande. L'agent en a besoin, alors Volant lance `podman exec -i` ; c'est le seul mot que ses lignes de commande ajoutent. Volant ne lance jamais `podman mount`. `become` avec `sudo` passe par le `sudo` du conteneur, et `su` est refusé. Avec `-vvvv`, chaque commande s'affiche en ligne `RUN [...]`, comme le plugin l'écrit, sans ligne `ESTABLISH`.
+
+## Répertoires chroot
+
+`ansible_connection: chroot`, ou `community.general.chroot`, exécute un play dans une arborescence du contrôleur : construction d'image, arbre `debootstrap`, dépannage. Le nom d'inventaire, ou `ansible_host`, est le répertoire. Les deux noms demandent community.general installé sur le contrôleur. L'exécution demande root, parce que `chroot` le demande.
+
+| Variable | Rôle |
+|---|---|
+| `ansible_chroot_exe` | Le programme `chroot`, un nom cherché dans votre `PATH` ou un chemin absolu. La valeur par défaut vient de `ANSIBLE_CHROOT_EXE` ou de `[chroot_connection] exe`. |
+| `ansible_chroot_disable_root_check` | Saute la vérification que le contrôleur tourne en root. La valeur par défaut vient de `ANSIBLE_CHROOT_DISABLE_ROOT_CHECK` ou de `[chroot_connection] disable_root_check`. |
+| `ansible_executable` | Le shell sous lequel les commandes s'exécutent, `/bin/sh` par défaut. La valeur par défaut vient de `ANSIBLE_EXECUTABLE` ou de `[defaults] executable`. |
+
+Avant que rien ne s'exécute, la tâche échoue, comme sous ansible-core, pour un chemin qui n'est pas un répertoire, pour une arborescence sans `bin/sh`, et pour un contrôleur qui n'est pas root sauf si la vérification est désactivée. L'agent monte par `chroot <dir> /bin/sh`, donc le script qui l'écrit tourne dans l'arborescence, et aucun chemin qu'il écrit ne peut en sortir, quels que soient les liens symboliques qu'elle contient. Quand `df` ne peut pas dire combien de place il reste, comme dans une arborescence sans `/proc` monté, la vérification d'espace est omise. `become` fonctionne quand l'arborescence a `sudo`. Avec `-vvvv`, les lignes affichent `THIS IS A LOCAL CHROOT DIR`, puis une ligne `EXEC [...]` par commande.
+
+## Conteneurs de travail Buildah
+
+`ansible_connection: buildah`, ou `containers.podman.buildah`, configure le conteneur de travail que crée `buildah from <image>`, pour qu'un play construise une image couche par couche, que `buildah commit` enregistre ensuite. Les deux noms demandent containers.podman installé sur le contrôleur. Comme pour podman, le conteneur est `ansible_host`, sinon le nom d'inventaire, et l'utilisateur est `ansible_user`, le mot-clé `remote_user` ou `-u` ; `root` n'ajoute aucune option. Le programme est le `buildah` de votre `PATH`, et les variables `BUILDAH_*` l'atteignent par l'environnement.
+
+L'agent démarre par `buildah run [--user U] <conteneur> -- <agent>`. Volant ne lance jamais `buildah mount`, qui demande `buildah unshare` pour un utilisateur rootless : un conteneur de travail sans shell reçoit l'agent par `buildah copy`. buildah en rootless écrit des avertissements sur les capacités à chaque commande, donc le stderr de l'agent n'est pas affiché. Avec `-vvvv`, chaque commande s'affiche en ligne `RUN [...]`, sans ligne `ESTABLISH`.
+
+## Instances LXD et Incus
+
+`ansible_connection: lxd`, ou `community.general.lxd`, exécute un play dans une instance LXD, locale ou sur un serveur distant, via la commande `lxc`. `community.general.incus` fait de même pour Incus avec la commande `incus` ; il n'a pas de nom court dans ansible-core. Les deux demandent community.general installé sur le contrôleur.
+
+| Variable | Rôle |
+|---|---|
+| `ansible_lxd_host`, `ansible_incus_host` | L'instance, jusqu'au premier point : `web.example.com` est `web`. Elle l'emporte sur `ansible_host`, qui l'emporte sur le nom d'inventaire. |
+| `ansible_lxd_remote`, `ansible_incus_remote` | Le serveur distant, `local` par défaut. |
+| `ansible_lxd_project`, `ansible_incus_project` | Le projet. Incus en passe toujours un, `default` par défaut. |
+| `ansible_lxd_executable`, `ansible_incus_executable` | Le shell sous lequel les commandes s'exécutent. Elle l'emporte sur `ansible_executable` ; `/bin/sh` par défaut. |
+
+L'utilisateur est `ansible_user`, le mot-clé `remote_user` ou `-u`, `root` par défaut. Pour tout autre utilisateur, chaque commande passe par la méthode d'élévation, `/bin/su <user> -c` sauf si `lxd_become_method` ou `incus_become_method` en nomme une autre. Une instance sans shell reçoit l'agent par `lxc file push` ou `incus file push` quand l'utilisateur est root. Une instance absente ou arrêtée rend l'hôte injoignable avec les mots du plugin, comme `instance not running: web` ; Incus y ajoute le serveur distant et le projet. Avec `-vvvv`, les lignes affichent `ESTABLISH LXD CONNECTION FOR USER: <user>` (`Incus` pour Incus), la ligne `INFO:` du plugin pour un utilisateur autre que root, puis une ligne `EXEC [...]` par commande.
 
 ## Variables d'hôte
 

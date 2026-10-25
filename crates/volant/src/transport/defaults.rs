@@ -276,19 +276,24 @@ impl std::error::Error for ConnectError {}
 /// routes to one of them: names that exist, which this release refuses rather than misreports.
 pub(super) const KNOWN_CONNECTIONS: &[&str] = &["paramiko", "paramiko_ssh", "psrp", "winrm"];
 
-/// An `ansible_connection` naming no plugin at all. Measured on ansible-core 2.19.12: the task
-/// fails with this message, for a host's own connection, a delegate's and a `run_once`
-/// runner's alike, and nobody is unreachable.
+/// A connection the task fails for, rather than the host: an `ansible_connection` naming no
+/// plugin at all, or a plugin that refuses before it runs anything, as `chroot` refuses a
+/// directory that is not one. Measured on ansible-core 2.19.12: the task fails with the message,
+/// for a host's own connection, a delegate's and a `run_once` runner's alike, and nobody is
+/// unreachable.
 #[derive(Debug)]
-pub struct ConnectionNotFound(pub String, pub Option<String>);
+pub struct ConnectionFailsTask {
+    message: String,
+    warning: Option<String>,
+}
 
-impl std::fmt::Display for ConnectionNotFound {
+impl std::fmt::Display for ConnectionFailsTask {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "the connection plugin '{}' was not found", self.0)
+        f.write_str(&self.message)
     }
 }
 
-impl std::error::Error for ConnectionNotFound {}
+impl std::error::Error for ConnectionFailsTask {}
 
 /// The collection ansible-core 2.19.12 routes a connection name to, for the names a collection
 /// took over from the core.
@@ -330,18 +335,35 @@ pub fn plugin_load_warning(plugin: &str, collection: &str) -> String {
     format!("Error loading plugin '{plugin}': No module named 'ansible_collections.{missing}'")
 }
 
-impl ConnectionNotFound {
-    /// The warning that goes with this failure, for a name a collection took over: the one the
-    /// controller's loader gave, else the one the reference gives with no collection installed.
-    pub fn warning(&self) -> Option<String> {
-        if let Some(said) = &self.1 {
-            return Some(said.clone());
+impl ConnectionFailsTask {
+    /// A name no plugin answers to. The warning that goes with it, for a name a collection took
+    /// over, is the one the controller's loader gave, else the one the reference gives with no
+    /// collection installed.
+    pub fn not_found(name: &str, loader_warning: Option<String>) -> ConnectionFailsTask {
+        let routed = || {
+            let (_, routed) = ROUTED_CONNECTIONS
+                .iter()
+                .find(|(known, _)| *known == name)?;
+            let collection = routed.rsplit_once('.')?.0;
+            Some(plugin_load_warning(routed, collection))
+        };
+        ConnectionFailsTask {
+            message: format!("the connection plugin '{name}' was not found"),
+            warning: loader_warning.or_else(routed),
         }
-        let (_, routed) = ROUTED_CONNECTIONS
-            .iter()
-            .find(|(name, _)| *name == self.0)?;
-        let collection = routed.rsplit_once('.')?.0;
-        Some(plugin_load_warning(routed, collection))
+    }
+
+    /// A plugin's own refusal, in its words.
+    pub fn refused(message: impl Into<String>) -> ConnectionFailsTask {
+        ConnectionFailsTask {
+            message: message.into(),
+            warning: None,
+        }
+    }
+
+    /// The warning printed before the task fails, when there is one.
+    pub fn warning(&self) -> Option<String> {
+        self.warning.clone()
     }
 }
 

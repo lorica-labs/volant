@@ -1,0 +1,5 @@
+{
+  "code": 2,
+  "stderr": "",
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [file] ********************************************************************\nchanged: [h1]\n\nTASK [stat] ********************************************************************\n[ERROR]: Task failed: Module failed: Permission denied: [Errno 13] Permission denied: b'<golden-tmp>/denied/file'\nOrigin: <golden-tmp>/play.yml:6:11\n\n4     - block:\n5         - file: {path: \"{{ playbook_dir }}/denied\", state: directory, mode: \"0000\"}\n6         - stat: {path: \"{{ playbook_dir }}/denied/file\"}\n            ^ column 11\n\nfatal: [h1]: FAILED! => {\"changed\": false, \"msg\": \"Permission denied\"}\n\nTASK [file] ********************************************************************\nchanged: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=2    unreachable=0    failed=1    skipped=0    rescued=0    ignored=0   \n\n"
+}

@@ -49,6 +49,41 @@ parity-reference:
 runtime-lock:
     python3 -I crates/volant/src/runtime/lock.py
 
+# Record the compat sample (crates/volant/tests/compat) with the volant.compat.record callback
+# under each ansible-core it supports, the development branch included, and fail when two
+# recordings differ in their kinds of event or in the keys of an event. Needs `uv` and network.
+compat-matrix:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    repo="$PWD"
+    work="$(mktemp -d)"
+    trap 'rm -rf "$work"' EXIT
+    cp -r crates/volant/tests/compat/. "$work"
+    for core in "ansible-core~=2.19.0" "ansible-core~=2.20.0" "ansible-core~=2.21.0" "ansible-core @ git+https://github.com/ansible/ansible@devel"; do
+        name="$(echo "$core" | tr -c 'a-z0-9.\n' _)"
+        (cd "$work" && ANSIBLE_COLLECTIONS_PATH="$repo/collections" ANSIBLE_CALLBACKS_ENABLED=volant.compat.record \
+            VOLANT_RECORD_PATH="$work/$name.jsonl" uvx --python 3.13 --from "$core" ansible-playbook -i hosts.ini -f 1 site.yml > "$work/$name.out")
+    done
+    python3 - "$work"/*.jsonl <<'EOF'
+    import json, sys
+    shapes = {}
+    for path in sys.argv[1:]:
+        shape = {}
+        for line in open(path):
+            event = json.loads(line)
+            shape.setdefault(event["event"], set()).update(event)
+        shapes[path.rsplit("/", 1)[-1]] = shape
+    first, *rest = shapes.items()
+    failed = False
+    for name, shape in rest:
+        for kind in sorted(set(first[1]) | set(shape)):
+            if first[1].get(kind) != shape.get(kind):
+                failed = True
+                print(f"{name}: {kind}: {sorted(shape.get(kind, ()))} where {first[0]} has {sorted(first[1].get(kind, ()))}")
+    print("\n".join(shapes), "differ" if failed else "agree", sep="\n")
+    sys.exit(failed)
+    EOF
+
 # Everything CI runs, in the same order
 check: fmt lint test
 
@@ -441,7 +476,7 @@ ssh-test: agent-musl
     cargo build -p volant-agent --features test-natives
     mkdir -p target/test-natives
     cp target/debug/volant-agent target/test-natives/volant-agent
-    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | binary(host_named_paths) | binary(fetch_dest) | test(/^a_scenario_matches_the_reference::/) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver) | test(=every_runs_keyword_changes_something_observable) | test(=retries_are_rendered_per_item) | test(=a_host_name_read_through_a_filter_stays_text) | test(=a_group_named_from_a_host_value_reads_through_variables) | test(/^a_name_a_host_printed_stays_text_on_every_route/) | test(=a_lookup_reads_the_controller_after_the_tasks_in_front_of_it) | test(=a_task_behind_a_fact_writing_module_renders_the_new_facts) | test(=a_module_in_the_playbook_s_library_or_a_role_s_runs) | test(=a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union) | test(=a_warning_repeated_by_two_items_prints_once) | test(=library_directories_join_the_search_in_the_reference_s_order) | test(=a_library_module_answers_its_short_name_and_never_ansible_builtin) | test(=a_task_an_action_plugin_backs_leaves_the_link_for_the_next_task) | test(=python::tests::dropping_the_builder_leaves_no_ansible_local_directory) | test(=python::tests::only_ansible_core_s_own_module_is_core) | test(=python::tests::the_helper_names_the_files_a_union_came_from) | test(/^a_file_one_tool_encrypts_the_other_decrypts/) | test(=a_file_one_tool_rekeys_the_other_reads_under_the_new_secret) | test(=a_block_one_tool_wrote_the_other_opens)'
+    VOLANT_TEST_NATIVES_AGENT_DIR="$PWD/target/test-natives" cargo nextest run --workspace --ignore-default-filter --no-tests=fail -E 'binary(reference_modules) | binary(compat_record) | binary(host_named_paths) | binary(fetch_dest) | test(/^a_scenario_matches_the_reference::/) | test(=python::tests::a_collection_the_controller_cannot_run_is_answered_name_by_name) | test(=python::tests::the_controller_resolves_what_its_collections_hold) | test(=a_task_an_action_plugin_backs_retries_through_the_driver) | test(=every_runs_keyword_changes_something_observable) | test(=retries_are_rendered_per_item) | test(=a_host_name_read_through_a_filter_stays_text) | test(=a_group_named_from_a_host_value_reads_through_variables) | test(/^a_name_a_host_printed_stays_text_on_every_route/) | test(=a_lookup_reads_the_controller_after_the_tasks_in_front_of_it) | test(=a_task_behind_a_fact_writing_module_renders_the_new_facts) | test(=a_module_in_the_playbook_s_library_or_a_role_s_runs) | test(=a_module_written_in_the_playbook_s_library_rebuilds_a_kept_union) | test(=a_warning_repeated_by_two_items_prints_once) | test(=library_directories_join_the_search_in_the_reference_s_order) | test(=a_library_module_answers_its_short_name_and_never_ansible_builtin) | test(=a_task_an_action_plugin_backs_leaves_the_link_for_the_next_task) | test(=python::tests::dropping_the_builder_leaves_no_ansible_local_directory) | test(=python::tests::only_ansible_core_s_own_module_is_core) | test(=python::tests::the_helper_names_the_files_a_union_came_from) | test(/^a_file_one_tool_encrypts_the_other_decrypts/) | test(=a_file_one_tool_rekeys_the_other_reads_under_the_new_secret) | test(=a_block_one_tool_wrote_the_other_opens)'
     just facts-compare
 
 # Gather facts twice on one host, through the native setup and through the Python one, and

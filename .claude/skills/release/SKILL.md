@@ -8,7 +8,7 @@ description: Cut a Volant release through the release-plz pull request and cargo
 release-plz and cargo-dist do the work. Cutting a release means merging one pull request, then checking that what came out is what you expected.
 
 1. Check the open release pull request (label `release`, opened by release-plz). Read `CHANGELOG.md` in the diff: entries are user-facing, grouped under Added, Changed, Fixed, Removed, Security. Edit wording in the pull request if needed.
-2. Confirm the version follows SemVer for the changes listed. Pre-releases use `0.1.0-alpha.1`, `0.1.0-rc.1` forms.
+2. Confirm the version follows SemVer for the changes listed. Pre-releases use `0.1.0-alpha.1`, `0.1.0-rc.1` forms. release-plz does not know the `volant.compat` collection: set `version:` in `collections/ansible_collections/volant/compat/galaxy.yml` to the new version on the release branch, or `the_collection_version_is_the_workspace_version` fails.
 3. Merge with `gh pr merge --squash --delete-branch`. release-plz tags `vX.Y.Z` and publishes the crates.
 4. Watch the release workflow: `gh run list --workflow release.yml --limit 1` then `gh run watch <id>`.
 5. Verify the release page has one archive per target (six controller archives and four agent archives, see the table in `docs/src/content/docs/start/installation.mdx`), `sha256.sum`, the shell installer and provenance attestations: `gh release view vX.Y.Z`. Then check the libraries of the published files. The release workflow ran this gate before it published, so a failure here means the published bytes differ from the checked ones:

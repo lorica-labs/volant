@@ -232,6 +232,7 @@ export default defineConfig({
             { label: 'Full support matrix', slug: 'docs/reference/parity' },
             { label: 'Template language', slug: 'docs/reference/templates' },
             { label: 'Managed runtime', slug: 'docs/reference/runtime' },
+            { label: 'Run recordings', slug: 'docs/reference/recording' },
             { label: 'Glossary', slug: 'docs/reference/glossary' },
           ],
         },

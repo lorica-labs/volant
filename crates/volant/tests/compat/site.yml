@@ -1,0 +1,30 @@
+- hosts: all
+  gather_facts: true
+  roles: [r1]
+  tasks:
+    - name: loop
+      ansible.builtin.debug: {msg: "{{ item }}"}
+      loop: [a, b]
+    - name: until
+      ansible.builtin.command: echo hi
+      register: out
+      until: out.rc == 0
+      retries: 2
+      delay: 0
+      changed_when: false
+    - name: secret
+      ansible.builtin.debug: {msg: hidden}
+      no_log: true
+    - name: delegated
+      ansible.builtin.command: "true"
+      delegate_to: other
+      run_once: true
+    - ansible.builtin.include_tasks: inc.yml
+      loop: [1, 2]
+    - ansible.builtin.import_tasks: inc.yml
+    - name: fails
+      ansible.builtin.fail: {msg: planned}
+      ignore_errors: true
+    - name: skipped
+      ansible.builtin.debug: {msg: x}
+      when: false

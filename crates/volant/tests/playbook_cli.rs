@@ -4868,14 +4868,18 @@ fn a_role_is_found_next_to_the_playbook_and_named_in_every_banner() {
 }
 
 /// A role nobody can find stops the run before the first banner, naming every directory it looked
-/// in, and exits **1**.
+/// in at the entry that named it, and exits **1**.
 #[test]
 fn a_missing_role_names_every_directory_searched_and_exits_1() {
     let out = volant(&["playbook", &fixture("roles/missing.yml")]);
     let err = String::from_utf8(out.stderr).unwrap();
     assert_eq!(out.status.code(), Some(1), "{err}");
     assert!(
-        err.contains("the role 'nosuchrole' was not found in "),
+        err.contains("[ERROR]: the role 'nosuchrole' was not found in "),
+        "{err}"
+    );
+    assert!(
+        err.contains("\nOrigin: ") && err.contains("^ column"),
         "{err}"
     );
     // Matched by their tails: the compiler resolves the playbook's directory, so the prefix a
@@ -4883,7 +4887,13 @@ fn a_missing_role_names_every_directory_searched_and_exits_1() {
     assert!(err.contains("fixtures/roles/roles:"), "{err}");
     assert!(err.contains("/usr/share/ansible/roles"), "{err}");
     assert!(err.contains("/etc/ansible/roles"), "{err}");
-    assert!(err.trim_end().ends_with("fixtures/roles"), "{err}");
+    assert!(
+        err.lines()
+            .find(|line| line.starts_with("[ERROR]: "))
+            .unwrap_or_default()
+            .ends_with("fixtures/roles"),
+        "{err}"
+    );
     assert!(
         !String::from_utf8_lossy(&out.stdout).contains("PLAY ["),
         "nothing runs before a role is found"

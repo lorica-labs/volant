@@ -148,6 +148,8 @@ fn parse_at(
     rendering: &Rendering<'_>,
 ) -> anyhow::Result<Playbook> {
     let (docs, origins) = crate::yaml::load_with_origins(text, source)?;
+    // A `!vault` value in a play's, a block's or a task's `vars:` points its failure at its tag.
+    crate::yaml::note_vault_origins(&docs, &origins, source, text);
     let _origins = OriginScope::enter(source, origins);
     let Some(Yaml::Sequence(entries)) = docs.first() else {
         bail!("{source}: a playbook must be a list of plays");
@@ -317,6 +319,7 @@ fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
         .with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
     let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
+    crate::yaml::note_vault_origins(&docs, &origins, &source, &text);
     let _origins = OriginScope::enter(&source, origins);
     match docs.first() {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
@@ -333,6 +336,7 @@ pub(crate) fn parse_handlers_file(path: &Path) -> anyhow::Result<Vec<HandlerTask
         .with_context(|| format!("reading {}", path.display()))?;
     let source = path.display().to_string();
     let (docs, origins) = crate::yaml::load_with_origins(&text, &source)?;
+    crate::yaml::note_vault_origins(&docs, &origins, &source, &text);
     let _origins = OriginScope::enter(&source, origins);
     match docs.first() {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),

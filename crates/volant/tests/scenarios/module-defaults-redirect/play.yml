@@ -1,0 +1,10 @@
+- hosts: h1
+  gather_facts: false
+  module_defaults:
+    group/acme.probe.grp: {x: 1}
+  tasks:
+    - acme.probe.oldprobe: {y: old}
+      register: r1
+    - acme.probe.probe: {y: new}
+      register: r2
+    - debug: {msg: "{{ [r1.got, r2.got] }}"}

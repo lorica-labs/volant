@@ -316,13 +316,14 @@ pub(crate) fn unresolved_group(group: &str) -> String {
 pub(crate) type Rendered = Result<Map<String, Value>, String>;
 
 /// What `module_defaults` gives the call to `module`, before the task's own arguments are laid
-/// over it. `groups` maps a group's full name to the modules it holds; `render` turns the value
+/// over it. `resolved` is the name `module` resolves to, when a redirect leads elsewhere. `groups` maps a group's full name to the modules it holds; `render` turns the value
 /// a key holds into the mapping it stands for.
 ///
 /// # Errors
 /// The reference's sentence for a group `groups` does not hold, or whatever `render` refuses.
 pub(crate) fn defaults_for(
     module: &str,
+    resolved: Option<&str>,
     layers: &[Value],
     groups: &BTreeMap<String, Vec<String>>,
     render: &mut dyn FnMut(&str, &Value) -> Rendered,
@@ -344,6 +345,9 @@ pub(crate) fn defaults_for(
         }
     }
     let me = canonical(module);
+    // A group lists modules by the name they resolve to: measured on ansible-core 2.19.12, a task
+    // naming a module by a `runtime.yml` redirect gets the defaults of the group of its target.
+    let target = resolved.map_or(me, canonical);
     let mut out = Map::new();
     // Each value is rendered by the caller before it is required to be a mapping: a whole value
     // may be a template that renders to one.
@@ -354,7 +358,10 @@ pub(crate) fn defaults_for(
     for (key, value) in &merged {
         if let Some(group) = key.strip_prefix("group/") {
             let members = groups.get(group).ok_or_else(|| unresolved_group(group))?;
-            if members.iter().any(|member| canonical(member) == me) {
+            if members
+                .iter()
+                .any(|member| canonical(member) == me || canonical(member) == target)
+            {
                 lay(key, value)?;
             }
         }

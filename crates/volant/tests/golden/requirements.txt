@@ -1,0 +1,16 @@
+# The Python packages the bridged golden rows import, beside ansible-core: every name a row of
+# cases.yml lists under `needs`, and the two the collection filters read. The versions are the
+# ones the recordings were made with. CI installs this file; CONTRIBUTING.md says how to.
+fqdn==1.6.0
+hashids==1.3.1
+jc==1.26.1
+jmespath==1.1.0
+jsonpatch==1.36
+jsonschema==4.26.0
+netaddr==1.3.0
+passlib==1.7.4
+petname==2.9
+prettytable==3.18.0
+tomlkit==0.15.2
+xkcdpass==1.30.0
+xmltodict==1.0.4

@@ -169,7 +169,9 @@ pub(super) trait AgentCommands: Reach {
         )
     }
 
-    /// Reads the agent from stdin into the cache, atomically, after checking free space. It
+    /// Reads the agent from stdin into the cache, atomically, after checking free space. When `df`
+    /// cannot say, as in a chroot with no `/proc`, the check is left out, and a disk that fills up
+    /// is still caught by the byte count. It
     /// reads the byte count it was told rather than up to the end of its input, because behind
     /// `su` that input is a terminal, where no end ever comes; `head -c` has that on every host
     /// an agent is built for (GNU coreutils, BusyBox and toybox alike). The byte count is
@@ -192,7 +194,7 @@ pub(super) trait AgentCommands: Reach {
             "umask 077; {checks}prepare || exit $?; \
              t=\"$d/volant-agent.tmp.$$\"; \
              avail=$(df -Pk \"$d\" | awk 'NR==2 {{print $4}}'); \
-             case \"$avail\" in ''|*[!0-9]*) avail=0;; esac; \
+             case \"$avail\" in ''|*[!0-9]*) avail={need};; esac; \
              [ \"$avail\" -ge {need} ] || {{ echo \"$avail\"; exit {EXIT_NO_SPACE}; }}; \
              head -c {size} > \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
              [ \"$(wc -c < \"$t\")\" -eq {size} ] || {{ rm -f \"$t\"; exit {EXIT_SHORT_WRITE}; }}; \

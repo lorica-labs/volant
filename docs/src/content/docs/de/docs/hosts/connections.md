@@ -18,6 +18,7 @@ Volant erreicht einen verwalteten Host, legt dort einen kleinen statischen Agent
 | `local` | Startet den Agent als Kindprozess auf dem Controller, ohne Netzwerk. |
 | `docker` | Startet den Agent über `docker exec -i` in einem laufenden Container, wie `community.docker.docker`. Siehe [Docker-Container](#docker-container). |
 | `podman` | Startet den Agent über `podman exec -i` in einem laufenden Podman-Container, rootless oder nicht, wie `containers.podman.podman`. Siehe [Podman-Container](#podman-container). |
+| `chroot` | Startet den Agent über `chroot` in einem Verzeichnisbaum auf dem Controller, wie `community.general.chroot`. Siehe [Chroot-Verzeichnisse](#chroot-verzeichnisse). |
 
 Jeder andere Name wird vom ansible-core des Controllers aufgelöst, so wie `ansible-playbook` ihn auflöst, einmal pro Name und Lauf. `ansible.builtin.ssh` und `ansible.builtin.local` lösen sich zu den beiden Plugins oben auf und laufen. Ein kurzer Name, den eine Collection von ansible-core übernommen hat, wird zu dieser Collection geleitet, wenn sie installiert ist:
 
@@ -72,6 +73,18 @@ Volant liest die Optionen so, wie der Quellcode des Plugins sie liest, und das w
 | `ansible_podman_extra_args` | Argumente nach `podman` und vor dem Unterbefehl, getrennt wie von einer Shell. Der Standard kommt aus `ANSIBLE_PODMAN_EXTRA_ARGS` oder `[defaults] podman_extra_args`. |
 
 Das Plugin startet `podman exec` ohne `-i` und kann einem Befehl daher kein stdin übergeben. Der Agent braucht eines, also startet Volant `podman exec -i`; das ist das einzige Wort, das seine Befehlszeilen hinzufügen. Volant startet nie `podman mount`. `become` mit `sudo` läuft über das `sudo` des Containers, und `su` wird abgelehnt. Mit `-vvvv` erscheint jeder Befehl als `RUN [...]`-Zeile, wie das Plugin sie schreibt, ohne `ESTABLISH`-Zeile.
+
+## Chroot-Verzeichnisse
+
+`ansible_connection: chroot` oder `community.general.chroot` führt ein Play in einem Verzeichnisbaum auf dem Controller aus: ein Image-Build, ein `debootstrap`-Baum, eine Rettungsaktion. Der Inventory-Name oder `ansible_host` ist das Verzeichnis. Beide Namen brauchen community.general auf dem Controller. Der Lauf braucht root, weil `chroot` es braucht.
+
+| Variable | Wirkung |
+|---|---|
+| `ansible_chroot_exe` | Das Programm `chroot`, ein Name, der in Ihrem `PATH` gesucht wird, oder ein absoluter Pfad. Der Standard kommt aus `ANSIBLE_CHROOT_EXE` oder `[chroot_connection] exe`. |
+| `ansible_chroot_disable_root_check` | Überspringt die Prüfung, ob der Controller als root läuft. Der Standard kommt aus `ANSIBLE_CHROOT_DISABLE_ROOT_CHECK` oder `[chroot_connection] disable_root_check`. |
+| `ansible_executable` | Die Shell, unter der die Befehle laufen, standardmäßig `/bin/sh`. Der Standard kommt aus `ANSIBLE_EXECUTABLE` oder `[defaults] executable`. |
+
+Bevor irgendetwas läuft, schlägt der Task fehl, wie unter ansible-core, bei einem Pfad, der kein Verzeichnis ist, bei einem Baum ohne `bin/sh` und bei einem Controller, der nicht root ist, außer die Prüfung ist abgeschaltet. Der Agent kommt über `chroot <dir> /bin/sh` hinein, das Skript, das ihn schreibt, läuft also im Baum, und kein Pfad, den es schreibt, kann den Baum verlassen, welche symbolischen Links er auch enthält. Kann `df` nicht sagen, wie viel Platz frei ist, etwa in einem Baum ohne eingehängtes `/proc`, entfällt die Platzprüfung. `become` funktioniert, wenn der Baum `sudo` hat. Mit `-vvvv` zeigen die Zeilen `THIS IS A LOCAL CHROOT DIR`, dann eine `EXEC [...]`-Zeile pro Befehl.
 
 ## Hostvariablen
 

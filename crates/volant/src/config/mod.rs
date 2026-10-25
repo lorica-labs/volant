@@ -321,6 +321,7 @@ impl Config {
         }
         docker::env(&mut config.plugins.docker)?;
         docker::podman_env(&mut config.plugins.podman);
+        docker::chroot_env(&mut config.plugins.chroot)?;
         // Set and empty still wins, and a word the reference does not know reads as false.
         if let Ok(format) = std::env::var("ANSIBLE_CALLBACK_RESULT_FORMAT") {
             config.callback_result_format = Some(format);

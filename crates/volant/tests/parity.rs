@@ -516,7 +516,15 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
                 [("ansible_connection".to_string(), Value::from(n.as_str()))]
                     .into_iter()
                     .collect();
-            if volant::transport::Transport::for_vars("h", &vars, &defaults()).is_ok() {
+            // A plugin's own refusal of the probe's host, as chroot refuses a directory that is
+            // not one, is the engine driving it.
+            let driven = match volant::transport::Transport::for_vars("h", &vars, &defaults()) {
+                Ok(_) => true,
+                Err(err) => err
+                    .downcast_ref::<volant::transport::ConnectionFailsTask>()
+                    .is_some(),
+            };
+            if driven {
                 push("connection", &n, Status::Runs, "");
             } else {
                 push("connection", &n, Status::Later, "another connection");

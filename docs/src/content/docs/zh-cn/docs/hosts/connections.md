@@ -16,6 +16,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 |---|---|
 | `ssh` | 运行 `PATH` 中的 OpenSSH 客户端。Volant 自己构建命令行，不使用包装脚本，也不使用 Rust 的 SSH 库，所以你的 `~/.ssh/config` 会生效。 |
 | `local` | 在控制节点上把 agent 作为子进程运行，不经过网络。 |
+| `docker` | 通过 `docker exec -i` 在运行中的容器里运行 agent，与 `community.docker.docker` 相同。见 [Docker 容器](#docker-容器)。 |
 
 其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
@@ -32,11 +33,31 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 
 使用 `-vvv` 时，被转向的名字会在某台主机上第一个使用它的 task 下打印 `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot`，每一跳一行。
 
-解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `community.docker.docker`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
+解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `containers.podman.podman`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
 
 什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
 密码来自 `-k`、`--connection-password-file` 或 `ansible_password` 变量。Volant 通过 `SSH_ASKPASS` 和一个运行结束时会删除的私有临时文件把它交给 `ssh`，这需要 OpenSSH 8.4 或更高版本。随后 `ssh` 以 `BatchMode=no` 和 `NumberOfPasswordPrompts=1` 运行，所以一次错误的回答就会结束这次尝试。密码绝不会出现在命令行、程序的环境或输出中，`-vvvv` 也不例外。用 vault 加密的 `ansible_password` 与任何 vault 加密的变量一样工作。没有密码时，`ssh` 以 `BatchMode=yes` 运行，从不提示，所以需要密码或口令的主机会被报告为不可达，而不是让运行卡住。
+
+## Docker 容器
+
+`ansible_connection: docker` 或 `community.docker.docker` 在运行中的容器里执行 play，容器里不需要 sshd，也不需要到它的网络路径。两个名字都需要控制节点上装有 community.docker，与 `ansible-playbook` 一样。Volant 运行你 `PATH` 中的 `docker` 程序，因此 `DOCKER_HOST`、`DOCKER_CONTEXT` 和 `DOCKER_CONFIG` 通过环境传给它。
+
+agent 通过 `docker exec -i` 送进去，所以镜像需要 `/bin/sh` 和常用工具：`uname`、`id`、`ls`、`mkdir`、`df`、`awk`、`head`、`wc`、`chmod`、`mv` 和 `find`。最小的 Alpine 或 Debian 镜像都有。没有 shell 的镜像，例如 distroless 或 scratch，暂不支持。
+
+| 变量 | 作用 |
+|---|---|
+| `ansible_docker_host` | 容器的名字或 id。它优先于 `ansible_host`，后者优先于清单名。 |
+| `ansible_docker_user` | 命令以哪个用户运行，即 `docker exec -u`。它优先于 `ansible_user`、`remote_user` 关键字和 `-u`。未设置时用容器自己的用户。 |
+| `ansible_docker_extra_args` | 放在 `docker` 之后、`exec` 之前的参数，按单个空格切分，而不是按 shell 词切分。默认值来自 `[docker_connection] extra_cli_args`。 |
+| `ansible_docker_extra_env` | 用 `docker exec -e` 设置的变量映射。每个值都必须是文本：不带引号的数字或布尔值会被拒绝。 |
+| `ansible_docker_privileged` | `docker exec --privileged`。默认值来自 `ANSIBLE_DOCKER_PRIVILEGED` 或 `[docker_connection] privileged`。 |
+| `ansible_docker_working_dir` | `docker exec -w`。默认值来自 `ANSIBLE_DOCKER_WORKING_DIR` 或 `[docker_connection] working_dir`。 |
+| `ansible_docker_timeout` | `docker` 回应第一条命令可用的秒数。默认值依次来自 `ANSIBLE_DOCKER_TIMEOUT`、`[docker_connection] timeout`，再到连接超时。 |
+
+`become` 配合 `sudo` 时使用容器自己的 `sudo`。`su` 会被拒绝，因为 `docker exec` 不给它终端。容器不存在或已停止，或镜像里没有该用户时，主机不可达，消息是 docker 自己的。ansible-core 把这三种情况都报告为 `Failed to create temporary directory`，因此这条消息是有意不同的。
+
+使用 `-vvvv` 时，会显示 `ESTABLISH DOCKER CONNECTION FOR USER: <user>`，然后每条命令一行 `EXEC [...]`，这些是 Volant 自己的命令。play 没有指定用户时，用户来自 `docker inspect`：镜像没有指定时为 `root`，docker 无法给出时为 `?`。
 
 ## 主机变量
 

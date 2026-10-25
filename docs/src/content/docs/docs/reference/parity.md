@@ -35,7 +35,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
-| collection connection | 0 | 0 | 0 | 30 |
+| collection connection | 1 | 0 | 0 | 29 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -706,7 +706,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `ansible.netcommon.netconf` | <span class="kw kw-no">later</span> | another connection |
 | `ansible.netcommon.network_cli` | <span class="kw kw-no">later</span> | another connection |
 | `ansible.netcommon.persistent` | <span class="kw kw-no">later</span> | another connection |
-| `community.docker.docker` | <span class="kw kw-no">later</span> | another connection |
+| `community.docker.docker` | <span class="kw kw-runs">runs</span> |  |
 | `community.docker.docker_api` | <span class="kw kw-no">later</span> | another connection |
 | `community.docker.nsenter` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.chroot` | <span class="kw kw-no">later</span> | another connection |

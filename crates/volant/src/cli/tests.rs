@@ -5,7 +5,6 @@ use super::hosts::{order_hosts, shuffle};
 use super::passwords::{password_from_file, ssh_words};
 #[cfg(unix)]
 use super::plays::run;
-use super::run::armed;
 use crate::config::Config;
 use crate::inventory::Host;
 use crate::python::{self, Facts, Natives};
@@ -74,7 +73,9 @@ fn the_native_switch_and_facts_reach_the_payloads() {
         let args =
             PlaybookArgs::try_parse_from(["volant"].iter().chain(extra).chain(&["site.yml"]))
                 .unwrap();
-        armed(union.clone(), config.native_modules, args.facts)
+        union
+            .clone()
+            .armed(config.native_modules, args.facts)
             .payload(module)
             .expect("the union holds it")
             .force_python

@@ -31,6 +31,12 @@ pub struct ExecTarget {
     pub prefix: Vec<String>,
     /// The user the commands run as, when the runtime is told one.
     pub user: Option<String>,
+    /// With no user set, the command whose output names the user the target runs as, for the
+    /// `ESTABLISH` line: `docker inspect --format {{.Config.User}}`.
+    pub user_probe: Option<Vec<String>>,
+    /// Why the target cannot be reached at all, said when a link is asked for rather than when
+    /// the connection is read: the runtime's program is not installed here.
+    pub unavailable: Option<String>,
     pub remote_tmp: String,
     /// How long the runtime may take to answer the first command before the target is
     /// reported unreachable.
@@ -59,7 +65,17 @@ impl ExecTarget {
         agents: &AgentSource,
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
-        super::trace::established_as(&self.name, &self.kind, self.user.as_deref());
+        if let Some(why) = &self.unavailable {
+            return Err(ConnectError::Unreachable(why.clone()));
+        }
+        if super::trace::connection_lines() {
+            let user = match (&self.user, &self.user_probe) {
+                (Some(user), _) => user.clone(),
+                (None, Some(probe)) => self.default_user(probe).await,
+                (None, None) => "None".to_string(),
+            };
+            super::trace::established_as(&self.name, &self.kind, Some(&user));
+        }
         if let Some(e) = escalation
             && e.method == BecomeMethod::Su
         {
@@ -108,6 +124,27 @@ impl ExecTarget {
         AgentLink::new_with_preamble(child, preamble(escalated))
             .await
             .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
+    }
+
+    /// The user `probe` names, `root` when it names none, and `?` when it fails, as the
+    /// reference's docker plugin prints it.
+    async fn default_user(&self, probe: &[String]) -> String {
+        let asked = Command::new(&probe[0])
+            .args(&probe[1..])
+            .stdin(Stdio::null())
+            .kill_on_drop(true)
+            .output();
+        match tokio::time::timeout(self.connect_timeout, asked).await {
+            Ok(Ok(out)) if out.status.success() => {
+                let user = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                if user.is_empty() {
+                    "root".to_string()
+                } else {
+                    user
+                }
+            }
+            _ => "?".to_string(),
+        }
     }
 
     /// `step` bounded by the connection timeout: a runtime that hangs makes the target

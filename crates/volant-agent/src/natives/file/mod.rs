@@ -1,12 +1,15 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! `file`, answered in the agent as `ansible/modules/file.py` of ansible-core 2.19.12 answers,
-//! for `state` `file`, `directory` and `absent` (or none, which reads the path's current state).
+//! for `state` `file`, `directory` and `absent` (or none, which reads the path's current state),
+//! and `link` where the link is already there and points at `src`.
 //!
 //! The native reads and decides first, then acts in the reference's own order (`mkdir`, owner,
 //! group, mode). Every hand-back comes before the first change; a failure after it is the
 //! reference's own failure, with whatever was already done left done, as the reference leaves it.
-//! Outside the subset (`link`, `hard`, `touch`, `recurse`, timestamps, `attributes`, SELinux, a
-//! task `environment`...) the Python module answers.
+//! Outside the subset (making or changing a link, `hard`, `touch`, `recurse`, timestamps,
+//! `attributes`, an SELinux host, a task `environment`...) the Python module answers. On a host
+//! without SELinux the module skips `seuser`, `serole`, `selevel` and `setype`, and so does
+//! the native.
 
 use std::fs;
 use std::os::unix::fs::MetadataExt;
@@ -79,14 +82,9 @@ const SPEC: &[ArgSpec] = &[
 /// Options whose every value other than `null` is outside the native.
 const UNSUPPORTED: &[&str] = &[
     "_diff_peek",
-    "src",
     "modification_time",
     "access_time",
     "attributes",
-    "seuser",
-    "serole",
-    "selevel",
-    "setype",
 ];
 
 /// Why a state function stopped short of an answer.
@@ -199,6 +197,10 @@ fn answer(
     };
     let basename = str_param(&params, "_original_basename")?.map(str::to_string);
     let asked = str_param(&params, "state")?.map(str::to_string);
+    let src = str_param(&params, "src")?.map(str::to_string);
+    if src.is_some() && asked.as_deref() != Some("link") {
+        return Err("src is set".into());
+    }
     let mut path = path_param(&params, "path")?.to_string();
 
     // `additional_parameter_handling`: a directory named where a file is meant stands for the
@@ -230,8 +232,9 @@ fn answer(
         "absent" => ensure_absent(&path, clock),
         "file" => ensure_file(&path, follow, &attrs),
         "directory" => ensure_directory(&path, follow, &attrs),
+        "link" => ensure_link(&path, src.as_deref(), follow, &attrs, &params),
         // A choice the native leaves to the module is named; anything else the task gave is not.
-        other @ ("hard" | "link" | "touch") => return Err(format!("state {other}").into()),
+        other @ ("hard" | "touch") => return Err(format!("state {other}").into()),
         _ => return Err("state is not one of the module's choices".into()),
     };
     let mut result = match outcome {
@@ -333,6 +336,49 @@ fn ensure_file(path: &str, follow: bool, attrs: &Attrs) -> Result<Map<String, Va
     }
     let changed = attrs.set(&target, false, |error| error)?;
     Ok(done(&path, changed))
+}
+
+/// `ensure_symlink` for a link already there and pointing at `src`, the attributes then set on
+/// its target when links are followed. Making the link, or changing what it points at, is the
+/// module's.
+fn ensure_link(
+    path: &str,
+    src: Option<&str>,
+    follow: bool,
+    attrs: &Attrs,
+    params: &Map<String, Value>,
+) -> Result<Map<String, Value>, Stop> {
+    let src = src.ok_or_else(|| Stop::Back("state link without src".into()))?;
+    if get_state(path)? != "link" {
+        return Err("state link where there is no link".to_string().into());
+    }
+    let old = fs::read_link(path).map_err(|err| os_error(&err, path))?;
+    if old.as_os_str() != src {
+        return Err("the link points elsewhere".to_string().into());
+    }
+    // `os.path.join(dirname(path), src)` must exist without `force`, and a followed link's
+    // target must exist for its attributes to be set: the module fails or warns otherwise.
+    let parent = std::path::Path::new(path)
+        .parent()
+        .unwrap_or(std::path::Path::new(""));
+    let absrc = parent.join(src);
+    if !bool_param(params, "force")? && fs::metadata(&absrc).is_err() {
+        return Err("the link's source does not exist".to_string().into());
+    }
+    let has_attrs = attrs.owner.is_some() || attrs.group.is_some() || attrs.mode.is_some();
+    if !follow && has_attrs {
+        return Err("attributes on the link itself".to_string().into());
+    }
+    if follow && fs::metadata(path).is_err() {
+        return Err("the link's target does not exist".to_string().into());
+    }
+    let target = attrs_path(path, follow)?;
+    let changed = attrs.set(&target, false, |error| error)?;
+    let mut result = Map::new();
+    result.insert("dest".into(), path.into());
+    result.insert("src".into(), src.into());
+    result.insert("changed".into(), Value::Bool(changed));
+    Ok(result)
 }
 
 /// `ensure_directory`: `mkdir -p`, each directory it creates given the owner, group and mode,

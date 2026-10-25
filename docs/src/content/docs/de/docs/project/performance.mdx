@@ -114,7 +114,7 @@ Beide Engines zahlen dafür gleich viel, weil es Prozesse sind, die auf dem Host
 Zwei Schritte werden durch das gebremst, was die Referenz selbst tut:
 
 - `service_facts` führt die Befehle aus, die ansible-core ausführt (`systemctl list-unit-files`, `service --status-all` und ein `systemctl show` pro Unit), damit seine Antwort dieselbe ist. Das native Modul führt sie nebeneinander aus, wo die Referenz sie nacheinander ausführt, und sie machen immer noch den größten Teil seiner 2,4 Sekunden aus. Darunter kommt es nicht, solange es dieselben Quellen liest.
-- Der `apt`-Task des Playbooks setzt `update_cache` ohne `cache_valid_time`, daher führt die Referenz in jedem Durchlauf `apt-get update` aus. Das native `apt` beantwortet nur einen Task, bei dem nichts zu tun ist, daher geht dieser an das Python-Modul, und die Aktualisierung des Caches macht den größten Teil seiner 2,2 Sekunden aus.
+- Der `apt`-Task des Playbooks setzt `update_cache` ohne `cache_valid_time`, daher führt die Referenz in jedem Durchlauf `apt-get update` aus. Zum Zeitpunkt der Messung beantwortete das native `apt` nur einen Task, bei dem nichts zu tun ist, daher ging dieser an das Python-Modul, und die Aktualisierung des Caches macht den größten Teil seiner 2,2 Sekunden aus. Seit dem 2026-10-25 führt das native `apt` die Aktualisierung selbst aus ([#879](https://github.com/lorica-labs/volant/pull/879)).
 
 Diese beiden Schritte kosten zusammen 4,5 bis 4,7 Sekunden pro Host. Sie schneller zu machen hieße, andere Quellen zu lesen als die Referenz, und diese Entscheidung bleibt einem späteren Release überlassen.
 

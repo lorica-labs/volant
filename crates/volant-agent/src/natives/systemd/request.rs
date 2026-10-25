@@ -82,6 +82,16 @@ pub(super) struct Request<'a> {
     pub(super) daemon_reload: bool,
 }
 
+/// The `type='bool'` options, which the module converts from `"yes"`, `1` and the like.
+pub(super) const BOOLS: &[&str] = &[
+    "enabled",
+    "force",
+    "masked",
+    "daemon_reload",
+    "daemon_reexec",
+    "no_block",
+];
+
 /// The task's arguments, validated as the module validates them, or the reason to hand back.
 ///
 /// `params` are the arguments with aliases resolved and defaults filled in, as `invocation`
@@ -91,9 +101,8 @@ pub(super) fn request<'a>(
     params: &'a Map<String, Value>,
 ) -> Result<Request<'a>, String> {
     check_names(SPEC, args)?;
-    // The module converts `"yes"`, `1` and the like, and a number given as a string, and shows
-    // the converted value in `invocation`; it also words the refusals. Only JSON's own types
-    // are read here.
+    // The booleans arrive converted ([`BOOLS`]); a value the module refuses it also words the
+    // refusal of, so it goes back.
     let optional_bool = |name: &str| match &params[name] {
         Value::Null => Ok(None),
         _ => bool_param(params, name).map(Some),

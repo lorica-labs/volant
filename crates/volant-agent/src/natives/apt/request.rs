@@ -3,7 +3,7 @@
 
 use serde_json::{Map, Value};
 
-use super::super::common::invocation;
+use super::super::common::{invocation, to_bool};
 use super::spec::{SPEC, TAKEN, Take};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub(super) enum State {
@@ -143,23 +143,6 @@ fn is_exact_name(name: &str) -> bool {
         && bytes.iter().all(|b| {
             b.is_ascii_lowercase() || b.is_ascii_digit() || matches!(b, b'+' | b'-' | b'.')
         })
-}
-
-/// `check_type_bool`: a bool, or a string or number among the spellings it takes.
-fn to_bool(value: &Value) -> Option<bool> {
-    match value {
-        Value::Bool(b) => Some(*b),
-        Value::Number(n) => {
-            let n = n.as_f64()?;
-            (n == 1.0 || n == 0.0).then_some(n == 1.0)
-        }
-        Value::String(text) => match text.to_lowercase().trim() {
-            "y" | "yes" | "on" | "1" | "true" | "t" => Some(true),
-            "n" | "no" | "off" | "0" | "false" | "f" => Some(false),
-            _ => None,
-        },
-        _ => None,
-    }
 }
 
 /// `check_type_int`: an integer, or a string `int()` reads in plain ASCII digits.

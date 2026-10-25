@@ -139,6 +139,12 @@
             - name: after-stat-file-absent-present
               stat: {path: "{{ dir }}/a", get_checksum: false, get_mime: false, get_attributes: false}
               register: after
+            - name: file-link
+              file: {path: "{{ dir }}/l2", src: "{{ dir }}/f.txt", state: link}
+              register: last
+            - name: after-stat-file-link
+              stat: {path: "{{ dir }}/l2", get_checksum: false, get_mime: false, get_attributes: false}
+              register: after
 
             - name: copy-module-created
               copy: {content: "one\n", dest: "{{ dir }}/c.txt", mode: "0644"}
@@ -416,12 +422,6 @@
             - name: stat-sha256
               stat: {path: "{{ dir }}/f.txt", checksum_algorithm: sha256}
               register: last
-            - name: file-link
-              file: {path: "{{ dir }}/l2", src: "{{ dir }}/f.txt", state: link}
-              register: last
-            - name: after-stat-file-link
-              stat: {path: "{{ dir }}/l2", get_checksum: false, get_mime: false, get_attributes: false}
-              register: after
             - name: copy-module-remote-src
               copy: {src: "{{ dir }}/f.txt", dest: "{{ dir }}/r.txt", remote_src: true}
               register: last

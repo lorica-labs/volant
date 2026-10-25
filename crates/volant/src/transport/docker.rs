@@ -89,6 +89,7 @@ pub(super) fn target(
         unavailable: found
             .is_none()
             .then(|| "docker command not found in PATH".to_string()),
+        quiet_stderr: false,
         copy: Some(copy_into(&docker, &options)),
         user_probe: options
             .user
@@ -152,7 +153,8 @@ fn copy_into(docker: &str, options: &Options) -> super::CopyInto {
         argv
     };
     super::CopyInto {
-        tar_into: command(&["cp", "-", &format!("{}:{{dir}}", options.container)]),
+        command: command(&["cp", "-", &format!("{}:{{dir}}", options.container)]),
+        feed: super::Feed::TarStdin,
         arch: vec![
             command(&["inspect", "--format", "{{.Image}}", &options.container]),
             command(&["image", "inspect", "--format", "{{.Architecture}}", "{}"]),

@@ -229,15 +229,36 @@ pub fn parent(path: &str) -> &str {
 }
 
 /// Whether the path, or the file a link there names, carries any extended attribute, ACLs
-/// included: what `shutil.copystat` would copy.
+/// included: what `shutil.copystat` would copy, which reads the names as `os.listxattr` does.
+///
+/// The list itself is read, not only its size: overlayfs answers a size query with its own
+/// `trusted.overlay.*` names counted, then leaves them out of the list, so a directory a
+/// container created looks as if it held attributes it does not show.
 #[cfg(target_os = "linux")]
 pub fn has_xattrs(path: &str) -> bool {
     let Ok(path) = CString::new(path) else {
         return true;
     };
-    // SAFETY: a null buffer of size 0 asks only for the size of the list.
-    let size = unsafe { libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
-    size != 0 && !(size < 0 && io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP))
+    let unsupported = || io::Error::last_os_error().raw_os_error() == Some(libc::ENOTSUP);
+    loop {
+        // SAFETY: a null buffer of size 0 asks only for the size of the list.
+        let size = unsafe { libc::listxattr(path.as_ptr(), std::ptr::null_mut(), 0) };
+        let Ok(len) = usize::try_from(size) else {
+            return !unsupported();
+        };
+        if len == 0 {
+            return false;
+        }
+        let mut names = vec![0u8; len];
+        // SAFETY: `names` is writable for the `len` bytes passed.
+        let read = unsafe { libc::listxattr(path.as_ptr(), names.as_mut_ptr().cast(), len) };
+        match usize::try_from(read) {
+            Ok(read) => return read != 0,
+            // A name added between the two calls: ask again.
+            Err(_) if io::Error::last_os_error().raw_os_error() == Some(libc::ERANGE) => {}
+            Err(_) => return !unsupported(),
+        }
+    }
 }
 
 /// Elsewhere a native hands every task back before it gets here.

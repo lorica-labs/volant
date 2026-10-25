@@ -14,8 +14,9 @@ use super::args::{Call, raise};
 pub(crate) const MAX_CHARS: u128 = 256 * 1024 * 1024;
 
 /// The most items one list may hold: the same 256 MiB, at 16 bytes an item. `l.extend(l)` in a
-/// loop doubles a list for as long as it runs.
-pub(crate) const MAX_ITEMS: u128 = MAX_CHARS / 16;
+/// loop doubles a list for as long as it runs. A million in the unit tests, so the test that
+/// reaches the limit takes a second and not twenty on a loaded machine.
+pub(crate) const MAX_ITEMS: u128 = if cfg!(test) { 1 << 20 } else { MAX_CHARS / 16 };
 
 /// `Ok` when a list of `items` items is within the limit.
 pub(crate) fn check_items(items: u128) -> Result<(), Error> {

@@ -97,6 +97,21 @@ fn exec_list_line(place: &str, argv: &[String]) -> String {
     format!("<{place}> EXEC [{}]", words.join(", "))
 }
 
+/// `<name> RUN [<the command line as a list of Python bytes>]`, podman's line for a command.
+pub(super) fn run_list(place: &str, argv: &[String]) {
+    if enabled() {
+        line(&run_list_line(place, argv));
+    }
+}
+
+fn run_list_line(place: &str, argv: &[String]) -> String {
+    let words: Vec<String> = argv
+        .iter()
+        .map(|word| bytes_repr(word.as_bytes()))
+        .collect();
+    format!("<{place}> RUN [{}]", words.join(", "))
+}
+
 /// A Python `str` literal for `text`, as `repr` writes one.
 fn str_repr(text: &str) -> String {
     let quote = if text.contains('\'') && !text.contains('"') {
@@ -180,7 +195,16 @@ fn bytes_repr(bytes: &[u8]) -> String {
 mod tests {
     use rstest::rstest;
 
-    use super::{bytes_repr, established_line, exec_list_line, shell_quote};
+    use super::{bytes_repr, established_line, exec_list_line, run_list_line, shell_quote};
+
+    #[test]
+    fn a_podman_line_writes_bytes() {
+        let argv = ["/usr/bin/podman", "exec", "app1"].map(String::from);
+        assert_eq!(
+            run_list_line("app1", &argv),
+            "<app1> RUN [b'/usr/bin/podman', b'exec', b'app1']"
+        );
+    }
 
     #[test]
     fn an_exec_target_s_lines_read_as_the_reference_s() {

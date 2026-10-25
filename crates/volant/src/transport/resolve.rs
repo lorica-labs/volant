@@ -308,8 +308,8 @@ mod tests {
     )]
     #[case(
         ConnectionNames::default(),
-        "containers.podman.podman",
-        Some("host 'h': connection 'containers.podman.podman' is not supported")
+        "kubernetes.core.kubectl",
+        Some("host 'h': connection 'kubernetes.core.kubectl' is not supported")
     )]
     #[case(ConnectionNames::default(), "docker", None)]
     #[case(asked().0, "broken", None)]

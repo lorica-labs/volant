@@ -193,6 +193,9 @@ impl Transport {
             super::docker::PLUGIN => Ok(Transport::Exec(super::docker::target(
                 host_name, vars, defaults, keywords,
             )?)),
+            super::podman::PLUGIN => Ok(Transport::Exec(super::podman::target(
+                host_name, vars, defaults, keywords,
+            )?)),
             other => bail!("host '{host_name}': connection '{other}' is not supported"),
         }
     }

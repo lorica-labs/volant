@@ -20,12 +20,22 @@ use super::reach::Reach;
 /// The shell every command but the agent's own start runs under.
 const SHELL: &str = "/bin/sh";
 
+/// How the `-vvvv` lines show a command, as the reference's plugin does: docker writes
+/// `ESTABLISH` then `EXEC [...]` in text, podman writes `RUN [...]` in bytes and no `ESTABLISH`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Lines {
+    Exec,
+    Run,
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct ExecTarget {
     /// The container, pod or directory, shown in the `<...>` of the `-vvvv` lines.
     pub name: String,
     /// The connection's word in `ESTABLISH <KIND> CONNECTION`: `DOCKER` for docker.
     pub kind: String,
+    /// How the `-vvvv` lines show a command.
+    pub lines: Lines,
     /// The command line that runs a program in the target with stdin and stdout passed
     /// through, up to the program: `docker exec -i app1`.
     pub prefix: Vec<String>,
@@ -71,7 +81,7 @@ impl ExecTarget {
         if let Some(why) = &self.unavailable {
             return Err(ConnectError::Unreachable(why.clone()));
         }
-        if super::trace::connection_lines() {
+        if super::trace::connection_lines() && self.lines == Lines::Exec {
             let user = match (&self.user, &self.user_probe) {
                 (Some(user), _) => user.clone(),
                 (None, Some(probe)) => self.default_user(probe).await,
@@ -201,7 +211,10 @@ impl Reach for ExecTarget {
     }
 
     fn trace_exec(&self, argv: &[String]) {
-        super::trace::exec_list(&self.name, argv);
+        match self.lines {
+            Lines::Exec => super::trace::exec_list(&self.name, argv),
+            Lines::Run => super::trace::run_list(&self.name, argv),
+        }
     }
 
     fn trace_result(&self, captured: &Captured) {

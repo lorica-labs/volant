@@ -40,8 +40,8 @@ pub struct ConnectionDefaults {
     /// How a connection name other than `local` and `ssh` is resolved: through the controller's
     /// ansible-core when the run can ask it.
     pub names: super::ConnectionNames,
-    /// `community.docker.docker`'s settings from `ansible.cfg` and the environment.
-    pub docker: super::DockerSettings,
+    /// What the collections' connection plugins read from `ansible.cfg` and the environment.
+    pub plugins: super::PluginSettings,
 }
 
 /// Written by hand so `become_password` cannot reach a log or a `-vvv` dump: a derived `Debug`
@@ -66,7 +66,7 @@ impl std::fmt::Debug for ConnectionDefaults {
             .field("ssh_extra_args", &self.ssh_extra_args)
             .field("ssh_use_tty", &self.ssh_use_tty)
             .field("names", &self.names)
-            .field("docker", &self.docker)
+            .field("plugins", &self.plugins)
             .finish()
     }
 }

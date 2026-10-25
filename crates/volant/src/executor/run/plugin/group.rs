@@ -11,7 +11,7 @@
 use tokio::sync::watch;
 use volant_protocol::{BatchOutcome, NOT_RUN, OnlyIf, TaskResult};
 
-use crate::action_plugins::{Plugin, Step, Sub};
+use crate::action_plugins::{FileBlob, Plugin, Step, Sub};
 use crate::executor::prepare::Item;
 use crate::executor::run::batch::send_batch;
 use crate::executor::run::blob::blob_preflight;
@@ -28,6 +28,8 @@ struct Running<'p> {
     last: Option<TaskResult>,
     ahead: Option<(Sub, TaskResult)>,
     sent: bool,
+    /// A step held over to the next round, which it could not share (see [`shares_a_file`]).
+    held: Option<Step>,
 }
 
 /// Runs every item's plugin to its result, a round of sub-tasks per batch. The results come back
@@ -59,6 +61,7 @@ pub(in crate::executor) async fn run_plugin_group<C: AgentChannel>(
             last: None,
             ahead: None,
             sent: false,
+            held: None,
         })
         .collect();
     let mut done = Vec::new();
@@ -70,9 +73,14 @@ pub(in crate::executor) async fn run_plugin_group<C: AgentChannel>(
         let mut wants: Vec<(usize, Option<Sub>)> = Vec::new();
         let mut k = 0;
         while k < running.len() {
-            let last = running[k].last.take();
             let item = &items[running[k].item];
-            match running[k].plugin.next(last) {
+            let step = if let Some(step) = running[k].held.take() {
+                step
+            } else {
+                let last = running[k].last.take();
+                running[k].plugin.next(last)
+            };
+            match step {
                 Step::Done(mut result) => {
                     if !running[k].sent {
                         mark_unsent(&mut result);
@@ -86,6 +94,11 @@ pub(in crate::executor) async fn run_plugin_group<C: AgentChannel>(
                         && sub.files.is_empty()
                     {
                         running[k].last = Some(answer);
+                        continue;
+                    }
+                    if shares_a_file(&sub, &files) {
+                        running[k].held = Some(Step::Run(sub));
+                        k += 1;
                         continue;
                     }
                     match sub_task(task, item, &sub, union, interpreters, asked) {
@@ -168,4 +181,39 @@ pub(in crate::executor) async fn run_plugin_group<C: AgentChannel>(
     }
     done.sort_by_key(|(item, _)| *item);
     Ok(done)
+}
+
+/// Whether `sub` stages a file a sub-task of this round already stages. A staged file is
+/// consumed by the one module it was put there for (`copy` moves it into place), so two items
+/// writing the same bytes to two places take two rounds, as they take two trips one at a time.
+fn shares_a_file(sub: &Sub, staged: &[(String, FileBlob)]) -> bool {
+    sub.files
+        .iter()
+        .any(|(_, blob)| staged.iter().any(|(_, other)| other.hash == blob.hash))
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::Map;
+
+    use super::{FileBlob, Sub, shares_a_file};
+
+    /// Two items writing the same bytes stage one blob twice: the second waits for a round of
+    /// its own, since the first item's `copy` consumes the staged file.
+    #[test]
+    fn a_staged_file_is_not_shared_within_a_round() {
+        let blob = |hash: &str| FileBlob {
+            hash: hash.into(),
+            b64: String::new(),
+        };
+        let copy = |hash: &str| Sub {
+            module: "copy",
+            args: Map::new(),
+            files: vec![("src".into(), blob(hash))],
+        };
+        let staged = vec![("src".to_string(), blob("aa"))];
+        assert!(shares_a_file(&copy("aa"), &staged));
+        assert!(!shares_a_file(&copy("bb"), &staged));
+        assert!(!shares_a_file(&copy("aa"), &[]));
+    }
 }

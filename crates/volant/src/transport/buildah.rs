@@ -61,6 +61,8 @@ pub(super) fn target(
             .is_none()
             .then(|| "buildah command not found in PATH".to_string()),
         quiet_stderr: true,
+        failures: Vec::new(),
+        info: None,
         copy: Some(super::CopyInto {
             command: copy,
             feed: super::Feed::LocalFile,

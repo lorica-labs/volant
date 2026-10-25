@@ -166,9 +166,9 @@ mod tests {
             };
             Ok(match name {
                 "local" | "ssh" => panic!("'{name}' is never asked"),
-                "lxd" => found(
-                    "community.general.lxd",
-                    &["lxd", "ansible.builtin.lxd", "community.general.lxd"],
+                "funcd" => found(
+                    "community.general.funcd",
+                    &["funcd", "ansible.builtin.funcd", "community.general.funcd"],
                 ),
                 "ansible.builtin.ssh" => found("ansible.builtin.ssh", &["ansible.builtin.ssh"]),
                 "winrm" => found("ansible.builtin.winrm", &["winrm"]),
@@ -216,7 +216,10 @@ mod tests {
     }
 
     #[rstest]
-    #[case("lxd", "host 'h': connection 'community.general.lxd' is not supported")]
+    #[case(
+        "funcd",
+        "host 'h': connection 'community.general.funcd' is not supported"
+    )]
     #[case(
         "winrm",
         "host 'h': connection 'ansible.builtin.winrm' is not supported"
@@ -279,11 +282,12 @@ mod tests {
     #[test]
     fn the_redirect_lines_come_once_per_host_and_name() {
         let (names, _) = asked();
-        let line = "redirecting (type: connection) ansible.builtin.lxd to community.general.lxd";
-        let _ = transport(&names, "lxd");
-        let _ = transport(&names, "lxd");
+        let line =
+            "redirecting (type: connection) ansible.builtin.funcd to community.general.funcd";
+        let _ = transport(&names, "funcd");
+        let _ = transport(&names, "funcd");
         assert_eq!(names.take_lines("h"), [line]);
-        let _ = transport(&names, "lxd");
+        let _ = transport(&names, "funcd");
         assert!(names.take_lines("h").is_empty());
         assert!(names.take_lines("other").is_empty());
     }
@@ -292,7 +296,7 @@ mod tests {
     fn each_name_is_asked_once_per_run() {
         let (names, controller) = asked();
         for _ in 0..3 {
-            let _ = transport(&names, "lxd");
+            let _ = transport(&names, "funcd");
             let _ = transport(&names, "docker");
         }
         assert_eq!(controller.0.load(Ordering::Relaxed), 2);

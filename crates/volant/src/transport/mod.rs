@@ -15,6 +15,7 @@ mod docker;
 mod escalation;
 mod exec;
 mod fused;
+mod lxd;
 mod names;
 mod podman;
 mod reach;

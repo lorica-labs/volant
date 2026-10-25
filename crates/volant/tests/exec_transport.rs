@@ -101,6 +101,8 @@ impl Runtime {
             user_probe: None,
             unavailable: None,
             quiet_stderr: false,
+            failures: Vec::new(),
+            info: None,
             copy: Some(volant::transport::CopyInto {
                 feed: volant::transport::Feed::TarStdin,
                 command: vec![

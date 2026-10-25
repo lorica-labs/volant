@@ -20,6 +20,7 @@ Volant llega a un host administrado, le deja un pequeño agente estático (un pr
 | `podman` | Ejecuta el agente en un contenedor de Podman en marcha mediante `podman exec -i`, rootless o no, como `containers.podman.podman`. Consulta [Contenedores Podman](#contenedores-podman). |
 | `chroot` | Ejecuta el agente en un árbol de directorios del controlador mediante `chroot`, como `community.general.chroot`. Consulta [Directorios chroot](#directorios-chroot). |
 | `buildah` | Ejecuta el agente en un contenedor de trabajo de Buildah mediante `buildah run`, como `containers.podman.buildah`. Consulta [Contenedores de trabajo de Buildah](#contenedores-de-trabajo-de-buildah). |
+| `lxd` | Ejecuta el agente en una instancia de LXD mediante `lxc exec`, como `community.general.lxd`; `community.general.incus` hace lo mismo para Incus. Consulta [Instancias de LXD e Incus](#instancias-de-lxd-e-incus). |
 
 Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resuelve `ansible-playbook`, una vez por nombre y por ejecución. `ansible.builtin.ssh` y `ansible.builtin.local` se resuelven en los dos plugins de arriba y se ejecutan. Un nombre corto que una colección heredó de ansible-core se dirige a esa colección cuando está instalada:
 
@@ -92,6 +93,19 @@ Antes de que se ejecute nada, la tarea falla, como con ansible-core, para una ru
 `ansible_connection: buildah`, o `containers.podman.buildah`, configura el contenedor de trabajo que crea `buildah from <imagen>`, para que un play construya una imagen capa a capa, que luego guarda `buildah commit`. Los dos nombres necesitan containers.podman instalado en el controlador. Como con podman, el contenedor es `ansible_host` o, si no, el nombre del inventario, y el usuario es `ansible_user`, la palabra clave `remote_user` o `-u`; `root` no añade ninguna opción. El programa es el `buildah` de tu `PATH`, y las variables `BUILDAH_*` le llegan por el entorno.
 
 El agente arranca con `buildah run [--user U] <contenedor> -- <agente>`. Volant nunca ejecuta `buildah mount`, que necesita `buildah unshare` para un usuario rootless: un contenedor de trabajo sin shell recibe el agente con `buildah copy`. buildah en rootless escribe avisos sobre capacidades en cada comando, así que el stderr del agente no se muestra. Con `-vvvv` cada comando aparece como una línea `RUN [...]`, sin línea `ESTABLISH`.
+
+## Instancias de LXD e Incus
+
+`ansible_connection: lxd`, o `community.general.lxd`, ejecuta un play en una instancia de LXD, local o en un servidor remoto, mediante el comando `lxc`. `community.general.incus` hace lo mismo para Incus con el comando `incus`; no tiene nombre corto en ansible-core. Los dos necesitan community.general instalado en el controlador.
+
+| Variable | Qué hace |
+|---|---|
+| `ansible_lxd_host`, `ansible_incus_host` | La instancia, hasta el primer punto: `web.example.com` es `web`. Gana a `ansible_host`, que gana al nombre del inventario. |
+| `ansible_lxd_remote`, `ansible_incus_remote` | El servidor remoto, `local` por defecto. |
+| `ansible_lxd_project`, `ansible_incus_project` | El proyecto. Incus siempre pasa uno, `default` por defecto. |
+| `ansible_lxd_executable`, `ansible_incus_executable` | La shell con la que se ejecutan los comandos. Gana a `ansible_executable`; `/bin/sh` por defecto. |
+
+El usuario es `ansible_user`, la palabra clave `remote_user` o `-u`, `root` por defecto. Para cualquier otro usuario, cada comando pasa por el método de escalada, `/bin/su <user> -c` salvo que `lxd_become_method` o `incus_become_method` nombre otro. Una instancia sin shell recibe el agente con `lxc file push` o `incus file push` cuando el usuario es root. Una instancia que no existe o está parada deja el host inalcanzable con las palabras del plugin, como `instance not running: web`; Incus añade el servidor remoto y el proyecto. Con `-vvvv` las líneas muestran `ESTABLISH LXD CONNECTION FOR USER: <user>` (`Incus` para Incus), la línea `INFO:` del plugin para un usuario que no es root y luego una línea `EXEC [...]` por comando.
 
 ## Variables de host
 

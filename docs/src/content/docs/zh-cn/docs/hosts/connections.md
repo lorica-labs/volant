@@ -20,6 +20,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 | `podman` | 通过 `podman exec -i` 在运行中的 Podman 容器里运行 agent，无论是否 rootless，与 `containers.podman.podman` 相同。见 [Podman 容器](#podman-容器)。 |
 | `chroot` | 通过 `chroot` 在控制节点上的目录树里运行 agent，与 `community.general.chroot` 相同。见 [chroot 目录](#chroot-目录)。 |
 | `buildah` | 通过 `buildah run` 在 Buildah 工作容器里运行 agent，与 `containers.podman.buildah` 相同。见 [Buildah 工作容器](#buildah-工作容器)。 |
+| `lxd` | 通过 `lxc exec` 在 LXD 实例里运行 agent，与 `community.general.lxd` 相同；`community.general.incus` 对 Incus 做同样的事。见 [LXD 和 Incus 实例](#lxd-和-incus-实例)。 |
 
 其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
@@ -92,6 +93,19 @@ Volant 按插件源码的方式读取选项，这与它的文档不同。容器�
 `ansible_connection: buildah` 或 `containers.podman.buildah` 配置 `buildah from <镜像>` 创建的工作容器，让 play 逐层构建镜像，之后由 `buildah commit` 保存。两个名字都需要控制节点上装有 containers.podman。与 podman 一样，容器是 `ansible_host`，否则是清单名；用户是 `ansible_user`、`remote_user` 关键字或 `-u`；`root` 不会加任何选项。程序是你 `PATH` 中的 `buildah`，`BUILDAH_*` 变量通过环境传给它。
 
 agent 用 `buildah run [--user U] <容器> -- <agent>` 启动。Volant 从不运行 `buildah mount`，因为它对 rootless 用户需要 `buildah unshare`：没有 shell 的工作容器通过 `buildah copy` 获得 agent。rootless 的 buildah 每条命令都会输出关于 capability 的警告，因此不显示 agent 的 stderr。使用 `-vvvv` 时，每条命令显示为一行 `RUN [...]`，没有 `ESTABLISH` 行。
+
+## LXD 和 Incus 实例
+
+`ansible_connection: lxd` 或 `community.general.lxd` 通过 `lxc` 命令在 LXD 实例里执行 play，实例可以在本地，也可以在远程服务器上。`community.general.incus` 用 `incus` 命令对 Incus 做同样的事；它在 ansible-core 中没有短名字。两者都需要控制节点上装有 community.general。
+
+| 变量 | 作用 |
+|---|---|
+| `ansible_lxd_host`、`ansible_incus_host` | 实例名，取到第一个点为止：`web.example.com` 即 `web`。它优先于 `ansible_host`，后者优先于清单名。 |
+| `ansible_lxd_remote`、`ansible_incus_remote` | 远程服务器，默认为 `local`。 |
+| `ansible_lxd_project`、`ansible_incus_project` | 项目。Incus 总会传一个，默认为 `default`。 |
+| `ansible_lxd_executable`、`ansible_incus_executable` | 命令运行所用的 shell。它优先于 `ansible_executable`；默认为 `/bin/sh`。 |
+
+用户是 `ansible_user`、`remote_user` 关键字或 `-u`，默认为 `root`。对其他任何用户，每条命令都通过提权方法执行，默认是 `/bin/su <user> -c`，除非 `lxd_become_method` 或 `incus_become_method` 指定了别的方法。用户为 root 时，没有 shell 的实例通过 `lxc file push` 或 `incus file push` 获得 agent。实例不存在或已停止时，主机不可达，消息使用插件的措辞，例如 `instance not running: web`；Incus 还会加上远程服务器和项目。使用 `-vvvv` 时，会显示 `ESTABLISH LXD CONNECTION FOR USER: <user>`（Incus 为 `Incus`），对非 root 用户还有插件的 `INFO:` 行，然后每条命令一行 `EXEC [...]`。
 
 ## 主机变量
 

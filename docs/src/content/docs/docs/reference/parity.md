@@ -35,7 +35,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
-| collection connection | 4 | 0 | 0 | 26 |
+| collection connection | 6 | 0 | 0 | 24 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -711,11 +711,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `community.docker.nsenter` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.chroot` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.funcd` | <span class="kw kw-no">later</span> | another connection |
-| `community.general.incus` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.incus` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.iocage` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.jail` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.lxc` | <span class="kw kw-no">later</span> | another connection |
-| `community.general.lxd` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.lxd` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.qubes` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.saltstack` | <span class="kw kw-no">later</span> | another connection |
 | `community.general.wsl` | <span class="kw kw-no">later</span> | another connection |

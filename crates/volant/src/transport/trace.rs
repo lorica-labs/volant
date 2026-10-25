@@ -97,6 +97,13 @@ fn exec_list_line(place: &str, argv: &[String]) -> String {
     format!("<{place}> EXEC [{}]", words.join(", "))
 }
 
+/// `<name> <text>`, a plugin's own note on a link.
+pub(super) fn note(place: &str, text: &str) {
+    if enabled() {
+        line(&format!("<{place}> {text}"));
+    }
+}
+
 /// `<dir> THIS IS A LOCAL CHROOT DIR`, the chroot plugin's line for a link.
 pub(super) fn local_chroot(place: &str) {
     if enabled() {

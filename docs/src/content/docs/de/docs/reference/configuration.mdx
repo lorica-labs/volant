@@ -1,5 +1,5 @@
 ---
-sourceHash: 9dd8ea33ceb0
+sourceHash: 1f43b5ded964
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -84,6 +84,10 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
   Führt benachrichtigte Handler auch auf Hosts aus, die fehlgeschlagen sind.
+</Option>
+
+<Option name="duplicate_dict_key" id="defaults-duplicate-dict-key" default="warn" env="ANSIBLE_DUPLICATE_YAML_DICT_KEY">
+  Was ein YAML-Schlüssel bekommt, der in einer Zuordnung zweimal steht: `warn` behält den letzten Wert und zeigt, wo der zweite Schlüssel steht, `error` weist die Datei ab, `ignore` behält den letzten Wert ohne Meldung.
 </Option>
 
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">

@@ -26,9 +26,13 @@ pub(super) fn when_error(err: TemplateError, kept: Option<&TemplateError>) -> Te
     }
 }
 
-/// The chain of a task whose `when` could not be evaluated: the condition's sentence at where the
-/// `when` was written.
+/// The chain of a task whose `when` could not be evaluated, the condition's sentence at where the
+/// `when` was written, or whose keyword did not render ([`keyword_causes`]).
 pub(in crate::executor) fn conditional_causes(task: &PlayTask, message: &str) -> Option<Value> {
+    when_causes(task, message).or_else(|| keyword_causes(task, message))
+}
+
+fn when_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let sentence = message.strip_prefix("Task failed: ").unwrap_or(message);
     // A lookup's sentence without `Task failed: ` is a `with_` loop's, shown with no task around it.
     let lookup = message.starts_with("Task failed: The lookup plugin '");
@@ -60,7 +64,7 @@ pub(in crate::executor) fn conditional_causes(task: &PlayTask, message: &str) ->
 /// The chain of a task keyword that failed to render: measured on ansible-core 2.19.12, one cause,
 /// the keyword's sentence at where its value was written (`check_mode`, `diff`, `ignore_errors`,
 /// `notify`). A keyword whose value has no recorded place has no chain.
-pub(in crate::executor) fn keyword_causes(task: &PlayTask, message: &str) -> Option<Value> {
+fn keyword_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let sentence = message.strip_prefix("Task failed: ").unwrap_or(message);
     let key = sentence
         .strip_prefix(super::item::KEYWORD_ERROR)?

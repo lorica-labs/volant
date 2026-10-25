@@ -2431,7 +2431,6 @@ pub(super) async fn drive_host(
                 .or_else(|| throttle::causes(task, &err.0))
                 .or_else(|| super::prepare::undefined::conditional_causes(task, &err.0))
                 .or_else(|| super::prepare::undefined_causes(task, &err.0))
-                .or_else(|| super::prepare::undefined::keyword_causes(task, &err.0))
             {
                 result.0.insert(crate::render::CHAIN_KEY.into(), causes);
             } else if let Some(detail) = err.0.strip_prefix("Task failed: ")

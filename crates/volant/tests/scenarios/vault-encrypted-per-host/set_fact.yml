@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - set_fact:
+        bare: "{{ x }}"
+        filtered: "{{ x | string }}"
+        joined: "{{ x ~ '' }}"
+    - debug:
+        msg: "{{ inventory_hostname }}: {{ bare is vault_encrypted }} {{ filtered is vault_encrypted }} {{ joined is vault_encrypted }} {{ bare == x }}"

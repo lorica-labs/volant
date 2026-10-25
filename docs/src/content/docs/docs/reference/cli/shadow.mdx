@@ -8,11 +8,20 @@ import Option from '../../../../../components/Option.astro';
 `volant shadow replay` reads a recording of the `volant.compat.record` callback (see [Run recordings](/docs/reference/recording/)). It runs the same playbooks with the same options through Volant and answers every task that would reach a host with the result ansible-core recorded. Then it compares what Volant decided with what ansible-core did. No host is contacted and no agent starts.
 
 ```sh
-volant shadow replay RECORDING [--json]
+volant shadow replay RECORDING [--json] [--ledger PATH]
+volant shadow status [--json] [--require-ready] [--ledger PATH]
 ```
 
 <Option name="--json">
   Write the report as JSON Lines: one object per divergence, then a summary object.
+</Option>
+
+<Option name="--ledger" arg="PATH">
+  The ledger to append to or read, instead of `.volant/shadow.jsonl` beside the `ansible.cfg` in effect (in the working directory when there is none).
+</Option>
+
+<Option name="status --require-ready">
+  Exit 1 unless every playbook in the ledger is `ready`.
 </Option>
 
 ## Before the replay
@@ -79,6 +88,23 @@ The last line is the summary:
 
 The reasons in `not_compared` are `after_flow` (after a `flow` divergence on that host), `no_log` (compared on the status alone) and `unknown: <reason>` (a loop item that is unknown). The reasons in `arguments_not_compared` are `no_log`, `not_recorded` (ansible-core passed no `invocation` to the callback, as for `debug`, or as ansible-core 2.21 does for every task) `controller` (Volant ran the task on the controller and sent nothing) and `unknown: <reason>`, counted per argument.
 
+## The ledger and the verdict
+
+One clean replay proves little. Each replay that is not refused appends one line to the ledger, `.volant/shadow.jsonl` beside the `ansible.cfg` in effect: the date, the playbooks and their hashes, the Volant version, the recording's ansible-core and hash, the hash of `volant.lock` when there is one, the `--limit` and `--tags` of the run, the number of hosts, the tasks compared and not compared, the `file:line` of each task compared and of each task the replay compiled, the divergences by kind, and `clean`, `dirty` or `out-of-profile`. Volant does not decide where the ledger lives between runs: commit it, or keep it in your CI cache.
+
+`volant shadow status` reads it and gives one row per playbook:
+
+- The streak is the number of `clean` replays in a row. A `dirty` replay resets it, and so does a new Volant version. A changed playbook or collection does not, because both engines run the same files. `out-of-profile` replays do not count either way.
+- The coverage is the share of the playbook's tasks, every branch included, that the replays of the streak compared at least once. The tasks never compared are listed by name.
+- The verdict is `ready` when the streak reaches `shadow_runs` (5 by default) and the coverage reaches `shadow_coverage` (0.9 by default), both read from the [`[volant]` section](/docs/reference/configuration/) of `ansible.cfg`. It is `diverged` when the last replay was `dirty`, and `not-ready` otherwise, with the reason.
+
+```text
+site.yml  not-ready  streak 2/5, coverage 96% of 25 tasks (1 never compared), no divergence
+  2 clean replays in a row, 5 wanted
+```
+
+With `--json`, each row is one object with `playbook`, `verdict`, `streak`, `coverage`, `tasks`, `never_compared`, `last_divergence` and `reasons`. A ledger line that cannot be read is left out with a warning that names its line number.
+
 ## Exit codes
 
 | Code | Meaning |
@@ -86,3 +112,5 @@ The reasons in `not_compared` are `after_flow` (after a `flow` divergence on tha
 | 0 | No divergence. |
 | 1 | At least one divergence. |
 | 4 | The recording cannot be replayed against this checkout: a newer format, or a file that changed. |
+
+`volant shadow status` exits 0, or 1 under `--require-ready` when a playbook is not `ready` or the ledger is empty.

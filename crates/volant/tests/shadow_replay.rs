@@ -305,3 +305,77 @@ fn values_that_change_between_runs_are_not_compared() {
     let reference = std::fs::read_to_string(dir.path().join("ansible.out")).expect("reference");
     assert_eq!(printed, reference);
 }
+
+/// `volant shadow status` in `dir`, reading `dir/ansible.cfg`.
+fn status(dir: &Path, options: &[&str]) -> Output {
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
+        .args(["shadow", "status"])
+        .args(options)
+        .current_dir(dir)
+        .env("HOME", dir)
+        .env("ANSIBLE_CONFIG", dir.join("ansible.cfg"));
+    process::run_within(&mut command, Duration::from_secs(60), None)
+}
+
+/// A replay appends one ledger line beside the `ansible.cfg` in effect, a refused one none; with
+/// `shadow_runs = 3`, `status --require-ready` exits 1 after two and 0 after three.
+#[test]
+fn the_ledger_feeds_the_verdict() {
+    let dir = fixture();
+    std::fs::write(
+        dir.path().join("ansible.cfg"),
+        "[volant]
+shadow_runs = 3
+",
+    )
+    .unwrap();
+    let command = |recording: &str| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+        command
+            .args(["shadow", "replay", recording])
+            .current_dir(dir.path())
+            .env("HOME", dir.path())
+            .env("ANSIBLE_CONFIG", dir.path().join("ansible.cfg"))
+            .env("VOLANT_AGENT_DIR", dir.path().join("no-agents"))
+            .env_remove("VOLANT_PYTHON")
+            .stdin(std::process::Stdio::null());
+        process::run_within(&mut command, Duration::from_secs(60), None)
+    };
+    let ledger = dir.path().join(".volant/shadow.jsonl");
+    for _ in 0..2 {
+        assert_eq!(command("recording.jsonl").status.code(), Some(0));
+    }
+    assert_eq!(command("missing.jsonl").status.code(), Some(4));
+    let lines: Vec<Value> = std::fs::read_to_string(&ledger)
+        .unwrap()
+        .lines()
+        .map(|l| serde_json::from_str(l).unwrap())
+        .collect();
+    assert_eq!(lines.len(), 2);
+    assert_eq!(lines[0]["verdict"], "clean");
+    assert_eq!(lines[0]["playbook"], "site.yml");
+    assert_eq!(lines[0]["ansible_core"], "2.19.12");
+    assert!(
+        lines[0]["tasks"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|t| t == "site.yml:30")
+    );
+
+    let out = status(dir.path(), &["--require-ready"]);
+    assert_eq!(out.status.code(), Some(1));
+    let shown = String::from_utf8_lossy(&out.stdout);
+    assert!(shown.contains("site.yml  not-ready  streak 2/3"), "{shown}");
+    assert!(
+        shown.contains("2 clean replays in a row, 3 wanted"),
+        "{shown}"
+    );
+
+    assert_eq!(command("recording.jsonl").status.code(), Some(0));
+    let out = status(dir.path(), &["--require-ready", "--json"]);
+    let row: Value = serde_json::from_str(String::from_utf8_lossy(&out.stdout).trim()).unwrap();
+    assert_eq!(row["verdict"], "ready", "{row}");
+    assert_eq!(out.status.code(), Some(0));
+}

@@ -19,6 +19,8 @@ pub(crate) struct Watched {
     /// Every host with the groups it belongs to besides `all`, as the first play saw them.
     pub(super) inventory: Option<BTreeMap<String, Vec<String>>>,
     pub(super) recap: BTreeMap<String, HostStats>,
+    /// Every task the plays compiled, every branch, by `file:line`, with its name.
+    pub(super) known: BTreeMap<String, String>,
 }
 
 /// One result line as Volant reported it.
@@ -99,9 +101,35 @@ impl Replay {
         watched.inventory = Some(hosts);
     }
 
+    /// Notes the tasks and handlers of a play as it compiled them: every branch, whether it then
+    /// runs or not. Statements that run no module are left out, as the comparison leaves them.
+    pub(crate) fn saw_tasks(&self, compiled: &crate::compile::Compiled) {
+        let tasks = compiled
+            .steps
+            .iter()
+            .map(|s| &s.task)
+            .chain(compiled.handlers.iter().map(|h| &h.task));
+        let mut watched = self.lock();
+        for task in tasks {
+            if task.origin.is_none() || super::compare::NOT_TASKS.contains(&task.module.as_str()) {
+                continue;
+            }
+            let path = self.path_of(task.origin.as_ref());
+            watched
+                .known
+                .entry(path)
+                .or_insert_with(|| task.name.clone());
+        }
+    }
+
     /// Notes the recap as it stands; the last play's is the run's.
     pub(crate) fn saw_recap(&self, stats: &Stats) {
         self.lock().recap = stats.hosts().map(|(h, s)| (h.to_owned(), *s)).collect();
+    }
+
+    /// Every task the replay compiled, by `file:line`, with its name.
+    pub(super) fn known(&self) -> BTreeMap<String, String> {
+        self.lock().known.clone()
     }
 
     fn lock(&self) -> std::sync::MutexGuard<'_, Watched> {

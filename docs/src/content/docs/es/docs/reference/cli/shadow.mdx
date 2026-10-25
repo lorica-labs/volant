@@ -1,5 +1,5 @@
 ---
-sourceHash: 18ca274cc7a2
+sourceHash: 581fc6ef8549
 title: volant shadow
 description: Reproducir una ejecución que ansible-playbook grabó, sin contactar ningún host, y ver qué habría hecho Volant de otra manera.
 ---
@@ -9,11 +9,20 @@ import Option from '../../../../../../components/Option.astro';
 `volant shadow replay` lee una grabación del callback `volant.compat.record` (ver [Grabaciones de ejecuciones](/es/docs/reference/recording/)). Ejecuta los mismos playbooks con las mismas opciones en Volant y responde a cada tarea que llegaría a un host con el resultado que grabó ansible-core. Después compara lo que decidió Volant con lo que hizo ansible-core. No se contacta ningún host y no arranca ningún agente.
 
 ```sh
-volant shadow replay RECORDING [--json]
+volant shadow replay RECORDING [--json] [--ledger PATH]
+volant shadow status [--json] [--require-ready] [--ledger PATH]
 ```
 
 <Option name="--json">
   Escribir el informe como JSON Lines: un objeto por divergencia y, al final, un objeto de resumen.
+</Option>
+
+<Option name="--ledger" arg="PATH">
+  El registro donde añadir o leer, en lugar de `.volant/shadow.jsonl` junto al `ansible.cfg` en vigor (en el directorio de trabajo si no hay ninguno).
+</Option>
+
+<Option name="status --require-ready">
+  Salir con 1 salvo que cada playbook del registro esté `ready`.
 </Option>
 
 ## Antes de la reproducción
@@ -80,6 +89,23 @@ La última línea es el resumen:
 
 Los motivos de `not_compared` son `after_flow` (tras una divergencia `flow` en ese host), `no_log` (comparada solo por el estado) y `unknown: <motivo>` (un elemento de bucle desconocido). Los motivos de `arguments_not_compared` son `no_log`, `not_recorded` (ansible-core no pasó ningún `invocation` al callback, como ocurre con `debug`, o como hace ansible-core 2.21 con todas las tareas) `controller` (Volant ejecutó la tarea en el controlador y no envió nada) y `unknown: <motivo>`, contado por argumento.
 
+## El registro y el veredicto
+
+Una sola reproducción limpia prueba poco. Cada reproducción que no se rechaza añade una línea al registro, `.volant/shadow.jsonl` junto al `ansible.cfg` en vigor: la fecha, los playbooks y sus hashes, la versión de Volant, el ansible-core y el hash de la grabación, el hash de `volant.lock` si existe, el `--limit` y los `--tags` de la ejecución, el número de hosts, las tareas comparadas y no comparadas, el `archivo:línea` de cada tarea comparada y de cada tarea que compiló la reproducción, las divergencias por tipo, y `clean`, `dirty` o `out-of-profile`. Volant no decide dónde vive el registro entre ejecuciones: versiónalo o guárdalo en la caché de tu CI.
+
+`volant shadow status` lo lee y da una fila por playbook:
+
+- La racha es el número de reproducciones `clean` seguidas. Una reproducción `dirty` la reinicia, igual que una nueva versión de Volant. Un playbook o una colección modificados no la reinician, porque los dos motores ejecutan los mismos archivos. Las reproducciones `out-of-profile` no cuentan en ningún sentido.
+- La cobertura es la parte de las tareas del playbook, con todas sus ramas, que las reproducciones de la racha compararon al menos una vez. Las tareas nunca comparadas se listan por nombre.
+- El veredicto es `ready` cuando la racha llega a `shadow_runs` (5 por defecto) y la cobertura a `shadow_coverage` (0.9 por defecto), ambos leídos de la [sección `[volant]`](/es/docs/reference/configuration/) del `ansible.cfg`. Es `diverged` cuando la última reproducción fue `dirty`, y `not-ready` en otro caso, con el motivo.
+
+```text
+site.yml  not-ready  streak 2/5, coverage 96% of 25 tasks (1 never compared), no divergence
+  2 clean replays in a row, 5 wanted
+```
+
+Con `--json`, cada fila es un objeto con `playbook`, `verdict`, `streak`, `coverage`, `tasks`, `never_compared`, `last_divergence` y `reasons`. Una línea del registro que no se puede leer se omite con un aviso que da su número de línea.
+
 ## Códigos de salida
 
 | Código | Significado |
@@ -87,3 +113,5 @@ Los motivos de `not_compared` son `after_flow` (tras una divergencia `flow` en e
 | 0 | Ninguna divergencia. |
 | 1 | Al menos una divergencia. |
 | 4 | La grabación no se puede reproducir en este repositorio: un formato más reciente, o un archivo que cambió. |
+
+`volant shadow status` sale con 0, o con 1 bajo `--require-ready` cuando un playbook no está `ready` o el registro está vacío.

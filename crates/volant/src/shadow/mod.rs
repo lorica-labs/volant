@@ -5,9 +5,11 @@
 mod alike;
 mod args;
 mod compare;
+mod ledger;
 mod recording;
 pub(crate) mod replay;
 mod report;
+mod status;
 mod watch;
 
 use std::path::{Path, PathBuf};
@@ -30,18 +32,44 @@ pub enum ShadowCommand {
         /// Report as JSON Lines: one object per divergence, then a summary object.
         #[arg(long)]
         json: bool,
+        /// The ledger to append the replay to, instead of `.volant/shadow.jsonl` beside the
+        /// `ansible.cfg` in effect.
+        #[arg(long, value_name = "PATH")]
+        ledger: Option<PathBuf>,
+    },
+    /// Say from the ledger whether each playbook is ready to switch.
+    Status {
+        /// One JSON object per playbook.
+        #[arg(long)]
+        json: bool,
+        /// Exit 1 unless every playbook is ready.
+        #[arg(long)]
+        require_ready: bool,
+        /// The ledger to read, instead of `.volant/shadow.jsonl` beside the `ansible.cfg` in
+        /// effect.
+        #[arg(long, value_name = "PATH")]
+        ledger: Option<PathBuf>,
     },
 }
 
 pub fn shadow(command: ShadowCommand) -> i32 {
     match command {
-        ShadowCommand::Replay { recording, json } => replay(&recording, json),
+        ShadowCommand::Replay {
+            recording,
+            json,
+            ledger,
+        } => replay(&recording, json, ledger.as_deref()),
+        ShadowCommand::Status {
+            json,
+            require_ready,
+            ledger,
+        } => status(json, require_ready, ledger.as_deref()),
     }
 }
 
 /// Replays `path` and reports what differs: exit 0 for nothing, 1 for at least one divergence.
 /// The replayed run prints on stderr, so the report alone is on stdout.
-fn replay(path: &Path, json: bool) -> i32 {
+fn replay(path: &Path, json: bool, ledger: Option<&Path>) -> i32 {
     let ready = recording::read(path).and_then(|recording| {
         check(&recording.header, Path::new("."))?;
         let args = args::playbook_args(&recording.header)?;
@@ -72,7 +100,105 @@ fn replay(path: &Path, json: bool) -> i32 {
     crate::cli::replay(&args, &replay);
     let report = compare::compare(&recording, &replay);
     print!("{}", if json { report.json() } else { report.human() });
+    let line = ledger_line(path, &recording, &report, &replay);
+    let ledger = ledger::path(ledger);
+    if let Err(err) = ledger::append(&ledger, &line) {
+        eprintln!(
+            "[WARNING]: cannot write the ledger {}: {err}",
+            ledger.display()
+        );
+    }
     i32::from(!report.divergences.is_empty())
+}
+
+/// The ledger's line for the replay of `path`.
+fn ledger_line(
+    path: &Path,
+    recording: &recording::Recording,
+    report: &compare::Report,
+    replay: &replay::Replay,
+) -> ledger::Line {
+    let header = &recording.header;
+    let joined = |f: &dyn Fn(&recording::Hashed) -> String| {
+        header.playbooks.iter().map(f).collect::<Vec<_>>().join(" ")
+    };
+    let text = |key: &str| {
+        header
+            .cli
+            .get(key)
+            .and_then(|v| v.as_str())
+            .map(str::to_owned)
+    };
+    let tags: Vec<String> = header
+        .cli
+        .get("tags")
+        .and_then(|v| v.as_array())
+        .map(|a| {
+            a.iter()
+                .filter_map(|t| t.as_str())
+                .map(str::to_owned)
+                .collect()
+        })
+        .unwrap_or_default();
+    let verdict = if !in_profile(&header.ansible_core) {
+        "out-of-profile"
+    } else if report.divergences.is_empty() && !report.truncated {
+        "clean"
+    } else {
+        "dirty"
+    };
+    let time = ledger::now();
+    ledger::Line {
+        date: ledger::utc(time),
+        time,
+        playbook: joined(&|p| relative(&p.path, &header.cwd).display().to_string()),
+        playbook_sha256: joined(&|p| p.sha256.clone()),
+        volant: crate::VERSION.to_owned(),
+        ansible_core: header.ansible_core.clone(),
+        recording_sha256: sha256_of(path).unwrap_or_default(),
+        lock_sha256: sha256_of(Path::new("volant.lock")).ok(),
+        limit: text("subset"),
+        tags: if tags == ["all"] { Vec::new() } else { tags },
+        hosts: report.hosts,
+        compared: report.compared,
+        not_compared: report.skipped.values().sum(),
+        tasks: report.paths.iter().cloned().collect(),
+        known: replay.known(),
+        divergences: report
+            .by_kind()
+            .into_iter()
+            .map(|(k, n)| (k.to_owned(), n))
+            .collect(),
+        verdict: verdict.to_owned(),
+    }
+}
+
+/// `volant shadow status`: exit 0, or 1 under `require_ready` unless every playbook is ready.
+fn status(json: bool, require_ready: bool, ledger: Option<&Path>) -> i32 {
+    let config = match crate::config::Config::load() {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("ERROR! {err:#}");
+            return crate::stats::error_code(&err);
+        }
+    };
+    let ledger = ledger::path(ledger);
+    let lines = match ledger::read(&ledger) {
+        Ok(lines) => lines,
+        Err(err) => {
+            eprintln!("ERROR! cannot read the ledger {}: {err}", ledger.display());
+            return 1;
+        }
+    };
+    let rows = status::rows(&lines, config.shadow_runs, config.shadow_coverage);
+    let now = ledger::now();
+    if json {
+        print!("{}", status::json(&rows, now));
+    } else {
+        print!("{}", status::human(&rows, config.shadow_runs, now));
+    }
+    let ready = !rows.is_empty() && rows.iter().all(|r| r.verdict == "ready");
+    i32::from(require_ready && !ready)
 }
 
 /// Whether a recording of ansible-core `version` is one Volant follows.

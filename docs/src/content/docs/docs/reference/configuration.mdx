@@ -231,6 +231,14 @@ Ansible ignores this section, so one `ansible.cfg` can carry it and still drive 
   Share one OpenSSH connection between all the `ssh` runs of an inventory host. With `false`, each link and probe opens its own connection. See [One connection per host](/docs/hosts/connections/#one-connection-per-host).
 </Option>
 
+<Option name="shadow_runs" id="volant-shadow-runs" default="5">
+  How many clean replays in a row [`volant shadow status`](/docs/reference/cli/shadow/#the-ledger-and-the-verdict) wants of a playbook before it calls it `ready`. A whole number of at least 1; anything else stops the run with exit code 5.
+</Option>
+
+<Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">
+  The share of a playbook's tasks those replays must have compared, from 0 to 1, before `volant shadow status` calls it `ready`. Anything else stops the run with exit code 5.
+</Option>
+
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">
   Sets what `template`, `copy`, `script`, `unarchive` and `assemble` do with a controller `src` that a managed host named, and where a `fetch` may write a `dest` that a host named: `allow`, `contained` or `refuse`. The default is `allow`, which behaves as ansible-core does, and any other word stops the run with exit code 5. See [A source file a managed host named](/docs/internals/action-plugins/#a-source-file-a-managed-host-named) for what each word does.
 </Option>

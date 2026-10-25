@@ -1,5 +1,5 @@
 ---
-sourceHash: f541f96267bc
+sourceHash: c80b79a9a509
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -230,6 +230,14 @@ Ansible ignoriert diesen Abschnitt, sodass eine `ansible.cfg` ihn enthalten und 
 
 <Option name="ssh_control_master" id="volant-ssh-control-master" default="true" env="VOLANT_SSH_CONTROL_MASTER">
   Teilt eine OpenSSH-Verbindung zwischen allen `ssh`-Aufrufen eines Inventory-Hosts. Mit `false` öffnet jede Verbindung und jede Probe ihre eigene. Siehe [Eine Verbindung pro Host](/de/docs/hosts/connections/#eine-verbindung-pro-host).
+</Option>
+
+<Option name="shadow_runs" id="volant-shadow-runs" default="5">
+  Wie viele saubere Wiederholungen in Folge [`volant shadow status`](/de/docs/reference/cli/shadow/#das-register-und-das-urteil) von einem Playbook erwartet, bevor es `ready` meldet. Eine ganze Zahl von mindestens 1; jeder andere Wert beendet den Lauf mit Exit-Code 5.
+</Option>
+
+<Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">
+  Der Anteil der Tasks eines Playbooks, den diese Wiederholungen verglichen haben müssen, von 0 bis 1, bevor `volant shadow status` `ready` meldet. Jeder andere Wert beendet den Lauf mit Exit-Code 5.
 </Option>
 
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">

@@ -352,7 +352,20 @@ impl Builder<'_> {
         section: Section,
         kind: RoleKind,
     ) -> anyhow::Result<()> {
-        let path = self.search.locate(&entry.name)?;
+        let path = self.search.locate(&entry.name).map_err(|err| {
+            // Measured on ansible-core 2.19.12: `[ERROR]:` and the sentence, at the entry.
+            match &entry.keywords.origin {
+                Some(origin) => Refusal::plain(
+                    1,
+                    crate::playbook::Located {
+                        message: format!("{err:#}"),
+                        origin: origin.clone(),
+                    }
+                    .text(),
+                ),
+                None => err,
+            }
+        })?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
         let key = identity(entry);
         if !role.allow_duplicates && seen.contains(&key) {

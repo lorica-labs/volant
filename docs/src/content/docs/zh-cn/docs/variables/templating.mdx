@@ -1,5 +1,5 @@
 ---
-sourceHash: 71da6f6cf85b
+sourceHash: c4107e9762a5
 title: 模板
 description: 控制节点上的 Jinja2、严格模式、条件、Volant 提供的过滤器、测试器和 lookup，以及模板文件如何渲染。
 ---
@@ -62,7 +62,7 @@ tasks:
 
 主机数据永远不会被渲染。来自受管主机的变量，以及由它构造出的变量，仍然是文本。见[来自主机的值绝不会被当作模板](#来自主机的值绝不会被当作模板)。
 
-读取 `vars`、或调用 `lookup` 或 `query` 的变量会保持原样，在 task 使用它时才渲染。`hostvars['other']['name']` 给出的是包含模板的变量的原始文本。
+读取 `vars`、或调用 `lookup` 或 `query` 的变量会保持原样，在 task 使用它时才渲染。`hostvars['other']['name']` 会用另一台主机自己的变量渲染该变量中的模板，与 ansible-core 一致。这次渲染中没有 `hostvars`。主机若持有来自受管主机的值（例如收集到的 facts），则给出原始文本。
 
 ## 可用内容
 

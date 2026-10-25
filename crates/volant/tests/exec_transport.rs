@@ -90,6 +90,7 @@ impl Runtime {
             name: container.into(),
             kind: "DOCKER".into(),
             lines: volant::transport::Lines::Exec,
+            shell: "/bin/sh".into(),
             prefix: vec![
                 self.program.display().to_string(),
                 "exec".into(),
@@ -99,8 +100,10 @@ impl Runtime {
             user: None,
             user_probe: None,
             unavailable: None,
+            quiet_stderr: false,
             copy: Some(volant::transport::CopyInto {
-                tar_into: vec![
+                feed: volant::transport::Feed::TarStdin,
+                command: vec![
                     self.program.display().to_string(),
                     "cp".into(),
                     "-".into(),

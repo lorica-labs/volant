@@ -23,6 +23,7 @@ pub(super) const PLUGIN: &str = "community.docker.docker";
 pub struct PluginSettings {
     pub docker: DockerSettings,
     pub podman: super::podman::PodmanSettings,
+    pub chroot: super::chroot::ChrootSettings,
 }
 
 /// What `ansible.cfg` and the environment say for the plugin; a host variable speaks over each.
@@ -88,6 +89,7 @@ pub(super) fn target(
         unavailable: found
             .is_none()
             .then(|| "docker command not found in PATH".to_string()),
+        quiet_stderr: false,
         copy: Some(copy_into(&docker, &options)),
         user_probe: options
             .user
@@ -97,6 +99,7 @@ pub(super) fn target(
         name: options.container,
         kind: "DOCKER".into(),
         lines: super::exec::Lines::Exec,
+        shell: "/bin/sh".into(),
         user: options.user,
         remote_tmp: remote_tmp_of(host_name, vars, defaults)?,
         connect_timeout: timeout.unwrap_or(defaults.connect_timeout),
@@ -150,7 +153,8 @@ fn copy_into(docker: &str, options: &Options) -> super::CopyInto {
         argv
     };
     super::CopyInto {
-        tar_into: command(&["cp", "-", &format!("{}:{{dir}}", options.container)]),
+        command: command(&["cp", "-", &format!("{}:{{dir}}", options.container)]),
+        feed: super::Feed::TarStdin,
         arch: vec![
             command(&["inspect", "--format", "{{.Image}}", &options.container]),
             command(&["image", "inspect", "--format", "{{.Architecture}}", "{}"]),
@@ -200,7 +204,7 @@ fn python_repr(value: &Value) -> String {
 }
 
 /// A boolean setting: a word the reference does not know reads as false.
-fn flag(value: &Value) -> bool {
+pub(super) fn flag(value: &Value) -> bool {
     match value {
         Value::Bool(on) => *on,
         Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),

@@ -18,6 +18,8 @@ Volant llega a un host administrado, le deja un pequeño agente estático (un pr
 | `local` | Ejecuta el agente como proceso hijo en el controlador, sin red. |
 | `docker` | Ejecuta el agente en un contenedor en marcha mediante `docker exec -i`, como `community.docker.docker`. Consulta [Contenedores Docker](#contenedores-docker). |
 | `podman` | Ejecuta el agente en un contenedor de Podman en marcha mediante `podman exec -i`, rootless o no, como `containers.podman.podman`. Consulta [Contenedores Podman](#contenedores-podman). |
+| `chroot` | Ejecuta el agente en un árbol de directorios del controlador mediante `chroot`, como `community.general.chroot`. Consulta [Directorios chroot](#directorios-chroot). |
+| `buildah` | Ejecuta el agente en un contenedor de trabajo de Buildah mediante `buildah run`, como `containers.podman.buildah`. Consulta [Contenedores de trabajo de Buildah](#contenedores-de-trabajo-de-buildah). |
 
 Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resuelve `ansible-playbook`, una vez por nombre y por ejecución. `ansible.builtin.ssh` y `ansible.builtin.local` se resuelven en los dos plugins de arriba y se ejecutan. Un nombre corto que una colección heredó de ansible-core se dirige a esa colección cuando está instalada:
 
@@ -72,6 +74,24 @@ Volant lee las opciones como las lee el código fuente del plugin, que difiere d
 | `ansible_podman_extra_args` | Argumentos puestos después de `podman` y antes del subcomando, separados como lo haría una shell. El valor por defecto viene de `ANSIBLE_PODMAN_EXTRA_ARGS` o de `[defaults] podman_extra_args`. |
 
 El plugin ejecuta `podman exec` sin `-i`, así que no puede pasar su stdin a un comando. El agente lo necesita, por eso Volant ejecuta `podman exec -i`; es la única palabra que añaden sus líneas de comando. Volant nunca ejecuta `podman mount`. `become` con `sudo` funciona con el `sudo` del propio contenedor, y `su` se rechaza. Con `-vvvv` cada comando aparece como una línea `RUN [...]`, como la escribe el plugin, sin línea `ESTABLISH`.
+
+## Directorios chroot
+
+`ansible_connection: chroot`, o `community.general.chroot`, ejecuta un play dentro de un árbol de directorios del controlador: la construcción de una imagen, un árbol de `debootstrap`, un rescate. El nombre del inventario, o `ansible_host`, es el directorio. Los dos nombres necesitan community.general instalado en el controlador. La ejecución necesita root, porque `chroot` lo necesita.
+
+| Variable | Qué hace |
+|---|---|
+| `ansible_chroot_exe` | El programa `chroot`, un nombre que se busca en tu `PATH` o una ruta absoluta. El valor por defecto viene de `ANSIBLE_CHROOT_EXE` o de `[chroot_connection] exe`. |
+| `ansible_chroot_disable_root_check` | Omite la comprobación de que el controlador se ejecuta como root. El valor por defecto viene de `ANSIBLE_CHROOT_DISABLE_ROOT_CHECK` o de `[chroot_connection] disable_root_check`. |
+| `ansible_executable` | La shell con la que se ejecutan los comandos, `/bin/sh` por defecto. El valor por defecto viene de `ANSIBLE_EXECUTABLE` o de `[defaults] executable`. |
+
+Antes de que se ejecute nada, la tarea falla, como con ansible-core, para una ruta que no es un directorio, para un árbol sin `bin/sh` y para un controlador que no es root, salvo que la comprobación esté desactivada. El agente sube por `chroot <dir> /bin/sh`, así que el script que lo escribe se ejecuta dentro del árbol, y ninguna ruta que escriba puede salir de él, tenga los enlaces simbólicos que tenga. Cuando `df` no puede decir cuánto espacio queda, como en un árbol sin `/proc` montado, se omite la comprobación de espacio. `become` funciona cuando el árbol tiene `sudo`. Con `-vvvv` las líneas muestran `THIS IS A LOCAL CHROOT DIR` y luego una línea `EXEC [...]` por comando.
+
+## Contenedores de trabajo de Buildah
+
+`ansible_connection: buildah`, o `containers.podman.buildah`, configura el contenedor de trabajo que crea `buildah from <imagen>`, para que un play construya una imagen capa a capa, que luego guarda `buildah commit`. Los dos nombres necesitan containers.podman instalado en el controlador. Como con podman, el contenedor es `ansible_host` o, si no, el nombre del inventario, y el usuario es `ansible_user`, la palabra clave `remote_user` o `-u`; `root` no añade ninguna opción. El programa es el `buildah` de tu `PATH`, y las variables `BUILDAH_*` le llegan por el entorno.
+
+El agente arranca con `buildah run [--user U] <contenedor> -- <agente>`. Volant nunca ejecuta `buildah mount`, que necesita `buildah unshare` para un usuario rootless: un contenedor de trabajo sin shell recibe el agente con `buildah copy`. buildah en rootless escribe avisos sobre capacidades en cada comando, así que el stderr del agente no se muestra. Con `-vvvv` cada comando aparece como una línea `RUN [...]`, sin línea `ESTABLISH`.
 
 ## Variables de host
 

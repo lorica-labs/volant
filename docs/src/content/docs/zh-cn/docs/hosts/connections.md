@@ -18,6 +18,8 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 | `local` | 在控制节点上把 agent 作为子进程运行，不经过网络。 |
 | `docker` | 通过 `docker exec -i` 在运行中的容器里运行 agent，与 `community.docker.docker` 相同。见 [Docker 容器](#docker-容器)。 |
 | `podman` | 通过 `podman exec -i` 在运行中的 Podman 容器里运行 agent，无论是否 rootless，与 `containers.podman.podman` 相同。见 [Podman 容器](#podman-容器)。 |
+| `chroot` | 通过 `chroot` 在控制节点上的目录树里运行 agent，与 `community.general.chroot` 相同。见 [chroot 目录](#chroot-目录)。 |
+| `buildah` | 通过 `buildah run` 在 Buildah 工作容器里运行 agent，与 `containers.podman.buildah` 相同。见 [Buildah 工作容器](#buildah-工作容器)。 |
 
 其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
@@ -72,6 +74,24 @@ Volant 按插件源码的方式读取选项，这与它的文档不同。容器�
 | `ansible_podman_extra_args` | 放在 `podman` 之后、子命令之前的参数，按 shell 的方式切分。默认值来自 `ANSIBLE_PODMAN_EXTRA_ARGS` 或 `[defaults] podman_extra_args`。 |
 
 插件运行 `podman exec` 时不带 `-i`，因此无法把 stdin 交给命令。agent 需要 stdin，所以 Volant 运行 `podman exec -i`；这是它的命令行唯一多出的词。Volant 从不运行 `podman mount`。`become` 配合 `sudo` 时使用容器自己的 `sudo`，`su` 会被拒绝。使用 `-vvvv` 时，每条命令显示为一行 `RUN [...]`，与插件的写法相同，没有 `ESTABLISH` 行。
+
+## chroot 目录
+
+`ansible_connection: chroot` 或 `community.general.chroot` 在控制节点上的目录树里执行 play：构建镜像、`debootstrap` 目录树、救援操作。清单名或 `ansible_host` 就是该目录。两个名字都需要控制节点上装有 community.general。运行需要 root，因为 `chroot` 需要。
+
+| 变量 | 作用 |
+|---|---|
+| `ansible_chroot_exe` | `chroot` 程序，可以是在你的 `PATH` 中查找的名字，也可以是绝对路径。默认值来自 `ANSIBLE_CHROOT_EXE` 或 `[chroot_connection] exe`。 |
+| `ansible_chroot_disable_root_check` | 跳过控制节点是否以 root 运行的检查。默认值来自 `ANSIBLE_CHROOT_DISABLE_ROOT_CHECK` 或 `[chroot_connection] disable_root_check`。 |
+| `ansible_executable` | 命令运行所用的 shell，默认为 `/bin/sh`。默认值来自 `ANSIBLE_EXECUTABLE` 或 `[defaults] executable`。 |
+
+在任何东西运行之前，以下情况会让 task 失败，与 ansible-core 相同：路径不是目录，目录树没有 `bin/sh`，以及控制节点不是 root（除非关闭了该检查）。agent 通过 `chroot <dir> /bin/sh` 送入，所以写入它的脚本在目录树里运行，无论目录树中有什么符号链接，它写的路径都不会离开目录树。当 `df` 无法给出剩余空间时，例如目录树里没有挂载 `/proc`，会跳过空间检查。目录树里有 `sudo` 时可以使用 `become`。使用 `-vvvv` 时，会显示 `THIS IS A LOCAL CHROOT DIR`，然后每条命令一行 `EXEC [...]`。
+
+## Buildah 工作容器
+
+`ansible_connection: buildah` 或 `containers.podman.buildah` 配置 `buildah from <镜像>` 创建的工作容器，让 play 逐层构建镜像，之后由 `buildah commit` 保存。两个名字都需要控制节点上装有 containers.podman。与 podman 一样，容器是 `ansible_host`，否则是清单名；用户是 `ansible_user`、`remote_user` 关键字或 `-u`；`root` 不会加任何选项。程序是你 `PATH` 中的 `buildah`，`BUILDAH_*` 变量通过环境传给它。
+
+agent 用 `buildah run [--user U] <容器> -- <agent>` 启动。Volant 从不运行 `buildah mount`，因为它对 rootless 用户需要 `buildah unshare`：没有 shell 的工作容器通过 `buildah copy` 获得 agent。rootless 的 buildah 每条命令都会输出关于 capability 的警告，因此不显示 agent 的 stderr。使用 `-vvvv` 时，每条命令显示为一行 `RUN [...]`，没有 `ESTABLISH` 行。
 
 ## 主机变量
 

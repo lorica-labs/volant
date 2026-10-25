@@ -950,13 +950,13 @@
       "changed": true
     },
     "compare": "exact",
-    "expect": "fallback",
+    "expect": "native",
     "group": "file",
     "module": "file",
     "patterns": {},
     "unordered": [],
     "volatile": [],
-    "why": "state link"
+    "why": ""
   },
   "file-owner-unknown": {
     "args": {

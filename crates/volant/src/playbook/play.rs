@@ -289,7 +289,9 @@ pub(crate) fn parse_role_entries(node: &Yaml) -> anyhow::Result<Vec<RoleEntry>> 
 /// not - so `vars:` is read as the block keyword it is and only the leftovers are parameters.
 fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
     if let Some(name) = yaml.as_str() {
-        return Ok(RoleEntry::named(name, RoleFrom::default()));
+        let mut entry = RoleEntry::named(name, RoleFrom::default());
+        entry.keywords.origin = value_origin(yaml);
+        return Ok(entry);
     }
     let map = yaml
         .as_mapping()
@@ -371,6 +373,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
             delegate_facts,
             delegate_to,
             deferred,
+            origin: task_origin(map),
             ..PlayTask::empty()
         },
     })

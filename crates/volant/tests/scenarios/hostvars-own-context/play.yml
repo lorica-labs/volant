@@ -1,0 +1,15 @@
+- hosts: n-h1
+  gather_facts: false
+  vars:
+    db_port: 9999
+  tasks:
+    - debug:
+        msg: "{{ hostvars['d1'].db_url }}"
+    - debug:
+        msg: "{{ groups['db'] | map('extract', hostvars, 'db_url') | list }}"
+    - debug:
+        msg: "{{ hostvars['n-h2'].me }}"
+    - debug:
+        msg: "{{ hostvars['d1'].via_groups }}"
+    - debug:
+        msg: "{{ hostvars['d1'].bad | default('none') }}"

@@ -59,6 +59,21 @@ impl<'a> Rendering<'a> {
     }
 }
 
+impl Rendering<'_> {
+    /// Gives the helper the plugin directories beside `files` before any of their imports is
+    /// named: measured on ansible-core 2.19.12, a filter of the playbook's `filter_plugins/`
+    /// renders an `import_playbook` name.
+    ///
+    /// # Errors
+    /// Why the running helper refused the directories.
+    pub fn add_plugin_dirs(&self, files: &[PathBuf]) -> anyhow::Result<()> {
+        match self.templar.bridge() {
+            Some(bridge) => bridge.set_plugin_dirs(files.iter().map(|f| base_dir(f)).collect()),
+            None => Ok(()),
+        }
+    }
+}
+
 impl Default for Rendering<'static> {
     fn default() -> Self {
         static NONE: std::sync::LazyLock<Map<String, Value>> = std::sync::LazyLock::new(Map::new);
@@ -76,7 +91,15 @@ fn read(path: &Path, depth: usize, rendering: &Rendering<'_>) -> anyhow::Result<
     // makes no sense gets. It carries its own code so the blanket [`load`] wraps the parse in
     // cannot take it.
     let text = crate::vault::read_to_string(path).map_err(|err| {
-        crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
+        // Measured on ansible-core 2.19.12 for a file that is not there.
+        if err.kind() == std::io::ErrorKind::NotFound {
+            crate::stats::Refusal::plain(
+                1,
+                format!("the playbook: {} could not be found", path.display()),
+            )
+        } else {
+            crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
+        }
     })?;
     parse_at(
         &text,

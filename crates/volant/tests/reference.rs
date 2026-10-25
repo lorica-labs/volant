@@ -546,6 +546,11 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
     let docs = yaml::load(&text, &case.display().to_string()).expect("case.yml parses");
     let doc = yaml::to_json(&docs[0]).expect("case.yml is JSON-shaped");
     let spec = Case::parse(&name, &doc);
+    // The `ssh` job sets this: a scenario that needs nothing has already run in the `test` job.
+    if spec.needs.is_empty() && std::env::var_os("VOLANT_SCENARIOS_WITH_NEEDS").is_some() {
+        eprintln!("skipped: {name} needs nothing and runs in the test job");
+        return;
+    }
     let (unmet, python) = spec.unmet(&name);
     if !unmet.is_empty() {
         let why = format!("{name} needs {}", unmet.join(", "));

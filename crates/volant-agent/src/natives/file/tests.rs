@@ -49,7 +49,7 @@ fn file_answers_every_recorded_case_like_the_reference() {
         return;
     }
     type Setup = fn(&Scratch);
-    let cases: [(&str, &str, Value, Setup); 12] = [
+    let cases: [(&str, &str, Value, Setup); 13] = [
         (
             "file-absent-missing",
             include_str!("../../../../volant/tests/golden/module/file-absent-missing.json"),
@@ -102,6 +102,12 @@ fn file_answers_every_recorded_case_like_the_reference() {
             |s| mkdir(&s.path("a/b"), 0o755),
         ),
         (
+            "file-link",
+            include_str!("../../../../volant/tests/golden/module/file-link.json"),
+            json!({"path": "<golden-tmp>/l2", "src": "<golden-tmp>/f.txt", "state": "link"}),
+            |_| {},
+        ),
+        (
             "file-owner-unknown",
             include_str!("../../../../volant/tests/golden/module/file-owner-unknown.json"),
             json!({"owner": "volant-no-such-user", "path": "<golden-tmp>/f.txt"}),
@@ -135,10 +141,17 @@ fn file_answers_every_recorded_case_like_the_reference() {
             serde_json::from_str(&args.to_string().replace("<golden-tmp>", &scratch.0)).unwrap();
         let path = args["path"].as_str().or(args["dest"].as_str()).unwrap();
         match ask(&args) {
+            // A link's size is the length of the path it holds, and the scratch directory is
+            // not the one the reference ran in.
             NativeRun::Done(result) => found.extend(
-                differences(recording, result.0, &scratch, &[])
-                    .into_iter()
-                    .map(|d| format!("{case}: {d}")),
+                differences(
+                    recording,
+                    result.0,
+                    &scratch,
+                    if case == "file-link" { &["size"] } else { &[] },
+                )
+                .into_iter()
+                .map(|d| format!("{case}: {d}")),
             ),
             NativeRun::Fallback(why) => found.push(format!("{case}: handed back, {why}")),
             NativeRun::Cancelled => found.push(format!("{case}: cancelled")),
@@ -178,7 +191,11 @@ fn file_hands_back_before_changing_anything() {
         .insert("PATH".into(), "/nowhere".into());
     let plain = Context::default;
     for (args, context) in [
-        (json!({"path": link, "src": file, "state": "link"}), plain()),
+        (json!({"path": dir, "src": file, "state": "link"}), plain()),
+        (
+            json!({"path": link, "src": "nowhere", "state": "link"}),
+            plain(),
+        ),
         (
             json!({"path": dir, "mode": "0755", "recurse": true, "state": "directory"}),
             plain(),
@@ -354,8 +371,8 @@ fn a_directory_given_with_a_basename_stands_for_the_file_inside() {
     assert_eq!(after(&scratch.0)["mode"], "0755");
 }
 
-/// A link already pointing at `src` is answered, its target given the mode; a link pointing
-/// elsewhere goes back untouched. Without SELinux, `setype` changes nothing, as in the module.
+/// A link already pointing at `src` is answered, and a missing one made, its target given the
+/// mode; a link pointing elsewhere goes back untouched. Without SELinux, `setype` changes nothing, as in the module.
 #[test]
 fn a_link_in_place_is_answered_and_selinux_options_are_skipped() {
     if selinux_enabled() {
@@ -383,6 +400,20 @@ fn a_link_in_place_is_answered_and_selinux_options_are_skipped() {
     let elsewhere = ask(&json!({"path": link, "src": file, "state": "link"}));
     assert!(matches!(elsewhere, NativeRun::Fallback(_)));
     assert_eq!(after(&link), snapshot);
+
+    let made = scratch.path("made");
+    chmod(&file, 0o600);
+    let NativeRun::Done(created) =
+        ask(&json!({"path": made, "src": file, "state": "link", "mode": "0644"}))
+    else {
+        panic!("a missing link handed back");
+    };
+    assert_eq!(created.0["changed"], json!(true));
+    assert_eq!(created.0["state"], json!("link"));
+    assert_eq!(fs::read_link(&made).unwrap().to_str(), Some(file.as_str()));
+    assert_eq!(after(&file)["mode"], json!("0644"));
+    let again = ask(&json!({"path": made, "src": file, "state": "link", "mode": "0644"}));
+    assert!(matches!(again, NativeRun::Done(r) if r.0["changed"] == json!(false)));
 
     let NativeRun::Done(typed) = ask(&json!({"path": file, "setype": "etc_t", "mode": "0644"}))
     else {

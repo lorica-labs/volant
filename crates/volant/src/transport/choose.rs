@@ -14,7 +14,7 @@ use crate::vars::host_setting;
 
 use super::control::{SSH_PROGRAM, control_path_for, user_sets_control};
 use super::defaults::{
-    BecomeMethod, ConnectError, ConnectionDefaults, ConnectionKeywords, ConnectionNotFound,
+    BecomeMethod, ConnectError, ConnectionDefaults, ConnectionFailsTask, ConnectionKeywords,
     Escalation, HostOwn, KNOWN_CONNECTIONS, Secret, SshTarget, Transport, as_map, port_of,
     setting_args, timeout_of,
 };
@@ -85,9 +85,9 @@ fn plugin_of(host_name: &str, name: &str, names: &ConnectionNames) -> anyhow::Re
         }
         None if KNOWN_CONNECTIONS.contains(&name) || name.contains('.') => Ok(name.to_string()),
         Some(Resolution::Missing { warning }) => {
-            Err(ConnectionNotFound(name.to_string(), warning).into())
+            Err(ConnectionFailsTask::not_found(name, warning).into())
         }
-        None => Err(ConnectionNotFound(name.to_string(), None).into()),
+        None => Err(ConnectionFailsTask::not_found(name, None).into()),
     }
 }
 
@@ -195,6 +195,12 @@ impl Transport {
             )?)),
             super::podman::PLUGIN => Ok(Transport::Exec(super::podman::target(
                 host_name, vars, defaults, keywords,
+            )?)),
+            super::buildah::PLUGIN => Ok(Transport::Exec(super::buildah::target(
+                host_name, vars, defaults, keywords,
+            )?)),
+            super::chroot::PLUGIN => Ok(Transport::Exec(super::chroot::target(
+                host_name, vars, defaults,
             )?)),
             other => bail!("host '{host_name}': connection '{other}' is not supported"),
         }

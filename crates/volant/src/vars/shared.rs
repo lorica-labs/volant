@@ -45,6 +45,26 @@ impl VarStore {
         completed
     }
 
+    /// `groups` as the reference orders its keys: `all`, `ungrouped`, then each group in the order
+    /// the inventory first named it, measured on ansible-core 2.19.12.
+    fn groups_in_order(&self) -> Map<String, Value> {
+        let mut out = Map::new();
+        for name in self.dynamic.group_order() {
+            if let Some(members) = self.groups.get(&name) {
+                out.insert(name, serde_json::to_value(members).unwrap_or_default());
+            }
+        }
+        for (name, members) in &self.groups {
+            if !out.contains_key(name) {
+                out.insert(
+                    name.clone(),
+                    serde_json::to_value(members).unwrap_or_default(),
+                );
+            }
+        }
+        out
+    }
+
     /// `hostvars_shared` without a host to complete it for: the inventory's own hosts and the
     /// three spellings of the controller.
     pub(super) fn hostvars_base(&mut self) -> Arc<HostvarsMap> {
@@ -125,10 +145,7 @@ impl VarStore {
         self.host_facts.retain(|host, _| live.contains(host));
         let batch = serde_json::to_value(&*scope.batch_hosts).unwrap_or_default();
         let mut map = Map::new();
-        map.insert(
-            "groups".to_string(),
-            serde_json::to_value(&self.groups).unwrap_or_default(),
-        );
+        map.insert("groups".to_string(), Value::Object(self.groups_in_order()));
         map.insert(
             "ansible_play_hosts".to_string(),
             serde_json::to_value(&*scope.play_hosts).unwrap_or_default(),

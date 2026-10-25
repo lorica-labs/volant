@@ -1,5 +1,5 @@
 ---
-sourceHash: 9e8e2288a96a
+sourceHash: c475b50fe6dd
 title: "按项目选择 ansible-core 版本，并保留 Ansible 移除的功能"
 description: "决策记录 0010。"
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | 状态 | 日期 |
 |---|---|
-| 提议 | 2026-10-25 |
+| 已接受 | 2026-10-25 |
 
 ## 背景
 

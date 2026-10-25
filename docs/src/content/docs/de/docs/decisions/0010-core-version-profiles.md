@@ -1,5 +1,5 @@
 ---
-sourceHash: 9e8e2288a96a
+sourceHash: c475b50fe6dd
 title: "Die ansible-core-Version pro Projekt wählen und behalten, was Ansible entfernt"
 description: "Entscheidungsdokument 0010."
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | Status | Datum |
 |---|---|
-| vorgeschlagen | 2026-10-25 |
+| akzeptiert | 2026-10-25 |
 
 ## Kontext
 

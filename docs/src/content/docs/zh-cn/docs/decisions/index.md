@@ -1,5 +1,5 @@
 ---
-sourceHash: 978201df0e63
+sourceHash: 43d5378ddeb6
 title: 决策记录
 description: 塑造 Volant 用户所见内容的决策，以及做出这些决策的原因。
 sidebar:
@@ -22,4 +22,4 @@ sidebar:
 | [0007](/zh-cn/docs/decisions/0007-action-plugins/) | 把 action plugin 作为由控制节点驱动的一串子 task 来运行。 |
 | [0008](/zh-cn/docs/decisions/0008-native-modules-and-speed/) | 常用模块在 agent 中原生回答，其余交给 Python，每台主机共享一个 ssh 连接。 |
 | [0009](/zh-cn/docs/decisions/0009-interface-crates-mit-or-apache/) | 引擎保持 GPL-3.0-or-later，描述公共接口的 crate 采用 MIT OR Apache-2.0 许可。 |
-| [0010](/zh-cn/docs/decisions/0010-core-version-profiles/) | 提议：每个项目选择 Volant 复现的 ansible-core 版本（`2.19` 或 `latest`），Ansible 移除的功能带警告保留，`volant upgrade-plan` 列出升级会改变的内容。 |
+| [0010](/zh-cn/docs/decisions/0010-core-version-profiles/) | 每个项目选择 Volant 复现的 ansible-core 版本（`2.19` 或 `latest`），Ansible 移除的功能带警告保留，`volant upgrade-plan` 列出升级会改变的内容。 |

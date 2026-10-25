@@ -1,5 +1,5 @@
 ---
-sourceHash: 9e8e2288a96a
+sourceHash: c475b50fe6dd
 title: "Choisir la version d'ansible-core par projet, et garder ce qu'Ansible retire"
 description: "Fiche de décision 0010."
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | Statut | Date |
 |---|---|
-| proposé | 2026-10-25 |
+| accepté | 2026-10-25 |
 
 ## Contexte
 

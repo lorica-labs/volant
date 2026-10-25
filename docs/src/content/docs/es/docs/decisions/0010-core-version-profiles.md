@@ -1,5 +1,5 @@
 ---
-sourceHash: 9e8e2288a96a
+sourceHash: c475b50fe6dd
 title: "Elegir la versión de ansible-core por proyecto y conservar lo que Ansible retira"
 description: "Registro de decisión 0010."
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | Estado | Fecha |
 |---|---|
-| propuesto | 2026-10-25 |
+| aceptada | 2026-10-25 |
 
 ## Contexto
 

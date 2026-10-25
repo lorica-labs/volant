@@ -22,7 +22,8 @@ const CONNECTION_PLUGINS: [&str; 6] = [
 /// The collections' connection plugins this engine drives. ansible-core strips the settings of
 /// its own plugins only; these are stripped too, because a host that named its own
 /// `ansible_docker_host`, user or environment would choose where its next task runs.
-const ENGINE_CONNECTION_PLUGINS: [&str; 5] = ["docker", "podman", "chroot", "lxd", "incus"];
+const ENGINE_CONNECTION_PLUGINS: [&str; 6] =
+    ["docker", "podman", "chroot", "lxd", "incus", "kubectl"];
 
 /// ansible-core 2.19.12's `MAGIC_VARIABLE_MAPPING` values, which include every
 /// `COMMON_CONNECTION_VARS` name, then `RESTRICTED_RESULT_KEYS` and `INTERNAL_RESULT_KEYS`.

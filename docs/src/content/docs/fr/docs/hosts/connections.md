@@ -21,6 +21,7 @@ Volant atteint un hôte géré, y dépose un petit agent statique (un programme 
 | `chroot` | Lance l'agent dans une arborescence du contrôleur via `chroot`, comme `community.general.chroot`. Voir [Répertoires chroot](#répertoires-chroot). |
 | `buildah` | Lance l'agent dans un conteneur de travail Buildah via `buildah run`, comme `containers.podman.buildah`. Voir [Conteneurs de travail Buildah](#conteneurs-de-travail-buildah). |
 | `lxd` | Lance l'agent dans une instance LXD via `lxc exec`, comme `community.general.lxd` ; `community.general.incus` fait de même pour Incus. Voir [Instances LXD et Incus](#instances-lxd-et-incus). |
+| `kubectl` | Lance l'agent dans un conteneur d'un pod Kubernetes via `kubectl exec`, comme `kubernetes.core.kubectl`. Voir [Pods Kubernetes](#pods-kubernetes). |
 
 Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-playbook` le résout, une fois par nom et par exécution. `ansible.builtin.ssh` et `ansible.builtin.local` se résolvent vers les deux plugins ci-dessus et s'exécutent. Un nom court qu'une collection a repris à ansible-core est routé vers cette collection quand elle est installée :
 
@@ -37,7 +38,7 @@ Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-pla
 
 Avec `-vvv`, un nom routé affiche `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` sous la première tâche qui l'utilise sur un hôte, une ligne par étape.
 
-Un nom qui se résout vers un plugin que Volant ne pilote pas encore, comme `winrm`, `psrp` ou `kubernetes.core.kubectl`, rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
+Un nom qui se résout vers un plugin que Volant ne pilote pas encore, comme `winrm`, `psrp` ou `amazon.aws.aws_ssm`, rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
 
 Un nom qui ne se résout vers rien fait échouer la tâche avec `the connection plugin '<name>' was not found`, comme dans Ansible. Cela comprend un nom court routé vers une collection qui n'est pas installée, comme `docker` sans community.docker, après l'avertissement qu'ansible-core affiche pour lui, et `paramiko`, qu'ansible-core 2.19.12 ne porte pas sous ce nom. Cela vaut que la valeur soit la connexion de l'hôte lui-même, celle d'une cible de `delegate_to`, ou celle de l'hôte qui exécute une tâche `run_once`.
 
@@ -106,6 +107,28 @@ L'agent démarre par `buildah run [--user U] <conteneur> -- <agent>`. Volant ne 
 | `ansible_lxd_executable`, `ansible_incus_executable` | Le shell sous lequel les commandes s'exécutent. Elle l'emporte sur `ansible_executable` ; `/bin/sh` par défaut. |
 
 L'utilisateur est `ansible_user`, le mot-clé `remote_user` ou `-u`, `root` par défaut. Pour tout autre utilisateur, chaque commande passe par la méthode d'élévation, `/bin/su <user> -c` sauf si `lxd_become_method` ou `incus_become_method` en nomme une autre. Une instance sans shell reçoit l'agent par `lxc file push` ou `incus file push` quand l'utilisateur est root. Une instance absente ou arrêtée rend l'hôte injoignable avec les mots du plugin, comme `instance not running: web` ; Incus y ajoute le serveur distant et le projet. Avec `-vvvv`, les lignes affichent `ESTABLISH LXD CONNECTION FOR USER: <user>` (`Incus` pour Incus), la ligne `INFO:` du plugin pour un utilisateur autre que root, puis une ligne `EXEC [...]` par commande.
+
+## Pods Kubernetes
+
+`ansible_connection: kubectl`, ou `kubernetes.core.kubectl`, exécute un play dans un conteneur d'un pod via `kubectl exec -i`. Les deux noms demandent kubernetes.core installé sur le contrôleur et `kubectl` dans votre `PATH`.
+
+| Variable | Rôle |
+|---|---|
+| `ansible_kubectl_pod` | Le pod. Sans elle, le pod est `ansible_host`, sinon le nom d'inventaire. |
+| `ansible_kubectl_container` | Le conteneur, pour un pod qui en a plusieurs. |
+| `ansible_kubectl_namespace` | Le namespace. |
+| `ansible_kubectl_kubeconfig`, `ansible_kubectl_config` | Le fichier kubeconfig. Un kubeconfig donné sous forme de mapping va dans un fichier temporaire privé, supprimé à la fin de l'exécution. |
+| `ansible_kubectl_extra_args` | Des arguments de plus pour `kubectl`, découpés sur les espaces. |
+| `ansible_kubectl_local_env_vars` | Un mapping de variables placées dans l'environnement de chaque commande `kubectl`. |
+| `ansible_kubectl_context` | Le contexte dans le kubeconfig. |
+| `ansible_kubectl_server`, `ansible_kubectl_host` | Le serveur d'API. |
+| `ansible_kubectl_username`, `ansible_kubectl_user`, `ansible_kubectl_password` | Un nom d'utilisateur et un mot de passe pour le serveur d'API. |
+| `ansible_kubectl_token`, `ansible_kubectl_api_key` | Un jeton bearer pour le serveur d'API. |
+| `ansible_kubectl_client_cert`, `ansible_kubectl_cert_file`, `ansible_kubectl_client_key`, `ansible_kubectl_key_file` | Le certificat client et sa clé. |
+| `ansible_kubectl_ca_cert`, `ansible_kubectl_ssl_ca_cert` | L'autorité de certification du serveur d'API. |
+| `ansible_kubectl_validate_certs`, `ansible_kubectl_verify_ssl` | Passée telle quelle après `--insecure-skip-tls-verify`, comme le fait le plugin : `true` donne `True`, et `false` n'ajoute rien. |
+
+Chaque option peut aussi venir de la variable d'environnement `K8S_AUTH_*` que lit le plugin, sur laquelle une variable d'hôte l'emporte. Les options arrivent à `kubectl` dans l'ordre du plugin. Les commandes s'exécutent sous l'utilisateur du conteneur : le plugin ne peut pas en choisir un, donc `ansible_user` est ignoré. Un conteneur sans shell ne peut pas recevoir l'agent, car `kubectl cp` y demande `tar`. Un pod absent, un namespace absent ou un pod terminé rendent l'hôte injoignable avec ce qu'a dit `kubectl`. Avec `-vvvv`, les lignes affichent `ESTABLISH kubectl CONNECTION`, puis une ligne `EXEC [...]` par commande, où le mot de passe et le jeton apparaissent comme `********`.
 
 ## Variables d'hôte
 

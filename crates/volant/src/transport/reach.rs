@@ -25,7 +25,7 @@ pub(super) trait Reach: Sync {
     ///
     /// # Errors
     /// Why it could not be made, such as a password that could not be stored.
-    fn environment(&self) -> Result<Vec<(&'static str, OsString)>, ConnectError>;
+    fn environment(&self) -> Result<Vec<(OsString, OsString)>, ConnectError>;
 
     /// The `-vvvv` line of a command about to run.
     fn trace_exec(&self, argv: &[String]);

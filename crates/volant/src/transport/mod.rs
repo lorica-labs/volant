@@ -15,6 +15,7 @@ mod docker;
 mod escalation;
 mod exec;
 mod fused;
+mod kubectl;
 mod lxd;
 mod names;
 mod podman;
@@ -37,7 +38,7 @@ pub use defaults::{
     refused_escalation,
 };
 pub use docker::{DockerSettings, PluginSettings};
-pub use exec::{ExecTarget, Lines};
+pub use exec::{ExecTarget, KeptFile, Lines};
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;
 pub(crate) use names::{first_set, secret_text};

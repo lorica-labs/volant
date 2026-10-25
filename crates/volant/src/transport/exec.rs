@@ -25,6 +25,27 @@ pub enum Lines {
     Run,
     /// `THIS IS A LOCAL CHROOT DIR` for the link, then `EXEC [...]` lines.
     Chroot,
+    /// `ESTABLISH <KIND> CONNECTION` with no user, then `EXEC [...]` lines: kubectl's.
+    NoUser,
+}
+
+/// A file the controller wrote for a target's commands to read, such as a kubeconfig given as a
+/// mapping; removed when the last copy of the target that names it goes.
+#[derive(Debug, Clone)]
+pub struct KeptFile(pub std::sync::Arc<tempfile::TempPath>);
+
+impl PartialEq for KeptFile {
+    fn eq(&self, other: &KeptFile) -> bool {
+        **self.0 == **other.0
+    }
+}
+
+impl Eq for KeptFile {}
+
+impl std::hash::Hash for KeptFile {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        (**self.0).hash(state);
+    }
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -62,6 +83,12 @@ pub struct ExecTarget {
     /// A `-vvvv` line the plugin prints after its `ESTABLISH` line, such as lxd's note on a user
     /// other than root.
     pub info: Option<String>,
+    /// Variables set in the environment of every local command, kubectl's `local_env_vars`.
+    pub env: Vec<(String, String)>,
+    /// Values masked as `********` in every command line printed, such as a token.
+    pub secrets: Vec<String>,
+    /// A file the commands read, kept for as long as the target is.
+    pub kept: Option<KeptFile>,
     pub remote_tmp: String,
     /// How long the runtime may take to answer the first command before the target is
     /// reported unreachable.
@@ -104,6 +131,9 @@ impl ExecTarget {
         }
         if super::trace::connection_lines() && self.lines == Lines::Chroot {
             super::trace::local_chroot(&self.name);
+        }
+        if super::trace::connection_lines() && self.lines == Lines::NoUser {
+            super::trace::note(&self.name, &format!("ESTABLISH {} CONNECTION", self.kind));
         }
         if super::trace::connection_lines() && self.lines == Lines::Exec {
             let user = match (&self.user, &self.user_probe) {
@@ -171,6 +201,7 @@ impl ExecTarget {
         self.trace_exec(&argv);
         let child = Command::new(&argv[0])
             .args(&argv[1..])
+            .envs(self.environment()?)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(self.link_stderr())
@@ -233,14 +264,30 @@ impl Reach for ExecTarget {
         self.run(&self.shell, &["-c", command])
     }
 
-    fn environment(&self) -> Result<Vec<(&'static str, std::ffi::OsString)>, ConnectError> {
-        Ok(Vec::new())
+    fn environment(&self) -> Result<Vec<(std::ffi::OsString, std::ffi::OsString)>, ConnectError> {
+        Ok(self
+            .env
+            .iter()
+            .map(|(key, value)| (key.into(), value.into()))
+            .collect())
     }
 
     fn trace_exec(&self, argv: &[String]) {
+        let masked: Vec<String> = argv
+            .iter()
+            .map(|word| {
+                if self.secrets.contains(word) {
+                    "********".to_string()
+                } else {
+                    word.clone()
+                }
+            })
+            .collect();
         match self.lines {
-            Lines::Exec | Lines::Chroot => super::trace::exec_list(&self.name, argv),
-            Lines::Run => super::trace::run_list(&self.name, argv),
+            Lines::Exec | Lines::Chroot | Lines::NoUser => {
+                super::trace::exec_list(&self.name, &masked);
+            }
+            Lines::Run => super::trace::run_list(&self.name, &masked),
         }
     }
 

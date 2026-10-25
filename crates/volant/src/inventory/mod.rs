@@ -168,7 +168,14 @@ impl Inventory {
         if let Some(port) = port.filter(|p| *p != 0) {
             all.insert("ansible_port".to_string(), Value::from(port));
         }
-        all.extend(vars);
+        // `InventoryData.set_variable` looks a name up among the groups first, and `all` and
+        // `ungrouped` always are groups: the variables of a host so named are that group's.
+        // Measured on ansible-core 2.19.12, every host then reads them.
+        if matches!(name, "all" | "ungrouped") {
+            self.group_mut(name).vars.extend(vars);
+        } else {
+            all.extend(vars);
+        }
         self.hosts.push(Host {
             name: name.to_string(),
             vars: all,

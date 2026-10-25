@@ -19,7 +19,9 @@ use serde_json::{Map, Value};
 
 use crate::modules::Context;
 use crate::natives::Native;
-use crate::natives::common::{clean_args, clock, invocation, native_run, shlex_quote};
+use crate::natives::common::{
+    clean_args, clock, convert_bools, invocation, native_run, shlex_quote,
+};
 use crate::natives::runtime::{self, Clock, Root, Stop, py_space, py_strip};
 
 mod host;
@@ -30,7 +32,7 @@ use host::{Host, Reply};
 use parse::{
     parse_systemctl_show, reply_missing, request_was_ignored, sysv_is_enabled, xdg_default,
 };
-use request::{SPEC, VALID_ENABLED_STATES, request};
+use request::{BOOLS, SPEC, VALID_ENABLED_STATES, request};
 
 pub const NATIVE: Native = Native {
     name: "systemd",
@@ -80,7 +82,10 @@ fn answer(
     clock: Clock,
     etc: &str,
 ) -> Result<Map<String, Value>, Exit> {
-    let invocation = invocation(SPEC, args);
+    let mut invocation = invocation(SPEC, args);
+    if let Some(module_args) = invocation["module_args"].as_object_mut() {
+        convert_bools(module_args, BOOLS);
+    }
     let params = invocation["module_args"].as_object().unwrap().clone();
     let request = request(args, &params)?;
     // The module's environment: the agent's, which the Python module starts with, and the

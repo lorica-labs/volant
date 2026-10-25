@@ -90,6 +90,37 @@ pub fn check_names(spec: &[ArgSpec], args: &Map<String, Value>) -> Result<(), St
     Ok(())
 }
 
+/// `check_type_bool`: a bool, or a string or number among the spellings it takes.
+pub fn to_bool(value: &Value) -> Option<bool> {
+    match value {
+        Value::Bool(b) => Some(*b),
+        Value::Number(n) => {
+            let n = n.as_f64()?;
+            (n == 1.0 || n == 0.0).then_some(n == 1.0)
+        }
+        Value::String(text) => match text.to_lowercase().trim() {
+            "y" | "yes" | "on" | "1" | "true" | "t" => Some(true),
+            "n" | "no" | "off" | "0" | "false" | "f" => Some(false),
+            _ => None,
+        },
+        _ => None,
+    }
+}
+
+/// The `type='bool'` parameters among `names` converted as the module converts them, which is
+/// also what `invocation` shows. A value it would refuse is left as it is, for [`bool_param`] to
+/// hand back.
+pub fn convert_bools(params: &mut Map<String, Value>, names: &[&str]) {
+    for name in names {
+        if let Some(value) = params.get_mut(*name)
+            && !value.is_null()
+            && let Some(b) = to_bool(value)
+        {
+            *value = Value::Bool(b);
+        }
+    }
+}
+
 /// A `type='bool'` parameter, taken only as a JSON boolean. The reference also converts `"yes"`,
 /// `1` and the like, and shows the converted value in `invocation`; the Python module does that.
 pub fn bool_param(params: &Map<String, Value>, name: &str) -> Result<bool, String> {

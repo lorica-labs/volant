@@ -1,0 +1,6 @@
+# A task with two actions, in the playbook and in a role's task file an include_role reads: the
+# `[ERROR]` block at the task, exit 4.
+stderr: true
+runs:
+  - args: [-i, inv.ini, static.yml]
+  - args: [-i, inv.ini, role.yml]

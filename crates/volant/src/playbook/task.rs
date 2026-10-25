@@ -18,7 +18,7 @@ use super::fields::{
 use super::keywords::{META, action_statement, connect_keywords, delegation, escalation, flag};
 use super::load::task_list;
 use super::model::{Apply, Block, PlayTask};
-use super::origin::{key_origin, task_origin, value_origin};
+use super::origin::{key_origin, located, task_origin, value_origin};
 use super::play::{collections, environment, module_defaults};
 /// A block, with its three sections parsed recursively and its inherited keywords read into a
 /// module-less [`PlayTask`].
@@ -171,7 +171,10 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
             // than an unknown-keyword error.
             None => {
                 if let Some((first, _)) = &module {
-                    bail!("conflicting action statements: {first}, {key}");
+                    return Err(located(
+                        format!("conflicting action statements: {first}, {key}"),
+                        map,
+                    ));
                 }
                 module = Some((key.to_string(), value));
             }
@@ -234,7 +237,10 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         Some((word, node)) => {
             let (name, args) = action_statement(node)?;
             if let Some((other, _)) = &module {
-                bail!("conflicting action statements: {name}, {other}");
+                return Err(located(
+                    format!("conflicting action statements: {name}, {other}"),
+                    map,
+                ));
             }
             local = word == "local_action";
             rewritten = args;

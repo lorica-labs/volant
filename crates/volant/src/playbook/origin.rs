@@ -93,3 +93,48 @@ pub(super) fn task_origin(map: &saphyr::Mapping<'_>) -> Option<Origin> {
         })
     })
 }
+
+/// A load error the reference prints as an `[ERROR]` block at a place in a file, with no chain of
+/// files and items in front of its message.
+#[derive(Debug)]
+pub(crate) struct Located {
+    pub message: String,
+    pub origin: Origin,
+}
+
+impl Located {
+    /// What follows `[ERROR]: `: the message and the place, ending with the blank line a block of
+    /// several lines ends with.
+    pub(crate) fn text(&self) -> String {
+        let block = crate::render::ErrorBlock {
+            message: self.message.clone(),
+            origin: Some(self.origin.clone()),
+            unknown: None,
+            causes: Vec::new(),
+            lead: None,
+            on_stderr: true,
+        };
+        let text = crate::render::block_text(&block);
+        format!(
+            "{}
+",
+            text.trim_start_matches("[ERROR]: ")
+        )
+    }
+}
+
+impl std::fmt::Display for Located {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.message)
+    }
+}
+
+impl std::error::Error for Located {}
+
+/// `message` at where `map` was written, or with no place when the file has none.
+pub(super) fn located(message: String, map: &saphyr::Mapping<'_>) -> anyhow::Error {
+    match task_origin(map) {
+        Some(origin) => anyhow::Error::new(Located { message, origin }),
+        None => anyhow::anyhow!(message),
+    }
+}

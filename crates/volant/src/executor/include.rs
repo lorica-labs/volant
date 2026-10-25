@@ -227,7 +227,14 @@ pub(super) fn resolve_include(
                         .downcast_ref::<crate::playbook::TaskFileRefused>()
                         .is_some() =>
                 {
-                    abort.raise_with(4, format!("{err:#}"));
+                    let refused = err
+                        .downcast_ref::<crate::playbook::TaskFileRefused>()
+                        .expect("checked above");
+                    if refused.1 {
+                        abort.raise_plain_with(4, refused.0.clone());
+                    } else {
+                        abort.raise_with(4, format!("{err:#}"));
+                    }
                     return (Vec::new(), Vec::new(), std::time::Duration::ZERO, copy);
                 }
                 Err(err) => {

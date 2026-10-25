@@ -55,10 +55,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     let code = match runtime.block_on(run_all(args, plays, &mut out, &profile)) {
         Ok(code) => code,
         Err(err) => {
-            match err.downcast_ref::<Refusal>() {
-                Some(r) if r.plain || r.unresolved.is_some() => r.show(),
-                _ => eprintln!("ERROR! {err:#}"),
-            }
+            Refusal::show_error(&err);
             error_code(&err)
         }
     };

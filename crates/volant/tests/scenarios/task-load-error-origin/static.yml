@@ -1,0 +1,5 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: msg=in
+      bogus_kw: 1

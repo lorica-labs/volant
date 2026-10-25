@@ -73,6 +73,14 @@ impl Inventory {
             // Nothing is under `all`, which is all the listing walks.
             return Inventory::default().dump_with(vars_of, group_vars);
         }
+        // The listing shows the hosts the pattern `all` matches, and a host named `all` is all it
+        // matches then: measured on ansible-core 2.19.12, the other groups keep their place among
+        // the children and lose their hosts.
+        if self.hosts.len() > 1 && self.hosts.iter().any(|h| h.name == "all") {
+            return self
+                .limited_to(&std::iter::once("all".to_string()).collect())
+                .dump_with(vars_of, group_vars);
+        }
         let shown_group_vars = |name: &str| {
             let vars = group_vars.map(|of| of(name)).unwrap_or_default();
             (!vars.is_empty())

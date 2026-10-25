@@ -597,7 +597,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|
 | `config` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `csvfile` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `dict` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
+| `dict` | <span class="kw kw-runs">runs</span> |  |
 | `env` | <span class="kw kw-runs">runs</span> |  |
 | `file` | <span class="kw kw-runs">runs</span> |  |
 | `fileglob` | <span class="kw kw-runs">runs</span> |  |
@@ -608,14 +608,14 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `items` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `lines` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `list` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `nested` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
+| `nested` | <span class="kw kw-runs">runs</span> |  |
 | `password` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `pipe` | <span class="kw kw-runs">runs</span> |  |
 | `random_choice` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `sequence` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `subelements` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
+| `subelements` | <span class="kw kw-runs">runs</span> |  |
 | `template` | <span class="kw kw-runs">runs</span> |  |
-| `together` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
+| `together` | <span class="kw kw-runs">runs</span> |  |
 | `unvault` | <span class="kw kw-runs">runs</span> |  |
 | `url` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `varnames` | <span class="kw kw-runs">runs</span> |  |

@@ -10,6 +10,7 @@ use minijinja::{Environment, Error, ErrorKind, State, Value};
 mod basic;
 mod fileglob;
 mod first_found;
+mod loops;
 mod template;
 
 use basic::{inventory_hostnames, varnames};
@@ -108,19 +109,26 @@ fn failed(name: &str, err: Error) -> Error {
     ))
 }
 
+/// A lookup that only rearranges its terms.
+type Shape = fn(&[Value]) -> Result<Vec<Value>, Error>;
+
 fn invalid(msg: impl Into<String>) -> Error {
     Error::new(ErrorKind::InvalidOperation, msg.into())
 }
 
 /// The lookups this release runs, short names; each is also accepted as `ansible.builtin.<name>`.
 const SUPPORTED: &[&str] = &[
+    "dict",
     "env",
     "file",
     "fileglob",
     "first_found",
     "inventory_hostnames",
+    "nested",
     "pipe",
+    "subelements",
     "template",
+    "together",
     "unvault",
     "vars",
     "varnames",
@@ -149,6 +157,19 @@ fn lookup(
     }
     if matches!(name, "first_found" | "ansible.builtin.first_found") {
         return first_found(state, terms, kwargs, base_dir);
+    }
+    // What a loop lookup hands back comes from its terms and is data, as the plugin's is.
+    let shaping: Option<Shape> = match name.strip_prefix("ansible.builtin.").unwrap_or(name) {
+        "dict" => Some(loops::dict),
+        "nested" => Some(loops::nested),
+        "subelements" => Some(loops::subelements),
+        "together" => Some(loops::together),
+        _ => None,
+    };
+    if let Some(shape) = shaping {
+        kwargs.assert_all_used()?;
+        taint(state);
+        return shape(terms);
     }
     if matches!(name, "fileglob" | "ansible.builtin.fileglob") {
         return fileglob(state, terms, kwargs, base_dir);

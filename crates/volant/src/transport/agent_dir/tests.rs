@@ -14,6 +14,7 @@ use crate::testing::{defaults, scratch};
 use crate::transport::{SshTarget, Transport};
 
 use super::super::bootstrap::{Captured, is_this_agent};
+use super::AgentCommands;
 
 const VERSION: &str = env!("CARGO_PKG_VERSION");
 /// The uid the tests hand a directory to, as if another user on the host had made it.

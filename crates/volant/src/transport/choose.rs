@@ -236,6 +236,15 @@ impl Transport {
         }
     }
 
+    /// The user the link logs in or runs as, when one is set.
+    pub fn user(&self) -> Option<&str> {
+        match self {
+            Transport::Local => None,
+            Transport::Ssh(target) => target.user.as_deref(),
+            Transport::Exec(target) => target.user.as_deref(),
+        }
+    }
+
     /// Whether this transport's `ssh` runs share a connection, through [`Transport::shared`].
     pub fn is_shared(&self) -> bool {
         matches!(self, Transport::Ssh(target) if target.control_path.is_some())
@@ -285,6 +294,7 @@ impl Transport {
                     .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
             }
             Transport::Ssh(target) => target.connect(agents, escalation).await,
+            Transport::Exec(target) => target.connect(agents, escalation).await,
         }
     }
 }

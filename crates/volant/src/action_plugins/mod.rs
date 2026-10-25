@@ -347,6 +347,7 @@ impl LinkFacts {
             escalation: escalation.map(|e| (e.method.name().to_string(), e.user.clone())),
             delegate: delegate.map(|(name, _)| name.clone()),
             local: matches!(transport, crate::transport::Transport::Local),
+            remote_user: transport.user().map(str::to_string),
             ..LinkFacts::default()
         };
         if let crate::transport::Transport::Ssh(target) = transport {
@@ -355,7 +356,6 @@ impl LinkFacts {
                 .private_key
                 .as_ref()
                 .map(|k| k.display().to_string());
-            facts.remote_user.clone_from(&target.user);
             facts.ssh_common_args = words(&target.common_args);
             facts.ssh_extra_args = words(&target.extra_args);
         }

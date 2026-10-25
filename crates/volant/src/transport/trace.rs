@@ -65,12 +65,67 @@ pub(super) fn exec(target: &SshTarget, argv: &[String]) {
     }
 }
 
+/// `<name> ESTABLISH <KIND> CONNECTION FOR USER: <user>` for a target reached through an exec
+/// command, `None` when no user is set.
+pub(super) fn established_as(place: &str, kind: &str, user: Option<&str>) {
+    if enabled() {
+        line(&established_line(place, kind, user));
+    }
+}
+
+fn established_line(place: &str, kind: &str, user: Option<&str>) -> String {
+    format!(
+        "<{place}> ESTABLISH {kind} CONNECTION FOR USER: {}",
+        user.unwrap_or("None")
+    )
+}
+
+/// `<name> EXEC [<the command line as a Python list>]` for a command an exec target runs.
+pub(super) fn exec_list(place: &str, argv: &[String]) {
+    if enabled() {
+        line(&exec_list_line(place, argv));
+    }
+}
+
+fn exec_list_line(place: &str, argv: &[String]) -> String {
+    let words: Vec<String> = argv.iter().map(|word| str_repr(word)).collect();
+    format!("<{place}> EXEC [{}]", words.join(", "))
+}
+
+/// A Python `str` literal for `text`, as `repr` writes one.
+fn str_repr(text: &str) -> String {
+    let quote = if text.contains('\'') && !text.contains('"') {
+        '"'
+    } else {
+        '\''
+    };
+    let mut out = String::from(quote);
+    for c in text.chars() {
+        match c {
+            '\\' => out.push_str("\\\\"),
+            '\t' => out.push_str("\\t"),
+            '\n' => out.push_str("\\n"),
+            '\r' => out.push_str("\\r"),
+            c if c == quote => {
+                out.push('\\');
+                out.push(c);
+            }
+            c if c.is_control() => {
+                let _ = write!(out, "\\x{:02x}", u32::from(c));
+            }
+            c => out.push(c),
+        }
+    }
+    out.push(quote);
+    out
+}
+
 /// `<address> (code, b'stdout', b'stderr')` once a command that was waited for has ended.
-pub(super) fn result(target: &SshTarget, captured: &Captured) {
+pub(super) fn result(place: &str, captured: &Captured) {
     if enabled() {
         line(&format!(
             "<{}> ({}, {}, {})",
-            target.address,
+            place,
             captured.code.unwrap_or(-1),
             bytes_repr(captured.stdout.as_bytes()),
             bytes_repr(captured.stderr.as_bytes())
@@ -120,7 +175,33 @@ fn bytes_repr(bytes: &[u8]) -> String {
 mod tests {
     use rstest::rstest;
 
-    use super::{bytes_repr, shell_quote};
+    use super::{bytes_repr, established_line, exec_list_line, shell_quote};
+
+    #[test]
+    fn an_exec_target_s_lines_read_as_the_reference_s() {
+        assert_eq!(
+            established_line("app1", "DOCKER", Some("root")),
+            "<app1> ESTABLISH DOCKER CONNECTION FOR USER: root"
+        );
+        assert_eq!(
+            established_line("app1", "DOCKER", None),
+            "<app1> ESTABLISH DOCKER CONNECTION FOR USER: None"
+        );
+        let argv = [
+            "docker",
+            "exec",
+            "-i",
+            "app1",
+            "/bin/sh",
+            "-c",
+            "it's \"x\"",
+        ]
+        .map(String::from);
+        assert_eq!(
+            exec_list_line("app1", &argv),
+            r#"<app1> EXEC ['docker', 'exec', '-i', 'app1', '/bin/sh', '-c', 'it\'s "x"']"#
+        );
+    }
 
     #[rstest]
     #[case(b"ok\n", "b'ok\\n'")]

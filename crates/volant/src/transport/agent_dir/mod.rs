@@ -19,8 +19,11 @@
 //! The checks use `ls -ldn`, which POSIX specifies and GNU, BusyBox and BSD `ls` all print the
 //! same way, so no `stat` option that a host may lack is needed.
 
-use super::bootstrap::{EXIT_AGENT_DIR_UNSAFE, EXIT_NOT_FUSED};
-use super::defaults::SshTarget;
+use super::bootstrap::{
+    EXIT_AGENT_DIR_UNSAFE, EXIT_AGENT_MISSING, EXIT_AGENT_UNRUNNABLE, EXIT_NO_SPACE,
+    EXIT_NOT_FUSED, EXIT_SHORT_WRITE, EXIT_UNAME_FAILED, space_needed_kib,
+};
+use super::reach::Reach;
 use super::shell::shell_word;
 use std::fmt::Write as _;
 
@@ -65,20 +68,22 @@ const CHECKS: &str = concat!(
     r#"ent "$(ls -ldn -- "$old" 2>/dev/null)" "$old"; okmode d && rm -rf -- "$old"; done; return 0; }; "#,
 );
 
-impl SshTarget {
+/// The shell commands that check, fill and start the agent's directory, for any target the
+/// bootstrap reaches.
+pub(super) trait AgentCommands: Reach {
     /// The assignments every agent command starts with: the id of the user it runs as, `remote_tmp`
     /// (`rt`), the directory (`d`) and the program (`a`). The tilde of a `remote_tmp` is expanded
     /// by the shell that runs this, which is the target user's own.
-    pub(super) fn agent_vars(&self) -> String {
+    fn agent_vars(&self) -> String {
         format!(
             "u=$(id -u) || exit 1; rt={}; d=\"$rt/volant-agent-{}-$u\"; a=\"$d/volant-agent\"; ",
-            shell_word(&self.remote_tmp),
+            shell_word(self.remote_tmp()),
             env!("CARGO_PKG_VERSION")
         )
     }
 
     /// The functions, for a command that checks or makes the directory.
-    pub(super) fn agent_checks(&self) -> String {
+    fn agent_checks(&self) -> String {
         format!(
             "{}{}",
             self.agent_vars(),
@@ -87,10 +92,10 @@ impl SshTarget {
     }
 
     /// The agent's directory for a message: the numeric id is only known on the host.
-    pub(super) fn dir_hint(&self) -> String {
+    fn dir_hint(&self) -> String {
         format!(
             "{}/volant-agent-{}-<uid>",
-            self.remote_tmp,
+            self.remote_tmp(),
             env!("CARGO_PKG_VERSION")
         )
     }
@@ -99,7 +104,7 @@ impl SshTarget {
     /// the checks and the cached program answers `--version --build-id` with the line `expected`
     /// gives for this machine's `uname -m` pattern; otherwise it exits [`EXIT_NOT_FUSED`] having
     /// written nothing on stdout.
-    pub(super) fn fused_command(&self, expected: &[(&str, String)]) -> String {
+    fn fused_command(&self, expected: &[(&str, String)]) -> String {
         let mut cases = String::new();
         for (arch, line) in expected {
             let _ = write!(cases, "{arch}) w={};; ", shell_word(line));
@@ -115,13 +120,66 @@ impl SshTarget {
     /// of a run that took its time to upload; what is left is the time between the last check
     /// and `exec`. `redirect` is appended to the `exec` command, for the stderr of a link
     /// through `su`.
-    pub(super) fn exec_command(&self, redirect: &str) -> String {
+    fn exec_command(&self, redirect: &str) -> String {
         format!(
             "{}verify || exit {EXIT_AGENT_DIR_UNSAFE}; exec \"$a\"{redirect}",
             self.agent_checks()
         )
     }
+
+    /// Prints the machine architecture, then the cached agent's version and the hash of its own
+    /// file, or exits 42 when no agent is cached. The architecture names the binary this
+    /// controller would upload, whose hash decides whether the cached one is reused. A cached
+    /// agent that cannot run exits 45 and `uname` failing exits 46, so neither hands its own
+    /// status back to `ssh`, where 255 would read as a connection failure. A cached agent in a
+    /// directory, or under a `remote_tmp`, that another user could change is never run: the probe
+    /// exits 47 and names the path on stderr.
+    fn probe_command(&self) -> String {
+        format!(
+            "uname -m || exit {EXIT_UNAME_FAILED}; {checks}if [ -x \"$a\" ]; then verify || exit {EXIT_AGENT_DIR_UNSAFE}; \"$a\" --version --build-id || {{ echo \"$a: exit status $?\" >&2; exit {EXIT_AGENT_UNRUNNABLE}; }}; else exit {EXIT_AGENT_MISSING}; fi",
+            checks = self.agent_checks()
+        )
+    }
+
+    /// Reads the agent from stdin into the cache, atomically, after checking free space. It
+    /// reads the byte count it was told rather than up to the end of its input, because behind
+    /// `su` that input is a terminal, where no end ever comes; `head -c` has that on every host
+    /// an agent is built for (GNU coreutils, BusyBox and toybox alike). The byte count is
+    /// verified before the temporary copy is made executable and renamed, so a
+    /// transfer cut short never lands under the final name; older cached versions are removed
+    /// afterwards, and failing to remove one does not fail an upload that has already landed.
+    /// The temporary name carries the remote shell's pid, so two uploads racing on one host
+    /// write to separate files instead of interleaving into one of exactly the right size. A
+    /// connection killed mid-transfer still orphans its own `.tmp.<pid>` file, since nothing
+    /// left running can clean it up; an hour-old sweep after a successful `mv` removes those
+    /// without ever touching a sibling upload still in flight.
+    ///
+    /// Everything it makes is made under `umask 077`. It first checks `remote_tmp` and the
+    /// agent's directory, and exits 47 with the reason on stderr when another user owns or can
+    /// write to either; a directory that is this user's own but too open is emptied of what this
+    /// controller put there and made again. Only the other versions' directories that this user
+    /// owns are removed.
+    fn upload_command(&self, size: u64) -> String {
+        format!(
+            "umask 077; {checks}prepare || exit $?; \
+             t=\"$d/volant-agent.tmp.$$\"; \
+             avail=$(df -Pk \"$d\" | awk 'NR==2 {{print $4}}'); \
+             case \"$avail\" in ''|*[!0-9]*) avail=0;; esac; \
+             [ \"$avail\" -ge {need} ] || {{ echo \"$avail\"; exit {EXIT_NO_SPACE}; }}; \
+             head -c {size} > \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
+             [ \"$(wc -c < \"$t\")\" -eq {size} ] || {{ rm -f \"$t\"; exit {EXIT_SHORT_WRITE}; }}; \
+             chmod 755 \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
+             mv \"$t\" \"$a\" || {{ rm -f \"$t\"; exit 1; }}; \
+             find \"$d\" -name 'volant-agent.tmp.*' -mmin +60 -delete 2>/dev/null; \
+             sweep; \
+             exit 0",
+            checks = self.agent_checks(),
+            need = space_needed_kib(size),
+        )
+    }
 }
+
+impl<T: Reach + ?Sized> AgentCommands for T {}
 
 #[cfg(all(test, unix))]
 mod tests;

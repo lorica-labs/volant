@@ -162,12 +162,16 @@ impl Relinker<'_> {
     }
 }
 
-/// `transport` with ssh's `ConnectTimeout` set to `timeout`, in the whole seconds it takes and at
+/// `transport` with its connection timeout set to `timeout`, in the whole seconds it takes and at
 /// least one; a local transport has no connection to set up.
 pub(super) fn with_connect_timeout(transport: &Transport, timeout: Option<Duration>) -> Transport {
     let mut transport = transport.clone();
-    if let (Some(timeout), Transport::Ssh(target)) = (timeout, &mut transport) {
-        target.connect_timeout = Duration::from_secs((timeout.as_secs_f64().ceil() as u64).max(1));
+    let seconds =
+        |timeout: Duration| Duration::from_secs((timeout.as_secs_f64().ceil() as u64).max(1));
+    match (timeout, &mut transport) {
+        (Some(timeout), Transport::Ssh(target)) => target.connect_timeout = seconds(timeout),
+        (Some(timeout), Transport::Exec(target)) => target.connect_timeout = seconds(timeout),
+        _ => {}
     }
     transport
 }

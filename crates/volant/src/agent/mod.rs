@@ -1,16 +1,19 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Finding the agent binary and talking to a running agent.
 
+use std::sync::{Arc, Mutex};
+
 use anyhow::{Context, bail};
-use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, BufReader};
+use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt, BufReader};
 use tokio::process::Child;
 use tokio::sync::mpsc;
-use volant_protocol::frame::{header, payload_len};
+use volant_protocol::frame::header;
 use volant_protocol::{FromAgent, PROTOCOL_VERSION, ToAgent};
 
 mod blobs;
 mod decode;
 pub(crate) mod embedded;
+mod frames;
 mod source;
 
 #[cfg(test)]
@@ -67,6 +70,12 @@ pub struct AgentLink {
     /// Whether a handshake has answered over this link: the one that opened it fused with the
     /// probe already did it.
     ready: bool,
+    /// What the stream carried after its last frame that could not be a frame: what the process
+    /// behind the link printed once the agent was gone, such as the sequences `su` ends a session
+    /// with.
+    trailing: Arc<Mutex<Vec<u8>>>,
+    /// Whether [`AgentLink::ended`] found the process behind the link gone.
+    died: bool,
 }
 
 impl AgentLink {
@@ -87,7 +96,9 @@ impl AgentLink {
         // `recv`, is what makes `recv` cancellation-safe: dropping its future only drops a
         // channel receive, never a partially read frame.
         let (tx, rx) = mpsc::channel(1);
-        let reader = tokio::spawn(read_frames(stdout, tx)).abort_handle();
+        let trailing = Arc::new(Mutex::new(Vec::new()));
+        let reader =
+            tokio::spawn(frames::read_frames(stdout, tx, Arc::clone(&trailing))).abort_handle();
         let link = Self {
             stdin: Some(stdin),
             frames: rx,
@@ -105,6 +116,8 @@ impl AgentLink {
             tty_line: None,
             hangup: None,
             ready: false,
+            trailing,
+            died: false,
         };
         (link, reader)
     }
@@ -216,6 +229,28 @@ impl AgentLink {
         let code = waited.await.ok()?.ok()?.code();
         let _ = self.child.start_kill();
         code
+    }
+
+    /// How the process behind a link whose stream ended mid-batch ended, as a module that died
+    /// does in the reference: its exit code (128 and the signal for one a signal stopped) and
+    /// what it printed that was no frame. `None` when it is still running after two seconds, or
+    /// exited 255, which is `ssh` losing the connection: the host is then unreachable.
+    pub async fn ended(&mut self) -> Option<(i32, String)> {
+        let waited = tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait());
+        let status = waited.await.ok()?.ok()?;
+        self.died = true;
+        let code = status.code().or_else(|| frames::signal_code(status))?;
+        // `ssh` says 255 for a connection it lost; the agent never exits with it.
+        if code == 255 {
+            return None;
+        }
+        let text = std::mem::take(&mut *self.trailing.lock().expect("agent trailing"));
+        Some((code, String::from_utf8_lossy(&text).into_owned()))
+    }
+
+    /// Whether the process behind this link is known to be gone: a later batch needs a new link.
+    pub fn died(&self) -> bool {
+        self.died
     }
 
     /// The payloads this link has already asked about. Lives here so it dies with the link.
@@ -419,45 +454,6 @@ impl Drop for AgentLink {
             }
         }
     }
-}
-
-/// Reads whole frames off the agent's stdout in a loop and forwards each outcome: a payload,
-/// a read error, or nothing at all once the stream ends cleanly (dropping the sender, which
-/// is what turns the matching `recv` into `Ok(None)`).
-async fn read_frames(
-    mut stdout: BufReader<Box<dyn AsyncRead + Send + Unpin>>,
-    tx: mpsc::Sender<std::io::Result<Vec<u8>>>,
-) {
-    loop {
-        match read_frame(&mut stdout).await {
-            Ok(Some(payload)) => {
-                if tx.send(Ok(payload)).await.is_err() {
-                    return;
-                }
-            }
-            Ok(None) => return,
-            Err(err) => {
-                let _ = tx.send(Err(err)).await;
-                return;
-            }
-        }
-    }
-}
-
-/// Async twin of `volant_protocol::frame::read_frame`: reads the first length byte alone so
-/// a clean end of stream (`Ok(None)`) is distinguished from the stream closing partway
-/// through the length prefix or the payload, both of which are errors.
-async fn read_frame<R: AsyncRead + Unpin>(r: &mut R) -> std::io::Result<Option<Vec<u8>>> {
-    let mut first = [0u8; 1];
-    if r.read(&mut first).await? == 0 {
-        return Ok(None);
-    }
-    let mut rest = [0u8; 3];
-    r.read_exact(&mut rest).await?;
-    let len = payload_len([first[0], rest[0], rest[1], rest[2]])?;
-    let mut payload = vec![0u8; len];
-    r.read_exact(&mut payload).await?;
-    Ok(Some(payload))
 }
 
 #[cfg(all(test, unix))]

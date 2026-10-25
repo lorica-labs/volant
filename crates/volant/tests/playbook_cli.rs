@@ -809,17 +809,22 @@ fn a_result_s_warnings_are_shown_and_not_registered() {
     );
 }
 
+/// An agent that dies under its task fails that task the way ansible-core 2.19.12 fails a module
+/// that dies: `rc` 143 for `kill $PPID`, and the host is not lost.
 #[test]
-fn an_agent_that_dies_mid_batch_makes_its_host_unreachable() {
+fn an_agent_that_dies_mid_batch_fails_its_task() {
     let out = volant(&["playbook", &fixture("dying-agent.yml")]);
     let text = String::from_utf8(out.stdout).unwrap();
-    assert!(text.contains("fatal: [localhost]: UNREACHABLE!"), "{text}");
+    assert!(
+        text.contains(r#"fatal: [localhost]: FAILED! => {"changed": false, "module_stderr": "Terminated\n", "module_stdout": "", "msg": "Module result deserialization failed: No start of json char found", "rc": 143}"#),
+        "{text}"
+    );
     assert!(
         !text.contains("Never reached"),
-        "tasks after the agent died must not be displayed: {text}"
+        "tasks after the failed one must not run: {text}"
     );
-    assert!(text.contains("unreachable=1"), "{text}");
-    assert_eq!(out.status.code(), Some(4), "{text}");
+    assert!(text.contains("unreachable=0    failed=1"), "{text}");
+    assert_eq!(out.status.code(), Some(2), "{text}");
 }
 
 #[test]
@@ -2558,31 +2563,25 @@ fn seventy_hosts_finish_with_a_full_recap() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
-/// A host lost in the middle of a section says so: no rescue, no cleanup, and a recap that names
-/// it.
+/// An agent that dies in the middle of a section fails its task, which the section's rescue takes,
+/// as ansible-core 2.19.12 takes a module that dies.
 #[test]
-fn a_host_lost_partway_through_a_block_gets_no_rescue_and_no_cleanup() {
+fn an_agent_that_dies_partway_through_a_block_is_rescued() {
     let out = volant_within(
         &["playbook", &fixture("blocks/agent-dies.yml")],
         std::time::Duration::from_secs(20),
     );
     let text = String::from_utf8(out.stdout).unwrap();
-    assert_eq!(out.status.code(), Some(4), "{text}");
-    assert!(text.contains("fatal: [localhost]: UNREACHABLE!"), "{text}");
-    for absent in [
-        "TASK [Never reached]",
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(!text.contains("TASK [Never reached]"), "{text}");
+    for present in [
         "TASK [Rescue task]",
         "TASK [Always task]",
         "TASK [After the block]",
     ] {
-        assert!(!text.contains(absent), "{absent} must not run: {text}");
+        assert!(text.contains(present), "{present} must run: {text}");
     }
-    assert!(
-        text.contains(
-            "localhost                  : ok=1    changed=1    unreachable=1    failed=0    skipped=0    rescued=0"
-        ),
-        "the step it did run is counted, and the loss is counted once: {text}"
-    );
+    assert!(text.contains("rescued=1"), "{text}");
 }
 
 // The keyword tables, covered in both directions. Every row of `keywords::TASK_KEYWORDS`,

@@ -759,6 +759,52 @@ fn ssh_su_reaches_an_account_through_its_password(#[case] right: Option<bool>, #
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// An agent killed behind `su` fails its task with `rc` 137, as ansible-core 2.19.12 fails a
+/// module killed the same way, and the next task opens a new link.
+#[test]
+#[ignore = "needs sshd on localhost and passwordless sudo, run through just ssh-test"]
+fn ssh_su_an_agent_killed_behind_su_fails_its_task() {
+    let (target, password, account) = su_account(9);
+    let dir = tmp("sukilled");
+    let inv = dir.join("inventory.ini");
+    std::fs::write(
+        &inv,
+        format!(
+            "box ansible_host=127.0.0.1 ansible_user={} ansible_ssh_private_key_file={} \
+             ansible_ssh_common_args='-F /dev/null' ansible_become_password={password}\n",
+            user(),
+            key(),
+        ),
+    )
+    .unwrap();
+    let play = dir.join("su.yml");
+    std::fs::write(
+        &play,
+        format!(
+            "- hosts: box\n  gather_facts: false\n  become: true\n  become_method: su\n  \
+             become_user: {target}\n  tasks:\n    - shell: kill -9 $PPID\n      \
+             ignore_errors: true\n    - command: id -un\n"
+        ),
+    )
+    .unwrap();
+    let out = volant_within(
+        &[
+            "playbook",
+            "-i",
+            &inv.display().to_string(),
+            &play.display().to_string(),
+        ],
+        Duration::from_secs(120),
+    );
+    let text = both(&out);
+    drop(account);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#""rc": 137}"#), "{text}");
+    assert!(text.contains("unreachable=0    failed=0"), "{text}");
+    assert!(text.contains("ignored=1"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// Removes the account [`ssh_su_reaches_an_account_through_its_password`] made, its home with
 /// it, however the test ends: `Drop` is the only thing a panic still runs.
 struct Account(String);

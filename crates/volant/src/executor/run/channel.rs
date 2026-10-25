@@ -49,6 +49,12 @@ pub(in crate::executor) trait AgentChannel {
     /// Gives the link up after a question went unanswered: its answer may still arrive, and the
     /// next task would read it as its own. The link is dead afterwards.
     fn abandon(&mut self) {}
+    /// How the process behind a link that stopped mid-batch ended: its exit code and what it
+    /// printed that was no frame. `None` when that reads as a lost connection; see
+    /// `AgentLink::ended`.
+    async fn ended(&mut self) -> Option<(i32, String)> {
+        None
+    }
 }
 
 /// How a plugin that expects its host to go away gets a link to it again.
@@ -219,5 +225,9 @@ impl AgentChannel for AgentLink {
 
     fn abandon(&mut self) {
         AgentLink::abandon(self);
+    }
+
+    async fn ended(&mut self) -> Option<(i32, String)> {
+        AgentLink::ended(self).await
     }
 }

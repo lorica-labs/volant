@@ -70,6 +70,14 @@ const CHECKS: &str = concat!(
 
 /// The shell commands that check, fill and start the agent's directory, for any target the
 /// bootstrap reaches.
+/// Runs the agent and exits with its status. Not `exec`: a program a signal stops makes `ssh`
+/// exit 255, as a lost connection does, where a shell that waits for it exits 128 and the
+/// signal, as the reference's own shell does for a module that dies. The shell's report of the
+/// signal goes nowhere; the agent keeps the command's stderr.
+fn run_agent(redirect: &str) -> String {
+    format!("exec 3>&2 2>/dev/null; \"$a\" 2>&3 3>&-{redirect}; exit $?")
+}
+
 pub(super) trait AgentCommands: Reach {
     /// The assignments every agent command starts with: the id of the user it runs as, `remote_tmp`
     /// (`rt`), the directory (`d`) and the program (`a`). The tilde of a `remote_tmp` is expanded
@@ -110,20 +118,22 @@ pub(super) trait AgentCommands: Reach {
             let _ = write!(cases, "{arch}) w={};; ", shell_word(line));
         }
         format!(
-            "{}case \"$(uname -m)\" in {cases}*) exit {EXIT_NOT_FUSED};; esac;              [ -x \"$a\" ] && verify && [ \"$(\"$a\" --version --build-id 2>/dev/null)\" = \"$w\" ]              && exec \"$a\"; exit {EXIT_NOT_FUSED}",
-            self.agent_checks()
+            "{}case \"$(uname -m)\" in {cases}*) exit {EXIT_NOT_FUSED};; esac;              [ -x \"$a\" ] && verify && [ \"$(\"$a\" --version --build-id 2>/dev/null)\" = \"$w\" ]              && {{ {}; }}; exit {EXIT_NOT_FUSED}",
+            self.agent_checks(),
+            run_agent("")
         )
     }
 
     /// Starts the agent, once `remote_tmp`, the directory and the program have passed the checks
     /// again. The probe checked them earlier, in another `ssh` session, so this closes the gap
     /// of a run that took its time to upload; what is left is the time between the last check
-    /// and `exec`. `redirect` is appended to the `exec` command, for the stderr of a link
+    /// and the start. `redirect` is appended to the agent's command, for the stderr of a link
     /// through `su`.
     fn exec_command(&self, redirect: &str) -> String {
         format!(
-            "{}verify || exit {EXIT_AGENT_DIR_UNSAFE}; exec \"$a\"{redirect}",
-            self.agent_checks()
+            "{}verify || exit {EXIT_AGENT_DIR_UNSAFE}; {}",
+            self.agent_checks(),
+            run_agent(redirect)
         )
     }
 

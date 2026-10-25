@@ -26,6 +26,9 @@ pub struct ErrorBlock {
     /// What the first segment says in place of `Task failed.`, when the first link of the chain
     /// carries more: a module's own message, behind `Task failed: Module failed: `.
     pub lead: Option<String>,
+    /// Written on stderr: what the reference's `Display.error` prints from outside the callback,
+    /// such as a file an include could not load.
+    pub on_stderr: bool,
 }
 
 /// One link of a failure's chain: its own message, where the value it is about was written, and
@@ -156,6 +159,7 @@ impl ErrorBlock {
                 causes_of(result)
             },
             lead: if censored { None } else { lead_of(result) },
+            on_stderr: false,
         }
     }
 
@@ -173,6 +177,7 @@ impl ErrorBlock {
             unknown: None,
             causes: Vec::new(),
             lead: None,
+            on_stderr: false,
         }
     }
 }
@@ -361,7 +366,11 @@ impl Renderer {
         if text.contains('\n') {
             text.push('\n');
         }
-        let _ = writeln!(self.out, "{}", self.paint(FAILED, &text));
+        if block.on_stderr {
+            let _ = writeln!(anstream::stderr(), "{}", self.paint(FAILED, &text));
+        } else {
+            let _ = writeln!(self.out, "{}", self.paint(FAILED, &text));
+        }
     }
 
     /// `censored` is the `no_log` of the task whose batch could not be sent. Measured on

@@ -84,6 +84,9 @@ pub struct Config {
     /// `[defaults] show_custom_stats` or `ANSIBLE_SHOW_CUSTOM_STATS`: print what `set_stats`
     /// collected after the recap. Off by default, as in the reference.
     pub show_custom_stats: bool,
+    /// `[defaults] duplicate_dict_key` or `ANSIBLE_DUPLICATE_YAML_DICT_KEY`: what a YAML key
+    /// written twice gets, `warn` unless said.
+    pub duplicate_dict_key: Option<String>,
     /// `[defaults] show_task_path_on_failure` or `ANSIBLE_SHOW_TASK_PATH_ON_FAILURE`: print the
     /// `task path:` line before the `fatal:` line of a failed task below `-vv`, where the
     /// reference prints it for no task. Off by default, as in the reference.
@@ -309,6 +312,10 @@ impl Config {
             config.localhost_warning =
                 boolean("LOCALHOST_WARNING", "env: ANSIBLE_LOCALHOST_WARNING", &flag)?;
         }
+        if let Ok(mode) = std::env::var("ANSIBLE_DUPLICATE_YAML_DICT_KEY") {
+            config.duplicate_dict_key = Some(mode);
+        }
+        crate::yaml::set_duplicate_keys(config.duplicate_dict_key.as_deref().unwrap_or("warn"));
         if let Ok(flag) = std::env::var("ANSIBLE_SHOW_CUSTOM_STATS")
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {

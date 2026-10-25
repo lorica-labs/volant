@@ -346,9 +346,20 @@ pub(super) async fn blob_preflight<C: AgentChannel>(
     logs: &mut Vec<String>,
 ) -> Result<(), String> {
     if let Some(union) = blob
-        && tasks.iter().any(|task| task.payload.is_some())
+        && let Some(payload) = tasks.iter().find_map(|task| task.payload.as_ref())
     {
+        let first = link.memory().seen(&union.hash).is_none();
         ensure_blob(link, host, &union.hash, &union.zip_b64, logs).await?;
+        // The first batch that names the union is usually the facts, run natively: the server
+        // the run's modules need starts behind it and the tasks after it. A write that fails
+        // here fails the batch's own a moment later.
+        if first {
+            let warm = ToAgent::Warm {
+                interpreter: payload.interpreter.clone(),
+                blob: union.hash.clone(),
+            };
+            let _ = link.ask(&warm).await;
+        }
     }
     // The payloads before the files: a batch refused for its payload leaves nothing on the host,
     // and a staged file can hold a rendered secret.

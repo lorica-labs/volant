@@ -85,7 +85,7 @@ Every filter, test and lookup in this list also answers under its `ansible.built
 
 Volant implements the common filters, tests and lookups itself, in Rust. Every other one that ansible-core 2.19.12 or a collection ships runs in a Python process on the controller, with the plugin's own code, so the result is the one ansible-core gives.
 
-A play that uses only the Rust ones never starts Python for templating. The Python process starts on the first call that needs it and then serves the rest of the run. Starting it takes about 0.55 s, paid once per run, measured with `hash`.
+A play that uses only the Rust ones never starts Python for templating. The Python process starts on the first call that needs it, or as the run starts when a loop uses a lookup that only ansible-core has, and then serves the rest of the run. Starting it takes about 0.55 s, paid once per run, measured with `hash`.
 
 ### What needs Python
 

@@ -68,6 +68,31 @@ fn fingerprint(at: &Path) -> Option<Fingerprint> {
     ))
 }
 
+/// Starts the server for `blob` under `interpreter`, with no task environment, and leaves it
+/// importing: the first task keyed to it waits for its ready frame instead of starting one. A
+/// blob the agent does not hold, or a server that will not start, is left to that task.
+pub fn warm(remote_tmp: &str, interpreter: &str, blob: &str) {
+    let Ok(path) = crate::blobs::path(remote_tmp, blob) else {
+        return;
+    };
+    SERVERS.with(|table| {
+        let mut table = table.borrow_mut();
+        let key = (interpreter.to_string(), blob.to_string(), BTreeMap::new());
+        if table.live.contains_key(&key) || table.starting.contains_key(&key) {
+            return;
+        }
+        if !matches!(crate::blobs::holds(remote_tmp, blob), Ok(true)) {
+            return;
+        }
+        if let Some(now) = fingerprint(&path) {
+            table.verified.insert(blob.to_string(), now);
+        }
+        if let Ok(server) = Server::spawn(interpreter, &path, &key.2) {
+            table.starting.insert(key, server);
+        }
+    });
+}
+
 /// Called at the start of every batch. The allowance for restarting a server that dies is per
 /// batch, and a batch that refused every task because one start failed has to be able to succeed
 /// the next time the controller asks.
@@ -128,6 +153,8 @@ struct Servers {
     refused: HashMap<Key, String>,
     /// Each blob's fingerprint when its hash last matched its name.
     verified: HashMap<String, Fingerprint>,
+    /// Servers [`warm`] started that no task has waited for yet.
+    starting: HashMap<Key, Server>,
 }
 
 impl Servers {
@@ -169,7 +196,16 @@ impl Servers {
                 self.refused.insert(key, msg.clone());
                 return (Run::Done(fail(msg, None)), Timing::default());
             }
-            match Server::start_in(&payload.interpreter, blob, &key.2, cancelled) {
+            let started = match self.starting.remove(&key) {
+                Some(mut server) => match server.wait_ready(cancelled) {
+                    Ok(()) => Ok(server),
+                    Err(err) if err.kind() == io::ErrorKind::Interrupted => Err(err),
+                    // Its error is told again by a start of the task's own.
+                    Err(_) => Server::start_in(&payload.interpreter, blob, &key.2, cancelled),
+                },
+                None => Server::start_in(&payload.interpreter, blob, &key.2, cancelled),
+            };
+            match started {
                 Ok(server) => {
                     // One server per environment would grow without bound under an environment
                     // that changes per task (a loop setting a variable from `item`): a server with

@@ -86,7 +86,7 @@ Todos los filtros, tests y lookups de esta lista responden también con su nombr
 
 Volant implementa por sí mismo, en Rust, los filtros, tests y lookups habituales. Todos los demás que incluyen ansible-core 2.19.12 o una colección se ejecutan en un proceso de Python en el controlador, con el propio código del plugin, así que el resultado es el que da ansible-core.
 
-Un play que usa solo los de Rust nunca inicia Python para las plantillas. El proceso de Python arranca en la primera llamada que lo necesita y después atiende el resto de la ejecución. Arrancarlo tarda unos 0.55 s, que se pagan una vez por ejecución, medido con `hash`.
+Un play que usa solo los de Rust nunca inicia Python para las plantillas. El proceso de Python arranca en la primera llamada que lo necesita, o al empezar la ejecución cuando un bucle usa un lookup que solo tiene ansible-core, y después atiende el resto de la ejecución. Arrancarlo tarda unos 0.55 s, que se pagan una vez por ejecución, medido con `hash`.
 
 ### Qué necesita Python
 

@@ -84,7 +84,7 @@ Chaque filtre, test et lookup de cette liste répond aussi sous son nom `ansible
 
 Volant implémente lui-même, en Rust, les filtres, tests et lookups courants. Tous les autres qu'ansible-core 2.19.12 ou une collection fournit s'exécutent dans un processus Python sur le contrôleur, avec le propre code du plugin : le résultat est donc celui qu'ansible-core donne.
 
-Un play qui n'utilise que ceux en Rust ne démarre jamais Python pour le templating. Le processus Python démarre au premier appel qui en a besoin, puis sert le reste de l'exécution. Son démarrage prend environ 0.55 s, payées une fois par exécution, mesurées avec `hash`.
+Un play qui n'utilise que ceux en Rust ne démarre jamais Python pour le templating. Le processus Python démarre au premier appel qui en a besoin, ou dès le début de l'exécution quand une boucle utilise un lookup que seul ansible-core possède, puis sert le reste de l'exécution. Son démarrage prend environ 0.55 s, payées une fois par exécution, mesurées avec `hash`.
 
 ### Ce qui nécessite Python
 

@@ -129,6 +129,18 @@ impl Server {
         environment: &BTreeMap<String, String>,
         cancelled: &dyn Fn() -> bool,
     ) -> io::Result<Server> {
+        let mut server = Self::spawn(interpreter, blob, environment)?;
+        server.wait_ready(cancelled)?;
+        Ok(server)
+    }
+
+    /// The process of [`Server::start_in`], started and left to import: [`Server::wait_ready`]
+    /// is what makes it usable.
+    pub(super) fn spawn(
+        interpreter: &str,
+        blob: &Path,
+        environment: &BTreeMap<String, String>,
+    ) -> io::Result<Server> {
         let mut child = Command::new(interpreter)
             .envs(child_environment(environment, PERF.load(Ordering::Relaxed)))
             .arg("-c")
@@ -176,7 +188,7 @@ impl Server {
                 }
             }
         });
-        let mut server = Server {
+        Ok(Server {
             child,
             stdin,
             frames,
@@ -190,11 +202,16 @@ impl Server {
             abandoned: HashSet::new(),
             reap_timeout: REAP_TIMEOUT,
             preload_wait: PRELOAD_WAIT,
-        };
+        })
+    }
+
+    /// Waits for the ready frame of a server [`Server::spawn`] started, at most
+    /// [`START_TIMEOUT`] from now.
+    pub(super) fn wait_ready(&mut self, cancelled: &dyn Fn() -> bool) -> io::Result<()> {
         let deadline = Instant::now() + START_TIMEOUT;
         loop {
-            match server.frame(deadline.min(Instant::now() + CANCEL_POLL)) {
-                Ok(bytes) if ready(&bytes) => return Ok(server),
+            match self.frame(deadline.min(Instant::now() + CANCEL_POLL)) {
+                Ok(bytes) if ready(&bytes) => return Ok(()),
                 Err(err) if err.kind() == io::ErrorKind::TimedOut && Instant::now() < deadline => {
                     if cancelled() {
                         return Err(io::Error::new(
@@ -203,7 +220,7 @@ impl Server {
                         ));
                     }
                 }
-                _ => return Err(server.died()),
+                _ => return Err(self.died()),
             }
         }
     }

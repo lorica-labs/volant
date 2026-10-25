@@ -16,7 +16,7 @@ mod frame;
 mod pool;
 mod server;
 
-pub use pool::{batch_started, run};
+pub use pool::{batch_started, run, warm};
 #[cfg(all(test, unix))]
 use server::Server;
 pub use server::set_perf;

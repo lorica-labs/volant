@@ -86,7 +86,7 @@ tasks:
 
 Volant 自己用 Rust 实现常用的过滤器、测试器和 lookup。ansible-core 2.19.12 或某个 collection 提供的其他所有过滤器、测试器和 lookup，都在控制节点上的 Python 进程中运行，使用插件自己的代码，所以结果与 ansible-core 给出的一致。
 
-只用 Rust 版本的 play，永远不会为模板启动 Python。Python 进程在第一次需要它的调用时启动，然后为运行的其余部分服务。启动大约需要 0.55 秒，每次运行只付一次，用 `hash` 测得。
+只用 Rust 版本的 play，永远不会为模板启动 Python。Python 进程在第一次需要它的调用时启动；如果某个循环用到只有 ansible-core 才有的 lookup，则在运行开始时就启动，然后为运行的其余部分服务。启动大约需要 0.55 秒，每次运行只付一次，用 `hash` 测得。
 
 ### 什么需要 Python
 

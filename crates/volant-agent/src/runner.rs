@@ -118,6 +118,7 @@ where
                 ToAgent::HasBlob { .. } => "has_blob",
                 ToAgent::PutBlob { .. } => "put_blob",
                 ToAgent::PutFile { .. } => "put_file",
+                ToAgent::Warm { .. } => "warm",
             };
             eprintln!("volant-agent: ignoring unexpected {kind} during batch {id}");
             false

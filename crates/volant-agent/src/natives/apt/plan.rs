@@ -92,6 +92,10 @@ pub(super) fn plan(
             names,
             missing,
             arch: arch.to_string(),
+            policy_rc_d: request
+                .module_args
+                .get("policy_rc_d")
+                .and_then(Value::as_i64),
             params: request.module_args.clone(),
             cache_time: seconds,
             result,
@@ -144,18 +148,11 @@ pub(super) fn plan(
                     return Err("a package is in a state outside the native apt".into());
                 }
             }
-            if !missing.is_empty()
-                && request
-                    .module_args
-                    .get("policy_rc_d")
-                    .is_some_and(|v| !v.is_null())
-            {
-                return Err("policy_rc_d is outside the native apt".into());
-            }
             if stale || !missing.is_empty() {
                 return Ok(act(request.packages.clone(), missing, native_arch, result));
             }
-            // The module's `apt-mark manual` would change what apt believes: that task is its own.
+            // The module's `apt-mark manual` changes what apt believes only for a name marked
+            // automatically installed; for the others it is a no-op the native skips.
             let extended = read(root, EXTENDED_STATES)?.unwrap_or_default();
             let extended = stanzas(&extended);
             if request.packages.iter().any(|name| {
@@ -163,10 +160,7 @@ pub(super) fn plan(
                     .get(name.as_str())
                     .is_some_and(|entries| entries.iter().any(|e| e.auto_installed))
             }) {
-                return Err(
-                    "a package is marked automatically installed, and apt-mark would change that"
-                        .into(),
-                );
+                return Ok(act(request.packages.clone(), missing, native_arch, result));
             }
             cache(&mut result);
             Ok(Plan::Answer(result))

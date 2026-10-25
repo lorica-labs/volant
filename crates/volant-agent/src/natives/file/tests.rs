@@ -102,6 +102,12 @@ fn file_answers_every_recorded_case_like_the_reference() {
             |s| mkdir(&s.path("a/b"), 0o755),
         ),
         (
+            "file-link",
+            include_str!("../../../../volant/tests/golden/module/file-link.json"),
+            json!({"path": "<golden-tmp>/l2", "src": "<golden-tmp>/f.txt", "state": "link"}),
+            |_| {},
+        ),
+        (
             "file-owner-unknown",
             include_str!("../../../../volant/tests/golden/module/file-owner-unknown.json"),
             json!({"owner": "volant-no-such-user", "path": "<golden-tmp>/f.txt"}),

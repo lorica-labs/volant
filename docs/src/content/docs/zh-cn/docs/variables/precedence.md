@@ -1,5 +1,5 @@
 ---
-sourceHash: 89ab68cf559b
+sourceHash: 8577d9c13ab0
 title: 优先级与 facts
 description: 两个来源定义同一个变量时哪个胜出、魔法变量，以及 facts 如何收集、命名和缓存。
 ---
@@ -46,6 +46,7 @@ description: 两个来源定义同一个变量时哪个胜出、魔法变量，�
 | `ansible_play_batch`、`play_hosts` | 当前 [`serial` 批次](/zh-cn/docs/playbooks/how-a-play-runs/#serial-批次)的主机。`play_hosts` 已弃用。 |
 | `playbook_dir`、`inventory_dir`、`inventory_file` | 当前运行的路径。 |
 | `omit` | 用来丢弃某个模块参数的占位符。 |
+| `vars` | 该主机的全部变量，按名称读取。`vars['a']`、`vars[name]` 和 `vars.get('a')` 会渲染变量中的模板，与 `{{ a }}` 相同。其中不包含 `omit`。 |
 | `ansible_playbook_python` | 为 Volant 运行 ansible-core 的 Python 解释器。模板读取它时才去查找，找不到时为未定义。 |
 | `ansible_check_mode`、`ansible_diff_mode` | 运行是否带有 `--check` 和 `--diff`。play 或 task 自己的 `check_mode` 或 `diff` 关键字不会改变它们。 |
 | `ansible_run_tags`、`ansible_skip_tags` | 运行选择和跳过的 tag，见[检查模式、diff 与列表输出](/zh-cn/docs/playbooks/check-and-diff/#ansible_run_tags-与-ansible_skip_tags)。 |

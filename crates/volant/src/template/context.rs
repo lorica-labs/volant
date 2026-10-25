@@ -11,6 +11,7 @@ use serde_json::{Map, Value};
 
 mod hostvars;
 mod read;
+mod vars;
 
 use super::env::{chained_attr, fresh_const, mutable_attr, mutable_var};
 use super::pymethods::mutable::{identity, mutable};
@@ -337,6 +338,10 @@ impl Object for Context {
         }
         if key == CONTEXT_KEY {
             return Some(minijinja::Value::from_dyn_object(Arc::clone(self)));
+        }
+        // The magic `vars`, unless the host holds a variable of that name.
+        if key == "vars" && !self.vars.contains_key(key) {
+            return Some(minijinja::Value::from_object(vars::Vars(Arc::clone(self))));
         }
         self.deferred.again(key);
         // Before the memo, never after: a second read of the same name is answered from the

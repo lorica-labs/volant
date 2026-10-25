@@ -45,6 +45,7 @@ A fixed set of magic variables sits on top of every host's view and always wins:
 | `ansible_play_batch`, `play_hosts` | The hosts of the current [`serial` batch](/docs/playbooks/how-a-play-runs/#serial-batches). `play_hosts` is deprecated. |
 | `playbook_dir`, `inventory_dir`, `inventory_file` | Paths of the current run. |
 | `omit` | The placeholder that drops a module argument. |
+| `vars` | Every variable of this host, read by name. `vars['a']`, `vars[name]` and `vars.get('a')` render a template the variable holds, as `{{ a }}` does. `omit` is not in it. |
 | `ansible_playbook_python` | The Python interpreter that runs ansible-core for Volant. Found when a template reads it, and undefined when none is found. |
 | `ansible_check_mode`, `ansible_diff_mode` | Whether the run has `--check` and `--diff`. A play's or a task's own `check_mode` or `diff` keyword does not change them. |
 | `ansible_run_tags`, `ansible_skip_tags` | The tags the run selects and skips, see [Check mode, diff and listings](/docs/playbooks/check-and-diff/#ansible_run_tags-and-ansible_skip_tags). |

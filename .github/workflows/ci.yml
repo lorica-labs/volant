@@ -24,11 +24,17 @@ jobs:
   # not, the Rust jobs below are skipped, which the required checks accept, and the Documentation
   # workflow builds the site. The generated English pages stay out of that set: tests compare
   # them with the code.
+  #
+  # And whether it changes how the release binaries are built or what they carry: the
+  # manifests, the build script, the toolchain, the entry points, the command line, the managed
+  # runtime, the container scripts. Only then do the release builds and the containers run on a
+  # pull request; a push to main runs them every time, so main catches what the paths miss.
   changes:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
+      build: ${{ steps.diff.outputs.build }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -39,6 +45,7 @@ jobs:
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             echo code=true >> "$GITHUB_OUTPUT"
+            echo build=true >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # The checkout is the merge commit: its first parent is the base branch.
@@ -48,6 +55,12 @@ jobs:
             echo code=true >> "$GITHUB_OUTPUT"
           else
             echo code=false >> "$GITHUB_OUTPUT"
+          fi
+          build='^(Cargo\.(toml|lock)|rust-toolchain\.toml|dist-workspace\.toml|\.cargo/|justfile$|\.github/workflows/ci\.yml$|tests/|crates/[^/]+/(Cargo\.toml|build\.rs)$|crates/volant/src/(main\.rs|bin/|cli/|runtime/))'
+          if grep -Eq "$build" <<<"$changed"; then
+            echo build=true >> "$GITHUB_OUTPUT"
+          else
+            echo build=false >> "$GITHUB_OUTPUT"
           fi
 
   lint:
@@ -209,7 +222,7 @@ jobs:
   # The controller as a release builds it: static, with the agent inside.
   runtime-binary:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.build == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     steps:
@@ -373,7 +386,7 @@ jobs:
   # release in the target. aarch64 is built here too and checked on its ELF tables.
   glibc-floor:
     needs: changes
-    if: needs.changes.outputs.code == 'true'
+    if: needs.changes.outputs.build == 'true'
     strategy:
       fail-fast: false
       matrix:

@@ -196,6 +196,9 @@ impl Transport {
             super::podman::PLUGIN => Ok(Transport::Exec(super::podman::target(
                 host_name, vars, defaults, keywords,
             )?)),
+            super::buildah::PLUGIN => Ok(Transport::Exec(super::buildah::target(
+                host_name, vars, defaults, keywords,
+            )?)),
             super::chroot::PLUGIN => Ok(Transport::Exec(super::chroot::target(
                 host_name, vars, defaults,
             )?)),

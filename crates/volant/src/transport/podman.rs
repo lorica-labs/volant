@@ -75,8 +75,10 @@ pub(super) fn target(
         unavailable: found
             .is_none()
             .then(|| format!("{executable} command not found in PATH")),
+        quiet_stderr: false,
         copy: Some(super::CopyInto {
-            tar_into: command(&["cp", "-", &format!("{container}:{{dir}}")]),
+            command: command(&["cp", "-", &format!("{container}:{{dir}}")]),
+            feed: super::Feed::TarStdin,
             arch: vec![
                 command(&["inspect", "--format", "{{.Image}}", &container]),
                 command(&["image", "inspect", "--format", "{{.Architecture}}", "{}"]),

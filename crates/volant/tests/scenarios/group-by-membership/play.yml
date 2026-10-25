@@ -1,0 +1,16 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - command: "sleep {{ {'h1': 0.6, 'h2': 0.3, 'h3': 0}[inventory_hostname] }}"
+      changed_when: false
+    - group_by: {key: everyone}
+    - group_by: {key: everyone}
+
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug:
+        msg:
+          everyone: "{{ groups['everyone'] }}"
+          ungrouped: "{{ groups['ungrouped'] }}"
+          group_names: "{{ group_names }}"

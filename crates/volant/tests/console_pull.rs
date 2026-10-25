@@ -123,9 +123,8 @@ fn text(out: &Output) -> String {
     )
 }
 
-/// The native pull with no Python: a shallow clone and the playbook run, `-o` with nothing new and
-/// with a new commit, local modifications refused then discarded by `--clean`, a missing
-/// playbook (exit 5), an unreachable URL (exit 2), and `--purge`.
+/// The native pull with no Python: shallow clone and run, `-o` twice, `--clean` over local edits,
+/// a missing playbook (exit 5), an unreachable URL (exit 2), and `--purge`.
 #[test]
 fn a_pull_checks_out_and_runs_without_python() {
     let dir = tempfile::tempdir().unwrap();

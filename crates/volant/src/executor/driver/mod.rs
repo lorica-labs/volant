@@ -2448,7 +2448,7 @@ pub(super) async fn drive_host(
                 );
             }
             super::prepare::undefined::mark_keyword(task, &err, &mut result);
-            let results = vec![(None, result)];
+            let results = vec![(None, super::run::record_unrun(&store, task, &name, result))];
             // Measured on ansible-core 2.19.12: an undefined variable in a task's arguments
             // fails that task, and a rescue around it takes the failure with the error's own
             // sentence in `ansible_failed_result.msg`.

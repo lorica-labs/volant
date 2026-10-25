@@ -61,6 +61,31 @@ pub(in crate::executor) fn record_registered(
     }
 }
 
+/// Registers the result of a task that failed before it ran, its arguments or its `when` not
+/// rendered, and hands it back. Measured on ansible-core 2.19.12: the failed result is registered
+/// all the same, with `changed` and the summary of the exception the display leaves out, so a
+/// later task under `ignore_errors` reads it.
+pub(in crate::executor) fn record_unrun(
+    store: &std::sync::Mutex<VarStore>,
+    task: &PlayTask,
+    host: &str,
+    result: TaskResult,
+) -> TaskResult {
+    let mut registered = result.clone();
+    registered.0.entry("changed").or_insert(Value::Bool(false));
+    registered
+        .0
+        .insert("exception".into(), Value::from("(traceback unavailable)"));
+    record_registered(
+        &mut store.lock().expect("vars lock"),
+        task,
+        &[host.to_string()],
+        &[(None, registered)],
+        &[],
+    );
+    result
+}
+
 /// Writes the `ansible_facts` of a batch's results for every host the batch writes for.
 ///
 /// **The one place a result's facts become variables**, beside [`record_registered`] and for the

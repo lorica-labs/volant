@@ -44,7 +44,31 @@ jobs:
           persist-credentials: false
       - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
       - uses: release-plz/action@b2baf303c463c223526d52a8a91b0777f052cf3f # v0.5
+        id: release-plz
         with:
           command: release-pr
         env:
           GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+      # release-plz bumps the Cargo manifests only, and a test requires the volant.compat collection
+      # to carry the engine version, so the release branch gets the collection version in a second
+      # commit. The Actions bot authors it: release-plz counts any other author on its branch as a
+      # contributor, and closes the pull request on the next run instead of updating it.
+      - name: Set the volant.compat version on the release branch
+        if: steps.release-plz.outputs.prs_created == 'true'
+        env:
+          GITHUB_TOKEN: ${{ secrets.RELEASE_PLZ_TOKEN }}
+          PR: ${{ steps.release-plz.outputs.pr }}
+          REPOSITORY: ${{ github.repository }}
+        run: |
+          branch=$(jq -er .head_branch <<<"$PR")
+          version=$(jq -er '.releases[] | select(.package_name == "volant") | .version' <<<"$PR")
+          git fetch --quiet origin "refs/heads/$branch"
+          git switch --quiet --detach FETCH_HEAD
+          galaxy=collections/ansible_collections/volant/compat/galaxy.yml
+          sed -i "s/^version: .*/version: $version/" "$galaxy"
+          if git diff --quiet; then exit 0; fi
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898283+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet --signoff -m "chore: set the volant.compat version to $version" "$galaxy"
+          git push --quiet "https://x-access-token:${GITHUB_TOKEN}@github.com/${REPOSITORY}.git" \
+            "HEAD:refs/heads/$branch"

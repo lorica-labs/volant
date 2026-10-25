@@ -554,6 +554,39 @@ def actions(names):
     return {name: resolve_action(name) is not None for name in names}
 
 
+def connections(names):
+    """What ansible-core's connection loader makes of each name: the plugin's full name and the
+    names it went through, or `missing` with the warning the loader gave, or why the loader
+    refused the name. That warning is returned rather than printed: the engine prints it when it
+    fails the task, as the reference does."""
+    from ansible.plugins.loader import connection_loader
+    from ansible.utils.display import Display
+
+    loaders()
+    display = Display()
+    said = display.error_as_warning
+    caught = []
+    display.error_as_warning = lambda msg, exception, *args, **kwargs: caught.append(
+        "%s: %s" % (msg.rstrip("."), exception)
+    )
+    answers = {}
+    try:
+        for name in names:
+            del caught[:]
+            try:
+                found = connection_loader.find_plugin_with_context(name)
+            except Exception as failure:
+                answers[name] = {"unusable": "%s: %s" % (type(failure).__name__, failure)}
+                continue
+            if found.resolved:
+                answers[name] = {"fqcn": found.resolved_fqcn, "hops": list(found.redirect_list)}
+            else:
+                answers[name] = {"missing": True, "warning": caught[0] if caught else None}
+    finally:
+        display.error_as_warning = said
+    return answers
+
+
 def diff_text(diffs, colored=False):
     """The text `ansible-playbook` prints for a result's `diff`: ansible-core's own
     `CallbackBase._get_diff`, which colours the lines difflib made and nothing else."""
@@ -854,6 +887,8 @@ def call(request):
         return {"value": action_groups(request["args"])}
     if kind == "actions":
         return {"value": actions(request["args"])}
+    if kind == "connections":
+        return {"value": connections(request["args"])}
     if kind == "lookup_needs":
         return {"value": lookup_needs(request["args"][0])}
     if kind not in EXPRESSIONS:

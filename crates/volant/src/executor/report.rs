@@ -113,7 +113,7 @@ pub(super) async fn report_task(
                     host: host.to_string(),
                     index,
                     line: format!("Notification for handler {name} has been saved."),
-                    debug: false,
+                    shade: crate::executor::coordinator::Shade::Plain,
                     banner: true,
                 })
                 .await;

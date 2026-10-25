@@ -38,7 +38,7 @@ use meta::{MetaContext, apply_meta};
 use publish::{Coordinator, Rendering, keep_links, take_links, task_name};
 pub(in crate::executor) use publish::{escalated_links, render_name};
 pub use types::Progress;
-pub(in crate::executor) use types::{BatchEnd, Event, MetaEffect};
+pub(in crate::executor) use types::{BatchEnd, Event, MetaEffect, Shade};
 use types::{Round, Unreached};
 
 /// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list
@@ -369,7 +369,7 @@ pub(super) async fn run_batch(
                 if gone.contains(host) {
                     if let Some(blame) = unreached.remove(&key) {
                         step_header!(host);
-                        blame.show(host, out);
+                        blame.show_after(pending.remove(&key), host, stats, out);
                         prompt!(unreachable_ask(), host, key.1);
                     }
                     break;

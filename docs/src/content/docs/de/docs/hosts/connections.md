@@ -17,9 +17,24 @@ Volant erreicht einen verwalteten Host, legt dort einen kleinen statischen Agent
 | `ssh` | Startet den OpenSSH-Client aus Ihrem `PATH`. Volant baut die Kommandozeile selbst, ohne Wrapper und ohne Rust-SSH-Bibliothek, sodass Ihre `~/.ssh/config` gilt. |
 | `local` | Startet den Agent als Kindprozess auf dem Controller, ohne Netzwerk. |
 
-Jede andere Verbindung wird abgelehnt. Das betrifft `paramiko_ssh`, `winrm`, `psrp`, die Container- und Cloud-Plugins wie `docker`, `podman`, `kubectl` und `aws_ssm` sowie die vollständig qualifizierten Schreibweisen der beiden unterstützten: `ansible.builtin.ssh`, `ansible.builtin.local` und `ansible.legacy.*`. Jeder Wert mit einem Punkt wird abgelehnt, also auch das Plugin einer Collection wie `community.docker.docker`. Der Host wird als nicht erreichbar gemeldet, mit `connection '<name>' is not supported`, und der übrige Lauf geht weiter.
+Jeder andere Name wird vom ansible-core des Controllers aufgelöst, so wie `ansible-playbook` ihn auflöst, einmal pro Name und Lauf. `ansible.builtin.ssh` und `ansible.builtin.local` lösen sich zu den beiden Plugins oben auf und laufen. Ein kurzer Name, den eine Collection von ansible-core übernommen hat, wird zu dieser Collection geleitet, wenn sie installiert ist:
 
-Ein einfacher Name, den kein Plugin trägt, lässt den Task mit `the connection plugin '<name>' was not found` fehlschlagen, wie bei Ansible. Dasselbe gilt für `docker` und die anderen Namen, die eine Collection von ansible-core übernommen hat, weil die Collection nicht vorhanden ist. Das gilt unabhängig davon, ob der Wert die eigene Verbindung des Hosts ist, die eines `delegate_to`-Ziels oder die des Hosts, der einen `run_once`-Task ausführt.
+| Kurzer Name | Löst sich auf zu | Collection im Paket `ansible` 12.3.0 |
+|---|---|---|
+| `docker` | `community.docker.docker` | community.docker 4.8.5 |
+| `podman` | `containers.podman.podman` | containers.podman 1.18.0 |
+| `buildah` | `containers.podman.buildah` | containers.podman 1.18.0 |
+| `kubectl` | `kubernetes.core.kubectl` | kubernetes.core 6.2.0 |
+| `lxd` | `community.general.lxd` | community.general 11.4.2 |
+| `chroot` | `community.general.chroot` | community.general 11.4.2 |
+| `aws_ssm` | `community.aws.aws_ssm`, das `community.aws` 10.0.0 an `amazon.aws.aws_ssm` weiterleitet | amazon.aws 10.1.2 |
+| `incus` | kein kurzer Name: `community.general.incus` schreiben | community.general 11.4.2 |
+
+Mit `-vvv` gibt ein umgeleiteter Name `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` unter dem ersten Task aus, der ihn auf einem Host verwendet, eine Zeile pro Schritt.
+
+Ein Name, der sich zu einem Plugin auflöst, das Volant noch nicht steuert, etwa `winrm`, `psrp` oder `community.docker.docker`, macht den Host nicht erreichbar, mit `connection '<full name>' is not supported`, und der übrige Lauf geht weiter. Die [Unterstützungsmatrix](/de/docs/reference/parity/#collection-connection) listet jedes Verbindungs-Plugin der Collections im Paket auf.
+
+Ein Name, der sich zu nichts auflöst, lässt den Task mit `the connection plugin '<name>' was not found` fehlschlagen, wie bei Ansible. Dazu gehört ein kurzer Name, der zu einer nicht installierten Collection geleitet wird, etwa `docker` ohne community.docker, nach der Warnung, die ansible-core dafür ausgibt, und `paramiko`, das ansible-core 2.19.12 unter diesem Namen nicht mitbringt. Das gilt unabhängig davon, ob der Wert die eigene Verbindung des Hosts ist, die eines `delegate_to`-Ziels oder die des Hosts, der einen `run_once`-Task ausführt.
 
 Ein Passwort kommt aus `-k`, aus `--connection-password-file` oder aus der Variable `ansible_password`. Volant übergibt es `ssh` über `SSH_ASKPASS` und eine private temporäre Datei, die am Ende des Laufs entfernt wird; das setzt OpenSSH 8.4 oder neuer voraus. `ssh` läuft dann mit `BatchMode=no` und `NumberOfPasswordPrompts=1`, sodass eine falsche Antwort den Versuch beendet. Das Passwort steht nie in einer Kommandozeile, in der Umgebung eines Programms oder in der Ausgabe, auch nicht bei `-vvvv`. Ein per Vault verschlüsseltes `ansible_password` funktioniert wie jede verschlüsselte Variable. Ohne Passwort läuft `ssh` mit `BatchMode=yes` und fragt nie nach; ein Host, der nach einem Passwort oder einer Passphrase fragen würde, wird deshalb als nicht erreichbar gemeldet, statt den Lauf zu blockieren.
 
@@ -173,7 +188,7 @@ Schlägt die Rechteausweitung fehl, sei es wegen eines fehlenden oder falschen P
 ## Noch nicht vorhanden
 
 - Windows-Hosts und Netzwerkgeräte.
-- Die Verbindungs-Plugins, die unter Verbindungstypen genannt sind.
+- Die Verbindungs-Plugins außer `ssh` und `local`, aufgelistet in der [Unterstützungsmatrix](/de/docs/reference/parity/#collection-connection).
 - `doas`, `pbrun` und die anderen become-Methoden. Sie lassen sich als weitere Wege ergänzen, den Agent zu starten, ohne das Protokoll zu ändern.
 
 [Keywords](/de/docs/reference/keywords/) ist die vollständige Liste, aus den Tabellen erzeugt, die die Engine liest.

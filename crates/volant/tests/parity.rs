@@ -283,6 +283,7 @@ fn defaults() -> volant::transport::ConnectionDefaults {
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
         ssh_use_tty: true,
+        names: volant::transport::ConnectionNames::default(),
     }
 }
 
@@ -507,6 +508,19 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             };
             push("lookup", &l, s, note);
         }
+        // Asked as a playbook names it, by its full name, so it runs only once the engine
+        // drives that plugin itself.
+        for n in names(c, &["connection"]) {
+            let vars: serde_json::Map<String, Value> =
+                [("ansible_connection".to_string(), Value::from(n.as_str()))]
+                    .into_iter()
+                    .collect();
+            if volant::transport::Transport::for_vars("h", &vars, &defaults()).is_ok() {
+                push("connection", &n, Status::Runs, "");
+            } else {
+                push("connection", &n, Status::Later, "another connection");
+            }
+        }
     }
     rows
 }
@@ -532,6 +546,7 @@ const CATEGORIES_IN_FULL: &[&str] = &[
     "vars",
     "cache",
     "callback",
+    "collection connection",
 ];
 
 fn page(rows: &[Row], r: &Value) -> String {

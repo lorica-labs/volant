@@ -10,7 +10,7 @@ use crate::render::Renderer;
 use crate::stats::{Outcome, Stats};
 
 use super::publish::task_name;
-use super::types::{Event, Progress};
+use super::types::{Event, Progress, Shade};
 use crate::executor::RunState;
 use crate::executor::prepare::PlayPlan;
 /// The header of step `index`, for the drain paths that reach a banner after the step loop has
@@ -130,11 +130,11 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
         }
         return;
     }
-    if let Event::Display { line, debug, .. } = &event {
-        if *debug {
-            out.debug(line);
-        } else {
-            out.display(line);
+    if let Event::Display { line, shade, .. } = &event {
+        match shade {
+            Shade::Plain => out.display(line),
+            Shade::Debug => out.debug(line),
+            Shade::Verbose(level) => out.verbose(*level, line),
         }
         return;
     }

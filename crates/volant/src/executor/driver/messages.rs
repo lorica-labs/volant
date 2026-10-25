@@ -1,14 +1,16 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! What a host's driver tells the coordinator about a step besides its results.
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
-use crate::executor::coordinator::{Event, MetaEffect};
+use crate::executor::RunOptions;
+use crate::executor::coordinator::{Event, MetaEffect, Shade};
 use crate::playbook::PlayTask;
 use crate::render::Dump;
 use crate::stats::Outcome;
+use crate::transport::{ConnectionKeywords, Transport};
 
 use super::Driver;
 
@@ -24,6 +26,32 @@ impl Driver<'_> {
                 censored: false,
             })
             .await;
+    }
+
+    /// The connection the step at `index` runs over on `target`, and the `-vvv` redirect lines
+    /// resolving its name gave, printed under that step as the reference prints them.
+    pub(super) async fn reach(
+        &self,
+        index: usize,
+        target: &str,
+        vars: &Map<String, Value>,
+        options: &RunOptions,
+        keywords: &ConnectionKeywords,
+    ) -> anyhow::Result<Transport> {
+        let resolved = Transport::for_task(target, vars, &options.defaults, keywords);
+        for line in options.defaults.names.take_lines(target) {
+            let _ = self
+                .tx
+                .send(Event::Display {
+                    host: self.name.to_string(),
+                    index,
+                    line,
+                    shade: Shade::Verbose(3),
+                    banner: true,
+                })
+                .await;
+        }
+        resolved
     }
 
     /// Tells the coordinator this host is done with the step at `index`.

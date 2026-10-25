@@ -47,6 +47,7 @@ pub(crate) fn defaults() -> ConnectionDefaults {
         ssh_common_args: Vec::new(),
         ssh_extra_args: Vec::new(),
         ssh_use_tty: true,
+        names: crate::transport::ConnectionNames::default(),
     }
 }
 

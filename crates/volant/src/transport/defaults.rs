@@ -37,6 +37,9 @@ pub struct ConnectionDefaults {
     /// `[ssh_connection] usetty` and `ANSIBLE_SSH_USETTY`: the terminal a host gets when it sets
     /// no `ansible_ssh_use_tty` of its own.
     pub ssh_use_tty: bool,
+    /// How a connection name other than `local` and `ssh` is resolved: through the controller's
+    /// ansible-core when the run can ask it.
+    pub names: super::ConnectionNames,
 }
 
 /// Written by hand so `become_password` cannot reach a log or a `-vvv` dump: a derived `Debug`
@@ -60,6 +63,7 @@ impl std::fmt::Debug for ConnectionDefaults {
             .field("ssh_common_args", &self.ssh_common_args)
             .field("ssh_extra_args", &self.ssh_extra_args)
             .field("ssh_use_tty", &self.ssh_use_tty)
+            .field("names", &self.names)
             .finish()
     }
 }
@@ -271,7 +275,7 @@ pub(super) const KNOWN_CONNECTIONS: &[&str] = &["paramiko", "paramiko_ssh", "psr
 /// fails with this message, for a host's own connection, a delegate's and a `run_once`
 /// runner's alike, and nobody is unreachable.
 #[derive(Debug)]
-pub struct ConnectionNotFound(pub String);
+pub struct ConnectionNotFound(pub String, pub Option<String>);
 
 impl std::fmt::Display for ConnectionNotFound {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -322,8 +326,12 @@ pub fn plugin_load_warning(plugin: &str, collection: &str) -> String {
 }
 
 impl ConnectionNotFound {
-    /// The warning that goes with this failure, for a name a collection took over.
+    /// The warning that goes with this failure, for a name a collection took over: the one the
+    /// controller's loader gave, else the one the reference gives with no collection installed.
     pub fn warning(&self) -> Option<String> {
+        if let Some(said) = &self.1 {
+            return Some(said.clone());
+        }
         let (_, routed) = ROUTED_CONNECTIONS
             .iter()
             .find(|(name, _)| *name == self.0)?;

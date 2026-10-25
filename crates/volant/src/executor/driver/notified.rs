@@ -48,7 +48,7 @@ pub(super) async fn announce_notified(
                 host: host.to_string(),
                 index,
                 line: format!("NOTIFIED HANDLER {name} for {host}"),
-                debug: false,
+                shade: crate::executor::coordinator::Shade::Plain,
                 banner: false,
             })
             .await;

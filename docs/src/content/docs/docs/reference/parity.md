@@ -31,10 +31,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | cache | 2 | 0 | 0 | 0 |
 | callback | 1 | 0 | 0 | 4 |
 | connection | 2 | 0 | 0 | 4 |
-| collection module | 5986 | 0 | 0 | 3457 |
+| collection module | 5903 | 0 | 0 | 3540 |
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
+| collection connection | 0 | 0 | 0 | 30 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -694,6 +695,41 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `oneline` | <span class="kw kw-no">later</span> | a stdout callback |
 | `tree` | <span class="kw kw-no">later</span> | a stdout callback |
 
+## collection connection
+
+| Name | Status | Note |
+|---|---|---|
+| `amazon.aws.aws_ssm` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.grpc` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.httpapi` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.libssh` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.netconf` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.network_cli` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.persistent` | <span class="kw kw-no">later</span> | another connection |
+| `community.docker.docker` | <span class="kw kw-no">later</span> | another connection |
+| `community.docker.docker_api` | <span class="kw kw-no">later</span> | another connection |
+| `community.docker.nsenter` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.chroot` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.funcd` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.incus` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.iocage` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.jail` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.lxc` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.lxd` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.qubes` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.saltstack` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.wsl` | <span class="kw kw-no">later</span> | another connection |
+| `community.general.zone` | <span class="kw kw-no">later</span> | another connection |
+| `community.libvirt.libvirt_lxc` | <span class="kw kw-no">later</span> | another connection |
+| `community.libvirt.libvirt_qemu` | <span class="kw kw-no">later</span> | another connection |
+| `community.okd.oc` | <span class="kw kw-no">later</span> | another connection |
+| `community.proxmox.proxmox_pct_remote` | <span class="kw kw-no">later</span> | another connection |
+| `community.vmware.vmware_tools` | <span class="kw kw-no">later</span> | another connection |
+| `containers.podman.buildah` | <span class="kw kw-no">later</span> | another connection |
+| `containers.podman.podman` | <span class="kw kw-no">later</span> | another connection |
+| `google.cloud.iap` | <span class="kw kw-no">later</span> | another connection |
+| `kubernetes.core.kubectl` | <span class="kw kw-no">later</span> | another connection |
+
 ## Collections
 
 For each collection, how many of its rows run, out of the total, for its modules, filters, tests, lookups, action plugins and inventory plugins.
@@ -748,7 +784,7 @@ For each collection, how many of its rows run, out of the total, for its modules
 | `containers.podman` | 1.18.0 | 31/31 | 0/0 | 0/0 | 0/0 | 0/0 | 2/2 |
 | `cyberark.conjur` | 1.3.9 | 0/0 | 0/0 | 0/0 | 1/1 | 0/0 | 0/0 |
 | `cyberark.pas` | 1.0.36 | 4/4 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `dellemc.enterprise_sonic` | 3.2.0 | 83/87 | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `dellemc.enterprise_sonic` | 3.2.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
 | `dellemc.openmanage` | 9.12.3 | 105/105 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `dellemc.powerflex` | 2.6.1 | 16/16 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `dellemc.unity` | 2.1.0 | 18/18 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |

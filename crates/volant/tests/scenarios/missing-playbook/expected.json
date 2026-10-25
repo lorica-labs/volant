@@ -1,0 +1,5 @@
+{
+  "code": 1,
+  "stderr": "[ERROR]: the playbook: nosuch.yml could not be found\n",
+  "stdout": ""
+}

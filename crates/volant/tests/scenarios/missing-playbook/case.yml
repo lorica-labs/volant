@@ -1,0 +1,3 @@
+# A playbook that is not there: [ERROR]: and the reference's sentence, exit 1.
+stderr: true
+args: [-i, inv.ini, nosuch.yml]

@@ -76,7 +76,15 @@ fn read(path: &Path, depth: usize, rendering: &Rendering<'_>) -> anyhow::Result<
     // makes no sense gets. It carries its own code so the blanket [`load`] wraps the parse in
     // cannot take it.
     let text = crate::vault::read_to_string(path).map_err(|err| {
-        crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
+        // Measured on ansible-core 2.19.12 for a file that is not there.
+        if err.kind() == std::io::ErrorKind::NotFound {
+            crate::stats::Refusal::plain(
+                1,
+                format!("the playbook: {} could not be found", path.display()),
+            )
+        } else {
+            crate::stats::Refusal::at(1, format!("reading playbook {}: {err}", path.display()))
+        }
     })?;
     parse_at(
         &text,

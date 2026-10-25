@@ -287,10 +287,6 @@ fn inside(dir: &str, name: &str) -> String {
 /// `stat`). The only trace is this sub-task's own `invocation`, which neither engine shows or
 /// hands on.
 pub(super) fn stat(path: &str, follow: bool, checksum: bool) -> Step {
-    Step::Run(stat_sub(path, follow, checksum))
-}
-
-fn stat_sub(path: &str, follow: bool, checksum: bool) -> Sub {
     let mut args = Map::new();
     args.insert("path".into(), Value::String(path.to_string()));
     args.insert("follow".into(), Value::Bool(follow));
@@ -298,11 +294,7 @@ fn stat_sub(path: &str, follow: bool, checksum: bool) -> Sub {
     args.insert("get_mime".into(), Value::Bool(false));
     args.insert("get_attributes".into(), Value::Bool(false));
     args.insert("checksum_algorithm".into(), Value::String("sha1".into()));
-    Sub {
-        module: "stat",
-        args,
-        files: Vec::new(),
-    }
+    Sub::run("stat", args)
 }
 
 /// The `stat` block of a `stat` result, or the reference's failure when there is none.
@@ -370,19 +362,19 @@ impl Copy {
         }
     }
 
-    /// The `stat` of `dest_file`, with the `file` that [`Copy::touch`] runs when it finds these
-    /// bytes, in the same trip: a destination that already holds them costs one trip, not two.
-    /// Without `force` a file that exists is left alone whatever it holds, so the `stat` goes
-    /// alone.
+    /// The `stat` of `dest_file`, with the [`Copy::touch`] it calls for on these bytes in the same
+    /// trip; without `force`, which leaves an existing file alone, the `stat` goes alone.
     fn look(&self) -> Step {
-        let sub = stat_sub(&self.dest_file, self.follow, self.force);
-        if !self.force {
-            return Step::Run(sub);
-        }
-        Step::RunThen {
-            sub,
-            then: self.touch_sub(),
-            checksum: self.checksum.clone(),
+        let Step::Run(sub) = stat(&self.dest_file, self.follow, self.force) else {
+            unreachable!("a `stat` is one sub-task")
+        };
+        match self.force.then(|| self.touch_sub()) {
+            Some(then) => Step::RunThen {
+                sub,
+                then,
+                checksum: self.checksum.clone(),
+            },
+            None => Step::Run(sub),
         }
     }
 

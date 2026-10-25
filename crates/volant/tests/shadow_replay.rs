@@ -59,8 +59,10 @@ fn a_replay_prints_what_ansible_playbook_printed() {
     let out = replay(dir.path(), "recording.jsonl");
     let stderr = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(0), "{stderr}");
-    let here = dir.path().to_string_lossy();
-    let printed = String::from_utf8_lossy(&out.stdout).replace(&*here, RECORDED_IN);
+    // The directory as the replay sees it: macOS reaches its temporary one through a link.
+    let here = std::fs::canonicalize(dir.path()).expect("canonical");
+    let printed =
+        String::from_utf8_lossy(&out.stdout).replace(&*here.to_string_lossy(), RECORDED_IN);
     let reference = std::fs::read_to_string(dir.path().join("ansible.out")).expect("reference");
     assert_eq!(printed, reference);
 }

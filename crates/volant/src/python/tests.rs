@@ -1253,6 +1253,21 @@ fn the_helper_names_the_files_a_union_came_from() {
     }
 }
 
+/// A module_utils file read for one module is handed to the next one as it was read: a helper
+/// that built `copy` first builds the same union of three modules as a helper that did not.
+#[test]
+fn what_one_build_read_does_not_change_the_next_union() {
+    let (Some(mut fresh), Some(mut warm)) = (helper_or_skip(), helper_or_skip()) else {
+        return;
+    };
+    let names = ["stat", "ansible.posix.sysctl", "copy"].map(String::from);
+    warm.union(&["copy".to_string()]).unwrap();
+    assert_eq!(
+        fresh.union(&names).unwrap().0.hash,
+        warm.union(&names).unwrap().0.hash
+    );
+}
+
 fn framed(payload: &[u8]) -> Cursor<Vec<u8>> {
     let mut buf = Vec::new();
     write_frame(&mut buf, payload).unwrap();

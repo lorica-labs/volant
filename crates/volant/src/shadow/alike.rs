@@ -63,6 +63,31 @@ fn alike(theirs: &Value, ours: &Value) -> bool {
     }
 }
 
+/// `args` with the recording's directory, `from`, read as the replay's, `to`, in every string.
+pub(super) fn moved(
+    args: &Map<String, Value>,
+    (from, to): &(String, String),
+) -> Map<String, Value> {
+    fn walk(value: &Value, from: &str, to: &str) -> Value {
+        match value {
+            Value::String(s) => Value::String(s.replace(from, to)),
+            Value::Array(items) => Value::Array(items.iter().map(|v| walk(v, from, to)).collect()),
+            Value::Object(map) => Value::Object(
+                map.iter()
+                    .map(|(k, v)| (k.clone(), walk(v, from, to)))
+                    .collect(),
+            ),
+            other => other.clone(),
+        }
+    }
+    if from.is_empty() || from == to {
+        return args.clone();
+    }
+    args.iter()
+        .map(|(k, v)| (k.clone(), walk(v, from, to)))
+        .collect()
+}
+
 #[cfg(test)]
 #[path = "alike_tests.rs"]
 mod tests;

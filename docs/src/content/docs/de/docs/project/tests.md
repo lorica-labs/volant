@@ -1,5 +1,5 @@
 ---
-sourceHash: 2e7bc4a7539f
+sourceHash: 91122208fedb
 title: Tests
 description: Wie Volant gegen ansible-core geprüft wird, die Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
@@ -15,6 +15,7 @@ Jede Art von Aufzeichnung hat einen Namen, und `just golden <kind>` erzeugt sie 
 | `template` | Das Ergebnis beim Rendern jedes Ausdrucks in `crates/volant/tests/golden/cases.yml` | In jedem Job, mit `reference.rs` |
 | `inventory` | Hosts, Variablen und Gruppen eines Inventorys sowie die Hosts, die jedes Muster auswählt | In jedem Job, mit `reference.rs` |
 | `scenario` | Ein Playbook-Lauf: der Exit-Code und die gesamte Standardausgabe | In jedem Job, mit `reference.rs` |
+| `shadow` | Ein Lauf eines ausgewählten Szenarios durch den Callback `volant.compat.record`, komprimiert in `crates/volant/tests/golden/shadow`; das eigene Beispiel des Callbacks wird zusätzlich unter jeder unterstützten ansible-core-Version geprüft (`just compat-matrix`) | Jeder Job, mit `shadow_golden.rs`, das jede Aufzeichnung wiederholt und keine Abweichung erwartet |
 | `module` | Was jedes native Modul auf einem echten Rechner geantwortet hat | Im Job `ssh` und mit `just test-reference`, mit `reference_modules.rs` |
 | `command-names` | Die Ausgabe der Skripte in `tests/command-names`, die `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` und `ansible-galaxy` aufrufen | Der Job `command-names` |
 

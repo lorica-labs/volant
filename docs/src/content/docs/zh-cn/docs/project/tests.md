@@ -1,5 +1,5 @@
 ---
-sourceHash: 2e7bc4a7539f
+sourceHash: 91122208fedb
 title: 测试
 description: Volant 如何对照 ansible-core 进行检查，各种已记录的应答，以及如何添加场景。
 ---
@@ -15,6 +15,7 @@ Volant 的行为必须与 ansible-core 2.19.12 一致。因此，测试套件的
 | `template` | `crates/volant/tests/golden/cases.yml` 中每个表达式的渲染结果 | 每个 job，通过 `reference.rs` |
 | `inventory` | inventory 的主机、变量和组，以及每个模式选中的主机 | 每个 job，通过 `reference.rs` |
 | `scenario` | 一次 playbook 运行：退出码和完整的标准输出 | 每个 job，通过 `reference.rs` |
+| `shadow` | 选定场景经由 `volant.compat.record` 回调的一次运行，压缩保存在 `crates/volant/tests/golden/shadow` 中；同时会在回调支持的每个 ansible-core 版本下检查回调自带的示例（`just compat-matrix`） | 每个 job，由 `shadow_golden.rs` 重放每份记录，要求没有差异 |
 | `module` | 每个原生模块在真实机器上的应答 | `ssh` job 和 `just test-reference`，通过 `reference_modules.rs` |
 | `command-names` | `tests/command-names` 中脚本的输出，这些脚本调用 `ansible`、`ansible-playbook`、`ansible-vault`、`ansible-inventory`、`ansible-doc`、`ansible-config` 和 `ansible-galaxy` | `command-names` job |
 

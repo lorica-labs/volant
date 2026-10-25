@@ -86,7 +86,7 @@ Jeder Filter, Test und Lookup in dieser Liste antwortet auch unter seinem Namen 
 
 Volant implementiert die gängigen Filter, Tests und Lookups selbst, in Rust. Jeder andere, den ansible-core 2.19.12 oder eine Collection mitbringt, läuft in einem Python-Prozess auf dem Controller, mit dem eigenen Code des Plugins, sodass das Ergebnis das von ansible-core ist.
 
-Ein Play, das nur die Rust-Varianten nutzt, startet für das Templating nie Python. Der Python-Prozess startet beim ersten Aufruf, der ihn braucht, und bedient dann den Rest des Laufs. Sein Start dauert etwa 0,55 s, einmal pro Lauf, gemessen mit `hash`.
+Ein Play, das nur die Rust-Varianten nutzt, startet für das Templating nie Python. Der Python-Prozess startet beim ersten Aufruf, der ihn braucht, oder schon zu Beginn des Laufs, wenn eine Schleife ein Lookup nutzt, das nur ansible-core hat, und bedient dann den Rest des Laufs. Sein Start dauert etwa 0,55 s, einmal pro Lauf, gemessen mit `hash`.
 
 ### Was Python braucht
 

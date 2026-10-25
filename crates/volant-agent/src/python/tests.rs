@@ -1985,6 +1985,7 @@ fn the_first_task_runs_in_the_server_warm_started() {
     };
     let result = done(run(&payload, &args(json!({})), &context, &|| false).0);
     let _ = marker.kill();
+    let _ = marker.wait();
     assert!(!result.failed(), "{:?}", result.0);
     let server = result.0["parent"].as_str().unwrap().to_string();
     assert!(

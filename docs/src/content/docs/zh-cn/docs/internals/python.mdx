@@ -24,7 +24,7 @@ flowchart TB
 1. 控制节点让一个辅助进程为本次运行需要的每个模块构建 ansible-core 的 payload，除非[缓存](#union-缓存)里已经有结果。
 2. Volant 把它们合并成一个 zip，即 union blob，其中包含它们导入的每个 `module_utils` 文件。blob 以其内容的 BLAKE3 哈希命名。
 3. blob 只向每台主机发送一次，并缓存在那里。agent 在使用之前会校验哈希，已经有它的主机什么都不会收到。
-4. agent 在第一个 task 需要 Python 时启动一个 Python 服务。每个解释器、payload 和 task `environment` 的组合保持一个服务，每个目标用户有自己的 agent。服务从 blob 中加载一次共享代码，然后为每个 task fork 一个子进程。子进程运行模块，并通过管道把它的 JSON 结果写回。子进程运行期间，服务会把该模块导入自己，所以同一个模块的下一个子进程启动时它已经加载好了。
+4. 控制端发送 payload 之后，agent 立即启动一个 Python 服务，此时第一个需要 Python 的 task 之前的那些 task 仍在运行。每个解释器、payload 和 task `environment` 中解释器启动时读取的部分（`PYTHON*`、`LD_*`、区域设置、`TZ`、`HOME` 和临时目录）的组合保持一个服务；其余变量由子进程在模块运行前设置。每个目标用户有自己的 agent。服务从 blob 中加载一次共享代码，然后为每个 task fork 一个子进程。子进程运行模块，并通过管道把它的 JSON 结果写回。子进程运行期间，服务会把该模块导入自己，所以同一个模块的下一个子进程启动时它已经加载好了。
 
 union 在第一次连接之前构建，所以它必须包含主机可能用到的每个模块。它带有 play 指名的模块、参与 play 的 role 的每个 task 和 handler 文件里的模块（包括其 `meta/main.yml` 依赖），以及 include 按字面指名的任何文件里的模块。只在另一个平台的文件里出现的模块，例如 `setup-Debian.yml` 旁边的 `setup-RedHat.yml`，也在其中，所以 `include_tasks: setup-{{ ansible_os_family }}.yml` 无论主机选了哪个文件，都能找到它的模块。那里没有任何模块对应的名称会被省略，只有在某台主机真的运行到它时，才会按名称失败。
 

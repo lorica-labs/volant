@@ -10,8 +10,9 @@ permissions:
 
 concurrency:
   group: ci-${{ github.ref }}
-  # A fix pass on a pull request replaces the run it supersedes; a push to main is never cancelled.
-  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+  # A fix pass on a pull request replaces the run it supersedes, and a merge to main replaces the
+  # run of the merge before it: each tested the same pull requests, and the newest also has its own.
+  cancel-in-progress: true
 
 env:
   CARGO_TERM_COLOR: always
@@ -25,6 +26,7 @@ jobs:
   # them with the code.
   changes:
     runs-on: ubuntu-latest
+    timeout-minutes: 5
     outputs:
       code: ${{ steps.diff.outputs.code }}
     steps:
@@ -50,6 +52,11 @@ jobs:
 
   lint:
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    permissions:
+      contents: read
+      # For the step that cancels the run when lint fails.
+      actions: write
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -68,6 +75,13 @@ jobs:
       - run: typos
       - uses: docker://rhysd/actionlint@sha256:b1934ee5f1c509618f2508e6eb47ee0d3520686341fec936f3b79331f9315667 # 1.7.12
       - run: zizmor .github/workflows
+      # A change that fails lint cannot merge: stop the other jobs and give their runners back.
+      # A pull request from a fork has a read-only token, and this step then fails on its own.
+      - if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RUN_ID: ${{ github.run_id }}
+        run: gh run cancel "$RUN_ID" --repo "$GITHUB_REPOSITORY"
 
   # The steps are skipped, not the job: a skipped matrix job reports as `test`, never as
   # `test (ubuntu-latest)` or `test (macos-latest)`, the names the required checks wait for.
@@ -78,6 +92,7 @@ jobs:
       matrix:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 40
     steps:
       - if: needs.changes.outputs.code == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
@@ -85,19 +100,41 @@ jobs:
           persist-credentials: false
       - if: needs.changes.outputs.code == 'true'
         uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          components: llvm-tools-preview
       - if: needs.changes.outputs.code == 'true'
         uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
         with:
-          tool: nextest
+          tool: nextest,cargo-llvm-cov,just
       # Includes `reference.rs`: the template, inventory and scenario goldens, which need no host.
-      - if: needs.changes.outputs.code == 'true'
+      - if: needs.changes.outputs.code == 'true' && matrix.os != 'ubuntu-latest'
         run: cargo nextest run --workspace --no-tests=fail
+      # On Linux the same tests run once, under llvm-cov, and give the coverage figure too. The
+      # floor gates a pull request, not main: a dip below it cannot leave main red. Main still
+      # runs instrumented, so the cache a pull request restores holds the instrumented build.
+      - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        run: just coverage
+      - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
+        run: just COVERAGE_FLOOR=0 coverage
+      # The report reuses the profile data `just coverage` left behind rather than running the
+      # tests again.
+      - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
+        run: just coverage-lcov
+      - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest'
+        uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
+        with:
+          files: lcov.info
+          token: ${{ secrets.CODECOV_TOKEN }}
+          # A pull request from a fork has no access to the token, and coverage upload is not a
+          # reason to fail it: the floor above is the gate.
+          fail_ci_if_error: false
 
   # A refactor or perf pull request changes no behaviour: no golden or snapshot moves, and the
   # list of tests is the one the merge base has, so a test is neither dropped nor renamed.
   refactor-guard:
     if: github.event_name == 'pull_request' && (startsWith(github.event.pull_request.title, 'refactor') || startsWith(github.event.pull_request.title, 'perf'))
     runs-on: ubuntu-latest
+    timeout-minutes: 40
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -121,38 +158,11 @@ jobs:
           (cd "$RUNNER_TEMP/base" && just test-names) > "$RUNNER_TEMP/base.txt"
           diff "$RUNNER_TEMP/base.txt" "$RUNNER_TEMP/head.txt"
 
-  # Coverage is a figure to read on a pull request, not a gate on main: a push to main does not
-  # run it, so a dip below the floor cannot leave main red.
-  coverage:
-    needs: changes
-    if: github.event_name == 'pull_request' && needs.changes.outputs.code == 'true'
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
-        with:
-          persist-credentials: false
-      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
-        with:
-          components: llvm-tools-preview
-      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
-        with:
-          tool: nextest,cargo-llvm-cov,just
-      - run: just coverage
-      # The report reuses the profile data `just coverage` left behind rather than running the
-      # tests again.
-      - run: just coverage-lcov
-      - uses: codecov/codecov-action@303a32d7a59b442fa8d48b6a1cc6825c09c847a5 # v7.1.1
-        with:
-          files: lcov.info
-          token: ${{ secrets.CODECOV_TOKEN }}
-          # A pull request from a fork has no access to the token, and coverage upload is not a
-          # reason to fail it: the floor above is the gate.
-          fail_ci_if_error: false
-
   musl:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -167,6 +177,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       RUSTUP_TOOLCHAIN: "1.95"
     steps:
@@ -182,6 +193,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -194,6 +206,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -232,6 +245,7 @@ jobs:
   runtime-clean:
     needs: runtime-binary
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: debian:stable-slim@sha256:a717a33469731894e77e912ea7d714e27c2dc38ee6554fd1a3102e92999cfc66
     steps:
       - name: Install curl, the only tool the download needs
@@ -279,6 +293,7 @@ jobs:
   command-names:
     needs: runtime-binary
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     container: debian:stable-slim@sha256:a717a33469731894e77e912ea7d714e27c2dc38ee6554fd1a3102e92999cfc66
     steps:
       - name: Install the download tools and git
@@ -334,6 +349,7 @@ jobs:
   scratch:
     needs: runtime-binary
     runs-on: ubuntu-latest
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -358,6 +374,7 @@ jobs:
       matrix:
         arch: [x86_64, aarch64]
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     env:
       # zig prints a linker warning, and the denial of warnings would turn it into an error.
       RUSTFLAGS: ""
@@ -393,6 +410,7 @@ jobs:
     needs: changes
     if: needs.changes.outputs.code == 'true'
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -431,12 +449,20 @@ jobs:
           python3 -m venv .venv
           .venv/bin/python -m pip install ansible-core==2.19.12
           echo "VOLANT_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
+      # The pinned versions are written in this file, so its hash names the set.
+      - id: collections
+        uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+        with:
+          path: .collections
+          key: collections-${{ hashFiles('.github/workflows/ci.yml') }}
       - name: Install the pinned collections
+        env:
+          CACHED: ${{ steps.collections.outputs.cache-hit }}
         run: |
           set -euo pipefail
           .venv/bin/python -m pip install -r crates/volant/tests/golden/requirements.txt
           # Galaxy first. When its downloads fail, the same versions are built from their release tags.
-          if ! .venv/bin/ansible-galaxy collection install -p "$PWD/.collections" \
+          if [ "$CACHED" != true ] && ! .venv/bin/ansible-galaxy collection install -p "$PWD/.collections" \
             ansible.posix==2.2.2 community.general==13.4.0 ansible.utils==6.1.1 \
             community.library_inventory_filtering_v1==1.1.5; then
             echo "::warning::Galaxy failed; installing the pinned collections from their release tags"

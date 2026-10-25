@@ -124,12 +124,18 @@ jobs:
         with:
           tool: nextest,cargo-llvm-cov,just
       # Includes `reference.rs`: the template, inventory and scenario goldens, which need no host.
+      # A pull request runs the `pr` profile, which leaves out the tests that wait on real time
+      # (see .config/nextest.toml); main runs them all.
       - if: needs.changes.outputs.code == 'true' && matrix.os != 'ubuntu-latest'
+        env:
+          NEXTEST_PROFILE: ${{ github.event_name == 'pull_request' && 'pr' || 'default' }}
         run: cargo nextest run --workspace --no-tests=fail
       # On Linux the same tests run once, under llvm-cov, and give the coverage figure too. The
       # floor gates a pull request, not main: a dip below it cannot leave main red. Main still
       # runs instrumented, so the cache a pull request restores holds the instrumented build.
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name == 'pull_request'
+        env:
+          NEXTEST_PROFILE: pr
         run: just coverage
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
         run: just COVERAGE_FLOOR=0 coverage

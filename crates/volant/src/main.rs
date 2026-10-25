@@ -38,6 +38,10 @@ enum Command {
     Shims(ShimsCommand),
     /// Encrypt, decrypt and view vault files, with the arguments of ansible-vault.
     Vault(VaultArgs),
+    /// Replay runs the volant.compat.record callback recorded. Hidden until the replay engine
+    /// answers tasks from the recording.
+    #[command(subcommand, hide = true)]
+    Shadow(volant::shadow::ShadowCommand),
 }
 
 /// Parses the command line. Started under an ansible-core program name, the process behaves as
@@ -106,6 +110,7 @@ fn main() {
         Command::Runtime(command) => volant::cli::runtime(command),
         Command::Shims(command) => volant::cli::shims(command),
         Command::Vault(args) => volant::cli::vault(args),
+        Command::Shadow(command) => volant::shadow::shadow(command),
     };
     std::process::exit(code);
 }

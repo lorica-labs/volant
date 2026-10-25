@@ -29,6 +29,7 @@ pub(crate) mod python;
 pub(crate) mod render;
 pub(crate) mod roles;
 pub(crate) mod runtime;
+pub mod shadow;
 pub(crate) mod splitter;
 pub(crate) mod stats;
 pub mod template;

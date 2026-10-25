@@ -110,11 +110,11 @@ Volant a sa propre version de huit de ces plugins : `copy`, `dnf`, `fetch`, `pa
 
 ## Le cache de l'union
 
-Construire l'union coûte un démarrage de Python, un import d'ansible-core et la construction de chaque module : 3.8 secondes sur les quatre rôles Galaxy de la [page de performances](/fr/docs/project/performance/). Le contrôleur garde le résultat sous `$XDG_CACHE_HOME/volant/unions/`, ou `~/.cache/volant/unions/`, dans un répertoire privé à votre compte.
+Construire l'union coûte un démarrage de Python, un import d'ansible-core et la construction de chaque module. ansible-core lit chaque fichier `module_utils` qu'un module importe, et les modules d'une exécution en partagent la plupart : le helper lit donc chaque fichier une seule fois pour toute l'union. Cela prend de 1.5 à 1.8 seconde sur les quatre rôles Galaxy de la [page de performances](/fr/docs/project/performance/), contre 3.7 à 4.4 secondes quand chaque module les relisait. Le contrôleur garde le résultat sous `$XDG_CACHE_HOME/volant/unions/`, ou `~/.cache/volant/unions/`, dans un répertoire privé à votre compte.
 
 Une entrée est retrouvée grâce à tout ce que la construction a lu et qui n'est pas un fichier : la version de Volant, l'interpréteur, les modules et collections demandés, l'environnement `ANSIBLE_*` et `PYTHON*`, l'`ansible.cfg` qu'ansible-core lirait et le répertoire de travail. Elle liste aussi chaque fichier source que l'assistant a lu, avec sa taille et sa date de modification. Une exécution ne réutilise l'entrée que si chacun de ces fichiers est inchangé et si le zip a encore le hash enregistré. Mettre à jour ansible-core ou une collection sur place reconstruit donc l'union.
 
-Un cache illisible, corrompu ou impossible à écrire ne fait jamais échouer une exécution : l'union est reconstruite, et un répertoire non inscriptible affiche un avertissement par exécution. Pour le vider, supprimez le répertoire.
+Un cache illisible, corrompu ou impossible à écrire ne fait jamais échouer une exécution : l'union est reconstruite, et un répertoire non inscriptible affiche un avertissement par exécution. Le cache garde jusqu'à 1 GiB. Au-delà, les entrées qu'aucune exécution n'a utilisées depuis le plus longtemps partent en premier, et une entrée qu'aucune exécution n'a utilisée depuis 30 jours est supprimée. Pour le vider, supprimez le répertoire.
 
 ## Modules natifs
 

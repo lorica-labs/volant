@@ -110,11 +110,11 @@ Volant tiene su propia versión de ocho de estos plugins: `copy`, `dnf`, `fetch`
 
 ## La caché de la union
 
-Construir la union cuesta un arranque de Python, una importación de ansible-core y una construcción de cada módulo: 3.8 segundos con los cuatro roles de Galaxy de la [página de rendimiento](/es/docs/project/performance/). El controlador guarda el resultado en `$XDG_CACHE_HOME/volant/unions/`, o en `~/.cache/volant/unions/`, en un directorio privado de tu cuenta.
+Construir la union cuesta un arranque de Python, una importación de ansible-core y una construcción de cada módulo. ansible-core lee cada archivo de `module_utils` que importa un módulo, y los módulos de una ejecución comparten la mayoría, así que el helper lee cada archivo una sola vez para toda la union: de 1.5 a 1.8 segundos con los cuatro roles de Galaxy de la [página de rendimiento](/es/docs/project/performance/), frente a 3.7 a 4.4 segundos cuando cada módulo los volvía a leer. El controlador guarda el resultado en `$XDG_CACHE_HOME/volant/unions/`, o en `~/.cache/volant/unions/`, en un directorio privado de tu cuenta.
 
 Una entrada se busca por todo lo que leyó la construcción y que no es un archivo: la versión de Volant, el intérprete, los módulos y colecciones pedidos, el entorno `ANSIBLE_*` y `PYTHON*`, el `ansible.cfg` que leería ansible-core y el directorio de trabajo. También enumera cada archivo de origen que leyó el helper, con su tamaño y su fecha de modificación. Una ejecución reutiliza la entrada solo si cada uno de esos archivos no ha cambiado y el zip sigue teniendo su hash registrado. Por tanto, actualizar ansible-core o una colección en el sitio reconstruye la union.
 
-Una caché que no se puede leer, está dañada o no se puede escribir nunca hace fallar una ejecución: la union se reconstruye, y un directorio en el que no se puede escribir imprime un aviso por ejecución. Para vaciarla, elimina el directorio.
+Una caché que no se puede leer, está dañada o no se puede escribir nunca hace fallar una ejecución: la union se reconstruye, y un directorio en el que no se puede escribir imprime un aviso por ejecución. La caché guarda hasta 1 GiB. Por encima de eso, se eliminan primero las entradas que ninguna ejecución usa desde hace más tiempo, y una entrada que ninguna ejecución ha usado en 30 días se elimina. Para vaciarla, elimina el directorio.
 
 ## Módulos nativos
 

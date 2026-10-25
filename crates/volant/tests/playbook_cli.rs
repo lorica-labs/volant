@@ -6309,12 +6309,14 @@ fn backdate(path: &Path, ago: u64) {
         .unwrap_or_else(|e| panic!("backdating {}: {e}", path.display()));
 }
 
-/// Every file of the kept unions with its mtime: a run that hits the cache rewrites none.
+/// The zip and deflated form of every kept union with its mtime: a run that hits the cache
+/// rewrites neither. It does refresh the manifest's mtime, which marks the entry as used.
 fn kept_unions(cache: &Path) -> Vec<(std::path::PathBuf, std::time::SystemTime)> {
     let mut out: Vec<_> = std::fs::read_dir(cache.join("volant").join("unions"))
         .map(|entries| {
             entries
                 .flatten()
+                .filter(|e| e.path().extension().is_none_or(|ext| ext != "json"))
                 .filter_map(|e| Some((e.path(), e.metadata().ok()?.modified().ok()?)))
                 .collect()
         })

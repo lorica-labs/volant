@@ -110,11 +110,11 @@ Volant 有其中八个 plugin 的自有版本：`copy`、`dnf`、`fetch`、`pack
 
 ## union 缓存
 
-构建 union 需要一次 Python 启动、一次 ansible-core 导入，以及每个模块的一次构建：在[性能页面](/zh-cn/docs/project/performance/)的四个 Galaxy role 上需要 3.8 秒。控制节点把结果保存在 `$XDG_CACHE_HOME/volant/unions/` 或 `~/.cache/volant/unions/` 下，该目录只属于你的账户。
+构建 union 需要一次 Python 启动、一次 ansible-core 导入，以及每个模块的一次构建。ansible-core 会读取模块导入的每个 `module_utils` 文件，而同一次运行的模块大多共用这些文件，所以 helper 在整个 union 中每个文件只读一次：在[性能页面](/zh-cn/docs/project/performance/)的四个 Galaxy role 上需要 1.5 到 1.8 秒，而每个模块各自重读时需要 3.7 到 4.4 秒。控制节点把结果保存在 `$XDG_CACHE_HOME/volant/unions/` 或 `~/.cache/volant/unions/` 下，该目录只属于你的账户。
 
 查找条目所依据的是构建读取的、不是文件的一切内容：Volant 版本、解释器、被要求的模块和 collection、`ANSIBLE_*` 和 `PYTHON*` 环境、ansible-core 会读取的 `ansible.cfg`，以及工作目录。它还列出辅助进程读取的每个源文件，连同大小和修改时间。只有这些文件都没变、且 zip 仍与记录的哈希一致时，一次运行才会复用该条目。所以就地升级 ansible-core 或某个 collection 会重新构建 union。
 
-无法读取、已损坏或无法写入的缓存永远不会让运行失败：union 会重新构建，无法写入的目录每次运行输出一条警告。要清除它，删除该目录即可。
+无法读取、已损坏或无法写入的缓存永远不会让运行失败：union 会重新构建，无法写入的目录每次运行输出一条警告。缓存最多保存 1 GiB。超出时，最久没有被任何运行使用的条目最先删除；30 天内没有被任何运行使用的条目也会被删除。要清除它，删除该目录即可。
 
 ## 原生模块
 

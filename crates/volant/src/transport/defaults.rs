@@ -182,6 +182,8 @@ pub enum Transport {
     /// Run the agent on the controller machine itself.
     Local,
     Ssh(SshTarget),
+    /// Run the agent through a command that execs into the target, such as `docker exec -i`.
+    Exec(super::ExecTarget),
 }
 
 /// A password a host variable gave. It prints as `<redacted>`, so a derived `Debug` on a type

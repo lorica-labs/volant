@@ -1,12 +1,11 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The `ssh` command lines of an `SshTarget`.
+//! The `ssh` command lines of an `SshTarget`, and what the bootstrap needs of them.
 
-use super::bootstrap::{
-    EXIT_AGENT_DIR_UNSAFE, EXIT_AGENT_MISSING, EXIT_AGENT_UNRUNNABLE, EXIT_NO_SPACE,
-    EXIT_SHORT_WRITE, EXIT_UNAME_FAILED, space_needed_kib,
-};
+use super::bootstrap::{Captured, EXIT_SSH_FAILURE};
 use super::control::{CONTROL_PERSIST, SERVER_ALIVE_COUNT_MAX, SERVER_ALIVE_INTERVAL};
 use super::defaults::{ConnectError, SshTarget};
+use super::escalation::unreachable_message;
+use super::reach::Reach;
 
 impl SshTarget {
     /// Which password an `ssh` call of this target offers: the host variable's, or the one of
@@ -116,55 +115,45 @@ impl SshTarget {
         ]);
         argv
     }
+}
 
-    /// Prints the machine architecture, then the cached agent's version and the hash of its own
-    /// file, or exits 42 when no agent is cached. The architecture names the binary this
-    /// controller would upload, whose hash decides whether the cached one is reused. A cached
-    /// agent that cannot run exits 45 and `uname` failing exits 46, so neither hands its own
-    /// status back to `ssh`, where 255 would read as a connection failure. A cached agent in a
-    /// directory, or under a `remote_tmp`, that another user could change is never run: the probe
-    /// exits 47 and names the path on stderr.
-    pub fn probe_command(&self) -> String {
-        format!(
-            "uname -m || exit {EXIT_UNAME_FAILED}; {checks}if [ -x \"$a\" ]; then verify || exit {EXIT_AGENT_DIR_UNSAFE}; \"$a\" --version --build-id || {{ echo \"$a: exit status $?\" >&2; exit {EXIT_AGENT_UNRUNNABLE}; }}; else exit {EXIT_AGENT_MISSING}; fi",
-            checks = self.agent_checks()
-        )
+impl Reach for SshTarget {
+    fn place(&self) -> &str {
+        &self.address
     }
 
-    /// Reads the agent from stdin into the cache, atomically, after checking free space. It
-    /// reads the byte count it was told rather than up to the end of its input, because behind
-    /// `su` that input is a terminal, where no end ever comes; `head -c` has that on every host
-    /// an agent is built for (GNU coreutils, BusyBox and toybox alike). The byte count is
-    /// verified before the temporary copy is made executable and renamed, so a
-    /// transfer cut short never lands under the final name; older cached versions are removed
-    /// afterwards, and failing to remove one does not fail an upload that has already landed.
-    /// The temporary name carries the remote shell's pid, so two uploads racing on one host
-    /// write to separate files instead of interleaving into one of exactly the right size. A
-    /// connection killed mid-transfer still orphans its own `.tmp.<pid>` file, since nothing
-    /// left running can clean it up; an hour-old sweep after a successful `mv` removes those
-    /// without ever touching a sibling upload still in flight.
-    ///
-    /// Everything it makes is made under `umask 077`. It first checks `remote_tmp` and the
-    /// agent's directory, and exits 47 with the reason on stderr when another user owns or can
-    /// write to either; a directory that is this user's own but too open is emptied of what this
-    /// controller put there and made again. Only the other versions' directories that this user
-    /// owns are removed.
-    pub fn upload_command(&self, size: u64) -> String {
-        format!(
-            "umask 077; {checks}prepare || exit $?; \
-             t=\"$d/volant-agent.tmp.$$\"; \
-             avail=$(df -Pk \"$d\" | awk 'NR==2 {{print $4}}'); \
-             case \"$avail\" in ''|*[!0-9]*) avail=0;; esac; \
-             [ \"$avail\" -ge {need} ] || {{ echo \"$avail\"; exit {EXIT_NO_SPACE}; }}; \
-             head -c {size} > \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
-             [ \"$(wc -c < \"$t\")\" -eq {size} ] || {{ rm -f \"$t\"; exit {EXIT_SHORT_WRITE}; }}; \
-             chmod 755 \"$t\" || {{ rm -f \"$t\"; exit 1; }}; \
-             mv \"$t\" \"$a\" || {{ rm -f \"$t\"; exit 1; }}; \
-             find \"$d\" -name 'volant-agent.tmp.*' -mmin +60 -delete 2>/dev/null; \
-             sweep; \
-             exit 0",
-            checks = self.agent_checks(),
-            need = space_needed_kib(size),
-        )
+    fn remote_tmp(&self) -> &str {
+        &self.remote_tmp
+    }
+
+    fn command_line(&self, command: &str, payload: bool) -> Vec<String> {
+        self.ssh_argv_with(command, payload)
+    }
+
+    fn environment(&self) -> Result<Vec<(&'static str, std::ffi::OsString)>, ConnectError> {
+        self.askpass_environment()
+    }
+
+    fn trace_exec(&self, argv: &[String]) {
+        super::trace::exec(self, argv);
+    }
+
+    fn trace_result(&self, captured: &Captured) {
+        super::trace::result(&self.address, captured);
+    }
+
+    /// `ssh` reports its own failures as 255, and none of the bootstrap commands ever returns it,
+    /// so this cannot swallow a remote command's own status.
+    fn connection_failure(
+        &self,
+        captured: &Captured,
+        offered: Option<&str>,
+    ) -> Option<ConnectError> {
+        (captured.code == Some(EXIT_SSH_FAILURE))
+            .then(|| ConnectError::Unreachable(unreachable_message(&captured.stderr, offered)))
+    }
+
+    fn over_ssh(&self) -> Option<&SshTarget> {
+        Some(self)
     }
 }

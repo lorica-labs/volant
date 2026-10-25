@@ -23,6 +23,7 @@ use tokio::sync::oneshot;
 
 use crate::agent::{AgentLink, AgentSource};
 
+use super::agent_dir::AgentCommands;
 use super::bootstrap::{EXIT_NOT_FUSED, triple_for};
 use super::defaults::{BecomeMethod, Escalation, SshTarget};
 use super::escalation::{SudoForm, escalated_command};

@@ -9,8 +9,10 @@ mod choose;
 mod control;
 mod defaults;
 mod escalation;
+mod exec;
 mod fused;
 mod names;
+mod reach;
 mod resolve;
 mod session;
 mod shell;
@@ -25,6 +27,7 @@ pub use defaults::{
     MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport, plugin_load_warning,
     refused_escalation,
 };
+pub use exec::ExecTarget;
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;
 pub(crate) use names::{first_set, secret_text};

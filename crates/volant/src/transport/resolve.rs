@@ -210,6 +210,7 @@ mod tests {
         let got = match transport(&names, name).unwrap() {
             Transport::Local => "local",
             Transport::Ssh(_) => "ssh",
+            Transport::Exec(_) => "exec",
         };
         assert_eq!(got, want);
     }

@@ -1,0 +1,175 @@
+// SPDX-License-Identifier: GPL-3.0-or-later
+//! A target reached through a local command that runs another command inside it with stdin and
+//! stdout passed through: `docker exec -i`, `kubectl exec -i`, `lxc exec`, `chroot`. The agent's
+//! link already is one process whose stdin and stdout carry frames, so any such command carries
+//! it, and the probe, the upload and the start are the ones `ssh` runs.
+
+use std::process::Stdio;
+use std::time::Duration;
+
+use tokio::process::Command;
+
+use crate::agent::{AgentLink, AgentSource};
+
+use super::agent_dir::AgentCommands;
+use super::bootstrap::{Captured, bootstrap, bootstrap_probe_ran, first_words, run_bootstrap};
+use super::defaults::{BecomeMethod, ConnectError, Escalation};
+use super::escalation::{RunAs, escalated_command, preamble, preparing_for, settle_form};
+use super::reach::Reach;
+
+/// The shell every command but the agent's own start runs under.
+const SHELL: &str = "/bin/sh";
+
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct ExecTarget {
+    /// The container, pod or directory, shown in the `<...>` of the `-vvvv` lines.
+    pub name: String,
+    /// The connection's word in `ESTABLISH <KIND> CONNECTION`: `DOCKER` for docker.
+    pub kind: String,
+    /// The command line that runs a program in the target with stdin and stdout passed
+    /// through, up to the program: `docker exec -i app1`.
+    pub prefix: Vec<String>,
+    /// The user the commands run as, when the runtime is told one.
+    pub user: Option<String>,
+    pub remote_tmp: String,
+    /// How long the runtime may take to answer the first command before the target is
+    /// reported unreachable.
+    pub connect_timeout: Duration,
+}
+
+impl ExecTarget {
+    /// The command line that runs `program` with `args` in the target.
+    fn run(&self, program: &str, args: &[&str]) -> Vec<String> {
+        let mut argv = self.prefix.clone();
+        argv.push(program.to_string());
+        argv.extend(args.iter().map(ToString::to_string));
+        argv
+    }
+
+    /// The connection's name in messages: `docker` for `DOCKER`.
+    fn connection(&self) -> String {
+        self.kind.to_ascii_lowercase()
+    }
+
+    /// Opens a link: the probe, the upload when the target's cache is stale, and the agent's
+    /// start, each through the exec command. `sudo` goes ahead of the agent as it does over
+    /// `ssh`; `su` reads its password from a terminal, which this command does not give.
+    pub(super) async fn connect(
+        &self,
+        agents: &AgentSource,
+        escalation: Option<&Escalation>,
+    ) -> Result<AgentLink, ConnectError> {
+        super::trace::established_as(&self.name, &self.kind, self.user.as_deref());
+        if let Some(e) = escalation
+            && e.method == BecomeMethod::Su
+        {
+            return Err(ConnectError::Become(format!(
+                "become_method 'su' is not supported yet on a {} connection",
+                self.connection()
+            )));
+        }
+        let probe_command = self.probe_command();
+        let (escalated, probe) = if let Some(e) = escalation {
+            let (form, probe) = self
+                .answering(settle_form(e, bootstrap_probe_ran, |form| {
+                    run_bootstrap(self, RunAs::Direct(Some((e, form))), &probe_command, None)
+                }))
+                .await??;
+            (Some((e, form)), probe)
+        } else {
+            let probe = self
+                .answering(run_bootstrap(
+                    self,
+                    RunAs::Direct(None),
+                    &probe_command,
+                    None,
+                ))
+                .await??;
+            (None, probe)
+        };
+        bootstrap(self, agents, RunAs::Direct(escalated), Some(probe))
+            .await
+            .map_err(|err| preparing_for(err, escalation))?;
+        let start = self.exec_command("");
+        let start = match escalated {
+            None => start,
+            Some(_) => format!("exec {}", escalated_command(escalated, &start)),
+        };
+        let argv = self.command_line(&start, true);
+        self.trace_exec(&argv);
+        let child = Command::new(&argv[0])
+            .args(&argv[1..])
+            .stdin(Stdio::piped())
+            .stdout(Stdio::piped())
+            .stderr(Stdio::inherit())
+            .kill_on_drop(true)
+            .spawn()
+            .map_err(|e| ConnectError::Unreachable(format!("starting {}: {e}", argv[0])))?;
+        AgentLink::new_with_preamble(child, preamble(escalated))
+            .await
+            .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))
+    }
+
+    /// `step` bounded by the connection timeout: a runtime that hangs makes the target
+    /// unreachable, saying how long it waited and for what.
+    async fn answering<F: Future>(&self, step: F) -> Result<F::Output, ConnectError> {
+        tokio::time::timeout(self.connect_timeout, step)
+            .await
+            .map_err(|_| {
+                let seconds = self.connect_timeout.as_secs();
+                ConnectError::Unreachable(format!(
+                    "{} did not answer within {seconds} second{} when asked to run a command in {}",
+                    self.prefix[0],
+                    if seconds == 1 { "" } else { "s" },
+                    self.name
+                ))
+            })
+    }
+}
+
+impl Reach for ExecTarget {
+    fn place(&self) -> &str {
+        &self.name
+    }
+
+    fn remote_tmp(&self) -> &str {
+        &self.remote_tmp
+    }
+
+    fn command_line(&self, command: &str, _payload: bool) -> Vec<String> {
+        self.run(SHELL, &["-c", command])
+    }
+
+    fn environment(&self) -> Result<Vec<(&'static str, std::ffi::OsString)>, ConnectError> {
+        Ok(Vec::new())
+    }
+
+    fn trace_exec(&self, argv: &[String]) {
+        super::trace::exec_list(&self.name, argv);
+    }
+
+    fn trace_result(&self, captured: &Captured) {
+        super::trace::result(&self.name, captured);
+    }
+
+    /// The runtime's own failures share their exit codes with the commands it runs (`docker
+    /// exec` exits 1 for a container that does not exist), so they are read off the first
+    /// probe instead, whose every own status is known.
+    fn connection_failure(
+        &self,
+        _captured: &Captured,
+        _offered: Option<&str>,
+    ) -> Option<ConnectError> {
+        None
+    }
+
+    /// A container that does not exist or is stopped: the runtime said so on stderr.
+    fn probe_failure(&self, probe: &Captured) -> Option<ConnectError> {
+        Some(ConnectError::Unreachable(format!(
+            "{} could not run a command in {}: {}",
+            self.prefix[0],
+            self.name,
+            first_words(&probe.stderr, "it exited without a message")
+        )))
+    }
+}

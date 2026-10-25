@@ -9,7 +9,8 @@ use tokio::process::Command;
 
 use crate::agent::{AgentLink, AgentSource};
 
-use super::bootstrap::{Captured, EXIT_SSH_FAILURE, bootstrap_probe_ran};
+use super::agent_dir::AgentCommands;
+use super::bootstrap::{Captured, EXIT_SSH_FAILURE, bootstrap, bootstrap_probe_ran, run_bootstrap};
 use super::control::{
     STOP_MASTER_TIMEOUT, TIMING_ONLY, config_sets_control, dump_hostname, ssh_dump,
 };
@@ -166,7 +167,7 @@ impl SshTarget {
             }
             None => (None, None),
         };
-        self.bootstrap(agents, RunAs::Direct(escalated), probed)
+        bootstrap(self, agents, RunAs::Direct(escalated), probed)
             .await
             .map_err(|err| preparing_for(err, escalation))?;
         let start = self.exec_command("");
@@ -204,7 +205,12 @@ impl SshTarget {
     ) -> Result<(SudoForm, Captured), ConnectError> {
         let command = self.probe_command();
         settle_form(escalation, bootstrap_probe_ran, |form| {
-            self.run_bootstrap(RunAs::Direct(Some((escalation, form))), &command, None)
+            run_bootstrap(
+                self,
+                RunAs::Direct(Some((escalation, form))),
+                &command,
+                None,
+            )
         })
         .await
     }
@@ -218,7 +224,7 @@ impl SshTarget {
         escalation: &Escalation,
     ) -> Result<AgentLink, ConnectError> {
         let probe = self.run_su(escalation, &self.probe_command(), None).await?;
-        self.bootstrap(agents, RunAs::Su(escalation), Some(probe))
+        bootstrap(self, agents, RunAs::Su(escalation), Some(probe))
             .await
             .map_err(|err| preparing_for(err, Some(escalation)))?;
         // The agent's stderr would land in the stream it answers on, so it goes to a file
@@ -299,7 +305,7 @@ impl SshTarget {
             .map_err(|e| ConnectError::Unreachable(format!("starting ssh: {e}")))
     }
 
-    /// One bootstrap command behind `su`, captured the way [`Self::run_capturing`] captures one
+    /// One bootstrap command behind `su`, captured the way `run_capturing` captures one
     /// over a pipe: what it printed once `su` let it in, its exit code, and `ssh`'s own words.
     pub(super) async fn run_su(
         &self,

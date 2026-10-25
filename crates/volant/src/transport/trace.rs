@@ -171,7 +171,7 @@ pub(crate) fn shell_quote(word: &str) -> String {
 }
 
 /// A Python `bytes` literal for `bytes`: the quote Python picks, and its escapes.
-fn bytes_repr(bytes: &[u8]) -> String {
+pub(crate) fn bytes_repr(bytes: &[u8]) -> String {
     let quote = if bytes.contains(&b'\'') && !bytes.contains(&b'"') {
         '"'
     } else {

@@ -1,5 +1,5 @@
 ---
-sourceHash: 37a3f4cfcd5c
+sourceHash: b74cf526136c
 title: ansible 命令名
 description: Volant 的哪个命令取代 ansible-core 的哪个程序，哪些相同，哪些不同，以及如何保留你的命令行。
 ---
@@ -17,10 +17,10 @@ Volant 运行 ansible-core 2.19.12 的九个程序。每一个都是 `volant` �
 | `ansible-doc` | [`volant doc`](/zh-cn/docs/reference/cli/doc/) | ansible-core 自己的工具 | 第一次使用时安装 |
 | `ansible-config` | [`volant config`](/zh-cn/docs/reference/cli/config/) | ansible-core 自己的工具 | 第一次使用时安装 |
 | `ansible-galaxy` | [`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/) | ansible-core 自己的工具 | 第一次使用时安装 |
-| `ansible-pull` | [`volant pull`](/zh-cn/docs/reference/cli/pull/) | ansible-core 自己的工具，它的两个步骤使用 Volant 的引擎 | 第一次使用时安装 |
+| `ansible-pull` | [`volant pull`](/zh-cn/docs/reference/cli/pull/) | Volant | `git` 检出不需要 |
 | `ansible-console` | [`volant console`](/zh-cn/docs/reference/cli/console/) | ansible-core 自己的工具 | 第一次使用时安装 |
 
-托管运行时在某个命令第一次需要它时自行安装，与 playbook 一样，并在安装时于标准错误输出打印一行。[托管运行时](/zh-cn/docs/reference/runtime/)对它有说明。你不需要安装 ansible，但九个命令中有五个运行的是该运行时里 ansible-core 自己的代码。`volant console` 用 ansible-core 的执行器运行任务，而不是 Volant 的。
+托管运行时在某个命令第一次需要它时自行安装，与 playbook 一样，并在安装时于标准错误输出打印一行。[托管运行时](/zh-cn/docs/reference/runtime/)对它有说明。你不需要安装 ansible，但九个命令中有四个运行的是该运行时里 ansible-core 自己的代码。`volant console` 用 ansible-core 的执行器运行任务，而不是 Volant 的。
 
 ## 保留你的命令行
 
@@ -62,12 +62,12 @@ ansible-playbook -i hosts.ini site.yml
 | 一个工具加密的文件，另一个工具能解密，默认 id 和带标签的 id 都一样 | `a_file_one_tool_encrypts_the_other_decrypts` |
 | `volant inventory` 打印 ansible-inventory 的 JSON 和 YAML 字节：键顺序、四个空格的缩进、PyYAML 锚点 | `crates/volant/tests/inventory_golden.rs`（基于 `golden/inventories/cases.yml`）和 `inventory_cli.rs` |
 | `volant config` 和 `volant galaxy` 打印工具所打印的内容 | `crates/volant/tests/tools_cli.rs` |
-| `volant pull` 打印 `ansible-pull` 所打印的内容，只有一行除外（见下） | `console_pull.rs` 中的 `a_pull_prints_what_the_reference_pull_prints` |
+| `volant pull` 打印的 playbook 运行和 `-o` 那一行与 `ansible-pull` 相同，检出时不用 Python | `console_pull.rs` 中的 `a_pull_prints_what_the_reference_pull_prints` 和 `a_pull_checks_out_and_runs_without_python` |
 | `volant console` 像 `ansible-console` 一样从管道读取命令 | `the_console_reads_its_commands_from_a_pipe` |
 | `install` 创建的链接、它打印的行，以及 `remove` 不动的内容 | `crates/volant/tests/shims.rs` |
 | 哪些名字对应哪个命令，且没有其他名字 | `crates/volant/src/cli/program.rs` 中的测试 |
 
-每个原生命令接受的选项列在它自己的页面上：[`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)、[`volant vault`](/zh-cn/docs/reference/cli/vault/) 和 [`volant inventory`](/zh-cn/docs/reference/cli/inventory/)。没有列在那里的选项会被拒绝，绝不会被忽略。
+每个原生命令接受的选项列在它自己的页面上：[`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)、[`volant vault`](/zh-cn/docs/reference/cli/vault/)、[`volant inventory`](/zh-cn/docs/reference/cli/inventory/) 和 [`volant pull`](/zh-cn/docs/reference/cli/pull/)。没有列在那里的选项会被拒绝，绝不会被忽略。
 
 ## 哪些不同
 
@@ -75,7 +75,7 @@ ansible-playbook -i hosts.ini site.yml
 - `--version` 打印 `ansible [core 2.19.12]`（或程序名）和各路径。当 Volant 找不到带 ansible-core 的解释器时，Python、Jinja 和 PyYAML 的行会省略，因为 `--version` 不安装任何东西。见 [`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)。
 - `--version` 中的 `executable location` 是程序被启动时的样子：`volant`，或那个链接。见 [`volant doc`](/zh-cn/docs/reference/cli/doc/#终端退出码和---version)。
 - `ansible-inventory --toml` 不需要任何 Python 包（参考实现需要 `tomli-w`），遇到 `null` 值时只输出一行 `[ERROR]`，而不是回溯信息（两者都以 250 退出）。见 [`volant inventory`](/zh-cn/docs/reference/cli/inventory/)。
-- `volant pull` 在输出的第二行显示 `<cache>/volant/pull/ansible-pull`，而 `ansible-pull` 显示它脚本的路径。见 [`volant pull`](/zh-cn/docs/reference/cli/pull/)。
+- `volant pull` 先打印它的前两行，再打印各步骤的输出，它的检出也不启动 Python。见 [`volant pull`](/zh-cn/docs/reference/cli/pull/#与-ansible-pull-的不同)。
 - 运行时有了 `collections/` 目录之后，`volant config dump` 会把 `COLLECTIONS_PATHS` 显示为由环境变量设置。见 [`volant config`](/zh-cn/docs/reference/cli/config/#collection-路径)。
 - `ansible-vault view` 只在终端上才经过分页器，依次看 `PAGER`、`ANSIBLE_PAGER`、`[defaults] pager`，最后是 `less`。见 [Vault](/zh-cn/docs/variables/vault/)。
 - `volant adhoc` 和 `volant playbook` 使用 Volant 的引擎，所以 [我的 playbook 能运行吗？](/zh-cn/docs/start/compatibility/) 和 [`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/#不是模块的动作) 中列出的差异都适用。
@@ -88,4 +88,4 @@ ansible-playbook -i hosts.ini site.yml
 | `volant vault` | 完成 | 文件错误，例如对已存在的文件执行 `create` | 用法错误 | | 选项错误，例如 `--output` 带两个文件 | |
 | `volant inventory` | 已打印 | | 用法错误 | | 没有动作或有两个动作，或 `--host` 或 `--graph` 的目标错误 | |
 
-`volant playbook` 使用[退出码](/zh-cn/docs/reference/exit-codes/)页面上的退出码。在 ansible-core 的运行时中运行的五个工具返回工具自己的退出码；无法启动解释器时返回 1，并带一行 `[ERROR]:`。
+`volant playbook` 使用[退出码](/zh-cn/docs/reference/exit-codes/)页面上的退出码。在 ansible-core 的运行时中运行的四个工具返回工具自己的退出码；无法启动解释器时返回 1，并带一行 `[ERROR]:`。检出失败时 `volant pull` 以 2 退出，选项错误或找不到 playbook 时以 5 退出，其他情况下返回 playbook 的退出码。

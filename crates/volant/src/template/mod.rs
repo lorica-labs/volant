@@ -13,6 +13,7 @@ mod context;
 mod env;
 mod file;
 mod filters;
+pub(crate) use clock::local_now;
 pub(crate) use filters::python_json;
 mod globals;
 mod lipsum;

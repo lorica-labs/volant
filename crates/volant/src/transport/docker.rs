@@ -79,6 +79,7 @@ pub(super) fn target(
         unavailable: found
             .is_none()
             .then(|| "docker command not found in PATH".to_string()),
+        copy: Some(copy_into(&docker, &options)),
         user_probe: options
             .user
             .is_none()
@@ -127,6 +128,24 @@ fn inspect_argv(docker: &str, options: &Options) -> Vec<String> {
         options.container.clone(),
     ]);
     argv
+}
+
+/// `docker cp - CONTAINER:{dir}`, which unpacks a tar stream, and the container's image's
+/// architecture through `docker inspect`.
+fn copy_into(docker: &str, options: &Options) -> super::CopyInto {
+    let command = |words: &[&str]| {
+        let mut argv = vec![docker.to_string()];
+        argv.extend(extra_words(options));
+        argv.extend(words.iter().map(ToString::to_string));
+        argv
+    };
+    super::CopyInto {
+        tar_into: command(&["cp", "-", &format!("{}:{{dir}}", options.container)]),
+        arch: vec![
+            command(&["inspect", "--format", "{{.Image}}", &options.container]),
+            command(&["image", "inspect", "--format", "{{.Architecture}}", "{}"]),
+        ],
+    }
 }
 
 fn extra_words(options: &Options) -> Vec<String> {

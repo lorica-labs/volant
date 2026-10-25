@@ -2,7 +2,9 @@
 //! End-to-end runs over `community.docker.docker` against real containers. Ignored by default:
 //! they need a `docker` that runs without a password, community.docker on
 //! `ANSIBLE_COLLECTIONS_PATH`, and `VOLANT_AGENT_DIR` holding `volant-agent-<triple>` for the
-//! image's architecture. `VOLANT_DOCKER_TEST_IMAGE` picks the image, `alpine:3.20` by default.
+//! image's architecture. `VOLANT_DOCKER_TEST_IMAGE` picks the image, `alpine:3.20` by default,
+//! and `VOLANT_DOCKER_TEST_NO_SHELL_IMAGE` the image with no `/bin/sh`, distroless's
+//! `static-debian12:debug-nonroot` by default, whose busybox lives in `/busybox`.
 #![cfg(target_os = "linux")]
 
 use std::fmt::Write as _;
@@ -21,13 +23,34 @@ impl Container {
         Container::made(name, &["create"])
     }
 
+    /// A running container of an image with no shell, kept up by busybox's `sleep`.
+    fn without_a_shell(name: &str) -> Container {
+        let image = std::env::var("VOLANT_DOCKER_TEST_NO_SHELL_IMAGE")
+            .unwrap_or_else(|_| "gcr.io/distroless/static-debian12:debug-nonroot".into());
+        Container::from_image(
+            name,
+            &["run", "-d", "--entrypoint", "/busybox/sleep"],
+            &image,
+        )
+    }
+
     fn made(name: &str, how: &[&str]) -> Container {
-        let name = format!("volant-e2e-{name}-{}", std::process::id());
         let image =
             std::env::var("VOLANT_DOCKER_TEST_IMAGE").unwrap_or_else(|_| "alpine:3.20".into());
+        Container::from_image(name, how, &image)
+    }
+
+    fn from_image(name: &str, how: &[&str], image: &str) -> Container {
+        let name = format!("volant-e2e-{name}-{}", std::process::id());
+        let entrypoint_given = how.contains(&"--entrypoint");
         let out = Command::new("docker")
             .args(how)
-            .args(["--name", &name, &image, "sleep", "infinity"])
+            .args(["--name", &name, image])
+            .args(if entrypoint_given {
+                &["infinity"][..]
+            } else {
+                &["sleep", "infinity"][..]
+            })
             .output()
             .expect("docker runs");
         assert!(
@@ -142,4 +165,31 @@ fn docker_reports_what_it_cannot_reach_in_its_own_words() {
         assert!(line.contains(said), "{host}: {line}");
     }
     assert!(stdout.contains("changed: [fine]"), "{stdout}");
+}
+
+/// An image with no shell gets the agent through `docker cp`, and a second run reuses the agent
+/// it placed.
+#[test]
+#[ignore = "needs docker, community.docker and a musl agent"]
+fn docker_reaches_a_container_with_no_shell() {
+    let app = Container::without_a_shell("noshell");
+    let dir = tempfile::tempdir().unwrap();
+    for _ in 0..2 {
+        let out = play(
+            dir.path(),
+            &[("bare", &format!("ansible_docker_host: {}", app.0))],
+            "    - ansible.builtin.command: /busybox/whoami
+      register: who
+    - ansible.builtin.debug:
+        var: who.stdout
+",
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        assert!(stdout.contains("\"who.stdout\": \"nonroot\""), "{stdout}");
+    }
 }

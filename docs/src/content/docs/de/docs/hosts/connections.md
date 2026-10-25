@@ -43,7 +43,7 @@ Ein Passwort kommt aus `-k`, aus `--connection-password-file` oder aus der Varia
 
 `ansible_connection: docker` oder `community.docker.docker` führt ein Play in einem laufenden Container aus, ohne sshd darin und ohne Netzwerkweg dorthin. Beide Namen brauchen community.docker auf dem Controller, wie bei `ansible-playbook`. Volant startet das Programm `docker` aus Ihrem `PATH`, sodass `DOCKER_HOST`, `DOCKER_CONTEXT` und `DOCKER_CONFIG` es über die Umgebung erreichen.
 
-Der Agent kommt über `docker exec -i` hinein, daher braucht das Image `/bin/sh` und die üblichen Werkzeuge: `uname`, `id`, `ls`, `mkdir`, `df`, `awk`, `head`, `wc`, `chmod`, `mv` und `find`. Ein minimales Alpine- oder Debian-Image hat sie. Ein Image ohne Shell, etwa distroless oder scratch, wird noch nicht unterstützt.
+Der Agent kommt über `docker exec -i` hinein, daher braucht das Image `/bin/sh` und die üblichen Werkzeuge: `uname`, `id`, `ls`, `mkdir`, `df`, `awk`, `head`, `wc`, `chmod`, `mv` und `find`. Ein minimales Alpine- oder Debian-Image hat sie. Ein Image ohne Shell, etwa distroless, bekommt den Agent stattdessen über `docker cp`: Volant fragt `docker inspect` nach der Architektur des Images, kopiert den Agent in das `/tmp` des Containers, und der Agent legt sich selbst in sein Cache-Verzeichnis, mit denselben Prüfungen. Der Container braucht ein `/tmp`, `remote_tmp` muss absolut sein oder für einen Benutzer mit Home-Verzeichnis mit `~` beginnen, und `become` wird abgelehnt, weil keine Shell da ist, die `sudo` starten könnte. Die Kopie in `/tmp` bleibt, wenn der Benutzer des Containers sie nicht entfernen kann.
 
 | Variable | Wirkung |
 |---|---|
@@ -114,6 +114,8 @@ Der Agent ist ein kleines statisches Programm, für x86_64 Linux etwa 1,2 MB gro
 Er liegt unter `<remote_tmp>/volant-agent-<version>-<uid>/volant-agent`, mit dem Standard-`remote_tmp` also unter `~/.ansible/tmp/` im Home-Verzeichnis. Die Version im Pfad ist die des Controllers selbst; so vermeidet ein aktualisierter Controller, einen älteren Agent auszuführen. Ein Task mit Rechteausweitung führt seinen eigenen Agent als `become_user` aus, im Cache im Home-Verzeichnis dieses Benutzers, sodass ein Host einen Cache pro Konto hält, als das der Lauf handelt.
 
 Sind Python-Module gelaufen, liegt neben dem Agent-Verzeichnis im selben `remote_tmp` ein zweites Verzeichnis, `volant-blobs-<version>-<uid>`, mit den Modul-Payloads, die Volant gesendet hat.
+
+Wie der Agent dorthin kommt, hängt vom Ziel ab. Über `ssh` und in einem Container mit Shell wird der Agent einem Shell-Skript auf der Verbindung übergeben, das das Verzeichnis prüft und die Datei schreibt. In einem Container ohne Shell legt der eigene Kopierbefehl der Laufzeit den Agent hinein, und der Agent legt sich mit denselben Prüfungen selbst ab; docker macht das mit `docker cp`.
 
 Um beide zu leeren, entfernen Sie die beiden Verzeichnisse. Sonst bleibt nichts zurück:
 

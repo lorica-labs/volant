@@ -42,7 +42,7 @@ A password comes from `-k`, from `--connection-password-file` or from the `ansib
 
 `ansible_connection: docker`, or `community.docker.docker`, runs a play inside a running container, with no sshd in it and no network path to it. Both names need community.docker installed on the controller, as they do for `ansible-playbook`. Volant runs the `docker` program from your `PATH`, so `DOCKER_HOST`, `DOCKER_CONTEXT` and `DOCKER_CONFIG` reach it through the environment.
 
-The agent goes up through `docker exec -i`, so the image needs `/bin/sh` and the usual tools: `uname`, `id`, `ls`, `mkdir`, `df`, `awk`, `head`, `wc`, `chmod`, `mv` and `find`. A minimal Alpine or Debian image has them. An image with no shell, such as distroless or scratch, is not supported yet.
+The agent goes up through `docker exec -i`, so the image needs `/bin/sh` and the usual tools: `uname`, `id`, `ls`, `mkdir`, `df`, `awk`, `head`, `wc`, `chmod`, `mv` and `find`. A minimal Alpine or Debian image has them. An image with no shell, such as distroless, gets the agent through `docker cp` instead: Volant asks `docker inspect` for the image's architecture, copies the agent into the container's `/tmp`, and the agent puts itself in its cache directory under the same checks. The container needs a `/tmp`, `remote_tmp` must be absolute or start with `~` for a user that has a home, and `become` is refused, since there is no shell to run `sudo` from. The copy in `/tmp` stays when the container's user cannot remove it.
 
 | Variable | What it does |
 |---|---|
@@ -113,6 +113,8 @@ The agent is a small static program, about 1.2 MB for x86_64 Linux. Volant uploa
 It lives at `<remote_tmp>/volant-agent-<version>-<uid>/volant-agent`, so with the default `remote_tmp` it sits under `~/.ansible/tmp/` in a home directory. The version in the path is the controller's own, which is how an upgraded controller avoids running an older agent. A task that escalates runs its own agent as the `become_user`, cached in that user's home, so a host holds one cache per account the run acts as.
 
 When Python modules have run, a second directory, `volant-blobs-<version>-<uid>`, sits beside the agent directory in the same `remote_tmp` and holds the module payloads Volant sent.
+
+How the agent gets there depends on the target. Over `ssh`, and in a container that has a shell, the agent is fed to a shell script on the connection, which checks the directory and writes the file. In a container with no shell, the runtime's own copy command puts the agent in, and the agent places itself under the same checks; docker does this with `docker cp`.
 
 To clear both, remove the two directories. Nothing else is left behind:
 

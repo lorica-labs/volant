@@ -307,6 +307,19 @@ impl Inventory {
         names
     }
 
+    /// The group names in the reference's order: `all`, `ungrouped`, then each group as the
+    /// inventory first named it.
+    pub fn group_order(&self) -> Vec<String> {
+        let mut names = vec!["all".to_string(), "ungrouped".to_string()];
+        names.extend(
+            self.groups
+                .iter()
+                .map(|g| g.name.clone())
+                .filter(|name| name != "all" && name != "ungrouped"),
+        );
+        names
+    }
+
     /// Every group with its member hosts, including `all` and `ungrouped`: Ansible's `groups`.
     pub fn groups(&self) -> BTreeMap<String, Vec<String>> {
         let mut out: BTreeMap<String, Vec<String>> = self

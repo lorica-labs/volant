@@ -1,0 +1,9 @@
+- hosts: z1
+  gather_facts: false
+  tasks:
+    - debug:
+        msg:
+          keys: "{{ groups.keys() | list }}"
+          as_list: "{{ groups | list }}"
+          first: "{{ groups | first }}"
+          all: "{{ groups['all'] }}"

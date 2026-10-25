@@ -202,6 +202,11 @@ impl Replay {
         Ok(TaskResult(reply))
     }
 
+    /// The directory the replay runs in.
+    pub(super) fn root(&self) -> &Path {
+        &self.root
+    }
+
     /// `origin`'s `file:line`, relative to the replay's directory as the recording's paths are.
     pub(super) fn path_of(&self, origin: Option<&Origin>) -> String {
         let Some(origin) = origin else {

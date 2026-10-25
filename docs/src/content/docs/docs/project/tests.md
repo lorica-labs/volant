@@ -15,6 +15,7 @@ Each kind of recording has a name, and `just golden <kind>` regenerates it.
 | `inventory` | Hosts, variables and groups of an inventory, and the hosts each pattern selects | Every job, with `reference.rs` |
 | `scenario` | A playbook run: the exit code and the whole standard output | Every job, with `reference.rs` |
 | `command-names` | The output of the scripts in `tests/command-names`, which call `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` and `ansible-galaxy` | The `command-names` job |
+| `shadow` | A run of a chosen scenario through the `volant.compat.record` callback, gzipped in `crates/volant/tests/golden/shadow`; the callback's own sample under every ansible-core it supports is checked too (`just compat-matrix`) | Every job, with `shadow_golden.rs`, which replays each recording and wants no divergence |
 | `module` | What each native module answered on a real machine | The `ssh` job and `just test-reference`, with `reference_modules.rs` |
 
 Nothing in a recording is edited by hand. Change the input, run `just golden <kind>` with ansible-core 2.19.12 installed, and read the diff. Running it on an unchanged tree leaves the files exactly as they were. The `module` kind also needs `sudo`, systemd, apt and cron, because it creates an account and a unit on the machine.

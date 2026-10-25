@@ -7,7 +7,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
-use super::alike::different_args;
+use super::alike::{different_args, moved};
 use super::recording::Recording;
 use super::replay::Replay;
 use super::watch::{Done, Watched};
@@ -60,6 +60,9 @@ pub(super) struct Report {
     /// Arguments not compared, by reason: per result line, or per argument for an unknown one.
     pub(super) unargued: BTreeMap<String, usize>,
     pub(super) truncated: bool,
+    /// The directory the run was recorded in and the one it is replayed in: an argument holding
+    /// a path under the first is compared as if it named the second.
+    pub(super) moved: (String, String),
 }
 
 /// One task as one engine reported it on one host: its `file:line`, which time that path ran
@@ -88,12 +91,17 @@ pub(super) fn compare(recording: &Recording, replay: &Replay) -> Report {
     let (recorded, inventory, recap) = recorded(recording);
     let mut report = Report {
         truncated: recording.truncated,
+        moved: (
+            recording.header.cwd.clone(),
+            replay.root().to_string_lossy().into_owned(),
+        ),
         ..Report::default()
     };
     if let Some(replayed) = &watched.inventory {
         compare_inventory(&inventory, replayed, &mut report);
     }
-    let replayed = replayed(&watched.results);
+    let statements = statements(recording);
+    let replayed = replayed(&watched.results, &statements);
     let mut hosts: Vec<&String> = recorded.keys().chain(replayed.keys()).collect();
     hosts.sort();
     hosts.dedup();
@@ -179,13 +187,37 @@ fn recorded(
     (hosts, inventory, recap)
 }
 
-/// Volant's tasks of each host, from the result lines it reported, in the same shape.
-fn replayed(results: &[Done]) -> BTreeMap<String, Vec<Task>> {
+/// The `file:line` of each statement the recording has that runs no module (an include, a `meta`),
+/// whose result lines are left out on both sides.
+fn statements(recording: &Recording) -> std::collections::HashSet<String> {
+    let cwd = Path::new(&recording.header.cwd);
+    recording
+        .events
+        .iter()
+        .filter(|e| e["event"] == "task")
+        .filter(|e| NOT_TASKS.contains(&e["action"].as_str().unwrap_or_default()))
+        .filter_map(|e| e["path"].as_str())
+        .map(|path| {
+            let path = Path::new(path);
+            path.strip_prefix(cwd)
+                .unwrap_or(path)
+                .to_string_lossy()
+                .into_owned()
+        })
+        .collect()
+}
+
+/// Volant's tasks of each host, from the result lines it reported, in the same shape, the lines of
+/// `statements` left out.
+fn replayed(
+    results: &[Done],
+    statements: &std::collections::HashSet<String>,
+) -> BTreeMap<String, Vec<Task>> {
     let mut hosts: BTreeMap<String, Vec<Task>> = BTreeMap::new();
     let mut last: HashMap<&str, usize> = HashMap::new();
     let mut count: HashMap<(&str, &str), usize> = HashMap::new();
     let mut items: HashMap<&str, usize> = HashMap::new();
-    for done in results {
+    for done in results.iter().filter(|d| !statements.contains(&d.path)) {
         let host = done.host.as_str();
         let list = hosts.entry(done.host.clone()).or_default();
         // A loop's whole-task line, which follows its items' lines under the same step.
@@ -396,7 +428,7 @@ fn compare_line(
         (false, None, _) => "not_recorded",
         (false, Some(_), None) => "controller",
         (false, Some(recorded), Some(sent)) => {
-            let (x, y, reasons) = different_args(recorded, sent);
+            let (x, y, reasons) = different_args(&moved(recorded, &report.moved), sent);
             for reason in reasons {
                 *report
                     .unargued

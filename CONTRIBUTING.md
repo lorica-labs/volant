@@ -66,7 +66,7 @@ The tests only talk to `localhost`, which is why CI can run them unchanged.
 
 ### The golden corpus
 
-`crates/volant/tests/golden` holds what ansible-core 2.19.12 produced for a set of templates, inventory patterns and modules, and each directory of `crates/volant/tests/scenarios` holds a playbook with the output it printed. The tests compare Volant against both. `just golden` regenerates them all, or only the kinds you name (`template`, `inventory`, `scenario`, `module`), and needs ansible-core 2.19.12 installed; `module` also needs `sudo`, systemd, apt and cron. Output snapshots under `crates/volant/tests/snapshots` are reviewed with `cargo insta review`.
+`crates/volant/tests/golden` holds what ansible-core 2.19.12 produced for a set of templates, inventory patterns and modules, and each directory of `crates/volant/tests/scenarios` holds a playbook with the output it printed. The tests compare Volant against both. `just golden` regenerates them all, or only the kinds you name (`template`, `inventory`, `scenario`, `command-names`, `shadow`, `module`), and needs ansible-core 2.19.12 installed; `module` also needs `sudo`, systemd, apt and cron, and `shadow` needs `uv` for the callback's check under each ansible-core. Output snapshots under `crates/volant/tests/snapshots` are reviewed with `cargo insta review`.
 
 Some template rows import a Python package beyond ansible-core, named in the row's `needs` list. Record the goldens in an environment that has all of them:
 

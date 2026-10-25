@@ -200,12 +200,22 @@ pub(in crate::executor) fn record_inventory_results(
                 }
             }
             "group_by" => {
-                if let Some(group) = result.0.get("add_group").and_then(Value::as_str) {
+                if let Some(group) = result
+                    .0
+                    .get("add_group")
+                    .and_then(Value::as_str)
+                    .map(str::to_string)
+                {
                     let parents = names(result.0.get("parent_groups"));
-                    vars.add_to_group(host, group, &parents);
+                    let changed = vars.add_to_group(host, &group, &parents);
+                    // Measured on ansible-core 2.19.12: `changed` when the group or the
+                    // membership is new, as for `add_host`.
+                    if task.changed_when.is_empty() {
+                        result.0.insert("changed".into(), Value::Bool(changed));
+                    }
                     let mut marked = Vec::new();
                     if from_data(&["key"]) {
-                        marked.push(group);
+                        marked.push(group.as_str());
                     }
                     if from_data(&["parents"]) {
                         marked.extend(parents.iter().map(String::as_str));

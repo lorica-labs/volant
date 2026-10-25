@@ -144,7 +144,10 @@ async fn a_whole_link_runs_over_the_exec_command() {
             tasks: vec![Task {
                 only_if: None,
                 module: "command".into(),
-                args: json!({"_raw_params": "id -u"}).as_object().unwrap().clone(),
+                args: json!({"_raw_params": "id -un"})
+                    .as_object()
+                    .unwrap()
+                    .clone(),
                 ignore_errors: false,
                 timeout: None,
                 environment: BTreeMap::default(),
@@ -156,13 +159,15 @@ async fn a_whole_link_runs_over_the_exec_command() {
         })
         .await
         .unwrap();
-        let want = if escalation.is_some() { "0" } else { "" };
         match link.recv().await.unwrap() {
             Some(FromAgent::TaskResult {
                 index: 0, result, ..
             }) => {
-                let uid = result.0["stdout"].as_str().unwrap_or_default().to_string();
-                assert!(want.is_empty() || uid == want, "{container}: uid {uid}");
+                let answer = result.0["stdout"].as_str().unwrap_or_default();
+                assert!(
+                    escalation.is_none() || answer == "root",
+                    "{container}: {answer}"
+                );
             }
             other => panic!("{container}: expected a result, got {other:?}"),
         }

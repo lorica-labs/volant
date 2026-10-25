@@ -160,7 +160,7 @@ Il est écrit une seule fois sur l'entrée standard de `sudo`. Il n'apparaît ja
 
 ### La sonde sudo
 
-Volant demande à `sudo` quelle forme employer au lieu d'en supposer une. Il essaie d'abord `sudo -n`, et ne se rabat sur `sudo -k -S -p ''` que lorsque `sudo` lui-même rejette la demande faute d'authentification. La [fiche de décision 0004](/fr/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explique pourquoi une supposition bloquerait le lien.
+Volant demande à `sudo` quelle forme employer au lieu d'en supposer une. Il essaie d'abord `sudo -n`, et ne se rabat sur `sudo -k -S -p ''` que lorsque `sudo` lui-même rejette la demande faute d'authentification. La [fiche de décision 0004](/fr/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explique pourquoi une supposition bloquerait le lien. Sur un hôte qui a déjà servi, Volant démarre d'abord l'agent en cache sous `sudo -n` dans la même session `ssh` que ses vérifications, et ne lance la sonde que si cela échoue, comme le décrit [L'agent sur vos hôtes](/fr/docs/internals/agent/).
 
 Quand l'élévation échoue, faute de mot de passe, avec un mauvais mot de passe ou à cause d'une règle `sudoers` qui interdit la commande, la tâche échoue et l'hôte reste joignable. Les messages sont ceux d'Ansible : `Missing sudo password` ou `Incorrect sudo password`.
 

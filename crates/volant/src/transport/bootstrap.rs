@@ -27,6 +27,9 @@ pub(super) const EXIT_UNAME_FAILED: i32 = 46;
 /// The agent's directory, or the `remote_tmp` above it, is one that another user could change, so
 /// nothing in it is run. The reason is on the command's stderr, with the path.
 pub(super) const EXIT_AGENT_DIR_UNSAFE: i32 = 47;
+/// The probe and the agent in one command found no agent of this controller's to start: the
+/// probe and the upload run as they do on their own. Nothing is written on stdout first.
+pub(super) const EXIT_NOT_FUSED: i32 = 48;
 /// `ssh` reports its own failures with this, whatever the remote command would have returned.
 pub(super) const EXIT_SSH_FAILURE: i32 = 255;
 

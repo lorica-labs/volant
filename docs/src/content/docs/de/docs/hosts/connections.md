@@ -160,7 +160,7 @@ Es wird einmal in die Standardeingabe von `sudo` geschrieben. Es erscheint nie i
 
 ### Die sudo-Probe
 
-Volant fragt `sudo`, welche Form zu verwenden ist, statt eine anzunehmen. Es probiert zuerst `sudo -n` und weicht auf `sudo -k -S -p ''` nur aus, wenn `sudo` selbst die Anfrage wegen fehlender Authentifizierung ablehnt. [Entscheidungsdokument 0004](/de/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) erklärt, warum ein Raten die Verbindung blockieren würde.
+Volant fragt `sudo`, welche Form zu verwenden ist, statt eine anzunehmen. Es probiert zuerst `sudo -n` und weicht auf `sudo -k -S -p ''` nur aus, wenn `sudo` selbst die Anfrage wegen fehlender Authentifizierung ablehnt. [Entscheidungsdokument 0004](/de/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) erklärt, warum ein Raten die Verbindung blockieren würde. Auf einem Host, der schon einmal lief, startet Volant zuerst den gecachten Agent unter `sudo -n` in derselben `ssh`-Sitzung wie seine Prüfungen und führt die Probe nur aus, wenn das nicht klappt, wie [Der Agent auf Ihren Hosts](/de/docs/internals/agent/) beschreibt.
 
 Schlägt die Rechteausweitung fehl, sei es wegen eines fehlenden oder falschen Passworts oder einer `sudoers`-Regel, die den Befehl verbietet, schlägt der Task fehl, und der Host bleibt erreichbar. Die Meldungen sind die von Ansible: `Missing sudo password` oder `Incorrect sudo password`.
 

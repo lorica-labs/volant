@@ -23,6 +23,8 @@ sequenceDiagram
   Note over C,H: the protocol runs over its stdin and stdout
 ```
 
+On a host that ran before, the check and the start go in one `ssh` session: the command checks the directory, compares the cached agent with the build this controller holds for the host's machine type, and starts it, under `sudo -n` for a connection that escalates with `sudo`. When any of that fails, the session ends before the agent answers, and the steps above run in order.
+
 ## The agent cache
 
 The agent is a single static executable. Its release archive for x86_64 Linux is about 1.2 MB. Volant uploads it once per host and reuses it on every later run.
@@ -79,7 +81,7 @@ Volant leaves sharing to you when you already configure it. It adds nothing when
 - the `ssh` arguments ask for debug output with `-v`;
 - `[volant] ssh_control_master = false` or `VOLANT_SSH_CONTROL_MASTER=0`, see [Configuration](/docs/reference/configuration/#volant-ssh-control-master).
 
-An escalated connection runs one extra `ssh` session for the `sudo` probe, two when a password is needed. With sharing on, those sessions use the same connection.
+An escalated connection that cannot start in one session (see above) runs one extra `ssh` session for the `sudo` probe, two when a password is needed. With sharing on, those sessions use the same connection.
 
 OpenSSH does the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and your ssh-agent apply exactly as they do for `ansible-playbook`.
 

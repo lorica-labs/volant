@@ -24,6 +24,8 @@ sequenceDiagram
   Note over C,H: le protocole passe par son stdin et son stdout
 ```
 
+Sur un hôte qui a déjà servi, la vérification et le démarrage passent dans une seule session `ssh` : la commande vérifie le répertoire, compare l'agent en cache au build que ce contrôleur a pour le type de machine de l'hôte, et le démarre, sous `sudo -n` pour une connexion qui s'élève avec `sudo`. Si l'une de ces étapes échoue, la session se termine avant que l'agent réponde, et les étapes ci-dessus s'exécutent dans l'ordre.
+
 ## Le cache de l'agent
 
 L'agent est un seul exécutable statique. Son archive de publication pour Linux x86_64 pèse environ 1.2 MB. Volant l'envoie une fois par hôte et le réutilise à chaque exécution suivante.
@@ -80,7 +82,7 @@ Volant vous laisse gérer le partage quand vous le configurez déjà. Il n'ajout
 - les arguments de `ssh` demandent une sortie de débogage avec `-v` ;
 - `[volant] ssh_control_master = false` ou `VOLANT_SSH_CONTROL_MASTER=0`, voir [Configuration](/fr/docs/reference/configuration/#volant-ssh-control-master).
 
-Une connexion avec élévation lance une session `ssh` supplémentaire pour la sonde `sudo`, deux quand un mot de passe est nécessaire. Quand le partage est actif, ces sessions utilisent la même connexion.
+Une connexion avec élévation qui ne peut pas démarrer en une seule session (voir plus haut) lance une session `ssh` supplémentaire pour la sonde `sudo`, deux quand un mot de passe est nécessaire. Quand le partage est actif, ces sessions utilisent la même connexion.
 
 C'est OpenSSH qui fait le travail : `~/.ssh/config`, `Match`, `Include`, `ProxyJump` et votre ssh-agent s'appliquent exactement comme avec `ansible-playbook`.
 

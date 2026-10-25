@@ -19,9 +19,10 @@
 //! The checks use `ls -ldn`, which POSIX specifies and GNU, BusyBox and BSD `ls` all print the
 //! same way, so no `stat` option that a host may lack is needed.
 
-use super::bootstrap::EXIT_AGENT_DIR_UNSAFE;
+use super::bootstrap::{EXIT_AGENT_DIR_UNSAFE, EXIT_NOT_FUSED};
 use super::defaults::SshTarget;
 use super::shell::shell_word;
+use std::fmt::Write as _;
 
 /// Shell functions, defined once per command line.
 ///
@@ -91,6 +92,21 @@ impl SshTarget {
             "{}/volant-agent-{}-<uid>",
             self.remote_tmp,
             env!("CARGO_PKG_VERSION")
+        )
+    }
+
+    /// The probe and the start in one command: the agent is started when the directory passes
+    /// the checks and the cached program answers `--version --build-id` with the line `expected`
+    /// gives for this machine's `uname -m` pattern; otherwise it exits [`EXIT_NOT_FUSED`] having
+    /// written nothing on stdout.
+    pub(super) fn fused_command(&self, expected: &[(&str, String)]) -> String {
+        let mut cases = String::new();
+        for (arch, line) in expected {
+            let _ = write!(cases, "{arch}) w={};; ", shell_word(line));
+        }
+        format!(
+            "{}case \"$(uname -m)\" in {cases}*) exit {EXIT_NOT_FUSED};; esac;              [ -x \"$a\" ] && verify && [ \"$(\"$a\" --version --build-id 2>/dev/null)\" = \"$w\" ]              && exec \"$a\"; exit {EXIT_NOT_FUSED}",
+            self.agent_checks()
         )
     }
 

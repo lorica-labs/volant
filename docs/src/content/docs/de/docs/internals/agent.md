@@ -24,6 +24,8 @@ sequenceDiagram
   Note over C,H: das Protokoll läuft über seine stdin und stdout
 ```
 
+Auf einem Host, der schon einmal lief, gehen Prüfung und Start in eine `ssh`-Sitzung: Der Befehl prüft das Verzeichnis, vergleicht den gecachten Agent mit dem Build, den dieser Controller für den Maschinentyp des Hosts hat, und startet ihn, unter `sudo -n` für eine Verbindung, die mit `sudo` Rechte erweitert. Schlägt davon etwas fehl, endet die Sitzung, bevor der Agent antwortet, und die Schritte oben laufen der Reihe nach.
+
 ## Der Agent-Cache
 
 Der Agent ist eine einzelne statische ausführbare Datei. Sein Release-Archiv für x86_64-Linux ist etwa 1,2 MB groß. Volant lädt ihn einmal pro Host hoch und verwendet ihn bei jedem späteren Lauf wieder.
@@ -80,7 +82,7 @@ Volant überlässt das Teilen Ihnen, wenn Sie es schon konfigurieren. Es fügt n
 - die `ssh`-Argumente mit `-v` Debug-Ausgabe verlangen;
 - `[volant] ssh_control_master = false` oder `VOLANT_SSH_CONTROL_MASTER=0` gilt, siehe [Konfiguration](/de/docs/reference/configuration/#volant-ssh-control-master).
 
-Eine Verbindung mit erweiterten Rechten führt eine zusätzliche `ssh`-Sitzung für die `sudo`-Probe aus, zwei, wenn ein Passwort nötig ist. Ist das Teilen an, verwenden diese Sitzungen dieselbe Verbindung.
+Eine Verbindung mit erweiterten Rechten, die nicht in einer Sitzung starten kann (siehe oben), führt eine zusätzliche `ssh`-Sitzung für die `sudo`-Probe aus, zwei, wenn ein Passwort nötig ist. Ist das Teilen an, verwenden diese Sitzungen dieselbe Verbindung.
 
 OpenSSH erledigt die Arbeit, daher gelten `~/.ssh/config`, `Match`, `Include`, `ProxyJump` und Ihr ssh-agent genau so, wie sie für `ansible-playbook` gelten.
 

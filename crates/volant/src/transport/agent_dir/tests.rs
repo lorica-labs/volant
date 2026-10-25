@@ -625,3 +625,38 @@ fn a_real_acl_entry_for_another_user_on_remote_tmp_is_refused() {
         captured(&upload)
     );
 }
+
+/// The probe and the start in one command start the cached agent only when it is the expected
+/// build, in a directory the checks pass, and otherwise exit 48 with nothing on stdout.
+#[test]
+fn the_fused_command_starts_only_the_expected_agent() {
+    let line = |hash: &str| format!("volant-agent {VERSION} {hash}");
+    let remote = Remote::new();
+    let fused = |hash: &str| remote.target.fused_command(&[("*", line(hash))]);
+    let missing = Remote::sh(&fused("abc"), b"", None);
+    assert_eq!((missing.status.code(), missing.stdout.len()), (Some(48), 0));
+
+    let agent = format!(
+        "#!/bin/sh\n[ \"$1\" = --version ] && {{ echo '{}'; exit 0; }}\necho started\n",
+        line("abc")
+    );
+    let upload = remote.upload(agent.as_bytes());
+    assert_eq!(upload.status.code(), Some(0), "{:?}", captured(&upload));
+    let started = Remote::sh(&fused("abc"), b"", None);
+    assert_eq!(
+        (
+            started.status.code(),
+            String::from_utf8_lossy(&started.stdout).trim()
+        ),
+        (Some(0), "started"),
+        "{:?}",
+        captured(&started)
+    );
+    let other = Remote::sh(&fused("def"), b"", None);
+    assert_eq!((other.status.code(), other.stdout.len()), (Some(48), 0));
+
+    // A directory open to others is never run from, whatever its program says.
+    std::fs::set_permissions(remote.dir(), std::fs::Permissions::from_mode(0o777)).unwrap();
+    let open = Remote::sh(&fused("abc"), b"", None);
+    assert_eq!((open.status.code(), open.stdout.len()), (Some(48), 0));
+}

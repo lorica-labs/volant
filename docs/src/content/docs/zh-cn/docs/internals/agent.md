@@ -24,6 +24,8 @@ sequenceDiagram
   Note over C,H: 协议通过它的 stdin 和 stdout 运行
 ```
 
+对已经运行过的主机，检查和启动在同一个 `ssh` 会话里完成：命令检查目录，把缓存的 agent 与本控制端为该主机机器类型准备的构建比较，然后启动它；用 `sudo` 提权的连接用 `sudo -n`。其中任何一步失败，会话会在 agent 应答之前结束，然后按上面的步骤依次进行。
+
 ## agent 缓存
 
 agent 是单个静态可执行文件。它面向 x86_64 Linux 的发布压缩包约为 1.2 MB。Volant 为每台主机上传一次，之后的每次运行都复用它。
@@ -80,7 +82,7 @@ socket 名称是 inventory 名称、主机连接时使用的每个 `ssh` 选项�
 - `ssh` 参数用 `-v` 要求了调试输出；
 - `[volant] ssh_control_master = false` 或 `VOLANT_SSH_CONTROL_MASTER=0`，见[配置](/zh-cn/docs/reference/configuration/#volant-ssh-control-master)。
 
-提权连接为 `sudo` 探测多运行一个 `ssh` 会话，需要密码时是两个。开启共享时，这些会话使用同一个连接。
+不能在一个会话里启动（见上文）的提权连接，为 `sudo` 探测多运行一个 `ssh` 会话，需要密码时是两个。开启共享时，这些会话使用同一个连接。
 
 工作由 OpenSSH 完成，所以 `~/.ssh/config`、`Match`、`Include`、`ProxyJump` 和你的 ssh-agent 的生效方式，与它们在 `ansible-playbook` 下完全相同。
 

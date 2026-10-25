@@ -25,12 +25,22 @@ use super::reach::Reach;
 /// The directory the copy lands in before the agent places itself.
 const LANDING: &str = "/tmp";
 
+/// What a runtime's copy command reads.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum Feed {
+    /// A tar stream on stdin, unpacked into the directory written `{dir}`: `docker cp - app1:{dir}`.
+    TarStdin,
+    /// A file on the controller written `{src}`, copied to the path written `{dest}`:
+    /// `buildah copy --chmod 0755 c1 {src} {dest}`.
+    LocalFile,
+}
+
 /// How an exec target's runtime copies a file in and says what machine the target is.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub struct CopyInto {
-    /// The command that reads a tar stream on stdin and unpacks it into a directory of the target,
-    /// with `{dir}` in the word where the directory goes: `docker cp - app1:{dir}`.
-    pub tar_into: Vec<String>,
+    /// The copy command, with the placeholders its `feed` fills.
+    pub command: Vec<String>,
+    pub feed: Feed,
     /// The commands whose last answer names the target's architecture, each with `{}` in a word
     /// for the previous one's answer: the container's image, then that image's architecture.
     pub arch: Vec<Vec<String>>,
@@ -40,11 +50,13 @@ pub struct CopyInto {
 static PLACED: Mutex<Option<HashMap<String, String>>> = Mutex::new(None);
 
 impl ExecTarget {
-    /// Whether the first probe failed because the target has no `/bin/sh`. Docker 29 prints the
-    /// runtime's refusal on stdout.
+    /// Whether the first probe failed because the target has no `/bin/sh`: the runtime's refusal
+    /// names it, on stderr, or on stdout for Docker 29. Docker and podman exit 126 or 127, buildah
+    /// exits 1 and says `stat /bin/sh: no such file or directory`.
     pub(super) fn has_no_shell(probe: &Captured) -> bool {
-        matches!(probe.code, Some(126 | 127))
-            && (probe.stderr.contains("/bin/sh") || probe.stdout.contains("/bin/sh"))
+        let said =
+            |text: &str| text.contains("/bin/sh") && text.to_lowercase().contains("no such file");
+        probe.code != Some(0) && (said(&probe.stderr) || said(&probe.stdout))
     }
 
     /// The link to a target with no shell, through the agent placing itself.
@@ -94,7 +106,7 @@ impl ExecTarget {
             .args(&argv[1..])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(self.link_stderr())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| ConnectError::Unreachable(format!("starting {}: {e}", argv[0])))?;
@@ -137,13 +149,28 @@ impl ExecTarget {
         hash: &str,
     ) -> Result<String, ConnectError> {
         let landed = format!("volant-agent-{}-{}", env!("CARGO_PKG_VERSION"), &hash[..16]);
-        let tar = super::tar::single_file(&landed, 0o755, bytes);
-        let argv: Vec<String> = copy
-            .tar_into
-            .iter()
-            .map(|word| word.replace("{dir}", LANDING))
-            .collect();
-        let copied = self.capture(&argv, Some(&tar)).await?;
+        let fill = |words: &[String], from: &str, to: &str| -> Vec<String> {
+            words.iter().map(|word| word.replace(from, to)).collect()
+        };
+        let copied = match copy.feed {
+            Feed::TarStdin => {
+                let tar = super::tar::single_file(&landed, 0o755, bytes);
+                self.capture(&fill(&copy.command, "{dir}", LANDING), Some(&tar))
+                    .await?
+            }
+            Feed::LocalFile => {
+                let local = staged(&landed, bytes).map_err(|e| {
+                    ConnectError::Unreachable(format!("staging the agent to copy: {e}"))
+                })?;
+                let source = local.path().join(&landed);
+                let argv = fill(
+                    &fill(&copy.command, "{src}", &source.display().to_string()),
+                    "{dest}",
+                    &format!("{LANDING}/{landed}"),
+                );
+                self.capture(&argv, None).await?
+            }
+        };
         if copied.code != Some(0) {
             return Err(ConnectError::Unreachable(format!(
                 "copying the agent into {}:{LANDING} failed: {}",
@@ -247,4 +274,18 @@ impl ExecTarget {
         self.trace_result(&captured);
         Ok(captured)
     }
+}
+
+/// A directory of its own holding the agent under `name`, executable, for a copy command that
+/// reads a file on the controller. Removed when it drops.
+fn staged(name: &str, bytes: &[u8]) -> std::io::Result<tempfile::TempDir> {
+    let dir = tempfile::tempdir()?;
+    let path = dir.path().join(name);
+    std::fs::write(&path, bytes)?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755))?;
+    }
+    Ok(dir)
 }

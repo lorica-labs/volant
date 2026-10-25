@@ -106,7 +106,10 @@ pub(crate) fn expand_include(
         Some(Apply::Keywords(keywords)) => inherited = merge(&inherited, keywords),
         // Raised here and not at load: measured, the statement's banner shows first.
         Some(Apply::Refused(sentence)) => {
-            return Err(anyhow::Error::new(TaskFileRefused(sentence.to_string())));
+            return Err(anyhow::Error::new(TaskFileRefused(
+                sentence.to_string(),
+                false,
+            )));
         }
         None => {}
     }

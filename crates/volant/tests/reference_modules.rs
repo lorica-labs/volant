@@ -985,6 +985,25 @@ fn every_bridge_case_matches_the_reference() {
     );
 }
 
+/// CI installs the packages the rows need from one list, so a row may only need what it holds.
+#[test]
+fn every_package_a_row_needs_is_in_the_requirements() {
+    let entries: Vec<Value> =
+        serde_json::from_str(include_str!("golden/expected.json")).expect("expected.json parses");
+    let listed = include_str!("golden/requirements.txt");
+    for entry in &entries {
+        for package in entry["case"]["needs"].as_array().into_iter().flatten() {
+            let package = package.as_str().unwrap_or_default();
+            assert!(
+                listed
+                    .lines()
+                    .any(|line| line.split("==").next() == Some(package)),
+                "{package} is not in tests/golden/requirements.txt"
+            );
+        }
+    }
+}
+
 /// The Python packages a row's `needs` names that `python` cannot import.
 fn missing_packages<'a>(python: &std::path::Path, case: &'a Value) -> Vec<&'a str> {
     case["needs"]

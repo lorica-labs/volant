@@ -41,6 +41,7 @@ pub(super) use plugin::protocol_task;
 pub(super) use plugin::{PluginStart, run_plugin_attempts, run_plugin_group, wait_or_stop};
 pub(super) use record::{
     fact_targets, record_facts, record_inventory_results, record_local_facts, record_registered,
+    record_unrun,
 };
 pub(super) use register::{failed_task_value, notified_handlers, registered_value, take_warnings};
 pub(super) use replayed::Replayed;

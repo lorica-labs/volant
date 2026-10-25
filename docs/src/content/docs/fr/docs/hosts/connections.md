@@ -17,6 +17,7 @@ Volant atteint un hôte géré, y dépose un petit agent statique (un programme 
 | `ssh` | Lance le client OpenSSH de votre `PATH`. Volant construit lui-même la ligne de commande, sans enveloppe et sans bibliothèque SSH en Rust : votre `~/.ssh/config` s'applique donc. |
 | `local` | Lance l'agent comme processus fils sur le contrôleur, sans réseau. |
 | `docker` | Lance l'agent dans un conteneur en marche via `docker exec -i`, comme `community.docker.docker`. Voir [Conteneurs Docker](#conteneurs-docker). |
+| `podman` | Lance l'agent dans un conteneur Podman en marche via `podman exec -i`, rootless ou non, comme `containers.podman.podman`. Voir [Conteneurs Podman](#conteneurs-podman). |
 
 Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-playbook` le résout, une fois par nom et par exécution. `ansible.builtin.ssh` et `ansible.builtin.local` se résolvent vers les deux plugins ci-dessus et s'exécutent. Un nom court qu'une collection a repris à ansible-core est routé vers cette collection quand elle est installée :
 
@@ -33,7 +34,7 @@ Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-pla
 
 Avec `-vvv`, un nom routé affiche `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` sous la première tâche qui l'utilise sur un hôte, une ligne par étape.
 
-Un nom qui se résout vers un plugin que Volant ne pilote pas encore, comme `winrm`, `psrp` ou `containers.podman.podman`, rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
+Un nom qui se résout vers un plugin que Volant ne pilote pas encore, comme `winrm`, `psrp` ou `kubernetes.core.kubectl`, rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
 
 Un nom qui ne se résout vers rien fait échouer la tâche avec `the connection plugin '<name>' was not found`, comme dans Ansible. Cela comprend un nom court routé vers une collection qui n'est pas installée, comme `docker` sans community.docker, après l'avertissement qu'ansible-core affiche pour lui, et `paramiko`, qu'ansible-core 2.19.12 ne porte pas sous ce nom. Cela vaut que la valeur soit la connexion de l'hôte lui-même, celle d'une cible de `delegate_to`, ou celle de l'hôte qui exécute une tâche `run_once`.
 
@@ -58,6 +59,19 @@ L'agent monte par `docker exec -i`, donc l'image doit avoir `/bin/sh` et les out
 `become` avec `sudo` passe par le `sudo` du conteneur. `su` est refusé, parce que `docker exec` ne lui donne pas de terminal. Un conteneur qui n'existe pas ou qui est arrêté, ou un utilisateur que l'image n'a pas, rend l'hôte injoignable avec le message de docker lui-même. ansible-core signale ces trois cas comme `Failed to create temporary directory` : ce message diffère donc volontairement.
 
 Avec `-vvvv`, les lignes affichent `ESTABLISH DOCKER CONNECTION FOR USER: <user>`, puis une ligne `EXEC [...]` par commande, qui sont les commandes propres à Volant. Quand le play ne nomme pas d'utilisateur, il vient de `docker inspect` : `root` quand l'image n'en nomme aucun, `?` quand docker ne peut pas le dire.
+
+## Conteneurs Podman
+
+`ansible_connection: podman`, ou `containers.podman.podman`, exécute un play dans un conteneur Podman, rootless ou non, sans démon ni ssh. Les deux noms demandent containers.podman installé sur le contrôleur. L'agent monte comme pour docker : par `podman exec -i` quand l'image a un shell, par `podman cp` quand elle n'en a pas.
+
+Volant lit les options comme les lit le code source du plugin, qui diffère de sa documentation. Le conteneur est `ansible_host`, sinon le nom d'inventaire ; le `ansible_podman_host` documenté n'est pas lu. L'utilisateur est `ansible_user`, le mot-clé `remote_user` ou `-u`, passé en `podman exec --user`.
+
+| Variable | Rôle |
+|---|---|
+| `ansible_podman_executable` | Le programme `podman`, un nom cherché dans votre `PATH` ou un chemin. La valeur par défaut vient de `ANSIBLE_PODMAN_EXECUTABLE`. |
+| `ansible_podman_extra_args` | Des arguments placés après `podman` et avant la sous-commande, découpés comme le ferait un shell. La valeur par défaut vient de `ANSIBLE_PODMAN_EXTRA_ARGS` ou de `[defaults] podman_extra_args`. |
+
+Le plugin lance `podman exec` sans `-i`, il ne peut donc pas passer son stdin à une commande. L'agent en a besoin, alors Volant lance `podman exec -i` ; c'est le seul mot que ses lignes de commande ajoutent. Volant ne lance jamais `podman mount`. `become` avec `sudo` passe par le `sudo` du conteneur, et `su` est refusé. Avec `-vvvv`, chaque commande s'affiche en ligne `RUN [...]`, comme le plugin l'écrit, sans ligne `ESTABLISH`.
 
 ## Variables d'hôte
 

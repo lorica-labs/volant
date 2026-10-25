@@ -35,7 +35,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
-| collection connection | 1 | 0 | 0 | 29 |
+| collection connection | 2 | 0 | 0 | 28 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -726,7 +726,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `community.proxmox.proxmox_pct_remote` | <span class="kw kw-no">later</span> | another connection |
 | `community.vmware.vmware_tools` | <span class="kw kw-no">later</span> | another connection |
 | `containers.podman.buildah` | <span class="kw kw-no">later</span> | another connection |
-| `containers.podman.podman` | <span class="kw kw-no">later</span> | another connection |
+| `containers.podman.podman` | <span class="kw kw-runs">runs</span> |  |
 | `google.cloud.iap` | <span class="kw kw-no">later</span> | another connection |
 | `kubernetes.core.kubectl` | <span class="kw kw-no">later</span> | another connection |
 

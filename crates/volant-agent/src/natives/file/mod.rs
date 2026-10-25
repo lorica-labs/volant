@@ -338,9 +338,9 @@ fn ensure_file(path: &str, follow: bool, attrs: &Attrs) -> Result<Map<String, Va
     Ok(done(&path, changed))
 }
 
-/// `ensure_symlink` for a link already there and pointing at `src`, the attributes then set on
-/// its target when links are followed. Making the link, or changing what it points at, is the
-/// module's.
+/// `ensure_symlink` for a link already there and pointing at `src`, or for nothing there yet:
+/// the link made, and the attributes then set on its target when links are followed. Replacing
+/// something else, or changing what a link points at, is the module's.
 fn ensure_link(
     path: &str,
     src: Option<&str>,
@@ -349,11 +349,16 @@ fn ensure_link(
     params: &Map<String, Value>,
 ) -> Result<Map<String, Value>, Stop> {
     let src = src.ok_or_else(|| Stop::Back("state link without src".into()))?;
-    if get_state(path)? != "link" {
-        return Err("state link where there is no link".to_string().into());
+    let prev = get_state(path)?;
+    if !matches!(prev, "link" | "absent") {
+        return Err("state link where something else is".to_string().into());
     }
-    let old = fs::read_link(path).map_err(|err| os_error(&err, path))?;
-    if old.as_os_str() != src {
+    if prev == "link"
+        && fs::read_link(path)
+            .map_err(|err| os_error(&err, path))?
+            .as_os_str()
+            != src
+    {
         return Err("the link points elsewhere".to_string().into());
     }
     // `os.path.join(dirname(path), src)` must exist without `force`, and a followed link's
@@ -369,11 +374,17 @@ fn ensure_link(
     if !follow && has_attrs {
         return Err("attributes on the link itself".to_string().into());
     }
-    if follow && fs::metadata(path).is_err() {
+    if follow && fs::metadata(&absrc).is_err() {
         return Err("the link's target does not exist".to_string().into());
     }
+    // A link that cannot be made changed nothing, and the module words the error.
+    let made = prev == "absent";
+    if made {
+        std::os::unix::fs::symlink(src, path)
+            .map_err(|_| Stop::Back("the link could not be made".into()))?;
+    }
     let target = attrs_path(path, follow)?;
-    let changed = attrs.set(&target, false, |error| error)?;
+    let changed = attrs.set(&target, made, |error| error)? || made;
     let mut result = Map::new();
     result.insert("dest".into(), path.into());
     result.insert("src".into(), src.into());

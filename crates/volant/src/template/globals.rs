@@ -209,8 +209,13 @@ pub(super) fn build(mut args: Vec<Value>, max_pairs: usize) -> Result<Value, Err
             args.len()
         )));
     }
+    if keywords.is_none()
+        && let Some(copy) = args.first().and_then(super::context::copied)
+    {
+        return copy;
+    }
     // A mapping and no keywords: the copy is the mapping. Values are never changed in place in a
-    // template, and the mapping may be lazy (`vars`, `hostvars`), where a copy would read, and
+    // template, and the mapping may be lazy (`hostvars`), where a copy would read, and
     // fail on, every variable the caller never asked for.
     if keywords.is_none()
         && let Some(source) = args.first()

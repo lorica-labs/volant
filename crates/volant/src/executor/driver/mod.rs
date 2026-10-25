@@ -22,7 +22,7 @@ use crate::vars::VarStore;
 
 use super::coordinator::{Event, MetaEffect, Progress, escalated_links, render_name};
 use super::debugger::{self, Hold};
-use super::include::{report_include, resolve_include};
+use super::include::{NO_FAILED_VARS, report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, failed_result, pause_of, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
@@ -276,7 +276,7 @@ pub(super) async fn drive_host(
             // `ansible_failed_task`.
             if let Some(next) = rescue_target(&c, index) {
                 let task = &c.steps[index].task;
-                if !std::mem::take(&mut peer_failure) {
+                if !std::mem::take(&mut peer_failure) && !result.0.contains_key(NO_FAILED_VARS) {
                     let mut vars = store.lock().expect("vars lock");
                     vars.set_untrusted_fact(&name, "ansible_failed_task", failed_task_value(task));
                     vars.set_untrusted_fact(
@@ -2448,7 +2448,7 @@ pub(super) async fn drive_host(
                 );
             }
             super::prepare::undefined::mark_keyword(task, &err, &mut result);
-            let results = vec![(None, result)];
+            let results = vec![(None, super::run::record_unrun(&store, task, &name, result))];
             // Measured on ansible-core 2.19.12: an undefined variable in a task's arguments
             // fails that task, and a rescue around it takes the failure with the error's own
             // sentence in `ansible_failed_result.msg`.

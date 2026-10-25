@@ -130,18 +130,61 @@ pub(super) async fn send_batch<C: AgentChannel>(
                 | FromAgent::PutFileDone { .. },
             )) => {}
             Ok(None) => {
+                if died(link, &mut received).await {
+                    break Ok(BatchOutcome::Completed);
+                }
                 break Err(format!(
                     "agent stopped before the batch finished{}",
                     link.stderr_note()
                 ));
             }
-            Err(err) => break Err(format!("reading from the agent: {err}")),
+            Err(err) => {
+                if died(link, &mut received).await {
+                    break Ok(BatchOutcome::Completed);
+                }
+                break Err(format!("reading from the agent: {err}"));
+            }
         }
     };
     if let Some(ledger) = link.timings() {
         ledger.wire_micros += crate::profile::micros(started).saturating_sub(agent);
     }
     (received, ended)
+}
+
+/// Whether the agent stopped mid-batch the way a module that dies does in the reference: the
+/// process behind the link ended on its own, and not by `ssh` losing the connection. The first
+/// task with no answer then fails with the reference's result for a module that printed no
+/// result, measured on ansible-core 2.19.12 with `kill $PPID` from `shell`: `rc` 143,
+/// `module_stderr` `Terminated` (the shell's report), `module_stdout` what came after the last
+/// frame. The tasks after it never ran and are not reported.
+async fn died<C: AgentChannel>(link: &mut C, received: &mut [Option<TaskResult>]) -> bool {
+    let Some((rc, stdout)) = link.ended().await else {
+        return false;
+    };
+    if let Some(slot) = received.iter_mut().find(|r| r.is_none()) {
+        let stderr = match rc {
+            137 => "Killed\n",
+            143 => "Terminated\n",
+            _ => "",
+        };
+        let mut result = TaskResult(
+            serde_json::json!({
+                "changed": false,
+                "failed": true,
+                "module_stderr": stderr,
+                "module_stdout": stdout,
+                "msg": "Module result deserialization failed: No start of json char found",
+                "rc": rc,
+            })
+            .as_object()
+            .cloned()
+            .unwrap_or_default(),
+        );
+        summarise_exception(&mut result);
+        *slot = Some(result);
+    }
+    true
 }
 
 /// Where one host's batch ids start for one play: a range 2^32 wide, handed out once per

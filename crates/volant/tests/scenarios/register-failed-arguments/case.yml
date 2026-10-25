@@ -1,0 +1,3 @@
+# A task whose arguments or `when` fail to render still registers its failed result, which a
+# later task reads under `ignore_errors`.
+args: [-i, inv.ini, play.yml]

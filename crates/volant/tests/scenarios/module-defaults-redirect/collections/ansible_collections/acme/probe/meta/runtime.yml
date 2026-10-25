@@ -1,0 +1,8 @@
+requires_ansible: ">=2.15"
+action_groups:
+  grp:
+    - probe
+plugin_routing:
+  modules:
+    oldprobe:
+      redirect: acme.probe.probe

@@ -17,6 +17,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 | `ssh` | 运行 `PATH` 中的 OpenSSH 客户端。Volant 自己构建命令行，不使用包装脚本，也不使用 Rust 的 SSH 库，所以你的 `~/.ssh/config` 会生效。 |
 | `local` | 在控制节点上把 agent 作为子进程运行，不经过网络。 |
 | `docker` | 通过 `docker exec -i` 在运行中的容器里运行 agent，与 `community.docker.docker` 相同。见 [Docker 容器](#docker-容器)。 |
+| `podman` | 通过 `podman exec -i` 在运行中的 Podman 容器里运行 agent，无论是否 rootless，与 `containers.podman.podman` 相同。见 [Podman 容器](#podman-容器)。 |
 
 其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
@@ -33,7 +34,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 
 使用 `-vvv` 时，被转向的名字会在某台主机上第一个使用它的 task 下打印 `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot`，每一跳一行。
 
-解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `containers.podman.podman`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
+解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `kubernetes.core.kubectl`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
 
 什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
@@ -58,6 +59,19 @@ agent 通过 `docker exec -i` 送进去，所以镜像需要 `/bin/sh` 和常用
 `become` 配合 `sudo` 时使用容器自己的 `sudo`。`su` 会被拒绝，因为 `docker exec` 不给它终端。容器不存在或已停止，或镜像里没有该用户时，主机不可达，消息是 docker 自己的。ansible-core 把这三种情况都报告为 `Failed to create temporary directory`，因此这条消息是有意不同的。
 
 使用 `-vvvv` 时，会显示 `ESTABLISH DOCKER CONNECTION FOR USER: <user>`，然后每条命令一行 `EXEC [...]`，这些是 Volant 自己的命令。play 没有指定用户时，用户来自 `docker inspect`：镜像没有指定时为 `root`，docker 无法给出时为 `?`。
+
+## Podman 容器
+
+`ansible_connection: podman` 或 `containers.podman.podman` 在 Podman 容器里执行 play，无论是否 rootless，不需要守护进程，也不需要 ssh。两个名字都需要控制节点上装有 containers.podman。agent 的送入方式与 docker 相同：镜像有 shell 时通过 `podman exec -i`，没有时通过 `podman cp`。
+
+Volant 按插件源码的方式读取选项，这与它的文档不同。容器是 `ansible_host`，否则是清单名；文档中的 `ansible_podman_host` 不会被读取。用户是 `ansible_user`、`remote_user` 关键字或 `-u`，以 `podman exec --user` 传入。
+
+| 变量 | 作用 |
+|---|---|
+| `ansible_podman_executable` | `podman` 程序，可以是在你的 `PATH` 中查找的名字，也可以是路径。默认值来自 `ANSIBLE_PODMAN_EXECUTABLE`。 |
+| `ansible_podman_extra_args` | 放在 `podman` 之后、子命令之前的参数，按 shell 的方式切分。默认值来自 `ANSIBLE_PODMAN_EXTRA_ARGS` 或 `[defaults] podman_extra_args`。 |
+
+插件运行 `podman exec` 时不带 `-i`，因此无法把 stdin 交给命令。agent 需要 stdin，所以 Volant 运行 `podman exec -i`；这是它的命令行唯一多出的词。Volant 从不运行 `podman mount`。`become` 配合 `sudo` 时使用容器自己的 `sudo`，`su` 会被拒绝。使用 `-vvvv` 时，每条命令显示为一行 `RUN [...]`，与插件的写法相同，没有 `ESTABLISH` 行。
 
 ## 主机变量
 

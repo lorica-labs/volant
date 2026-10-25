@@ -250,17 +250,20 @@ pub(crate) fn parse_tasks_file(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> 
     parse_tasks_text(path).map_err(|err| {
         if err.downcast_ref::<NotATaskList>().is_some() {
             err
+        } else if let Some(located) = err.downcast_ref::<super::Located>() {
+            anyhow::Error::new(TaskFileRefused(located.text(), true))
         } else {
-            anyhow::Error::new(TaskFileRefused(format!("{err:#}")))
+            anyhow::Error::new(TaskFileRefused(format!("{err:#}"), false))
         }
     })
 }
 
 /// A task file the reference refuses while it loads it: a YAML error, a task it cannot parse.
 /// Raised from a dynamic include it ends the run at exit 4 with the statement's banner and no
-/// recap; measured on ansible-core 2.19.12, unlike [`NotATaskList`], which fails the host.
+/// recap; measured on ansible-core 2.19.12, unlike [`NotATaskList`], which fails the host. The
+/// flag says the text is an `[ERROR]` block's, printed without `ERROR!`.
 #[derive(Debug)]
-pub(crate) struct TaskFileRefused(pub String);
+pub(crate) struct TaskFileRefused(pub String, pub bool);
 
 impl std::fmt::Display for TaskFileRefused {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {

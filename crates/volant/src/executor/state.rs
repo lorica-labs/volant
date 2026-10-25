@@ -88,6 +88,14 @@ impl Abort {
         self.raise(reason);
     }
 
+    /// [`Abort::raise_plain`] ending the run with `code`.
+    pub fn raise_plain_with(&self, code: i32, reason: String) {
+        if self.reason.lock().expect("abort lock").is_none() {
+            self.code.store(code, std::sync::atomic::Ordering::SeqCst);
+        }
+        self.raise_plain(reason);
+    }
+
     /// Whether the reason kept is printed as `[ERROR]: reason`.
     pub fn is_plain(&self) -> bool {
         self.plain.load(std::sync::atomic::Ordering::SeqCst)

@@ -5,7 +5,7 @@ use std::time::Duration;
 use rstest::rstest;
 use serde_json::{Value, json};
 
-use super::{DockerSettings, Options, exec_argv, extra_env, inspect_argv, program};
+use super::{DockerSettings, Options, PluginSettings, exec_argv, extra_env, inspect_argv, program};
 use crate::transport::{ConnectionDefaults, ConnectionKeywords, Transport};
 
 fn words(argv: &[String]) -> String {
@@ -107,11 +107,14 @@ fn each_option_is_read_from_its_variables_over_the_settings() {
     let docker = dir.path().join("docker").display().to_string();
     let defaults = ConnectionDefaults {
         remote_user: Some("from-cli".into()),
-        docker: DockerSettings {
-            extra_cli_args: Some("--host unix:///cfg".into()),
-            privileged: Some(true),
-            working_dir: Some("/cfg".into()),
-            timeout: Some(Duration::from_secs(30)),
+        plugins: PluginSettings {
+            docker: DockerSettings {
+                extra_cli_args: Some("--host unix:///cfg".into()),
+                privileged: Some(true),
+                working_dir: Some("/cfg".into()),
+                timeout: Some(Duration::from_secs(30)),
+            },
+            ..PluginSettings::default()
         },
         ..crate::testing::defaults()
     };

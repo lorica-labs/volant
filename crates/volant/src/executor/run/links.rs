@@ -37,6 +37,13 @@ pub(in crate::executor) async fn reuse_or_connect<'a>(
     // Why the kept connection was not reused, kept only in case the reconnection below fails
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.
+    // The agent a task stopped is gone, though its connection is not: the next batch starts one.
+    if links.get(key).is_some_and(AgentLink::died) {
+        checked.remove(key);
+        if let Some(dead) = links.remove(key) {
+            tokio::spawn(dead.shutdown());
+        }
+    }
     let reboots = options.reboots.of(&key.host);
     let (stale, retired) = check_kept(
         links,

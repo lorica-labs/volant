@@ -32,7 +32,7 @@ impl Default for Config {
             nocolor: false,
             deprecation_warnings: true,
             ssh_usetty: true,
-            docker: crate::transport::DockerSettings::default(),
+            plugins: crate::transport::PluginSettings::default(),
             enable_task_debugger: false,
             roles_path: default_roles_path(),
             collections_path: default_collections_path(),

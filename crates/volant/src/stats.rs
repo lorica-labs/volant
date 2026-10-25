@@ -274,6 +274,18 @@ impl Refusal {
         })
     }
 
+    /// Prints a run's error on stderr the way the reference does: a refusal as it words it, a
+    /// load error at its place, and anything else behind `ERROR!`.
+    pub fn show_error(err: &anyhow::Error) {
+        match err.downcast_ref::<Self>() {
+            Some(r) if r.plain || r.unresolved.is_some() => r.show(),
+            _ => match err.downcast_ref::<crate::playbook::Located>() {
+                Some(located) => eprintln!("[ERROR]: {}", located.text()),
+                None => eprintln!("ERROR! {err:#}"),
+            },
+        }
+    }
+
     /// Prints this refusal on stderr the way the reference does: `[ERROR]: message`, behind its
     /// warning for a module no collection holds.
     pub fn show(&self) {
@@ -297,6 +309,8 @@ impl Refusal {
             .any(<dyn std::error::Error + 'static>::is::<Refusal>)
         {
             err
+        } else if let Some(located) = err.downcast_ref::<crate::playbook::Located>() {
+            Refusal::plain(code, located.text())
         } else {
             Refusal::at(code, format!("{err:#}"))
         }

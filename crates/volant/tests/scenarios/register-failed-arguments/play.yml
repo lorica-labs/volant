@@ -1,0 +1,21 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "{{ nosuchvar }}"
+      register: r
+      ignore_errors: true
+    - debug:
+        var: r
+    - command: echo {{ nosuchvar }}
+      register: c
+      ignore_errors: true
+    - debug:
+        var: c
+    - debug:
+        msg: never
+      when: nosuch2
+      register: w
+      ignore_errors: true
+    - debug:
+        var: w

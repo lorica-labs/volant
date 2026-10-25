@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - include_tasks: a.yml
+      register: r1
+    - include_tasks: "{{ item }}.yml"
+      loop: [a]
+      loop_control: {index_var: i}
+      register: r2
+    - include_tasks: a.yml
+      when: false
+      register: r3
+    - include_role: {name: rr}
+      register: r4
+    - debug: {msg: "{{ [r1, r2, r3, r4] }}"}

@@ -58,7 +58,9 @@ fn module_defaults_follow_the_reference(
 ) {
     let layers = layers.as_array().expect("layers");
     assert_eq!(
-        Value::Object(defaults_for(module, layers, &groups(), &mut as_written).expect("defaults")),
+        Value::Object(
+            defaults_for(module, None, layers, &groups(), &mut as_written).expect("defaults")
+        ),
         want
     );
 }
@@ -114,7 +116,7 @@ fn a_short_name_goes_to_the_first_listed_collection_that_has_it(
 fn a_group_nobody_defined_names_itself() {
     let layers = [json!({"group/nosuch": {"a": 1}})];
     assert_eq!(
-        defaults_for("ping", &layers, &groups(), &mut as_written),
+        defaults_for("ping", None, &layers, &groups(), &mut as_written),
         Err(unresolved_group("ansible.builtin.nosuch"))
     );
 }

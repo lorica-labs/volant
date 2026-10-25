@@ -383,6 +383,7 @@ impl Adhoc {
                 help: None,
             }],
             lead: None,
+            on_stderr: false,
         };
         let mut result = TaskResult::failed_with(message);
         result.0.insert("changed".into(), false.into());

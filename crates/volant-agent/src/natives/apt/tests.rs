@@ -686,11 +686,17 @@ echo done",
             stamp = stamp.display(),
         ),
     );
+    let policy_log = host.fake.0.join("apt-cache.log");
     host.fake.script(
         "/bin/apt-cache",
-        "for n in \"$@\"; do [ \"$n\" = newpkg ] && printf 'newpkg:\n  Installed: (none)\n  Candidate: 1:1.0-1\n  Version table:\n';          [ \"$n\" = ghost ] && printf 'ghost:\n  Installed: (none)\n  Candidate: (none)\n'; done; exit 0",
+        &format!(
+            "echo \"$*\" >> '{}'
+             for n in \"$@\"; do [ \"$n\" = newpkg ] && printf 'newpkg:\n  Installed: (none)\n  Candidate: 1:1.0-1\n  Version table:\n';          [ \"$n\" = ghost ] && printf 'ghost:\n  Installed: (none)\n  Candidate: (none)\n'; done; exit 0",
+            policy_log.display()
+        ),
     );
     let apt_log = || std::fs::read_to_string(&log).unwrap_or_default();
+    let policies = || std::fs::read_to_string(&policy_log).unwrap_or_default();
 
     host.hands_back(&json!({"name": ["ghost", "bash"]}));
     assert_eq!(apt_log(), "");
@@ -721,6 +727,10 @@ echo done",
 "
     ));
     assert_eq!(host.calls(), ["manual newpkg bash"]);
+    // Without an update the candidates are asked once; an update asks them again after it.
+    assert_eq!(policies(), "policy ghost\npolicy newpkg\n");
+    host.done(&json!({"name": "newpkg", "update_cache": true}));
+    assert!(policies().ends_with("policy newpkg\npolicy newpkg\npolicy newpkg\n"));
 
     let mut context = host.context();
     context.environment.insert("FAIL".into(), "1".into());

@@ -64,9 +64,12 @@ pub(super) fn act(
         .ok_or("the module reads this apt-get path differently")?
         .to_string();
     let env = apt_env(task_env, clock)?;
-    if !act.missing.is_empty() {
-        candidates(&act.missing, &act.arch, &env, task_env, clock)?;
-    }
+    // Asked before anything changes; asked again only after an update, which can move them.
+    let mut pins = if act.missing.is_empty() {
+        None
+    } else {
+        Some(candidates(&act.missing, &act.arch, &env, task_env, clock)?)
+    };
     let mut cache_updated = false;
     let mut cache_time = act.cache_time;
     if act.update {
@@ -92,7 +95,10 @@ pub(super) fn act(
     if act.missing.is_empty() {
         outcome.insert("changed".into(), false.into());
     } else {
-        let pins = candidates(&act.missing, &act.arch, &env, task_env, clock)?;
+        let pins = match pins.take() {
+            Some(pins) if !act.update => pins,
+            _ => candidates(&act.missing, &act.arch, &env, task_env, clock)?,
+        };
         let cmd = install_command(&apt_get, &act.params, &pins);
         let policy = match act.policy_rc_d {
             Some(code) => match policy::enter(code, root, task_env)? {

@@ -361,6 +361,9 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         ("retries", field(yaml, "retries")),
         ("delay", field(yaml, "delay")),
         ("notify", field(yaml, "notify")),
+        ("check_mode", field(yaml, "check_mode")),
+        ("diff", field(yaml, "diff")),
+        ("ignore_errors", field(yaml, "ignore_errors")),
         ("loop", loop_node),
         ("var", var),
         // A list of conditions is not placed: the reference points at the one that failed.

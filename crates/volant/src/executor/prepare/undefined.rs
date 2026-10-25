@@ -57,6 +57,24 @@ pub(in crate::executor) fn conditional_causes(task: &PlayTask, message: &str) ->
     None
 }
 
+/// The chain of a task keyword that failed to render: measured on ansible-core 2.19.12, one cause,
+/// the keyword's sentence at where its value was written (`check_mode`, `diff`, `ignore_errors`,
+/// `notify`). A keyword whose value has no recorded place has no chain.
+pub(in crate::executor) fn keyword_causes(task: &PlayTask, message: &str) -> Option<Value> {
+    let sentence = message.strip_prefix("Task failed: ").unwrap_or(message);
+    let key = sentence
+        .strip_prefix(super::item::KEYWORD_ERROR)?
+        .strip_prefix('\'')?
+        .split('\'')
+        .next()?;
+    let origin = task.value_origins.get(key)?;
+    Some(serde_json::json!([crate::render::cause(
+        sentence,
+        Some(origin),
+        None
+    )]))
+}
+
 /// Makes `result` the error of a `loop_control` keyword that read a missing name. Measured on
 /// ansible-core 2.19.12: the error stands alone, with no `Task failed: `, at the value.
 pub(in crate::executor) fn mark_keyword(

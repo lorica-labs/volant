@@ -1,0 +1,4 @@
+# A loop item whose `when`, `check_mode` or `ignore_errors` fails to render: the error block
+# chains the sentence at the value, and an `ignore_errors` that failed counts as ignored.
+stderr: true
+args: [-i, inv.ini, play.yml]

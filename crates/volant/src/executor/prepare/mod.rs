@@ -244,7 +244,19 @@ pub(super) fn prepare(
             warnings,
         ) {
             Ok(fields) => fields,
-            Err(err) if element.is_some() => Fields::failed(item_failure(task, &err)),
+            Err(err) if element.is_some() => {
+                let mut failed = Fields::failed(item_failure(task, &err));
+                // Measured on ansible-core 2.19.12: an item whose `ignore_errors` failed to
+                // render counts as ignored, so the loop prints `...ignoring` unless another
+                // item failed for good.
+                if err
+                    .0
+                    .starts_with("Error processing keyword 'ignore_errors'")
+                {
+                    failed.ignore_errors = Some(true);
+                }
+                failed
+            }
             Err(err) => return Err(err),
         };
         // As `environment`: a keyword the reference renders before the module runs, so an

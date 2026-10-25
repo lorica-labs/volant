@@ -100,7 +100,11 @@ pub(super) const KEYWORD_ERROR: &str = "Error processing keyword ";
 /// The text a task that dies before it runs reports: the reference's `Task failed: ` prefix,
 /// except on a keyword error, which it states as it is.
 pub(in crate::executor) fn failure_text(err: &TemplateError) -> String {
-    if err.0.starts_with(KEYWORD_ERROR)
+    // A task keyword read as a boolean is worded with the prefix, measured for `check_mode`.
+    let task_keyword = ["check_mode", "diff", "ignore_errors"]
+        .iter()
+        .any(|key| err.0.starts_with(&format!("{KEYWORD_ERROR}'{key}'")));
+    if (err.0.starts_with(KEYWORD_ERROR) && !task_keyword)
         || err.0.starts_with(NOTIFY_FAILED)
         || err.0.starts_with("Task failed: ")
         || is_loop_lookup_failure(err)
@@ -239,9 +243,18 @@ pub(super) fn item_failure(task: &PlayTask, err: &TemplateError) -> TaskResult {
     };
     let mut result = TaskResult::failed_with(message);
     result.0.insert("changed".into(), Value::Bool(false));
-    if let Some(Value::Array(mut causes)) =
-        crate::executor::prepare::undefined::finalization_causes(task, &err.0)
+    result
+        .0
+        .insert("exception".into(), "(traceback unavailable)".into());
+    use crate::executor::prepare::undefined::{
+        conditional_causes, finalization_causes, keyword_causes,
+    };
+    // A `when` or a keyword that failed is chained as for a task with no loop: `Task failed.` at
+    // the task, then the sentence at the value.
+    if let Some(causes) = conditional_causes(task, &err.0).or_else(|| keyword_causes(task, &err.0))
     {
+        result.0.insert(crate::render::CHAIN_KEY.into(), causes);
+    } else if let Some(Value::Array(mut causes)) = finalization_causes(task, &err.0) {
         // A head that already leads the block stays; a plain one becomes the lead.
         if let Some(head) = causes.first_mut()
             && head.get("lead").is_none()

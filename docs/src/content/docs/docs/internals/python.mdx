@@ -136,6 +136,8 @@ Anything outside that goes to ansible-core's Python module. A task `environment`
 
 A native module receives the arguments the Python module would have received. It first decides, by reading only, whether it can give the answer the reference would give. If it cannot, it hands the task back before touching the host, and the Python module does the real work. Its result, `invocation` included, is the one the reference module returns, key for key, and a test compares them for every case the module covers. The result comes back as untrusted data, through the same path as a Python module's.
 
+On a host whose configuration turns apt's package cache off, as Docker's Debian and Ubuntu images do, apt builds it again from the package lists on every call: 1.3 seconds each on Ubuntu 24.04. The native `apt` then points its `apt-get`, `apt-cache` and `apt-mark` calls at a cache in the connection's own directory, removed when the connection ends. What they print and what they leave on the host do not change.
+
 Set `[volant] native_modules = false`, or `VOLANT_NATIVE_MODULES=0`, to send every task to Python. `--profile` shows which path each task took and, for a hand-back, the reason. See [Command line](/docs/reference/cli/#run-and-output).
 
 <Aside type="note">

@@ -137,6 +137,8 @@ Todo lo que queda fuera de eso va al módulo de Python de ansible-core. Un `envi
 
 Un módulo nativo recibe los argumentos que habría recibido el módulo de Python. Primero decide, solo leyendo, si puede dar la respuesta que daría la referencia. Si no puede, devuelve la tarea antes de tocar el host, y el módulo de Python hace el trabajo real. Su resultado, `invocation` incluido, es el que devuelve el módulo de referencia, clave por clave, y una prueba los compara en cada caso que el módulo cubre. El resultado vuelve como datos no fiables, por el mismo camino que el de un módulo de Python.
 
+En un host cuya configuración desactiva la caché de paquetes de apt, como hacen las imágenes de Debian y Ubuntu de Docker, apt la vuelve a construir a partir de las listas de paquetes en cada llamada: 1.3 segundos cada una en Ubuntu 24.04. El `apt` nativo hace entonces que sus llamadas a `apt-get`, `apt-cache` y `apt-mark` usen una caché en el directorio propio de la conexión, que se elimina cuando la conexión termina. Lo que imprimen y lo que dejan en el host no cambia.
+
 Define `[volant] native_modules = false`, o `VOLANT_NATIVE_MODULES=0`, para enviar todas las tareas a Python. `--profile` muestra qué camino tomó cada tarea y, en una devolución, el motivo. Consulta [Línea de comandos](/es/docs/reference/cli/#ejecución-y-salida).
 
 <Aside type="note">

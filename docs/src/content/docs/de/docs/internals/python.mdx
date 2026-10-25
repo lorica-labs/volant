@@ -137,6 +137,8 @@ Alles außerhalb davon geht an das Python-Modul von ansible-core. Ein Task-`envi
 
 Ein natives Modul bekommt die Argumente, die das Python-Modul bekommen hätte. Es entscheidet zuerst, rein lesend, ob es die Antwort geben kann, die die Referenz geben würde. Wenn nicht, gibt es den Task zurück, bevor es den Host anfasst, und das Python-Modul erledigt die eigentliche Arbeit. Sein Ergebnis, `invocation` eingeschlossen, ist das, was das Referenzmodul zurückgibt, Schlüssel für Schlüssel, und ein Test vergleicht beide für jeden Fall, den das Modul abdeckt. Das Ergebnis kommt als nicht vertrauenswürdige Daten zurück, über denselben Pfad wie das eines Python-Moduls.
 
+Auf einem Host, dessen Konfiguration den Paket-Cache von apt abschaltet, wie die Debian- und Ubuntu-Images von Docker, baut apt ihn bei jedem Aufruf neu aus den Paketlisten: 1,3 Sekunden pro Aufruf unter Ubuntu 24.04. Das native `apt` lässt seine Aufrufe von `apt-get`, `apt-cache` und `apt-mark` dann einen Cache im eigenen Verzeichnis der Verbindung nutzen, das mit dem Ende der Verbindung entfernt wird. Was sie ausgeben und was sie auf dem Host hinterlassen, ändert sich nicht.
+
 Setzen Sie `[volant] native_modules = false` oder `VOLANT_NATIVE_MODULES=0`, um jeden Task an Python zu schicken. `--profile` zeigt, welchen Pfad jeder Task genommen hat, und bei einer Rückgabe den Grund. Siehe [Kommandozeile](/de/docs/reference/cli/#lauf-und-ausgabe).
 
 <Aside type="note">

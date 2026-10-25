@@ -137,6 +137,8 @@ Tout ce qui sort de là va au module Python d'ansible-core. Un `environment` de 
 
 Un module natif reçoit les arguments que le module Python aurait reçus. Il décide d'abord, en lisant seulement, s'il peut donner la réponse que donnerait la référence. S'il ne le peut pas, il rend la tâche avant de toucher à l'hôte, et le module Python fait le vrai travail. Son résultat, `invocation` compris, est celui que renvoie le module de référence, clé pour clé, et un test les compare pour chaque cas que le module couvre. Le résultat revient comme donnée non fiable, par le même chemin que celui d'un module Python.
 
+Sur un hôte dont la configuration désactive le cache de paquets d'apt, comme les images Debian et Ubuntu de Docker, apt le reconstruit à partir des listes de paquets à chaque appel : 1.3 seconde par appel sous Ubuntu 24.04. Le `apt` natif fait alors utiliser à ses appels de `apt-get`, `apt-cache` et `apt-mark` un cache placé dans le répertoire propre à la connexion, supprimé à la fin de celle-ci. Ce qu'ils affichent et ce qu'ils laissent sur l'hôte ne change pas.
+
 Définissez `[volant] native_modules = false`, ou `VOLANT_NATIVE_MODULES=0`, pour envoyer chaque tâche à Python. `--profile` montre quel chemin chaque tâche a pris et, pour un retour de main, la raison. Voir [Ligne de commande](/fr/docs/reference/cli/#exécution-et-sortie).
 
 <Aside type="note">

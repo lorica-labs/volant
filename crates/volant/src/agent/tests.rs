@@ -229,6 +229,26 @@ async fn an_agent_that_speaks_protocol_six_is_refused_at_the_handshake() {
     );
 }
 
+/// Bytes that cannot be a frame, such as the `OSC 3008` `su` prints when its session ends, end the
+/// stream and come back with the code the process ended with.
+#[tokio::test]
+async fn text_after_the_agent_is_no_frame_and_comes_back_with_the_exit_code() {
+    let child = tokio::process::Command::new("sh")
+        .arg("-c")
+        .arg(r"printf '\033]3008;end=x\033\\'; kill -9 $$")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::piped())
+        .stderr(std::process::Stdio::null())
+        .kill_on_drop(true)
+        .spawn()
+        .expect("sh is on PATH");
+    let mut link = AgentLink::new(child).unwrap();
+    assert!(matches!(link.recv().await, Ok(None)));
+    let (code, text) = link.ended().await.expect("the process ended");
+    assert_eq!((code, text.as_str()), (137, "\u{1b}]3008;end=x\u{1b}\\"));
+    assert!(link.died());
+}
+
 /// What a link was told about a payload dies with that link, so a connection lost and reopened
 /// asks again and the blob travels again.
 #[tokio::test]

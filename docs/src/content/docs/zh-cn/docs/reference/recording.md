@@ -1,5 +1,5 @@
 ---
-sourceHash: 121b3af3c375
+sourceHash: 0c8e4bf84fac
 title: 运行记录
 description: ansible-playbook 运行时 volant.compat.record 回调写入的文件，逐行说明。
 ---
@@ -56,7 +56,7 @@ path = shadow/run-{{ timestamp }}.jsonl.gz
 
 字段说明：
 
-- 所有哈希均为十六进制的 SHA-256。`extra_vars_hash` 基于按键排序的 JSON 形式的 extra 变量计算。
+- 所有哈希均为十六进制的 SHA-256。`extra_vars_hash` 覆盖每个原样给出的 `-e` 参数，其后跟一个 NUL 字节；对于 `@文件` 参数，还包括该文件的内容，其后再跟一个 NUL 字节。重放时传入的是相同的参数，因此只有这些参数指向的文件发生变化时，哈希才会改变。
 - `status` 取值为 `ok`、`changed`、`failed`、`skipped` 或 `unreachable`。被 `ignore_errors` 放过的失败仍记为 `failed`。
 - 在循环中，每个元素都有一行 `result`，其 `item` 为从 0 开始的索引。随后 `item` 为 `null` 的那一行是整个任务，各元素位于 `results` 下。
 - `delegated_to` 是 `delegate_to` 指定的主机，没有则为 `null`。

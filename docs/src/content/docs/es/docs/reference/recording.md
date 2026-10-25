@@ -1,5 +1,5 @@
 ---
-sourceHash: 121b3af3c375
+sourceHash: 0c8e4bf84fac
 title: Grabaciones de ejecuciones
 description: El archivo que escribe el callback volant.compat.record mientras se ejecuta ansible-playbook, línea por línea.
 ---
@@ -56,7 +56,7 @@ Las líneas `header` e `inventory` van primero, al empezar el primer play. `stat
 
 Notas sobre los campos:
 
-- Cada hash es SHA-256 en hexadecimal. `extra_vars_hash` se calcula sobre las variables extra como JSON con las claves ordenadas.
+- Cada hash es SHA-256 en hexadecimal. `extra_vars_hash` cubre cada argumento `-e` tal como se dio, seguido de un byte NUL, y para un argumento `@archivo` el contenido del archivo, seguido de otro byte NUL. Una reproducción pasa los mismos argumentos, así que el hash solo cambia cuando cambia un archivo que nombran.
 - `status` es `ok`, `changed`, `failed`, `skipped` o `unreachable`. Un fallo que `ignore_errors` dejó pasar sigue siendo `failed`.
 - En un bucle, cada elemento tiene una línea `result` cuyo `item` es su índice desde 0. La línea siguiente, con `item` a `null`, es la tarea entera, con los elementos bajo `results`.
 - `delegated_to` es el host que nombró un `delegate_to`, o `null`.

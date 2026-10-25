@@ -65,9 +65,16 @@ def _plain(value):
     return str(value)
 
 
-def _hash(value):
-    text = json.dumps(value, default=_plain, sort_keys=True)
-    return hashlib.sha256(text.encode()).hexdigest()
+def _extra_vars_hash(arguments):
+    """Each `-e` argument as given, then the file an `@` argument names, each followed by NUL."""
+    digest = hashlib.sha256()
+    for argument in arguments:
+        digest.update(argument.encode() + b"\0")
+        if argument.startswith("@") and os.path.isfile(argument[1:]):
+            with open(argument[1:], "rb") as file:
+                digest.update(file.read())
+            digest.update(b"\0")
+    return digest.hexdigest()
 
 
 class CallbackModule(CallbackBase):
@@ -116,7 +123,7 @@ class CallbackModule(CallbackBase):
                 "sources": sources,
                 "files": [{"path": os.path.abspath(s), "sha256": _sha256(s)} for s in sources if os.path.isfile(s)],
             },
-            extra_vars_hash=_hash(variables.extra_vars),
+            extra_vars_hash=_extra_vars_hash(cli.get("extra_vars") or ()),
             started=self._started.isoformat(),
         )
         groups = variables.get_vars(include_hostvars=False)["groups"]

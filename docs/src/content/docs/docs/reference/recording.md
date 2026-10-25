@@ -55,7 +55,7 @@ The `header` and `inventory` lines come first, when the first play starts. `stat
 
 Notes on the fields:
 
-- Every hash is SHA-256, in hexadecimal. `extra_vars_hash` is computed over the extra variables as JSON with sorted keys.
+- Every hash is SHA-256, in hexadecimal. `extra_vars_hash` covers each `-e` argument as given, followed by a NUL byte, and for an `@file` argument the file's content, followed by another NUL byte. A replay passes the same arguments, so the hash only changes when a file they name does.
 - `status` is `ok`, `changed`, `failed`, `skipped` or `unreachable`. A failure that `ignore_errors` let through is still `failed`.
 - In a loop, each item has a `result` line whose `item` is its index from 0. The line with `item` set to `null` that follows is the whole task, with the items under `results`.
 - `delegated_to` is the host a `delegate_to` named, or `null`.

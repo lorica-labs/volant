@@ -1,5 +1,5 @@
 ---
-sourceHash: 121b3af3c375
+sourceHash: 0c8e4bf84fac
 title: Enregistrements de runs
 description: Le fichier qu'écrit le callback volant.compat.record pendant un run d'ansible-playbook, ligne par ligne.
 ---
@@ -56,7 +56,7 @@ Les lignes `header` et `inventory` viennent en premier, au début du premier pla
 
 Notes sur les champs :
 
-- Chaque empreinte est un SHA-256 en hexadécimal. `extra_vars_hash` est calculé sur les variables extra en JSON, clés triées.
+- Chaque empreinte est un SHA-256 en hexadécimal. `extra_vars_hash` couvre chaque argument `-e` tel que donné, suivi d'un octet NUL, et pour un argument `@fichier` le contenu du fichier, suivi d'un autre octet NUL. Un rejeu passe les mêmes arguments : l'empreinte ne change que si un fichier qu'ils nomment change.
 - `status` vaut `ok`, `changed`, `failed`, `skipped` ou `unreachable`. Un échec qu'`ignore_errors` a laissé passer reste `failed`.
 - Dans une boucle, chaque élément a une ligne `result` dont `item` est son index à partir de 0. La ligne qui suit, avec `item` à `null`, est la tâche entière, avec les éléments sous `results`.
 - `delegated_to` est l'hôte nommé par un `delegate_to`, ou `null`.

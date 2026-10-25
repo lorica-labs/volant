@@ -288,8 +288,16 @@ impl VarStore {
         self.untrusted_hosts = None;
     }
 
-    /// `group_by`: `host` joins `group`, which is made a child of each of `parents`.
-    pub fn add_to_group(&mut self, host: &str, group: &str, parents: &[String]) {
+    /// `group_by`: `host` joins `group`, which is made a child of each of `parents`. Whether it
+    /// changed the inventory: a group that was missing, or a membership.
+    pub fn add_to_group(&mut self, host: &str, group: &str, parents: &[String]) -> bool {
+        let known = self.dynamic.groups();
+        let changed = std::iter::once(group)
+            .chain(parents.iter().map(String::as_str))
+            .any(|name| !known.contains_key(name))
+            || !known[group_or_all(&known, group)]
+                .iter()
+                .any(|member| member == host);
         if group != "all" {
             if is_data_name(group) {
                 self.data_groups.insert(group.to_string());
@@ -305,8 +313,18 @@ impl VarStore {
             self.dynamic.add_member(host, group);
             self.added
                 .push(Added::Member(host.to_string(), group.to_string()));
+            let joined: HashSet<String> = self
+                .added
+                .iter()
+                .filter_map(|change| match change {
+                    Added::Member(member, to) if to == group => Some(member.clone()),
+                    _ => None,
+                })
+                .collect();
+            self.dynamic.joined_at_run_time(host, group, &joined);
         }
         self.inventory_moved();
+        changed
     }
 
     fn inventory_moved(&mut self) {
@@ -383,5 +401,15 @@ impl VarStore {
         self.playbook_dir = playbook_dir.to_path_buf();
         self.forget_hostvars();
         Ok(())
+    }
+}
+
+/// `group` when the inventory has it, else `all`, which it always has: the key a membership
+/// check reads.
+fn group_or_all<'a>(known: &BTreeMap<String, Vec<String>>, group: &'a str) -> &'a str {
+    if known.contains_key(group) {
+        group
+    } else {
+        "all"
     }
 }

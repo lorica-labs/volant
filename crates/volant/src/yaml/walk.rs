@@ -167,13 +167,14 @@ pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
     enum Work<'t, 'a> {
         Node(&'t MarkedYaml<'a>),
         Entry(&'t MarkedYaml<'a>, &'t MarkedYaml<'a>),
+        Item(&'t MarkedYaml<'a>),
     }
     let at = |n: &MarkedYaml<'_>| (n.span.start.line(), n.span.start.col() + 1);
     let mut work = vec![Work::Node(root)];
     while let Some(item) = work.pop() {
         match item {
             Work::Node(node) => match &node.data {
-                YamlData::Sequence(items) => work.extend(items.iter().rev().map(Work::Node)),
+                YamlData::Sequence(items) => work.extend(items.iter().rev().map(Work::Item)),
                 YamlData::Mapping(map) => {
                     out.0.push(at(node));
                     let entries: Vec<_> = map.iter().map(|(k, v)| Work::Entry(k, v)).collect();
@@ -188,6 +189,12 @@ pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
                 work.push(Work::Node(value));
                 work.push(Work::Node(key));
             }
+            // An item of a sequence is placed like a value, its own start standing for its key.
+            Work::Item(item) => {
+                out.1.push(at(item));
+                out.2.push(at(item));
+                work.push(Work::Node(item));
+            }
         }
     }
 }
@@ -198,12 +205,13 @@ pub(super) fn mapping_addresses(root: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usiz
     enum Work<'t, 'a> {
         Node(&'t Yaml<'a>),
         Entry(&'t Yaml<'a>, &'t Yaml<'a>),
+        Item(&'t Yaml<'a>),
     }
     let mut work = vec![Work::Node(root)];
     while let Some(item) = work.pop() {
         match item {
             Work::Node(node) => match node {
-                Yaml::Sequence(items) => work.extend(items.iter().rev().map(Work::Node)),
+                Yaml::Sequence(items) => work.extend(items.iter().rev().map(Work::Item)),
                 Yaml::Mapping(map) => {
                     out.0.push(std::ptr::from_ref(map).addr());
                     let entries: Vec<_> = map.iter().map(|(k, v)| Work::Entry(k, v)).collect();
@@ -216,6 +224,10 @@ pub(super) fn mapping_addresses(root: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usiz
                 out.1.push(std::ptr::from_ref(value).addr());
                 work.push(Work::Node(value));
                 work.push(Work::Node(key));
+            }
+            Work::Item(item) => {
+                out.1.push(std::ptr::from_ref(item).addr());
+                work.push(Work::Node(item));
             }
         }
     }

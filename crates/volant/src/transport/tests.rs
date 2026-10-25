@@ -947,6 +947,7 @@ fn the_published_host_variables_are_the_ones_this_module_reads() {
         include_str!("control.rs"),
         include_str!("defaults.rs"),
         include_str!("docker.rs"),
+        include_str!("podman.rs"),
         include_str!("escalation/mod.rs"),
         include_str!("escalation/probe.rs"),
         include_str!("escalation/su.rs"),

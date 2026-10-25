@@ -14,6 +14,7 @@ mod escalation;
 mod exec;
 mod fused;
 mod names;
+mod podman;
 mod reach;
 mod resolve;
 mod session;
@@ -31,11 +32,12 @@ pub use defaults::{
     MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport, plugin_load_warning,
     refused_escalation,
 };
-pub use docker::DockerSettings;
-pub use exec::ExecTarget;
+pub use docker::{DockerSettings, PluginSettings};
+pub use exec::{ExecTarget, Lines};
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;
 pub(crate) use names::{first_set, secret_text};
+pub use podman::PodmanSettings;
 pub use resolve::{ConnectionNames, Resolution, ResolveConnection};
 pub(crate) use shell::validate_remote_tmp;
 pub(crate) use trace::shell_quote;

@@ -128,10 +128,13 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             config.ssh_usetty = callback_flag(value);
         }
         if section == "docker_connection" {
-            super::docker::ini(&mut config.docker, key.trim(), value, origin)?;
+            super::docker::ini(&mut config.plugins.docker, key.trim(), value, origin)?;
         }
         if section != "defaults" {
             continue;
+        }
+        if key.trim() == "podman_extra_args" {
+            config.plugins.podman.extra_args = Some(value.trim().to_string());
         }
         match key.trim() {
             "inventory" => {

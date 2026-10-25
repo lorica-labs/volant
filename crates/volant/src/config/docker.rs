@@ -1,10 +1,12 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `[docker_connection]` and the `ANSIBLE_DOCKER_*` variables, the settings community.docker
-//! 4.8.5's `community.docker.docker` reads besides host variables.
+//! The settings the collections' container connections read besides host variables:
+//! `[docker_connection]` and `ANSIBLE_DOCKER_*` for community.docker 4.8.5's
+//! `community.docker.docker`, `ANSIBLE_PODMAN_*` for containers.podman 1.18.0's
+//! `containers.podman.podman`, whose `[defaults] podman_extra_args` the `[defaults]` reader takes.
 
 use std::time::Duration;
 
-use crate::transport::DockerSettings;
+use crate::transport::{DockerSettings, PodmanSettings};
 
 use super::settings::{boolean, integer, timeout_secs};
 
@@ -52,4 +54,14 @@ pub(super) fn env(docker: &mut DockerSettings) -> anyhow::Result<()> {
         )?));
     }
     Ok(())
+}
+
+/// `ANSIBLE_PODMAN_EXECUTABLE` and `ANSIBLE_PODMAN_EXTRA_ARGS`, which win over the file.
+pub(super) fn podman_env(podman: &mut PodmanSettings) {
+    if let Ok(executable) = std::env::var("ANSIBLE_PODMAN_EXECUTABLE") {
+        podman.executable = Some(executable);
+    }
+    if let Ok(args) = std::env::var("ANSIBLE_PODMAN_EXTRA_ARGS") {
+        podman.extra_args = Some(args);
+    }
 }

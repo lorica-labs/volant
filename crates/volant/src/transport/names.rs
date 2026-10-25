@@ -32,6 +32,13 @@ pub(super) const DOCKER_PRIVILEGED: [&str; 1] = ["ansible_docker_privileged"];
 pub(super) const DOCKER_WORKING_DIR: [&str; 1] = ["ansible_docker_working_dir"];
 pub(super) const DOCKER_TIMEOUT: [&str; 1] = ["ansible_docker_timeout"];
 
+/// containers.podman 1.18.0's `containers.podman.podman`, as its source reads them: the container
+/// and the user are the play context's, so the documented `ansible_podman_host` is not one.
+pub(super) const PODMAN_HOST: [&str; 1] = ["ansible_host"];
+pub(super) const PODMAN_USER: [&str; 1] = ["ansible_user"];
+pub(super) const PODMAN_EXECUTABLE: [&str; 1] = ["ansible_podman_executable"];
+pub(super) const PODMAN_EXTRA_ARGS: [&str; 1] = ["ansible_podman_extra_args"];
+
 /// Every name above, for the scan that checks a managed host cannot set any of them through
 /// the facts it returns.
 #[cfg(test)]
@@ -50,6 +57,8 @@ pub(crate) fn all() -> impl Iterator<Item = &'static str> {
         .chain(DOCKER_PRIVILEGED)
         .chain(DOCKER_WORKING_DIR)
         .chain(DOCKER_TIMEOUT)
+        .chain(PODMAN_EXECUTABLE)
+        .chain(PODMAN_EXTRA_ARGS)
 }
 
 /// The value of the first of `names` the host sets.

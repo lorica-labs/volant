@@ -18,6 +18,13 @@ use super::names::{
 /// The plugin's full name, which a short `docker` resolves to.
 pub(super) const PLUGIN: &str = "community.docker.docker";
 
+/// What `ansible.cfg` and the environment say for the collections' connection plugins.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct PluginSettings {
+    pub docker: DockerSettings,
+    pub podman: super::podman::PodmanSettings,
+}
+
 /// What `ansible.cfg` and the environment say for the plugin; a host variable speaks over each.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct DockerSettings {
@@ -56,20 +63,22 @@ pub(super) fn target(
         user: text(&DOCKER_USER)
             .or_else(|| keywords.user.clone())
             .or_else(|| defaults.remote_user.clone()),
-        extra_args: text(&DOCKER_EXTRA_ARGS).or_else(|| defaults.docker.extra_cli_args.clone()),
+        extra_args: text(&DOCKER_EXTRA_ARGS)
+            .or_else(|| defaults.plugins.docker.extra_cli_args.clone()),
         env: extra_env(first_set(vars, &DOCKER_EXTRA_ENV))
             .map_err(|e| anyhow::anyhow!("host '{host_name}': {e}"))?,
-        working_dir: text(&DOCKER_WORKING_DIR).or_else(|| defaults.docker.working_dir.clone()),
+        working_dir: text(&DOCKER_WORKING_DIR)
+            .or_else(|| defaults.plugins.docker.working_dir.clone()),
         privileged: first_set(vars, &DOCKER_PRIVILEGED)
             .map(flag)
-            .or(defaults.docker.privileged)
+            .or(defaults.plugins.docker.privileged)
             .unwrap_or(false),
     };
     let timeout = match first_set(vars, &DOCKER_TIMEOUT) {
         Some(value) => Some(seconds(value).ok_or_else(|| {
             anyhow::anyhow!("host '{host_name}': ansible_docker_timeout must be a whole number of seconds, found {value}")
         })?),
-        None => defaults.docker.timeout,
+        None => defaults.plugins.docker.timeout,
     };
     let found = program(std::env::var_os("PATH").as_deref());
     let docker = found
@@ -87,6 +96,7 @@ pub(super) fn target(
         prefix: exec_argv(&docker, &options),
         name: options.container,
         kind: "DOCKER".into(),
+        lines: super::exec::Lines::Exec,
         user: options.user,
         remote_tmp: remote_tmp_of(host_name, vars, defaults)?,
         connect_timeout: timeout.unwrap_or(defaults.connect_timeout),
@@ -228,13 +238,13 @@ fn program(path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
 }
 
 #[cfg(unix)]
-fn executable(meta: &std::fs::Metadata) -> bool {
+pub(super) fn executable(meta: &std::fs::Metadata) -> bool {
     use std::os::unix::fs::PermissionsExt;
     meta.permissions().mode() & 0o111 != 0
 }
 
 #[cfg(not(unix))]
-fn executable(_meta: &std::fs::Metadata) -> bool {
+pub(super) fn executable(_meta: &std::fs::Metadata) -> bool {
     true
 }
 

@@ -4,6 +4,7 @@
 use std::path::Path;
 use std::time::Duration;
 
+use serde_json::Value;
 use tokio::sync::mpsc;
 use volant_protocol::{BatchOutcome, TaskResult};
 
@@ -12,7 +13,7 @@ use super::super::coordinator::Event;
 use super::super::prepare::Item;
 use super::super::run::{
     ItemRetry, PluginStart, Relinker, Replayed, RetryLine, broke_before, finish, refusal,
-    run_plugin_attempts, running_host_vars,
+    run_plugin_attempts, run_plugin_group, running_host_vars,
 };
 use super::Driver;
 use crate::action_plugins::{Kind, LinkFacts};
@@ -97,6 +98,9 @@ pub(super) async fn run_plugin_items(
     batch_id: &mut u64,
     logs: &mut Vec<String>,
 ) -> ItemsEnded {
+    if grouped(&look) {
+        return run_grouped(look, driver, owned, received, batch_id, logs).await;
+    }
     let mut stopped = false;
     let mut broken_at = None;
     let mut outcome = Ok(BatchOutcome::Completed);
@@ -208,6 +212,120 @@ pub(super) async fn run_plugin_items(
     ItemsEnded {
         stopped,
         broken_at,
+        outcome,
+    }
+}
+
+/// Whether the items of this task can run side by side ([`run_plugin_group`]): a `copy` or
+/// `template` loop where nothing ties an item to the one before it, and each item writes a `dest`
+/// of its own, so no item reads what another writes.
+fn grouped(look: &PluginItems<'_>) -> bool {
+    let task = look.task;
+    let live: Vec<&Item> = look.items.iter().filter(|i| i.skipped.is_none()).collect();
+    let mut dests = std::collections::BTreeSet::new();
+    matches!(look.kind, Kind::Copy | Kind::Template)
+        && look.plans.is_none()
+        && look.pause.is_none()
+        && look.replayed.is_none()
+        && look.delegate.is_none()
+        && task.break_when.is_empty()
+        && task.timeout.is_none()
+        && task.async_val == 0
+        && refusal(task).is_none()
+        && live.len() > 1
+        && live.iter().all(|item| {
+            item.check_mode != Some(true)
+                && item.diff != Some(true)
+                && item
+                    .args
+                    .get("dest")
+                    .and_then(Value::as_str)
+                    .is_some_and(|dest| !dest.ends_with('/') && dests.insert(dest))
+        })
+}
+
+/// The items of a [`grouped`] task, run side by side, their warnings shown under the task in
+/// item order once they are done.
+async fn run_grouped(
+    look: PluginItems<'_>,
+    driver: &mut Driver<'_>,
+    owned: &mut AgentLink,
+    received: &mut [Option<TaskResult>],
+    batch_id: &mut u64,
+    logs: &mut Vec<String>,
+) -> ItemsEnded {
+    let link = LinkFacts::of(look.transport, look.escalation, None);
+    let starts: Vec<PluginStart> = look
+        .items
+        .iter()
+        .map(|item| PluginStart {
+            link: &link,
+            kind: look.kind,
+            running_vars: running_host_vars(None, std::slice::from_ref(item)),
+            templar: look.templar,
+            origin: look.origin,
+            playbook_dir: look.playbook_dir,
+            host_named_paths: look.options.host_named_paths,
+            host_named_dest_dirs: look.options.host_named_dest_dirs.as_deref(),
+            tx: look.tx,
+            index: look.index,
+        })
+        .collect();
+    let mut warnings: Vec<Vec<String>> = vec![Vec::new(); look.items.len()];
+    let plugins = look
+        .items
+        .iter()
+        .zip(&starts)
+        .zip(warnings.iter_mut())
+        .enumerate()
+        .filter(|(_, ((item, _), _))| item.skipped.is_none())
+        .map(|(ii, ((item, start), said))| {
+            let context = start.context(look.task, item, said);
+            (ii, crate::action_plugins::start(look.kind, context))
+        })
+        .collect();
+    let ran = run_plugin_group(
+        owned,
+        look.name,
+        batch_id,
+        plugins,
+        look.task,
+        look.items,
+        look.union,
+        look.interpreters,
+        look.asked,
+        &mut driver.stop,
+        &mut driver.stop_broken,
+        logs,
+    )
+    .await;
+    let outcome = match ran {
+        Ok(results) => {
+            for (ii, result) in results {
+                received[ii] = Some(if look.decided {
+                    finish(look.task, &look.items[ii], result, look.templar)
+                } else {
+                    result
+                });
+            }
+            Ok(BatchOutcome::Completed)
+        }
+        Err(ended) => ended,
+    };
+    for message in warnings.into_iter().flatten() {
+        let _ = look
+            .tx
+            .send(Event::Warning {
+                host: look.name.to_string(),
+                index: look.index,
+                message,
+                censored: false,
+            })
+            .await;
+    }
+    ItemsEnded {
+        stopped: false,
+        broken_at: None,
         outcome,
     }
 }

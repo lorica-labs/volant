@@ -49,6 +49,12 @@ pub fn open(dir: &Path, key: &CacheKey) -> io::Result<Option<Entry>> {
         deflated
     });
     keep_frame(&entry.union.hash, BlobFrame::smaller(zip, deflated));
+    // The sweep goes by the newest file of an entry: one a run reads is one it still uses, and
+    // the last to go when the cache is full.
+    let _ = fs::File::options()
+        .write(true)
+        .open(dir.join(format!("{}.json", key.0)))
+        .and_then(|manifest| manifest.set_modified(SystemTime::now()));
     Ok(Some(entry))
 }
 

@@ -94,10 +94,9 @@ fn written_here(name: &str) -> bool {
         })
 }
 
-/// Removes every file of this cache in `dir` nothing has written for [`STALE`]: entries of module
-/// sets no run asks for any more, and temporary files a run that died left behind. An entry
-/// still in use but older than that is rebuilt once. A link is never followed, and a file this
-/// cache did not name is never touched.
+/// Removes every file of this cache in `dir` nothing has written or read for [`STALE`]: entries
+/// of module sets no run asks for any more, and temporary files a run that died left behind. A
+/// link is never followed, and a file this cache did not name is never touched.
 pub(super) fn sweep(dir: &Path, now: SystemTime) {
     sweep_within(dir, now, MAX_BYTES);
 }
@@ -107,9 +106,9 @@ pub(super) fn sweep(dir: &Path, now: SystemTime) {
 /// that only the month-old rule would ever have removed. An entry is a few megabytes.
 const MAX_BYTES: u64 = 1 << 30;
 
-/// [`sweep`], then, while the entries left hold more than `max_bytes`, the oldest entry whole:
-/// its manifest, zip and deflated form go together, so no half of an entry outlives the rest.
-/// An entry is as old as the newest of its files.
+/// [`sweep`], then, while the entries left hold more than `max_bytes`, the entry no run read or
+/// wrote for longest, whole: its manifest, zip and deflated form go together, so no half of an
+/// entry outlives the rest. An entry is as old as the newest of its files.
 pub(super) fn sweep_within(dir: &Path, now: SystemTime, max_bytes: u64) {
     let Some(limit) = now.checked_sub(STALE) else {
         return;

@@ -778,9 +778,9 @@ fn the_key_reads_only_a_regular_file_and_only_up_to_the_bound() {
     assert_eq!(read(&cwd), vec![]);
 }
 
-/// Past the size it may hold, the cache removes its oldest entries whole and keeps the newest.
+/// Past the size it may hold, the cache removes the entries no run used for longest, whole.
 #[test]
-fn the_sweep_keeps_the_cache_under_its_size_by_removing_the_oldest_entries() {
+fn the_sweep_keeps_the_cache_under_its_size_by_removing_the_least_used_entries() {
     let root = scratch();
     let dir = root.path().join("unions");
     let keys: Vec<CacheKey> = (1..=3).map(|n| CacheKey(format!("{n:064x}"))).collect();
@@ -809,16 +809,22 @@ fn the_sweep_keeps_the_cache_under_its_size_by_removing_the_oldest_entries() {
             .map(|f| f.metadata().unwrap().len())
             .sum()
     };
-    let room = size(&keys[1]) + size(&keys[2]);
+    // The oldest entry written is the one a run read last.
+    assert!(load(&dir, &keys[0]).is_some());
+    let room = size(&keys[0]) + size(&keys[2]);
     sweep_within(&dir, SystemTime::now(), room);
-    assert_eq!(load(&dir, &keys[0]), None, "the oldest entry goes");
-    assert!(load(&dir, &keys[1]).is_some() && load(&dir, &keys[2]).is_some());
+    assert_eq!(
+        load(&dir, &keys[1]),
+        None,
+        "the least recently used entry goes"
+    );
+    assert!(load(&dir, &keys[0]).is_some() && load(&dir, &keys[2]).is_some());
     assert!(
         fs::read_dir(&dir).unwrap().flatten().all(|f| !f
             .file_name()
             .to_str()
             .unwrap()
-            .starts_with(&keys[0].0)),
-        "nothing of the oldest entry is left"
+            .starts_with(&keys[1].0)),
+        "nothing of that entry is left"
     );
 }

@@ -42,7 +42,7 @@ pub use key::{interpreter_without_running, key};
 /// the manifest. A format 2 entry has none.
 const FORMAT: u64 = 3;
 
-/// An entry nothing has rewritten for this long is removed by the next store: a module set a
+/// An entry no run has read or written for this long is removed by the next store: a module set a
 /// playbook no longer names would otherwise stay on disk for good.
 const STALE: Duration = Duration::from_secs(30 * 24 * 3600);
 

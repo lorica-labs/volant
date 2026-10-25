@@ -12,7 +12,7 @@ pub const MODULE: Module = Module {
 };
 
 fn run_shell(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() -> bool) -> Run {
-    command::execute(args, true, ctx, cancelled)
+    command::with_invocation(command::execute(args, true, ctx, cancelled), args, true)
 }
 
 #[cfg(all(test, unix))]

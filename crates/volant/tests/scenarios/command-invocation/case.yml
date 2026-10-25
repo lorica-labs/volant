@@ -1,0 +1,2 @@
+# The invocation of command and shell: every argument with its default, as a loop item keeps it.
+args: [-i, inv.ini, play.yml]

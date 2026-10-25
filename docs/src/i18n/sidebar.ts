@@ -111,6 +111,12 @@ export const sidebarLabels: Labels = {
     es: 'Runtime gestionado',
     'zh-cn': '托管运行时',
   },
+  'Switch without risk': {
+    fr: 'Changer sans risque',
+    de: 'Ohne Risiko umsteigen',
+    es: 'Cambiar sin riesgo',
+    'zh-cn': '无风险切换',
+  },
   'Run recordings': {
     fr: 'Enregistrements de runs',
     de: 'Aufzeichnungen von Läufen',

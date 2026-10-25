@@ -1,12 +1,12 @@
 ---
-sourceHash: 581fc6ef8549
+sourceHash: 2b9b652f0234
 title: volant shadow
 description: Reproducir una ejecución que ansible-playbook grabó, sin contactar ningún host, y ver qué habría hecho Volant de otra manera.
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant shadow replay` lee una grabación del callback `volant.compat.record` (ver [Grabaciones de ejecuciones](/es/docs/reference/recording/)). Ejecuta los mismos playbooks con las mismas opciones en Volant y responde a cada tarea que llegaría a un host con el resultado que grabó ansible-core. Después compara lo que decidió Volant con lo que hizo ansible-core. No se contacta ningún host y no arranca ningún agente.
+`volant shadow replay` lee una grabación del callback `volant.compat.record` (ver [Grabaciones de ejecuciones](/es/docs/reference/recording/)). Ejecuta los mismos playbooks con las mismas opciones en Volant y responde a cada tarea que llegaría a un host con el resultado que grabó ansible-core. Después compara lo que decidió Volant con lo que hizo ansible-core. No se contacta ningún host y no arranca ningún agente. [Cambiar sin riesgo](/es/docs/start/switch-without-risk/) recorre todo el camino, CI incluida.
 
 ```sh
 volant shadow replay RECORDING [--json] [--ledger PATH]

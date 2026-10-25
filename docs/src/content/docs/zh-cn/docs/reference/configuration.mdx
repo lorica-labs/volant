@@ -1,5 +1,5 @@
 ---
-sourceHash: c80b79a9a509
+sourceHash: 9dd8ea33ceb0
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -233,7 +233,7 @@ Ansible 会忽略这个段，所以同一个 `ansible.cfg` 可以包含它，并
 </Option>
 
 <Option name="shadow_runs" id="volant-shadow-runs" default="5">
-  [`volant shadow status`](/zh-cn/docs/reference/cli/shadow/#记录簿与结论) 在判定一个 playbook 为 `ready` 之前，要求连续多少次干净的重放。至少为 1 的整数；其他任何值都会以退出码 5 终止运行。
+  [`volant shadow status`](/zh-cn/docs/reference/cli/shadow/#记录簿与结论) 在判定一个 playbook 为 `ready` 之前，要求连续多少次干净的重放。至少为 1 的整数；其他任何值都会以退出码 5 终止运行。参见[无风险切换](/zh-cn/docs/start/switch-without-risk/)。
 </Option>
 
 <Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">

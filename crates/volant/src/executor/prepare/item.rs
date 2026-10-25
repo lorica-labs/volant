@@ -280,13 +280,10 @@ pub(super) fn item_failure(task: &PlayTask, err: &TemplateError) -> TaskResult {
     result
         .0
         .insert("exception".into(), "(traceback unavailable)".into());
-    use crate::executor::prepare::undefined::{
-        conditional_causes, finalization_causes, keyword_causes,
-    };
+    use crate::executor::prepare::undefined::{conditional_causes, finalization_causes};
     // A `when` or a keyword that failed is chained as for a task with no loop: `Task failed.` at
     // the task, then the sentence at the value.
-    if let Some(causes) = conditional_causes(task, &err.0).or_else(|| keyword_causes(task, &err.0))
-    {
+    if let Some(causes) = conditional_causes(task, &err.0) {
         result.0.insert(crate::render::CHAIN_KEY.into(), causes);
     } else if let Some(Value::Array(mut causes)) = finalization_causes(task, &err.0) {
         // A head that already leads the block stays; a plain one becomes the lead.

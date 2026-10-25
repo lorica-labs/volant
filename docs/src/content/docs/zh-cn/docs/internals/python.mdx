@@ -125,7 +125,7 @@ agent 自带这些模块的 Rust 版本：
 | `setup` | 在 Debian 和 Ubuntu 上，针对[原生 facts](/zh-cn/docs/variables/precedence/#原生-facts)下列出的 facts |
 | `stat` | 路径是普通的绝对路径，且校验和是 SHA-1 |
 | `file` | `state` 是 `file`、`directory` 或 `absent`，或者未设置；路径上还没有任何东西，或链接已存在且指向 `src` 时，也包括 `link` |
-| `apt` | 包按精确名称给出、不带版本：缓存是新的、包都已安装或都已不存在时只读取；缓存过期时执行更新，缺少的包用与模块相同的 `apt-get` 命令安装 |
+| `apt` | 包按精确名称给出、不带版本：缓存是新的、包都已安装或都已不存在时只读取；缓存过期时执行更新，缺少的包用与模块相同的 `apt-get` 命令安装，任务设置了 `policy_rc_d` 时在其下安装；标记为自动安装的包会像模块那样被标记为手动安装 |
 | `systemd`、`systemd_service` | 系统范围内的 `name`、`state`、`enabled` 和 `daemon_reload` |
 | `lineinfile` | 正则表达式在 Rust 中与在 Python 中含义相同，且 `backrefs` 关闭 |
 | `copy` | `copy` action plugin 运行的那个模块，针对从控制节点暂存的文件 |

@@ -96,6 +96,15 @@ pub struct Union {
 }
 
 impl Union {
+    /// This union under the run's native policy: `[volant] native_modules` or
+    /// `VOLANT_NATIVE_MODULES`, and where `setup` gets its facts.
+    pub(crate) fn armed(self, enabled: bool, facts: Facts) -> Union {
+        Union {
+            natives: Natives { enabled, facts },
+            ..self
+        }
+    }
+
     /// The module's half of the payload a task naming `module` runs with, when the run built one.
     pub fn payload(&self, module: &str) -> Option<ModulePayload> {
         let facts = self.modules.get(payload_key(module))?;

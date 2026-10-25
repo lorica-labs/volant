@@ -284,6 +284,7 @@ fn defaults() -> volant::transport::ConnectionDefaults {
         ssh_extra_args: Vec::new(),
         ssh_use_tty: true,
         names: volant::transport::ConnectionNames::default(),
+        docker: volant::transport::DockerSettings::default(),
     }
 }
 

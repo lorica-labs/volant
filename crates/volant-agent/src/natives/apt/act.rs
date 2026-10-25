@@ -2,7 +2,8 @@
 //! What the module runs when its cache is stale or a package is missing, in its order and under
 //! its environment: `apt-get update` (python-apt's `cache.update()` there, which runs the same
 //! hooks and touches the same stamp), the candidates of the missing names, `apt-get install` built
-//! as `install()` builds it, then `apt-mark manual` over every name.
+//! as `install()` builds it (under `policy_rc_d` when the task sets it), then `apt-mark manual`
+//! over every name.
 //!
 //! Handed back before anything changed: a missing name `apt-cache policy` gives no candidate
 //! (unknown, virtual, or pinned away), whose failure the module words itself; a tool not on
@@ -17,6 +18,7 @@ use std::path::Path;
 use serde_json::{Map, Value, json};
 
 use super::super::runtime::{self, Clock, Root, Stop};
+use super::policy;
 use super::status::{bin_path, cache_mtime, from_timestamp};
 
 /// What the plan leaves to run.
@@ -28,6 +30,8 @@ pub(super) struct Act {
     pub(super) missing: Vec<String>,
     /// dpkg's native architecture, as `apt-cache policy` may name a package with it.
     pub(super) arch: String,
+    /// The exit code `/usr/sbin/policy-rc.d` gives during the install, when the task sets one.
+    pub(super) policy_rc_d: Option<i64>,
     /// The module's arguments, defaults filled in.
     pub(super) params: Map<String, Value>,
     /// `cache_update_time` before any update.
@@ -90,7 +94,20 @@ pub(super) fn act(
     } else {
         let pins = candidates(&act.missing, &act.arch, &env, task_env, clock)?;
         let cmd = install_command(&apt_get, &act.params, &pins);
-        let (rc, out, err) = run_line(&cmd, &env, clock)?;
+        let policy = match act.policy_rc_d {
+            Some(code) => match policy::enter(code, root, task_env)? {
+                Ok(policy) => Some(policy),
+                Err(msg) => return Ok(failed(result, msg)),
+            },
+            None => None,
+        };
+        let ran = run_line(&cmd, &env, clock);
+        if let Some(policy) = policy
+            && let Err(msg) = policy::exit(policy, root)
+        {
+            return Ok(failed(result, msg));
+        }
+        let (rc, out, err) = ran?;
         if rc == 0 {
             outcome.extend(json_map(json!({
                 "changed": true, "stdout": out, "stderr": err, "diff": {},
@@ -268,6 +285,13 @@ fn failure(cmd: &str, out: String, err: String, rc: i32) -> Map<String, Value> {
         "stderr": err,
         "rc": rc,
     }))
+}
+
+/// `fail_json(msg)` alone.
+fn failed(mut result: Map<String, Value>, msg: String) -> Map<String, Value> {
+    result.insert("failed".into(), true.into());
+    result.insert("msg".into(), msg.into());
+    result
 }
 
 fn json_map(value: Value) -> Map<String, Value> {

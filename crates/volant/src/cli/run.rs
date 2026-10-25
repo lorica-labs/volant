@@ -19,7 +19,7 @@ use crate::executor::{self, Abort, RunOptions, RunState};
 use crate::inventory::Host;
 use crate::listing::{self, Listing};
 use crate::profile::{Phase, Profile, json_path, micros};
-use crate::python::{Facts, Natives};
+use crate::python::Facts;
 use crate::render::Renderer;
 use crate::roles::RoleSearch;
 use crate::stats::{Refusal, Stats, error_code, exit_code};
@@ -466,6 +466,7 @@ async fn run_all(
         ssh_extra_args: ssh_words("--ssh-extra-args", args.connect.ssh_extra_args.as_deref())?,
         ssh_use_tty: config.ssh_usetty,
         names: crate::transport::ConnectionNames::through(Arc::clone(&bridge) as _),
+        docker: config.docker,
     };
     let mut stats = Stats::default();
 
@@ -553,7 +554,7 @@ async fn run_all(
             forced
         }
     };
-    let python = python.map(|union| armed(union, config.native_modules, facts));
+    let python = python.map(|union| union.armed(config.native_modules, facts));
     let (run_tags, skip_tags) = selection.lists();
     store.set_tags(run_tags, skip_tags);
     store.set_modes(args.check, args.diff);
@@ -697,15 +698,6 @@ async fn run_all(
     }
     // `exit_code` reads the whole run, whatever the recaps showed along the way.
     Ok(exit_code(&stats))
-}
-
-/// `union` under the run's native policy: `[volant] native_modules` or `VOLANT_NATIVE_MODULES`,
-/// and where `setup` gets its facts.
-pub(super) fn armed(union: python::Union, enabled: bool, facts: Facts) -> python::Union {
-    python::Union {
-        natives: Natives { enabled, facts },
-        ..union
-    }
 }
 
 /// The recap, then what `set_stats` collected when the run asks to see it.

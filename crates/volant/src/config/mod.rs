@@ -10,6 +10,7 @@ use crate::executor::DEFAULT_CONNECT_TIMEOUT;
 
 mod color;
 mod defaults;
+mod docker;
 mod locate;
 mod parse;
 mod paths;
@@ -103,6 +104,8 @@ pub struct Config {
     /// plugin sends without input a terminal (`ssh -tt`). On by default; `ansible_ssh_use_tty`
     /// on a host wins over both.
     pub ssh_usetty: bool,
+    /// `[docker_connection]` and `ANSIBLE_DOCKER_*`, for `community.docker.docker`.
+    pub docker: crate::transport::DockerSettings,
     /// `[defaults] enable_task_debugger` or `ANSIBLE_ENABLE_TASK_DEBUGGER`: a failed or
     /// unreachable task with no `debugger` keyword opens the debugger prompt.
     pub enable_task_debugger: bool,
@@ -316,6 +319,7 @@ impl Config {
         if let Ok(flag) = std::env::var("ANSIBLE_SSH_USETTY") {
             config.ssh_usetty = callback_flag(&flag);
         }
+        docker::env(&mut config.docker)?;
         // Set and empty still wins, and a word the reference does not know reads as false.
         if let Ok(format) = std::env::var("ANSIBLE_CALLBACK_RESULT_FORMAT") {
             config.callback_result_format = Some(format);

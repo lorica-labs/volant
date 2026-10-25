@@ -48,6 +48,7 @@ pub(crate) fn defaults() -> ConnectionDefaults {
         ssh_extra_args: Vec::new(),
         ssh_use_tty: true,
         names: crate::transport::ConnectionNames::default(),
+        docker: crate::transport::DockerSettings::default(),
     }
 }
 

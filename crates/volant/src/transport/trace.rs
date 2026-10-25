@@ -33,6 +33,11 @@ fn enabled() -> bool {
     VERBOSITY.load(Ordering::Relaxed) >= LEVEL_FROM
 }
 
+/// Whether the connection lines are shown, for a line that costs a command to write.
+pub(super) fn connection_lines() -> bool {
+    enabled()
+}
+
 fn line(text: &str) {
     let choice = *COLOR
         .lock()

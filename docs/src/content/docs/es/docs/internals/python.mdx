@@ -125,7 +125,7 @@ El agente incluye versiones en Rust de estos módulos:
 | `setup` | en Debian y Ubuntu, para los facts enumerados en [Facts](/es/docs/variables/precedence/#facts-nativos) |
 | `stat` | la ruta es simple y absoluta, y el checksum es SHA-1 |
 | `file` | `state` es `file`, `directory` o `absent`, o no está definido, y `link` cuando aún no hay nada en la ruta, o el enlace ya existe y apunta a `src` |
-| `apt` | los paquetes se nombran exactamente, sin versión: una caché al día y paquetes ya instalados o ausentes solo se leen; una caché vieja se actualiza y los paquetes que faltan se instalan con los mismos comandos `apt-get` que ejecuta el módulo |
+| `apt` | los paquetes se nombran exactamente, sin versión: una caché al día y paquetes ya instalados o ausentes solo se leen; una caché vieja se actualiza y los paquetes que faltan se instalan con los mismos comandos `apt-get` que ejecuta el módulo, bajo `policy_rc_d` cuando la tarea lo indica; un paquete marcado como instalado automáticamente se marca como manual, igual que en el módulo |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` y `daemon_reload` en el ámbito del sistema |
 | `lineinfile` | la expresión regular significa lo mismo en Rust que en Python, y `backrefs` está desactivado |
 | `copy` | el módulo que ejecuta el plugin de acción `copy`, para un archivo preparado desde el controlador |

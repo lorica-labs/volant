@@ -19,6 +19,11 @@ const CONNECTION_PLUGINS: [&str; 6] = [
     "winrm",
 ];
 
+/// The collections' connection plugins this engine drives. ansible-core strips the settings of
+/// its own plugins only; these are stripped too, because a host that named its own
+/// `ansible_docker_host`, user or environment would choose where its next task runs.
+const ENGINE_CONNECTION_PLUGINS: [&str; 1] = ["docker"];
+
 /// ansible-core 2.19.12's `MAGIC_VARIABLE_MAPPING` values, which include every
 /// `COMMON_CONNECTION_VARS` name, then `RESTRICTED_RESULT_KEYS` and `INTERNAL_RESULT_KEYS`.
 const RESTRICTED_FACTS: [&str; 39] = [
@@ -106,11 +111,15 @@ pub(super) fn restricted_fact(key: &str) -> bool {
     if key.starts_with("ansible_ssh_host_key_") {
         return false;
     }
-    let plugin_setting = CONNECTION_PLUGINS.iter().any(|plugin| {
-        key.strip_prefix("ansible_")
-            .and_then(|rest| rest.strip_prefix(plugin))
-            .is_some_and(|rest| rest.starts_with('_'))
-    }) && !key.ends_with("_bridge")
+    let plugin_setting = CONNECTION_PLUGINS
+        .iter()
+        .chain(&ENGINE_CONNECTION_PLUGINS)
+        .any(|plugin| {
+            key.strip_prefix("ansible_")
+                .and_then(|rest| rest.strip_prefix(plugin))
+                .is_some_and(|rest| rest.starts_with('_'))
+        })
+        && !key.ends_with("_bridge")
         && !key.ends_with("_gwbridge");
     // `^ansible_.*_interpreter$`: both underscores are its own, so `ansible_interpreter` is not.
     let interpreter = key.len() >= "ansible__interpreter".len()

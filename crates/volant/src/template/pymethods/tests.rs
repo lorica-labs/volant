@@ -133,7 +133,11 @@ fn a_reverse_sort_is_stable_and_orders_the_items() {
 fn a_list_stops_growing_at_the_limit() {
     let out =
         render("{% set l = [1] %}{% for i in range(60) %}{% set _ = l.extend(l) %}{% endfor %}");
-    assert!(out.is_err(), "{out:?}");
+    assert!(
+        out.as_ref()
+            .is_err_and(|e| e.contains("Volant builds at most 1048576")),
+        "{out:?}"
+    );
 }
 
 /// A width, a precision or a `*` of `%` that a host supplies is bounded like the other methods:

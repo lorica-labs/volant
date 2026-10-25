@@ -35,6 +35,7 @@ indexmap.workspace = true
 libc.workspace = true
 minijinja.workspace = true
 minijinja-contrib.workspace = true
+miniz_oxide.workspace = true
 pbkdf2.workspace = true
 regex.workspace = true
 saphyr.workspace = true

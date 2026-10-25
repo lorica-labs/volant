@@ -994,6 +994,7 @@ dependencies = [
  "mimalloc",
  "minijinja",
  "minijinja-contrib",
+ "miniz_oxide",
  "pbkdf2",
  "regex",
  "rstest",

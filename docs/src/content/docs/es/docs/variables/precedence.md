@@ -1,5 +1,5 @@
 ---
-sourceHash: 89ab68cf559b
+sourceHash: 8577d9c13ab0
 title: Precedencia y facts
 description: Qué fuente gana cuando dos definen la misma variable, las variables mágicas, y cómo se recopilan, nombran y guardan en caché los facts.
 ---
@@ -46,6 +46,7 @@ Un conjunto fijo de variables mágicas se sitúa encima de la vista de cada host
 | `ansible_play_batch`, `play_hosts` | Los hosts del [lote de `serial`](/es/docs/playbooks/how-a-play-runs/#lotes-con-serial) actual. `play_hosts` está obsoleta. |
 | `playbook_dir`, `inventory_dir`, `inventory_file` | Rutas de la ejecución actual. |
 | `omit` | El marcador que descarta un argumento de módulo. |
+| `vars` | Todas las variables de este host, leídas por nombre. `vars['a']`, `vars[name]` y `vars.get('a')` renderizan la plantilla que contiene la variable, como `{{ a }}`. `omit` no forma parte de ellas. |
 | `ansible_playbook_python` | El intérprete de Python que ejecuta ansible-core para Volant. Se busca cuando una plantilla lo lee, y queda sin definir cuando no se encuentra ninguno. |
 | `ansible_check_mode`, `ansible_diff_mode` | Si la ejecución lleva `--check` y `--diff`. La palabra clave `check_mode` o `diff` de un play o de una tarea no los cambia. |
 | `ansible_run_tags`, `ansible_skip_tags` | Las etiquetas que la ejecución selecciona y omite, consulta [Modo check, diff y listados](/es/docs/playbooks/check-and-diff/#ansible_run_tags-y-ansible_skip_tags). |

@@ -1,0 +1,2 @@
+# `vars` holds every variable of the host, a template in one rendered as `{{ name }}` would render it.
+args: [-i, inv.ini, play.yml]

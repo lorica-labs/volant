@@ -1,5 +1,5 @@
 ---
-sourceHash: 89ab68cf559b
+sourceHash: 8577d9c13ab0
 title: Rangfolge und Facts
 description: Welche Quelle gewinnt, wenn zwei dieselbe Variable definieren, die magischen Variablen und wie Facts gesammelt, benannt und zwischengespeichert werden.
 ---
@@ -46,6 +46,7 @@ Eine feste Menge magischer Variablen liegt über der Sicht jedes Hosts und gewin
 | `ansible_play_batch`, `play_hosts` | Die Hosts des aktuellen [`serial`-Batches](/de/docs/playbooks/how-a-play-runs/#serial-batches). `play_hosts` ist veraltet. |
 | `playbook_dir`, `inventory_dir`, `inventory_file` | Pfade des aktuellen Laufs. |
 | `omit` | Der Platzhalter, der ein Modulargument weglässt. |
+| `vars` | Alle Variablen dieses Hosts, nach Namen gelesen. `vars['a']`, `vars[name]` und `vars.get('a')` rendern ein Template, das die Variable enthält, wie `{{ a }}`. `omit` gehört nicht dazu. |
 | `ansible_playbook_python` | Der Python-Interpreter, der ansible-core für Volant ausführt. Wird gefunden, wenn ein Template ihn liest, und ist undefiniert, wenn keiner gefunden wird. |
 | `ansible_check_mode`, `ansible_diff_mode` | Ob der Lauf `--check` und `--diff` hat. Ein eigenes Keyword `check_mode` oder `diff` an einem Play oder Task ändert sie nicht. |
 | `ansible_run_tags`, `ansible_skip_tags` | Die Tags, die der Lauf auswählt und überspringt, siehe [Check-Modus, Diff und Auflistungen](/de/docs/playbooks/check-and-diff/#ansible_run_tags-und-ansible_skip_tags). |

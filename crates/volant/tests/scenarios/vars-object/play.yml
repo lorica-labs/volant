@@ -1,0 +1,20 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    a: 1
+    key: a
+    via_var: "{{ vars[key] }}"
+  tasks:
+    - debug:
+        msg:
+          - "{{ vars['a'] }}"
+          - "{{ vars.a }}"
+          - "{{ vars[key] }}"
+          - "{{ via_var }}"
+          - "{{ 'a' in vars }}"
+          - "{{ 'omit' in vars }}"
+          - "{{ 'nosuch' in vars }}"
+          - "{{ vars | length > 0 }}"
+          - "{{ vars.get('a') }}"
+          - "{{ vars.get('nosuch', 'd') }}"
+          - "{{ vars['inventory_hostname'] }}"

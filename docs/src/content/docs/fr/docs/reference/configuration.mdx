@@ -1,5 +1,5 @@
 ---
-sourceHash: 9dd8ea33ceb0
+sourceHash: 1f43b5ded964
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -84,6 +84,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
   Exécute les handlers notifiés même sur les hôtes qui ont échoué.
+</Option>
+
+<Option name="duplicate_dict_key" id="defaults-duplicate-dict-key" default="warn" env="ANSIBLE_DUPLICATE_YAML_DICT_KEY">
+  Ce que reçoit une clé YAML écrite deux fois dans un même mapping : `warn` garde la dernière valeur et indique où se trouve la seconde clé, `error` refuse le fichier, `ignore` garde la dernière valeur sans rien dire.
 </Option>
 
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">

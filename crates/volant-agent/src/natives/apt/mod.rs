@@ -36,6 +36,7 @@ use super::{Native, NativeRun};
 use crate::modules::Context;
 
 mod act;
+mod cache;
 mod plan;
 mod policy;
 mod request;

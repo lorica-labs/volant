@@ -85,6 +85,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Run notified handlers even on hosts that failed.
 </Option>
 
+<Option name="duplicate_dict_key" id="defaults-duplicate-dict-key" default="warn" env="ANSIBLE_DUPLICATE_YAML_DICT_KEY">
+  What a YAML key written twice in one mapping gets: `warn` keeps the last value and prints where the second key is, `error` refuses the file, `ignore` keeps the last value and says nothing.
+</Option>
+
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
   Print the statistics that `set_stats` collected after the recap.
 </Option>

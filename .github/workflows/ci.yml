@@ -93,6 +93,10 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
+    env:
+      # Many tests spend their time waiting on a child process or a timer, not on a core: more
+      # test threads than the runner has cores keeps the cores busy.
+      NEXTEST_TEST_THREADS: 8
     steps:
       - if: needs.changes.outputs.code == 'true'
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7

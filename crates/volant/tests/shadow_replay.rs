@@ -15,11 +15,13 @@ use std::time::Duration;
 const RECORDED_IN: &str = "/tmp/volant-shadow";
 
 fn fixture() -> tempfile::TempDir {
+    fixture_of("shadow")
+}
+
+fn fixture_of(name: &str) -> tempfile::TempDir {
     let dir = tempfile::tempdir().expect("temp dir");
-    copy(
-        &Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/shadow"),
-        dir.path(),
-    );
+    let tests = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests");
+    copy(&tests.join(name), dir.path());
     dir
 }
 
@@ -36,7 +38,8 @@ fn copy(from: &Path, to: &Path) {
     }
 }
 
-/// The replay of `recording` in `dir`, with no agent anywhere it could be started from.
+/// The replay of `recording` in `dir`, with no agent anywhere it could be started from and
+/// nothing on standard input.
 fn replay(dir: &Path, recording: &str) -> Output {
     let no_agents = dir.join("no-agents");
     std::fs::create_dir_all(&no_agents).expect("mkdir");
@@ -48,6 +51,7 @@ fn replay(dir: &Path, recording: &str) -> Output {
         .env("VOLANT_AGENT_DIR", &no_agents)
         .env_remove("ANSIBLE_CONFIG")
         .env_remove("VOLANT_PYTHON");
+    command.stdin(std::process::Stdio::null());
     process::run_within(&mut command, Duration::from_secs(60), None)
 }
 
@@ -107,4 +111,15 @@ fn a_truncated_recording_replays_up_to_its_end() {
         "{stdout}"
     );
     assert_ne!(out.status.code(), Some(0));
+}
+
+/// A `pause` that asked on a terminal (`tests/shadow-pause`, recorded in
+/// `/tmp/volant-shadow-pause` with `yes` typed) takes the recorded answer and asks nothing.
+#[test]
+fn a_pause_takes_the_recorded_answer() {
+    let dir = fixture_of("shadow-pause");
+    let out = replay(dir.path(), "recording.jsonl");
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("\"msg\": \"yes\""), "{stdout}");
 }

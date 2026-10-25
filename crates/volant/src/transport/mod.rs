@@ -21,6 +21,7 @@ pub use defaults::{
     BecomeMethod, ConnectError, ConnectionDefaults, ConnectionKeywords, ConnectionNotFound,
     Escalation, EscalationProgram, HostOwn, INCORRECT_SU_PASSWORD, INCORRECT_SUDO_PASSWORD,
     MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport, plugin_load_warning,
+    refused_escalation,
 };
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;

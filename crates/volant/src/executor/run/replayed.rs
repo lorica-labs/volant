@@ -38,19 +38,20 @@ pub(in crate::executor) fn sent<T, E>(
 /// unreachable ends the batch there.
 pub(in crate::executor) fn batch(
     replay: &Replay,
-    seen: &mut Seen,
+    seen: Option<&Seen>,
     host: &str,
-    steps: &[&PlayTask],
+    steps: &[(usize, &PlayTask)],
     origin: &[(usize, usize)],
 ) -> (Vec<Option<TaskResult>>, Result<BatchOutcome, String>) {
-    let occurrences: Vec<usize> = steps.iter().map(|task| replay.reach(seen, task)).collect();
     let mut flat = Vec::new();
     for &(step, item) in origin {
+        let (pos, task) = steps[step];
+        let occurrence = Seen::of(seen, pos);
         let replayed = Replayed {
             replay,
             host,
-            task: steps[step],
-            occurrence: occurrences[step],
+            task,
+            occurrence,
         };
         let (mut one, outcome) = replayed.attempt(item, 1);
         flat.push(one.pop().flatten());
@@ -61,16 +62,38 @@ pub(in crate::executor) fn batch(
     (flat, Ok(BatchOutcome::Completed))
 }
 
+/// Under a replay, the recorded result of a `pause`, which neither waits nor asks: the answer a
+/// prompt got is the one the recording holds.
+pub(in crate::executor) fn paused(
+    options: &RunOptions,
+    seen: Option<&Seen>,
+    host: &str,
+    pos: usize,
+    task: &PlayTask,
+    item: usize,
+) -> Option<TaskResult> {
+    if volant_protocol::modules::short_name(&task.module) != "pause" {
+        return None;
+    }
+    let replayed = Replayed::reach(options, seen, host, pos, task)?;
+    Some(
+        replayed
+            .answer(item, 1)
+            .unwrap_or_else(TaskResult::failed_with),
+    )
+}
+
 impl<'a> Replayed<'a> {
-    /// The step `task` is under a replay, counted as one more time it reaches the host.
+    /// Step `pos`, `task`, under a replay, with the occurrence [`Seen::mark`] gave it.
     pub(in crate::executor) fn reach(
         options: &'a RunOptions,
-        seen: &mut Seen,
+        seen: Option<&Seen>,
         host: &'a str,
+        pos: usize,
         task: &'a PlayTask,
     ) -> Option<Self> {
         let replay = options.replay.as_deref()?;
-        let occurrence = replay.reach(seen, task);
+        let occurrence = Seen::of(seen, pos);
         Some(Replayed {
             replay,
             host,

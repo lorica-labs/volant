@@ -4,6 +4,7 @@
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
@@ -33,9 +34,36 @@ pub(crate) struct Replay {
     truncated: bool,
 }
 
-/// Which time each task path has run on one host, counted as the host's driver reaches them.
+/// Under a replay, which time each task's `file:line` has reached one host, and the occurrence
+/// each step of the host was given when its driver took it up: run, skipped or sent alike, since
+/// the recording counts every task that has a result.
 #[derive(Debug, Default)]
-pub(crate) struct Seen(HashMap<String, usize>);
+pub(crate) struct Seen {
+    counts: HashMap<(Arc<str>, usize), usize>,
+    steps: HashMap<usize, usize>,
+}
+
+impl Seen {
+    /// Counts step `pos` as one more time `task`'s file and line reached the host; nothing
+    /// outside a replay, where `seen` is `None`.
+    pub(crate) fn mark(seen: &mut Option<Seen>, pos: usize, task: &PlayTask) {
+        let (Some(seen), Some(origin)) = (seen.as_mut(), task.origin.as_ref()) else {
+            return;
+        };
+        let count = seen
+            .counts
+            .entry((Arc::clone(&origin.path), origin.line))
+            .or_default();
+        seen.steps.insert(pos, *count);
+        *count += 1;
+    }
+
+    /// The occurrence step `pos` was given when it was marked.
+    pub(crate) fn of(seen: Option<&Seen>, pos: usize) -> usize {
+        seen.and_then(|s| s.steps.get(&pos).copied())
+            .unwrap_or_default()
+    }
+}
 
 impl Replay {
     /// The answers of `recording`, for a replay running in `root`.
@@ -93,16 +121,6 @@ impl Replay {
             root: root.to_path_buf(),
             truncated: recording.truncated,
         }
-    }
-
-    /// The next occurrence of `task` on the host `seen` counts for.
-    pub(crate) fn reach(&self, seen: &mut Seen, task: &PlayTask) -> usize {
-        let next = seen
-            .0
-            .entry(self.path_of(task.origin.as_ref()))
-            .or_default();
-        *next += 1;
-        *next - 1
     }
 
     /// What the host answered for `task`'s item `item` at attempt `attempt` (from 1), as a

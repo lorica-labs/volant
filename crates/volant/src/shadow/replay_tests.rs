@@ -52,12 +52,20 @@ fn the_same_path_is_told_apart_by_occurrence() {
         ],
         false,
     );
-    let mut seen = Seen::default();
+    // Steps 4 and 9 of the host are the file's two runs; another path between them counts apart.
+    let mut seen = Some(Seen::default());
     let task = task_at("/here/inc.yml", 1);
-    for rc in [1, 2] {
-        let n = replay.reach(&mut seen, &task);
+    Seen::mark(&mut seen, 4, &task);
+    Seen::mark(&mut seen, 6, &task_at("/here/site.yml", 3));
+    Seen::mark(&mut seen, 9, &task);
+    for (pos, rc) in [(4, 1), (9, 2)] {
+        let n = Seen::of(seen.as_ref(), pos);
         assert_eq!(replay.answer("h", &task, n, 0, 1).unwrap().0["rc"], rc);
     }
+    assert_eq!(Seen::of(seen.as_ref(), 6), 0);
+    let mut off = None;
+    Seen::mark(&mut off, 4, &task);
+    assert!(off.is_none());
     let relative = task_at("inc.yml", 1);
     assert_eq!(replay.answer("h", &relative, 1, 0, 1).unwrap().0["rc"], 2);
 }

@@ -4355,6 +4355,7 @@ async fn a_real_link_s_stop_batch_forward_reaches_the_agent() {
     link.send(&ToAgent::RunBatch {
         id: 77,
         tasks: vec![Task {
+            only_if: None,
             module: "shell".into(),
             args: json!({"_raw_params": format!("sleep {marker} & wait")})
                 .as_object()

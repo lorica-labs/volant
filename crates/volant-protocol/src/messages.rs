@@ -37,7 +37,10 @@ use serde_json::{Map, Value};
 ///
 /// 9 added `Warm`: start the Python server for a payload ahead of the task that needs it. An
 /// agent that did not know the message would read it as malformed.
-pub const PROTOCOL_VERSION: u32 = 9;
+///
+/// 10 added `Task.only_if`: a task run only when an earlier task of its batch found a file with
+/// a given sum. An agent that did not know the field would run the task whatever it found.
+pub const PROTOCOL_VERSION: u32 = 10;
 
 /// How the frame after a `PutBlob` carries the blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -219,7 +222,22 @@ pub struct Task {
     /// Start the task as a background job and answer at once with its id (Ansible's `async`).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job: Option<AsyncJob>,
+    /// Run only when task `task` of this batch, a `stat`, found a regular file whose SHA-1 is
+    /// `checksum`; otherwise answer [`NOT_RUN`] without running anything. What a plugin sends
+    /// with its `stat` so the module it would run next on that answer goes in the same trip.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub only_if: Option<OnlyIf>,
 }
+
+/// See [`Task::only_if`].
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct OnlyIf {
+    pub task: usize,
+    pub checksum: String,
+}
+
+/// The key of the result a task with [`Task::only_if`] answers when the condition did not hold.
+pub const NOT_RUN: &str = "_volant_not_run";
 
 /// How a task runs in the background: what ansible-core hands its `async_wrapper`.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]

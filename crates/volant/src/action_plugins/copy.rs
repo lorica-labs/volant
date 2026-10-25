@@ -331,7 +331,7 @@ impl Copy {
             }
             self.dest_file = inside(&self.dest, &self.of.basename);
             self.state = State::Stat { again: true };
-            return stat(&self.dest_file, self.follow, self.force);
+            return self.look();
         }
         if exists && !self.force {
             // Measured: the destination is left alone, and the result says which one and from
@@ -362,8 +362,29 @@ impl Copy {
         }
     }
 
+    /// The `stat` of `dest_file`, with the [`Copy::touch`] it calls for on these bytes in the same
+    /// trip; without `force`, which leaves an existing file alone, the `stat` goes alone.
+    fn look(&self) -> Step {
+        let Step::Run(sub) = stat(&self.dest_file, self.follow, self.force) else {
+            unreachable!("a `stat` is one sub-task")
+        };
+        match self.force.then(|| self.touch_sub()) {
+            Some(then) => Step::RunThen {
+                sub,
+                then,
+                checksum: self.checksum.clone(),
+            },
+            None => Step::Run(sub),
+        }
+    }
+
     /// The destination already holds these bytes: `file` sets what else the task asked for.
     fn touch(&mut self) -> Step {
+        self.state = State::Module("file");
+        Step::Run(self.touch_sub())
+    }
+
+    fn touch_sub(&self) -> Sub {
         let mut args: Map<String, Value> = self
             .of
             .args
@@ -378,8 +399,11 @@ impl Copy {
         );
         args.insert("recurse".into(), Value::Bool(false));
         args.insert("state".into(), Value::String("file".into()));
-        self.state = State::Module("file");
-        Sub::run("file", args)
+        Sub {
+            module: "file",
+            args,
+            files: Vec::new(),
+        }
     }
 
     /// The destination differs: the bytes are staged on the host as `src`, and `copy` moves
@@ -449,7 +473,7 @@ impl Plugin for Copy {
         match self.state {
             State::Start => {
                 self.state = State::Stat { again: false };
-                stat(&self.dest_file, self.follow, self.force)
+                self.look()
             }
             State::Stat { again } => {
                 let Some(result) = last else {

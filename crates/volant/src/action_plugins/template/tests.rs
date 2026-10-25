@@ -133,7 +133,7 @@ fn start_plain(dir: &Path, args: Value) -> Box<dyn Plugin> {
 
 /// The `copy` sub-task the plugin ends up sending for a destination that is not there.
 fn sent(plugin: &mut dyn Plugin) -> Sub {
-    let Step::Run(stat) = plugin.next(None) else {
+    let (Step::Run(stat) | Step::RunThen { sub: stat, .. }) = plugin.next(None) else {
         panic!("no `stat` first")
     };
     assert_eq!(stat.module, "stat");

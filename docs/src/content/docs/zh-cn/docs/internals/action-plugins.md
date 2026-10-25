@@ -6,7 +6,7 @@ description: Volant 如何运行 ansible-core 通过控制节点上的 action pl
 
 ansible-core 自带的大多数模块按模块本身运行：控制节点发送 payload，主机运行它，结果送回。少数模块的运行方式不同：由 ansible-core 自己决定发送什么，有时要先向主机询问一些事，而 task 上的模块名只是入口。`package` 就是一例：实际运行的是 `apt` 或 `dnf`，在主机说明它有哪一个之后才选定。`copy` 是另一例：是否有任何东西要传到主机，取决于主机先回报的一个校验和。
 
-Volant 自己运行其中八个：`copy`、`dnf`、`fetch`、`package`、`reboot`、`service`、`template` 和 `unarchive`。每一个都是控制节点上的一个小型状态机：先被问到下一步，再拿到上一步的结果，直到得出 task 自己的结果。它走的每一步，都是本次运行 union 中的一个普通模块，单独通过该 task 已有的链路发送。plugin 最终得到的结果，走的是和其他所有模块结果相同的路径，所以主机回答的任何内容，都不会通过别的什么途径进入 playbook 的变量。
+Volant 自己运行其中八个：`copy`、`dnf`、`fetch`、`package`、`reboot`、`service`、`template` 和 `unarchive`。每一个都是控制节点上的一个小型状态机：先被问到下一步，再拿到上一步的结果，直到得出 task 自己的结果。它走的每一步，都是本次运行 union 中的一个普通模块，通过该 task 已有的链路发送，每一步一次往返；下文所述 `copy` 的 `stat` 和 `file` 例外。plugin 最终得到的结果，走的是和其他所有模块结果相同的路径，所以主机回答的任何内容，都不会通过别的什么途径进入 playbook 的变量。
 
 task 自己的 `timeout:` 关键字会以这种方式限定整个条目，八个都适用：每个子 task，以及每一次等待主机回来，包括 `reboot` 的重新连接。用完这个时间，task 就在那里结束，并给出 `Task failed: Timed out after <seconds> second(s).`，而不是 plugin 对剩下的时间可能做出的任何别的处理。
 
@@ -16,7 +16,7 @@ ansible-core 同样通过 action plugin 运行的那些名称，以及语料库�
 
 一个控制节点上的文件，或直接写入目标的 `content:`，只在内容不同时才发送到主机。
 
-plugin 先对目标运行 `stat`，除非 `force: false`，否则会要求返回 SHA-1；`force: false` 时它不要求任何校验和，并且无论现有目标里是什么，都保持不动。它把这个校验和与本地字节的校验和比较。目标已经是相同字节时，运行 `file`，设置 task 要求的属性；其他情况则把字节暂存到主机上，再运行一个 `copy` 子 task。只有最后这种情况才会发送内容。
+plugin 先对目标运行 `stat`，除非 `force: false`，否则会要求返回 SHA-1；`force: false` 时它不要求任何校验和，并且无论现有目标里是什么，都保持不动。它把这个校验和与本地字节的校验和比较。目标已经是相同字节时，运行 `file`，设置 task 要求的属性；其他情况则把字节暂存到主机上，再运行一个 `copy` 子 task。只有最后这种情况才会发送内容。`file` 与 `stat` 在同一次往返中发出：只有当 `stat` 找到校验和相同的普通文件时，agent 才运行它，所以已经是相同字节的目标只需一次往返。
 
 `remote_src: true` 会跳过这一切：`copy` 单独运行，使用 task 自己的参数，`src` 指向主机上已有的文件。
 

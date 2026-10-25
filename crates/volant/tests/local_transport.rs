@@ -66,6 +66,7 @@ async fn runs_a_batch_through_the_local_transport() {
     link.send(&ToAgent::RunBatch {
         id: 1,
         tasks: vec![Task {
+            only_if: None,
             module: "command".into(),
             args: json!({"_raw_params": "echo via-local"})
                 .as_object()
@@ -115,6 +116,7 @@ async fn cancel_stops_the_running_task_and_its_children() {
     link.send(&ToAgent::RunBatch {
         id: 9,
         tasks: vec![Task {
+            only_if: None,
             module: "shell".into(),
             // `sleep ... & wait` forces the shell to fork the sleep as a grandchild and stay
             // around itself (a lone trailing simple command would instead be exec'd, replacing
@@ -162,6 +164,7 @@ async fn dropping_the_link_lets_the_agent_stop_its_task() {
     link.send(&ToAgent::RunBatch {
         id: 10,
         tasks: vec![Task {
+            only_if: None,
             module: "shell".into(),
             args: json!({"_raw_params": format!("sleep {marker} & wait")})
                 .as_object()

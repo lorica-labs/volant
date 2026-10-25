@@ -52,7 +52,7 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
     stop_broken: &mut bool,
     logs: &mut Vec<String>,
 ) -> Result<TaskResult, Result<BatchOutcome, String>> {
-    use crate::action_plugins::{Step, gone};
+    use crate::action_plugins::{Step, Sub, gone};
     use tokio::time::Instant;
     // The `timeout` keyword bounds the whole item, as the reference's alarm bounds the whole
     // action: every sub-task, every wait for the host to come back. Past it, the item's result is
@@ -82,6 +82,8 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
     // plugin asks again after a try that failed and after a probe it was not satisfied with, and
     // the reference's loop counts both as failures.
     let mut tries: Option<u32> = None;
+    // The answer of a `RunThen`'s second sub-task, and which sub-task it answers.
+    let mut ahead: Option<(Sub, TaskResult)> = None;
     loop {
         if expired() {
             sweep_abandoned(
@@ -101,6 +103,7 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             .await;
             return Ok(timeout_result());
         }
+        let speculated = ahead.take();
         let step = match plugin.next(last.take()) {
             // Over the task's own link when it does not escalate; otherwise over the host's link
             // as the connection user, whose failure is the plugin's to see.
@@ -183,7 +186,7 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             },
             step => step,
         };
-        let (sub, dropping, job) = match step {
+        let (sub, dropping, job, then) = match step {
             Step::Done(mut result) => {
                 if !sent {
                     mark_unsent(&mut result);
@@ -229,16 +232,32 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                 continue;
             }
             Step::Run(sub) => {
+                if let Some((then, result)) = speculated
+                    && then.module == sub.module
+                    && then.args == sub.args
+                    && sub.files.is_empty()
+                {
+                    last = Some(result);
+                    continue;
+                }
                 sent |= sub.module != "raw";
-                (sub, false, None)
+                (sub, false, None, None)
+            }
+            Step::RunThen {
+                sub,
+                then,
+                checksum,
+            } => {
+                sent = true;
+                (sub, false, None, Some((then, checksum)))
             }
             Step::RunDropping(sub) => {
                 sent |= sub.module != "raw";
-                (sub, true, None)
+                (sub, true, None, None)
             }
             Step::RunJob { sub, limit } => {
                 sent |= sub.module != "raw";
-                (sub, false, Some(limit))
+                (sub, false, Some(limit), None)
             }
             Step::Plain(_) => {
                 return Ok(TaskResult::failed_with(
@@ -391,7 +410,15 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             Err(failure) => return Ok(failure),
         };
         *batch_id += 1;
-        let tasks = vec![built];
+        let mut tasks = vec![built];
+        // A second sub-task that cannot be built is not sent: the plugin asks for it again
+        // after the first answers, and gets the failure then.
+        let then = then.and_then(|(then, checksum)| {
+            let mut built = sub_task(task, item, &then, union, interpreters, asked).ok()?;
+            built.only_if = Some(volant_protocol::OnlyIf { task: 0, checksum });
+            tasks.push(built);
+            Some(then)
+        });
         // What the sub-task needs on the host and could not be put there fails the item as it
         // stands, and the plugin never sees it: the module did not run, and a plugin handed the
         // error as the module's result would dress it as one (`copy` adds `diff` and the local
@@ -417,9 +444,14 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             return Ok(timeout_result());
         }
         let tasks: Vec<Task> = tasks.into_iter().map(bounded).collect();
-        let (mut flat, ended) =
-            send_batch(link, host, *batch_id, tasks, stop, stop_broken, logs).await;
-        let result = flat.pop().flatten();
+        let (flat, ended) = send_batch(link, host, *batch_id, tasks, stop, stop_broken, logs).await;
+        let mut flat = flat.into_iter();
+        let result = flat.next().flatten();
+        if let (Some(then), Some(answer)) = (then, flat.next().flatten())
+            && !answer.0.contains_key(volant_protocol::NOT_RUN)
+        {
+            ahead = Some((then, answer));
+        }
         match ended {
             Ok(BatchOutcome::Completed | BatchOutcome::Failed { .. }) => {}
             // The link went, which a sub-task that may take it down reports to the plugin

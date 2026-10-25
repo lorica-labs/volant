@@ -169,7 +169,7 @@ fn the_native_fields_are_absent_on_the_wire_when_empty_and_default_on_the_way_in
     );
     assert_eq!(serde_json::from_str::<Ran>(&text).unwrap(), ran);
     assert_eq!(
-        PROTOCOL_VERSION, 9,
+        PROTOCOL_VERSION, 10,
         "additive fields do not move the version"
     );
 }
@@ -253,6 +253,7 @@ fn run_batch_round_trips() {
     let msg = ToAgent::RunBatch {
         id: 7,
         tasks: vec![Task {
+            only_if: None,
             module: "ansible.builtin.command".into(),
             args: json!({"_raw_params": "echo hi"})
                 .as_object()
@@ -400,8 +401,8 @@ fn skipped_is_read_by_truthiness() {
 
 /// The version moves with the shape.
 #[test]
-fn the_protocol_version_is_nine() {
-    assert_eq!(PROTOCOL_VERSION, 9);
+fn the_protocol_version_is_ten() {
+    assert_eq!(PROTOCOL_VERSION, 10);
 }
 
 #[test]

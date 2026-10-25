@@ -186,6 +186,7 @@ fn a_put_blob_that_arrives_during_a_batch_is_answered() {
         send(&ToAgent::RunBatch {
             id: 1,
             tasks: vec![Task {
+                only_if: None,
                 module: "command".into(),
                 args: serde_json::json!({"_raw_params": "sleep 1"})
                     .as_object()
@@ -401,6 +402,7 @@ fn a_native_module_cannot_take_staged_files() {
     let mut link = Link::open(&scratch.0);
     let file = link.stage(b"a file");
     let results = link.run(vec![Task {
+        only_if: None,
         module: "command".into(),
         args: json!({"_raw_params": "true"}).as_object().unwrap().clone(),
         ignore_errors: true,
@@ -746,6 +748,7 @@ const PYTHON: &str = "/usr/bin/python3";
 /// of a batch reports.
 fn python_task(union: &str, file: &str) -> Task {
     Task {
+        only_if: None,
         module: "probe".into(),
         args: Map::new(),
         ignore_errors: true,

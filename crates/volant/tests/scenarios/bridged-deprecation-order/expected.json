@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "stderr": "[WARNING]: talk warns\n[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: talk is going away. This feature will be removed from collection 'acme.probe' version 9.0.0.\n",
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [acme.probe.talk] *********************************************************\nok: [h1]\n\nTASK [acme.probe.talk] *********************************************************\nok: [h1]\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

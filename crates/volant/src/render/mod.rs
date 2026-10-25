@@ -74,6 +74,9 @@ pub struct Renderer {
 /// `_volant_` prefix keeps it off every line and out of every registered value.
 pub const DIFF_KEY: &str = "_volant_diff";
 
+/// What a warning starts with when its text is printed as it is, with no `[WARNING]: ` before it.
+pub const RAW_WARNING: &str = "\u{0}raw:";
+
 const HOST_COLUMN: usize = 26;
 
 /// What a `no_log` result shows instead of itself, measured on ansible-core 2.19.12 - the body
@@ -358,6 +361,13 @@ impl Renderer {
     /// it has shown in `_warns` and drops a repeat (`_deduplicate`, keyed by that text alone). A
     /// registered result still holds every copy, as the reference's does.
     pub fn warning(&mut self, text: &str, censored: bool) {
+        // Text written as it came, a deprecation the helper worded in full.
+        if let Some(raw) = text.strip_prefix(RAW_WARNING) {
+            if self.warned.insert(raw.to_string()) {
+                let _ = write!(anstream::stderr(), "{raw}");
+            }
+            return;
+        }
         let body = if censored { CENSORED } else { text };
         let line = format!("[WARNING]: {body}");
         if !self.warned.insert(line.clone()) {

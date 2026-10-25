@@ -215,9 +215,16 @@ pub(in crate::executor) fn take_warnings(
         if let Some(Value::Array(list)) = result.0.remove("warnings") {
             out.extend(list.iter().map(warning_text));
         }
+        // A bridged plugin's deprecation, after its warnings: measured on ansible-core 2.19.12.
+        if let Some(Value::String(text)) = result.0.remove(DEPRECATION_TEXT) {
+            out.push(format!("{}{text}", crate::render::RAW_WARNING));
+        }
     }
     out
 }
+
+/// Where the helper leaves the text of a deprecation a plugin raised, for the driver to show.
+const DEPRECATION_TEXT: &str = "_volant_deprecation_text";
 
 /// A warning as the reference registers and shows it. A string is kept as it is. A module of
 /// ansible-core 2.19 answers a `WarningSummary` object, rendered as `format_event_brief_message`

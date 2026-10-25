@@ -114,7 +114,7 @@ VOLANT_TARGET_HOST=host1 VOLANT_SECOND_HOST=host2 just bench-k3s 3
 有两个步骤受限于参照版本自身的做法：
 
 - `service_facts` 运行 ansible-core 运行的命令（`systemctl list-unit-files`、`service --status-all`，以及每个 unit 一次 `systemctl show`），以便让它的应答保持一致。原生模块并行运行这些命令，而参照版本逐个运行，但它们仍然占据了其 2.4 秒的大部分。只要读取同样的来源，它就无法低于这个水平。
-- playbook 的 `apt` task 设置了 `update_cache` 而没有 `cache_valid_time`，所以参照版本每次都运行 `apt-get update`。原生的 `apt` 只应答无事可做的 task，所以这个 task 交给了 Python 模块，缓存刷新占了它 2.2 秒的大部分。
+- playbook 的 `apt` task 设置了 `update_cache` 而没有 `cache_valid_time`，所以参照版本每次都运行 `apt-get update`。测量时，原生的 `apt` 只应答无事可做的 task，所以这个 task 交给了 Python 模块，缓存刷新占了它 2.2 秒的大部分。自 2026-10-25 起，原生的 `apt` 自己执行更新（[#879](https://github.com/lorica-labs/volant/pull/879)）。
 
 这两个步骤合计每台主机耗时 4.5 到 4.7 秒。要让它们更快，就意味着读取参照版本之外的其他来源，这个决定留给以后的版本。
 

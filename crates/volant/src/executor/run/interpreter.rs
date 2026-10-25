@@ -294,6 +294,7 @@ pub(super) fn sub_task(
     };
     let interpreter = chosen_interpreter(asked, interpreters)?;
     Ok(Task {
+        only_if: None,
         module: sub.module.to_string(),
         args: with_modes(item, sub.args.clone()),
         ignore_errors: item.ignore_errors.unwrap_or_else(|| task.ignores_errors())

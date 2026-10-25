@@ -10,6 +10,7 @@ use volant_protocol::{BatchOutcome, FromAgent, LogLevel, PROTOCOL_VERSION, Task,
 
 fn command(cmd: &str, ignore_errors: bool) -> Task {
     Task {
+        only_if: None,
         module: "command".into(),
         args: json!({"_raw_params": cmd}).as_object().unwrap().clone(),
         ignore_errors,
@@ -195,5 +196,39 @@ fn a_vanished_controller_stops_the_batch() {
     assert!(
         started.elapsed().as_secs() < 5,
         "agent must not wait for the sleep"
+    );
+}
+
+/// A task under `only_if` whose `stat` did not find that sum answers that it did not run, and
+/// the batch goes on.
+#[test]
+fn a_task_whose_condition_fails_is_not_run() {
+    let mut agent = spawn_agent();
+    agent.send(&ToAgent::Hello {
+        protocol: PROTOCOL_VERSION,
+        python_perf: false,
+    });
+    assert!(matches!(agent.recv(), Some(FromAgent::Ready { .. })));
+    let mut guarded = command("touch /nonexistent-volant-only-if", false);
+    guarded.only_if = Some(volant_protocol::OnlyIf {
+        task: 0,
+        checksum: "0123".into(),
+    });
+    agent.send(&ToAgent::RunBatch {
+        id: 1,
+        tasks: vec![command("echo first", false), guarded],
+    });
+    let (i, _) = result_of(agent.recv());
+    assert_eq!(i, 0);
+    let (i, r) = result_of(agent.recv());
+    assert_eq!(i, 1);
+    assert_eq!(r.0[volant_protocol::NOT_RUN], json!(true));
+    assert!(!r.failed());
+    assert_eq!(
+        agent.recv(),
+        Some(FromAgent::BatchDone {
+            batch: 1,
+            outcome: BatchOutcome::Completed
+        })
     );
 }

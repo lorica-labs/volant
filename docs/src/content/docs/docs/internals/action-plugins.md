@@ -5,7 +5,7 @@ description: How Volant runs the modules ansible-core runs through an action plu
 
 Most modules ansible-core ships run as themselves: the controller sends a payload, the host runs it, the result comes back. A handful run differently: ansible-core itself decides what to send, sometimes after asking the host something first, and the module name on the task is only the entry point. `package` is one: what runs is `apt` or `dnf`, chosen after the host says which one it has. `copy` is another: whether anything travels to the host at all depends on a checksum the host reports back first.
 
-Volant runs eight of these itself: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent alone over the link the task already has. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
+Volant runs eight of these itself: `copy`, `dnf`, `fetch`, `package`, `reboot`, `service`, `template` and `unarchive`. Each one is a small state machine on the controller: asked for the next step, handed the result of the last one, until it has the task's own result. Every step it takes is an ordinary module of the run's union, sent over the link the task already has, one step per trip, except the `stat` and `file` of `copy` described below. The result a plugin ends with goes down the same road every other module result takes, so nothing a host answered reaches a playbook's variables by a way of its own.
 
 A task's own `timeout:` keyword bounds the whole item this way, on any of the eight: every sub-task and every wait for the host to come back, `reboot`'s reconnecting included. Running out of it ends the task there with `Task failed: Timed out after <seconds> second(s).`, never whatever the plugin would have made of the time it had left.
 
@@ -15,7 +15,7 @@ The names ansible-core also runs through an action plugin, and every action plug
 
 A controller file, or a `content:` written straight into the destination, sent to the host only when it differs.
 
-The plugin runs `stat` on the destination first, asking for a SHA-1 unless `force: false`, in which case it asks for none and leaves an existing destination untouched whatever it holds. It compares that sum with the one of the local bytes. A destination already holding the same bytes gets `file`, to set the attributes the task asked for; everything else gets the bytes staged on the host and a `copy` sub-task. Only that last case sends anything.
+The plugin runs `stat` on the destination first, asking for a SHA-1 unless `force: false`, in which case it asks for none and leaves an existing destination untouched whatever it holds. It compares that sum with the one of the local bytes. A destination already holding the same bytes gets `file`, to set the attributes the task asked for; everything else gets the bytes staged on the host and a `copy` sub-task. Only that last case sends anything. The `file` goes in the same trip as the `stat`: the agent runs it only when the `stat` found a regular file with that sum, so a destination that already holds the bytes costs one trip.
 
 `remote_src: true` skips all of this: `copy` runs alone, with the task's own arguments, and `src` names a file already on the host.
 

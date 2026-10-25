@@ -238,6 +238,15 @@ impl Sub {
 pub(crate) enum Step {
     /// One more module on the host; its result comes back on the next call.
     Run(Sub),
+    /// `sub`, a `stat`, and in the same trip `then`, which the agent runs only when that `stat`
+    /// finds a regular file whose SHA-1 is `checksum`. The next call is handed `sub`'s result;
+    /// when `then` ran, the plugin's next `Run` of that same sub-task is answered with its
+    /// result rather than sent again.
+    RunThen {
+        sub: Sub,
+        then: Sub,
+        checksum: String,
+    },
     /// One more module, under which the link may go away. Its result comes back on the next
     /// call, or, when the link went before it answered, [`gone`] naming why: a `shutdown` that
     /// took the connection down with it has done what it was asked.

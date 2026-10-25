@@ -232,6 +232,7 @@ pub(in crate::executor) fn protocol_task(
         args.insert("_async_dir".into(), Value::String(async_dir(&item.vars)));
     }
     Task {
+        only_if: None,
         module: task.module.clone(),
         args: with_modes(item, args),
         // An item is not the task: a failing item never stops the ones behind it, exactly as in

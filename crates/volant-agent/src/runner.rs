@@ -30,12 +30,29 @@ where
     // mid-batch, which means writing a frame from inside the cancellation check.
     let send = RefCell::new(send);
     let cancelled = || is_cancelled(control, id, &broken, &remote_tmp, &send);
+    // The results a later task's `only_if` reads, kept only for those.
+    let mut kept: Vec<Option<volant_protocol::TaskResult>> = vec![None; tasks.len()];
     for (index, task) in tasks.iter().enumerate() {
         if cancelled() {
             return stop(id, index, &broken, &send);
         }
         let started = Instant::now();
+        let held = task.only_if.as_ref().is_none_or(|only| {
+            kept.get(only.task)
+                .and_then(Option::as_ref)
+                .is_some_and(|r| found(r, &only.checksum))
+        });
         let (run, mut ran) = match &task.job {
+            _ if !held => (
+                Run::Done(volant_protocol::TaskResult(serde_json::Map::from_iter([
+                    ("skipped".to_string(), serde_json::Value::Bool(true)),
+                    (
+                        volant_protocol::NOT_RUN.to_string(),
+                        serde_json::Value::Bool(true),
+                    ),
+                ]))),
+                modules::ran_natively(),
+            ),
             // The reference's `ActionBase.run` refuses the pair before the module starts.
             Some(_)
                 if task.args.get(volant_protocol::modules::CHECK_MODE_ARG)
@@ -60,6 +77,14 @@ where
         };
         ran.micros = u64::try_from(started.elapsed().as_micros()).unwrap_or(u64::MAX);
         let failed = result.failed();
+        if tasks.iter().any(|later| {
+            later
+                .only_if
+                .as_ref()
+                .is_some_and(|only| only.task == index)
+        }) {
+            kept[index] = Some(result.clone());
+        }
         (send.borrow_mut())(&FromAgent::TaskResult {
             batch: id,
             index,
@@ -77,6 +102,16 @@ where
         batch: id,
         outcome: BatchOutcome::Completed,
     })
+}
+
+/// Whether `result` is a `stat` that found a regular file whose SHA-1 is `checksum`.
+fn found(result: &volant_protocol::TaskResult, checksum: &str) -> bool {
+    let stat = result.0.get("stat");
+    let field = |key: &str| stat.and_then(|s| s.get(key));
+    !result.failed()
+        && field("exists") == Some(&serde_json::Value::Bool(true))
+        && field("isdir") == Some(&serde_json::Value::Bool(false))
+        && field("checksum").and_then(serde_json::Value::as_str) == Some(checksum)
 }
 
 /// A `Cancel` for this batch, or a controller that went away, ends the batch normally. A
@@ -155,4 +190,34 @@ where
         batch: id,
         outcome: BatchOutcome::Cancelled { at: index },
     })
+}
+
+#[cfg(test)]
+mod only_if_tests {
+    use serde_json::json;
+
+    /// `only_if` holds for a `stat` of a regular file with that sum, and for nothing else.
+    #[test]
+    fn the_condition_reads_the_stat_of_a_regular_file() {
+        let stat = |value: serde_json::Value| {
+            volant_protocol::TaskResult(value.as_object().unwrap().clone())
+        };
+        let file = json!({"stat": {"exists": true, "isdir": false, "checksum": "ab"}});
+        assert!(super::found(&stat(file.clone()), "ab"));
+        assert!(!super::found(&stat(file), "cd"));
+        assert!(!super::found(
+            &stat(json!({"stat": {"exists": false}})),
+            "ab"
+        ));
+        assert!(!super::found(
+            &stat(json!({"stat": {"exists": true, "isdir": true}})),
+            "ab"
+        ));
+        assert!(!super::found(
+            &stat(
+                json!({"failed": true, "stat": {"exists": true, "isdir": false, "checksum": "ab"}})
+            ),
+            "ab"
+        ));
+    }
 }

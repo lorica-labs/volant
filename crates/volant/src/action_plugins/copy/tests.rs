@@ -120,7 +120,7 @@ fn a_source_a_host_named_is_read_as_the_mode_says(
     let untrusted: BTreeSet<String> = ["src".to_string()].into();
     let mut plugin = start_mode(mode, &args, &untrusted, &play);
     match (plugin.next(None), read) {
-        (Step::Run(sub), true) => assert_eq!(sub.module, "stat"),
+        (Step::Run(sub) | Step::RunThen { sub, .. }, true) => assert_eq!(sub.module, "stat"),
         (Step::Done(result), false) => {
             let msg = result.0["msg"].as_str().unwrap();
             assert!(msg.contains("named by a managed host"), "{msg}");
@@ -186,7 +186,7 @@ fn run(plugin: &mut dyn Plugin, last: Option<Value>) -> Sub {
         _ => unreachable!(),
     });
     match plugin.next(last) {
-        Step::Run(sub) => sub,
+        Step::Run(sub) | Step::RunThen { sub, .. } => sub,
         other => panic!("done early: {other:?}"),
     }
 }
@@ -244,7 +244,17 @@ fn the_stat_is_the_reference_s() {
 #[test]
 fn an_identical_file_is_not_sent() {
     let (_dir, mut plugin) = copy_task(json!({"mode": "0644"}));
-    run(plugin.as_mut(), None);
+    // The `file` the plugin runs on an identical file goes with the `stat`, on that condition.
+    let Step::RunThen {
+        sub: stat,
+        then,
+        checksum,
+    } = plugin.next(None)
+    else {
+        panic!("the `stat` went alone")
+    };
+    assert_eq!(stat.module, "stat");
+    assert_eq!(checksum, HELLO_SHA1);
     let sub = run(
         plugin.as_mut(),
         Some(
@@ -252,6 +262,7 @@ fn an_identical_file_is_not_sent() {
         ),
     );
     assert_eq!(sub.module, "file");
+    assert_eq!((then.module, &then.args), (sub.module, &sub.args));
     assert_eq!(
         Value::Object(sub.args),
         json!({"dest": "/tmp/v/hello.txt", "_original_basename": "hello.txt",

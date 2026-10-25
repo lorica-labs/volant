@@ -7,6 +7,8 @@ mod interpreter;
 mod jobs;
 mod modules;
 mod natives;
+#[cfg(unix)]
+mod place;
 mod put_file;
 mod python;
 mod runner;
@@ -39,6 +41,13 @@ fn main() {
         // The two halves of a background job, started by the agent itself: see `jobs`.
         Some("--async-job") => std::process::exit(jobs::watch()),
         Some("--async-run") => std::process::exit(jobs::run()),
+        // A target with no shell: the agent puts itself in its cache directory. See `place`.
+        #[cfg(unix)]
+        Some("--place") => {
+            let remote_tmp = args.next();
+            let from_copy = args.next().as_deref() == Some("--from-copy");
+            std::process::exit(place::run(remote_tmp, from_copy));
+        }
         _ => {}
     }
     if std::env::args().nth(1).as_deref() == Some("--version") {

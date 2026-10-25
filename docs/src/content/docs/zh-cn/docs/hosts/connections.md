@@ -43,7 +43,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 
 `ansible_connection: docker` 或 `community.docker.docker` 在运行中的容器里执行 play，容器里不需要 sshd，也不需要到它的网络路径。两个名字都需要控制节点上装有 community.docker，与 `ansible-playbook` 一样。Volant 运行你 `PATH` 中的 `docker` 程序，因此 `DOCKER_HOST`、`DOCKER_CONTEXT` 和 `DOCKER_CONFIG` 通过环境传给它。
 
-agent 通过 `docker exec -i` 送进去，所以镜像需要 `/bin/sh` 和常用工具：`uname`、`id`、`ls`、`mkdir`、`df`、`awk`、`head`、`wc`、`chmod`、`mv` 和 `find`。最小的 Alpine 或 Debian 镜像都有。没有 shell 的镜像，例如 distroless 或 scratch，暂不支持。
+agent 通过 `docker exec -i` 送进去，所以镜像需要 `/bin/sh` 和常用工具：`uname`、`id`、`ls`、`mkdir`、`df`、`awk`、`head`、`wc`、`chmod`、`mv` 和 `find`。最小的 Alpine 或 Debian 镜像都有。没有 shell 的镜像，例如 distroless，改用 `docker cp` 获得 agent：Volant 向 `docker inspect` 询问镜像的架构，把 agent 复制到容器的 `/tmp`，再由 agent 按同样的检查把自己放进缓存目录。容器需要有 `/tmp`，`remote_tmp` 必须是绝对路径，或者对有主目录的用户以 `~` 开头，并且 `become` 会被拒绝，因为没有 shell 来运行 `sudo`。容器的用户无法删除时，`/tmp` 中的副本会留下。
 
 | 变量 | 作用 |
 |---|---|
@@ -114,6 +114,8 @@ agent 是一个小型静态程序，x86_64 Linux 版本约 1.2 MB。Volant 为�
 它位于 `<remote_tmp>/volant-agent-<version>-<uid>/volant-agent`，所以使用默认的 `remote_tmp` 时，它位于主目录中的 `~/.ansible/tmp/` 之下。路径中的版本是控制节点自己的版本，这就是升级后的控制节点避免运行旧版 agent 的方式。提权的 task 会以 `become_user` 的身份运行它自己的 agent，缓存在该用户的主目录中，所以运行所涉及的每个账户，主机上都有一份缓存。
 
 运行过 Python 模块后，第二个目录 `volant-blobs-<version>-<uid>` 会位于同一个 `remote_tmp` 中、agent 目录的旁边，保存 Volant 发送的模块 payload。
+
+agent 如何到达取决于目标。通过 `ssh`，以及在有 shell 的容器里，agent 会在连接上交给一个 shell 脚本，由它检查目录并写入文件。在没有 shell 的容器里，由运行时自己的复制命令把 agent 放进去，再由 agent 按同样的检查放置自己；docker 用 `docker cp` 完成这一步。
 
 要清除两者，删除这两个目录即可。不会留下任何其他东西：
 

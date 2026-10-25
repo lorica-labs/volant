@@ -37,6 +37,9 @@ pub struct ExecTarget {
     /// Why the target cannot be reached at all, said when a link is asked for rather than when
     /// the connection is read: the runtime's program is not installed here.
     pub unavailable: Option<String>,
+    /// How the runtime copies the agent in when the target has no shell; `None` for a runtime
+    /// whose targets always have one.
+    pub copy: Option<super::CopyInto>,
     pub remote_tmp: String,
     /// How long the runtime may take to answer the first command before the target is
     /// reported unreachable.
@@ -84,6 +87,17 @@ impl ExecTarget {
                 self.connection()
             )));
         }
+        if escalation.is_some() && self.copy.is_some() {
+            let shell = self
+                .answering(run_bootstrap(self, RunAs::Direct(None), "exit 0", None))
+                .await??;
+            if Self::has_no_shell(&shell) {
+                return Err(ConnectError::Become(format!(
+                    "become needs a shell in {}, which has no /bin/sh",
+                    self.name
+                )));
+            }
+        }
         let probe_command = self.probe_command();
         let (escalated, probe) = if let Some(e) = escalation {
             let (form, probe) = self
@@ -101,6 +115,11 @@ impl ExecTarget {
                     None,
                 ))
                 .await??;
+            if let Some(copy) = &self.copy
+                && Self::has_no_shell(&probe)
+            {
+                return self.connect_copied(copy, agents).await;
+            }
             (None, probe)
         };
         bootstrap(self, agents, RunAs::Direct(escalated), Some(probe))
@@ -206,7 +225,10 @@ impl Reach for ExecTarget {
             "{} could not run a command in {}: {}",
             self.prefix[0],
             self.name,
-            first_words(&probe.stderr, "it exited without a message")
+            first_words(
+                &probe.stderr,
+                &first_words(&probe.stdout, "it exited without a message")
+            )
         )))
     }
 }

@@ -7,6 +7,7 @@ mod agent_dir;
 mod bootstrap;
 mod choose;
 mod control;
+mod copy;
 mod defaults;
 mod docker;
 mod escalation;
@@ -18,10 +19,12 @@ mod resolve;
 mod session;
 mod shell;
 mod ssh;
+mod tar;
 pub mod trace;
 
 pub use bootstrap::{space_needed_kib, triple_for};
 pub use control::{control_dir, raise_open_file_limit};
+pub use copy::CopyInto;
 pub use defaults::{
     BecomeMethod, ConnectError, ConnectionDefaults, ConnectionKeywords, ConnectionNotFound,
     Escalation, EscalationProgram, HostOwn, INCORRECT_SU_PASSWORD, INCORRECT_SUDO_PASSWORD,

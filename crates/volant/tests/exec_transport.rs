@@ -12,17 +12,29 @@ use volant::agent::AgentSource;
 use volant::transport::{BecomeMethod, ConnectError, Escalation, ExecTarget, Transport};
 use volant_protocol::{BatchOutcome, FromAgent, Task, ToAgent};
 
-/// Runs `exec -i <container> <program...>` here. `gone` is a container that does not exist and
-/// `hang` one whose runtime never answers. The pid of the runtime and of what it started are
+/// Runs `exec -i <container> <program...>` here. `gone` is a container that does not exist,
+/// `hang` one whose runtime never answers, and `nosh` one with no `/bin/sh`, whose `/tmp` is a
+/// directory of its own. `cp - <container>:<dir>` unpacks a tar stream there, and `inspect` and
+/// `image inspect` name this machine's architecture as docker does. The pid of the runtime and of what it started are
 /// written beside the container's directory, and the program runs in the background with the
 /// runtime's stdin, as a program in a container outlives the client that started it.
 const RUNTIME: &str = r#"#!/bin/sh
+case "$1" in
+  inspect) echo "image-of-$4"; exit 0;;
+  image) case "$(uname -m)" in x86_64) echo amd64;; aarch64) echo arm64;; *) uname -m;; esac; exit 0;;
+  cp) echo "$3" >> "@ROOT@/cp.log"; c=${3%%:*}; dir=${3#*:}
+      mkdir -p "@ROOT@/$c$dir" && exec tar -x -f - -C "@ROOT@/$c$dir";;
+esac
 [ "$1" = exec ] || { echo "fake runtime: only exec" >&2; exit 2; }
 shift; [ "$1" = -i ] && shift
 c=$1; shift
 case "$c" in
   gone) echo "Error response from daemon: No such container: $c" >&2; exit 1;;
   hang) exec sleep 600;;
+  nosh) case "$1" in
+    /bin/sh) echo 'OCI runtime exec failed: exec failed: unable to start container process: exec: "/bin/sh": stat /bin/sh: no such file or directory' >&2; exit 127;;
+    /tmp/volant-agent-*) p="@ROOT@/nosh$1"; shift; set -- "$p" "$@";;
+  esac;;
 esac
 mkdir -p "@ROOT@/$c"
 echo "runtime $$" >> "@ROOT@/$c.pids"
@@ -86,6 +98,31 @@ impl Runtime {
             user: None,
             user_probe: None,
             unavailable: None,
+            copy: Some(volant::transport::CopyInto {
+                tar_into: vec![
+                    self.program.display().to_string(),
+                    "cp".into(),
+                    "-".into(),
+                    format!("{container}:{{dir}}"),
+                ],
+                arch: vec![
+                    vec![
+                        self.program.display().to_string(),
+                        "inspect".into(),
+                        "--format".into(),
+                        "{{.Image}}".into(),
+                        container.into(),
+                    ],
+                    vec![
+                        self.program.display().to_string(),
+                        "image".into(),
+                        "inspect".into(),
+                        "--format".into(),
+                        "{{.Architecture}}".into(),
+                        "{}".into(),
+                    ],
+                ],
+            }),
             remote_tmp: "~/.ansible/tmp".into(),
             connect_timeout: Duration::from_secs(1),
         })
@@ -272,4 +309,55 @@ async fn an_agent_whose_controller_died_stops_within_five_seconds() {
         tokio::time::sleep(Duration::from_millis(50)).await;
     }
     assert!(!alive(agent), "the agent {agent} is still running");
+}
+
+/// A target with no shell: the runtime's copy puts the agent in, the agent places itself, the
+/// copy it ran from is gone, and a second link this run starts the placed agent without copying.
+#[tokio::test]
+async fn a_target_with_no_shell_gets_the_agent_by_copy() {
+    let runtime = Runtime::new();
+    for _ in 0..2 {
+        let mut link = runtime
+            .target("nosh")
+            .connect(&runtime.agents, None)
+            .await
+            .unwrap_or_else(|e| panic!("{e}"));
+        link.handshake().await.unwrap();
+        link.shutdown().await;
+    }
+    let copies = std::fs::read_to_string(runtime.root.path().join("cp.log")).unwrap();
+    assert_eq!(copies.lines().count(), 1, "{copies}");
+    let landing = std::fs::read_dir(runtime.home("nosh").join("tmp"))
+        .unwrap()
+        .count();
+    assert_eq!(landing, 0, "the copy the agent ran from is removed");
+    let placed = runtime.home("nosh").join(".ansible/tmp");
+    assert_eq!(std::fs::read_dir(placed).unwrap().count(), 1);
+}
+
+#[tokio::test]
+async fn become_on_a_target_with_no_shell_says_why_it_cannot() {
+    let runtime = Runtime::new();
+    let sudo = Escalation {
+        method: BecomeMethod::Sudo,
+        user: "root".into(),
+        password: None,
+        exe: Vec::new(),
+        flags: None,
+        prompt_l10n: Vec::new(),
+    };
+    match runtime
+        .target("nosh")
+        .connect(&runtime.agents, Some(&sudo))
+        .await
+    {
+        Err(ConnectError::Become(message)) => {
+            assert_eq!(
+                message,
+                "become needs a shell in nosh, which has no /bin/sh"
+            );
+        }
+        Err(other) => panic!("a become error expected, got {other}"),
+        Ok(_) => panic!("become ran without a shell"),
+    }
 }

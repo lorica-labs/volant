@@ -43,7 +43,7 @@ Un mot de passe vient de `-k`, de `--connection-password-file` ou de la variable
 
 `ansible_connection: docker`, ou `community.docker.docker`, exécute un play dans un conteneur en marche, sans sshd dedans ni chemin réseau jusqu'à lui. Les deux noms demandent community.docker installé sur le contrôleur, comme pour `ansible-playbook`. Volant lance le programme `docker` de votre `PATH`, si bien que `DOCKER_HOST`, `DOCKER_CONTEXT` et `DOCKER_CONFIG` l'atteignent par l'environnement.
 
-L'agent monte par `docker exec -i`, donc l'image doit avoir `/bin/sh` et les outils habituels : `uname`, `id`, `ls`, `mkdir`, `df`, `awk`, `head`, `wc`, `chmod`, `mv` et `find`. Une image Alpine ou Debian minimale les a. Une image sans shell, comme distroless ou scratch, n'est pas encore prise en charge.
+L'agent monte par `docker exec -i`, donc l'image doit avoir `/bin/sh` et les outils habituels : `uname`, `id`, `ls`, `mkdir`, `df`, `awk`, `head`, `wc`, `chmod`, `mv` et `find`. Une image Alpine ou Debian minimale les a. Une image sans shell, comme distroless, reçoit l'agent par `docker cp` à la place : Volant demande à `docker inspect` l'architecture de l'image, copie l'agent dans le `/tmp` du conteneur, et l'agent se place lui-même dans son répertoire de cache, avec les mêmes contrôles. Le conteneur doit avoir un `/tmp`, `remote_tmp` doit être absolu ou commencer par `~` pour un utilisateur qui a un répertoire personnel, et `become` est refusé, faute de shell pour lancer `sudo`. La copie dans `/tmp` reste quand l'utilisateur du conteneur ne peut pas la supprimer.
 
 | Variable | Rôle |
 |---|---|
@@ -114,6 +114,8 @@ L'agent est un petit programme statique, d'environ 1.2 MB pour Linux x86_64. Vol
 Il se trouve dans `<remote_tmp>/volant-agent-<version>-<uid>/volant-agent`, donc, avec le `remote_tmp` par défaut, sous `~/.ansible/tmp/` dans un répertoire personnel. La version dans le chemin est celle du contrôleur, ce qui évite à un contrôleur mis à jour de lancer un ancien agent. Une tâche qui élève ses privilèges exécute son propre agent sous l'identité du `become_user`, mis en cache dans le répertoire personnel de cet utilisateur : un hôte porte donc un cache par compte sous lequel l'exécution agit.
 
 Quand des modules Python ont tourné, un second répertoire, `volant-blobs-<version>-<uid>`, se trouve à côté du répertoire de l'agent dans le même `remote_tmp` et contient les charges utiles de modules que Volant a envoyées.
+
+La façon dont l'agent arrive dépend de la cible. Par `ssh`, et dans un conteneur qui a un shell, l'agent est passé à un script shell sur la connexion, qui contrôle le répertoire et écrit le fichier. Dans un conteneur sans shell, la commande de copie du runtime y dépose l'agent, et l'agent se place lui-même avec les mêmes contrôles ; docker le fait avec `docker cp`.
 
 Pour effacer les deux, supprimez les deux répertoires. Rien d'autre ne reste :
 

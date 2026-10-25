@@ -1,5 +1,5 @@
 ---
-sourceHash: 71da6f6cf85b
+sourceHash: c4107e9762a5
 title: Plantillas
 description: Jinja2 en el controlador, el modo estricto, las condiciones, los filtros, tests y lookups que ofrece Volant, y cómo se renderizan los archivos de plantilla.
 ---
@@ -62,7 +62,7 @@ Una variable que lee un nombre sin valor tampoco tiene valor: `default` e `is de
 
 Los datos de un host nunca se renderizan. Una variable de un host administrado, y una variable construida a partir de una, sigue siendo texto. Consulta [Los valores de los hosts nunca se renderizan](#los-valores-de-los-hosts-nunca-se-renderizan).
 
-Una variable que lee `vars`, o que llama a `lookup` o `query`, se deja como está escrita y se renderiza cuando una tarea la usa. `hostvars['other']['name']` da el texto en bruto de una variable que contiene una plantilla.
+Una variable que lee `vars`, o que llama a `lookup` o `query`, se deja como está escrita y se renderiza cuando una tarea la usa. `hostvars['other']['name']` renderiza la plantilla que contiene esa variable con las variables del otro host, como hace ansible-core. Ese renderizado no tiene `hostvars`. Un host que contiene valores de un host gestionado, como hechos recopilados, da el texto en bruto en su lugar.
 
 ## Qué hay disponible
 

@@ -61,7 +61,7 @@ A variable that reads a name with no value has none either: `default` and `is de
 
 Host data is never rendered. A variable from a managed host, and a variable built from one, stays text. See [Values from hosts are never templated](#values-from-hosts-are-never-templated).
 
-A variable that reads `vars`, or calls `lookup` or `query`, is left as written and renders when a task uses it. `hostvars['other']['name']` gives the raw text of a variable that holds a template.
+A variable that reads `vars`, or calls `lookup` or `query`, is left as written and renders when a task uses it. `hostvars['other']['name']` renders a template that variable holds with the other host's own variables, as ansible-core does. That render has no `hostvars`. A host that holds values from a managed host, such as gathered facts, gives the raw text instead.
 
 ## What is available
 

@@ -1,0 +1,7 @@
+- hosts: n-h2
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "{{ hostvars['d1'].plain ~ '{{ 1 + 1 }}' }}"
+    - debug:
+        msg: "{{ hostvars['d1'].ansible_host }}"

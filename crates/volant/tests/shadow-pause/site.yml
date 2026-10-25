@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: ask
+      ansible.builtin.pause:
+        prompt: Type yes
+      register: answer
+    - name: answered
+      ansible.builtin.debug: {msg: "{{ answer.user_input }}"}

@@ -37,6 +37,7 @@ use super::run::{
     step_tasks, take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
+use crate::shadow::replay::Seen;
 use messages::dump_of;
 use notified::{announce_notified, saved_lines};
 
@@ -104,7 +105,7 @@ pub(super) async fn drive_host(
     // Which of them this play has already proved alive, with the host's reboot count when it
     // did: one liveness check per connection per play, and one more after each reboot.
     let mut checked: HashMap<LinkKey, u64> = HashMap::new();
-    let mut seen = crate::shadow::replay::Seen::default(); // `volant shadow replay`'s count
+    let mut seen = options.replay.as_ref().map(|_| Seen::default());
     // Ansible's `forks`: one permit per host, held from the connection to the results of a
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
@@ -1079,6 +1080,7 @@ pub(super) async fn drive_host(
                     if !batch.is_empty() {
                         break;
                     }
+                    Seen::mark(&mut seen, pos, task);
                     // A `break_when` ends the loop at a skipped item as at any other.
                     let mut decided = vec![None; items.len()];
                     if let (Some(at), _) =
@@ -1134,6 +1136,7 @@ pub(super) async fn drive_host(
                     if !batch.is_empty() {
                         break;
                     }
+                    Seen::mark(&mut seen, pos, task);
                     // Held for the task's items and given back before the host waits for anyone:
                     // a verdict it is about to wait for may depend on a host this one is holding
                     // up.
@@ -1198,11 +1201,19 @@ pub(super) async fn drive_host(
                                     verbosity,
                                     &mut driver.stop,
                                 );
-                                let ran = match task.timeout.filter(|t| *t > 0) {
-                                    Some(t) => tokio::time::timeout(Duration::from_secs(t), ran)
-                                        .await
-                                        .unwrap_or_else(|_| Some(local_timed_out(t))),
-                                    None => ran.await,
+                                let paused =
+                                    replayed::paused(&options, seen.as_ref(), &name, pos, task, ii);
+                                let ran = match (paused, task.timeout.filter(|t| *t > 0)) {
+                                    (Some(answer), _) => {
+                                        drop(ran);
+                                        Some(answer)
+                                    }
+                                    (None, Some(t)) => {
+                                        tokio::time::timeout(Duration::from_secs(t), ran)
+                                            .await
+                                            .unwrap_or_else(|_| Some(local_timed_out(t)))
+                                    }
+                                    (None, None) => ran.await,
                                 };
                                 // A pause the run's stop ended: no line and no count, like
                                 // every other wait the stop ends.
@@ -1496,6 +1507,7 @@ pub(super) async fn drive_host(
                     if refusal(task).is_none() && discovers_interpreter(&task.module, target_vars) {
                         discovering.insert(pos, !silent_discovery(target_vars));
                     }
+                    Seen::mark(&mut seen, pos, task);
                     batch.push((pos, items));
                     // Where this host goes after a step a `rescue` would catch depends on how that
                     // step ends, so the batch stops here: moving `pos` now would step over that
@@ -1630,20 +1642,7 @@ pub(super) async fn drive_host(
                     let index = batch[0].0;
                     let mut task = step_at(&c, &rendered, index).task.clone();
                     task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    // Measured for `Incorrect su password` (scout case `c5w`) and, over a local
-                    // connection, `Premature end of stream`: the reference raises them from its connection, so the result is `changed: false` and a
-                    // `msg` that already says `Task failed: `. The other refusals keep their shape
-                    // until they are measured too.
-                    let refused = if msg == crate::transport::INCORRECT_SU_PASSWORD
-                        || msg.starts_with(crate::transport::SU_PREMATURE_END)
-                    {
-                        let mut shaped = TaskResult::failed_with(crate::render::task_failed(&msg));
-                        shaped.0.insert("changed".into(), Value::Bool(false));
-                        shaped
-                    } else {
-                        TaskResult::failed_with(msg)
-                    };
-                    let results = vec![(None, refused)];
+                    let results = vec![(None, crate::transport::refused_escalation(msg))];
                     let rescuable = !handlers_only && rescue_target(&c, index).is_some();
                     let result = report_task(
                         &tx,
@@ -1778,7 +1777,7 @@ pub(super) async fn drive_host(
                     .to_path_buf();
                 let mut stopped = false;
                 let pause = pause_of(&step.task, items, &templar);
-                let replayed = Replayed::reach(&options, &mut seen, &name, &step.task);
+                let replayed = Replayed::reach(&options, seen.as_ref(), &name, *index, &step.task);
                 let mut outcome = Ok(BatchOutcome::Completed);
                 // Under `retries`/`until` the attempts judge each result themselves, since
                 // `until` reads what `changed_when` and `failed_when` decided.
@@ -1953,7 +1952,7 @@ pub(super) async fn drive_host(
                     chosen.as_ref(),
                 );
                 let python = replayed::sent(python, &options);
-                let replayed = Replayed::reach(&options, &mut seen, &name, task);
+                let replayed = Replayed::reach(&options, seen.as_ref(), &name, *index, task);
                 // The same helper the batched path uses, for the same reason: a step that cannot
                 // travel - no interpreter for its payload, or no payload for a module that needs
                 // one - reports that per item from one place. Reported nowhere, an item leaves
@@ -2166,9 +2165,9 @@ pub(super) async fn drive_host(
                 let (flat, ended) = if let Some(replay) = options.replay.as_deref() {
                     let steps: Vec<_> = batch
                         .iter()
-                        .map(|b| &step_at(&c, &rendered, b.0).task)
+                        .map(|b| (b.0, &step_at(&c, &rendered, b.0).task))
                         .collect();
-                    replayed::batch(replay, &mut seen, &name, &steps, &origin)
+                    replayed::batch(replay, seen.as_ref(), &name, &steps, &origin)
                 } else {
                     run_agent_batch(
                         link,

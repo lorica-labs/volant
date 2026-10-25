@@ -158,6 +158,21 @@ pub const INCORRECT_SU_PASSWORD: &str = "Incorrect su password";
 /// follows it with what `su` printed.
 pub const SU_PREMATURE_END: &str = "Premature end of stream waiting for become success.";
 
+/// The result of a task whose host refused to escalate, `msg` saying why. Measured for
+/// `Incorrect su password` (scout case `c5w`) and, over a local connection, `Premature end of
+/// stream`: the reference raises them from its connection, so the result is `changed: false` and
+/// a `msg` that already says `Task failed: `. The other refusals keep their shape until they are
+/// measured too.
+pub fn refused_escalation(msg: String) -> volant_protocol::TaskResult {
+    if msg == INCORRECT_SU_PASSWORD || msg.starts_with(SU_PREMATURE_END) {
+        let mut shaped = volant_protocol::TaskResult::failed_with(crate::render::task_failed(&msg));
+        shaped.0.insert("changed".into(), Value::Bool(false));
+        shaped
+    } else {
+        volant_protocol::TaskResult::failed_with(msg)
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
 pub enum Transport {
     /// Run the agent on the controller machine itself.

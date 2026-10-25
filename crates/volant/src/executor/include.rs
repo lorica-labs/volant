@@ -95,6 +95,7 @@ pub(super) fn resolve_include(
                     label: None,
                     result: super::prepare::failed_result(&err),
                     failed: true,
+                    load_failed: false,
                     ignored: None,
                 }],
                 std::time::Duration::ZERO,
@@ -118,11 +119,16 @@ pub(super) fn resolve_include(
             label: None,
             result: TaskResult::failed_with(super::prepare::failure_text(&err)),
             failed: true,
+            load_failed: false,
             ignored: None,
         }];
         return (Vec::new(), shown, std::time::Duration::ZERO, copy);
     }
     let step = copy.as_deref().unwrap_or(step);
+    let is_loop = loops(&step.task, items.first().map(|i| &i.element));
+    // What `register` holds: an entry per item, the loop's keys added later, whether the file
+    // could be loaded or not. Measured on ansible-core 2.19.12.
+    let mut registered = Vec::new();
     // `break_when` ends an include loop after the item it holds for, a skipped one included, and
     // `pause` waits after every other item that has another behind it: measured on ansible-core
     // 2.19.12, `include_tasks` over `[1, 2, 3]` with `break_when: item == 2` includes 1 and 2.
@@ -137,12 +143,14 @@ pub(super) fn resolve_include(
         if let Some(skipped) = &item.skipped {
             let mut result = skipped.clone();
             broke = break_after(&step.task, &item, &mut result, templar);
+            registered.push((item.element.clone(), result.clone()));
             let failed = result.failed();
             shown.push(Shown {
                 element: item.element.clone(),
                 label: item.label.clone(),
                 result,
                 failed,
+                load_failed: false,
                 ignored: failed.then_some(false),
             });
             if broke {
@@ -151,6 +159,8 @@ pub(super) fn resolve_include(
             passed += 1;
             continue;
         }
+        let entry = registered_entry(&item, matches!(kind, IncludeKind::Role), is_loop);
+        let load_failed;
         let result = match include_request(compiled, step, kind, &item, templar) {
             // The file is there and cannot be used: it holds a mapping rather than a list of
             // tasks, its YAML does not parse, or something inside it names a module, an option
@@ -177,6 +187,7 @@ pub(super) fn resolve_include(
                 },
             ) {
                 Ok(expanded) => {
+                    registered.push((item.element.clone(), entry.clone()));
                     let mut included = TaskResult(Map::from_iter([
                         ("changed".to_string(), json!(false)),
                         ("include".to_string(), json!(request.what)),
@@ -189,6 +200,7 @@ pub(super) fn resolve_include(
                             label: item.label,
                             result: included,
                             failed: true,
+                            load_failed: false,
                             ignored: Some(false),
                         });
                         break;
@@ -219,6 +231,8 @@ pub(super) fn resolve_include(
                     return (Vec::new(), Vec::new(), std::time::Duration::ZERO, copy);
                 }
                 Err(err) => {
+                    registered.push((item.element.clone(), entry.clone()));
+                    load_failed = true;
                     let mut body = Map::new();
                     body.insert("changed".into(), json!(false));
                     body.insert("include".into(), json!(request.what));
@@ -226,7 +240,15 @@ pub(super) fn resolve_include(
                     TaskResult(body)
                 }
             },
-            Err(result) => result,
+            Err(result) => {
+                // A file that is not there is a file that could not be loaded.
+                load_failed = result.0.contains_key("reason");
+                registered.push((
+                    item.element.clone(),
+                    if load_failed { entry } else { result.clone() },
+                ));
+                result
+            }
         };
         shown.push(Shown {
             element: item.element,
@@ -236,6 +258,7 @@ pub(super) fn resolve_include(
             // The strategy fails the host when the file cannot be loaded, and `ignore_errors`
             // belongs to the executor: measured on ansible-core 2.19.12, a missing file or a
             // mapping instead of a list ends the host at exit 2 whatever the keyword says.
+            load_failed,
             ignored: Some(false),
         });
     }
@@ -244,7 +267,42 @@ pub(super) fn resolve_include(
     } else {
         passed.saturating_sub(1)
     };
+    // A loop's index variable is in each entry, as a module's result has it.
+    if let (true, Some(name)) = (is_loop, &step.task.index_var) {
+        for (index, (_, entry)) in registered.iter_mut().enumerate() {
+            entry.0.insert(name.clone(), json!(index));
+        }
+    }
+    super::run::record_registered(
+        &mut store.lock().expect("vars lock"),
+        &step.task,
+        &super::run::fact_targets(&step.task, host, &live.live_hosts),
+        &registered,
+        &[],
+    );
     (groups, shown, pause.unwrap_or_default() * owed, copy)
+}
+
+/// One item's entry in what `register` holds. Measured on ansible-core 2.19.12: `include` names
+/// the file as written (a role has none), `include_args` holds the statement's other arguments,
+/// and a statement with no loop adds `changed: false`.
+fn registered_entry(item: &super::prepare::Item, role: bool, is_loop: bool) -> TaskResult {
+    let mut args = item.args.clone();
+    let written = if role {
+        None
+    } else {
+        let raw = args.remove("_raw_params");
+        args.remove("file").or(raw)
+    };
+    let mut entry = Map::new();
+    if !is_loop {
+        entry.insert("changed".into(), json!(false));
+    }
+    if let Some(written) = written {
+        entry.insert("include".into(), written);
+    }
+    entry.insert("include_args".into(), Value::Object(args));
+    TaskResult(entry)
 }
 
 /// One item of an include statement that has a line to show: a `when` left it out, or resolving
@@ -258,9 +316,42 @@ pub(super) struct Shown {
     /// `{"changed": false, "include": "nosuch.yml", "reason": "..."}` - measured, with no
     /// `failed` in it - and a key put there to be classified by would be a key on the line.
     failed: bool,
+    /// A file that could not be loaded: the reference prints its reason in an `[ERROR]` block,
+    /// and in a loop prints no line of its own for the item.
+    load_failed: bool,
     /// The statement's `ignore_errors` as `prepare` rendered it for this item, when it is a
     /// template; `None` reads the keyword as written.
     ignored: Option<bool>,
+}
+
+/// The `[ERROR]` block of one item's line, when it has one.
+fn item_error(item: &Shown, task: &PlayTask, censored: bool) -> Option<crate::render::ErrorBlock> {
+    if item.load_failed {
+        return Some(load_error(&item.result));
+    }
+    (item.failed && item.result.0.contains_key(crate::render::CHAIN_KEY))
+        .then(|| crate::render::ErrorBlock::of(&item.result, task.origin.as_ref(), censored))
+}
+
+/// The key a failure carries when the rescue that takes it reads no `ansible_failed_result` and
+/// no `ansible_failed_task`.
+pub(super) const NO_FAILED_VARS: &str = "_volant_no_failed_vars";
+
+/// The `[ERROR]` block of a file an include could not load: its reason, and no place.
+fn load_error(result: &TaskResult) -> crate::render::ErrorBlock {
+    crate::render::ErrorBlock {
+        message: result
+            .0
+            .get("reason")
+            .and_then(Value::as_str)
+            .unwrap_or_default()
+            .to_string(),
+        origin: None,
+        unknown: None,
+        causes: Vec::new(),
+        lead: None,
+        on_stderr: true,
+    }
 }
 
 /// Sends the lines an include step shows and its `TaskDone`, and answers with the result a rescue
@@ -312,13 +403,13 @@ pub(super) async fn report_include(
                 outcome,
                 result: item.result.clone(),
                 dump: Dump::No,
-                show: true,
+                // Measured on ansible-core 2.19.12: a file a loop item could not load prints its
+                // `[ERROR]` block and no line, and the host fails all the same.
+                show: !(item.load_failed && is_loop),
                 counts: !is_loop,
                 censored,
                 delegate: None,
-                error: (item.failed && item.result.0.contains_key(crate::render::CHAIN_KEY)).then(
-                    || crate::render::ErrorBlock::of(&item.result, task.origin.as_ref(), censored),
-                ),
+                error: item_error(item, task, censored),
                 task_origin: task.origin.clone(),
             })
             .await;
@@ -335,7 +426,7 @@ pub(super) async fn report_include(
                 .iter()
                 .map(|s| (s.element.clone(), s.result.clone()))
                 .collect();
-            let aggregate = if empty {
+            let mut aggregate = if empty {
                 empty_loop_result()
             } else {
                 match registered_value(task, &results) {
@@ -346,9 +437,24 @@ pub(super) async fn report_include(
                     _ => TaskResult::default(),
                 }
             };
-            let outcome = classify(&aggregate, !unignored, rescuable);
+            // A file a loop item could not load fails the host from the strategy, not the task:
+            // measured on ansible-core 2.19.12, a rescue still runs, but the recap counts the
+            // failure, not a rescue, and the rescue reads no `ansible_failed_result`.
+            let unloaded = shown.iter().any(|s| s.load_failed);
             if any_failed {
-                failure = Some(aggregate.clone());
+                aggregate.0.insert("failed".into(), json!(true));
+            }
+            let outcome = if unloaded && unignored {
+                Outcome::Failed
+            } else {
+                classify(&aggregate, !unignored, rescuable)
+            };
+            if any_failed {
+                let mut failed = aggregate.clone();
+                if unloaded {
+                    failed.0.insert(NO_FAILED_VARS.into(), json!(true));
+                }
+                failure = Some(failed);
             }
             let _ = tx
                 .send(Event::Result {

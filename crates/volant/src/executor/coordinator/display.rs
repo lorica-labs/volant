@@ -203,10 +203,16 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
             censored,
             delegate.as_deref(),
         );
-    } else if outcome == Outcome::Ignored {
+    } else {
+        // A failure with no line of its own can still have its block.
+        if let Some(error) = &error {
+            out.error(error);
+        }
         // A loop's aggregate prints no line of its own, but the failure it swallowed still has
         // to say so.
-        out.ignoring();
+        if outcome == Outcome::Ignored {
+            out.ignoring();
+        }
     }
 }
 

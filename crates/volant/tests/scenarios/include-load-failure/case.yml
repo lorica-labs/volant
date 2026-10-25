@@ -1,0 +1,7 @@
+# An include that cannot load its file: alone, an `[ERROR]` block then its `fatal:` line; in a
+# loop, the block and no line for the item. What `register` holds for an include, looped or not.
+stderr: true
+runs:
+  - args: [-i, inv.ini, single.yml]
+  - args: [-i, inv.ini, looped.yml]
+  - args: [-i, inv.ini, registered.yml]

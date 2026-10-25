@@ -22,7 +22,7 @@ use crate::vars::VarStore;
 
 use super::coordinator::{Event, MetaEffect, Progress, escalated_links, render_name};
 use super::debugger::{self, Hold};
-use super::include::{report_include, resolve_include};
+use super::include::{NO_FAILED_VARS, report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, failed_result, pause_of, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
@@ -276,7 +276,7 @@ pub(super) async fn drive_host(
             // `ansible_failed_task`.
             if let Some(next) = rescue_target(&c, index) {
                 let task = &c.steps[index].task;
-                if !std::mem::take(&mut peer_failure) {
+                if !std::mem::take(&mut peer_failure) && !result.0.contains_key(NO_FAILED_VARS) {
                     let mut vars = store.lock().expect("vars lock");
                     vars.set_untrusted_fact(&name, "ansible_failed_task", failed_task_value(task));
                     vars.set_untrusted_fact(

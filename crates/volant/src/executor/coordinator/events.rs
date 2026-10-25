@@ -215,7 +215,12 @@ pub(super) async fn answer(
 /// `...ignoring` line is the whole display of that step for that host.
 pub(super) fn shows_a_line(event: &Event) -> bool {
     match event {
-        Event::Result { show, outcome, .. } => *show || *outcome == Outcome::Ignored,
+        Event::Result {
+            show,
+            outcome,
+            error,
+            ..
+        } => *show || *outcome == Outcome::Ignored || error.is_some(),
         // A retry line is the first thing a retried task prints, and the reference shows the
         // task's banner above it: a task whose every attempt is still to come has no result yet.
         Event::Banner { .. } | Event::Retrying { .. } | Event::UnreachableIgnored { .. } => true,

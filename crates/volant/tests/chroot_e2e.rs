@@ -75,9 +75,8 @@ fn chroot_runs_a_play_in_a_tree() {
     );
 }
 
-/// The agent's directory is written from inside the tree, so a `remote_tmp` that is a symbolic
-/// link to a directory outside it points, inside the tree, at a path that is not there: the
-/// upload fails, and nothing outside the tree is written.
+/// The upload runs inside the tree, so a `remote_tmp` linking outside it names a path that is not
+/// there: the upload fails, and nothing outside the tree is written.
 #[test]
 #[ignore = "needs root, community.general and a tree"]
 fn chroot_writes_nothing_outside_the_tree() {

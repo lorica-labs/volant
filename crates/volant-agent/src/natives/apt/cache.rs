@@ -83,7 +83,8 @@ fn has_room(dir: &Path) -> bool {
     if unsafe { libc::statvfs(path.as_ptr(), &raw mut stat) } != 0 {
         return false;
     }
-    stat.f_bavail.saturating_mul(stat.f_frsize) >= ROOM
+    // `u32` blocks on macOS, `u64` on Linux.
+    u128::from(stat.f_bavail) * u128::from(stat.f_frsize) >= u128::from(ROOM)
 }
 
 #[cfg(test)]

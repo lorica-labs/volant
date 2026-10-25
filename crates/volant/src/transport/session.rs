@@ -286,7 +286,12 @@ impl SshTarget {
         stderr: Stdio,
     ) -> Result<tokio::process::Child, ConnectError> {
         refuse_option_user(escalation)?;
-        let mut argv = self.ssh_argv_with(&su_command(escalation, command, success), compress);
+        let remote = format!(
+            "{}{}",
+            self.login_tmp(),
+            su_command(escalation, command, success)
+        );
+        let mut argv = self.ssh_argv_with(&remote, compress);
         let address = argv.len() - 3;
         argv.splice(
             address..address,

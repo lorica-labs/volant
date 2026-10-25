@@ -11,7 +11,8 @@
 //! path is accepted only when it is not a symbolic link, belongs to the user the command runs
 //! as, and has no group or other write bit. `remote_tmp` itself is accepted only when other
 //! users cannot rename an entry in it: it belongs to that user, to root, or to the user whom
-//! `sudo` reports in `SUDO_UID` (the login user, who can already act as root), and it is closed
+//! `sudo` reports in `SUDO_UID` or [`AgentCommands::login_tmp`] in `VOLANT_LOGIN_UID` (the login
+//! user, who can already act as the escalated one), and it is closed
 //! to other writes, or has the sticky bit. A `remote_tmp` that the user owns may be open to its
 //! group when that group is the user's own primary group, as a umask of 002 with a group per
 //! user makes the home directory and what is under it.
@@ -49,7 +50,7 @@ const CHECKS: &str = concat!(
     r#"ent() { m=; o=; gp=; case "$1" in *" $2"|*" $2 -> "*) set -f; set -- $1; set +f; m=$1; o=$3; gp=$4;; esac; }; "#,
     r#"okmode() { case "$m" in "$1"????[!w]??[!w]*) [ "$o" = "$u" ]; return;; esac; return 1; }; "#,
     r#"oktmp() { case "$m" in d*) ;; *) return 1;; esac; "#,
-    r#"[ "$o" = "$u" ] || [ "$o" = 0 ] || [ "$o" = "${SUDO_UID:-x}" ] || return 1; "#,
+    r#"[ "$o" = "$u" ] || [ "$o" = 0 ] || [ "$o" = "${SUDO_UID:-${VOLANT_LOGIN_UID:-x}}" ] || return 1; "#,
     r#"case "$m" in d????????[tT]*) return 0;; d???????w*) return 1;; d????w????+) return 1;; d????w*) [ "$o" = "$u" ] && [ "$gp" = "$(id -g)" ]; return;; esac; return 0; }; "#,
     r#"fit() { ent "$(ls -ldn -- "$2" 2>/dev/null)" "$2"; okmode "$1"; }; "#,
     r#"say() { printf '%s\n' "$1: permissions ${m:-unknown}, owner uid ${o:-unknown}: $2" >&2; }; "#,
@@ -80,6 +81,23 @@ pub(super) trait AgentCommands: Reach {
             shell_word(self.remote_tmp()),
             env!("CARGO_PKG_VERSION")
         )
+    }
+
+    /// What an escalated command runs as the login user first: an absolute `remote_tmp` that
+    /// does not exist yet is made by the login user, mode 0700, as ansible-core 2.19.12 makes it
+    /// for a task with `become`, so the escalated link and the plain one can both use it. The
+    /// login user's id travels to the checks for a `su`, which, unlike `sudo`, says nothing
+    /// about who started it. A `remote_tmp` under `~` names each user's own home and is left to
+    /// that user.
+    fn login_tmp(&self) -> String {
+        let rt = self.remote_tmp();
+        let made = if rt.starts_with('/') {
+            let rt = shell_word(rt);
+            format!("[ -d {rt}/ ] || (umask 077 && mkdir -p {rt}) 2>/dev/null; ")
+        } else {
+            String::new()
+        };
+        format!("{made}VOLANT_LOGIN_UID=$(id -u); export VOLANT_LOGIN_UID; ")
     }
 
     /// The functions, for a command that checks or makes the directory.

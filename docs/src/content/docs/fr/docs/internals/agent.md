@@ -1,5 +1,5 @@
 ---
-sourceHash: 58f2d335264c
+sourceHash: 3819217d77a5
 title: L'agent sur vos hôtes
 description: Comment Volant envoie, vérifie et répare l'agent qu'il met en cache sur chaque hôte, et comment les connexions ssh vers un hôte sont partagées.
 ---
@@ -42,12 +42,12 @@ L'agent voyage par `ssh -C` : OpenSSH le compresse sur le réseau et rien n'est
 Volant n'exécute l'agent en cache que depuis un répertoire qu'aucun autre compte ne peut modifier. Il le vérifie lors de la sonde, après un envoi et une dernière fois juste avant le démarrage :
 
 - Le répertoire et le programme ne sont pas des liens symboliques. Le compte qui exécute l'agent possède les deux, et aucun n'a de bit d'écriture pour le groupe ou les autres.
-- `remote_tmp` appartient à ce compte, à root ou, sous `sudo`, au compte qui a lancé `sudo`. Les autres comptes ne peuvent pas y écrire, ou il a le sticky bit, comme `/tmp`.
+- `remote_tmp` appartient à ce compte, à root ou, sous `sudo` ou `su`, au compte qui s'est connecté. Les autres comptes ne peuvent pas y écrire, ou il a le sticky bit, comme `/tmp`.
 - Un `remote_tmp` que le compte possède peut être ouvert à son groupe quand ce groupe est le groupe principal du compte, comme le produit un umask de 002 avec un groupe par utilisateur. Il ne le peut pas si une entrée d'ACL y apparaît (un `+` après le mode dans `ls -l`), car cette entrée peut donner l'accès en écriture à un autre compte. Volant ne lit que les bits de mode : les ACL qui n'y figurent pas (NFSv4, ZFS, macOS) ne sont pas vues.
 
 Tout autre état arrête l'hôte avec une erreur `UNREACHABLE` qui nomme le chemin, ses permissions et son propriétaire. Un envoi crée ses fichiers avec `umask 077`. Si le répertoire est le vôtre mais trop ouvert, l'envoi le vide des fichiers de Volant et le recrée. Si un autre compte le possède, Volant n'y touche pas et le signale. Seuls sont supprimés les répertoires des autres versions que le même compte possède et qu'aucun autre compte ne peut modifier.
 
-Un `remote_tmp` qui n'existe pas est créé par le premier compte qui en a besoin, en mode 0700, et appartient ensuite à ce compte. Créez-le d'abord quand plusieurs comptes le partagent. Le `~/.ansible/tmp` par défaut ne demande rien.
+Un `remote_tmp` qui n'existe pas est créé par le compte qui s'est connecté, en mode 0700, comme le fait ansible-core, même quand une tâche avec élévation en a besoin la première. Un `become_user` autre que root ne peut alors pas y entrer : donnez à ce compte son propre `remote_tmp`, ou créez un répertoire partagé avec le sticky bit. Le `~/.ansible/tmp` par défaut ne demande rien, car `~` désigne le répertoire personnel de chaque compte.
 
 Les vérifications utilisent `ls -ldn` et n'exigent donc aucune option de `stat`. Volant ne vérifie pas les répertoires au-dessus de `remote_tmp`. Un compte qui peut en remplacer un peut encore échanger le chemin dans le court laps de temps entre la dernière vérification et le démarrage de l'agent.
 

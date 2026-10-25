@@ -1,5 +1,5 @@
 ---
-sourceHash: 58f2d335264c
+sourceHash: 3819217d77a5
 title: El agente en tus hosts
 description: Cómo Volant sube, comprueba y repara el agente que guarda en caché en cada host, y cómo se comparten las conexiones ssh con un host.
 ---
@@ -41,12 +41,12 @@ El agente viaja por `ssh -C`, así que OpenSSH lo comprime en la red y no hace f
 Volant ejecuta el agente en caché solo desde un directorio que ninguna otra cuenta puede modificar. Lo comprueba en la sonda, después de una subida y otra vez justo antes del inicio:
 
 - El directorio y el programa no son enlaces simbólicos. La cuenta que ejecuta el agente es la dueña de ambos, y ninguno tiene bit de escritura para el grupo ni para otros.
-- `remote_tmp` pertenece a esa cuenta, a root o, con `sudo`, a la cuenta que ejecutó `sudo`. Otras cuentas no pueden escribir en él, o tiene el sticky bit, como `/tmp`.
+- `remote_tmp` pertenece a esa cuenta, a root o, con `sudo` o `su`, a la cuenta que inició sesión. Otras cuentas no pueden escribir en él, o tiene el sticky bit, como `/tmp`.
 - Un `remote_tmp` que pertenece a la cuenta puede estar abierto a su grupo cuando ese grupo es el grupo primario de la propia cuenta, como ocurre con una umask de 002 y un grupo por usuario. No puede estarlo cuando aparece una entrada de ACL (un `+` tras el modo en `ls -l`), porque esa entrada puede conceder acceso de escritura a otra cuenta. Volant lee solo los bits de modo, así que las ACL que no están en ellos (NFSv4, ZFS, macOS) no se ven.
 
 Cualquier otro estado detiene el host con un error `UNREACHABLE` que nombra la ruta, sus permisos y su propietario. Una subida se crea con `umask 077`. Si el directorio es tuyo pero está demasiado abierto, la subida lo vacía de los archivos de Volant y lo crea de nuevo. Si pertenece a otra cuenta, Volant lo deja como está y lo notifica. Solo se eliminan los directorios de otras versiones que pertenecen a la misma cuenta y en los que ninguna otra cuenta puede escribir.
 
-Un `remote_tmp` que no existe lo crea la primera cuenta que lo necesita, con el modo 0700, y pasa a pertenecerle. Créalo antes cuando lo compartan varias cuentas. El `~/.ansible/tmp` por defecto no necesita nada.
+Un `remote_tmp` que no existe lo crea la cuenta que inició sesión, con el modo 0700, como hace ansible-core, aunque una tarea que escala privilegios lo necesite primero. Un `become_user` distinto de root no puede entrar entonces: dale a esa cuenta su propio `remote_tmp`, o crea uno compartido con el sticky bit. El `~/.ansible/tmp` por defecto no necesita nada, porque `~` designa el directorio personal de cada cuenta.
 
 Las comprobaciones usan `ls -ldn`, así que no necesitan ninguna opción de `stat`. Volant no comprueba los directorios por encima de `remote_tmp`. Una cuenta que pueda reemplazar uno de ellos aún puede cambiar la ruta en el breve intervalo entre la última comprobación y el inicio del agente.
 

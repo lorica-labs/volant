@@ -16,6 +16,7 @@ stderr, which the controller passes through.
 """
 import base64
 import collections.abc
+import contextlib
 import datetime
 import importlib.util
 import io
@@ -1385,8 +1386,14 @@ def captured_messages(result, warning_ctx):
     if warnings:
         result["warnings"] = warnings
     deprecations = warning_ctx.get_deprecation_warnings()
-    for summary in deprecations:
-        Display()._deprecated(summary)
+    # Written by the controller after the task's warnings, where the reference's callback has them:
+    # the text `Display` would print, captured rather than printed now.
+    shown = io.StringIO()
+    with contextlib.redirect_stderr(shown):
+        for summary in deprecations:
+            Display()._deprecated(summary)
+    if shown.getvalue():
+        result["_volant_deprecation_text"] = shown.getvalue()
     if deprecations:
         result["deprecations"] = [summary_shown(d) for d in deprecations]
 

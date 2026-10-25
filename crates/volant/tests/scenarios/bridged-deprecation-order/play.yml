@@ -1,0 +1,5 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - acme.probe.talk:
+    - acme.probe.talk:

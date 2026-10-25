@@ -1,0 +1,4 @@
+# A bridged plugin's deprecation is printed after the task's warnings.
+stderr: true
+needs: [ansible-core]
+args: [-i, inv.ini, play.yml]

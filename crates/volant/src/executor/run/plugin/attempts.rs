@@ -40,6 +40,38 @@ pub(in crate::executor) struct PluginStart<'a> {
     pub(in crate::executor) index: usize,
 }
 
+impl PluginStart<'_> {
+    /// What the plugin of `item` is started with.
+    pub(in crate::executor) fn context<'s>(
+        &'s self,
+        task: &PlayTask,
+        item: &'s Item,
+        warnings: &'s mut Vec<String>,
+    ) -> crate::action_plugins::Context<'s> {
+        crate::action_plugins::Context {
+            link: self.link,
+            args: &item.args,
+            args_untrusted: &item.args_untrusted,
+            running_vars: self.running_vars,
+            delegated: self.link.delegate.is_some(),
+            escalated: self.link.escalation.is_some(),
+            local: self.link.local,
+            item_vars: &item.vars,
+            templar: self.templar,
+            origin: self.origin,
+            playbook_dir: self.playbook_dir,
+            host_named_paths: self.host_named_paths,
+            host_named_dest_dirs: self.host_named_dest_dirs,
+            warnings,
+            environment: Some(&item.environment),
+            timeout: task.timeout,
+            check_mode: item.check_mode == Some(true),
+            diff: item.diff == Some(true),
+            async_val: task.async_val,
+        }
+    }
+}
+
 /// One item of a task an action plugin backs, attempt after attempt under `retries`/`until`.
 ///
 /// Each attempt starts the plugin afresh, so the whole sequence of sub-tasks runs again from its
@@ -82,30 +114,8 @@ pub(in crate::executor) async fn run_plugin_attempts<C: AgentChannel, R: Relink<
         // The warnings of the attempt whose result is shown, not one copy per attempt.
         warnings.clear();
         let raw = {
-            let mut plugin = crate::action_plugins::start(
-                start.kind,
-                crate::action_plugins::Context {
-                    link: start.link,
-                    args: &item.args,
-                    args_untrusted: &item.args_untrusted,
-                    running_vars: start.running_vars,
-                    delegated: start.link.delegate.is_some(),
-                    escalated: start.link.escalation.is_some(),
-                    local: start.link.local,
-                    item_vars: &item.vars,
-                    templar: start.templar,
-                    origin: start.origin,
-                    playbook_dir: start.playbook_dir,
-                    host_named_paths: start.host_named_paths,
-                    host_named_dest_dirs: start.host_named_dest_dirs,
-                    warnings: &mut *warnings,
-                    environment: Some(&item.environment),
-                    timeout: task.timeout,
-                    check_mode: item.check_mode == Some(true),
-                    diff: item.diff == Some(true),
-                    async_val: task.async_val,
-                },
-            );
+            let mut plugin =
+                crate::action_plugins::start(start.kind, start.context(task, item, warnings));
             run_plugin_item(
                 link,
                 relink,

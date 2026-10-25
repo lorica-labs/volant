@@ -23,7 +23,8 @@ use super::local::set_fact_names;
 use super::local::{run_local, set_fact_data};
 use super::output::{TTY_KEY, add_output_lines, classify, give_terminals, summarise_exception};
 use super::plugin::{
-    PluginStart, protocol_task, run_plugin_attempts, run_plugin_item, wait_or_stop,
+    PluginStart, protocol_task, run_plugin_attempts, run_plugin_group, run_plugin_item,
+    wait_or_stop,
 };
 #[cfg(unix)]
 use super::record::record_local_facts;
@@ -5638,4 +5639,77 @@ async fn a_retry_line_follows_the_censoring_of_the_other_output() {
         };
         assert_eq!(censored, expected, "no_log {no_log}, hides {hides}");
     }
+}
+
+/// The items of a grouped loop share their trips: one batch carries each item's next sub-task,
+/// and each item gets its own answer, in item order.
+#[tokio::test]
+async fn grouped_items_share_one_batch() {
+    use crate::action_plugins::{Plugin, Step, Sub};
+    struct Once(Option<Sub>);
+    impl Plugin for Once {
+        fn next(&mut self, last: Option<TaskResult>) -> Step {
+            match self.0.take() {
+                Some(sub) => Step::Run(sub),
+                None => Step::Done(last.unwrap_or_else(|| TaskResult::failed_with("nothing"))),
+            }
+        }
+    }
+    let echo = |text: &str| {
+        Box::new(Once(Some(Sub {
+            module: "command",
+            args: json!({"_raw_params": format!("echo {text}")})
+                .as_object()
+                .unwrap()
+                .clone(),
+            files: Vec::new(),
+        }))) as Box<dyn Plugin>
+    };
+    let answer = |index: usize, out: &str| FromAgent::TaskResult {
+        batch: 1,
+        index,
+        result: TaskResult(json!({"stdout": out}).as_object().unwrap().clone()),
+        ran: None,
+    };
+    let mut agent = FakeAgent::answering(vec![
+        answer(0, "a"),
+        answer(1, "b"),
+        FromAgent::BatchDone {
+            batch: 1,
+            outcome: BatchOutcome::Completed,
+        },
+    ]);
+    let mut stop = watch::channel(false).1;
+    let (mut batch_id, mut stop_broken, mut logs) = (0, false, Vec::new());
+    let items = vec![bare_item(), bare_item()];
+    let done = run_plugin_group(
+        &mut agent,
+        "h1",
+        &mut batch_id,
+        vec![(0, echo("a")), (1, echo("b"))],
+        &task("copy"),
+        &items,
+        None,
+        &[],
+        None,
+        &mut stop,
+        &mut stop_broken,
+        &mut logs,
+    )
+    .await
+    .expect("the batch completed");
+    let batches: Vec<usize> = agent
+        .sent
+        .iter()
+        .filter_map(|m| match m {
+            ToAgent::RunBatch { tasks, .. } => Some(tasks.len()),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(batches, [2]);
+    let outs: Vec<(usize, Value)> = done
+        .into_iter()
+        .map(|(ii, r)| (ii, r.0["stdout"].clone()))
+        .collect();
+    assert_eq!(outs, [(0, json!("a")), (1, json!("b"))]);
 }

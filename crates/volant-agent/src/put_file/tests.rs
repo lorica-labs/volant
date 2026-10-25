@@ -92,12 +92,32 @@ fn a_replaced_file_keeps_its_owner_group_and_mode() {
     fs::write(&at, b"old").unwrap();
     std::os::unix::fs::chown(&at, Some(1234), Some(4321)).unwrap();
     fs::set_permissions(&at, fs::Permissions::from_mode(0o640)).unwrap();
-    let before = fs::metadata(&at).unwrap();
     assert!(put(&staged, &at, None).unwrap());
     let after = fs::metadata(&at).unwrap();
     assert_eq!(fs::read(&at).unwrap(), b"new");
     assert_eq!((after.uid(), after.gid()), (1234, 4321));
     assert_eq!(mode(&at), 0o640);
-    assert_eq!(after.mtime(), before.mtime());
-    assert_eq!(after.mtime_nsec(), before.mtime_nsec());
+}
+
+/// A file the agent may not write is refused in the reference's words, even in a directory it
+/// may write, and stays as it was; skipped as root, which may write anything.
+#[test]
+fn a_file_the_agent_may_not_write_is_refused() {
+    if unsafe { libc::geteuid() } == 0 {
+        eprintln!("skipped: root may write a read-only file");
+        return;
+    }
+    let dir = tempfile::tempdir().unwrap();
+    let staged = dir.path().join("staged");
+    let at = dir.path().join("out");
+    fs::write(&staged, b"new").unwrap();
+    fs::write(&at, b"old").unwrap();
+    fs::set_permissions(&at, fs::Permissions::from_mode(0o444)).unwrap();
+    let err = put(&staged, &at, None).unwrap_err();
+    let shown = at.display();
+    assert_eq!(
+        refusal(&shown.to_string(), &err),
+        format!("Failed to transfer file to '{shown}': [Errno 13] Permission denied: b'{shown}'")
+    );
+    assert_eq!(fs::read(&at).unwrap(), b"old");
 }

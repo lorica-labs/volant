@@ -40,7 +40,7 @@ where
     }
     let (changed, error) = match outcome {
         Ok(changed) => (changed, None),
-        Err(err) => (false, Some(format!("putting the file at {path}: {err}"))),
+        Err(err) => (false, Some(refusal(path, &err))),
     };
     send(&FromAgent::PutFileDone {
         hash: hash.to_string(),
@@ -49,10 +49,28 @@ where
     })
 }
 
-/// Whether the content or the mode at `path` changed. A regular file it replaces keeps its owner,
-/// group, times and extended attributes where the agent may set them. A directory at `path` is refused; a symlink
-/// there is replaced, never followed. The new file is written beside `path` and renamed over
-/// it, so a reader sees the old file or the new one, never half of it.
+/// Why a put failed. An error of the system is said in the reference's words, `put_file`'s
+/// `AnsibleError` over Python's `OSError`, measured on ansible-core 2.19.12 with a file the
+/// connection user may not write: `Failed to transfer file to '<path>': [Errno 13] Permission
+/// denied: b'<path>'`.
+fn refusal(path: &str, err: &io::Error) -> String {
+    match err.raw_os_error() {
+        Some(code) => {
+            let text = err.to_string();
+            let text = text
+                .strip_suffix(&format!(" (os error {code})"))
+                .unwrap_or(&text);
+            format!("Failed to transfer file to '{path}': [Errno {code}] {text}: b'{path}'")
+        }
+        None => format!("putting the file at {path}: {err}"),
+    }
+}
+
+/// Whether the content or the mode at `path` changed. A regular file already there is written
+/// in place, as the reference's `put_file` copies onto it: it keeps its owner, group and mode, and
+/// one the agent may not write is refused, the agent running as the connection user. A directory
+/// at `path` is refused; a symlink there is replaced, never followed. A new file is written
+/// beside `path` and renamed into place, so a reader never sees half of it.
 fn put(staged: &Path, path: &Path, mode: Option<u32>) -> io::Result<bool> {
     static TEMP: AtomicU64 = AtomicU64::new(0);
 
@@ -75,19 +93,22 @@ fn put(staged: &Path, path: &Path, mode: Option<u32>) -> io::Result<bool> {
             "the path is a directory",
         ));
     }
-    let kept = held.as_ref().filter(|m| m.is_file());
-    let held_mode = kept.and_then(mode_of);
-    let mode = mode.or(held_mode).unwrap_or(DEFAULT_MODE);
     let bytes = fs::read(staged)?;
-    if held_mode.is_some()
-        && fs::read(path).is_ok_and(|held| blake3::hash(&held) == blake3::hash(&bytes))
-    {
-        if held_mode == Some(mode) {
-            return Ok(false);
+    if let Some(held_mode) = held.as_ref().filter(|m| m.is_file()).and_then(mode_of) {
+        let same = fs::read(path).is_ok_and(|held| blake3::hash(&held) == blake3::hash(&bytes));
+        if !same {
+            let mut file = open_in_place(path)?;
+            file.write_all(&bytes)?;
+            file.sync_all()?;
         }
-        set_mode(path, mode)?;
-        return Ok(true);
+        let mode = mode.unwrap_or(held_mode);
+        // Read again: a write takes setuid and setgid off.
+        if fs::metadata(path).ok().as_ref().and_then(mode_of) != Some(mode) {
+            set_mode(path, mode)?;
+        }
+        return Ok(!same || mode != held_mode);
     }
+    let mode = mode.unwrap_or(DEFAULT_MODE);
     let temp = dir.join(format!(
         ".volant-put-{}-{}",
         std::process::id(),
@@ -95,11 +116,7 @@ fn put(staged: &Path, path: &Path, mode: Option<u32>) -> io::Result<bool> {
     ));
     let written = create(&temp, mode).and_then(|mut file| {
         file.write_all(&bytes)?;
-        file.sync_all()?;
-        match kept {
-            Some(old) => keep_attributes(&file, &temp, path, old),
-            None => Ok(()),
-        }
+        file.sync_all()
     });
     // A mode the umask narrowed at creation is set outright before the file takes its name.
     let renamed = written
@@ -111,171 +128,28 @@ fn put(staged: &Path, path: &Path, mode: Option<u32>) -> io::Result<bool> {
     renamed.map(|()| true)
 }
 
-/// What `AnsibleModule.atomic_move` gives the new file before the rename: the owner and group
-/// of the file it replaces (a refusal with `EPERM` is ignored), its times and its extended
-/// attributes, which carry the SELinux context. The mode is set by the caller after this.
+/// The regular file at `path` opened to be written over, never through a symlink put there since
+/// it was looked at. `O_CREAT` as `shutil.copyfile` opens it, which `fs.protected_regular`
+/// refuses for another user's file in a sticky directory such as `/tmp`, as it refuses the
+/// reference.
 #[cfg(unix)]
-fn keep_attributes(
-    file: &fs::File,
-    temp: &Path,
-    old_path: &Path,
-    old: &fs::Metadata,
-) -> io::Result<()> {
-    use std::os::unix::fs::{MetadataExt, fchown};
-    match fchown(file, Some(old.uid()), Some(old.gid())) {
-        Err(err) if err.raw_os_error() != Some(libc::EPERM) => return Err(err),
-        _ => {}
-    }
-    copy_xattrs(old_path, temp)?;
-    file.set_times(
-        fs::FileTimes::new()
-            .set_accessed(old.accessed()?)
-            .set_modified(old.modified()?),
-    )
-}
-
-/// `shutil._copyxattr`: every attribute of `from` set on `to`. A file system or an account that
-/// refuses an attribute (`EPERM`, `ENOTSUP`, `ENODATA`, `EACCES`) leaves it out, as `copystat` does.
-#[cfg(unix)]
-fn copy_xattrs(from: &Path, to: &Path) -> io::Result<()> {
-    use std::ffi::{CStr, CString};
-    use std::os::unix::ffi::OsStrExt;
-
-    fn tolerated(err: &io::Error) -> bool {
-        matches!(
-            err.raw_os_error(),
-            Some(libc::EPERM | libc::ENOTSUP | libc::ENODATA | libc::EACCES)
-        )
-    }
-    let from = CString::new(from.as_os_str().as_bytes()).map_err(io::Error::other)?;
-    let to = CString::new(to.as_os_str().as_bytes()).map_err(io::Error::other)?;
-    let size = xattr::list(&from, &mut []);
-    if size < 0 {
-        let err = io::Error::last_os_error();
-        return if tolerated(&err) { Ok(()) } else { Err(err) };
-    }
-    let mut names = vec![0u8; size.unsigned_abs()];
-    let size = xattr::list(&from, &mut names);
-    if size < 0 {
-        let err = io::Error::last_os_error();
-        return if tolerated(&err) { Ok(()) } else { Err(err) };
-    }
-    names.truncate(size.unsigned_abs());
-    for name in names.split(|b| *b == 0).filter(|n| !n.is_empty()) {
-        let name = CString::new(name).map_err(io::Error::other)?;
-        let name: &CStr = &name;
-        let len = xattr::get(&from, name, &mut []);
-        if len < 0 {
-            let err = io::Error::last_os_error();
-            if tolerated(&err) {
-                continue;
-            }
-            return Err(err);
-        }
-        let mut value = vec![0u8; len.unsigned_abs()];
-        let got = xattr::get(&from, name, &mut value);
-        if got < 0 {
-            let err = io::Error::last_os_error();
-            if tolerated(&err) {
-                continue;
-            }
-            return Err(err);
-        }
-        let set = xattr::set(&to, name, &value[..got.unsigned_abs()]);
-        if set < 0 {
-            let err = io::Error::last_os_error();
-            if !tolerated(&err) {
-                return Err(err);
-            }
-        }
-    }
-    Ok(())
-}
-
-/// The extended attribute calls, over buffers. A buffer of size 0 asks for the size. macOS adds
-/// a position and an options argument to each call.
-#[cfg(unix)]
-mod xattr {
-    use std::ffi::CStr;
-
-    #[cfg(target_os = "macos")]
-    pub(super) fn list(path: &CStr, buf: &mut [u8]) -> isize {
-        // SAFETY: `buf` holds `buf.len()` bytes, which is what `listxattr` may write.
-        unsafe { libc::listxattr(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len(), 0) }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub(super) fn list(path: &CStr, buf: &mut [u8]) -> isize {
-        // SAFETY: `buf` holds `buf.len()` bytes, which is what `listxattr` may write.
-        unsafe { libc::listxattr(path.as_ptr(), buf.as_mut_ptr().cast(), buf.len()) }
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(super) fn get(path: &CStr, name: &CStr, buf: &mut [u8]) -> isize {
-        // SAFETY: `buf` holds `buf.len()` bytes, which is what `getxattr` may write.
-        unsafe {
-            libc::getxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                buf.as_mut_ptr().cast(),
-                buf.len(),
-                0,
-                0,
-            )
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub(super) fn get(path: &CStr, name: &CStr, buf: &mut [u8]) -> isize {
-        // SAFETY: `buf` holds `buf.len()` bytes, which is what `getxattr` may write.
-        unsafe {
-            libc::getxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                buf.as_mut_ptr().cast(),
-                buf.len(),
-            )
-        }
-    }
-
-    #[cfg(target_os = "macos")]
-    pub(super) fn set(path: &CStr, name: &CStr, value: &[u8]) -> libc::c_int {
-        // SAFETY: `value` holds the `value.len()` bytes `setxattr` reads.
-        unsafe {
-            libc::setxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                value.as_ptr().cast(),
-                value.len(),
-                0,
-                0,
-            )
-        }
-    }
-
-    #[cfg(not(target_os = "macos"))]
-    pub(super) fn set(path: &CStr, name: &CStr, value: &[u8]) -> libc::c_int {
-        // SAFETY: `value` holds the `value.len()` bytes `setxattr` reads.
-        unsafe {
-            libc::setxattr(
-                path.as_ptr(),
-                name.as_ptr(),
-                value.as_ptr().cast(),
-                value.len(),
-                0,
-            )
-        }
-    }
+fn open_in_place(path: &Path) -> io::Result<fs::File> {
+    use std::os::unix::fs::OpenOptionsExt;
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .custom_flags(libc::O_NOFOLLOW)
+        .open(path)
 }
 
 #[cfg(not(unix))]
-fn keep_attributes(
-    _file: &fs::File,
-    _temp: &Path,
-    _old_path: &Path,
-    _old: &fs::Metadata,
-) -> io::Result<()> {
-    Ok(())
+fn open_in_place(path: &Path) -> io::Result<fs::File> {
+    fs::OpenOptions::new()
+        .write(true)
+        .create(true)
+        .truncate(true)
+        .open(path)
 }
 
 #[cfg(unix)]

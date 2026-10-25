@@ -187,6 +187,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             "localhost_warning" => {
                 config.localhost_warning = boolean("LOCALHOST_WARNING", origin, value.trim())?;
             }
+            "duplicate_dict_key" => config.duplicate_dict_key = Some(value.trim().to_string()),
             "show_custom_stats" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.show_custom_stats = on;

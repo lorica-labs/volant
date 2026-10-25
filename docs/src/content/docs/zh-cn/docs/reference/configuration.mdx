@@ -86,6 +86,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
   即使在失败的主机上，也运行已被 notify 的 handler。
 </Option>
 
+<Option name="duplicate_dict_key" id="defaults-duplicate-dict-key" default="warn" env="ANSIBLE_DUPLICATE_YAML_DICT_KEY">
+  同一映射中写了两次的 YAML 键如何处理：`warn` 保留最后一个值并指出第二个键的位置，`error` 拒绝该文件，`ignore` 保留最后一个值且不提示。
+</Option>
+
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
   在汇总之后打印 `set_stats` 收集的统计信息。
 </Option>

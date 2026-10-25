@@ -86,6 +86,10 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
   Ejecuta los handlers notificados incluso en los hosts que fallaron.
 </Option>
 
+<Option name="duplicate_dict_key" id="defaults-duplicate-dict-key" default="warn" env="ANSIBLE_DUPLICATE_YAML_DICT_KEY">
+  Qué recibe una clave YAML escrita dos veces en un mismo mapeo: `warn` conserva el último valor y muestra dónde está la segunda clave, `error` rechaza el archivo, `ignore` conserva el último valor sin decir nada.
+</Option>
+
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
   Imprime después del recap las estadísticas que recogió `set_stats`.
 </Option>

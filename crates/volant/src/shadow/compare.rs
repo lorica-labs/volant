@@ -7,6 +7,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value, json};
 
+use super::alike::different_args;
 use super::recording::Recording;
 use super::replay::Replay;
 use super::watch::{Done, Watched};
@@ -53,9 +54,9 @@ pub(super) struct Report {
     pub(super) compared: usize,
     pub(super) hosts: usize,
     /// Tasks not compared, or compared on their status alone, by reason.
-    pub(super) skipped: BTreeMap<&'static str, usize>,
-    /// Result lines whose arguments were not compared, by reason.
-    pub(super) unargued: BTreeMap<&'static str, usize>,
+    pub(super) skipped: BTreeMap<String, usize>,
+    /// Arguments not compared, by reason: per result line, or per argument for an unknown one.
+    pub(super) unargued: BTreeMap<String, usize>,
     pub(super) truncated: bool,
 }
 
@@ -262,12 +263,12 @@ fn compare_host(
                 &volant[i.min(volant.len())..],
                 report,
             );
-            *report.skipped.entry("after_flow").or_default() += total - i - 1;
+            *report.skipped.entry("after_flow".into()).or_default() += total - i - 1;
             return false;
         };
         if (&a.path, a.occurrence) != (&v.path, v.occurrence) {
             flow(host, &ansible[i..], &volant[i..], report);
-            *report.skipped.entry("after_flow").or_default() += total - i - 1;
+            *report.skipped.entry("after_flow".into()).or_default() += total - i - 1;
             return false;
         }
         report.compared += 1;
@@ -323,7 +324,7 @@ fn compare_task(host: &str, a: &Task, v: &Task, watched: &Watched, report: &mut 
     }
     let censored = |l: &Line| l.result.get("censored") == Some(&Value::Bool(true));
     if a.lines.iter().all(censored) {
-        *report.skipped.entry("no_log").or_default() += 1;
+        *report.skipped.entry("no_log".into()).or_default() += 1;
     }
     report
         .divergences
@@ -348,7 +349,15 @@ fn compare_line(
     report: &mut Report,
     found: &mut Vec<(&'static str, Value, Value)>,
 ) {
+    let unknown = |v: Option<&Value>| v.and_then(crate::template::unknown::reason_in_json);
     if a.item.is_some() && a.result.get("item") != v.result.get("item") {
+        if let Some(reason) = unknown(v.result.get("item")) {
+            *report
+                .skipped
+                .entry(format!("unknown: {reason}"))
+                .or_default() += 1;
+            return;
+        }
         let item = |l: &Line| json!({"item": l.result.get("item").cloned().unwrap_or(Value::Null)});
         found.push(("loop", item(a), item(v)));
         return;
@@ -361,7 +370,7 @@ fn compare_line(
     }
     for key in ["false_condition", "attempts"] {
         let (x, y) = (a.result.get(key), v.result.get(key));
-        if !censored && x != y {
+        if !censored && x != y && unknown(y).is_none() {
             ansible.insert(key.into(), x.cloned().unwrap_or(Value::Null));
             volant.insert(key.into(), y.cloned().unwrap_or(Value::Null));
         }
@@ -384,69 +393,20 @@ fn compare_line(
         (false, None, _) => "not_recorded",
         (false, Some(_), None) => "controller",
         (false, Some(recorded), Some(sent)) => {
-            let (x, y) = different_args(recorded, sent);
+            let (x, y, reasons) = different_args(recorded, sent);
+            for reason in reasons {
+                *report
+                    .unargued
+                    .entry(format!("unknown: {reason}"))
+                    .or_default() += 1;
+            }
             if !x.is_empty() {
                 found.push(("args", Value::Object(x), Value::Object(y)));
             }
             return;
         }
     };
-    *report.unargued.entry(reason).or_default() += 1;
-}
-
-/// The keys Volant sent whose value differs from the one the module ran with. Keys only in the
-/// recording are the module's defaults, Volant's own keys start with `_volant`, and a value the
-/// module hid is not compared.
-fn different_args(
-    recorded: &Map<String, Value>,
-    sent: &Map<String, Value>,
-) -> (Map<String, Value>, Map<String, Value>) {
-    let (mut ansible, mut volant) = (Map::new(), Map::new());
-    for (key, value) in sent {
-        let Some(theirs) = recorded.get(key) else {
-            continue;
-        };
-        if key.starts_with("_volant")
-            || theirs == "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"
-            || alike(theirs, value)
-        {
-            continue;
-        }
-        ansible.insert(key.clone(), theirs.clone());
-        volant.insert(key.clone(), value.clone());
-    }
-    (ansible, volant)
-}
-
-/// Equal once the module's own conversion of what it was given is allowed for: `yes` for
-/// `true`, `"8"` for `8`, `"a,b"` for a list.
-fn alike(theirs: &Value, ours: &Value) -> bool {
-    match (theirs, ours) {
-        (Value::Bool(b), Value::String(s)) => {
-            let s = s.to_ascii_lowercase();
-            let words: &[&str] = if *b {
-                &["yes", "on", "true", "1", "y", "t"]
-            } else {
-                &["no", "off", "false", "0", "n", "f"]
-            };
-            words.contains(&s.as_str())
-        }
-        (Value::Number(n), Value::String(s)) | (Value::String(s), Value::Number(n)) => {
-            s.trim() == n.to_string()
-        }
-        (Value::String(s), Value::Bool(b)) => s == &b.to_string(),
-        (Value::Array(x), Value::Array(y)) => {
-            x.len() == y.len() && x.iter().zip(y).all(|(a, b)| alike(a, b))
-        }
-        (Value::Array(x), Value::String(s)) => {
-            let parts: Vec<&str> = s.split(',').map(str::trim).collect();
-            x.len() == parts.len() && x.iter().zip(parts).all(|(a, b)| alike(a, &json!(b)))
-        }
-        (Value::Object(x), Value::Object(y)) => {
-            y.iter().all(|(k, b)| x.get(k).is_none_or(|a| alike(a, b)))
-        }
-        _ => theirs == ours,
-    }
+    *report.unargued.entry(reason.to_owned()).or_default() += 1;
 }
 
 /// The recap line, compared once the host's tasks all were.
@@ -484,7 +444,3 @@ fn compare_recap(
         });
     }
 }
-
-#[cfg(test)]
-#[path = "compare_tests.rs"]
-mod tests;

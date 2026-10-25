@@ -274,11 +274,15 @@ fn aggregate(
 
 /// `r` as it is registered or handed to a rescue: without the error block's message the executor
 /// left on it, and without the `_ansible_` keys, which the reference strips on the way too
-/// (measured: a registered `debug` holds `msg`, `failed` and `changed` alone).
+/// (measured: a registered `debug` holds `msg`, `failed` and `changed` alone). The mark of a
+/// replay's `no_log` answer stays, for a later read of it to be unknown.
 pub(super) fn without_error(r: &TaskResult) -> TaskResult {
     let mut r = r.clone();
     r.0.remove(ERROR_KEY);
-    r.0.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
+    r.0.retain(|k, _| {
+        !k.starts_with("_ansible_")
+            && (!k.starts_with("_volant_") || k == crate::template::unknown::CENSORED)
+    });
     r
 }
 

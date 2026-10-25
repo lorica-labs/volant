@@ -356,6 +356,9 @@ impl DateTime {
 /// false or empty `fmt` leaves the `datetime` as it is, and a true `fmt` that is not text fails
 /// in `strftime`.
 pub(super) fn now(args: Rest<ValueOrKwargs>) -> Result<Value, Error> {
+    if super::unknown::active() {
+        return Ok(super::unknown::value("now()"));
+    }
     let args = args.into_values();
     let [utc, format] = bind(Callee::Python, "_now", &["utc", "fmt"], &args)?;
     let now = DateTime::now(utc.is_some_and(|utc| utc.is_true()));

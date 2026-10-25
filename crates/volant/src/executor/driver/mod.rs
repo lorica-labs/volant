@@ -159,7 +159,7 @@ pub(super) async fn drive_host(
     {
         pos += grown;
     }
-    let mut batch_id = first_batch_id();
+    let mut batch_id = super::run::first_batch_id();
     // The handlers this host has asked for and not yet run, as indices into `compiled.handlers`.
     // Never twice: measured, a handler notified by two tasks runs once.
     let mut notified: Vec<usize> = Vec::new();
@@ -897,16 +897,19 @@ pub(super) async fn drive_host(
             } else {
                 step
             };
-            let prepared = prepare(
-                step_read,
-                &name,
-                &plan,
-                &live,
-                &templar,
-                &store,
-                &options.defaults,
-                &mut warnings,
-            );
+            let prepared =
+                replayed::preparing(&options, seen.as_ref(), &name, &step_read.task, || {
+                    prepare(
+                        step_read,
+                        &name,
+                        &plan,
+                        &live,
+                        &templar,
+                        &store,
+                        &options.defaults,
+                        &mut warnings,
+                    )
+                });
             let prepared = match debugger::invalid(&step.task) {
                 Some(err) => Err(err),
                 None => debugger::with_edited(prepared, pos, &mut edited),
@@ -2609,15 +2612,6 @@ impl Driver<'_> {
     fn stopped(&self) -> bool {
         *self.stop.borrow()
     }
-}
-
-/// Where one host's batch ids start for one play: a range 2^32 wide, handed out once per
-/// process, so no id is used twice on a link. Links outlive the play that opened them and are
-/// shared by every driver that reaches the host, and a batch reads only the frames of its own id:
-/// an id seen again would take a late frame left on the link for its own.
-fn first_batch_id() -> u64 {
-    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    NEXT.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
 }
 
 #[cfg(test)]

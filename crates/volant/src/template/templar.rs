@@ -224,6 +224,15 @@ impl Templar {
         ctx: &minijinja::Value,
         tainted: &Tainted,
     ) -> Result<Value, TemplateError> {
+        unknown_through(|| self.render_known(text, ctx, tainted))
+    }
+
+    fn render_known(
+        &self,
+        text: &str,
+        ctx: &minijinja::Value,
+        tainted: &Tainted,
+    ) -> Result<Value, TemplateError> {
         // Per string, not per context: `render_value_in` walks a whole structure through one
         // context, and a tainted field must not make the next field data too.
         tainted.store(false, Ordering::Relaxed);
@@ -396,6 +405,10 @@ impl Templar {
         expr: &str,
         ctx: &minijinja::Value,
     ) -> Result<Value, TemplateError> {
+        unknown_through(|| self.evaluate_known(expr, ctx))
+    }
+
+    fn evaluate_known(&self, expr: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
         let value = eval_expr(self, expr, ctx).map_err(convert_error);
         // A variable the expression read failed to render: that is the error, whatever the
         // undefined value it was read as did to the expression.
@@ -443,6 +456,12 @@ impl Templar {
             }
             value = self.evaluate_in(single_expression(text).unwrap_or(text.trim()), &ctx)?;
         }
+        // Read by the replay, which takes the recorded branch: see `crate::shadow::replay`.
+        if let Value::String(text) = &value
+            && let Some(reason) = super::unknown::reason_in(text)
+        {
+            return Err(TemplateError(super::unknown::marker(reason)));
+        }
         match value {
             Value::Bool(b) => Ok(b),
             other => Err(TemplateError(format!(
@@ -451,5 +470,21 @@ impl Templar {
                 if truthy(&other) { "True" } else { "False" }
             ))),
         }
+    }
+}
+
+/// `render`, whose result is the unknown value's marker when what it rendered read one, whether
+/// it then succeeded or failed: see [`super::unknown`]. Outside a replay, `render` alone.
+fn unknown_through(
+    render: impl FnOnce() -> Result<Value, TemplateError>,
+) -> Result<Value, TemplateError> {
+    if !super::unknown::active() {
+        return render();
+    }
+    let before = super::unknown::begin();
+    let result = render();
+    match super::unknown::end(before) {
+        Some(reason) => Ok(Value::String(super::unknown::marker(&reason))),
+        None => result,
     }
 }

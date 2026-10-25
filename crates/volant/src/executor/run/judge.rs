@@ -86,12 +86,15 @@ pub(super) fn apply_conditions(
     if !task.changed_when.is_empty() {
         match all_hold(&task.changed_when, &vars, templar) {
             Ok(changed) => result.0.insert("changed".into(), json!(changed)),
+            // A condition that reads an unknown value keeps the recorded decision.
+            Err(e) if crate::template::unknown::reason_in(&e.0).is_some() => None,
             Err(e) => return unevaluable(result, "changed", &e),
         };
     }
     if !task.failed_when.is_empty() {
         let failed = match all_hold(&task.failed_when, &vars, templar) {
             Ok(failed) => failed,
+            Err(e) if crate::template::unknown::reason_in(&e.0).is_some() => result.failed(),
             Err(e) => return unevaluable(result, "failed", &e),
         };
         result.0.insert("failed_when_result".into(), json!(failed));

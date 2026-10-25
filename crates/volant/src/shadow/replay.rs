@@ -16,6 +16,10 @@ use crate::playbook::{Origin, PlayTask};
 /// that path ran on that host, and the item index (`None` outside a loop).
 type Key = (String, String, usize, Option<usize>);
 
+/// The key the last recorded answer of an `until` carries, for [`crate::executor`]'s judge to
+/// end the loop there when the condition reads an unknown value.
+pub(crate) const FINAL: &str = "_volant_final";
+
 /// The failed attempts of an `until`, in order, then the result the task ended with.
 #[derive(Debug, Default)]
 struct Answer {
@@ -58,6 +62,17 @@ impl Seen {
             .or_default();
         seen.steps.insert(pos, *count);
         *count += 1;
+    }
+
+    /// The occurrence the next step of `task`'s file and line will be given.
+    pub(crate) fn peek(seen: Option<&Seen>, task: &PlayTask) -> usize {
+        let (Some(seen), Some(origin)) = (seen, task.origin.as_ref()) else {
+            return 0;
+        };
+        seen.counts
+            .get(&(Arc::clone(&origin.path), origin.line))
+            .copied()
+            .unwrap_or_default()
     }
 
     /// The occurrence step `pos` was given when it was marked.
@@ -163,9 +178,11 @@ impl Replay {
             return Err(format!("recorded as unreachable: {msg}"));
         }
         // A `no_log` result keeps only its status: the answer is that status, which Volant
-        // hides again under the task's own `no_log`.
+        // hides again under the task's own `no_log`. What else it held was never recorded, so
+        // any other key read from it is unknown: see `crate::template::unknown::CENSORED`.
         if raw.get("censored") == Some(&Value::Bool(true)) {
             let mut map = Map::new();
+            map.insert(crate::template::unknown::CENSORED.into(), Value::Bool(true));
             map.insert("changed".into(), Value::Bool(answer.status == "changed"));
             if answer.status == "failed" {
                 map.insert("failed".into(), Value::Bool(true));
@@ -177,7 +194,12 @@ impl Replay {
                 "the recording's result for {path} on {host} is not an object"
             )));
         };
-        Ok(TaskResult(module_answer(map, task, looped)))
+        let mut reply = module_answer(map, looped);
+        // An `until` that reads an unknown value ends at the attempt the recording ended at.
+        if !task.until.is_empty() && attempt > answer.attempts.len() {
+            reply.insert(FINAL.into(), Value::Bool(true));
+        }
+        Ok(TaskResult(reply))
     }
 
     /// `origin`'s `file:line`, relative to the replay's directory as the recording's paths are.
@@ -191,8 +213,67 @@ impl Replay {
     }
 }
 
-/// `result` without what ansible-core adds after the module ran.
-fn module_answer(result: &Map<String, Value>, task: &PlayTask, looped: bool) -> Map<String, Value> {
+thread_local! {
+    /// The recorded step a replay prepares on this thread: see [`preparing`].
+    static STEP: std::cell::RefCell<Option<(Arc<Replay>, String, usize)>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `prepare`, the synchronous preparation of `task` on `host`, with the step the recording
+/// has for it in scope, so a `when` or a `loop` that reads an unknown value takes the recorded
+/// branch: see [`recorded_skip`] and [`recorded_items`].
+pub(crate) fn preparing<T>(
+    replay: Option<&Arc<Replay>>,
+    host: &str,
+    occurrence: usize,
+    prepare: impl FnOnce() -> T,
+) -> T {
+    let Some(replay) = replay else {
+        return prepare();
+    };
+    let step = (Arc::clone(replay), host.to_owned(), occurrence);
+    let before = STEP.with(|s| s.borrow_mut().replace(step));
+    let out = prepare();
+    STEP.with(|s| *s.borrow_mut() = before);
+    out
+}
+
+/// Whether the recording skipped item `item` of `task`, in the step being prepared.
+pub(crate) fn recorded_skip(task: &PlayTask, item: usize) -> Option<bool> {
+    STEP.with(|s| {
+        let s = s.borrow();
+        let (replay, host, occurrence) = s.as_ref()?;
+        let path = replay.path_of(task.origin.as_ref());
+        let key = |item| (host.clone(), path.clone(), *occurrence, item);
+        let answer = replay
+            .answers
+            .get(&key(Some(item)))
+            .or_else(|| replay.answers.get(&key(None)).filter(|_| item == 0))?;
+        Some(answer.status == "skipped")
+    })
+}
+
+/// The items the recording looped over for `task`, in the step being prepared.
+pub(crate) fn recorded_items(task: &PlayTask) -> Option<Vec<Value>> {
+    STEP.with(|s| {
+        let s = s.borrow();
+        let (replay, host, occurrence) = s.as_ref()?;
+        let path = replay.path_of(task.origin.as_ref());
+        let mut items: Vec<(usize, Value)> = replay
+            .answers
+            .iter()
+            .filter(|((h, p, o, _), _)| h == host && *p == path && o == occurrence)
+            .filter_map(|((.., i), a)| Some((((*i)?), a.result.get("item")?.clone())))
+            .collect();
+        items.sort_by_key(|(i, _)| *i);
+        (!items.is_empty()).then(|| items.into_iter().map(|(_, v)| v).collect())
+    })
+}
+
+/// `result` without what ansible-core adds after the module ran. `changed` and `failed` stay as
+/// ansible-core decided them: Volant decides them again from `changed_when` and `failed_when`,
+/// except when those read an unknown value, where the recorded decision is the one kept.
+fn module_answer(result: &Map<String, Value>, looped: bool) -> Map<String, Value> {
     const LOOP_KEYS: [&str; 4] = [
         "item",
         "ansible_loop_var",
@@ -205,8 +286,6 @@ fn module_answer(result: &Map<String, Value>, task: &PlayTask, looped: bool) -> 
             !(key.starts_with("_ansible_")
                 || *key == "failed_when_result"
                 || *key == "attempts"
-                || (*key == "changed" && !task.changed_when.is_empty())
-                || (*key == "failed" && !task.failed_when.is_empty())
                 || (looped && LOOP_KEYS.contains(&key.as_str())))
         })
         .map(|(key, value)| (key.clone(), value.clone()))

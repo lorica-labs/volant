@@ -143,3 +143,12 @@ pub(super) async fn send_batch<C: AgentChannel>(
     }
     (received, ended)
 }
+
+/// Where one host's batch ids start for one play: a range 2^32 wide, handed out once per
+/// process, so no id is used twice on a link. Links outlive the play that opened them and are
+/// shared by every driver that reaches the host, and a batch reads only the frames of its own id:
+/// an id seen again would take a late frame left on the link for its own.
+pub(in crate::executor) fn first_batch_id() -> u64 {
+    static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+    NEXT.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
+}

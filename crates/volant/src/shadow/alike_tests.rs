@@ -30,7 +30,7 @@ fn only_what_volant_sent_is_compared() {
         "password": "VALUE_SPECIFIED_IN_NO_LOG_PARAMETER"});
     let sent = json!({"_raw_params": "echo b", "creates": "x", "password": "s3cret",
         "_volant_tty": true});
-    let (ansible, volant) =
+    let (ansible, volant, _) =
         different_args(recorded.as_object().unwrap(), sent.as_object().unwrap());
     assert_eq!(Value::Object(ansible), json!({"_raw_params": "echo a"}));
     assert_eq!(Value::Object(volant), json!({"_raw_params": "echo b"}));

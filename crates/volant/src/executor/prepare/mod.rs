@@ -233,6 +233,7 @@ pub(super) fn prepare(
                 prepare: crate::profile::next_prepare(),
                 host,
                 later_item: index > 0,
+                item: index,
                 loop_names: [
                     task.loop_var.as_str(),
                     task.index_var.as_deref().unwrap_or_default(),

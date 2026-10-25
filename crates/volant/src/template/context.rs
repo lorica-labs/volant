@@ -357,6 +357,7 @@ impl Object for Context {
             return Some(value);
         }
         let (value, keep) = self.read(key, untrusted)?;
+        let value = super::env::known(value);
         if keep {
             self.memo.store(key, &value);
         }

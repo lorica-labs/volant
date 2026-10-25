@@ -37,6 +37,14 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf, bridge: Optio
             Some(short) if supported(short) => short.to_string(),
             _ => name,
         };
+        if super::unknown::active() && differs_between_runs(state, &name, &terms, &base_dir) {
+            // Read, so that minijinja sees every option taken.
+            for key in kwargs.args() {
+                let _ = kwargs.get::<Value>(key);
+            }
+            let short = name.rsplit('.').next().unwrap_or(&name);
+            return Ok(super::unknown::value(&format!("lookup '{short}'")));
+        }
         if let Some(bridge) = &bridge
             && super::bridged_name(PluginKind::Lookup, &name)
         {
@@ -107,6 +115,27 @@ fn failed(name: &str, err: Error) -> Error {
         "The lookup plugin '{name}' failed: {}",
         err.detail().unwrap_or_default()
     ))
+}
+
+/// Whether lookup `name` may answer otherwise on another run: a command, the environment, a
+/// random or generated value, the network, or a file outside the directory the replay runs in.
+/// A replay answers such a lookup with the unknown value.
+fn differs_between_runs(state: &State, name: &str, terms: &[Value], base_dir: &Path) -> bool {
+    let short = name.rsplit('.').next().unwrap_or(name);
+    if ["pipe", "env", "password", "lines", "url"].contains(&short) || short.contains("random") {
+        return true;
+    }
+    if short != "file" {
+        return false;
+    }
+    let here = std::env::current_dir()
+        .and_then(std::fs::canonicalize)
+        .unwrap_or_default();
+    terms.iter().filter_map(Value::as_str).any(|term| {
+        found_file(state, term, base_dir)
+            .and_then(|p| std::fs::canonicalize(p).ok())
+            .is_some_and(|p| !p.starts_with(&here))
+    })
 }
 
 /// A lookup that only rearranges its terms.

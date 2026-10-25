@@ -141,10 +141,17 @@ fn file_answers_every_recorded_case_like_the_reference() {
             serde_json::from_str(&args.to_string().replace("<golden-tmp>", &scratch.0)).unwrap();
         let path = args["path"].as_str().or(args["dest"].as_str()).unwrap();
         match ask(&args) {
+            // A link's size is the length of the path it holds, and the scratch directory is
+            // not the one the reference ran in.
             NativeRun::Done(result) => found.extend(
-                differences(recording, result.0, &scratch, &[])
-                    .into_iter()
-                    .map(|d| format!("{case}: {d}")),
+                differences(
+                    recording,
+                    result.0,
+                    &scratch,
+                    if case == "file-link" { &["size"] } else { &[] },
+                )
+                .into_iter()
+                .map(|d| format!("{case}: {d}")),
             ),
             NativeRun::Fallback(why) => found.push(format!("{case}: handed back, {why}")),
             NativeRun::Cancelled => found.push(format!("{case}: cancelled")),

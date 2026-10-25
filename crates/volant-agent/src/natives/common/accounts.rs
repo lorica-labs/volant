@@ -91,13 +91,13 @@ fn lookup(
     }
 }
 
-#[cfg(not(test))]
+#[cfg(not(all(test, target_os = "linux")))]
 fn getent() -> PathBuf {
     PathBuf::from("getent")
 }
 
 /// A test's own `getent`, which [`super::golden::fake_getent`] names for its thread alone.
-#[cfg(test)]
+#[cfg(all(test, target_os = "linux"))]
 fn getent() -> PathBuf {
     super::golden::fake_getent_path().unwrap_or_else(|| PathBuf::from("getent"))
 }

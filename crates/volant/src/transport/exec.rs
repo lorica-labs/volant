@@ -17,15 +17,14 @@ use super::defaults::{BecomeMethod, ConnectError, Escalation};
 use super::escalation::{RunAs, escalated_command, preamble, preparing_for, settle_form};
 use super::reach::Reach;
 
-/// The shell every command but the agent's own start runs under.
-const SHELL: &str = "/bin/sh";
-
 /// How the `-vvvv` lines show a command, as the reference's plugin does: docker writes
 /// `ESTABLISH` then `EXEC [...]` in text, podman writes `RUN [...]` in bytes and no `ESTABLISH`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Lines {
     Exec,
     Run,
+    /// `THIS IS A LOCAL CHROOT DIR` for the link, then `EXEC [...]` lines.
+    Chroot,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -36,6 +35,9 @@ pub struct ExecTarget {
     pub kind: String,
     /// How the `-vvvv` lines show a command.
     pub lines: Lines,
+    /// The shell every command but the agent's own start runs under: `/bin/sh` unless the
+    /// connection's `executable` says otherwise.
+    pub shell: String,
     /// The command line that runs a program in the target with stdin and stdout passed
     /// through, up to the program: `docker exec -i app1`.
     pub prefix: Vec<String>,
@@ -80,6 +82,9 @@ impl ExecTarget {
     ) -> Result<AgentLink, ConnectError> {
         if let Some(why) = &self.unavailable {
             return Err(ConnectError::Unreachable(why.clone()));
+        }
+        if super::trace::connection_lines() && self.lines == Lines::Chroot {
+            super::trace::local_chroot(&self.name);
         }
         if super::trace::connection_lines() && self.lines == Lines::Exec {
             let user = match (&self.user, &self.user_probe) {
@@ -203,7 +208,7 @@ impl Reach for ExecTarget {
     }
 
     fn command_line(&self, command: &str, _payload: bool) -> Vec<String> {
-        self.run(SHELL, &["-c", command])
+        self.run(&self.shell, &["-c", command])
     }
 
     fn environment(&self) -> Result<Vec<(&'static str, std::ffi::OsString)>, ConnectError> {
@@ -212,7 +217,7 @@ impl Reach for ExecTarget {
 
     fn trace_exec(&self, argv: &[String]) {
         match self.lines {
-            Lines::Exec => super::trace::exec_list(&self.name, argv),
+            Lines::Exec | Lines::Chroot => super::trace::exec_list(&self.name, argv),
             Lines::Run => super::trace::run_list(&self.name, argv),
         }
     }

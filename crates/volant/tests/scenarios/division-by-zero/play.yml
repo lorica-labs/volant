@@ -1,0 +1,17 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - set_fact:
+        x: "{{ 1 / 0 }}"
+      ignore_errors: true
+    - set_fact:
+        x: "{{ 1.0 / 0 }}"
+      ignore_errors: true
+    - debug:
+        msg: "{{ 10 | int / 0 }}"
+      ignore_errors: true
+    - debug:
+        msg: "n={{ 1 // 0 }}"
+      ignore_errors: true
+    - debug:
+        msg: "{{ 4 / 2 }}"

@@ -6,6 +6,7 @@
 mod agent_dir;
 mod bootstrap;
 mod choose;
+mod chroot;
 mod control;
 mod copy;
 mod defaults;
@@ -24,10 +25,11 @@ mod tar;
 pub mod trace;
 
 pub use bootstrap::{space_needed_kib, triple_for};
+pub use chroot::ChrootSettings;
 pub use control::{control_dir, raise_open_file_limit};
 pub use copy::CopyInto;
 pub use defaults::{
-    BecomeMethod, ConnectError, ConnectionDefaults, ConnectionKeywords, ConnectionNotFound,
+    BecomeMethod, ConnectError, ConnectionDefaults, ConnectionFailsTask, ConnectionKeywords,
     Escalation, EscalationProgram, HostOwn, INCORRECT_SU_PASSWORD, INCORRECT_SUDO_PASSWORD,
     MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport, plugin_load_warning,
     refused_escalation,

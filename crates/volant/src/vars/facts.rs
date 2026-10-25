@@ -22,7 +22,7 @@ const CONNECTION_PLUGINS: [&str; 6] = [
 /// The collections' connection plugins this engine drives. ansible-core strips the settings of
 /// its own plugins only; these are stripped too, because a host that named its own
 /// `ansible_docker_host`, user or environment would choose where its next task runs.
-const ENGINE_CONNECTION_PLUGINS: [&str; 2] = ["docker", "podman"];
+const ENGINE_CONNECTION_PLUGINS: [&str; 3] = ["docker", "podman", "chroot"];
 
 /// ansible-core 2.19.12's `MAGIC_VARIABLE_MAPPING` values, which include every
 /// `COMMON_CONNECTION_VARS` name, then `RESTRICTED_RESULT_KEYS` and `INTERNAL_RESULT_KEYS`.
@@ -84,11 +84,15 @@ const RESTRICTED_FACTS: [&str; 39] = [
 /// removes one from in `cleanup`: a host that named it for itself would choose where the agent,
 /// escalated or not, writes and deletes.
 ///
+/// `ansible_executable` is the shell a chroot's commands run under: a tree that named its own
+/// would choose the program its next task starts with.
+///
 /// `ansible_sudo_*`, `ansible_su_*` and `ansible_su_prompt_l10n` are the escalation settings of
 /// one method, read like their `ansible_become_*` twins: a host must not name its own `exe`,
 /// `user` or password.
-const ENGINE_RESTRICTED_FACTS: [&str; 12] = [
+const ENGINE_RESTRICTED_FACTS: [&str; 13] = [
     "ansible_remote_tmp",
+    "ansible_executable",
     "ansible_package_use",
     "ansible_async_dir",
     "ansible_sudo_exe",

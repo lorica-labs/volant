@@ -17,6 +17,30 @@ impl Inventory {
         }
     }
 
+    /// `host` joined `group` while the play runs. Measured on ansible-core 2.19.12 with
+    /// `group_by`: a host some group now holds leaves `ungrouped`, and the hosts that joined a
+    /// group this way follow the ones it already had in the inventory's order, whichever host got
+    /// there first.
+    pub fn joined_at_run_time(&mut self, host: &str, group: &str, joined: &HashSet<String>) {
+        if group != "ungrouped"
+            && let Some(ungrouped) = self.groups.iter_mut().find(|g| g.name == "ungrouped")
+        {
+            ungrouped.hosts.retain(|h| h != host);
+        }
+        let rank: HashMap<String, usize> = self
+            .hosts
+            .iter()
+            .enumerate()
+            .map(|(i, h)| (h.name.clone(), i))
+            .collect();
+        let group = self.group_mut(group);
+        let (mut late, early): (Vec<String>, Vec<String>) =
+            group.hosts.drain(..).partition(|h| joined.contains(h));
+        late.sort_by_key(|h| rank.get(h).copied().unwrap_or(usize::MAX));
+        group.hosts = early;
+        group.hosts.extend(late);
+    }
+
     /// Makes `child` a child group of `parent`, creating both. A group is never its own child.
     pub fn add_child(&mut self, parent: &str, child: &str) {
         if parent == child {
@@ -304,6 +328,19 @@ impl Inventory {
             .map(|g| g.name.clone())
             .collect();
         names.sort();
+        names
+    }
+
+    /// The group names in the reference's order: `all`, `ungrouped`, then each group as the
+    /// inventory first named it.
+    pub fn group_order(&self) -> Vec<String> {
+        let mut names = vec!["all".to_string(), "ungrouped".to_string()];
+        names.extend(
+            self.groups
+                .iter()
+                .map(|g| g.name.clone())
+                .filter(|name| name != "all" && name != "ungrouped"),
+        );
         names
     }
 

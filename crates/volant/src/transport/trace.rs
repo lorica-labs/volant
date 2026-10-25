@@ -97,6 +97,13 @@ fn exec_list_line(place: &str, argv: &[String]) -> String {
     format!("<{place}> EXEC [{}]", words.join(", "))
 }
 
+/// `<dir> THIS IS A LOCAL CHROOT DIR`, the chroot plugin's line for a link.
+pub(super) fn local_chroot(place: &str) {
+    if enabled() {
+        line(&format!("<{place}> THIS IS A LOCAL CHROOT DIR"));
+    }
+}
+
 /// `<name> RUN [<the command line as a list of Python bytes>]`, podman's line for a command.
 pub(super) fn run_list(place: &str, argv: &[String]) {
     if enabled() {

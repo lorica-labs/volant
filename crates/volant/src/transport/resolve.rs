@@ -151,7 +151,7 @@ mod tests {
     use serde_json::{Map, Value};
 
     use super::{ConnectionNames, Resolution, ResolveConnection, redirect_lines};
-    use crate::transport::{ConnectionNotFound, Transport};
+    use crate::transport::{ConnectionFailsTask, Transport};
 
     /// Answers as ansible-core 2.19.12 does with community.general installed and community.docker
     /// absent, and counts the questions.
@@ -166,9 +166,9 @@ mod tests {
             };
             Ok(match name {
                 "local" | "ssh" => panic!("'{name}' is never asked"),
-                "chroot" => found(
-                    "community.general.chroot",
-                    &["chroot", "ansible.builtin.chroot", "community.general.chroot"],
+                "lxd" => found(
+                    "community.general.lxd",
+                    &["lxd", "ansible.builtin.lxd", "community.general.lxd"],
                 ),
                 "ansible.builtin.ssh" => found("ansible.builtin.ssh", &["ansible.builtin.ssh"]),
                 "winrm" => found("ansible.builtin.winrm", &["winrm"]),
@@ -216,10 +216,7 @@ mod tests {
     }
 
     #[rstest]
-    #[case(
-        "chroot",
-        "host 'h': connection 'community.general.chroot' is not supported"
-    )]
+    #[case("lxd", "host 'h': connection 'community.general.lxd' is not supported")]
     #[case(
         "winrm",
         "host 'h': connection 'ansible.builtin.winrm' is not supported"
@@ -250,10 +247,13 @@ mod tests {
     ) {
         let (names, _) = asked();
         let err = transport(&names, name).unwrap_err();
-        let missing = err.downcast_ref::<ConnectionNotFound>().unwrap();
+        let missing = err.downcast_ref::<ConnectionFailsTask>().unwrap();
         assert_eq!(
-            (missing.0.as_str(), missing.warning().as_deref()),
-            (name, warning)
+            (missing.to_string(), missing.warning()),
+            (
+                format!("the connection plugin '{name}' was not found"),
+                warning.map(str::to_string)
+            )
         );
     }
 
@@ -279,12 +279,11 @@ mod tests {
     #[test]
     fn the_redirect_lines_come_once_per_host_and_name() {
         let (names, _) = asked();
-        let line =
-            "redirecting (type: connection) ansible.builtin.chroot to community.general.chroot";
-        let _ = transport(&names, "chroot");
-        let _ = transport(&names, "chroot");
+        let line = "redirecting (type: connection) ansible.builtin.lxd to community.general.lxd";
+        let _ = transport(&names, "lxd");
+        let _ = transport(&names, "lxd");
         assert_eq!(names.take_lines("h"), [line]);
-        let _ = transport(&names, "chroot");
+        let _ = transport(&names, "lxd");
         assert!(names.take_lines("h").is_empty());
         assert!(names.take_lines("other").is_empty());
     }
@@ -293,7 +292,7 @@ mod tests {
     fn each_name_is_asked_once_per_run() {
         let (names, controller) = asked();
         for _ in 0..3 {
-            let _ = transport(&names, "chroot");
+            let _ = transport(&names, "lxd");
             let _ = transport(&names, "docker");
         }
         assert_eq!(controller.0.load(Ordering::Relaxed), 2);
@@ -322,7 +321,7 @@ mod tests {
         match refused {
             Some(text) => assert_eq!(err.to_string(), text),
             None => assert!(
-                err.downcast_ref::<ConnectionNotFound>().is_some(),
+                err.downcast_ref::<ConnectionFailsTask>().is_some(),
                 "{err:#}"
             ),
         }

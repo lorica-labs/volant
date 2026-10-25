@@ -1,5 +1,5 @@
 ---
-sourceHash: 71da6f6cf85b
+sourceHash: c4107e9762a5
 title: Templating
 description: Jinja2 auf dem Controller, der strikte Modus, Bedingungen, die Filter, Tests und Lookups von Volant und wie Template-Dateien gerendert werden.
 ---
@@ -62,7 +62,7 @@ Eine Variable, die einen Namen ohne Wert liest, hat ebenfalls keinen: `default` 
 
 Host-Daten werden nie gerendert. Eine Variable von einem verwalteten Host und eine Variable, die aus einer solchen gebildet wird, bleibt Text. Siehe [Werte von Hosts werden nie als Template gerendert](#werte-von-hosts-werden-nie-als-template-gerendert).
 
-Eine Variable, die `vars` liest oder `lookup` oder `query` aufruft, bleibt wie geschrieben und wird gerendert, wenn ein Task sie verwendet. `hostvars['other']['name']` liefert den Rohtext einer Variable, die ein Template enthält.
+Eine Variable, die `vars` liest oder `lookup` oder `query` aufruft, bleibt wie geschrieben und wird gerendert, wenn ein Task sie verwendet. `hostvars['other']['name']` rendert ein Template in dieser Variable mit den Variablen des anderen Hosts, wie ansible-core. Dieses Rendern hat kein `hostvars`. Ein Host mit Werten von einem verwalteten Host, etwa gesammelten Facts, liefert stattdessen den Rohtext.
 
 ## Was es gibt
 

@@ -1,0 +1,2 @@
+# The keys of `groups` in the inventory's order: all, ungrouped, then each group as first named.
+args: [-i, inv.ini, play.yml]

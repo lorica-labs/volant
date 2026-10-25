@@ -90,6 +90,7 @@ impl Runtime {
             name: container.into(),
             kind: "DOCKER".into(),
             lines: volant::transport::Lines::Exec,
+            shell: "/bin/sh".into(),
             prefix: vec![
                 self.program.display().to_string(),
                 "exec".into(),

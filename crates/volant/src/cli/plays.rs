@@ -57,10 +57,13 @@ impl Plays<'_> {
         rendering: &Rendering<'_>,
     ) -> anyhow::Result<Vec<Playbook>> {
         match self {
-            Plays::Files | Plays::Replay(_) => files
-                .iter()
-                .map(|p| playbook::load_rendering(p, rendering))
-                .collect(),
+            Plays::Files | Plays::Replay(_) => {
+                rendering.add_plugin_dirs(files)?;
+                files
+                    .iter()
+                    .map(|p| playbook::load_rendering(p, rendering))
+                    .collect()
+            }
             Plays::Adhoc(adhoc) => Ok(vec![adhoc.playbook()?]),
         }
     }

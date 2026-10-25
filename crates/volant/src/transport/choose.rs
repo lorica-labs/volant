@@ -44,6 +44,30 @@ fn ssh_address(host_name: &str, ansible_host: Option<(&str, String)>) -> anyhow:
     Ok(address)
 }
 
+/// The host's `ansible_remote_tmp`, or the configured one. Blank reads as unset, which is what
+/// the configuration arms do with the same value: an empty `remote_tmp` puts the agent cache at
+/// `/volant-agent-<version>`, the upload fails on permissions, and the host is reported
+/// unreachable over a directory nobody wrote. Trimmed for the same reason they trim. The default
+/// already went through the same check when the configuration that produced it was loaded; a
+/// host variable is the one source that reaches here unchecked.
+pub(super) fn remote_tmp_of(
+    host_name: &str,
+    vars: &Map<String, Value>,
+    defaults: &ConnectionDefaults,
+) -> anyhow::Result<String> {
+    match host_setting(vars, "ansible_remote_tmp")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|tmp| !tmp.is_empty())
+    {
+        Some(tmp) => {
+            validate_remote_tmp(tmp).map_err(|e| anyhow::anyhow!("host '{host_name}': {e}"))?;
+            Ok(tmp.to_string())
+        }
+        None => Ok(defaults.remote_tmp.clone()),
+    }
+}
+
 /// The plugin a connection name stands for: its full name when the controller's ansible-core
 /// was asked, else the name as written. `local` and `ssh` are ansible-core's own and never asked.
 /// A name the controller cannot be asked about, because the run has no ansible-core to ask, is
@@ -150,24 +174,7 @@ impl Transport {
                 )?,
                 host_key_checking: defaults.host_key_checking,
                 connect_timeout: timeout_of(host_name, vars)?.unwrap_or(defaults.connect_timeout),
-                // Blank reads as unset, which is what the configuration arms do with the same
-                // value: an empty `remote_tmp` puts the agent cache at `/volant-agent-<version>`,
-                // the upload fails on permissions, and the host is reported unreachable over a
-                // directory nobody wrote. Trimmed for the same reason they trim.
-                remote_tmp: match setting_text("ansible_remote_tmp")
-                    .map(|tmp| tmp.trim().to_string())
-                    .filter(|tmp| !tmp.is_empty())
-                {
-                    Some(tmp) => {
-                        validate_remote_tmp(&tmp)
-                            .map_err(|e| anyhow::anyhow!("host '{host_name}': {e}"))?;
-                        tmp
-                    }
-                    // The default already went through the same check when the configuration
-                    // that produced it was loaded; a host variable is the one source that
-                    // reaches here unchecked.
-                    None => defaults.remote_tmp.clone(),
-                },
+                remote_tmp: remote_tmp_of(host_name, vars, defaults)?,
                 control_path: None,
                 dumped: None,
                 use_tty: host_setting(vars, "ansible_ssh_use_tty").map_or(
@@ -183,6 +190,9 @@ impl Transport {
                     },
                 ),
             })),
+            super::docker::PLUGIN => Ok(Transport::Exec(super::docker::target(
+                host_name, vars, defaults, keywords,
+            )?)),
             other => bail!("host '{host_name}': connection '{other}' is not supported"),
         }
     }

@@ -127,6 +127,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
         if section == "ssh_connection" && key.trim() == "usetty" {
             config.ssh_usetty = callback_flag(value);
         }
+        if section == "docker_connection" {
+            super::docker::ini(&mut config.docker, key.trim(), value, origin)?;
+        }
         if section != "defaults" {
             continue;
         }

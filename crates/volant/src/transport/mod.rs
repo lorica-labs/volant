@@ -8,6 +8,7 @@ mod bootstrap;
 mod choose;
 mod control;
 mod defaults;
+mod docker;
 mod escalation;
 mod exec;
 mod fused;
@@ -27,6 +28,7 @@ pub use defaults::{
     MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport, plugin_load_warning,
     refused_escalation,
 };
+pub use docker::DockerSettings;
 pub use exec::ExecTarget;
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;

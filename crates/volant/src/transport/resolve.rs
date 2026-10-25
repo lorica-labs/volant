@@ -308,8 +308,8 @@ mod tests {
     )]
     #[case(
         ConnectionNames::default(),
-        "community.docker.docker",
-        Some("host 'h': connection 'community.docker.docker' is not supported")
+        "containers.podman.podman",
+        Some("host 'h': connection 'containers.podman.podman' is not supported")
     )]
     #[case(ConnectionNames::default(), "docker", None)]
     #[case(asked().0, "broken", None)]

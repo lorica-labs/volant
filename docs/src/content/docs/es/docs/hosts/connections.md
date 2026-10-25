@@ -16,6 +16,7 @@ Volant llega a un host administrado, le deja un pequeño agente estático (un pr
 |---|---|
 | `ssh` | Ejecuta el cliente OpenSSH de tu `PATH`. Volant construye la línea de comandos él mismo, sin envoltorio y sin una biblioteca SSH de Rust, así que se aplica tu `~/.ssh/config`. |
 | `local` | Ejecuta el agente como proceso hijo en el controlador, sin red. |
+| `docker` | Ejecuta el agente en un contenedor en marcha mediante `docker exec -i`, como `community.docker.docker`. Consulta [Contenedores Docker](#contenedores-docker). |
 
 Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resuelve `ansible-playbook`, una vez por nombre y por ejecución. `ansible.builtin.ssh` y `ansible.builtin.local` se resuelven en los dos plugins de arriba y se ejecutan. Un nombre corto que una colección heredó de ansible-core se dirige a esa colección cuando está instalada:
 
@@ -32,11 +33,31 @@ Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resue
 
 Con `-vvv`, un nombre redirigido muestra `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` bajo la primera tarea que lo usa en un host, una línea por salto.
 
-Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `community.docker.docker`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
+Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `containers.podman.podman`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
 
 Un nombre que no se resuelve en nada hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Eso incluye un nombre corto dirigido a una colección que no está instalada, como `docker` sin community.docker, tras el aviso que ansible-core muestra para él, y `paramiko`, que ansible-core 2.19.12 no tiene con ese nombre. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
 
 Una contraseña viene de `-k`, de `--connection-password-file` o de la variable `ansible_password`. Volant se la entrega a `ssh` mediante `SSH_ASKPASS` y un archivo temporal privado que se elimina al final de la ejecución, lo que exige OpenSSH 8.4 o posterior. Entonces `ssh` se ejecuta con `BatchMode=no` y `NumberOfPasswordPrompts=1`, de modo que una respuesta incorrecta termina el intento. La contraseña nunca aparece en una línea de comandos, en el entorno de un programa ni en la salida, ni siquiera con `-vvvv`. Un `ansible_password` cifrado con vault funciona como cualquier variable cifrada. Sin contraseña, `ssh` se ejecuta con `BatchMode=yes` y nunca pregunta, así que un host que pediría una contraseña o una frase de paso se marca como inalcanzable en lugar de bloquear la ejecución.
+
+## Contenedores Docker
+
+`ansible_connection: docker`, o `community.docker.docker`, ejecuta un play dentro de un contenedor en marcha, sin sshd dentro ni camino de red hasta él. Los dos nombres necesitan community.docker instalado en el controlador, como con `ansible-playbook`. Volant ejecuta el programa `docker` de tu `PATH`, así que `DOCKER_HOST`, `DOCKER_CONTEXT` y `DOCKER_CONFIG` le llegan por el entorno.
+
+El agente sube por `docker exec -i`, así que la imagen necesita `/bin/sh` y las herramientas habituales: `uname`, `id`, `ls`, `mkdir`, `df`, `awk`, `head`, `wc`, `chmod`, `mv` y `find`. Una imagen mínima de Alpine o Debian las tiene. Una imagen sin shell, como distroless o scratch, todavía no está soportada.
+
+| Variable | Qué hace |
+|---|---|
+| `ansible_docker_host` | El nombre o el id del contenedor. Gana a `ansible_host`, que gana al nombre del inventario. |
+| `ansible_docker_user` | El usuario con el que se ejecutan los comandos, `docker exec -u`. Gana a `ansible_user`, a la palabra clave `remote_user` y a `-u`. Sin definir, el usuario propio del contenedor. |
+| `ansible_docker_extra_args` | Argumentos puestos después de `docker` y antes de `exec`, separados por espacios simples y no como palabras de shell. El valor por defecto viene de `[docker_connection] extra_cli_args`. |
+| `ansible_docker_extra_env` | Un diccionario de variables que se fijan con `docker exec -e`. Cada valor debe ser texto: un número o un booleano sin comillas se rechaza. |
+| `ansible_docker_privileged` | `docker exec --privileged`. El valor por defecto viene de `ANSIBLE_DOCKER_PRIVILEGED` o de `[docker_connection] privileged`. |
+| `ansible_docker_working_dir` | `docker exec -w`. El valor por defecto viene de `ANSIBLE_DOCKER_WORKING_DIR` o de `[docker_connection] working_dir`. |
+| `ansible_docker_timeout` | Los segundos que `docker` puede tardar en responder al primer comando. El valor por defecto viene de `ANSIBLE_DOCKER_TIMEOUT`, luego de `[docker_connection] timeout` y luego del tiempo de espera de la conexión. |
+
+`become` con `sudo` funciona con el `sudo` del propio contenedor. `su` se rechaza, porque `docker exec` no le da terminal. Un contenedor que no existe o está parado, o un usuario que la imagen no tiene, deja el host inalcanzable con el mensaje propio de docker. ansible-core informa de los tres casos como `Failed to create temporary directory`, así que este mensaje difiere a propósito.
+
+Con `-vvvv` las líneas muestran `ESTABLISH DOCKER CONNECTION FOR USER: <user>` y luego una línea `EXEC [...]` por comando, que son comandos propios de Volant. Cuando el play no nombra usuario, viene de `docker inspect`: `root` cuando la imagen no nombra ninguno, `?` cuando docker no puede decirlo.
 
 ## Variables de host
 

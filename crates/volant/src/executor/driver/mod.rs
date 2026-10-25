@@ -10,7 +10,6 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore, mpsc, watch};
 use volant_protocol::modules::short_name;
 use volant_protocol::{BatchOutcome, TaskResult};
 
-use crate::action_plugins::LinkFacts;
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{StepKind, after_failure, first, rescue_target};
 use crate::inventory::Host;
@@ -27,14 +26,13 @@ use super::include::{report_include, resolve_include};
 use super::prepare::{Item, PlayPlan, Prepared, failed_result, pause_of, prepare, retry_name};
 use super::report::report_task;
 use super::run::{
-    Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Polled, Relinker,
-    Replayed, RetryLine, announce_retry, any_retried, break_after, broke_before,
-    chosen_interpreter, discovers_interpreter, discovery_warning, fact_targets, failed_task_value,
-    finish, judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls,
-    python_for, record_facts, record_inventory_results, record_local_facts, record_registered,
-    refusal, replayed, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch,
-    run_local, run_plugin_attempts, running_host_vars, silent_discovery, stamp_discovery,
-    step_tasks, take_warnings, task_fails,
+    Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, Polled, Relinker, Replayed,
+    RetryLine, announce_retry, any_retried, break_after, broke_before, chosen_interpreter,
+    discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
+    judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
+    record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
+    replayed, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
+    running_host_vars, silent_discovery, stamp_discovery, step_tasks, take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -57,7 +55,7 @@ pub(in crate::executor) use boundaries::{Definitions, mark_boundaries};
 use boundaries::{calls_lookup, meets, strict, writes_facts};
 pub(crate) use boundaries::{expressions, strings, task_strings};
 use pinned::Turn;
-use plugin::{PluginBatch, plugin_step};
+use plugin::{PluginBatch, PluginItems, plugin_step, run_plugin_items};
 use rendered::{Rendered, render_keywords, step_at};
 pub(in crate::executor) use throttle::Turn as ThrottleTurn;
 use timings::file_timings;
@@ -1778,10 +1776,8 @@ pub(super) async fn drive_host(
                     .expect("vars lock")
                     .playbook_dir()
                     .to_path_buf();
-                let mut stopped = false;
                 let pause = pause_of(&step.task, items, &templar);
                 let replayed = Replayed::reach(&options, seen.as_ref(), &name, *index, &step.task);
-                let mut outcome = Ok(BatchOutcome::Completed);
                 // Under `retries`/`until` the attempts judge each result themselves, since
                 // `until` reads what `changed_when` and `failed_when` decided.
                 let plans = batch_retry.clone();
@@ -1792,109 +1788,41 @@ pub(super) async fn drive_host(
                         .map(|item| retry_name(&step.task, &item.vars, &templar))
                         .collect();
                 }
-                for (ii, item) in items.iter().enumerate() {
-                    let (at, passed) = broke_before(
-                        &step.task,
-                        items,
-                        &mut received[0],
-                        &mut checked_to,
-                        ii,
-                        &templar,
-                    );
-                    if driver.pause_for(pause, passed).await.is_none() {
-                        stopped = true;
-                        break;
-                    }
-                    if at.is_some() {
-                        broken_at = at;
-                        break;
-                    }
-                    if item.skipped.is_some() {
-                        continue;
-                    }
-                    if let Some(refused) = refusal(&step.task) {
-                        received[0][ii] = Some(refused);
-                        continue;
-                    }
-                    let retry = match plans.as_ref().map(|p| &p[ii]) {
-                        Some(Err(failed)) => {
-                            received[0][ii] = Some(failed.clone());
-                            continue;
-                        }
-                        Some(Ok(retry)) => retry.as_ref(),
-                        None => None,
-                    };
-                    let mut warnings = Vec::new();
-                    let delegate = delegate.as_ref();
-                    let start = PluginStart {
-                        link: &LinkFacts::of(&key.transport, batch_escalation.as_ref(), delegate),
-                        kind,
-                        running_vars: running_host_vars(delegate, std::slice::from_ref(item)),
-                        templar: &templar,
+                let ended = run_plugin_items(
+                    PluginItems {
+                        task: &step.task,
                         origin: &step.origin,
+                        items,
+                        templar: &templar,
+                        pause,
+                        plans: plans.as_deref(),
+                        kind,
+                        transport: &key.transport,
+                        escalation: batch_escalation.as_ref(),
+                        delegate: delegate.as_ref(),
                         playbook_dir: &playbook_dir,
-                        host_named_paths: options.host_named_paths,
-                        host_named_dest_dirs: options.host_named_dest_dirs.as_deref(),
+                        options: &options,
                         tx: &tx,
                         index: *index,
-                    };
-                    let ran = if let Some(replayed) = &replayed {
-                        replayed.attempts(ii, item, retry, &templar, &mut lefts[ii])
-                    } else {
-                        run_plugin_attempts(
-                            &mut owned,
-                            &mut relink,
-                            &name,
-                            &mut batch_id,
-                            &start,
-                            &step.task,
-                            item,
-                            retry,
-                            plan.python.as_deref(),
-                            &interpreters,
-                            asked.as_deref(),
-                            &mut driver.stop,
-                            &mut driver.stop_broken,
-                            &mut logs,
-                            &mut warnings,
-                            &mut lefts[ii],
-                        )
-                        .await
-                    };
-                    match ran {
-                        // Stopped between two attempts: nothing more runs, as for every other
-                        // wait the stop ends.
-                        Ok(None) => {
-                            stopped = true;
-                            break;
-                        }
-                        // An item that does not retry comes back as the module answered, and
-                        // the other items' `decided` results have had their conditions.
-                        Ok(Some(result)) if decided && retry.is_none() => {
-                            received[0][ii] = Some(finish(&step.task, item, result, &templar));
-                        }
-                        Ok(Some(result)) => received[0][ii] = Some(result),
-                        // The link lost or the run interrupted: this item has no result and the
-                        // ones behind it do not run, exactly as for any batch the agent did not
-                        // finish.
-                        Err(ended) => {
-                            outcome = ended;
-                            break;
-                        }
-                    }
-                    // Shown under this task, the way every other warning is. Not censored: the
-                    // plugins raise nothing but the name of an argument they dropped.
-                    for message in warnings {
-                        let _ = tx
-                            .send(Event::Warning {
-                                host: name.clone(),
-                                index: *index,
-                                message,
-                                censored: false,
-                            })
-                            .await;
-                    }
-                }
+                        replayed: replayed.as_ref(),
+                        name: &name,
+                        union: plan.python.as_deref(),
+                        interpreters: &interpreters,
+                        asked: asked.as_deref(),
+                        decided,
+                    },
+                    &mut driver,
+                    &mut owned,
+                    &mut relink,
+                    &mut received[0],
+                    &mut checked_to,
+                    &mut lefts,
+                    &mut batch_id,
+                    &mut logs,
+                )
+                .await;
+                let (mut stopped, outcome) = (ended.stopped, ended.outcome);
+                broken_at = ended.broken_at;
                 if broken_at.is_none() && !stopped && outcome.is_ok() {
                     let (at, passed) = broke_before(
                         &step.task,

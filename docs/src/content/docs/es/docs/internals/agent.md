@@ -24,6 +24,8 @@ sequenceDiagram
   Note over C,H: el protocolo circula por su stdin y su stdout
 ```
 
+En un host que ya se usó, la comprobación y el arranque van en una sola sesión `ssh`: el comando comprueba el directorio, compara el agente en caché con la compilación que este controlador tiene para el tipo de máquina del host y lo arranca, con `sudo -n` en una conexión que escala con `sudo`. Si algo de eso falla, la sesión termina antes de que el agente responda y los pasos de arriba se ejecutan en orden.
+
 ## La caché del agente
 
 El agente es un único ejecutable estático. Su archivo de publicación para Linux x86_64 pesa unos 1.2 MB. Volant lo sube una vez por host y lo reutiliza en todas las ejecuciones siguientes.
@@ -79,7 +81,7 @@ Volant te deja el uso compartido a ti cuando ya lo configuras. No añade nada cu
 - los argumentos de `ssh` piden salida de depuración con `-v`;
 - `[volant] ssh_control_master = false` o `VOLANT_SSH_CONTROL_MASTER=0`, consulta [Configuración](/es/docs/reference/configuration/#volant-ssh-control-master).
 
-Una conexión con escalado de privilegios ejecuta una sesión `ssh` más para la sonda de `sudo`, y dos cuando hace falta una contraseña. Con el uso compartido activado, esas sesiones usan la misma conexión.
+Una conexión con escalado de privilegios que no puede arrancar en una sola sesión (ver arriba) ejecuta una sesión `ssh` más para la sonda de `sudo`, y dos cuando hace falta una contraseña. Con el uso compartido activado, esas sesiones usan la misma conexión.
 
 OpenSSH hace el trabajo, así que `~/.ssh/config`, `Match`, `Include`, `ProxyJump` y tu ssh-agent se aplican exactamente igual que con `ansible-playbook`.
 

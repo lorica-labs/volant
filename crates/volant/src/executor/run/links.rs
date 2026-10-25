@@ -168,6 +168,9 @@ pub(super) async fn connect(
     escalation: Option<&Escalation>,
 ) -> Result<AgentLink, ConnectError> {
     let mut link = transport.connect(agents, escalation).await?;
+    if link.ready() {
+        return Ok(link);
+    }
     let timeout = defaults.connect_timeout;
     tokio::time::timeout(timeout, link.handshake())
         .await

@@ -155,6 +155,10 @@ impl SshTarget {
         {
             return self.open_su(agents, e).await;
         }
+        // On a host that ran before, the probe and the start go in one `ssh`.
+        if let Some(link) = self.open_fused(agents, escalation).await {
+            return Ok(link);
+        }
         let (escalated, probed) = match escalation {
             Some(e) => {
                 let (form, probe) = self.check_escalation(e).await?;

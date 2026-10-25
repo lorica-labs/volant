@@ -64,6 +64,9 @@ pub struct AgentLink {
     /// The reader of a local terminal's master, stopped when the link ends: its descriptor would
     /// otherwise keep the terminal open, and the agent behind it would never see the hangup.
     hangup: Option<tokio::task::AbortHandle>,
+    /// Whether a handshake has answered over this link: the one that opened it fused with the
+    /// probe already did it.
+    ready: bool,
 }
 
 impl AgentLink {
@@ -101,6 +104,7 @@ impl AgentLink {
             tty_target: None,
             tty_line: None,
             hangup: None,
+            ready: false,
         };
         (link, reader)
     }
@@ -197,6 +201,21 @@ impl AgentLink {
                 .context("writing the escalation password")?;
         }
         Ok(link)
+    }
+
+    /// Whether a handshake has answered over this link.
+    pub fn ready(&self) -> bool {
+        self.ready
+    }
+
+    /// How the process behind the link ended once its input is closed, waiting at most two
+    /// seconds: `None` when it had not ended by then, or ended on a signal.
+    pub async fn exit_code(mut self) -> Option<i32> {
+        drop(self.stdin.take());
+        let waited = tokio::time::timeout(std::time::Duration::from_secs(2), self.child.wait());
+        let code = waited.await.ok()?.ok()?.code();
+        let _ = self.child.start_kill();
+        code
     }
 
     /// The payloads this link has already asked about. Lives here so it dies with the link.
@@ -311,6 +330,7 @@ impl AgentLink {
                     // is now rather than as it was when the link was opened.
                     self.interpreters = interpreters;
                     self.natives = natives;
+                    self.ready = true;
                     return Ok(());
                 }
                 Some(FromAgent::Ready {

@@ -9,6 +9,7 @@ mod choose;
 mod control;
 mod defaults;
 mod escalation;
+mod fused;
 mod names;
 mod session;
 mod shell;

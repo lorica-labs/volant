@@ -18,6 +18,7 @@ Volant atteint un hôte géré, y dépose un petit agent statique (un programme 
 | `local` | Lance l'agent comme processus fils sur le contrôleur, sans réseau. |
 | `docker` | Lance l'agent dans un conteneur en marche via `docker exec -i`, comme `community.docker.docker`. Voir [Conteneurs Docker](#conteneurs-docker). |
 | `podman` | Lance l'agent dans un conteneur Podman en marche via `podman exec -i`, rootless ou non, comme `containers.podman.podman`. Voir [Conteneurs Podman](#conteneurs-podman). |
+| `chroot` | Lance l'agent dans une arborescence du contrôleur via `chroot`, comme `community.general.chroot`. Voir [Répertoires chroot](#répertoires-chroot). |
 
 Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-playbook` le résout, une fois par nom et par exécution. `ansible.builtin.ssh` et `ansible.builtin.local` se résolvent vers les deux plugins ci-dessus et s'exécutent. Un nom court qu'une collection a repris à ansible-core est routé vers cette collection quand elle est installée :
 
@@ -72,6 +73,18 @@ Volant lit les options comme les lit le code source du plugin, qui diffère de s
 | `ansible_podman_extra_args` | Des arguments placés après `podman` et avant la sous-commande, découpés comme le ferait un shell. La valeur par défaut vient de `ANSIBLE_PODMAN_EXTRA_ARGS` ou de `[defaults] podman_extra_args`. |
 
 Le plugin lance `podman exec` sans `-i`, il ne peut donc pas passer son stdin à une commande. L'agent en a besoin, alors Volant lance `podman exec -i` ; c'est le seul mot que ses lignes de commande ajoutent. Volant ne lance jamais `podman mount`. `become` avec `sudo` passe par le `sudo` du conteneur, et `su` est refusé. Avec `-vvvv`, chaque commande s'affiche en ligne `RUN [...]`, comme le plugin l'écrit, sans ligne `ESTABLISH`.
+
+## Répertoires chroot
+
+`ansible_connection: chroot`, ou `community.general.chroot`, exécute un play dans une arborescence du contrôleur : construction d'image, arbre `debootstrap`, dépannage. Le nom d'inventaire, ou `ansible_host`, est le répertoire. Les deux noms demandent community.general installé sur le contrôleur. L'exécution demande root, parce que `chroot` le demande.
+
+| Variable | Rôle |
+|---|---|
+| `ansible_chroot_exe` | Le programme `chroot`, un nom cherché dans votre `PATH` ou un chemin absolu. La valeur par défaut vient de `ANSIBLE_CHROOT_EXE` ou de `[chroot_connection] exe`. |
+| `ansible_chroot_disable_root_check` | Saute la vérification que le contrôleur tourne en root. La valeur par défaut vient de `ANSIBLE_CHROOT_DISABLE_ROOT_CHECK` ou de `[chroot_connection] disable_root_check`. |
+| `ansible_executable` | Le shell sous lequel les commandes s'exécutent, `/bin/sh` par défaut. La valeur par défaut vient de `ANSIBLE_EXECUTABLE` ou de `[defaults] executable`. |
+
+Avant que rien ne s'exécute, la tâche échoue, comme sous ansible-core, pour un chemin qui n'est pas un répertoire, pour une arborescence sans `bin/sh`, et pour un contrôleur qui n'est pas root sauf si la vérification est désactivée. L'agent monte par `chroot <dir> /bin/sh`, donc le script qui l'écrit tourne dans l'arborescence, et aucun chemin qu'il écrit ne peut en sortir, quels que soient les liens symboliques qu'elle contient. Quand `df` ne peut pas dire combien de place il reste, comme dans une arborescence sans `/proc` monté, la vérification d'espace est omise. `become` fonctionne quand l'arborescence a `sudo`. Avec `-vvvv`, les lignes affichent `THIS IS A LOCAL CHROOT DIR`, puis une ligne `EXEC [...]` par commande.
 
 ## Variables d'hôte
 

@@ -87,6 +87,7 @@ pub(super) fn target(
         name: container,
         kind: "PODMAN".into(),
         lines: Lines::Run,
+        shell: "/bin/sh".into(),
         user,
         remote_tmp: remote_tmp_of(host_name, vars, defaults)?,
         connect_timeout: defaults.connect_timeout,

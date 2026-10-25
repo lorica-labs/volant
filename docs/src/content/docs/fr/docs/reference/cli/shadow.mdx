@@ -1,5 +1,5 @@
 ---
-sourceHash: 4b6700dd2257
+sourceHash: 18ca274cc7a2
 title: volant shadow
 description: Rejouer un run qu'ansible-playbook a enregistré, sans contacter d'hôte, et voir ce que Volant aurait fait autrement.
 ---
@@ -32,7 +32,13 @@ Les options du run viennent de l'enregistrement : inventaire, variables extra, t
 
 Les tâches qui atteignent un hôte reçoivent le résultat enregistré à la place. Volant applique ensuite lui-même `changed_when`, `failed_when`, `register`, les boucles et `until`. Un `until` reçoit dans l'ordre les tentatives échouées enregistrées. Un `pause` prend la réponse que son prompt a reçue et n'attend pas. Un hôte enregistré comme injoignable est injoignable. Les tâches exécutées sur le contrôleur, comme `debug`, `set_fact`, les includes et `meta`, sont calculées par Volant comme d'habitude.
 
-Les lookups et les filtres qui donnent une valeur différente à chaque run, comme `now`, `password`, `pipe` ou `lookup('env')`, s'exécutent réellement : un playbook qui les utilise peut donc montrer des divergences qui ne sont que du bruit. Un playbook avec des modules Python ou une collecte de facts a toujours besoin d'ansible-core sur le contrôleur pour les préparer, par `VOLANT_PYTHON` ou le [runtime géré](/fr/docs/reference/runtime/).
+Un playbook avec des modules Python ou une collecte de facts a toujours besoin d'ansible-core sur le contrôleur pour les préparer, par `VOLANT_PYTHON` ou le [runtime géré](/fr/docs/reference/runtime/).
+
+## Les valeurs qui changent d'un run à l'autre
+
+Certaines valeurs diffèrent à chaque run : les lookups `pipe`, `env`, `password`, `lines` et `url`, tout lookup dont le nom contient `random`, un lookup `file` hors du répertoire où tourne le rejeu, `now()`, et les filtres `random` et `shuffle`. Pendant un rejeu, ils donnent à la place une valeur inconnue. C'est aussi le cas de toute clé lue dans un résultat `no_log` enregistré, puisque l'enregistrement n'en garde que le statut.
+
+Une expression qui lit une valeur inconnue est inconnue tout entière, quoi qu'elle en fasse : du texte autour, un filtre, une comparaison, un attribut ou un élément. Un argument de tâche inconnu n'est pas comparé, et le rapport le compte sous `unknown:` suivi de la raison, par exemple `unknown: lookup 'pipe'`. Un `when`, un `loop`, un `changed_when`, un `failed_when` ou un `until` qui lit une valeur inconnue suit l'enregistrement : la tâche s'exécute ou est sautée comme elle l'a été, boucle sur les éléments enregistrés, garde le statut enregistré, et s'arrête à la tentative où l'enregistrement s'est arrêté.
 
 ## Le rapport
 
@@ -72,7 +78,7 @@ La dernière ligne est le résumé :
 {"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
 ```
 
-Les raisons de `not_compared` sont `after_flow` (après une divergence `flow` sur cet hôte) et `no_log` (comparée sur le seul statut). Les raisons de `arguments_not_compared` sont `no_log`, `not_recorded` (ansible-core n'a passé aucun `invocation` au callback, comme pour `debug`, ou comme ansible-core 2.21 le fait pour toutes les tâches) et `controller` (Volant a exécuté la tâche sur le contrôleur et n'a rien envoyé).
+Les raisons de `not_compared` sont `after_flow` (après une divergence `flow` sur cet hôte), `no_log` (comparée sur le seul statut) et `unknown: <raison>` (un élément de boucle inconnu). Les raisons de `arguments_not_compared` sont `no_log`, `not_recorded` (ansible-core n'a passé aucun `invocation` au callback, comme pour `debug`, ou comme ansible-core 2.21 le fait pour toutes les tâches) `controller` (Volant a exécuté la tâche sur le contrôleur et n'a rien envoyé) et `unknown: <raison>`, compté par argument.
 
 ## Codes de sortie
 

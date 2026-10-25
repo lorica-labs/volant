@@ -63,6 +63,16 @@ pub(super) fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> En
         }
     });
     filters::register(&mut env, base_dir, bridge);
+    // A filter that draws at random answers otherwise on every run: unknown in a replay, and
+    // never sent to ansible-core.
+    if super::unknown::active() {
+        for name in ["random", "shuffle"] {
+            let reason = format!("filter '{name}'");
+            add_filter(&mut env, name, move |_: Rest<ValueOrKwargs>| {
+                super::unknown::value(&reason)
+            });
+        }
+    }
     super::order::register(&mut env);
     env.add_function(CONCAT_KEY, concat);
     env.add_function("range", range);
@@ -126,7 +136,8 @@ pub(super) fn chained_attr(name: String) -> minijinja::Value {
             if parent.is_undefined() {
                 return Ok(minijinja::Value::UNDEFINED);
             }
-            parent.get_attr(&name)
+            let read = parent.get_attr(&name).map(known)?;
+            Ok(super::unknown::censored_read(&parent, read))
         },
     )
 }
@@ -139,7 +150,16 @@ fn chained_item(
     if parent.is_undefined() {
         return Ok(minijinja::Value::UNDEFINED);
     }
-    parent.get_item(&key)
+    let read = parent.get_item(&key).map(known)?;
+    Ok(super::unknown::censored_read(&parent, read))
+}
+
+/// `value`, or the unknown value when it is the marker of one; see [`super::unknown`].
+pub(super) fn known(value: minijinja::Value) -> minijinja::Value {
+    value
+        .as_str()
+        .and_then(super::unknown::from_marker)
+        .unwrap_or(value)
 }
 
 /// The function name an attribute lookup is routed through: `ATTR_KEY` then the attribute.
@@ -211,7 +231,7 @@ pub(super) fn mutable_attr(name: String) -> minijinja::Value {
             if parent.is_undefined() {
                 return Ok(minijinja::Value::UNDEFINED);
             }
-            Ok(made_mutable(state, parent.get_attr(&name)?))
+            Ok(made_mutable(state, known(parent.get_attr(&name)?)))
         },
     )
 }
@@ -235,7 +255,7 @@ fn mutable_item(
     if parent.is_undefined() {
         return Ok(minijinja::Value::UNDEFINED);
     }
-    Ok(made_mutable(state, parent.get_item(&key)?))
+    Ok(made_mutable(state, known(parent.get_item(&key)?)))
 }
 
 pub(super) fn type_name(v: &Value) -> &'static str {

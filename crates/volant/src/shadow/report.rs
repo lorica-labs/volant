@@ -99,12 +99,13 @@ fn divergence(d: &Divergence) -> Value {
 }
 
 /// `reason count, reason count`, the kinds of divergence in their order of seriousness.
-fn counts(counts: &BTreeMap<&'static str, usize>) -> String {
-    let rank = |k: &&str| KINDS.iter().position(|x| x == k).unwrap_or(KINDS.len());
-    let mut keys: Vec<&&str> = counts.keys().collect();
-    keys.sort_by_key(|k| (rank(k), **k));
-    keys.iter()
-        .map(|k| format!("{} {}", label(k), counts[**k]))
+fn counts<K: AsRef<str> + Ord>(counts: &BTreeMap<K, usize>) -> String {
+    let rank = |k: &str| KINDS.iter().position(|x| *x == k).unwrap_or(KINDS.len());
+    let mut entries: Vec<(&K, &usize)> = counts.iter().collect();
+    entries.sort_by_key(|(k, _)| (rank(k.as_ref()), k.as_ref().to_owned()));
+    entries
+        .iter()
+        .map(|(k, n)| format!("{} {n}", label(k.as_ref())))
         .collect::<Vec<_>>()
         .join(", ")
 }

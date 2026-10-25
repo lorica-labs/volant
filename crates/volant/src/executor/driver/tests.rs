@@ -5,10 +5,11 @@ use std::sync::{Arc, Mutex};
 use serde_json::{Map, Value};
 use volant_protocol::modules::is_builtin;
 
+use super::super::run::first_batch_id;
 use super::boundaries::{
     FACT_MODULES, calls_lookup, is_boundary, reads_across_hosts, strict, writes_facts,
 };
-use super::{Definitions, first_batch_id, mark_boundaries, plugin_step};
+use super::{Definitions, mark_boundaries, plugin_step};
 use crate::compile::{Compiled, Step, StepKind};
 use crate::playbook::PlayTask;
 use crate::testing::{scratch, task, write};

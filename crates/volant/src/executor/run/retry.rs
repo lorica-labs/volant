@@ -247,11 +247,17 @@ pub(super) fn until_holds(
     if retry.until.is_empty() {
         return Ok(!result.failed());
     }
-    all_hold(
+    match all_hold(
         &retry.until,
         &condition_vars(task, item, result, templar),
         templar,
-    )
+    ) {
+        // A condition that reads an unknown value ends at the attempt the recording ended at.
+        Err(e) if crate::template::unknown::reason_in(&e.0).is_some() => {
+            Ok(result.0.contains_key(crate::shadow::replay::FINAL))
+        }
+        held => held,
+    }
 }
 
 /// One `FAILED - RETRYING` line: the count it shows and the attempt that failed.
@@ -285,12 +291,16 @@ pub(in crate::executor) fn judge_attempt(
     // The item's label is rendered once its last attempt is in, as `finish` does it.
     match attempt_verdict(task, item, raw, attempt, retry, templar) {
         Attempt::Done(mut r) => {
+            r.0.remove(crate::shadow::replay::FINAL);
             if let Some(message) = &item.label_error {
                 crate::executor::prepare::label_failed(message, &mut r);
             }
             Attempt::Done(r)
         }
-        again @ Attempt::Again(..) => again,
+        Attempt::Again(left, mut r) => {
+            r.0.remove(crate::shadow::replay::FINAL);
+            Attempt::Again(left, r)
+        }
     }
 }
 

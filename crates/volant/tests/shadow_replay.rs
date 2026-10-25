@@ -285,3 +285,23 @@ fn a_pause_takes_the_recorded_answer() {
     assert_eq!(out.status.code(), Some(0), "{stderr}");
     assert!(stderr.contains("\"msg\": \"yes\""), "{stderr}");
 }
+
+// `tests/shadow-unknown` was recorded in `/tmp/volant-shadow-unknown` with `VOLANT_SHADOW_CI=yes`
+// and `VOLANT_SHADOW_ITEMS=a,b`, which the replay does not have.
+/// A `pipe` argument and a `no_log` value are not compared; a `when`, a `loop` and an `until` on the
+/// environment follow the recording. No divergence, and the output is ansible-playbook's.
+#[test]
+fn values_that_change_between_runs_are_not_compared() {
+    let dir = fixture_of("shadow-unknown");
+    let out = replay(dir.path(), "recording.jsonl", &[]);
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{stdout}");
+    assert!(stdout.contains("no divergence"), "{stdout}");
+    assert!(stdout.contains("unknown: lookup 'pipe' 1"), "{stdout}");
+    assert!(stdout.contains("unknown: no_log 1"), "{stdout}");
+    let here = std::fs::canonicalize(dir.path()).expect("canonical");
+    let printed = String::from_utf8_lossy(&out.stderr)
+        .replace(&*here.to_string_lossy(), "/tmp/volant-shadow-unknown");
+    let reference = std::fs::read_to_string(dir.path().join("ansible.out")).expect("reference");
+    assert_eq!(printed, reference);
+}

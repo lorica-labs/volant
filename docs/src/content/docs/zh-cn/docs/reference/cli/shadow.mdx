@@ -1,5 +1,5 @@
 ---
-sourceHash: 4b6700dd2257
+sourceHash: 18ca274cc7a2
 title: volant shadow
 description: 在不连接任何主机的情况下重放 ansible-playbook 记录的一次运行，看看 Volant 会有哪些不同的做法。
 ---
@@ -32,7 +32,13 @@ volant shadow replay RECORDING [--json]
 
 本会连到主机的任务，改为得到记录中的结果。之后由 Volant 自己应用 `changed_when`、`failed_when`、`register`、循环和 `until`。`until` 会按顺序得到记录中失败的尝试。`pause` 采用其提示当时得到的回答，并且不会等待。记录为不可达的主机在重放中也不可达。在控制端运行的任务，例如 `debug`、`set_fact`、include 和 `meta`，照常由 Volant 计算。
 
-每次运行都会给出不同值的 lookup 和过滤器，例如 `now`、`password`、`pipe` 或 `lookup('env')`，会真实执行，因此使用它们的 playbook 可能出现只是噪声的差异。带有 Python 模块或收集 facts 的 playbook，仍需要控制端上的 ansible-core 来准备它们，可通过 `VOLANT_PYTHON` 或[托管运行时](/zh-cn/docs/reference/runtime/)提供。
+带有 Python 模块或收集 facts 的 playbook，仍需要控制端上的 ansible-core 来准备它们，可通过 `VOLANT_PYTHON` 或[托管运行时](/zh-cn/docs/reference/runtime/)提供。
+
+## 每次运行都会变化的值
+
+有些值每次运行都不同：`pipe`、`env`、`password`、`lines` 和 `url` lookup，名称中含有 `random` 的任何 lookup，指向重放所在目录之外的 `file` lookup，`now()`，以及 `random` 和 `shuffle` 过滤器。在重放中，它们改为给出一个未知值。从记录的 `no_log` 结果中读取的任何键也是如此，因为记录只保留了它的状态。
+
+读取了未知值的表达式整体都是未知的，无论它对这个值做了什么：周围的文本、过滤器、比较、属性或元素。未知的任务参数不做比较，报告会把它计入 `unknown:` 加原因，例如 `unknown: lookup 'pipe'`。读取了未知值的 `when`、`loop`、`changed_when`、`failed_when` 或 `until` 会按记录行事：任务像当时一样运行或被跳过，遍历记录中的元素，保留记录中的状态，并在记录停止的那次尝试处停止。
 
 ## 报告
 
@@ -72,7 +78,7 @@ judgment  local  site.yml:30  fails
 {"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
 ```
 
-`not_compared` 中的原因有 `after_flow`（该主机出现 `flow` 差异之后）和 `no_log`（只比较状态）。`arguments_not_compared` 中的原因有 `no_log`、`not_recorded`（ansible-core 没有把 `invocation` 传给回调，例如 `debug`，或 ansible-core 2.21 对所有任务都是如此）以及 `controller`（Volant 在控制端运行了该任务，没有发送任何内容）。
+`not_compared` 中的原因有 `after_flow`（该主机出现 `flow` 差异之后）、`no_log`（只比较状态）以及 `unknown: <原因>`（未知的循环元素）。`arguments_not_compared` 中的原因有 `no_log`、`not_recorded`（ansible-core 没有把 `invocation` 传给回调，例如 `debug`，或 ansible-core 2.21 对所有任务都是如此）`controller`（Volant 在控制端运行了该任务，没有发送任何内容）以及按参数计数的 `unknown: <原因>`。
 
 ## 退出码
 

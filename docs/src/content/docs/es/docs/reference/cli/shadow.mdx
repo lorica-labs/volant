@@ -1,5 +1,5 @@
 ---
-sourceHash: 4b6700dd2257
+sourceHash: 18ca274cc7a2
 title: volant shadow
 description: Reproducir una ejecución que ansible-playbook grabó, sin contactar ningún host, y ver qué habría hecho Volant de otra manera.
 ---
@@ -32,7 +32,13 @@ Las opciones de la ejecución salen de la grabación: inventario, variables extr
 
 Las tareas que llegan a un host reciben en su lugar el resultado grabado. Después Volant aplica por sí mismo `changed_when`, `failed_when`, `register`, los bucles y `until`. Un `until` recibe en orden los intentos fallidos grabados. Un `pause` toma la respuesta que recibió su prompt y no espera. Un host grabado como inalcanzable es inalcanzable. Las tareas que se ejecutan en el controlador, como `debug`, `set_fact`, los includes y `meta`, las calcula Volant como de costumbre.
 
-Los lookups y filtros que dan un valor distinto en cada ejecución, como `now`, `password`, `pipe` o `lookup('env')`, se ejecutan de verdad, así que un playbook que los usa puede mostrar divergencias que solo son ruido. Un playbook con módulos Python o recogida de facts sigue necesitando ansible-core en el controlador para prepararlos, mediante `VOLANT_PYTHON` o el [runtime gestionado](/es/docs/reference/runtime/).
+Un playbook con módulos Python o recogida de facts sigue necesitando ansible-core en el controlador para prepararlos, mediante `VOLANT_PYTHON` o el [runtime gestionado](/es/docs/reference/runtime/).
+
+## Los valores que cambian de una ejecución a otra
+
+Algunos valores son distintos en cada ejecución: los lookups `pipe`, `env`, `password`, `lines` y `url`, cualquier lookup con `random` en su nombre, un lookup `file` fuera del directorio donde se ejecuta la reproducción, `now()`, y los filtros `random` y `shuffle`. En una reproducción dan en su lugar un valor desconocido. Lo mismo ocurre con cualquier clave leída de un resultado `no_log` grabado, ya que la grabación solo guarda su estado.
+
+Una expresión que lee un valor desconocido es desconocida por completo, haga lo que haga con él: texto alrededor, un filtro, una comparación, un atributo o un elemento. Un argumento de tarea desconocido no se compara, y el informe lo cuenta bajo `unknown:` seguido del motivo, por ejemplo `unknown: lookup 'pipe'`. Un `when`, un `loop`, un `changed_when`, un `failed_when` o un `until` que lee un valor desconocido sigue la grabación: la tarea se ejecuta o se salta como entonces, recorre los elementos grabados, conserva el estado grabado y se detiene en el intento en que se detuvo la grabación.
 
 ## El informe
 
@@ -72,7 +78,7 @@ La última línea es el resumen:
 {"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
 ```
 
-Los motivos de `not_compared` son `after_flow` (tras una divergencia `flow` en ese host) y `no_log` (comparada solo por el estado). Los motivos de `arguments_not_compared` son `no_log`, `not_recorded` (ansible-core no pasó ningún `invocation` al callback, como ocurre con `debug`, o como hace ansible-core 2.21 con todas las tareas) y `controller` (Volant ejecutó la tarea en el controlador y no envió nada).
+Los motivos de `not_compared` son `after_flow` (tras una divergencia `flow` en ese host), `no_log` (comparada solo por el estado) y `unknown: <motivo>` (un elemento de bucle desconocido). Los motivos de `arguments_not_compared` son `no_log`, `not_recorded` (ansible-core no pasó ningún `invocation` al callback, como ocurre con `debug`, o como hace ansible-core 2.21 con todas las tareas) `controller` (Volant ejecutó la tarea en el controlador y no envió nada) y `unknown: <motivo>`, contado por argumento.
 
 ## Códigos de salida
 

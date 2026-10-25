@@ -89,11 +89,16 @@ pub(super) fn loop_list(
 ) -> Result<(Vec<Value>, bool), TemplateError> {
     crate::profile::count(crate::profile::Counter::RenderLoop, 1);
     let (rendered, tainted) = templar.render_value_tainted(raw, vars)?;
-    let list = match rendered {
-        Value::Array(items) => items,
+    // A loop over an unknown value goes over the items the recording looped over.
+    let recorded = rendered
+        .as_str()
+        .and_then(crate::template::unknown::reason_in)
+        .and_then(|_| crate::shadow::replay::recorded_items(task));
+    let list = match (recorded, rendered) {
+        (Some(items), _) | (None, Value::Array(items)) => items,
         // `with_items` takes anything that is not a list as a list of one.
-        other if task.with_items => vec![other],
-        other => {
+        (None, other) if task.with_items => vec![other],
+        (None, other) => {
             return Err(TemplateError(format!(
                 "Invalid data passed to 'loop', it requires a list, got this instead: {other}"
             )));

@@ -61,9 +61,16 @@ pub(super) fn render_fields(
         crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         at.note(templar, condition, true);
         // A conditional that cannot be evaluated yields to a kept loop error, as there.
-        let holds = templar
-            .condition(condition, vars)
-            .map_err(|e| super::undefined::when_error(e, loop_error.as_ref()))?;
+        let holds = match templar.condition(condition, vars) {
+            // A condition that reads an unknown value takes the recorded branch.
+            Err(e) if crate::template::unknown::reason_in(&e.0).is_some() => {
+                match crate::shadow::replay::recorded_skip(task, at.item) {
+                    Some(skipped) => !skipped,
+                    None => return Err(e),
+                }
+            }
+            held => held.map_err(|e| super::undefined::when_error(e, loop_error.as_ref()))?,
+        };
         if !holds {
             let mut r = Map::new();
             r.insert("changed".into(), json!(false));
@@ -132,6 +139,8 @@ pub(super) struct Noting<'a> {
     pub(super) host: &'a str,
     /// A loop item after the first.
     pub(super) later_item: bool,
+    /// The item's index, 0 for a task with no loop.
+    pub(super) item: usize,
     /// The names an item binds: a text that reads none of them renders alike for every item.
     pub(super) loop_names: [&'a str; 3],
 }

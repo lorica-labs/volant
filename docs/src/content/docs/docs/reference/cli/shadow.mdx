@@ -31,7 +31,13 @@ The run's options come from the recording: inventory, extra variables, tags, lim
 
 Tasks that reach a host get the recorded result instead. Volant then applies `changed_when`, `failed_when`, `register`, loops and `until` itself. An `until` gets the recorded failed attempts in order. A `pause` takes the answer its prompt got and does not wait. A host recorded as unreachable is unreachable. Tasks that run on the controller, such as `debug`, `set_fact`, includes and `meta`, are computed by Volant as usual.
 
-Lookups and filters that give a different value on each run, like `now`, `password`, `pipe` or `lookup('env')`, run for real, so a playbook that uses them can show divergences that are only noise. A playbook with Python modules or fact gathering still needs ansible-core on the controller to prepare them, through `VOLANT_PYTHON` or the [managed runtime](/docs/reference/runtime/).
+A playbook with Python modules or fact gathering still needs ansible-core on the controller to prepare them, through `VOLANT_PYTHON` or the [managed runtime](/docs/reference/runtime/).
+
+## Values that change between runs
+
+Some values are different on every run: the `pipe`, `env`, `password`, `lines` and `url` lookups, any lookup with `random` in its name, a `file` lookup outside the directory the replay runs in, `now()`, and the `random` and `shuffle` filters. In a replay they give an unknown value instead. So does any key read from a recorded `no_log` result, since the recording keeps only its status.
+
+An expression that reads an unknown value is unknown as a whole, whatever it does with it: text around it, a filter, a comparison, an attribute or an item. A task argument that is unknown is not compared, and the report counts it under `unknown:` and the reason, such as `unknown: lookup 'pipe'`. A `when`, a `loop`, a `changed_when`, a `failed_when` or an `until` that reads an unknown value follows the recording: the task runs or is skipped as it was, loops over the recorded items, keeps the recorded status, and stops at the attempt the recording stopped at.
 
 ## The report
 
@@ -71,7 +77,7 @@ The last line is the summary:
 {"summary":{"compared":23,"hosts":2,"divergences":{"judgment":1},"not_compared":{"no_log":2},"arguments_not_compared":{"no_log":2,"not_recorded":8},"truncated":false}}
 ```
 
-The reasons in `not_compared` are `after_flow` (after a `flow` divergence on that host) and `no_log` (compared on the status alone). The reasons in `arguments_not_compared` are `no_log`, `not_recorded` (ansible-core passed no `invocation` to the callback, as for `debug`, or as ansible-core 2.21 does for every task) and `controller` (Volant ran the task on the controller and sent nothing).
+The reasons in `not_compared` are `after_flow` (after a `flow` divergence on that host), `no_log` (compared on the status alone) and `unknown: <reason>` (a loop item that is unknown). The reasons in `arguments_not_compared` are `no_log`, `not_recorded` (ansible-core passed no `invocation` to the callback, as for `debug`, or as ansible-core 2.21 does for every task) `controller` (Volant ran the task on the controller and sent nothing) and `unknown: <reason>`, counted per argument.
 
 ## Exit codes
 

@@ -70,7 +70,8 @@ fn the_same_path_is_told_apart_by_occurrence() {
     assert_eq!(replay.answer("h", &relative, 1, 0, 1).unwrap().0["rc"], 2);
 }
 
-/// What ansible-core added after the module is gone, so Volant decides it again.
+/// What ansible-core added after the module is gone, so Volant decides it again; `changed` stays
+/// as ansible-core decided it, kept when `changed_when` reads an unknown value.
 #[test]
 fn the_answer_is_the_module_s() {
     let mut task = task_at("/here/site.yml", 3);
@@ -93,7 +94,7 @@ fn the_answer_is_the_module_s() {
     let answer = replay.answer("h", &task, 0, 0, 1).unwrap().0;
     assert_eq!(
         Value::Object(answer),
-        json!({"rc": 0, "invocation": {"module_args": {}}})
+        json!({"rc": 0, "changed": true, "invocation": {"module_args": {}}})
     );
 }
 
@@ -164,5 +165,8 @@ fn a_censored_result_answers_its_status() {
         .answer("h", &task_at("site.yml", 3), 0, 0, 1)
         .unwrap()
         .0;
-    assert_eq!(Value::Object(answer), json!({"changed": true}));
+    assert_eq!(
+        Value::Object(answer),
+        json!({"changed": true, "_volant_censored": true})
+    );
 }

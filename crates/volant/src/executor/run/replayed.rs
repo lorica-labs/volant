@@ -83,6 +83,19 @@ pub(in crate::executor) fn paused(
     )
 }
 
+/// Runs `prepare` for `task` on `host` with the step the recording has for it in scope, under a
+/// replay: see [`crate::shadow::replay::preparing`].
+pub(in crate::executor) fn preparing<T>(
+    options: &RunOptions,
+    seen: Option<&Seen>,
+    host: &str,
+    task: &PlayTask,
+    prepare: impl FnOnce() -> T,
+) -> T {
+    let occurrence = Seen::peek(seen, task);
+    crate::shadow::replay::preparing(options.replay.as_ref(), host, occurrence, prepare)
+}
+
 impl<'a> Replayed<'a> {
     /// Step `pos`, `task`, under a replay, with the occurrence [`Seen::mark`] gave it.
     pub(in crate::executor) fn reach(

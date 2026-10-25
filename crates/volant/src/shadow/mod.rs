@@ -2,6 +2,7 @@
 //! `volant shadow`: replaying a run `ansible-playbook` recorded with the `volant.compat.record`
 //! callback, to show what Volant would have done differently.
 
+mod alike;
 mod args;
 mod compare;
 mod recording;
@@ -66,6 +67,7 @@ fn replay(path: &Path, json: bool) -> i32 {
         );
     }
     let root = std::env::current_dir().unwrap_or_default();
+    crate::template::unknown::enable();
     let replay = Arc::new(replay::Replay::new(&recording, &root));
     crate::cli::replay(&args, &replay);
     let report = compare::compare(&recording, &replay);

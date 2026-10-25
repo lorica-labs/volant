@@ -1,0 +1,23 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: stamped
+      ansible.builtin.command: "echo {{ lookup('pipe', 'date +%s%N') }}"
+    - name: by environment
+      ansible.builtin.command: echo ci
+      when: lookup('env', 'VOLANT_SHADOW_CI') == 'yes'
+    - name: hidden
+      ansible.builtin.command: echo secret
+      register: hidden
+      no_log: true
+    - name: derived
+      ansible.builtin.command: "echo {{ hidden.stdout }}"
+    - name: listed
+      ansible.builtin.command: "echo {{ item }}"
+      loop: "{{ lookup('env', 'VOLANT_SHADOW_ITEMS').split(',') }}"
+    - name: retried
+      ansible.builtin.shell: test -e attempted || { touch attempted; false; }
+      register: out
+      until: out.rc == 0 and lookup('env', 'VOLANT_SHADOW_CI') == 'yes'
+      retries: 2
+      delay: 0

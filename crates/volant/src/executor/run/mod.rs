@@ -21,7 +21,7 @@ mod retry;
 
 pub(super) use argspec::refusal;
 pub(super) use async_job::{Polled, announce_retry, poll_job, polls};
-pub(super) use batch::run_agent_batch;
+pub(super) use batch::{first_batch_id, run_agent_batch};
 
 pub(super) use channel::Relinker;
 pub(super) use controller::pause_lines;

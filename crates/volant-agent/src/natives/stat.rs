@@ -142,6 +142,14 @@ fn answer(
                 .ok_or_else(|| Stop::HandBack(format!("stat of {path}: {err}")))?;
             result.insert("failed".into(), Value::Bool(true));
             result.insert("msg".into(), msg.into());
+            // Measured on ansible-core 2.19.12: the error block reads `Permission denied:
+            // [Errno 13] Permission denied: b'<path>'`.
+            if let Some(errno) = err.raw_os_error() {
+                result.insert(
+                    "exception".into(),
+                    crate::natives::common::os_error_summary(msg, errno, path),
+                );
+            }
             result.insert("invocation".into(), invocation(SPEC, args));
             return Ok(result);
         }

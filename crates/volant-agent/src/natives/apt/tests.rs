@@ -434,7 +434,6 @@ fn the_cache_check_is_read_like_the_module_reads_it() {
 
 /// Everything the fast path does not answer is handed back before any change.
 #[test]
-#[expect(clippy::too_many_lines)]
 fn everything_else_goes_back_to_the_module_before_any_change() {
     {
         let host = Host::new("outside");
@@ -539,14 +538,68 @@ fn everything_else_goes_back_to_the_module_before_any_change() {
     }
     {
         let host = Host::new("manual");
-        let reason = host.hands_back(&json!({"name": ["bash", "libfoo"]}));
-        assert!(
-            reason.starts_with("a package is marked automatically"),
-            "{reason}"
-        );
         host.done(&json!({"name": ["bash", "coreutils", "tzdata"]}));
         assert_eq!(host.calls(), Vec::<String>::new());
     }
+}
+
+/// A name marked automatically installed is marked manual, as the module's `apt-mark manual`
+/// does, and nothing else runs. `policy_rc_d` holds `/usr/sbin/policy-rc.d` for the install
+/// alone, and puts back the file that was there.
+#[test]
+fn apt_mark_and_policy_rc_d_run_like_the_module() {
+    let host = Host::new("policy");
+    let policy = host.fake.0.join("usr/sbin/policy-rc.d");
+    let seen = host.fake.0.join("seen");
+    host.fake.mkdir("/tmp").mkdir("/usr/sbin").script(
+        "/bin/apt-get",
+        &format!(
+            "/bin/cat '{p}' > '{s}' 2>/dev/null; /usr/bin/stat -c %a '{p}' >> '{s}' 2>/dev/null; exit 0",
+            p = policy.display(),
+            s = seen.display()
+        ),
+    );
+    host.fake.script(
+        "/bin/apt-cache",
+        "printf 'newpkg:
+  Installed: (none)
+  Candidate: 1.0
+'",
+    );
+    let marked = host.done(&json!({"name": ["bash", "libfoo"]}));
+    assert_eq!(marked["changed"], json!(false));
+    assert_eq!(marked["cache_updated"], json!(false));
+    assert_eq!(host.calls(), ["manual bash libfoo"]);
+    assert!(!seen.exists(), "nothing was installed");
+
+    let installed = || {
+        host.done(&json!({"name": "newpkg", "policy_rc_d": "101"}));
+        let during = std::fs::read_to_string(&seen).unwrap();
+        assert_eq!(
+            during,
+            "#!/bin/sh
+exit 101
+755
+"
+        );
+        let tmp = std::fs::read_dir(host.fake.0.join("tmp")).unwrap().count();
+        assert_eq!(tmp, 0, "the backup directory is removed");
+    };
+    installed();
+    assert!(!policy.exists(), "the script goes when nothing was there");
+    host.fake.write(
+        "/usr/sbin/policy-rc.d",
+        "#!/bin/sh
+exit 0
+",
+    );
+    installed();
+    assert_eq!(
+        std::fs::read_to_string(&policy).unwrap(),
+        "#!/bin/sh
+exit 0
+"
+    );
 }
 
 /// String arguments are converted like the module converts them; a task with no package is answered like it.

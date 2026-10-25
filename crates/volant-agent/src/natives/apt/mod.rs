@@ -37,6 +37,7 @@ use crate::modules::Context;
 
 mod act;
 mod plan;
+mod policy;
 mod request;
 mod spec;
 mod status;

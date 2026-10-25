@@ -1,5 +1,5 @@
 ---
-sourceHash: 7b06690a9fe4
+sourceHash: 528668a2f068
 title: "Extender Ansible solo con lo que puede volver a él"
 description: "Registro de decisión 0011."
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | Estado | Fecha |
 |---|---|
-| propuesto | 2026-10-25 |
+| aceptada | 2026-10-25 |
 
 ## Contexto
 

@@ -8,7 +8,7 @@ sidebar:
 
 | Status | Date |
 |---|---|
-| proposed | 2026-10-25 |
+| accepted | 2026-10-25 |
 
 ## Context
 

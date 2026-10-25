@@ -1,5 +1,5 @@
 ---
-sourceHash: 7b06690a9fe4
+sourceHash: 528668a2f068
 title: "只通过可退回 Ansible 的方式扩展 Ansible"
 description: "决策记录 0011。"
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | 状态 | 日期 |
 |---|---|
-| 提议 | 2026-10-25 |
+| 已接受 | 2026-10-25 |
 
 ## 背景
 

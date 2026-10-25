@@ -1,5 +1,5 @@
 ---
-sourceHash: 7b06690a9fe4
+sourceHash: 528668a2f068
 title: "Ansible nur durch das erweitern, was sich zurückführen lässt"
 description: "Entscheidungsdokument 0011."
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | Status | Datum |
 |---|---|
-| vorgeschlagen | 2026-10-25 |
+| akzeptiert | 2026-10-25 |
 
 ## Kontext
 

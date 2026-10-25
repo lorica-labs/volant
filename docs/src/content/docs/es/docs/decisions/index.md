@@ -1,5 +1,5 @@
 ---
-sourceHash: 8b9de3172725
+sourceHash: 088775cf213e
 title: Registros de decisión
 description: Las decisiones que dan forma a lo que ven los usuarios de Volant, y por qué se tomaron.
 sidebar:
@@ -22,4 +22,4 @@ Un registro no se reescribe una vez aceptado. Cuando una decisión posterior lo 
 | [0007](/es/docs/decisions/0007-action-plugins/) | Ejecutar los plugins de acción como una secuencia de subtareas dirigidas por el controlador. |
 | [0008](/es/docs/decisions/0008-native-modules-and-speed/) | Responder a los módulos comunes de forma nativa en el agente, dejar el resto a Python y compartir una conexión ssh por host. |
 | [0009](/es/docs/decisions/0009-interface-crates-mit-or-apache/) | Mantener el motor bajo GPL-3.0-or-later y licenciar bajo MIT OR Apache-2.0 los crates que describen una interfaz pública. |
-| [0011](/es/docs/decisions/0011-extensions-and-eject/) | Propuesta: extender Ansible solo con claves que un comando sabe reescribir en Ansible simple (`volant eject`, `volant check --portable`). |
+| [0011](/es/docs/decisions/0011-extensions-and-eject/) | Extender Ansible solo con claves que un comando sabe reescribir en Ansible simple (`volant eject`, `volant check --portable`). |

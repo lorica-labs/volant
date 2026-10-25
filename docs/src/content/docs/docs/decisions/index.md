@@ -21,4 +21,4 @@ A record is not rewritten once it is accepted. When a later decision changes it,
 | [0007](/docs/decisions/0007-action-plugins/) | Run action plugins as a sequence of sub-tasks driven by the controller. |
 | [0008](/docs/decisions/0008-native-modules-and-speed/) | Answer common modules natively in the agent, hand the rest to Python, and share one ssh connection per host. |
 | [0009](/docs/decisions/0009-interface-crates-mit-or-apache/) | Keep the engine under GPL-3.0-or-later, and license crates that describe a public interface MIT OR Apache-2.0. |
-| [0011](/docs/decisions/0011-extensions-and-eject/) | Proposed: extend Ansible only through keys a command can lower back to plain Ansible (`volant eject`, `volant check --portable`). |
+| [0011](/docs/decisions/0011-extensions-and-eject/) | Extend Ansible only through keys a command can lower back to plain Ansible (`volant eject`, `volant check --portable`). |

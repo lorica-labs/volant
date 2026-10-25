@@ -1,5 +1,5 @@
 ---
-sourceHash: 8b9de3172725
+sourceHash: 088775cf213e
 title: Fiches de décision
 description: Les décisions qui déterminent ce que voient les utilisateurs de Volant, et pourquoi elles ont été prises.
 sidebar:
@@ -22,4 +22,4 @@ Une fiche n'est pas réécrite une fois acceptée. Quand une décision ultérieu
 | [0007](/fr/docs/decisions/0007-action-plugins/) | Exécuter les plugins d'action comme une suite de sous-tâches pilotée par le contrôleur. |
 | [0008](/fr/docs/decisions/0008-native-modules-and-speed/) | Répondre aux modules courants nativement dans l'agent, confier le reste à Python, et partager une connexion ssh par hôte. |
 | [0009](/fr/docs/decisions/0009-interface-crates-mit-or-apache/) | Garder le moteur sous GPL-3.0-or-later, et placer sous MIT OR Apache-2.0 les crates qui décrivent une interface publique. |
-| [0011](/fr/docs/decisions/0011-extensions-and-eject/) | Proposée : n'étendre Ansible que par des clés qu'une commande sait réécrire en Ansible simple (`volant eject`, `volant check --portable`). |
+| [0011](/fr/docs/decisions/0011-extensions-and-eject/) | N'étendre Ansible que par des clés qu'une commande sait réécrire en Ansible simple (`volant eject`, `volant check --portable`). |

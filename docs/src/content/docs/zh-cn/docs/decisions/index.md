@@ -1,5 +1,5 @@
 ---
-sourceHash: 8b9de3172725
+sourceHash: 088775cf213e
 title: 决策记录
 description: 塑造 Volant 用户所见内容的决策，以及做出这些决策的原因。
 sidebar:
@@ -22,4 +22,4 @@ sidebar:
 | [0007](/zh-cn/docs/decisions/0007-action-plugins/) | 把 action plugin 作为由控制节点驱动的一串子 task 来运行。 |
 | [0008](/zh-cn/docs/decisions/0008-native-modules-and-speed/) | 常用模块在 agent 中原生回答，其余交给 Python，每台主机共享一个 ssh 连接。 |
 | [0009](/zh-cn/docs/decisions/0009-interface-crates-mit-or-apache/) | 引擎保持 GPL-3.0-or-later，描述公共接口的 crate 采用 MIT OR Apache-2.0 许可。 |
-| [0011](/zh-cn/docs/decisions/0011-extensions-and-eject/) | 提议：只通过命令能改写回普通 Ansible 的键来扩展 Ansible（`volant eject`、`volant check --portable`）。 |
+| [0011](/zh-cn/docs/decisions/0011-extensions-and-eject/) | 只通过命令能改写回普通 Ansible 的键来扩展 Ansible（`volant eject`、`volant check --portable`）。 |

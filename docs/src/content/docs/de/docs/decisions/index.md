@@ -1,5 +1,5 @@
 ---
-sourceHash: 8b9de3172725
+sourceHash: 088775cf213e
 title: Entscheidungsdokumente
 description: Die Entscheidungen, die prägen, was Volants Benutzer sehen, und warum sie getroffen wurden.
 sidebar:
@@ -22,4 +22,4 @@ Ein Dokument wird nicht umgeschrieben, sobald es akzeptiert ist. Ändert eine sp
 | [0007](/de/docs/decisions/0007-action-plugins/) | Action-Plugins als Folge von Teil-Tasks ausführen, die der Controller steuert. |
 | [0008](/de/docs/decisions/0008-native-modules-and-speed/) | Gängige Module nativ im Agent beantworten, den Rest an Python übergeben und pro Host eine ssh-Verbindung teilen. |
 | [0009](/de/docs/decisions/0009-interface-crates-mit-or-apache/) | Die Engine unter GPL-3.0-or-later halten und Crates, die eine öffentliche Schnittstelle beschreiben, unter MIT OR Apache-2.0 lizenzieren. |
-| [0011](/de/docs/decisions/0011-extensions-and-eject/) | Vorgeschlagen: Ansible nur durch Schlüssel erweitern, die ein Befehl in einfaches Ansible zurückschreiben kann (`volant eject`, `volant check --portable`). |
+| [0011](/de/docs/decisions/0011-extensions-and-eject/) | Ansible nur durch Schlüssel erweitern, die ein Befehl in einfaches Ansible zurückschreiben kann (`volant eject`, `volant check --portable`). |

@@ -1,5 +1,5 @@
 ---
-sourceHash: 7b06690a9fe4
+sourceHash: 528668a2f068
 title: "N'étendre Ansible que par ce qui peut y revenir"
 description: "Fiche de décision 0011."
 sidebar:
@@ -9,7 +9,7 @@ sidebar:
 
 | Statut | Date |
 |---|---|
-| proposé | 2026-10-25 |
+| accepté | 2026-10-25 |
 
 ## Contexte
 

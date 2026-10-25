@@ -4,7 +4,7 @@
 
 use std::collections::BTreeMap;
 use std::fs;
-use std::path::Path;
+use std::path::PathBuf;
 
 use crate::natives::runtime::{Clock, Stop, run as run_program};
 
@@ -81,7 +81,7 @@ fn lookup(
         }
     }
     let no_env = BTreeMap::new();
-    match run_program(&no_env, clock, Path::new("getent"), &[db, key])? {
+    match run_program(&no_env, clock, &getent(), &[db, key])? {
         Some((0, out)) => Ok(Some(out.lines().find_map(entry).ok_or_else(|| {
             Stop::HandBack(format!("getent {db} answered no entry for the key"))
         })?)),
@@ -89,6 +89,17 @@ fn lookup(
         Some((rc, _)) => Err(Stop::HandBack(format!("getent {db} exited {rc}"))),
         None => Err(Stop::HandBack("getent cannot be run".into())),
     }
+}
+
+#[cfg(not(test))]
+fn getent() -> PathBuf {
+    PathBuf::from("getent")
+}
+
+/// A test's own `getent`, which [`super::golden::fake_getent`] names for its thread alone.
+#[cfg(test)]
+fn getent() -> PathBuf {
+    super::golden::fake_getent_path().unwrap_or_else(|| PathBuf::from("getent"))
 }
 
 /// Whether `nsswitch`, the host's `/etc/nsswitch.conf`, asks `files` first for `db`, so that an

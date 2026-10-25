@@ -33,54 +33,53 @@ impl Scratch {
     }
 }
 
-/// Held by every test that changes this process's environment, for as long as the change
-/// lasts, so that no two of them overlap under a test runner that shares the process.
-pub static ENV_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
-
-/// The `PATH` a [`fake_getent`] replaced, put back when this is dropped, with
-/// [`ENV_LOCK`] held until then.
-#[must_use = "PATH goes back when this is dropped"]
-pub struct FakePath {
-    path: Option<std::ffi::OsString>,
-    _lock: std::sync::MutexGuard<'static, ()>,
+std::thread_local! {
+    /// The `getent` a test put in place of the host's, for the natives this thread runs.
+    static GETENT: std::cell::RefCell<Option<std::path::PathBuf>> =
+        const { std::cell::RefCell::new(None) };
 }
 
-impl Drop for FakePath {
+/// The `getent` this thread's test put in place, if any.
+pub fn fake_getent_path() -> Option<std::path::PathBuf> {
+    GETENT.with(|fake| fake.borrow().clone())
+}
+
+/// The `getent` a [`fake_getent`] replaced, put back when this is dropped.
+#[must_use = "the host's getent comes back when this is dropped"]
+pub struct FakeGetent(Option<std::path::PathBuf>);
+
+impl Drop for FakeGetent {
     fn drop(&mut self) {
-        // SAFETY: under ENV_LOCK, like the change it undoes.
-        unsafe {
-            match &self.path {
-                Some(path) => std::env::set_var("PATH", path),
-                None => std::env::remove_var("PATH"),
-            }
-        }
+        let before = self.0.take();
+        GETENT.with(|fake| *fake.borrow_mut() = before);
     }
 }
 
-/// A `getent` running `body` (`sh`), put first on this test process's `PATH` until the
-/// returned guard is dropped.
-pub fn fake_getent(scratch: &Scratch, body: &str) -> FakePath {
-    let lock = ENV_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    let bin = scratch.path("bin");
-    fs::create_dir(&bin).unwrap();
-    let getent = format!("{bin}/getent");
-    fs::write(&getent, format!("#!/bin/sh\n{body}\n")).unwrap();
+/// A `getent` running `body` (`sh`), run in place of the host's by the natives of this thread
+/// (and of [`within`]'s) until the returned guard is dropped. The process's `PATH` is left
+/// alone: another test running at the same time keeps the host's `getent`.
+pub fn fake_getent(scratch: &Scratch, body: &str) -> FakeGetent {
+    let getent = std::path::PathBuf::from(scratch.path("getent"));
+    fs::write(
+        &getent,
+        format!(
+            "#!/bin/sh
+{body}
+"
+        ),
+    )
+    .unwrap();
     fs::set_permissions(&getent, fs::Permissions::from_mode(0o755)).unwrap();
-    let path = std::env::var_os("PATH");
-    let mut fake = std::ffi::OsString::from(format!("{bin}:"));
-    fake.push(path.clone().unwrap_or_default());
-    // SAFETY: under ENV_LOCK, which every test that changes the environment holds.
-    unsafe { std::env::set_var("PATH", fake) };
-    FakePath { path, _lock: lock }
+    FakeGetent(GETENT.with(|fake| fake.replace(Some(getent))))
 }
 
 /// `f`'s answer, run on a thread, or a failure after `secs`: a native that ignores its clock
 /// would otherwise hold the test until nextest ends it, ten minutes on.
 pub fn within<T: Send + 'static>(secs: u64, f: impl FnOnce() -> T + Send + 'static) -> T {
     let (sent, got) = std::sync::mpsc::channel();
+    let getent = fake_getent_path();
     std::thread::spawn(move || {
+        GETENT.with(|fake| *fake.borrow_mut() = getent);
         let _ = sent.send(f());
     });
     got.recv_timeout(std::time::Duration::from_secs(secs))

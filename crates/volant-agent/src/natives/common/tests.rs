@@ -197,11 +197,14 @@ fn accounts_are_found_by_name_id_and_name_service() {
         let scratch = golden::Scratch::new("getent-path");
         let before = std::env::var_os("PATH");
         let during = {
-            let _path = golden::fake_getent(&scratch, "exit 2");
-            std::env::var_os("PATH")
+            let _getent = golden::fake_getent(&scratch, "exit 2");
+            let elsewhere = std::thread::spawn(golden::fake_getent_path).join().unwrap();
+            assert_eq!(elsewhere, None, "another thread saw this test's getent");
+            golden::fake_getent_path()
         };
-        assert_ne!(during, before, "the fake was not put on PATH");
-        assert_eq!(std::env::var_os("PATH"), before);
+        assert!(during.is_some(), "the fake was not put in place");
+        assert_eq!(golden::fake_getent_path(), None);
+        assert_eq!(std::env::var_os("PATH"), before, "PATH was changed");
     }
     {
         let scratch = golden::Scratch::new("getent");

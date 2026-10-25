@@ -29,6 +29,10 @@ fn the_supported_list_is_the_dispatch() {
         "fileglob",
         "inventory_hostnames",
         "varnames",
+        "dict",
+        "nested",
+        "subelements",
+        "together",
     ] {
         assert!(super::supported(name), "{name}");
         assert!(
@@ -578,5 +582,61 @@ fn a_template_lookup_sets_the_template_variables() {
     assert_eq!(
         t.render("{{ lookup('template', 'm.j2') }}", &map).unwrap(),
         json!(format!("#\n# by hand\n#\nm.j2 {full}\n"))
+    );
+}
+
+/// The loop lookups shape their terms as the reference's plugins do, `subelements` taking the
+/// list out of each item; their failures are the plugins' own sentences.
+#[test]
+fn the_loop_lookups_shape_their_terms_like_the_plugins() {
+    let t = crate::testing::templar();
+    let vars = json!({
+        "users": [
+            {"name": "u", "auth": {"keys": ["k1", "k2"]}},
+            {"name": "v", "auth": {"keys": []}},
+            {"name": "w", "skipped": true},
+        ],
+    });
+    let vars = vars.as_object().unwrap();
+    let query = |expr: &str| -> Value { t.render(&format!("{{{{ {expr} }}}}"), vars).unwrap() };
+    assert_eq!(
+        query("query('dict', {'a': 1, 'b': 2})"),
+        json!([{"key": "a", "value": 1}, {"key": "b", "value": 2}])
+    );
+    assert_eq!(
+        query("query('together', [1, 2], [3])"),
+        json!([[1, 3], [2, null]])
+    );
+    assert_eq!(
+        query("query('nested', ['a', 'b'], [1, [2, 3]])"),
+        json!([["a", 1], ["a", 2, 3], ["b", 1], ["b", 2, 3]])
+    );
+    assert_eq!(
+        query("query('subelements', users, 'auth.keys')"),
+        json!([
+            [{"name": "u", "auth": {}}, "k1"],
+            [{"name": "u", "auth": {}}, "k2"],
+        ])
+    );
+    let err = t
+        .render("{{ query('subelements', users, 'groups') }}", vars)
+        .unwrap_err();
+    assert!(
+        err.0
+            .contains("could not find 'groups' key in iterated item"),
+        "{}",
+        err.0
+    );
+    assert_eq!(
+        query("query('subelements', users, 'groups', {'skip_missing': True})"),
+        json!([])
+    );
+    let err = t.render("{{ query('dict', [1]) }}", vars).unwrap_err();
+    assert!(
+        err.0.contains(
+            "the 'dict' lookup plugin expects a dictionary, got '[1]' of type <class 'list'>)"
+        ),
+        "{}",
+        err.0
     );
 }

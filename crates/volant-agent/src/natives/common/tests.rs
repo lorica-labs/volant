@@ -262,3 +262,15 @@ fn attributes_are_set_in_order_and_stop_at_the_first_failure() {
     assert!(set_fs_attributes(&file, None, None, Some(&json!("0600"))).unwrap());
     assert!(!set_fs_attributes(&file, None, None, Some(&json!(384))).unwrap());
 }
+
+/// Booleans are converted from the spellings `check_type_bool` takes; anything else is kept.
+#[test]
+fn booleans_are_converted_like_the_module_converts_them() {
+    let mut params = json!({"a": "yes", "b": "True", "c": 0, "d": "maybe", "e": null, "f": "off"});
+    let params = params.as_object_mut().unwrap();
+    convert_bools(params, &["a", "b", "c", "d", "e", "f"]);
+    assert_eq!(
+        Value::Object(params.clone()),
+        json!({"a": true, "b": true, "c": false, "d": "maybe", "e": null, "f": false})
+    );
+}

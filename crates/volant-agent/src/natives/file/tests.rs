@@ -353,3 +353,40 @@ fn a_directory_given_with_a_basename_stands_for_the_file_inside() {
     assert_eq!(after(&file)["mode"], "0600");
     assert_eq!(after(&scratch.0)["mode"], "0755");
 }
+
+/// A link already pointing at `src` is answered, its target given the mode; a link pointing
+/// elsewhere goes back untouched. Without SELinux, `setype` changes nothing, as in the module.
+#[test]
+fn a_link_in_place_is_answered_and_selinux_options_are_skipped() {
+    if selinux_enabled() {
+        eprintln!("skipped: SELinux is enabled here");
+        return;
+    }
+    let scratch = Scratch::new("file-link");
+    let file = scratch.fixture();
+    let link = scratch.path("l");
+    chmod(&file, 0o600);
+    let NativeRun::Done(result) =
+        ask(&json!({"path": link, "src": "f.txt", "state": "link", "mode": "0644"}))
+    else {
+        panic!("a link in place handed back");
+    };
+    assert_eq!(result.0["dest"], json!(link));
+    assert_eq!(result.0["src"], json!("f.txt"));
+    assert_eq!(result.0["changed"], json!(true));
+    assert_eq!(result.0["state"], json!("link"));
+    assert_eq!(after(&file)["mode"], json!("0644"));
+    let again = ask(&json!({"path": link, "src": "f.txt", "state": "link", "mode": "0644"}));
+    assert!(matches!(again, NativeRun::Done(r) if r.0["changed"] == json!(false)));
+
+    let snapshot = after(&link);
+    let elsewhere = ask(&json!({"path": link, "src": file, "state": "link"}));
+    assert!(matches!(elsewhere, NativeRun::Fallback(_)));
+    assert_eq!(after(&link), snapshot);
+
+    let NativeRun::Done(typed) = ask(&json!({"path": file, "setype": "etc_t", "mode": "0644"}))
+    else {
+        panic!("setype handed back without SELinux");
+    };
+    assert_eq!(typed.0["changed"], json!(false));
+}

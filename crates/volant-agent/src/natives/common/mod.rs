@@ -24,7 +24,8 @@ mod mode;
 pub(crate) use accounts::files_first;
 pub use accounts::{Account, Group, group_account, lookup_group, lookup_user, owner_account};
 pub use args::{
-    ArgSpec, bool_param, check_names, flag, invocation, module_args, null, path_param, str_param,
+    ArgSpec, bool_param, check_names, convert_bools, flag, invocation, module_args, null,
+    path_param, str_param, to_bool,
 };
 #[cfg(all(test, target_os = "linux"))]
 pub use backup::backup_copy;

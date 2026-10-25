@@ -68,6 +68,21 @@ pub(super) fn is_installed(
     }
 }
 
+/// No paragraph for `name`, or one on `arch` or `all` that dpkg holds no files of
+/// (`not-installed`) or only the configuration of (`config-files`), and not on hold: what the
+/// module installs.
+pub(super) fn is_missing(status: &HashMap<&str, Vec<Stanza>>, name: &str, arch: &str) -> bool {
+    match status.get(name).map(Vec::as_slice) {
+        None => true,
+        Some([entry]) => {
+            let words: Vec<&str> = entry.status.split_whitespace().collect();
+            matches!(words.as_slice(), [want, "ok", "not-installed" | "config-files"] if *want != "hold")
+                && (entry.architecture == arch || entry.architecture == "all")
+        }
+        _ => false,
+    }
+}
+
 /// Whether `/usr/bin/python3` (or `/usr/bin/python`) can import python-apt, which is where the
 /// module goes when its own interpreter cannot: a `python3.N` whose `apt_pkg` extension for that
 /// version is in `dist-packages`. A system python of another version (the known

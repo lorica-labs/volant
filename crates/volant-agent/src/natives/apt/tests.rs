@@ -196,7 +196,13 @@ impl Host {
     }
 
     fn answer_at(&self, args: &Value, context: &Context, now: SystemTime) -> NativeRun {
-        answer(args.as_object().unwrap(), &self.fake.root(), context, now)
+        answer(
+            args.as_object().unwrap(),
+            &self.fake.root(),
+            context,
+            now,
+            crate::natives::runtime::unbounded(),
+        )
     }
 
     /// The answer a minute after the stamp.
@@ -309,7 +315,7 @@ fn the_fast_path_answers_installed_packages_like_the_reference() {
     {
         let host = Host::new("half");
         let reason = host.hands_back(&json!({"name": "foo", "state": "present"}));
-        assert_eq!(reason, "a package is not installed");
+        assert_eq!(reason, "a package is in a state outside the native apt");
         host.hands_back(&json!({"name": ["bash", "foo"]}));
         // Removing it is not "nothing to do" either.
         host.hands_back(&json!({"name": "foo", "state": "absent"}));
@@ -330,7 +336,7 @@ fn the_cache_check_is_read_like_the_module_reads_it() {
         let host = Host::new("stale");
         assert_eq!(
             host.hands_back(&json!({"update_cache": true})),
-            "update_cache without cache_valid_time"
+            "apt-get is not on PATH"
         );
         for args in [
             json!({"update_cache": true, "name": "bash"}),
@@ -606,4 +612,77 @@ fn arguments_are_read_like_the_module_reads_them() {
             NativeRun::Fallback(_)
         ));
     }
+}
+
+/// A stale cache is updated and a missing package installed with the module's command line,
+/// environment, `apt-mark` and keys; a name with no candidate goes back before anything runs.
+#[test]
+fn a_stale_cache_and_a_missing_package_are_handled_like_the_module() {
+    let host = Host::new("act");
+    let log = host.fake.0.join("apt.log");
+    let stamp = host.fake.0.join(STAMP.trim_start_matches('/'));
+    host.fake.script(
+        "/bin/apt-get",
+        &format!(
+            "echo \"$DEBIAN_FRONTEND $*\" >> '{log}'
+             [ \"$1\" = update ] && /usr/bin/touch -d @{later} '{stamp}' && exit 0
+             [ -n \"$FAIL\" ] && {{ echo 'E: boom' >&2; exit 100; }}
+echo done",
+            log = log.display(),
+            later = STAMP_SECONDS + 30,
+            stamp = stamp.display(),
+        ),
+    );
+    host.fake.script(
+        "/bin/apt-cache",
+        "for n in \"$@\"; do [ \"$n\" = newpkg ] && printf 'newpkg:\n  Installed: (none)\n  Candidate: 1:1.0-1\n  Version table:\n';          [ \"$n\" = ghost ] && printf 'ghost:\n  Installed: (none)\n  Candidate: (none)\n'; done; exit 0",
+    );
+    let apt_log = || std::fs::read_to_string(&log).unwrap_or_default();
+
+    host.hands_back(&json!({"name": ["ghost", "bash"]}));
+    assert_eq!(apt_log(), "");
+
+    let updated = host.done(&json!({"update_cache": true}));
+    assert_eq!(updated["changed"], json!(true));
+    assert_eq!(updated["cache_updated"], json!(true));
+    assert_eq!(updated["cache_update_time"], json!(STAMP_SECONDS + 30));
+    assert_eq!(
+        apt_log(),
+        "noninteractive update
+"
+    );
+
+    let installed = host.done(&json!({"name": ["newpkg", "bash"]}));
+    assert_eq!(installed["changed"], json!(true));
+    assert_eq!(
+        installed["stdout"],
+        json!(
+            "done
+"
+        )
+    );
+    assert_eq!(installed["diff"], json!({}));
+    assert_eq!(installed["cache_updated"], json!(false));
+    assert!(apt_log().ends_with(
+        "noninteractive -y -o Dpkg::Options::=--force-confdef -o Dpkg::Options::=--force-confold -o DPkg::Lock::Timeout=60 install newpkg=1:1.0-1
+"
+    ));
+    assert_eq!(host.calls(), ["manual newpkg bash"]);
+
+    let mut context = host.context();
+    context.environment.insert("FAIL".into(), "1".into());
+    let NativeRun::Done(failed) = host.answer_at(&json!({"name": "newpkg"}), &context, soon())
+    else {
+        panic!("a failed install handed back");
+    };
+    let apt_get = host.fake.0.join("bin/apt-get");
+    assert_eq!(
+        failed.0["msg"],
+        json!(format!(
+            "'{} -y -o \"Dpkg::Options::=--force-confdef\" -o \"Dpkg::Options::=--force-confold\" -o DPkg::Lock::Timeout=60       install 'newpkg=1:1.0-1'' failed: E: boom
+",
+            apt_get.display()
+        ))
+    );
+    assert_eq!(failed.0["rc"], json!(100));
 }

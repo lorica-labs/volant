@@ -124,8 +124,8 @@ Der Agent trägt Rust-Versionen dieser Module:
 |---|---|
 | `setup` | auf Debian und Ubuntu, für die Facts unter [Facts](/de/docs/variables/precedence/#native-facts) |
 | `stat` | der Pfad einfach und absolut ist und die Prüfsumme SHA-1 ist |
-| `file` | `state` den Wert `file`, `directory` oder `absent` hat oder nicht gesetzt ist |
-| `apt` | nichts zu tun ist: Der Cache ist frisch, und die verlangten Pakete sind schon installiert oder schon abwesend |
+| `file` | `state` den Wert `file`, `directory` oder `absent` hat oder nicht gesetzt ist, und `link`, wenn der Link schon da ist und auf `src` zeigt |
+| `apt` | die Pakete mit exaktem Namen ohne Version angegeben sind: Ein frischer Cache und schon installierte oder abwesende Pakete werden nur gelesen; ein veralteter Cache wird aktualisiert, und fehlende Pakete werden mit denselben `apt-get`-Befehlen installiert, die das Modul ausführt |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` und `daemon_reload` im System-Scope |
 | `lineinfile` | der reguläre Ausdruck in Rust dasselbe bedeutet wie in Python und `backrefs` aus ist |
 | `copy` | das Modul, das das Action-Plugin `copy` ausführt, für eine vom Controller bereitgestellte Datei |

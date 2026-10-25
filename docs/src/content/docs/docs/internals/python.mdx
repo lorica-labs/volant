@@ -123,8 +123,8 @@ The agent carries Rust versions of these modules:
 |---|---|
 | `setup` | on Debian and Ubuntu, for the facts listed under [Facts](/docs/variables/precedence/#native-facts) |
 | `stat` | the path is plain and absolute, and the checksum is SHA-1 |
-| `file` | `state` is `file`, `directory` or `absent`, or unset |
-| `apt` | nothing needs doing: the cache is fresh, and the packages asked for are already installed or already absent |
+| `file` | `state` is `file`, `directory` or `absent`, or unset, and `link` when the link is already there and points at `src` |
+| `apt` | packages named exactly, without a version: a fresh cache and packages already installed or absent are only read; a stale cache is updated and missing packages are installed with the same `apt-get` commands the module runs |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` and `daemon_reload` on the system scope |
 | `lineinfile` | the regular expression means the same in Rust as in Python, and `backrefs` is off |
 | `copy` | the module that the `copy` action plugin runs, for a file staged from the controller |

@@ -114,7 +114,7 @@ Les deux moteurs les paient de la même façon, parce que ce sont des processus 
 Deux étapes sont freinées par ce que fait la référence elle-même :
 
 - `service_facts` lance les commandes qu'ansible-core lance (`systemctl list-unit-files`, `service --status-all` et un `systemctl show` par unité) afin que sa réponse soit la même. Le module natif les lance côte à côte là où la référence les lance l'une après l'autre, et elles représentent encore l'essentiel de ses 2.4 secondes. Il ne peut pas descendre en dessous tant qu'il lit les mêmes sources.
-- La tâche `apt` du playbook définit `update_cache` sans `cache_valid_time` : la référence lance donc `apt-get update` à chaque passe. Le `apt` natif ne répond qu'à une tâche qui n'a rien à faire, donc celle-ci va au module Python, et le rafraîchissement du cache fait l'essentiel de ses 2.2 secondes.
+- La tâche `apt` du playbook définit `update_cache` sans `cache_valid_time` : la référence lance donc `apt-get update` à chaque passe. Au moment de la mesure, le `apt` natif ne répondait qu'à une tâche qui n'avait rien à faire, donc celle-ci allait au module Python, et le rafraîchissement du cache fait l'essentiel de ses 2.2 secondes. Depuis le 2026-10-25, le `apt` natif fait la mise à jour lui-même ([#879](https://github.com/lorica-labs/volant/pull/879)).
 
 Ces deux étapes coûtent ensemble 4.5 à 4.7 secondes par hôte. Les accélérer reviendrait à lire d'autres sources que celles que lit la référence, et cette décision est laissée à une version ultérieure.
 

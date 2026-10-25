@@ -124,8 +124,8 @@ L'agent embarque des versions Rust de ces modules :
 |---|---|
 | `setup` | sur Debian et Ubuntu, pour les facts listés sous [Facts](/fr/docs/variables/precedence/#facts-natifs) |
 | `stat` | le chemin est simple et absolu, et la somme de contrôle est SHA-1 |
-| `file` | `state` vaut `file`, `directory` ou `absent`, ou n'est pas défini |
-| `apt` | il n'y a rien à faire : le cache est à jour, et les paquets demandés sont déjà installés ou déjà absents |
+| `file` | `state` vaut `file`, `directory` ou `absent`, ou n'est pas défini, et `link` quand le lien existe déjà et pointe vers `src` |
+| `apt` | les paquets sont nommés exactement, sans version : un cache à jour et des paquets déjà installés ou absents sont seulement lus ; un cache périmé est mis à jour et les paquets manquants sont installés avec les mêmes commandes `apt-get` que le module |
 | `systemd`, `systemd_service` | `name`, `state`, `enabled` et `daemon_reload` sur la portée système |
 | `lineinfile` | l'expression régulière a le même sens en Rust qu'en Python, et `backrefs` est désactivé |
 | `copy` | le module qu'exécute le plugin d'action `copy`, pour un fichier déposé depuis le contrôleur |

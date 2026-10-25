@@ -113,7 +113,7 @@ Both engines pay for these the same way, because they are processes running on t
 Two steps are held back by what the reference itself does:
 
 - `service_facts` runs the commands ansible-core runs (`systemctl list-unit-files`, `service --status-all` and one `systemctl show` per unit) so that its answer is the same. The native module runs them side by side where the reference runs them one after the other, and they still make up most of its 2.4 seconds. It cannot go below them while it reads the same sources.
-- The playbook's `apt` task sets `update_cache` without `cache_valid_time`, so the reference runs `apt-get update` on every pass. The native `apt` only answers a task with nothing to do, so this one goes to the Python module, and the cache refresh is most of its 2.2 seconds.
+- The playbook's `apt` task sets `update_cache` without `cache_valid_time`, so the reference runs `apt-get update` on every pass. When this was measured, the native `apt` only answered a task with nothing to do, so this one went to the Python module, and the cache refresh is most of its 2.2 seconds. Since 2026-10-25 the native `apt` runs the update itself ([#879](https://github.com/lorica-labs/volant/pull/879)).
 
 Those two steps together cost 4.5 to 4.7 seconds per host. Making them faster would mean reading other sources than the reference reads, and that decision is left to a later release.
 

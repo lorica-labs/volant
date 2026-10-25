@@ -3,9 +3,9 @@ use super::announce::module_path_dirs;
 use super::args::PlaybookArgs;
 use super::hosts::{order_hosts, shuffle};
 use super::passwords::{password_from_file, ssh_words};
-use super::run::armed;
 #[cfg(unix)]
-use super::run::run;
+use super::plays::run;
+use super::run::armed;
 use crate::config::Config;
 use crate::inventory::Host;
 use crate::python::{self, Facts, Natives};

@@ -1,0 +1,79 @@
+
+PLAY [all] *********************************************************************
+
+TASK [r1 : role task] **********************************************************
+changed: [local]
+changed: [other]
+
+TASK [loop] ********************************************************************
+changed: [local] => (item=a)
+changed: [local] => (item=b)
+changed: [other] => (item=a)
+changed: [other] => (item=b)
+
+TASK [until] *******************************************************************
+FAILED - RETRYING: [local]: until (2 retries left).
+changed: [local]
+changed: [other]
+
+TASK [register] ****************************************************************
+ok: [local]
+ok: [other]
+
+TASK [when] ********************************************************************
+ok: [local] => {
+    "msg": "registered"
+}
+ok: [other] => {
+    "msg": "registered"
+}
+
+TASK [secret] ******************************************************************
+changed: [local]
+changed: [other]
+
+TASK [delegated] ***************************************************************
+changed: [local -> other]
+
+TASK [ansible.builtin.include_tasks] *******************************************
+included: /tmp/volant-shadow/inc.yml for local, other => (item=1)
+included: /tmp/volant-shadow/inc.yml for local, other => (item=2)
+
+TASK [included] ****************************************************************
+changed: [local]
+changed: [other]
+
+TASK [included] ****************************************************************
+changed: [local]
+changed: [other]
+
+TASK [fails] *******************************************************************
+[ERROR]: Task failed: Module failed: non-zero return code
+Origin: /tmp/volant-shadow/site.yml:30:7
+
+28     - ansible.builtin.include_tasks: inc.yml
+29       loop: [1, 2]
+30     - name: fails
+         ^ column 7
+
+fatal: [local]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "0:00:00.004056", "end": "2026-10-25 10:36:28.675302", "msg": "non-zero return code", "rc": 1, "start": "2026-10-25 10:36:28.671246", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+...ignoring
+fatal: [other]: FAILED! => {"changed": true, "cmd": ["false"], "delta": "0:00:00.004052", "end": "2026-10-25 10:36:29.073997", "msg": "non-zero return code", "rc": 1, "start": "2026-10-25 10:36:29.069945", "stderr": "", "stderr_lines": [], "stdout": "", "stdout_lines": []}
+...ignoring
+
+TASK [skipped] *****************************************************************
+skipping: [local]
+skipping: [other]
+
+RUNNING HANDLER [r1 : h] *******************************************************
+ok: [local] => {
+    "msg": "handler"
+}
+ok: [other] => {
+    "msg": "handler"
+}
+
+PLAY RECAP *********************************************************************
+local                      : ok=13   changed=8    unreachable=0    failed=0    skipped=1    rescued=0    ignored=1   
+other                      : ok=12   changed=7    unreachable=0    failed=0    skipped=1    rescued=0    ignored=1   
+

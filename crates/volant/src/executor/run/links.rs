@@ -25,6 +25,15 @@ pub(in crate::executor) async fn reuse_or_connect<'a>(
     agents: &AgentSource,
     options: &RunOptions,
 ) -> Result<&'a mut AgentLink, ConnectError> {
+    // A replay contacts no host: a stand-in that never connects carries the batch, which the
+    // driver answers from the recording.
+    if options.replay.is_some() {
+        if !links.contains_key(key) {
+            let link = AgentLink::dead().map_err(|e| ConnectError::Unreachable(e.to_string()))?;
+            links.insert(key.clone(), link);
+        }
+        return Ok(links.get_mut(key).expect("inserted just above"));
+    }
     // Why the kept connection was not reused, kept only in case the reconnection below fails
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.

@@ -2,9 +2,12 @@
 //! `volant shadow`: replaying a run `ansible-playbook` recorded with the `volant.compat.record`
 //! callback, to show what Volant would have done differently.
 
+mod args;
 mod recording;
+pub(crate) mod replay;
 
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use clap::Subcommand;
 use sha2::{Digest as _, Sha256};
@@ -30,40 +33,32 @@ pub fn shadow(command: ShadowCommand) -> i32 {
 }
 
 fn replay(path: &Path) -> i32 {
-    let recording =
-        match recording::read(path).and_then(|r| check(&r.header, Path::new(".")).map(|()| r)) {
-            Ok(recording) => recording,
-            Err(err) => {
-                eprintln!("ERROR! {err}");
-                return REFUSED;
-            }
-        };
+    let ready = recording::read(path).and_then(|recording| {
+        check(&recording.header, Path::new("."))?;
+        let args = args::playbook_args(&recording.header)?;
+        Ok((recording, args))
+    });
+    let (recording, args) = match ready {
+        Ok(ready) => ready,
+        Err(err) => {
+            eprintln!("ERROR! {err}");
+            return REFUSED;
+        }
+    };
     let header = &recording.header;
     if !in_profile(&header.ansible_core) {
         eprintln!(
-            "[WARNING]: the recording is of ansible-core {}, outside the 2.19 series Volant \
-             follows: the replay is out-of-profile",
+            "[WARNING]: the recording is of ansible-core {}, outside the 2.19 series Volant              follows: the replay is out-of-profile",
             header.ansible_core
         );
     }
     if recording.truncated {
         eprintln!(
-            "[WARNING]: the recording is truncated: the run was interrupted, and the replay \
-             stops at its last complete line"
+            "[WARNING]: the recording is truncated: the run was interrupted, and the replay              stops where the recording does"
         );
     }
-    let tasks = recording
-        .events
-        .iter()
-        .filter(|e| e["event"] == "task")
-        .count();
-    println!(
-        "{}: format {}, ansible-core {}, {tasks} tasks; it matches this checkout",
-        path.display(),
-        header.format,
-        header.ansible_core
-    );
-    0
+    let root = std::env::current_dir().unwrap_or_default();
+    crate::cli::replay(&args, &Arc::new(replay::Replay::new(&recording, &root)))
 }
 
 /// Whether a recording of ansible-core `version` is one Volant follows.

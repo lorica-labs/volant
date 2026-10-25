@@ -13,14 +13,25 @@ pub(super) enum Plays<'a> {
     Files,
     /// The one play `volant adhoc` builds, shown through the `minimal` callback.
     Adhoc(&'a Adhoc),
+    /// The playbook files, run by `volant shadow replay` with every host answered from the
+    /// recording.
+    Replay(&'a std::sync::Arc<crate::shadow::replay::Replay>),
 }
 
 impl Plays<'_> {
+    /// The recording a replay answers the hosts from; a replay starts no agent at all.
+    pub(super) fn replay(&self) -> Option<std::sync::Arc<crate::shadow::replay::Replay>> {
+        match self {
+            Plays::Replay(replay) => Some(std::sync::Arc::clone(replay)),
+            Plays::Files | Plays::Adhoc(_) => None,
+        }
+    }
+
     /// The file each playbook was named by; an ad hoc play is written nowhere, and its directory
     /// is `--playbook-dir` or the working one.
     pub(super) fn files(&self, args: &PlaybookArgs) -> Vec<PathBuf> {
         match self {
-            Plays::Files => args.playbooks.clone(),
+            Plays::Files | Plays::Replay(_) => args.playbooks.clone(),
             Plays::Adhoc(adhoc) => vec![adhoc.file()],
         }
     }
@@ -32,11 +43,29 @@ impl Plays<'_> {
         rendering: &Rendering<'_>,
     ) -> anyhow::Result<Vec<Playbook>> {
         match self {
-            Plays::Files => files
+            Plays::Files | Plays::Replay(_) => files
                 .iter()
                 .map(|p| playbook::load_rendering(p, rendering))
                 .collect(),
             Plays::Adhoc(adhoc) => Ok(vec![adhoc.playbook()?]),
         }
     }
+}
+
+/// Runs the playbooks and returns the process exit code.
+pub fn run(args: PlaybookArgs) -> i32 {
+    if args.version {
+        println!("{}", super::announce::version_line());
+        return 0;
+    }
+    super::run::drive(&args, &Plays::Files)
+}
+
+/// Runs the playbooks of `args` with every task that would reach a host answered by `replay`,
+/// and returns the process exit code.
+pub(crate) fn replay(
+    args: &PlaybookArgs,
+    replay: &std::sync::Arc<crate::shadow::replay::Replay>,
+) -> i32 {
+    super::run::drive(args, &Plays::Replay(replay))
 }

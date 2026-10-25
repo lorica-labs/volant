@@ -14,7 +14,6 @@ use crate::action_plugins::LinkFacts;
 use crate::agent::{AgentLink, AgentSource};
 use crate::compile::{StepKind, after_failure, first, rescue_target};
 use crate::inventory::Host;
-use crate::playbook::PlayTask;
 use crate::profile::{Phase, micros};
 use crate::python::ModulePayload;
 use crate::render::Dump;
@@ -29,15 +28,16 @@ use super::prepare::{Item, PlayPlan, Prepared, failed_result, pause_of, prepare,
 use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, PluginStart, Polled, Relinker,
-    RetryLine, announce_retry, any_retried, break_after, broke_before, chosen_interpreter,
-    discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
-    judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
-    record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
-    requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
-    run_plugin_attempts, running_host_vars, silent_discovery, stamp_discovery, step_tasks,
-    take_warnings, task_fails,
+    Replayed, RetryLine, announce_retry, any_retried, break_after, broke_before,
+    chosen_interpreter, discovers_interpreter, discovery_warning, fact_targets, failed_task_value,
+    finish, judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls,
+    python_for, record_facts, record_inventory_results, record_local_facts, record_registered,
+    refusal, replayed, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch,
+    run_local, run_plugin_attempts, running_host_vars, silent_discovery, stamp_discovery,
+    step_tasks, take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
+use messages::dump_of;
 use notified::{announce_notified, saved_lines};
 
 mod boundaries;
@@ -104,6 +104,7 @@ pub(super) async fn drive_host(
     // Which of them this play has already proved alive, with the host's reboot count when it
     // did: one liveness check per connection per play, and one more after each reboot.
     let mut checked: HashMap<LinkKey, u64> = HashMap::new();
+    let mut seen = crate::shadow::replay::Seen::default(); // `volant shadow replay`'s count
     // Ansible's `forks`: one permit per host, held from the connection to the results of a
     // batch. It lives in this binding and releases itself when dropped, so no way out of this
     // function can leak it, whether that is a return, an error, a cancellation or a panic.
@@ -1777,6 +1778,7 @@ pub(super) async fn drive_host(
                     .to_path_buf();
                 let mut stopped = false;
                 let pause = pause_of(&step.task, items, &templar);
+                let replayed = Replayed::reach(&options, &mut seen, &name, &step.task);
                 let mut outcome = Ok(BatchOutcome::Completed);
                 // Under `retries`/`until` the attempts judge each result themselves, since
                 // `until` reads what `changed_when` and `failed_when` decided.
@@ -1834,25 +1836,29 @@ pub(super) async fn drive_host(
                         tx: &tx,
                         index: *index,
                     };
-                    let ran = run_plugin_attempts(
-                        &mut owned,
-                        &mut relink,
-                        &name,
-                        &mut batch_id,
-                        &start,
-                        &step.task,
-                        item,
-                        retry,
-                        plan.python.as_deref(),
-                        &interpreters,
-                        asked.as_deref(),
-                        &mut driver.stop,
-                        &mut driver.stop_broken,
-                        &mut logs,
-                        &mut warnings,
-                        &mut lefts[ii],
-                    )
-                    .await;
+                    let ran = if let Some(replayed) = &replayed {
+                        replayed.attempts(ii, item, retry, &templar, &mut lefts[ii])
+                    } else {
+                        run_plugin_attempts(
+                            &mut owned,
+                            &mut relink,
+                            &name,
+                            &mut batch_id,
+                            &start,
+                            &step.task,
+                            item,
+                            retry,
+                            plan.python.as_deref(),
+                            &interpreters,
+                            asked.as_deref(),
+                            &mut driver.stop,
+                            &mut driver.stop_broken,
+                            &mut logs,
+                            &mut warnings,
+                            &mut lefts[ii],
+                        )
+                        .await
+                    };
                     match ran {
                         // Stopped between two attempts: nothing more runs, as for every other
                         // wait the stop ends.
@@ -1946,6 +1952,8 @@ pub(super) async fn drive_host(
                     payloads.get(index).map(|(module, _)| &**module),
                     chosen.as_ref(),
                 );
+                let python = replayed::sent(python, &options);
+                let replayed = Replayed::reach(&options, &mut seen, &name, task);
                 // The same helper the batched path uses, for the same reason: a step that cannot
                 // travel - no interpreter for its payload, or no payload for a module that needs
                 // one - reports that per item from one place. Reported nowhere, an item leaves
@@ -1987,18 +1995,22 @@ pub(super) async fn drive_host(
                     loop {
                         attempt += 1;
                         batch_id += 1;
-                        let (mut flat, ended_one) = run_agent_batch(
-                            link,
-                            &name,
-                            batch_id,
-                            vec![built.clone()],
-                            plan.python.as_deref(),
-                            &[],
-                            &mut driver.stop,
-                            &mut driver.stop_broken,
-                            &mut logs,
-                        )
-                        .await;
+                        let (mut flat, ended_one) = if let Some(replayed) = &replayed {
+                            replayed.attempt(ii, attempt)
+                        } else {
+                            run_agent_batch(
+                                link,
+                                &name,
+                                batch_id,
+                                vec![built.clone()],
+                                plan.python.as_deref(),
+                                &[],
+                                &mut driver.stop,
+                                &mut driver.stop_broken,
+                                &mut logs,
+                            )
+                            .await
+                        };
                         let raw = flat.pop().flatten();
                         if !matches!(
                             ended_one,
@@ -2010,7 +2022,7 @@ pub(super) async fn drive_host(
                         // The agent ended without a result for this item. Left unreported, the
                         // way the loop below leaves a task the agent never reached.
                         let Some(raw) = raw else { continue 'items };
-                        let raw = if polls(task) {
+                        let raw = if polls(task) && replayed.is_none() {
                             match poll_job(
                                 link,
                                 &name,
@@ -2075,7 +2087,7 @@ pub(super) async fn drive_host(
                             received[0][ii] = Some(failed);
                             continue 'items;
                         }
-                        if driver.sleep_between(retry.delay).await.is_none() {
+                        if replayed.is_none() && driver.sleep_between(retry.delay).await.is_none() {
                             file_timings(
                                 link,
                                 &options.profile,
@@ -2142,6 +2154,7 @@ pub(super) async fn drive_host(
                         payloads.get(index).map(|(module, _)| &**module),
                         chosen.as_ref(),
                     );
+                    let python = replayed::sent(python, &options);
                     // A step that cannot travel - no interpreter for its payload, or no payload
                     // for a module that needs one - reports that per item, from inside
                     // `step_tasks`, and the rest of the batch goes out as it would have.
@@ -2150,18 +2163,26 @@ pub(super) async fn drive_host(
                         origin.push((bi, ii));
                     }
                 }
-                let (flat, ended) = run_agent_batch(
-                    link,
-                    &name,
-                    batch_id,
-                    tasks,
-                    plan.python.as_deref(),
-                    &[],
-                    &mut driver.stop,
-                    &mut driver.stop_broken,
-                    &mut logs,
-                )
-                .await;
+                let (flat, ended) = if let Some(replay) = options.replay.as_deref() {
+                    let steps: Vec<_> = batch
+                        .iter()
+                        .map(|b| &step_at(&c, &rendered, b.0).task)
+                        .collect();
+                    replayed::batch(replay, &mut seen, &name, &steps, &origin)
+                } else {
+                    run_agent_batch(
+                        link,
+                        &name,
+                        batch_id,
+                        tasks,
+                        plan.python.as_deref(),
+                        &[],
+                        &mut driver.stop,
+                        &mut driver.stop_broken,
+                        &mut logs,
+                    )
+                    .await
+                };
                 for (k, result) in flat.into_iter().enumerate() {
                     if let Some(&(bi, ii)) = origin.get(k) {
                         received[bi][ii] = result;
@@ -2598,15 +2619,6 @@ impl Driver<'_> {
 fn first_batch_id() -> u64 {
     static NEXT: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
     NEXT.fetch_add(1 << 32, std::sync::atomic::Ordering::Relaxed)
-}
-
-/// How the reference's callback cleans this task's result lines.
-fn dump_of(task: &PlayTask) -> Dump {
-    match short_name(&task.module) {
-        "debug" => Dump::Debug,
-        "setup" | "gather_facts" => Dump::Setup,
-        _ => Dump::No,
-    }
 }
 
 #[cfg(test)]

@@ -22,7 +22,6 @@ pub(crate) struct Recording {
 
 #[derive(Debug, Deserialize)]
 pub(crate) struct Header {
-    pub(crate) format: u64,
     pub(crate) ansible_core: String,
     /// The run's options as ansible-core parsed them (`context.CLIARGS`).
     pub(crate) cli: Map<String, Value>,
@@ -55,7 +54,7 @@ pub(crate) fn read(path: &Path) -> Result<Recording, String> {
 }
 
 /// The recording in `text`, `cut` when its compressed stream ended early.
-fn parse(text: &[u8], cut: bool) -> Result<Recording, String> {
+pub(super) fn parse(text: &[u8], cut: bool) -> Result<Recording, String> {
     let text = String::from_utf8_lossy(text);
     let complete = text.rfind('\n').map_or("", |end| &text[..end]);
     let truncated = cut || !text.is_empty() && !text.ends_with('\n');

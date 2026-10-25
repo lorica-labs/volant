@@ -1,0 +1,6 @@
+# group_by: the members of a group it makes are in the inventory's order whichever host gets
+# there first, a host it groups leaves ungrouped, and each host's line says changed.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]
+forks: 3
+unordered: ['^(changed|ok): \[h\d\]']

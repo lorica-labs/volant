@@ -1,12 +1,12 @@
 ---
-sourceHash: 581fc6ef8549
+sourceHash: 2b9b652f0234
 title: volant shadow
 description: 在不连接任何主机的情况下重放 ansible-playbook 记录的一次运行，看看 Volant 会有哪些不同的做法。
 ---
 
 import Option from '../../../../../../components/Option.astro';
 
-`volant shadow replay` 读取 `volant.compat.record` 回调写下的记录（参见[运行记录](/zh-cn/docs/reference/recording/)）。它在 Volant 中以相同的选项运行相同的 playbook，对每个本会连到主机的任务，都用 ansible-core 记录的结果作答。然后它把 Volant 的决定与 ansible-core 的实际行为进行比较。不连接任何主机，也不启动任何 agent。
+`volant shadow replay` 读取 `volant.compat.record` 回调写下的记录（参见[运行记录](/zh-cn/docs/reference/recording/)）。它在 Volant 中以相同的选项运行相同的 playbook，对每个本会连到主机的任务，都用 ansible-core 记录的结果作答。然后它把 Volant 的决定与 ansible-core 的实际行为进行比较。不连接任何主机，也不启动任何 agent。[无风险切换](/zh-cn/docs/start/switch-without-risk/)介绍了完整流程，包括 CI。
 
 ```sh
 volant shadow replay RECORDING [--json] [--ledger PATH]

@@ -175,6 +175,7 @@ export default defineConfig({
             { label: 'Installation', slug: 'docs/start/installation' },
             { label: 'Quickstart', slug: 'docs/start/quickstart' },
             { label: 'Will my playbook run?', slug: 'docs/start/compatibility' },
+            { label: 'Switch without risk', slug: 'docs/start/switch-without-risk' },
             { label: 'Ansible command names', slug: 'docs/start/ansible-command-names' },
             { label: 'When a run fails', slug: 'docs/start/troubleshooting' },
           ],

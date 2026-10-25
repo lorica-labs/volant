@@ -5,7 +5,7 @@ description: Replay a run that ansible-playbook recorded, without contacting a h
 
 import Option from '../../../../../components/Option.astro';
 
-`volant shadow replay` reads a recording of the `volant.compat.record` callback (see [Run recordings](/docs/reference/recording/)). It runs the same playbooks with the same options through Volant and answers every task that would reach a host with the result ansible-core recorded. Then it compares what Volant decided with what ansible-core did. No host is contacted and no agent starts.
+`volant shadow replay` reads a recording of the `volant.compat.record` callback (see [Run recordings](/docs/reference/recording/)). It runs the same playbooks with the same options through Volant and answers every task that would reach a host with the result ansible-core recorded. Then it compares what Volant decided with what ansible-core did. No host is contacted and no agent starts. [Switch without risk](/docs/start/switch-without-risk/) walks through the whole path, CI included.
 
 ```sh
 volant shadow replay RECORDING [--json] [--ledger PATH]

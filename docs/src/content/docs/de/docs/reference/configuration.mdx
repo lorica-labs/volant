@@ -1,5 +1,5 @@
 ---
-sourceHash: c80b79a9a509
+sourceHash: 9dd8ea33ceb0
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -233,7 +233,7 @@ Ansible ignoriert diesen Abschnitt, sodass eine `ansible.cfg` ihn enthalten und 
 </Option>
 
 <Option name="shadow_runs" id="volant-shadow-runs" default="5">
-  Wie viele saubere Wiederholungen in Folge [`volant shadow status`](/de/docs/reference/cli/shadow/#das-register-und-das-urteil) von einem Playbook erwartet, bevor es `ready` meldet. Eine ganze Zahl von mindestens 1; jeder andere Wert beendet den Lauf mit Exit-Code 5.
+  Wie viele saubere Wiederholungen in Folge [`volant shadow status`](/de/docs/reference/cli/shadow/#das-register-und-das-urteil) von einem Playbook erwartet, bevor es `ready` meldet. Eine ganze Zahl von mindestens 1; jeder andere Wert beendet den Lauf mit Exit-Code 5. Siehe [Ohne Risiko umsteigen](/de/docs/start/switch-without-risk/).
 </Option>
 
 <Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">

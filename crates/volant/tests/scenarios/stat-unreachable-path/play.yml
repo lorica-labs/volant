@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - block:
+        - file: {path: "{{ playbook_dir }}/denied", state: directory, mode: "0000"}
+        - stat: {path: "{{ playbook_dir }}/denied/file"}
+      always:
+        - file: {path: "{{ playbook_dir }}/denied", state: directory, mode: "0755"}

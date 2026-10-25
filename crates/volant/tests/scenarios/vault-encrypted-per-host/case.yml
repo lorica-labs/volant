@@ -1,5 +1,7 @@
-# `is vault_encrypted` answers for the value a host holds, not for the variable's name.
+# `is vault_encrypted` answers for the value a host holds, not for the variable's name, and a
+# fact set to a bare `{{ x }}` of a vaulted `x` keeps the mark.
 runs:
   - args: [-i, inv, --vault-password-file, pw1, per_host.yml]
   - args: [-i, inv, --vault-password-file, pw1, sources.yml]
+  - args: [-i, inv, --vault-password-file, pw1, set_fact.yml]
 needs: ["ansible-core"]

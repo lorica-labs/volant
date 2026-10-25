@@ -8,6 +8,12 @@
 slow-timeout = { period = "60s", terminate-after = 10 }
 default-filter = "not binary(reference_modules)"
 
+# A pull request leaves out the tests whose time is a real wait: the async scenarios timed by
+# real jobs, the `host_pinned` scenarios timed by `sleep`, and the askpass runs held open by a
+# sleeping `ssh`. A push to main runs them. The other settings are the default profile's.
+[profile.pr]
+default-filter = "not binary(reference_modules) & not test(/scenarios_(async_poll|async_status|strategy_pinned_[a-z_]+)_case_yml$/) & not (binary(askpass) & (test(/^a_stopped_run_removes_its_password_file/) | test(=an_ignored_hang_up_does_not_stop_the_run)))"
+
 # Tests that change the machine they run on (an account, a group, a unit, `/etc/passwd`) must not
 # run beside each other: in the `ssh` job one creating an account made another's setup fail with
 # `/etc/passwd changed`. One thread for the whole group, whichever binary the test is in.

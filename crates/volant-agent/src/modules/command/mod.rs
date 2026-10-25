@@ -17,7 +17,50 @@ pub const MODULE: Module = Module {
 };
 
 fn run_command(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() -> bool) -> Run {
-    execute(args, false, ctx, cancelled)
+    with_invocation(execute(args, false, ctx, cancelled), args, false)
+}
+
+/// The arguments `command.py` declares, with their defaults, as `AnsibleModule` fills them.
+#[cfg(unix)]
+const SPEC: [crate::natives::common::ArgSpec; 12] = {
+    use crate::natives::common::{flag, null};
+    [
+        null("_raw_params"),
+        flag("_uses_shell", false),
+        null("argv"),
+        null("chdir"),
+        null("cmd"),
+        null("creates"),
+        null("executable"),
+        flag("expand_argument_vars", true),
+        null("removes"),
+        null("stdin"),
+        flag("stdin_add_newline", true),
+        flag("strip_empty_ends", true),
+    ]
+};
+
+/// `result` with the `invocation` the reference's module returns: measured on ansible-core
+/// 2.19.12 at `-vvv`, every argument of `command` and `shell`, `_uses_shell` telling them apart.
+#[cfg(unix)]
+pub(super) fn with_invocation(run: Run, args: &Map<String, Value>, shell: bool) -> Run {
+    let Run::Done(mut result) = run else {
+        return run;
+    };
+    let mut given = args.clone();
+    if shell {
+        given.insert("_uses_shell".into(), Value::Bool(true));
+    }
+    result.0.insert(
+        "invocation".into(),
+        crate::natives::common::invocation(&SPEC, &given),
+    );
+    Run::Done(result)
+}
+
+#[cfg(not(unix))]
+pub(super) fn with_invocation(run: Run, _: &Map<String, Value>, _: bool) -> Run {
+    run
 }
 
 mod argv;

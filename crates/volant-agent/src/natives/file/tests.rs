@@ -49,7 +49,7 @@ fn file_answers_every_recorded_case_like_the_reference() {
         return;
     }
     type Setup = fn(&Scratch);
-    let cases: [(&str, &str, Value, Setup); 12] = [
+    let cases: [(&str, &str, Value, Setup); 13] = [
         (
             "file-absent-missing",
             include_str!("../../../../volant/tests/golden/module/file-absent-missing.json"),

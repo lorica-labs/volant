@@ -52,6 +52,9 @@ pub struct ExecTarget {
     /// How the runtime copies the agent in when the target has no shell; `None` for a runtime
     /// whose targets always have one.
     pub copy: Option<super::CopyInto>,
+    /// Whether the agent's stderr is dropped rather than shown: rootless buildah writes a dozen
+    /// warnings about capabilities there for every command it runs.
+    pub quiet_stderr: bool,
     pub remote_tmp: String,
     /// How long the runtime may take to answer the first command before the target is
     /// reported unreachable.
@@ -65,6 +68,15 @@ impl ExecTarget {
         argv.push(program.to_string());
         argv.extend(args.iter().map(ToString::to_string));
         argv
+    }
+
+    /// Where the agent's stderr goes.
+    pub(super) fn link_stderr(&self) -> Stdio {
+        if self.quiet_stderr {
+            Stdio::null()
+        } else {
+            Stdio::inherit()
+        }
     }
 
     /// The connection's name in messages: `docker` for `DOCKER`.
@@ -151,7 +163,7 @@ impl ExecTarget {
             .args(&argv[1..])
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
-            .stderr(Stdio::inherit())
+            .stderr(self.link_stderr())
             .kill_on_drop(true)
             .spawn()
             .map_err(|e| ConnectError::Unreachable(format!("starting {}: {e}", argv[0])))?;

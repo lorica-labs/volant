@@ -19,6 +19,7 @@ Volant erreicht einen verwalteten Host, legt dort einen kleinen statischen Agent
 | `docker` | Startet den Agent über `docker exec -i` in einem laufenden Container, wie `community.docker.docker`. Siehe [Docker-Container](#docker-container). |
 | `podman` | Startet den Agent über `podman exec -i` in einem laufenden Podman-Container, rootless oder nicht, wie `containers.podman.podman`. Siehe [Podman-Container](#podman-container). |
 | `chroot` | Startet den Agent über `chroot` in einem Verzeichnisbaum auf dem Controller, wie `community.general.chroot`. Siehe [Chroot-Verzeichnisse](#chroot-verzeichnisse). |
+| `buildah` | Startet den Agent über `buildah run` in einem Buildah-Arbeitscontainer, wie `containers.podman.buildah`. Siehe [Buildah-Arbeitscontainer](#buildah-arbeitscontainer). |
 
 Jeder andere Name wird vom ansible-core des Controllers aufgelöst, so wie `ansible-playbook` ihn auflöst, einmal pro Name und Lauf. `ansible.builtin.ssh` und `ansible.builtin.local` lösen sich zu den beiden Plugins oben auf und laufen. Ein kurzer Name, den eine Collection von ansible-core übernommen hat, wird zu dieser Collection geleitet, wenn sie installiert ist:
 
@@ -85,6 +86,12 @@ Das Plugin startet `podman exec` ohne `-i` und kann einem Befehl daher kein stdi
 | `ansible_executable` | Die Shell, unter der die Befehle laufen, standardmäßig `/bin/sh`. Der Standard kommt aus `ANSIBLE_EXECUTABLE` oder `[defaults] executable`. |
 
 Bevor irgendetwas läuft, schlägt der Task fehl, wie unter ansible-core, bei einem Pfad, der kein Verzeichnis ist, bei einem Baum ohne `bin/sh` und bei einem Controller, der nicht root ist, außer die Prüfung ist abgeschaltet. Der Agent kommt über `chroot <dir> /bin/sh` hinein, das Skript, das ihn schreibt, läuft also im Baum, und kein Pfad, den es schreibt, kann den Baum verlassen, welche symbolischen Links er auch enthält. Kann `df` nicht sagen, wie viel Platz frei ist, etwa in einem Baum ohne eingehängtes `/proc`, entfällt die Platzprüfung. `become` funktioniert, wenn der Baum `sudo` hat. Mit `-vvvv` zeigen die Zeilen `THIS IS A LOCAL CHROOT DIR`, dann eine `EXEC [...]`-Zeile pro Befehl.
+
+## Buildah-Arbeitscontainer
+
+`ansible_connection: buildah` oder `containers.podman.buildah` konfiguriert den Arbeitscontainer, den `buildah from <image>` anlegt, sodass ein Play ein Image Schicht für Schicht baut, das `buildah commit` dann speichert. Beide Namen brauchen containers.podman auf dem Controller. Wie bei podman ist der Container `ansible_host`, sonst der Inventory-Name, und der Benutzer ist `ansible_user`, das Schlüsselwort `remote_user` oder `-u`; `root` fügt keine Option hinzu. Das Programm ist das `buildah` aus Ihrem `PATH`, und die `BUILDAH_*`-Variablen erreichen es über die Umgebung.
+
+Der Agent startet mit `buildah run [--user U] <container> -- <agent>`. Volant startet nie `buildah mount`, das für einen rootless Benutzer `buildah unshare` braucht: Ein Arbeitscontainer ohne Shell bekommt den Agent über `buildah copy`. Rootless buildah schreibt bei jedem Befehl Warnungen über Capabilities, deshalb wird das stderr des Agents nicht angezeigt. Mit `-vvvv` erscheint jeder Befehl als `RUN [...]`-Zeile, ohne `ESTABLISH`-Zeile.
 
 ## Hostvariablen
 

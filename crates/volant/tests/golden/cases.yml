@@ -486,7 +486,7 @@
 # Lookups and filters that need a fixture or an extra Python package. `needs` names the packages
 # the recording imported; the replay skips a row, by package name, when the runner lacks one.
 # `lookup('url', ...)` is read over file:// so no server is needed.
-# Not recorded: community.general.merge_variables (its own issue).
+# merge_variables with `groups=` is the `merge-variables-groups` scenario: it needs hosts.
 - {bridge: true, template: "{{ lookup('config', 'DEFAULT_FORKS') }}"}
 - {bridge: true, template: "{{ lookup('config', 'VOLANT_NO_SUCH_SETTING') }}"}
 - {bridge: true, template: "{{ lookup('url', 'file:///var/tmp/volant-golden-fs/a.txt') }}"}

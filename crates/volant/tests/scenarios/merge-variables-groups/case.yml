@@ -1,0 +1,4 @@
+# merge_variables with groups= reads the other hosts' variables through hostvars, each
+# rendered for the host it belongs to.
+needs: [ansible-core]
+args: [-i, inv.yml, play.yml]

@@ -128,6 +128,81 @@ fn docker_runs_a_play_in_a_running_container() {
     );
 }
 
+/// The inode and modification time of the agent the first run cached under root's `remote_tmp`:
+/// an upload writes a new copy and renames it over the old one, so a second run that uploaded
+/// nothing leaves both as they were.
+const CACHED_AGENT: &str = "stat -c '%i %Y' /root/.ansible/tmp/volant-agent-*/volant-agent";
+/// A user of the image, `volant`, who may run anything through `sudo` with no password.
+const WITH_SUDO_USER: &str = "adduser -D volant && apk add --no-cache sudo >/dev/null && echo 'volant ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/volant";
+
+const AS_USER_AND_ROOT: &str = "    - ansible.builtin.command: id -un\n      register: who\n    - ansible.builtin.command: id -un\n      become: true\n      register: root\n    - ansible.builtin.debug:\n        msg: \"{{ who.stdout }} then {{ root.stdout }}\"\n";
+
+/// `command` run to completion, its stdout trimmed.
+fn ran(command: &[&str]) -> String {
+    let out = Command::new(command[0])
+        .args(&command[1..])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{command:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+/// A second run finds the agent the first one cached and uploads nothing.
+#[test]
+#[ignore = "needs docker, community.docker and a musl agent"]
+fn docker_reuses_the_cached_agent_on_a_second_run() {
+    let app = Container::running("cache");
+    let dir = tempfile::tempdir().unwrap();
+    let cached = || ran(&["docker", "exec", &app.0, "sh", "-c", CACHED_AGENT]);
+    let mut before = String::new();
+    for round in 0..2 {
+        let out = play(
+            dir.path(),
+            &[("app1", &format!("ansible_docker_host: {}", app.0))],
+            WHO_AM_I,
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if round == 0 {
+            before = cached();
+            assert!(!before.is_empty(), "no cached agent");
+        }
+    }
+    assert_eq!(cached(), before, "the second run uploaded the agent again");
+}
+
+/// `ansible_user` names a user of the image other than root, and `become` reaches root through
+/// the image's `sudo`.
+#[test]
+#[ignore = "needs docker, community.docker and a musl agent"]
+fn docker_runs_as_another_user_and_becomes_root_through_sudo() {
+    let app = Container::running("sudo");
+    ran(&["docker", "exec", &app.0, "sh", "-c", WITH_SUDO_USER]);
+    let dir = tempfile::tempdir().unwrap();
+    let out = play(
+        dir.path(),
+        &[(
+            "app1",
+            &format!("ansible_docker_host: {}, ansible_user: volant", app.0),
+        )],
+        AS_USER_AND_ROOT,
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("\"msg\": \"volant then root\""), "{stdout}");
+}
+
 /// A container that does not exist, one that is stopped, and a user the image does not have
 /// each make their host unreachable in docker's own words, and the run goes on to the others.
 #[test]

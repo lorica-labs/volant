@@ -148,6 +148,53 @@ fn lxd_runs_a_play_as_root_and_as_another_user() {
     assert!(stdout.contains("\"who.stdout\": \"volant\""), "{stdout}");
 }
 
+/// The inode and modification time of the agent the first run cached under root's `remote_tmp`:
+/// an upload writes a new copy and renames it over the old one, so a second run that uploaded
+/// nothing leaves both as they were.
+const CACHED_AGENT: &str = "stat -c '%i %Y' /root/.ansible/tmp/volant-agent-*/volant-agent";
+
+/// `command` run to completion, its stdout trimmed.
+fn ran(command: &[&str]) -> String {
+    let out = Command::new(command[0])
+        .args(&command[1..])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{command:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// A second run finds the agent the first one cached and uploads nothing.
+#[test]
+#[ignore = "needs LXD, community.general and the agent"]
+fn lxd_reuses_the_cached_agent_on_a_second_run() {
+    let app = Instance::launched("cache");
+    let dir = tempfile::tempdir().unwrap();
+    let cached = || ran(&["lxc", "exec", &app.1, "--", "sh", "-c", CACHED_AGENT]);
+    let mut before = String::new();
+    for round in 0..2 {
+        let out = play(
+            dir.path(),
+            &[(&app.1, "")],
+            "    - ansible.builtin.command: id -un\n",
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if round == 0 {
+            before = cached();
+            assert!(!before.is_empty(), "no cached agent");
+        }
+    }
+    assert_eq!(cached(), before, "the second run uploaded the agent again");
+}
+
 #[test]
 #[ignore = "needs LXD, community.general and the agent"]
 fn lxd_reports_what_it_cannot_reach_in_the_plugin_s_words() {

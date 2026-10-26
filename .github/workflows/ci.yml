@@ -540,26 +540,23 @@ jobs:
           VOLANT_NATIVE_TESTS_ON_LOCALHOST: "1"
 
   containers:
+    name: containers (${{ matrix.runtimes }})
     needs: changes
     if: needs.changes.outputs.containers == 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 30
     strategy:
       fail-fast: false
+      # The runner has docker, podman and buildah, and chroot needs nothing: their tests share one
+      # job and one build. kind and LXD each take a job of their own to set up.
       matrix:
         include:
-          - runtime: docker
-            collection: community.docker==4.8.5
-          - runtime: podman
-            collection: containers.podman==1.18.0
-          - runtime: buildah
-            collection: containers.podman==1.18.0
-          - runtime: chroot
-            collection: community.general==11.4.2
-          - runtime: kubectl
-            collection: kubernetes.core==6.2.0
-          - runtime: lxd
-            collection: community.general==11.4.2
+          - runtimes: docker podman buildah chroot
+            collections: community.docker==4.8.5 containers.podman==1.18.0 community.general==11.4.2
+          - runtimes: kubectl
+            collections: kubernetes.core==6.2.0
+          - runtimes: lxd
+            collections: community.general==11.4.2
     env:
       # Each image pinned by the digest of its index, so every architecture gets the same one.
       ALPINE: docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
@@ -576,14 +573,15 @@ jobs:
         with:
           tool: nextest,just
       - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
-      - name: Install the controller Python and the plugin's collection
+      - name: Install the controller Python and the plugins' collections
         env:
-          COLLECTION: ${{ matrix.collection }}
+          COLLECTIONS: ${{ matrix.collections }}
         run: |
           set -euo pipefail
           python3 -m venv .venv
           .venv/bin/python -m pip install ansible-core==2.19.12
-          .venv/bin/ansible-galaxy collection install -p "$PWD/.collections" "$COLLECTION"
+          read -ra collections <<<"$COLLECTIONS"
+          .venv/bin/ansible-galaxy collection install -p "$PWD/.collections" "${collections[@]}"
           echo "VOLANT_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
           echo "ANSIBLE_COLLECTIONS_PATH=$PWD/.collections" >> "$GITHUB_ENV"
       - name: Point the tests at the pinned images
@@ -599,7 +597,7 @@ jobs:
             echo "VOLANT_KUBECTL_TEST_IMAGE=$POD_IMAGE"
           } >> "$GITHUB_ENV"
       - name: Unpack the Alpine image as the chroot tree
-        if: matrix.runtime == 'chroot'
+        if: contains(matrix.runtimes, 'chroot')
         run: |
           set -euo pipefail
           # Alpine's /bin/sh links to /bin/busybox, and the plugin checks it with os.stat on the
@@ -609,10 +607,10 @@ jobs:
           docker export "$(docker create "$ALPINE")" | sudo tar -x -C /srv/alpine
           echo "VOLANT_CHROOT_TEST_TREE=/srv/alpine" >> "$GITHUB_ENV"
       - name: Start a kind cluster
-        if: matrix.runtime == 'kubectl'
+        if: matrix.runtimes == 'kubectl'
         run: kind create cluster --wait 120s
       - uses: canonical/setup-lxd@8c6a87bfb56aa48f3fb9b830baa18562d8bfd4ee # v1
-        if: matrix.runtime == 'lxd'
+        if: matrix.runtimes == 'lxd'
         with:
           channel: 5.21/stable
-      - run: just container-test ${{ matrix.runtime }}
+      - run: just container-test ${{ matrix.runtimes }}

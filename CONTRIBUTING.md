@@ -30,7 +30,7 @@ just setup
 | `just test-one <crate> <pattern>` | One crate's tests matching a pattern, for the edit-and-retry loop. |
 | `just coverage` | Line coverage, gated at the floor CI enforces. |
 | `just ssh-test` | The tests that run a playbook over a real `ssh`, see below. |
-| `just container-test <runtime>` | The tests that run a playbook over a real container connection, see below. |
+| `just container-test <runtime>...` | The tests that run a playbook over a real container connection, see below. |
 | `just smoke-embedded` | Builds a controller with its agents embedded, as a release does, and runs one task with no agent beside it. |
 | `just link-check <archive \| target=file>...` | Checks that release binaries link what they promise: a static musl binary, a glibc binary that needs no glibc above 2.17, a macOS binary with system libraries only. |
 | `just scratch-test <controller>` | Runs a static controller in a `FROM scratch` container, as the release gate does. Needs Docker and a static busybox. |
@@ -63,7 +63,7 @@ The tests only talk to `localhost`, which is why CI can run them unchanged.
 
 ### Container connection tests
 
-The `<runtime>_*` tests run a playbook through a real container runtime, so `just check` leaves them out. `just container-test <runtime>` runs one runtime's tests. It builds the musl agent first and stops with a message when the runtime's program is not on your `PATH`. Every runtime also needs `VOLANT_PYTHON`, set up as for the SSH tests, and the plugin's collection on `ANSIBLE_COLLECTIONS_PATH`:
+The `<runtime>_*` tests run a playbook through a real container runtime, so `just check` leaves them out. `just container-test <runtime>...` runs the tests of each runtime named, one after the other. It builds an unoptimised musl agent first and stops with a message when the runtime's program is not on your `PATH`. Every runtime also needs `VOLANT_PYTHON`, set up as for the SSH tests, and the plugin's collection on `ANSIBLE_COLLECTIONS_PATH`:
 
 | Runtime | Program | Collection | What else |
 |---|---|---|---|

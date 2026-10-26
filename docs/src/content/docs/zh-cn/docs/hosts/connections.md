@@ -22,6 +22,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 | `buildah` | 通过 `buildah run` 在 Buildah 工作容器里运行 agent，与 `containers.podman.buildah` 相同。见 [Buildah 工作容器](#buildah-工作容器)。 |
 | `lxd` | 通过 `lxc exec` 在 LXD 实例里运行 agent，与 `community.general.lxd` 相同；`community.general.incus` 对 Incus 做同样的事。见 [LXD 和 Incus 实例](#lxd-和-incus-实例)。 |
 | `kubectl` | 通过 `kubectl exec` 在 Kubernetes pod 的容器里运行 agent，与 `kubernetes.core.kubectl` 相同。见 [Kubernetes pod](#kubernetes-pod)。 |
+| `aws_ssm` | 通过 AWS Systems Manager 会话在 EC2 实例上运行 agent，与 `amazon.aws.aws_ssm` 相同。见 [AWS Systems Manager 会话](#aws-systems-manager-会话)。 |
 
 其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
@@ -38,7 +39,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 
 使用 `-vvv` 时，被转向的名字会在某台主机上第一个使用它的 task 下打印 `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot`，每一跳一行。
 
-解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `amazon.aws.aws_ssm`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
+解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `community.general.jail`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
 
 什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
@@ -129,6 +130,22 @@ agent 用 `buildah run [--user U] <容器> -- <agent>` 启动。Volant 从不运
 | `ansible_kubectl_validate_certs`、`ansible_kubectl_verify_ssl` | 与插件一样，原样放在 `--insecure-skip-tls-verify` 之后：`true` 得到 `True`，`false` 则不添加任何内容。 |
 
 每个选项也可以来自插件读取的 `K8S_AUTH_*` 环境变量，主机变量优先于它。参数按插件的顺序传给 `kubectl`。命令以容器的用户运行：插件无法选择用户，因此 `ansible_user` 会被忽略。没有 shell 的容器无法接收 agent，因为 `kubectl cp` 需要容器里有 `tar`。pod 不存在、namespace 不存在或 pod 已结束时，主机不可达，消息为 `kubectl` 的输出。使用 `-vvvv` 时，会显示 `ESTABLISH kubectl CONNECTION`，然后每条命令一行 `EXEC [...]`，其中密码和 token 显示为 `********`。
+
+## AWS Systems Manager 会话
+
+`ansible_connection: amazon.aws.aws_ssm` 通过 AWS Systems Manager Session Manager 在 EC2 实例上执行 play，不需要入站端口、密钥对或堡垒机。短名字 `aws_ssm` 经由 community.aws 指向它，因此也需要安装该集合。控制节点需要 `session-manager-plugin`，其 Python 中需要 boto3；实例需要 SSM agent。
+
+| 变量 | 作用 |
+|---|---|
+| `ansible_aws_ssm_instance_id` | 实例。未设置时，实例为 `ansible_host`，否则为清单名。 |
+| `ansible_aws_ssm_region` | 区域，否则为 `AWS_DEFAULT_REGION` 或 `AWS_REGION`；默认为 `us-east-1`。 |
+| `ansible_aws_ssm_profile` | AWS 配置文件，否则为 `AWS_PROFILE`。 |
+| `ansible_aws_ssm_access_key_id`、`ansible_aws_ssm_secret_access_key`、`ansible_aws_ssm_session_token` | 凭据，否则为同名的 `AWS_*` 环境变量，再否则为 boto3 自己找到的凭据。它们从不显示，`-vvvv` 也不例外。 |
+| `ansible_aws_ssm_plugin` | `session-manager-plugin` 程序，否则为 `AWS_SESSION_MANAGER_PLUGIN`、`/usr/local/bin/session-manager-plugin` 或 `PATH` 中的那个。 |
+| `ansible_aws_ssm_document` | 会话启动的 SSM 文档；未设置时为账户的默认 shell。 |
+| `ansible_aws_ssm_timeout` | 会话在建立连接的每一步中可用的秒数；默认为 60。 |
+
+命令以会话的用户运行，在 Amazon Linux 上是 `ssm-user`。`become` 可以选择其他用户，`ansible_user` 会被忽略，与插件相同。Volant 不通过 S3 传输任何内容，因此插件需要的 `ansible_aws_ssm_bucket_*` 变量不会被读取。会话的终端只返回有效的 UTF-8，因此 agent 用 base64 行与控制节点通信，每个方向约 400 KiB/s；在某个实例上首次运行时会上传一次 agent，约需十秒。SSM agent 未管理的实例或被拒绝的凭据会使主机不可达，消息使用 boto3 的措辞，而插件在这种情况下会使任务失败。运行结束或控制节点被杀死时，会话关闭，agent 随之停止。使用 `-vvvv` 时，会显示 `ESTABLISH SSM CONNECTION TO: <instance>`，然后每条命令一行 `EXEC: <command>`。
 
 ## 主机变量
 

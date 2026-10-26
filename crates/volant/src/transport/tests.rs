@@ -952,6 +952,7 @@ fn the_published_host_variables_are_the_ones_this_module_reads() {
         include_str!("buildah.rs"),
         include_str!("lxd.rs"),
         include_str!("kubectl.rs"),
+        include_str!("ssm.rs"),
         include_str!("escalation/mod.rs"),
         include_str!("escalation/probe.rs"),
         include_str!("escalation/su.rs"),
@@ -1055,6 +1056,7 @@ fn the_connection_keyword_ranks_between_the_host_and_the_command_line(
         Ok(Transport::Local) => "local".to_string(),
         Ok(Transport::Ssh(_)) => "ssh".to_string(),
         Ok(Transport::Exec(_)) => "exec".to_string(),
+        Ok(Transport::Ssm(_)) => "ssm".to_string(),
         Err(err) => err.to_string(),
     };
     assert_eq!(got, want);
@@ -1637,7 +1639,9 @@ fn every_host_name_and_delegation_gets_its_own_master() {
                         .shared(SHARED.map(Path::new), &format!("web{n}"), Some("lb1"));
                 match transport {
                     Transport::Ssh(target) => target.control_path.expect("shared"),
-                    Transport::Local | Transport::Exec(_) => panic!("expected ssh"),
+                    Transport::Local | Transport::Exec(_) | Transport::Ssm(_) => {
+                        panic!("expected ssh")
+                    }
                 }
             })
             .collect();
@@ -1657,7 +1661,7 @@ fn every_host_name_and_delegation_gets_its_own_master() {
         .shared(SHARED.map(Path::new), "web1", Some(delegate))
         {
             Transport::Ssh(target) => target.control_path,
-            Transport::Local | Transport::Exec(_) => panic!("expected ssh"),
+            Transport::Local | Transport::Exec(_) | Transport::Ssm(_) => panic!("expected ssh"),
         };
         assert_ne!(via("lb1"), via("lb1-alias"));
     }

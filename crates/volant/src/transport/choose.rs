@@ -205,6 +205,9 @@ impl Transport {
             super::kubectl::PLUGIN => Ok(Transport::Exec(super::kubectl::target(
                 host_name, vars, defaults,
             )?)),
+            super::ssm::PLUGIN => Ok(Transport::Ssm(Box::new(super::ssm::target(
+                host_name, vars, defaults,
+            )?))),
             other => match super::lxd::Flavor::of(other) {
                 Some(flavor) => Ok(Transport::Exec(super::lxd::target(
                     flavor, host_name, vars, defaults, keywords,
@@ -266,7 +269,7 @@ impl Transport {
     /// The user the link logs in or runs as, when one is set.
     pub fn user(&self) -> Option<&str> {
         match self {
-            Transport::Local => None,
+            Transport::Local | Transport::Ssm(_) => None,
             Transport::Ssh(target) => target.user.as_deref(),
             Transport::Exec(target) => target.user.as_deref(),
         }
@@ -322,6 +325,7 @@ impl Transport {
             }
             Transport::Ssh(target) => target.connect(agents, escalation).await,
             Transport::Exec(target) => target.connect(agents, escalation).await,
+            Transport::Ssm(target) => target.connect(agents, escalation).await,
         }
     }
 }

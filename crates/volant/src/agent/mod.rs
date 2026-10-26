@@ -14,6 +14,7 @@ mod blobs;
 mod decode;
 pub(crate) mod embedded;
 mod frames;
+mod lines;
 mod source;
 
 #[cfg(test)]
@@ -184,6 +185,24 @@ impl AgentLink {
         link.stderr_file = Some(scratch.join("agent.stderr").display().to_string());
         link.stderr_local = Some(scratch);
         Ok(link)
+    }
+
+    /// The same, for an agent behind a shell that carries only text whole, such as a Session
+    /// Manager session: the frames travel as base64 lines (see `volant_protocol::lines`) over
+    /// `stdin` and `stdout`, and the agent's stderr is `stderr_file` on the host. `child` sends
+    /// the agent the line that ends its input once its own stdin closes, and exits when the
+    /// session does, which a drop waits for.
+    pub fn new_over_lines(
+        child: Child,
+        stdin: Input,
+        stdout: Box<dyn AsyncRead + Send + Unpin>,
+        stderr_file: String,
+    ) -> Self {
+        let stdin = Box::new(lines::LineWriter::new(stdin));
+        let stdout = Box::new(lines::LineReader::new(BufReader::new(stdout)));
+        let (mut link, _) = Self::over(child, stdin, stdout);
+        link.stderr_file = Some(stderr_file);
+        link
     }
 
     /// Where to look for what an agent that stopped said, for a message about it: empty when

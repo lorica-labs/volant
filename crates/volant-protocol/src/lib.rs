@@ -7,6 +7,7 @@ pub mod encoding;
 pub mod facts;
 pub mod frame;
 pub mod interpreter;
+pub mod lines;
 pub mod messages;
 pub mod modules;
 pub mod shape;

@@ -1,0 +1,14 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - gather_facts:
+        parallel: true
+        gather_subset: [min]
+      vars:
+        ansible_facts_modules: [setup, myfacts, badfacts]
+      register: g
+      failed_when: false
+    - debug:
+        msg: "{{ g.failed_modules.badfacts | dict2items | rejectattr('key', 'eq', 'ansible_job_id') | items2dict }}"
+    - debug:
+        msg: "{{ g.ansible_facts.keys() | select('match', '^(my_fact|_ansible|gather|module_setup)') | list | sort }}"

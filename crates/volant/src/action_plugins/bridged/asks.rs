@@ -35,6 +35,9 @@ impl Bridged {
                             .into(),
                     ));
                 }
+                if let Some(reason) = super::super::facts_modules::missing(&name) {
+                    return Err(Reply::Error(format!("\u{0}plugin:{reason}")));
+                }
                 let short = short_name(&name);
                 let builtin = !name.contains('.')
                     || name.starts_with("ansible.builtin.")
@@ -58,9 +61,13 @@ impl Bridged {
                         self.name
                     ))
                 })?;
-                let Value::Object(args) = args else {
+                let Value::Object(mut args) = args else {
                     return Err(Reply::Error("the module arguments are not a mapping".into()));
                 };
+                // The plugin runs the module, not the `async_status` action around it.
+                if *module == "async_status" {
+                    args.insert("_volant_module_only".into(), Value::Bool(true));
+                }
                 let sub = Sub {
                     module,
                     args,
@@ -225,6 +232,8 @@ impl Bridged {
             Ok(Value::Object(map)) => {
                 let raised_skip = map.contains_key(crate::executor::RAISED_SKIP);
                 let deprecation = map.get(crate::executor::DEPRECATION_TEXT).cloned();
+                // The error that gathers others, which the error block frames: see `settle_failure`.
+                let cause = map.get("_volant_cause").cloned();
                 let mut result = TaskResult(map);
                 crate::executor::drop_internal_keys(&mut result);
                 if raised_skip {
@@ -237,6 +246,9 @@ impl Bridged {
                     result
                         .0
                         .insert(crate::executor::DEPRECATION_TEXT.into(), text);
+                }
+                if let Some(cause) = cause {
+                    result.0.insert("_volant_cause".into(), cause);
                 }
                 result
             }

@@ -1122,7 +1122,12 @@ def shim():
 
     def answered(reply):
         if "error" in reply:
-            raise AnsibleConnectionFailure(str(reply["error"]))
+            # The controller's refusal of the ask itself, which the plugin sees as its own error;
+            # any other is the link's.
+            message = str(reply["error"])
+            if message.startswith("\x00plugin:"):
+                raise AnsibleError(message[len("\x00plugin:"):])
+            raise AnsibleConnectionFailure(message)
         return reply.get("value")
 
     def text(value, what):
@@ -1515,6 +1520,13 @@ def run_action(ident, request):
                         del result[key]
                     result.setdefault("changed", False)
                     result_compat(result, warning_ctx)
+                    # An error that gathers others (`gather_facts`'s failed modules) keeps its
+                    # shape for the controller's error block, which frames each one.
+                    event = getattr(result.get("exception"), "event", None)
+                    if event is not None and getattr(event, "events", None):
+                        result["_volant_cause"] = {
+                            "event": {"msg": event.msg, "events": [{"msg": e.msg} for e in event.events]}
+                        }
             finally:
                 action.cleanup()
         except Exception as failure:

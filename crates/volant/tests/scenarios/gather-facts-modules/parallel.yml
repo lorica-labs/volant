@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: true
+  gather_subset: [min]
+  vars:
+    ansible_facts_parallel: true
+    ansible_facts_modules: [setup, myfacts]
+  tasks:
+    - debug: {msg: "{{ [ansible_facts.my_fact, ansible_facts.distribution is defined] }}"}

@@ -977,7 +977,14 @@ def call(request):
         return {"error": {"kind": "plugin", "message": "a %s needs the value it is given" % kind}}
     expression = EXPRESSIONS[kind] if kind == "lookup" else EXPRESSIONS[kind] % name
     try:
-        variables = request.get("vars") or {}
+        variables = {
+            # A variable the controller could not render is its template, rendered when the plugin
+            # reads it, so a failure is raised there as the reference raises it.
+            key: trust_as_template(value["__volant_template__"])
+            if isinstance(value, dict) and set(value) == {"__volant_template__"}
+            else value
+            for key, value in (request.get("vars") or {}).items()
+        }
         # The loader a lookup resolves relative names and runs commands through, anchored where
         # the reference anchors it: the playbook's directory, else the first search path entry.
         loader = DataLoader()

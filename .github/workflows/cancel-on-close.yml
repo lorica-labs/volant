@@ -2,7 +2,9 @@ name: Cancel on close
 
 # A pull request that is merged or closed while its CI run is still going leaves that run going:
 # nothing else starts in its concurrency group. This run joins the group the CI workflow gives the
-# pull request, which cancels the CI run in progress, and then does nothing.
+# pull request, which cancels the CI run in progress, and then does nothing. The group is spelled
+# out from the number: once a pull request is merged, `github.ref` names the base branch, and
+# joining that group would cancel the base branch's own run.
 on:
   pull_request:
     types: [closed]
@@ -10,7 +12,7 @@ on:
 permissions: {}
 
 concurrency:
-  group: ci-${{ github.ref }}
+  group: ci-refs/pull/${{ github.event.pull_request.number }}/merge
   cancel-in-progress: true
 
 jobs:

@@ -1,0 +1,9 @@
+all:
+  children:
+    web:
+      hosts:
+        w1: {ansible_connection: local, x_one: {a: "{{ inventory_hostname }}"}}
+        w2: {ansible_connection: local, x_two: {b: "{{ inventory_hostname }}"}}
+    db:
+      hosts:
+        d1: {ansible_connection: local, x_three: {c: 3}}

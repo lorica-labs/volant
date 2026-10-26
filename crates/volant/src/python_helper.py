@@ -991,6 +991,9 @@ def call(request):
         anchor = variables.get("playbook_dir") or next(iter(variables.get("ansible_search_path") or []), None)
         if isinstance(anchor, str) and anchor:
             loader.set_basedir(anchor)
+        hosts = variables.get("hostvars")
+        if isinstance(hosts, dict) and set(hosts) == {"__volant_hostvars__"}:
+            variables["hostvars"] = PreloadedHostVars(hosts["__volant_hostvars__"], loader)
         templar = Templar(loader=loader, variables=variables)
         # The environment resolves a plugin on `in`, which may raise the not-found error or the
         # load error of a broken plugin file: both are answered below like a failed call.
@@ -1336,6 +1339,23 @@ class LazyHostVars(collections.abc.Mapping):
 
     def __len__(self):
         return len(self._names)
+
+    def raw_get(self, host):
+        # `HostVars.raw_get`: the host's variables, not rendered.
+        return self._variables(host)
+
+
+class PreloadedHostVars(LazyHostVars):
+    """`hostvars` for a lookup, whose call cannot ask the controller: every host's variables
+    sent with the call, in the shape a `hostvar` ask is answered."""
+
+    def __init__(self, hosts, loader):
+        super().__init__(None, list(hosts), loader)
+        for host, value in hosts.items():
+            self._asked[host] = trusted_as_template(value["vars"]) if value["trusted"] else value["vars"]
+
+    def _variables(self, host):
+        return self._asked.get(host) if isinstance(host, str) else None
 
 
 def result_compat(result, warning_ctx):

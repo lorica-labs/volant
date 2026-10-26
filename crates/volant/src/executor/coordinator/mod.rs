@@ -241,8 +241,9 @@ pub(super) async fn run_batch(
     let free = plan.strategy.free();
     let mut last_banner: Option<usize> = None;
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
-    // The first host to start each step, and the started steps whose banner is up already.
-    let (mut started, mut headed) = (HashMap::<usize, String>::new(), HashSet::<usize>::new());
+    // The hosts that started each step, whose banner goes up then, and the steps it is up for.
+    let mut started: HashMap<usize, HashSet<String>> = HashMap::new();
+    let mut headed = HashSet::new();
     let mut gone: HashSet<String> = HashSet::new();
     // The templated names the drivers rendered at their own step, by host and step.
     let mut names: HashMap<(String, usize), String> = HashMap::new();
@@ -316,10 +317,10 @@ pub(super) async fn run_batch(
                 }
             };
         }
-        if let Some(starter) = started.get(&index) {
-            step_header!(starter);
-        }
         for host in &play_hosts {
+            if started.get(&index).is_some_and(|h| h.contains(host)) {
+                step_header!(host);
+            }
             loop {
                 // The batch is lost: every host of it is out of the play, the way the reference
                 // marks them all failed.
@@ -454,14 +455,13 @@ pub(super) async fn run_batch(
                             pending.entry(at).or_default().push(event);
                         }
                     }
-                    // The banner of a step a host starts goes up at once when it is this step's.
                     Some(Event::Started {
                         host: starter,
                         index: at,
                     }) if !free => {
-                        let starter = started.entry(at).or_insert(starter).clone();
-                        if at == index {
-                            step_header!(&starter);
+                        started.entry(at).or_default().insert(starter.clone());
+                        if at == index && starter == *host {
+                            step_header!(host);
                         }
                     }
                     Some(Event::Started { .. }) => {}

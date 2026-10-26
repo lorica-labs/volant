@@ -105,6 +105,7 @@ async fn controller_side(
             check_mode: item.check_mode == Some(true),
             diff: item.diff == Some(true),
             async_val: task.async_val,
+            action: &task.module,
         },
     );
     let mut last = None;

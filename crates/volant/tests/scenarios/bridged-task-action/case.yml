@@ -1,0 +1,3 @@
+# self._task.action is the name the task wrote, a runtime.yml redirect included.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

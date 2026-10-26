@@ -1418,6 +1418,7 @@ def run_action(ident, request):
     parts = shim()
     name = request["name"]
     fields = dict(request.get("task") or {})
+    written = fields.pop("_volant_action", None) or name
     # The action is `name`, and the controller has merged the module defaults into the arguments.
     for keyword in ("action", "local_action", "module_defaults"):
         if keyword in fields:
@@ -1453,7 +1454,7 @@ def run_action(ident, request):
                 loader.set_basedir(anchor)
             task_vars["hostvars"] = LazyHostVars(ident, names, loader)
             templar = Templar(loader=loader, variables=task_vars)
-            fields["action"] = name
+            fields["action"] = written
             # A play of its own: `post_validate` reads the play's action groups, which hold nothing
             # here since no module_defaults reach the plugin.
             task = Task.load(fields, block=Block(play=Play()), loader=loader)

@@ -73,6 +73,7 @@ fn start_naming(
             check_mode: false,
             diff: false,
             async_val: 0,
+            action: "probe",
         },
     )
 }
@@ -331,6 +332,7 @@ fn the_play_context_describes_the_link_the_module_runs_over(
         check_mode: false,
         diff: false,
         async_val: 0,
+        action: "probe",
     };
     assert_eq!(play_context_of(&ctx, running.as_object().unwrap()), want);
 }

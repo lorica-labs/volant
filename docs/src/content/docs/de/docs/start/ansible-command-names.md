@@ -1,5 +1,5 @@
 ---
-sourceHash: 37a3f4cfcd5c
+sourceHash: 98256eaf2ac7
 title: Ansible-Befehlsnamen
 description: Welcher Volant-Befehl welches Programm von ansible-core ersetzt, was gleich ist, was abweicht und wie Sie Ihre Kommandozeilen behalten.
 ---
@@ -17,10 +17,10 @@ Volant führt die neun Programme von ansible-core 2.19.12 aus. Jedes ist ein Unt
 | `ansible-doc` | [`volant doc`](/de/docs/reference/cli/doc/) | dem eigenen Werkzeug von ansible-core | bei der ersten Verwendung installiert |
 | `ansible-config` | [`volant config`](/de/docs/reference/cli/config/) | dem eigenen Werkzeug von ansible-core | bei der ersten Verwendung installiert |
 | `ansible-galaxy` | [`volant galaxy`](/de/docs/reference/cli/galaxy/) | dem eigenen Werkzeug von ansible-core | bei der ersten Verwendung installiert |
-| `ansible-pull` | [`volant pull`](/de/docs/reference/cli/pull/) | dem eigenen Werkzeug von ansible-core, mit Volants Engine für seine zwei Schritte | bei der ersten Verwendung installiert |
-| `ansible-console` | [`volant console`](/de/docs/reference/cli/console/) | dem eigenen Werkzeug von ansible-core | bei der ersten Verwendung installiert |
+| `ansible-pull` | [`volant pull`](/de/docs/reference/cli/pull/) | Volant | für einen `git`-Checkout nicht nötig |
+| `ansible-console` | [`volant console`](/de/docs/reference/cli/console/) | Volant | für die nativen Module nicht nötig |
 
-Die verwaltete Runtime installiert sich beim ersten Mal selbst, wenn ein Befehl sie braucht, wie bei einem Playbook, und gibt dabei eine Zeile auf der Standardfehlerausgabe aus. [Die verwaltete Runtime](/de/docs/reference/runtime/) beschreibt sie. Sie müssen ansible nicht installieren, aber fünf der neun Befehle führen den eigenen Code von ansible-core aus dieser Runtime aus. `volant console` führt Tasks mit dem Executor von ansible-core aus, nicht mit dem von Volant.
+Die verwaltete Runtime installiert sich beim ersten Mal selbst, wenn ein Befehl sie braucht, wie bei einem Playbook, und gibt dabei eine Zeile auf der Standardfehlerausgabe aus. [Die verwaltete Runtime](/de/docs/reference/runtime/) beschreibt sie. Sie müssen ansible nicht installieren, aber drei der neun Befehle führen den eigenen Code von ansible-core aus dieser Runtime aus.
 
 ## Ihre Kommandozeilen behalten
 
@@ -62,12 +62,12 @@ Bei `ansible`, `ansible-vault` und `ansible-inventory` wurden die Ausgabe, die a
 | Eine Datei, die das eine Werkzeug verschlüsselt, entschlüsselt das andere, für die Standard-ID und für ein Label | `a_file_one_tool_encrypts_the_other_decrypts` |
 | `volant inventory` gibt die JSON- und YAML-Bytes von ansible-inventory aus: Schlüsselreihenfolge, Einrückung von vier Leerzeichen, PyYAML-Anker | `crates/volant/tests/inventory_golden.rs` über `golden/inventories/cases.yml` und `inventory_cli.rs` |
 | `volant config` und `volant galaxy` geben aus, was das Werkzeug ausgibt | `crates/volant/tests/tools_cli.rs` |
-| `volant pull` gibt aus, was `ansible-pull` ausgibt, bis auf eine Zeile (unten) | `a_pull_prints_what_the_reference_pull_prints` in `console_pull.rs` |
-| `volant console` liest seine Befehle wie `ansible-console` aus einer Pipe | `the_console_reads_its_commands_from_a_pipe` |
+| `volant pull` gibt den Playbook-Lauf und die Zeile von `-o` wie `ansible-pull` aus und checkt ohne Python aus | `a_pull_prints_what_the_reference_pull_prints` und `a_pull_checks_out_and_runs_without_python` in `console_pull.rs` |
+| `volant console` gibt auf einer Pipe für seine Befehle, Module und Shell-Zeilen aus, was `ansible-console` ausgibt, und braucht für native Module kein Python | `the_console_reads_its_commands_from_a_pipe` und `the_console_runs_without_python` in `console_pull.rs` |
 | Die Links, die `install` anlegt, die Zeilen, die es ausgibt, und was `remove` stehen lässt | `crates/volant/tests/shims.rs` |
 | Welche Namen auf welchen Befehl abgebildet werden, und kein anderer | die Tests in `crates/volant/src/cli/program.rs` |
 
-Die Optionen, die jeder native Befehl akzeptiert, stehen auf seiner eigenen Seite: [`volant adhoc`](/de/docs/reference/cli/adhoc/), [`volant vault`](/de/docs/reference/cli/vault/) und [`volant inventory`](/de/docs/reference/cli/inventory/). Eine Option, die dort nicht steht, wird abgelehnt, nie ignoriert.
+Die Optionen, die jeder native Befehl akzeptiert, stehen auf seiner eigenen Seite: [`volant adhoc`](/de/docs/reference/cli/adhoc/), [`volant vault`](/de/docs/reference/cli/vault/), [`volant inventory`](/de/docs/reference/cli/inventory/) und [`volant pull`](/de/docs/reference/cli/pull/). Eine Option, die dort nicht steht, wird abgelehnt, nie ignoriert.
 
 ## Was abweicht
 
@@ -75,7 +75,7 @@ Die Optionen, die jeder native Befehl akzeptiert, stehen auf seiner eigenen Seit
 - `--version` gibt `ansible [core 2.19.12]` (oder den Programmnamen) und die Pfade aus. Die Zeilen zu Python, Jinja und PyYAML entfallen, wenn Volant keinen Interpreter mit ansible-core findet, weil `--version` nichts installiert. Siehe [`volant adhoc`](/de/docs/reference/cli/adhoc/).
 - `executable location` in `--version` ist das Programm, wie es gestartet wurde: `volant` oder der Link. Siehe [`volant doc`](/de/docs/reference/cli/doc/#terminal-exit-code-und---version).
 - `ansible-inventory --toml` braucht kein Python-Paket, wo die Referenz `tomli-w` braucht, und ein `null`-Wert ergibt eine `[ERROR]`-Zeile statt eines Tracebacks (beide enden mit 250). Siehe [`volant inventory`](/de/docs/reference/cli/inventory/).
-- `volant pull` zeigt `<cache>/volant/pull/ansible-pull` in der zweiten Zeile seiner Ausgabe, wo `ansible-pull` den Pfad seines Skripts zeigt. Siehe [`volant pull`](/de/docs/reference/cli/pull/).
+- `volant pull` gibt seine ersten zwei Zeilen vor dem aus, was seine Schritte ausgeben, und sein Checkout startet kein Python. Siehe [`volant pull`](/de/docs/reference/cli/pull/#unterschiede-zu-ansible-pull).
 - `volant config dump` zeigt `COLLECTIONS_PATHS` als von der Umgebung gesetzt, sobald die Runtime ein Verzeichnis `collections/` hat. Siehe [`volant config`](/de/docs/reference/cli/config/#der-collections-pfad).
 - `ansible-vault view` läuft nur in einem Terminal über einen Pager, mit `PAGER`, dann `ANSIBLE_PAGER`, dann `[defaults] pager`, dann `less`. Siehe [Vault](/de/docs/variables/vault/).
 - `volant adhoc` und `volant playbook` nutzen Volants Engine, daher gelten die Unterschiede, die in [Läuft mein Playbook?](/de/docs/start/compatibility/) und auf [`volant adhoc`](/de/docs/reference/cli/adhoc/#aktionen-die-keine-module-sind) aufgeführt sind.
@@ -88,4 +88,4 @@ Die Optionen, die jeder native Befehl akzeptiert, stehen auf seiner eigenen Seit
 | `volant vault` | erledigt | ein Dateifehler, etwa `create` auf eine vorhandene Datei | ein Aufruffehler | | eine falsche Option, etwa zwei Dateien mit `--output` | |
 | `volant inventory` | ausgegeben | | ein Aufruffehler | | keine Aktion oder zwei Aktionen, oder ein falsches Ziel von `--host` oder `--graph` | |
 
-`volant playbook` verwendet die Codes auf [Exit-Codes](/de/docs/reference/exit-codes/). Die fünf Werkzeuge, die in der Runtime von ansible-core laufen, liefern den eigenen Code des Werkzeugs, oder 1 mit einer Zeile `[ERROR]:`, wenn sich der Interpreter nicht starten lässt.
+`volant playbook` verwendet die Codes auf [Exit-Codes](/de/docs/reference/exit-codes/). Die drei Werkzeuge, die in der Runtime von ansible-core laufen, liefern den eigenen Code des Werkzeugs, oder 1 mit einer Zeile `[ERROR]:`, wenn sich der Interpreter nicht starten lässt. `volant pull` endet mit 2, wenn der Checkout fehlschlägt, mit 5 bei einem Optionsfehler oder wenn kein Playbook gefunden wird, und sonst mit dem Code des Playbooks.

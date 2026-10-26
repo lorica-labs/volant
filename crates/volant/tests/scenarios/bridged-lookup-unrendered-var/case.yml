@@ -1,4 +1,4 @@
 # A lookup of the playbook that lists or reads a variable whose template fails: the name is
-# listed, and reading it fails the plugin as the reference does.
+# listed, and reading it raises the reference's undefined error, which the plugin reports.
 needs: [ansible-core]
 args: [-i, inv.ini, play.yml]

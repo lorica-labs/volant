@@ -28,13 +28,13 @@ pub(super) use controller::pause_lines;
 pub(super) use interpreter::{
     DISCOVERED_INTERPRETER, DISCOVERY_HELP, action_fqcn, chosen_interpreter, discovers_interpreter,
     discovery_warning, python_for, requested_interpreter, running_host_vars, silent_discovery,
-    stamp_discovery, step_tasks, unsent,
+    stamp_discovery, step_task, step_tasks, unsent,
 };
 pub(super) use judge::{break_after, broke_before, empty_loop_result, finish, loops, task_fails};
 pub(super) use links::reuse_or_connect;
 pub(super) use local::{run_local, set_fact_names};
 pub(super) use output::asks_to_be_hidden;
-pub(crate) use output::{RAISED_SKIP, drop_internal_keys};
+pub(crate) use output::{DEPRECATION_TEXT, RAISED_SKIP, drop_internal_keys};
 pub(super) use output::{classify, classify_as};
 #[cfg(test)]
 pub(super) use plugin::protocol_task;

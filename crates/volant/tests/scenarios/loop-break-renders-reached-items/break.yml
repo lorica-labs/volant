@@ -1,0 +1,26 @@
+- name: Loop items render when the loop reaches them
+  hosts: localhost
+  gather_facts: false
+  vars:
+    count: "{{ playbook_dir }}/count"
+  tasks:
+    - debug:
+        msg: "{{ lookup('pipe', 'echo d' ~ item ~ ' >> ' ~ count ~ '; wc -l < ' ~ count) }}"
+      loop: [1, 2, 3, 4]
+      loop_control: {break_when: "item == 2"}
+    - command: echo {{ lookup('pipe', 'echo c' ~ item ~ ' >> ' ~ count) }}{{ item }}
+      loop: [1, 2, 3, 4]
+      loop_control: {break_when: "item == 2"}
+    - copy:
+        content: "{{ lookup('pipe', 'echo p' ~ item ~ ' >> ' ~ count) }}{{ item }}"
+        dest: "{{ playbook_dir }}/out{{ item }}"
+      loop: [1, 2, 3, 4]
+      loop_control: {break_when: "item == 2"}
+    - include_tasks: "inc{{ lookup('pipe', 'echo i' ~ item ~ ' >> ' ~ count) }}.yml"
+      loop: [1, 2, 3]
+      loop_control: {break_when: "item == 2"}
+    - command: echo env
+      environment: "{{ {} if item == 1 else 'x' }}"
+      loop: [1, 2]
+      loop_control: {break_when: "item == 1"}
+    - debug: msg="{{ lookup('file', count).splitlines() }}"

@@ -7,9 +7,11 @@ use volant_protocol::modules::short_name;
 
 use crate::executor::RunOptions;
 use crate::executor::coordinator::{Event, MetaEffect, Shade};
+use crate::executor::prepare::{Item, render_deferred};
 use crate::playbook::PlayTask;
 use crate::render::Dump;
 use crate::stats::Outcome;
+use crate::template::Templar;
 use crate::transport::{ConnectionKeywords, Transport};
 
 use super::Driver;
@@ -26,6 +28,22 @@ impl Driver<'_> {
                 censored: false,
             })
             .await;
+    }
+
+    /// Loop item `ii` of the step at `index` as the loop reaches it, the rest of its fields
+    /// rendered and their warnings shown: see `render_deferred`.
+    pub(super) async fn reach_item<'i>(
+        &self,
+        index: usize,
+        task: &PlayTask,
+        items: &'i mut [Item],
+        ii: usize,
+        templar: &Templar,
+    ) -> &'i Item {
+        for message in render_deferred(task, self.plan, templar, self.name, &mut items[ii], ii) {
+            self.warn(index, message).await;
+        }
+        &items[ii]
     }
 
     /// The connection the step at `index` runs over on `target`, and the `-vvv` redirect lines

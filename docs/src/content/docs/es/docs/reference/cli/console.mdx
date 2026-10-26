@@ -1,23 +1,61 @@
 ---
-sourceHash: 3c19687c4170
+sourceHash: 136f082e17a2
 title: volant console
-description: Ejecuta comandos ad hoc en un shell interactivo con ansible-console, ejecutado desde el runtime de Python de Volant.
+description: Un shell interactivo que ejecuta una tarea ad hoc por línea con el motor de Volant, como ansible-console.
 ---
 
-`volant console` ejecuta el `ansible-console` de ansible-core 2.19.12 con el intérprete que Volant elige para una ejecución de playbook, así que funciona sin ansible-core instalado. Es el programa propio de ansible-core: ejecuta las tareas con el ejecutor de ansible-core, no con el de Volant.
+`volant console` es el `ansible-console` de ansible-core 2.19.12, escrito en Rust. Cada línea que escribes se ejecuta como una tarea ad hoc en los hosts actuales, con el motor de Volant, como la ejecuta [`volant adhoc`](/es/docs/reference/cli/adhoc/). Una sesión que solo ejecuta módulos nativos no inicia Python.
 
 ```sh
-volant console [ARGS...]
+volant console [pattern] [-i INV] [-l SUBSET] [-e VARS] [-f N] [-b] [--become-user USER] [--become-method METHOD]
+               [-u USER] [-c CONN] [-T SECS] [-C] [-D] [-M PATH] [--playbook-dir DIR] [--task-timeout N]
+               [vault, password and ssh options]
 ```
 
-Cada argumento va a `ansible-console` sin cambios, incluidos `-h` y `--version`. El intérprete, el entorno, el terminal, el código de salida y `--version` funcionan como en [`volant doc`](/es/docs/reference/cli/doc/).
+`pattern` son los hosts con los que empieza la sesión, `all` por defecto. Un patrón que no deja ningún host termina el comando con el código 1.
 
-La consola necesita un terminal para su prompt:
+## La sesión
 
 ```
 Welcome to the ansible console. Type help or ? to list commands.
 
-user@all (3)[f:5]$
+user@all (3)[f:5]$ 
 ```
 
-El prompt es el usuario, el patrón, el número de hosts y los forks, seguidos de `$ `, o de `# ` tras `become yes`. Escribe `exit` o pulsa ctrl-d para salir: la consola imprime una línea en blanco y `Ansible-console was exited.`, y sale con 0. Con la entrada estándar en una tubería, lee de ahí sus comandos y termina igual al final de la entrada.
+El prompt es el usuario remoto (`-u`, si no el nombre de tu cuenta), el patrón actual, el número de hosts que selecciona y los forks, y luego `$ `, o `# ` cuando become está activo y el usuario de become no está fijado o es `root`. En una terminal con color, el prompt va en blanco y negrita, o en rojo para `# `.
+
+Una línea se lee como la lee `ansible-console`:
+
+- Una línea vacía no hace nada. Una línea que empieza por `#` es un comentario.
+- Una línea cuya primera palabra es un comando de la consola (abajo) ejecuta ese comando.
+- Una línea cuya primera palabra nombra un módulo ejecuta ese módulo, con el resto de la línea como argumentos, leídos como `-a`: `ping`, `command echo hi`, `ansible.builtin.copy src=a dest=/tmp/a`.
+- Cualquier otra línea, o una línea que empieza por `!`, ejecuta el módulo `shell` con la línea entera: `echo hi there`, `!uptime`.
+
+Los resultados se imprimen como los imprime `volant adhoc`. Una tarea fallida imprime el bloque `[ERROR]` con `Origin: <unknown>`. Un aviso o un bloque de error ya impreso en la sesión no se imprime de nuevo.
+
+`exit`, `EOF` y ctrl-d imprimen una línea vacía y `Ansible-console was exited.`, y la sesión sale con 0. Ctrl-c en el prompt vuelve a imprimir el banner y el prompt. Ctrl-c mientras corre una tarea la detiene con `[ERROR]: User interrupted execution`, y la sesión continúa. Con la entrada estándar en una tubería, los comandos se leen línea a línea, no se repite nada en pantalla, y el final de la entrada termina la sesión.
+
+En una terminal, la línea se edita con historial y completado con Tab. Tab completa los nombres de comandos y módulos, los nombres de hosts y grupos después de `cd`, y las opciones de los módulos que Volant ejecuta de forma nativa. El historial se lee de `~/.ansible-console_history` al empezar y se reescribe al final, un comando por línea, en un archivo creado con el modo `0600`. También se lee un historial escrito por un Python compilado con libedit (`_HiStOrY_V2_` en su primera línea).
+
+## Comandos
+
+| Comando | Efecto |
+|---|---|
+| `cd [PATTERN]` | Cambia los hosts actuales a `PATTERN` cuando coincide con hosts. Si no, imprime `no host matched` y no cambia nada. `cd` solo selecciona `*`, y `cd /` o `cd *` selecciona `all`. |
+| `list`, `list groups` | Imprime los hosts actuales, o todos los grupos, uno por línea. |
+| `forks N`, `serial N` | Fija los forks. `forks 0` imprime `forks must be greater than or equal to 1`. |
+| `become BOOL` | Activa o desactiva become. |
+| `become_user USER`, `become_method METHOD`, `remote_user USER` | Fijan el usuario de become, el método de become y el usuario de conexión. |
+| `check BOOL`, `diff BOOL` | Activan o desactivan el modo check y el modo diff, e imprimen el nuevo valor. |
+| `timeout N` | Fija el tiempo límite de las tareas en segundos; `0` lo desactiva. |
+| `verbosity N` | Fija la verbosidad, como `-v`. |
+| `collections A,B` | Fija las colecciones donde se buscan los nombres cortos de módulos; `collections none` las restablece. |
+| `shell LINE` | Ejecuta `LINE` con el módulo `shell`. |
+| `help [NAME]`, `?` | Sin nombre, lista cada comando y cada módulo. Con un nombre, imprime la ayuda del comando, o la descripción y las opciones del módulo. |
+
+`help` para un módulo lee su documentación del ansible-core del runtime administrado, e imprime `[ERROR]: No documentation found for <name>.` cuando no hay runtime. Solo los nombres completos de módulos tienen ayuda, como en `ansible-console`: `help ping` imprime `*** No help on ping`. La lista de módulos reúne los módulos incorporados de ansible-core y los módulos de las colecciones instaladas donde la configuración busca colecciones.
+
+## Diferencias con ansible-console
+
+- `forks x` y `serial x` terminan la sesión con el código 250 y la línea `[ERROR]: Unexpected Exception`, como la referencia, pero sin su traza de Python.
+- En una terminal, las secuencias de control que redibujan la línea son las de rustyline, no las de GNU readline. Después de ctrl-c en el prompt, el banner empieza en una línea nueva.

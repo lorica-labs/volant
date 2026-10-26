@@ -122,6 +122,9 @@ pub(super) struct Adhoc {
     one_line: bool,
     /// `-t`: the directory the `tree` callback writes one file per host in, already absolute.
     tree: Option<PathBuf>,
+    /// The play keywords of a console command (`remote_user`, `become`, ...), whose task the
+    /// reference builds without `async_val` and `poll` and places nowhere.
+    console: Option<Map<String, Value>>,
 }
 
 /// `C.MODULE_REQUIRE_ARGS`: the modules whose `-a` is read with `check_raw`, so that only their
@@ -176,7 +179,21 @@ impl Adhoc {
             timeout: 0,
             one_line: false,
             tree: None,
+            console: None,
         })
+    }
+
+    /// The task as `ansible-console` builds it, under the session's play keywords.
+    pub(super) fn in_console(
+        mut self,
+        keywords: Map<String, Value>,
+        timeout: u64,
+        dir: Option<PathBuf>,
+    ) -> Self {
+        self.console = Some(keywords);
+        self.timeout = timeout;
+        self.dir = dir;
+        self
     }
 
     /// Hands the output options to the renderer.
@@ -289,11 +306,14 @@ impl Adhoc {
 
     /// Where the reference says the task comes from in an error block, and the task as it shows
     /// it there: `{'action': ..., 'args': ..., 'timeout': 0, 'async_val': 0, 'poll': 15}`.
-    fn task_origin(&self) -> Origin {
+    pub(super) fn task_origin(&self) -> Origin {
         let mut ds = Map::new();
         ds.insert("action".into(), self.module.clone().into());
         ds.insert("args".into(), Value::Object(self.args.clone()));
         ds.insert("timeout".into(), self.timeout.into());
+        if self.console.is_some() {
+            return Origin::described("<unknown>", &playbook::python_repr(&Value::Object(ds)));
+        }
         if !INCLUDES.contains(&self.module.as_str()) {
             ds.insert("async_val".into(), self.background.into());
             ds.insert("poll".into(), self.poll.unwrap_or(15).into());
@@ -335,8 +355,13 @@ impl Adhoc {
             Some(action) => (format!("{} {action}", self.module), Map::new()),
             None => (self.module.clone(), self.args.clone()),
         };
+        let mut play_keywords = String::new();
+        for (name, value) in self.console.iter().flatten() {
+            writeln!(play_keywords, "  {name}: {}", json(value.clone()))
+                .expect("a String takes a write");
+        }
         let text = format!(
-            "- name: Ansible Ad-Hoc\n  hosts: {}\n  gather_facts: false\n  tasks:\n  - action: {}\n    args: {}\n{keywords}",
+            "- name: Ansible Ad-Hoc\n  hosts: {}\n  gather_facts: false\n{play_keywords}  tasks:\n  - action: {}\n    args: {}\n{keywords}",
             json(self.pattern.clone().into()),
             json(action.into()),
             json(Value::Object(args)),

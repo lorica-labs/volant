@@ -39,8 +39,12 @@ pub(super) fn set_up(
     let choice = config.color_choice(args.no_color);
     out.set_choice(choice);
     crate::transport::trace::configure(args.verbose, choice);
-    announce(out, args.adhoc_pattern.as_ref().map(|_| args));
     python::set_module_path(module_path_dirs(args));
+    // A console's command: the session announced itself and opened the vault when it started.
+    if args.carried.is_some() {
+        return load_inventory(args, out, config);
+    }
+    announce(out, args.adhoc_pattern.as_ref().map(|_| args));
     let secrets = match crate::vault::load(&crate::vault::Request {
         ask: args.vault.ask_vault_pass,
         password_files: args.vault.vault_password_file.clone(),
@@ -56,6 +60,15 @@ pub(super) fn set_up(
         }
     };
     crate::vault::install(secrets);
+    load_inventory(args, out, config)
+}
+
+/// The forks and the inventory with its notes.
+fn load_inventory(
+    args: &PlaybookArgs,
+    out: &mut Renderer,
+    config: Config,
+) -> anyhow::Result<Result<SetUp, i32>> {
     // Refused before anything is loaded, the way the reference refuses it, whether it comes
     // from the command line, the environment or `ansible.cfg`. Exit 2: `Cli::parse()` already
     // exits 2 for `-f abc` or `-f -1` (clap's own default for a bad argument), so a refused `0`

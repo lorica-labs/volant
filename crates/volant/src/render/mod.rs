@@ -13,6 +13,7 @@ mod oneline;
 mod recap_json;
 mod result;
 mod shorten;
+mod shown;
 mod tree;
 
 pub(crate) use error::source_context;
@@ -20,9 +21,10 @@ pub use error::{
     AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, block_text, cause,
     concat_message, lead, task_failed,
 };
-pub(crate) use recap_json::ansible_json;
 use recap_json::dumps_indented;
+pub(crate) use recap_json::{ansible_json, ansible_json_indented};
 pub use shorten::shorten;
+pub use shown::Shown;
 
 /// How a task's result lines are cleaned before they are shown. Whether a body goes on the line
 /// at verbosity 0 is the result's own [`VERBOSE_ALWAYS`], not the task's.

@@ -32,7 +32,8 @@ use super::run::{
     judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
     record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
     replayed, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
-    running_host_vars, silent_discovery, stamp_discovery, step_tasks, take_warnings, task_fails,
+    running_host_vars, silent_discovery, stamp_discovery, step_task, step_tasks, take_warnings,
+    task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -1133,7 +1134,7 @@ pub(super) async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Local(items, delegate)) => {
+                Ok(Prepared::Local(mut items, delegate)) => {
                     if !batch.is_empty() {
                         break;
                     }
@@ -1159,10 +1160,11 @@ pub(super) async fn drive_host(
                     let mut labels = Vec::new();
                     let mut lefts: Vec<Vec<RetryLine>> = Vec::new();
                     let mut names: Vec<String> = Vec::new();
-                    for (ii, (item, plan)) in items.iter().zip(&plans).enumerate() {
+                    for (ii, plan) in plans.iter().enumerate() {
                         if ii > 0 && driver.pause_for(pause, 1).await.is_none() {
                             break 'run;
                         }
+                        let item = driver.reach_item(pos, task, &mut items, ii, &templar).await;
                         names.push(retry_name(task, &item.vars, &templar));
                         let mut mine = Vec::new();
                         let r = if let Some(s) = &item.skipped {
@@ -1747,7 +1749,7 @@ pub(super) async fn drive_host(
             {
                 // The batch rule above keeps a plugin task alone. Should that ever break, the host
                 // stops here naming it, rather than running `batch[0]` and dropping the rest.
-                let (index, items) = match plugin_step(&batch) {
+                let (index, items) = match plugin_step(&mut batch) {
                     Ok(step) => step,
                     Err(msg) => {
                         unreachable = Some(msg);
@@ -1864,8 +1866,20 @@ pub(super) async fn drive_host(
                 outcome
             } else if let Some(plans) = batch_retry.clone() {
                 decided = true;
-                let (index, items) = &batch[0];
+                let (index, items) = &mut batch[0];
                 let task = &step_at(&c, &rendered, *index).task;
+                let first = *index;
+                let timings = |link: &mut AgentLink| {
+                    file_timings(
+                        link,
+                        &options.profile,
+                        &name,
+                        &c,
+                        &[],
+                        first,
+                        &prepare_micros,
+                    );
+                };
                 names = items
                     .iter()
                     .map(|item| retry_name(task, &item.vars, &templar))
@@ -1894,26 +1908,21 @@ pub(super) async fn drive_host(
                 // starts: measured on ansible-core 2.19.12 with a two-item loop whose first item
                 // passed and whose second needed two attempts - the retry lines of the second
                 // sit between the two result lines, so the items do not retry together.
-                'items: for (ii, built) in step_tasks(task, items, &python, &mut received[0]) {
-                    let item = &items[ii];
+                'items: for ii in 0..items.len() {
                     let (at, passed) =
                         broke_before(task, items, &mut received[0], &mut checked_to, ii, &templar);
                     if driver.pause_for(pause, passed).await.is_none() {
-                        file_timings(
-                            link,
-                            &options.profile,
-                            &name,
-                            &c,
-                            &[],
-                            batch[0].0,
-                            &prepare_micros,
-                        );
+                        timings(link);
                         break 'run;
                     }
                     if at.is_some() {
                         broken_at = at;
                         break 'items;
                     }
+                    let item = driver.reach_item(*index, task, items, ii, &templar).await;
+                    let Some(built) = step_task(task, item, &python, &mut received[0][ii]) else {
+                        continue 'items;
+                    };
                     let retry = match &plans[ii] {
                         Err(failed) => {
                             received[0][ii] = Some(failed.clone());
@@ -1970,15 +1979,7 @@ pub(super) async fn drive_host(
                             {
                                 Polled::Done(result) => result,
                                 Polled::Stopped => {
-                                    file_timings(
-                                        link,
-                                        &options.profile,
-                                        &name,
-                                        &c,
-                                        &[],
-                                        batch[0].0,
-                                        &prepare_micros,
-                                    );
+                                    timings(link);
                                     break 'run;
                                 }
                                 Polled::Ended(ended) => {
@@ -2018,15 +2019,7 @@ pub(super) async fn drive_host(
                             continue 'items;
                         }
                         if replayed.is_none() && driver.sleep_between(retry.delay).await.is_none() {
-                            file_timings(
-                                link,
-                                &options.profile,
-                                &name,
-                                &c,
-                                &[],
-                                batch[0].0,
-                                &prepare_micros,
-                            );
+                            timings(link);
                             break 'run;
                         }
                     }
@@ -2052,15 +2045,7 @@ pub(super) async fn drive_host(
                         passed.saturating_sub(1)
                     };
                     if driver.pause_for(pause, owed).await.is_none() {
-                        file_timings(
-                            link,
-                            &options.profile,
-                            &name,
-                            &c,
-                            &[],
-                            batch[0].0,
-                            &prepare_micros,
-                        );
+                        timings(link);
                         break 'run;
                     }
                 }

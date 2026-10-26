@@ -28,7 +28,7 @@ use crate::vars::HostVars;
 /// The one step of a batch an action plugin backs, or the controller error that ends the host
 /// when the batch holds anything else: the plugin branch runs one step, so a second one would be
 /// reported by nobody and never run.
-pub(super) fn plugin_step<T>(batch: &[(usize, T)]) -> Result<&(usize, T), String> {
+pub(super) fn plugin_step<T>(batch: &mut [(usize, T)]) -> Result<&mut (usize, T), String> {
     match batch {
         [only] => Ok(only),
         _ => Err(format!(
@@ -51,7 +51,7 @@ pub(super) struct PluginBatch {
 pub(super) struct PluginItems<'a> {
     pub(super) task: &'a PlayTask,
     pub(super) origin: &'a Origin,
-    pub(super) items: &'a [Item],
+    pub(super) items: &'a mut [Item],
     pub(super) templar: &'a Templar,
     pub(super) pause: Option<Duration>,
     pub(super) plans: Option<&'a [ItemRetry]>,
@@ -104,7 +104,7 @@ pub(super) async fn run_plugin_items(
     let mut stopped = false;
     let mut broken_at = None;
     let mut outcome = Ok(BatchOutcome::Completed);
-    for (ii, item) in look.items.iter().enumerate() {
+    for ii in 0..look.items.len() {
         let (at, passed) = broke_before(
             look.task,
             look.items,
@@ -121,6 +121,9 @@ pub(super) async fn run_plugin_items(
             broken_at = at;
             break;
         }
+        let item = driver
+            .reach_item(look.index, look.task, look.items, ii, look.templar)
+            .await;
         if item.skipped.is_some() {
             continue;
         }

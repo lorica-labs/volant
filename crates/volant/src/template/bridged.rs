@@ -198,11 +198,66 @@ pub(super) fn lookup(
             }
         }
     }
+    if (needs.all || needs.names.iter().any(|n| n == "hostvars"))
+        && let Some(hosts) = hostvars(state)
+    {
+        vars.insert("hostvars".into(), serde_json::json!({ HOSTVARS: hosts }));
+    }
     super::lookups::taint(state);
     bridge
         .call(kind, name, &args, &kwargs, Some(&vars))
         .map(|value| super::bigint::to_template(&value))
         .map_err(|err| failed(kind, name, err))
+}
+
+/// What `hostvars` is sent as: `{HOSTVARS: {host: {"vars", "trusted"}}}`.
+const HOSTVARS: &str = "__volant_hostvars__";
+
+/// Every host's variables as an action plugin's `hostvar` ask answers them: the helper renders a
+/// variable when the plugin reads it, in that host's context, and a host holding a managed
+/// host's value is data. Measured on ansible-core 2.19.12 with `merge_variables` and `groups=`.
+fn hostvars(state: &State) -> Option<Map<String, serde_json::Value>> {
+    let root = state.lookup(super::CONTEXT_KEY)?;
+    let context = root.downcast_object_ref::<super::context::Context>()?;
+    let hosts = context.hostvars.as_ref()?;
+    let groups = context
+        .shared
+        .as_ref()
+        .and_then(|shared| shared.get("groups"))
+        .and_then(serde_json::Value::as_object);
+    Some(
+        hosts
+            .iter()
+            .map(|(host, entry)| {
+                let mut vars = crate::vars::settled(entry).into_owned();
+                // `group_names` is a magic variable the entry does not carry: the groups that
+                // hold the host, `all` aside, sorted, as `hostvars[host]` answers it.
+                if let (serde_json::Value::Object(map), Some(groups)) = (&mut vars, groups)
+                    && !map.contains_key("group_names")
+                {
+                    let mut names: Vec<&String> = groups
+                        .iter()
+                        .filter(|(name, members)| {
+                            *name != "all"
+                                && members
+                                    .as_array()
+                                    .is_some_and(|m| m.iter().any(|h| h.as_str() == Some(host)))
+                        })
+                        .map(|(name, _)| name)
+                        .collect();
+                    names.sort();
+                    map.insert("group_names".into(), serde_json::json!(names));
+                }
+                (
+                    host.clone(),
+                    serde_json::json!({
+                        "vars": vars,
+                        "trusted": !context.untrusted_hosts.contains(host),
+                    }),
+                )
+            })
+            .collect(),
+    )
 }
 
 /// What a variable the helper renders itself is sent as: `{UNRENDERED: template}`.

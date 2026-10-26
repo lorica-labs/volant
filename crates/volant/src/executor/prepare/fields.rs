@@ -19,6 +19,8 @@ use super::plan::PlayPlan;
 pub(super) struct Fields {
     /// Set when `when` was false, or when a field failed to render: the result to report.
     pub(super) skipped: Option<TaskResult>,
+    /// Set for a later item of a loop `break_when` may end: nothing past its `when` is rendered.
+    pub(super) deferred: bool,
     pub(super) args: Map<String, Value>,
     pub(super) args_untrusted: BTreeSet<String>,
     pub(super) ignore_errors: Option<bool>,
@@ -32,6 +34,7 @@ impl Fields {
     pub(super) fn failed(result: TaskResult) -> Self {
         Self {
             skipped: Some(result),
+            deferred: false,
             args: Map::new(),
             args_untrusted: BTreeSet::new(),
             ignore_errors: None,
@@ -90,46 +93,53 @@ pub(super) fn render_fields(
     {
         return Err(e);
     }
-    let (args, args_untrusted) = if skipped.is_some() {
-        (Map::new(), BTreeSet::new())
-    } else {
-        crate::profile::count(crate::profile::Counter::RenderArgs, 1);
-        if crate::profile::tracks_repeats() {
-            for value in task.args.values() {
-                note_texts(at, templar, value);
-            }
+    // An item a `when` left out renders nothing more, and a later item of a loop `break_when`
+    // may end renders the rest when the loop reaches it: see `render_deferred`.
+    if skipped.is_some() || at.defer {
+        return Ok(Fields {
+            deferred: skipped.is_none(),
+            skipped,
+            check_mode: flag_for("check_mode", task.check_mode.as_ref(), vars, templar, true)?,
+            diff: flag_for("diff", task.diff.as_ref(), vars, templar, true)?,
+            ..Fields::failed(TaskResult::default())
+        });
+    }
+    render_rest(task, plan, templar, vars, at, warnings)
+}
+
+/// The arguments and the keywords of an item that runs, rendered after its `when` held.
+pub(super) fn render_rest(
+    task: &PlayTask,
+    plan: &PlayPlan,
+    templar: &Templar,
+    vars: &HostVars,
+    at: &Noting<'_>,
+    warnings: &mut Vec<String>,
+) -> Result<Fields, TemplateError> {
+    crate::profile::count(crate::profile::Counter::RenderArgs, 1);
+    if crate::profile::tracks_repeats() {
+        for value in task.args.values() {
+            note_texts(at, templar, value);
         }
-        render_args(task, plan, templar, vars)?
-    };
-    // Per item, against the item's own variables, and never for an item a `when` left out:
-    // the reference evaluates the conditional before it renders the task's keywords.
-    let ignore_errors = match (&task.ignore_errors, &skipped) {
-        (Some(Flag::Template(raw)), None) => Some(ignore_errors_for(raw, vars, templar)?),
+    }
+    let (args, args_untrusted) = render_args(task, plan, templar, vars)?;
+    // Per item, against the item's own variables: the reference evaluates the conditional
+    // before it renders the task's keywords.
+    let ignore_errors = match &task.ignore_errors {
+        Some(Flag::Template(raw)) => Some(ignore_errors_for(raw, vars, templar)?),
         _ => None,
     };
-    let check_mode = flag_for(
-        "check_mode",
-        task.check_mode.as_ref(),
-        vars,
-        templar,
-        skipped.is_some(),
-    )?;
-    let diff = flag_for("diff", task.diff.as_ref(), vars, templar, skipped.is_some())?;
-    // A skipped item runs nothing, so a layer it could not render is not its problem: the
-    // reference does not evaluate `environment` for a task a `when` left out.
-    let environment = if skipped.is_some() {
-        BTreeMap::new()
-    } else {
-        environment_for(task, vars, templar, warnings)?
-    };
+    let check_mode = flag_for("check_mode", task.check_mode.as_ref(), vars, templar, false)?;
+    let diff = flag_for("diff", task.diff.as_ref(), vars, templar, false)?;
     Ok(Fields {
-        skipped,
+        skipped: None,
+        deferred: false,
         args,
         args_untrusted,
         ignore_errors,
         check_mode,
         diff,
-        environment,
+        environment: environment_for(task, vars, templar, warnings)?,
     })
 }
 
@@ -144,6 +154,8 @@ pub(super) struct Noting<'a> {
     pub(super) item: usize,
     /// The names an item binds: a text that reads none of them renders alike for every item.
     pub(super) loop_names: [&'a str; 3],
+    /// A later item of a loop `break_when` may end: see [`Fields::deferred`].
+    pub(super) defer: bool,
 }
 
 impl Noting<'_> {

@@ -543,6 +543,11 @@ def resolve_one(name):
         if collection_of(hop) is not None:
             track_collection(collection_of(hop))
     if not module.resolved:
+        # An action plugin with no module of its name: the reference refuses a task only when
+        # neither loader answers to it.
+        action = action_loader.find_plugin_with_context(name)
+        if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
+            return {"action_plugin": action.resolved_fqcn, "with_module": False}
         # A `runtime.yml` redirect into a collection nobody installed: the install hint names
         # the collection at the end of the chain, not the one the playbook wrote.
         last = module.redirect_list[-1] if module.redirect_list else name
@@ -991,6 +996,9 @@ def call(request):
         anchor = variables.get("playbook_dir") or next(iter(variables.get("ansible_search_path") or []), None)
         if isinstance(anchor, str) and anchor:
             loader.set_basedir(anchor)
+        hosts = variables.get("hostvars")
+        if isinstance(hosts, dict) and set(hosts) == {"__volant_hostvars__"}:
+            variables["hostvars"] = PreloadedHostVars(hosts["__volant_hostvars__"], loader)
         templar = Templar(loader=loader, variables=variables)
         # The environment resolves a plugin on `in`, which may raise the not-found error or the
         # load error of a broken plugin file: both are answered below like a failed call.
@@ -1114,7 +1122,12 @@ def shim():
 
     def answered(reply):
         if "error" in reply:
-            raise AnsibleConnectionFailure(str(reply["error"]))
+            # The controller's refusal of the ask itself, which the plugin sees as its own error;
+            # any other is the link's.
+            message = str(reply["error"])
+            if message.startswith("\x00plugin:"):
+                raise AnsibleError(message[len("\x00plugin:"):])
+            raise AnsibleConnectionFailure(message)
         return reply.get("value")
 
     def text(value, what):
@@ -1337,6 +1350,23 @@ class LazyHostVars(collections.abc.Mapping):
     def __len__(self):
         return len(self._names)
 
+    def raw_get(self, host):
+        # `HostVars.raw_get`: the host's variables, not rendered.
+        return self._variables(host)
+
+
+class PreloadedHostVars(LazyHostVars):
+    """`hostvars` for a lookup, whose call cannot ask the controller: every host's variables
+    sent with the call, in the shape a `hostvar` ask is answered."""
+
+    def __init__(self, hosts, loader):
+        super().__init__(None, list(hosts), loader)
+        for host, value in hosts.items():
+            self._asked[host] = trusted_as_template(value["vars"]) if value["trusted"] else value["vars"]
+
+    def _variables(self, host):
+        return self._asked.get(host) if isinstance(host, str) else None
+
 
 def result_compat(result, warning_ctx):
     """`TaskExecutor._apply_task_result_compat` of ansible-core 2.19.12: the warnings and
@@ -1490,6 +1520,13 @@ def run_action(ident, request):
                         del result[key]
                     result.setdefault("changed", False)
                     result_compat(result, warning_ctx)
+                    # An error that gathers others (`gather_facts`'s failed modules) keeps its
+                    # shape for the controller's error block, which frames each one.
+                    event = getattr(result.get("exception"), "event", None)
+                    if event is not None and getattr(event, "events", None):
+                        result["_volant_cause"] = {
+                            "event": {"msg": event.msg, "events": [{"msg": e.msg} for e in event.events]}
+                        }
             finally:
                 action.cleanup()
         except Exception as failure:

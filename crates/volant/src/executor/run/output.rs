@@ -29,6 +29,9 @@ pub(super) fn give_terminals(tasks: &mut [Task], close: Option<String>) {
 /// The key the Python helper sets on a result it built from `AnsibleActionSkip`.
 pub(crate) const RAISED_SKIP: &str = "_volant_raised_skip";
 
+/// Where the helper leaves the text of a deprecation a plugin raised, for the driver to show.
+pub(crate) const DEPRECATION_TEXT: &str = "_volant_deprecation_text";
+
 /// `stdout_lines` and `stderr_lines`, for a result that carries `stdout` or `stderr` and not the
 /// list beside it. The reference's `_execute_module` adds both to every
 /// module result that lacks them, so a Python module's result has them there; here the agent
@@ -224,6 +227,30 @@ pub(super) fn verbose_segments(summary: &Value) -> Option<Vec<String>> {
         event = next;
     }
     Some(segments)
+}
+
+/// The link of a summary whose event gathers the errors of others, as `gather_facts` reports the
+/// fact modules that failed (`result_dict_from_captured_errors`): the event's message, then each
+/// gathered error in a `Sub-Event` frame, as `format_event_verbose_message` frames it.
+pub(super) fn grouped_segment(summary: &Value) -> Option<String> {
+    use std::fmt::Write as _;
+    let event = summary.get("event")?;
+    let events = event.get("events")?.as_array().filter(|e| !e.is_empty())?;
+    let mut out = event.get("msg")?.as_str()?.to_string();
+    let count = events.len();
+    for (index, sub) in events.iter().enumerate() {
+        let text = sub.get("msg").and_then(Value::as_str).unwrap_or_default();
+        let _ = write!(
+            out,
+            "\n\n+--[ Sub-Event {} of {count} ]---\n| \n",
+            index + 1
+        );
+        for line in text.lines() {
+            let _ = writeln!(out, "| {line}");
+        }
+        out.push_str("| \n+--[ End Sub-Event ]---");
+    }
+    Some(out)
 }
 
 /// Whether Python's `bool()` is false for the value a module sent: `None`, `False`, a zero, or

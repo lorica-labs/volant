@@ -11,7 +11,9 @@ use crate::vars::HostVars;
 
 use super::argspec::refusal;
 use super::local::set_fact_data;
-use super::output::{CAUSE_KEY, RAISED_SKIP, brief_message, python_falsy, verbose_segments};
+use super::output::{
+    CAUSE_KEY, RAISED_SKIP, brief_message, grouped_segment, python_falsy, verbose_segments,
+};
 
 /// One module result, ready to report: `changed_when` and `failed_when` decide its outcome
 /// wherever the module ran, controller side as well as on the agent.
@@ -276,9 +278,16 @@ fn lay_returned_facts(
 pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
     let cause = result.0.remove(CAUSE_KEY);
     if result.failed() {
-        let local = volant_protocol::modules::local(&task.module).is_some();
+        // `raw` is the reference's action plugin, whose failure is the action's own.
+        let local = volant_protocol::modules::local(&task.module).is_some()
+            || short_name(&task.module) == "raw";
+        // An error that gathers others is the action's own, measured with `gather_facts`.
+        let grouped = cause
+            .as_ref()
+            .or_else(|| result.0.get("exception"))
+            .and_then(grouped_segment);
         let by = match result.0.get("exception") {
-            Some(e) if !local && !python_falsy(e) => "Module",
+            Some(e) if !local && !python_falsy(e) && grouped.is_none() => "Module",
             _ => "Action",
         };
         // A module that raised sends no `msg`, only the summary of its exception, which the
@@ -312,6 +321,17 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
         } else {
             crate::render::task_failed(&crate::render::concat_message(&by_failed, &detail))
         };
+        if let Some(segment) = grouped
+            && !result.0.contains_key(crate::render::CHAIN_KEY)
+        {
+            result.0.insert(
+                crate::render::CHAIN_KEY.into(),
+                json!([
+                    crate::render::lead(&crate::render::task_failed(&by_failed)),
+                    crate::render::cause(&segment, None, None)
+                ]),
+            );
+        }
         // The causes the module's summary chains: the first link says the task and the module
         // failed and gives the module's own message, the others follow behind `caused by`.
         if let Some(mut links) = cause.as_ref().and_then(verbose_segments)

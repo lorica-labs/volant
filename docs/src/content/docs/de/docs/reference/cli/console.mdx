@@ -1,23 +1,61 @@
 ---
-sourceHash: 3c19687c4170
+sourceHash: 136f082e17a2
 title: volant console
-description: Führt Ad-hoc-Befehle in einer interaktiven Shell mit ansible-console aus, gestartet aus der Python-Runtime von Volant.
+description: Eine interaktive Shell, die pro Zeile einen Ad-hoc-Task mit Volants Engine ausführt, wie ansible-console.
 ---
 
-`volant console` führt das `ansible-console` von ansible-core 2.19.12 mit dem Interpreter aus, den Volant für einen Playbook-Lauf wählt, und funktioniert daher ohne installiertes ansible-core. Es ist das eigene Programm von ansible-core: Es führt Tasks mit dem Executor von ansible-core aus, nicht mit dem von Volant.
+`volant console` ist das `ansible-console` von ansible-core 2.19.12, in Rust geschrieben. Jede eingegebene Zeile läuft als ein Ad-hoc-Task auf den aktuellen Hosts, mit Volants Engine, so wie [`volant adhoc`](/de/docs/reference/cli/adhoc/) ihn ausführt. Eine Sitzung, die nur native Module ausführt, startet kein Python.
 
 ```sh
-volant console [ARGS...]
+volant console [pattern] [-i INV] [-l SUBSET] [-e VARS] [-f N] [-b] [--become-user USER] [--become-method METHOD]
+               [-u USER] [-c CONN] [-T SECS] [-C] [-D] [-M PATH] [--playbook-dir DIR] [--task-timeout N]
+               [vault, password and ssh options]
 ```
 
-Jedes Argument geht unverändert an `ansible-console`, auch `-h` und `--version`. Interpreter, Umgebung, Terminal, Exit-Code und `--version` funktionieren wie bei [`volant doc`](/de/docs/reference/cli/doc/).
+`pattern` sind die Hosts, mit denen die Sitzung beginnt, standardmäßig `all`. Ein Muster, das keinen Host übrig lässt, beendet den Befehl mit Exit-Code 1.
 
-Die Konsole braucht für ihren Prompt ein Terminal:
+## Die Sitzung
 
 ```
 Welcome to the ansible console. Type help or ? to list commands.
 
-user@all (3)[f:5]$
+user@all (3)[f:5]$ 
 ```
 
-Der Prompt besteht aus Benutzer, Muster, Anzahl der Hosts und Forks, gefolgt von `$ `, oder `# ` nach `become yes`. Geben Sie `exit` ein oder drücken Sie Strg-D, um sie zu verlassen: Die Konsole gibt eine Leerzeile und `Ansible-console was exited.` aus und endet mit 0. Liegt die Standardeingabe an einer Pipe, liest sie ihre Befehle von dort und endet am Ende der Eingabe genauso.
+Der Prompt besteht aus dem Remote-Benutzer (`-u`, sonst Ihr Kontoname), dem aktuellen Muster, der Zahl der Hosts, die es auswählt, und den Forks, dann `$ `, oder `# `, wenn become an ist und der become-Benutzer fehlt oder `root` ist. Auf einem Terminal mit Farbe ist der Prompt fett weiß, oder rot für `# `.
+
+Eine Zeile wird gelesen, wie `ansible-console` sie liest:
+
+- Eine leere Zeile tut nichts. Eine Zeile, die mit `#` beginnt, ist ein Kommentar.
+- Eine Zeile, deren erstes Wort ein Befehl der Konsole ist (unten), führt diesen Befehl aus.
+- Eine Zeile, deren erstes Wort ein Modul nennt, führt dieses Modul aus, mit dem Rest der Zeile als Argumenten, gelesen wie `-a`: `ping`, `command echo hi`, `ansible.builtin.copy src=a dest=/tmp/a`.
+- Jede andere Zeile, oder eine Zeile, die mit `!` beginnt, führt das Modul `shell` mit der ganzen Zeile aus: `echo hi there`, `!uptime`.
+
+Ergebnisse werden ausgegeben, wie `volant adhoc` sie ausgibt. Ein fehlgeschlagener Task gibt den `[ERROR]`-Block mit `Origin: <unknown>` aus. Eine Warnung oder ein Fehlerblock, der in der Sitzung schon ausgegeben wurde, wird nicht noch einmal ausgegeben.
+
+`exit`, `EOF` und Strg-D geben eine leere Zeile und `Ansible-console was exited.` aus, und die Sitzung endet mit 0. Strg-C am Prompt gibt das Banner und den Prompt erneut aus. Strg-C während eines Tasks hält ihn mit `[ERROR]: User interrupted execution` an, und die Sitzung geht weiter. Mit der Standardeingabe auf einer Pipe werden die Befehle Zeile für Zeile gelesen, nichts wird zurückgegeben, und das Ende der Eingabe beendet die Sitzung.
+
+Auf einem Terminal wird die Zeile mit Verlauf und Tab-Vervollständigung bearbeitet. Tab vervollständigt Befehls- und Modulnamen, nach `cd` Host- und Gruppennamen, und die Optionen der Module, die Volant nativ ausführt. Der Verlauf wird zu Beginn aus `~/.ansible-console_history` gelesen und am Ende zurückgeschrieben, ein Befehl pro Zeile, in eine Datei, die mit Modus `0600` angelegt wird. Ein Verlauf, den ein mit libedit gebautes Python geschrieben hat (`_HiStOrY_V2_` in der ersten Zeile), wird ebenfalls gelesen.
+
+## Befehle
+
+| Befehl | Wirkung |
+|---|---|
+| `cd [PATTERN]` | Wechselt zu den Hosts von `PATTERN`, wenn es Hosts trifft. Sonst gibt es `no host matched` aus und ändert nichts. `cd` allein wählt `*`, `cd /` oder `cd *` wählt `all`. |
+| `list`, `list groups` | Gibt die aktuellen Hosts oder alle Gruppen aus, eine pro Zeile. |
+| `forks N`, `serial N` | Setzt die Forks. `forks 0` gibt `forks must be greater than or equal to 1` aus. |
+| `become BOOL` | Schaltet become an oder aus. |
+| `become_user USER`, `become_method METHOD`, `remote_user USER` | Setzen den become-Benutzer, die become-Methode und den Login-Benutzer. |
+| `check BOOL`, `diff BOOL` | Schalten den Check-Modus und den Diff-Modus an oder aus und geben den neuen Wert aus. |
+| `timeout N` | Setzt das Task-Timeout in Sekunden; `0` schaltet es ab. |
+| `verbosity N` | Setzt die Ausführlichkeit, wie `-v`. |
+| `collections A,B` | Setzt die Collections, in denen kurze Modulnamen gesucht werden; `collections none` setzt sie zurück. |
+| `shell LINE` | Führt `LINE` mit dem Modul `shell` aus. |
+| `help [NAME]`, `?` | Ohne Namen listet es jeden Befehl und jedes Modul. Mit einem Namen gibt es die Hilfe des Befehls aus, oder Beschreibung und Optionen des Moduls. |
+
+`help` für ein Modul liest dessen Dokumentation aus dem ansible-core der verwalteten Runtime und gibt `[ERROR]: No documentation found for <name>.` aus, wenn es keine Runtime gibt. Nur vollständige Modulnamen haben eine Hilfe, wie in `ansible-console`: `help ping` gibt `*** No help on ping` aus. Die Modulliste umfasst die eingebauten Module von ansible-core und die Module der Collections, die dort installiert sind, wo die Konfiguration nach Collections sucht.
+
+## Unterschiede zu ansible-console
+
+- `forks x` und `serial x` beenden die Sitzung mit Exit-Code 250 und der Zeile `[ERROR]: Unexpected Exception`, wie die Referenz, aber ohne ihren Python-Traceback.
+- Auf einem Terminal sind die Steuersequenzen, die die Zeile neu zeichnen, die von rustyline, nicht die von GNU readline. Nach Strg-C am Prompt beginnt das Banner in einer neuen Zeile.

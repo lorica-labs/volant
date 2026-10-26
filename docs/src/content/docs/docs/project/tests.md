@@ -14,7 +14,7 @@ Each kind of recording has a name, and `just golden <kind>` regenerates it.
 | `template` | The result of rendering each expression in `crates/volant/tests/golden/cases.yml` | Every job, with `reference.rs` |
 | `inventory` | Hosts, variables and groups of an inventory, and the hosts each pattern selects | Every job, with `reference.rs` |
 | `scenario` | A playbook run: the exit code and the whole standard output | Every job, with `reference.rs` |
-| `command-names` | The output of the scripts in `tests/command-names`, which call `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` and `ansible-galaxy` | The `command-names` job |
+| `command-names` | The output of the scripts in `tests/command-names`, which call `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-pull` and `ansible-console` | The `command-names` job |
 | `shadow` | A run of a chosen scenario through the `volant.compat.record` callback, gzipped in `crates/volant/tests/golden/shadow`; the callback's own sample under every ansible-core it supports is checked too (`just compat-matrix`) | Every job, with `shadow_golden.rs`, which replays each recording and wants no divergence |
 | `module` | What each native module answered on a real machine | The `ssh` job and `just test-reference`, with `reference_modules.rs` |
 

@@ -39,6 +39,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
         ColorChoice::Auto
     };
     let mut out = plays.renderer(choice, args.verbose);
+    args.lend_shown(&mut out);
     if let Plays::Adhoc(adhoc) = plays {
         out.set_minimal(adhoc.module());
         adhoc.show(&mut out);
@@ -61,6 +62,7 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     };
     // A blocked terminal read (a `pause` prompt the run was interrupted at) must not hold the exit.
     runtime.shutdown_background();
+    args.keep_shown(&mut out);
     // After everything the run printed, recap included, and never on stdout.
     if args.profile {
         eprint!("{}", profile.render());
@@ -142,6 +144,8 @@ async fn run_all(
             play.gather_facts = false;
         }
     }
+    let plays_of = playbooks.iter().flat_map(|pb| &pb.plays);
+    crate::action_plugins::facts_modules::configure(&config.facts_modules, plays_of, &inventory);
     let mode = Listing {
         tasks: args.list_tasks,
         tags: args.list_tags,
@@ -310,8 +314,7 @@ async fn run_all(
     let (python, helper) = match built {
         Ok(built) => built,
         Err(e) => {
-            // The reference's ad hoc run fails each host with a module nothing answers to, rather
-            // than refusing the run.
+            // The reference's ad hoc run fails each host with a module nothing answers to.
             if let Plays::Adhoc(adhoc) = plays
                 && adhoc.is_unresolved(&e)
                 && let Some(play) = playbooks.first().and_then(|pb| pb.plays.first())
@@ -325,6 +328,7 @@ async fn run_all(
             ));
         }
     };
+    crate::action_plugins::facts_modules::settle(python.as_ref());
     for play in compiled.iter().flatten() {
         preflight::check_collection_actions(play).map_err(|e| Refusal::or(4, e))?;
     }
@@ -422,7 +426,10 @@ async fn run_all(
             }
         }
     }
-    let (connection_password, become_password) = match ask_passwords(args) {
+    let asked = args
+        .carried_passwords()
+        .map_or_else(|| ask_passwords(args), Ok);
+    let (connection_password, become_password) = match asked {
         Ok(passwords) => passwords,
         Err(message) => {
             eprintln!("[ERROR]: {message}");

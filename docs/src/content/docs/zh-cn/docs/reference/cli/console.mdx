@@ -1,23 +1,61 @@
 ---
-sourceHash: 3c19687c4170
+sourceHash: 136f082e17a2
 title: volant console
-description: 用 ansible-console 在交互式 shell 中运行临时命令，它在 Volant 的 Python 运行时中运行。
+description: 交互式 shell，每行用 Volant 的引擎运行一个 ad hoc 任务，与 ansible-console 一样。
 ---
 
-`volant console` 用 Volant 为 playbook 运行选择的解释器运行 ansible-core 2.19.12 的 `ansible-console`，所以不装 ansible-core 也能工作。它是 ansible-core 自己的程序：它用 ansible-core 的执行器运行任务，而不是 Volant 的。
+`volant console` 是用 Rust 编写的 ansible-core 2.19.12 的 `ansible-console`。你输入的每一行都在当前主机上作为一个 ad hoc 任务运行，使用 Volant 的引擎，与 [`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/) 的运行方式相同。只运行原生模块的会话不会启动 Python。
 
 ```sh
-volant console [ARGS...]
+volant console [pattern] [-i INV] [-l SUBSET] [-e VARS] [-f N] [-b] [--become-user USER] [--become-method METHOD]
+               [-u USER] [-c CONN] [-T SECS] [-C] [-D] [-M PATH] [--playbook-dir DIR] [--task-timeout N]
+               [vault, password and ssh options]
 ```
 
-每个参数都原样交给 `ansible-console`，包括 `-h` 和 `--version`。解释器、环境变量、终端、退出码和 `--version` 的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。
+`pattern` 是会话开始时的主机，默认是 `all`。一个不剩任何主机的模式会让命令以 1 退出。
 
-控制台需要终端来显示提示符：
+## 会话
 
 ```
 Welcome to the ansible console. Type help or ? to list commands.
 
-user@all (3)[f:5]$
+user@all (3)[f:5]$ 
 ```
 
-提示符由用户、模式、主机数和 fork 数组成，后面跟 `$ `，在 `become yes` 之后则是 `# `。输入 `exit` 或按 ctrl-d 退出：控制台会打印一个空行和 `Ansible-console was exited.`，并以 0 退出。标准输入是管道时，它从那里读取命令，并在输入结束时以同样的方式结束。
+提示符由远程用户（`-u`，否则是你的账户名）、当前模式、它选中的主机数和 forks 组成，后面是 `$ `；当 become 打开且 become 用户未设置或为 `root` 时是 `# `。在支持颜色的终端上，提示符为粗体白色，`# ` 时为红色。
+
+一行按 `ansible-console` 的方式读取：
+
+- 空行什么也不做。以 `#` 开头的行是注释。
+- 第一个词是控制台命令（见下）的行运行该命令。
+- 第一个词是模块名的行运行该模块，行的其余部分按 `-a` 的读法作为参数：`ping`、`command echo hi`、`ansible.builtin.copy src=a dest=/tmp/a`。
+- 其他任何行，或以 `!` 开头的行，用 `shell` 模块运行整行：`echo hi there`、`!uptime`。
+
+结果按 `volant adhoc` 的方式打印。失败的任务打印带 `Origin: <unknown>` 的 `[ERROR]` 块。会话中已经打印过的警告或错误块不会再打印。
+
+`exit`、`EOF` 和 ctrl-d 打印一个空行和 `Ansible-console was exited.`，会话以 0 退出。在提示符处按 ctrl-c 会重新打印横幅和提示符。任务运行时按 ctrl-c 会以 `[ERROR]: User interrupted execution` 停止它，会话继续。标准输入是管道时，命令逐行读取，不回显，输入结束时会话结束。
+
+在终端上，行可以借助历史和 Tab 补全来编辑。Tab 补全命令名和模块名，`cd` 之后补全主机名和组名，还补全 Volant 原生运行的模块的选项。历史在开始时从 `~/.ansible-console_history` 读取，结束时写回，每行一个命令，文件以 `0600` 模式创建。用 libedit 构建的 Python 写的历史文件（第一行为 `_HiStOrY_V2_`）也能读取。
+
+## 命令
+
+| 命令 | 作用 |
+|---|---|
+| `cd [PATTERN]` | 当 `PATTERN` 匹配到主机时，把当前主机切换为它。否则打印 `no host matched`，不做改变。单独的 `cd` 选中 `*`，`cd /` 或 `cd *` 选中 `all`。 |
+| `list`、`list groups` | 打印当前主机或所有组，每行一个。 |
+| `forks N`、`serial N` | 设置 forks。`forks 0` 打印 `forks must be greater than or equal to 1`。 |
+| `become BOOL` | 打开或关闭 become。 |
+| `become_user USER`、`become_method METHOD`、`remote_user USER` | 设置 become 用户、become 方法和登录用户。 |
+| `check BOOL`、`diff BOOL` | 打开或关闭检查模式和差异模式，并打印新值。 |
+| `timeout N` | 以秒为单位设置任务超时；`0` 表示关闭。 |
+| `verbosity N` | 设置详细程度，与 `-v` 相同。 |
+| `collections A,B` | 设置查找短模块名时使用的集合；`collections none` 恢复默认。 |
+| `shell LINE` | 用 `shell` 模块运行 `LINE`。 |
+| `help [NAME]`、`?` | 不带名字时列出所有命令和模块。带名字时打印命令的帮助，或模块的说明和选项。 |
+
+模块的 `help` 从托管运行时的 ansible-core 读取文档；没有运行时时打印 `[ERROR]: No documentation found for <name>.`。与 `ansible-console` 一样，只有完整的模块名才有帮助：`help ping` 打印 `*** No help on ping`。模块列表包括 ansible-core 的内置模块，以及安装在配置查找集合的位置上的集合中的模块。
+
+## 与 ansible-console 的不同
+
+- `forks x` 和 `serial x` 与参照实现一样，以 250 结束会话并打印 `[ERROR]: Unexpected Exception` 那一行，但不打印 Python 回溯。
+- 在终端上，重绘行的控制序列来自 rustyline，而不是 GNU readline。在提示符处按 ctrl-c 后，横幅从新的一行开始。

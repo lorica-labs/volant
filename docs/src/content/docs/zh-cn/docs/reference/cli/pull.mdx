@@ -1,19 +1,53 @@
 ---
-sourceHash: 5a60f05341da
+sourceHash: 45a0f89e46bd
 title: volant pull
-description: 用 ansible-pull 克隆仓库并运行其中的 playbook，运行时使用 Volant 自己的引擎。
+description: 用 git 检出仓库，并像 ansible-pull 一样在本机运行其中的 playbook，检出时不用 Python。
 ---
 
-`volant pull` 用 Volant 为 playbook 运行选择的解释器运行 ansible-core 2.19.12 的 `ansible-pull`，所以不装 ansible-core 也能工作。
+`volant pull` 是用 Rust 编写的 ansible-core 2.19.12 的 `ansible-pull`。它在自己运行的机器上检出一个仓库，然后针对同一台机器运行仓库里的一个 playbook。它适合从 cron 运行。检出需要 `git`，不需要 Python。playbook 用 Volant 的引擎运行，与 [`volant playbook`](/zh-cn/docs/reference/cli/) 的运行方式相同，只有 playbook 需要 Python 时才会安装托管运行时。
 
 ```sh
-volant pull [ARGS...]
+volant pull -U URL [-d DIR] [-C REV] [-i INV]... [-e VARS]... [-t TAGS] [--skip-tags TAGS] [-l SUBSET]
+            [--check] [--diff] [--flush-cache] [-o] [-s N] [-f] [--clean] [--purge] [--full]
+            [--accept-host-key] [--verify-commit] [--track-subs] [--private-key FILE] [-m MODULE]
+            [-v...] [vault and password options] [PLAYBOOK...]
 ```
 
-每个参数都原样交给 `ansible-pull`：`-U`、`-d`、`-C`、`-f`、`-o`、`--purge`、`-i`、`-e` 等都是该工具自己的。解释器、环境变量、终端和退出码的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。
+## 步骤
 
-`ansible-pull` 为检出启动 `ansible`，为运行启动 `ansible-playbook`，两者都从它自己路径所在的目录启动。Volant 为它们保留一个目录，即其缓存（`$XDG_CACHE_HOME/volant/` 或 `~/.cache/volant/`）下的 `pull`，权限为 `0700`，并在其中把 `ansible` 和 `ansible-playbook` 链接到正在运行的 `volant` 二进制文件。以这些名字启动时，`volant` 的行为等同于 [`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/) 和 [`volant playbook`](/zh-cn/docs/reference/cli/)，所以两步都使用 Volant 的引擎。链接在第一次使用时创建，在 `volant` 二进制文件移动后被替换。检出步骤运行 `git` 模块，它需要运行时的 Python 和机器上的 `git`。
+1. `-U` 指定仓库，`-d` 指定检出到的目录。默认目录是 `~/.ansible/pull/<fqdn>`（`$ANSIBLE_HOME/pull/<fqdn>`），其中 `<fqdn>` 是本机的完整域名。相对的 `-d` 会变成绝对路径。
+2. 命令打印 `Starting Ansible Pull at <日期和时间>`，然后打印它自己的命令行。
+3. 检出会克隆仓库，或者获取仓库并更新工作树，做法与 `git` 模块在 `depth=1` 下相同。除非指定 `--full`，克隆是浅克隆，最后停在 `-C` 指定的分支、标签或提交上。结果按 `ansible -m git` 的方式打印：带 `before` 和 `after` 的 `localhost | CHANGED => {...}`，没有变化时为 `SUCCESS`。失败时打印 `[ERROR]` 块和 `FAILED!`，命令以 2 退出。已跟踪文件有本地修改时检出会失败，除非指定 `--clean`。
+4. 选择 playbook。命令行上给出的每个 playbook 都在检出目录中查找。没有给出时，使用 `<fqdn>.yml`、`<hostname>.yml` 和 `local.yml` 中第一个存在的。什么都没找到时，命令为每个缺失的文件给出警告，并以 5 退出，打印 `Could not find a playbook to run.`
+5. playbook 在检出目录中以 `ansible-playbook -c local` 运行。它被限制在 `localhost`、本机的名字和 `127.0.0.1`，给出 `-l` 时则限制在 `-l`。每个在检出目录中存在、或含有逗号的 `-i` 来源都会传下去。退出码是 playbook 的退出码。
 
-`ansible-pull` 打印的第二行是它自己的命令行。直接运行 `ansible-pull` 时那里显示它脚本的路径，而这里显示 `<cache>/volant/pull/ansible-pull`。这是输出中唯一的不同。
+两个步骤都写到标准输出，警告和错误也一样，因为 `ansible-pull` 把它们复制到那里。命令自身的警告（`-f` 的警告和 playbook 缺失的警告）写到标准错误。
 
-`ansible-pull` 通过管道分小块读取它的两个子进程，所以其中一个的警告可能被同时写出的输出截断。
+## 选项
+
+| 选项 | 作用 |
+|---|---|
+| `-o`、`--only-if-changed` | 只有检出改变了什么时才运行 playbook。否则打印 `Repository has not changed, quitting: b'...'`，其中检出的输出写成 Python 的 bytes 字面量，并以 0 退出。 |
+| `-s N`、`--sleep N` | 检出前随机等待 0 到 N-1 秒，这个数不为 0 时打印 `Sleeping for <n> seconds...`。不是正数的值以 5 退出。 |
+| `-f`、`--force` | 检出失败时警告 `Unable to update repository. Continuing with (forced) run of playbook.`，并运行上一次检出的 playbook。 |
+| `--clean` | 丢弃检出目录中的本地修改（`force=yes`）。 |
+| `--purge` | playbook 运行后删除检出目录，无论结果如何。 |
+| `--full` | 克隆完整历史。 |
+| `-C REV`、`--checkout REV` | 要检出的分支、标签或提交。 |
+| `--verify-commit` | 检查检出的提交或标签的 GPG 签名，验证不通过就停止。 |
+| `--track-subs` | 把子模块更新到它们分支的最新提交。 |
+| `--accept-host-key` | 接受仓库 ssh 服务器未知的主机密钥。 |
+| `--private-key FILE` | 仓库使用的 ssh 密钥。 |
+| `-m MODULE` | 默认的 `git` 以原生方式运行。`subversion`、`hg` 和 `bzr` 通过 [`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/) 运行该模块，需要托管运行时。其他名字以 5 退出。 |
+| `-e`、`-t`、`--skip-tags`、`-l`、`--check`、`--diff`、`--flush-cache`、`-K`、`--become-password-file`、`--connection-password-file`、`--vault-id`、`--vault-password-file`、`-v` | 传给 playbook 运行。`-e` 和 `-v` 也传给检出。 |
+
+`-u`、`-c`、`-T`、ssh 参数选项、`-k`、`-J`、`-M` 和 `--list-hosts` 会被接受但不起作用，与 `ansible-pull` 相同。
+
+## 与 ansible-pull 的不同
+
+- 在管道上，`ansible-pull` 在它的步骤打印完所有内容之后才打印它的前两行，因为它自己的输出有缓冲。Volant 先打印这两行，与两者在终端上的做法一致。
+- 检出只运行一次，在 `localhost` 上。如果检出前已经存在一个 `-i` 文件，并且用本机自己的名字列出了本机，`ansible-pull` 也会在那个主机上检出。
+- 带 `-i` 时，参照实现的检出结果还包含 `ansible_facts.discovered_interpreter_python`，并给出一条关于所找到解释器的警告。原生检出不启动 Python，所以两者都不打印。
+- 完整域名来自先解析本机名字、再反查它的地址。当规范名没有点而它的某个别名有点时，Python 的 `socket.getfqdn()` 取这个别名，Volant 不取。
+- 带 `-v` 时，关于配置文件的那一行在检出的警告之前。在管道上，参照实现的顺序取决于时机。
+- `--purge` 无法删除目录时，用操作系统的错误措辞报告。

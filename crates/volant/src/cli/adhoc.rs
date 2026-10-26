@@ -289,7 +289,7 @@ impl Adhoc {
 
     /// Where the reference says the task comes from in an error block, and the task as it shows
     /// it there: `{'action': ..., 'args': ..., 'timeout': 0, 'async_val': 0, 'poll': 15}`.
-    fn task_origin(&self) -> Origin {
+    pub(super) fn task_origin(&self) -> Origin {
         let mut ds = Map::new();
         ds.insert("action".into(), self.module.clone().into());
         ds.insert("args".into(), Value::Object(self.args.clone()));

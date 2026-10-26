@@ -174,6 +174,66 @@ fn kubectl_runs_a_play_in_a_pod() {
     assert!(left.is_empty(), "{left:?}");
 }
 
+/// The inode and modification time of the agent the first run cached under root's `remote_tmp`:
+/// an upload writes a new copy and renames it over the old one, so a second run that uploaded
+/// nothing leaves both as they were.
+const CACHED_AGENT: &str = "stat -c '%i %Y' /root/.ansible/tmp/volant-agent-*/volant-agent";
+
+/// `command` run to completion, its stdout trimmed.
+fn ran(command: &[&str]) -> String {
+    let out = Command::new(command[0])
+        .args(&command[1..])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{command:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// A second run finds the agent the first one cached and uploads nothing.
+#[test]
+#[ignore = "needs a cluster, kubernetes.core and the agent"]
+fn kubectl_reuses_the_cached_agent_on_a_second_run() {
+    let ns = Namespace::new("cache");
+    ns.pod("app1", &["sleep", "infinity"], "Ready");
+    let dir = tempfile::tempdir().unwrap();
+    let cached = || {
+        ran(&[
+            "kubectl",
+            "exec",
+            "-n",
+            &ns.0,
+            "app1",
+            "--",
+            "sh",
+            "-c",
+            CACHED_AGENT,
+        ])
+    };
+    let mut before = String::new();
+    for round in 0..2 {
+        let out = play(
+            dir.path(),
+            &[("app1", format!("ansible_kubectl_namespace: {}", ns.0))],
+            "    - ansible.builtin.command: id -un\n",
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if round == 0 {
+            before = cached();
+            assert!(!before.is_empty(), "no cached agent");
+        }
+    }
+    assert_eq!(cached(), before, "the second run uploaded the agent again");
+}
+
 /// A pod or a namespace that does not exist, and a pod that has finished, leave the host
 /// unreachable with what `kubectl` said.
 #[test]

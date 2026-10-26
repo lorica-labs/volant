@@ -75,6 +75,44 @@ fn chroot_runs_a_play_in_a_tree() {
     );
 }
 
+/// A second run finds the agent the first one cached and uploads nothing: an upload writes a new
+/// copy and renames it over the old one, so the inode and the modification time stay as they were.
+#[test]
+#[ignore = "needs root, community.general and a tree"]
+fn chroot_reuses_the_cached_agent_on_a_second_run() {
+    use std::os::unix::fs::MetadataExt;
+    let tree = Tree::copy();
+    let work = tempfile::tempdir().unwrap();
+    let cached = || {
+        let dir = std::fs::read_dir(tree.path().join("root/.ansible/tmp"))
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .find(|path| {
+                path.file_name()
+                    .is_some_and(|name| name.to_string_lossy().starts_with("volant-agent-"))
+            })
+            .expect("a cached agent");
+        let meta = dir.join("volant-agent").metadata().unwrap();
+        (meta.ino(), meta.mtime())
+    };
+    let mut before = None;
+    for _ in 0..2 {
+        let out = play(work.path(), tree.path(), "", WHO_AM_I);
+        assert!(
+            out.status.success(),
+            "{}{}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
+        );
+        before.get_or_insert_with(cached);
+    }
+    assert_eq!(
+        Some(cached()),
+        before,
+        "the second run uploaded the agent again"
+    );
+}
+
 /// The upload runs inside the tree, so a `remote_tmp` linking outside it names a path that is not
 /// there: the upload fails, and nothing outside the tree is written.
 #[test]

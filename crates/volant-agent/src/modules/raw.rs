@@ -29,7 +29,7 @@ fn run_raw(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() -> boo
     let executable = args
         .get("executable")
         .and_then(Value::as_str)
-        .unwrap_or("sh");
+        .unwrap_or("/bin/sh");
     let mut inner = Map::new();
     inner.insert("argv".into(), json!([executable, "-c", line]));
     // Ansible's `raw` returns the output untouched, where `command` trims trailing newlines.
@@ -45,6 +45,15 @@ fn run_raw(args: &Map<String, Value>, ctx: &Context, cancelled: &dyn Fn() -> boo
         Run::Done(TaskResult(mut map)) => {
             for key in ["cmd", "start", "end", "delta", "msg"] {
                 map.remove(key);
+            }
+            // The reference's action words a failure itself: `non-zero return code`, with no
+            // `msg` on a success.
+            if map
+                .get("rc")
+                .and_then(Value::as_i64)
+                .is_some_and(|rc| rc != 0)
+            {
+                map.insert("msg".into(), json!("non-zero return code"));
             }
             Run::Done(TaskResult(map))
         }

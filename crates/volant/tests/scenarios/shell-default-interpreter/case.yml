@@ -1,0 +1,2 @@
+# Without `executable`, `shell` and `raw` hand their line to `/bin/sh`, which a failing line names.
+args: [-i, inv.ini, play.yml]

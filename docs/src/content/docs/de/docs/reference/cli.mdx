@@ -1,5 +1,5 @@
 ---
-sourceHash: a228735dd63e
+sourceHash: c14148539387
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -11,7 +11,7 @@ volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
 volant config [ARGS...]
-volant console [ARGS...]
+volant console [pattern] [OPTIONS]
 volant doc [ARGS...]
 volant galaxy [ARGS...]
 volant pull -U URL [OPTIONS] [PLAYBOOK...]
@@ -27,7 +27,7 @@ Jeder andere Befehl hat eine eigene Seite: [`volant adhoc`](/de/docs/reference/c
 
 `volant playbook` nimmt dieselben Optionen wie `ansible-playbook`, soweit sie dort existieren. `volant-playbook` ist dasselbe Programm unter einem Namen, der dem vertrauten ähnelt. Playbooks, die zusammen angegeben werden, laufen der Reihe nach, und jedes gibt seinen eigenen Recap aus.
 
-Unter Linux und macOS richtet sich die `volant`-Binärdatei auch nach dem Namen, unter dem sie gestartet wurde (dem Dateinamen von `argv[0]`). Als `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-console`, `ansible-pull` oder `ansible-inventory` gestartet, über einen symbolischen oder einen harten Link, verhält sie sich wie `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy`, `volant console`, `volant pull` oder `volant inventory`, mit denselben Argumenten, derselben Ausgabe und denselben Exit-Codes. Als `ansible` gestartet, verhält sie sich wie `volant adhoc`. `volant doc`, `config`, `galaxy` und `console` führen die eigenen Werkzeuge von ansible-core aus der Python-Runtime von Volant aus. `volant pull` ist Volants eigener Befehl; [`volant pull`](/de/docs/reference/cli/pull/) listet, worin seine Ausgabe abweicht. Ein Aufruffehler endet mit 2 und nennt das Programm unter dem gestarteten Namen. Jeder andere Name behält das übliche `volant`-Verhalten.
+Unter Linux und macOS richtet sich die `volant`-Binärdatei auch nach dem Namen, unter dem sie gestartet wurde (dem Dateinamen von `argv[0]`). Als `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-console`, `ansible-pull` oder `ansible-inventory` gestartet, über einen symbolischen oder einen harten Link, verhält sie sich wie `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy`, `volant console`, `volant pull` oder `volant inventory`, mit denselben Argumenten, derselben Ausgabe und denselben Exit-Codes. Als `ansible` gestartet, verhält sie sich wie `volant adhoc`. `volant doc`, `config` und `galaxy` führen die eigenen Werkzeuge von ansible-core aus der Python-Runtime von Volant aus. `volant pull` und `volant console` sind Volants eigene Befehle; [`volant pull`](/de/docs/reference/cli/pull/) und [`volant console`](/de/docs/reference/cli/console/) listen, worin sie abweichen. Ein Aufruffehler endet mit 2 und nennt das Programm unter dem gestarteten Namen. Jeder andere Name behält das übliche `volant`-Verhalten.
 
 Hat eine Option einen Schlüssel in der `ansible.cfg` oder eine Umgebungsvariable, nennt der Eintrag sie. Die Option gewinnt gegen beide; [Konfiguration](/de/docs/reference/configuration/) erklärt die Reihenfolge.
 

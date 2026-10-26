@@ -16,7 +16,9 @@ use crate::transport::ConnectionDefaults;
 use crate::vars::VarStore;
 
 use super::coordinator::{Event, Progress};
-use super::prepare::{PlayPlan, Prepared, hide_after_failure, pause_of, prepare, resolve};
+use super::prepare::{
+    PlayPlan, Prepared, hide_after_failure, pause_of, prepare, render_deferred, resolve,
+};
 use super::run::{break_after, classify, empty_loop_result, loops, registered_value};
 
 mod request;
@@ -139,7 +141,10 @@ pub(super) fn resolve_include(
     let mut broke = false;
     let mut groups = Vec::new();
     let mut shown = Vec::new();
-    for item in items {
+    for (ii, mut item) in items.into_iter().enumerate() {
+        warnings.extend(render_deferred(
+            &step.task, plan, templar, host, &mut item, ii,
+        ));
         if let Some(skipped) = &item.skipped {
             let mut result = skipped.clone();
             broke = break_after(&step.task, &item, &mut result, templar);

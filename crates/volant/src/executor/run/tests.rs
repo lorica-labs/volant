@@ -82,6 +82,7 @@ async fn every_local_module_has_an_arm_in_run_local() {
     };
     for spec in volant_protocol::modules::LOCAL_MODULES {
         let item = Item {
+            deferred: false,
             element: None,
             label: None,
             args: Map::new(),
@@ -136,6 +137,7 @@ async fn local_with(module: &str, args: Value, host_vars: HostVars) -> TaskResul
         .render_map_tainted(&written.args, &host_vars)
         .expect("the arguments render");
     let item = Item {
+        deferred: false,
         args: rendered,
         args_untrusted: untrusted,
         vars: host_vars,
@@ -394,6 +396,7 @@ async fn a_set_fact_renders_its_keys_checks_the_names_and_keeps_values_data() {
         let mut t = task("set_fact");
         t.args = vars(json!({"k_{{ h }}": 1, "plain": 2}));
         let item = Item {
+            deferred: false,
             args: t.args.clone(),
             vars: host(),
             ..local_item(json!({}))
@@ -415,6 +418,7 @@ async fn a_set_fact_renders_its_keys_checks_the_names_and_keeps_values_data() {
         let mut t = task("set_fact");
         t.args = vars(json!({ key.clone(): "{{ ro.stdout }}" }));
         let item = Item {
+            deferred: false,
             args: vars(json!({ key.clone(): "{{ lookup('pipe', 'id') }}" })),
             args_untrusted: BTreeSet::from([key.clone()]),
             ..local_item(json!({}))
@@ -619,6 +623,7 @@ async fn an_interrupted_pause_ends_at_once() {
 fn the_argument_check_speaks_the_reference_s_sentences() {
     let check = |provided: Value, host: Value| {
         let item = Item {
+            deferred: false,
             element: None,
             label: None,
             args: vars(json!({
@@ -776,6 +781,7 @@ fn a_result_that_ran_says_whether_it_failed() {
     let templar = templar();
     let t = task("command");
     let item = Item {
+        deferred: false,
         element: None,
         label: None,
         args: Map::new(),
@@ -826,6 +832,7 @@ fn a_result_that_ran_says_whether_it_failed() {
 fn the_recap_counts_changed_the_way_the_reference_does() {
     let templar = templar();
     let item = Item {
+        deferred: false,
         element: None,
         label: None,
         args: Map::new(),
@@ -884,6 +891,7 @@ fn failed_when_false_rescues_a_non_zero_rc() {
     let mut t = task("command");
     t.failed_when = vec!["result.rc == 99".into()];
     let item = Item {
+        deferred: false,
         element: None,
         label: None,
         args: Map::new(),
@@ -1959,6 +1967,7 @@ async fn plugin_item_on<R: Relink<FakeAgent>>(
     });
     let t = PlayTask { timeout, ..t };
     let item = Item {
+        deferred: false,
         args: vars(args),
         ..bare_item()
     };
@@ -3310,6 +3319,7 @@ async fn copy_attempts<C: AgentChannel>(
 ) {
     let kind = crate::action_plugins::Kind::Copy;
     let item = Item {
+        deferred: false,
         args: vars(args),
         ..bare_item()
     };
@@ -5575,6 +5585,7 @@ async fn an_include_vars_merge_keeps_the_trust_of_both_sides() {
         let mut written = task("include_vars");
         written.args = vars(args);
         let item = Item {
+            deferred: false,
             args: written.args.clone(),
             vars: host_vars,
             ..local_item(json!({}))

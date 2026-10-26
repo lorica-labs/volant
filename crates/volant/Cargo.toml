@@ -38,6 +38,7 @@ minijinja-contrib.workspace = true
 miniz_oxide.workspace = true
 pbkdf2.workspace = true
 regex.workspace = true
+rustyline.workspace = true
 saphyr.workspace = true
 saphyr-parser.workspace = true
 serde.workspace = true

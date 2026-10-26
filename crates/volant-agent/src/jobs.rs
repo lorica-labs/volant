@@ -305,6 +305,7 @@ pub fn run() -> i32 {
         timeout: None,
         ..spec.task
     };
+    modules::AS_WRITTEN.store(true, std::sync::atomic::Ordering::Relaxed);
     let (run, _) = modules::run(&task, &|| passed(deadline, Duration::ZERO));
     match run {
         Run::Done(result) => match serde_json::to_string(&result) {

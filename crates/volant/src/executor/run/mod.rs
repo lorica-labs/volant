@@ -28,7 +28,7 @@ pub(super) use controller::pause_lines;
 pub(super) use interpreter::{
     DISCOVERED_INTERPRETER, DISCOVERY_HELP, action_fqcn, chosen_interpreter, discovers_interpreter,
     discovery_warning, python_for, requested_interpreter, running_host_vars, silent_discovery,
-    stamp_discovery, step_tasks, unsent,
+    stamp_discovery, step_task, step_tasks, unsent,
 };
 pub(super) use judge::{break_after, broke_before, empty_loop_result, finish, loops, task_fails};
 pub(super) use links::reuse_or_connect;

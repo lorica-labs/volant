@@ -29,7 +29,7 @@ fn answer(args: &Map<String, Value>) -> Result<TaskResult, String> {
     let mut unknown: Vec<&str> = args
         .keys()
         .map(String::as_str)
-        .filter(|key| !matches!(*key, "jid" | "mode" | "_async_dir"))
+        .filter(|key| !matches!(*key, "jid" | "mode" | "_async_dir" | MODULE_ONLY))
         .collect();
     if !unknown.is_empty() {
         unknown.sort_unstable();
@@ -104,6 +104,12 @@ fn answer(args: &Map<String, Value>) -> Result<TaskResult, String> {
     } else {
         status(&path, &jid, shown)
     };
+    // An action plugin that runs the module itself (`gather_facts` polling its jobs) gets the
+    // module's answer alone, without the keys the `async_status` action adds around it: measured
+    // on ansible-core 2.19.12 in `failed_modules`.
+    if args.contains_key(MODULE_ONLY) {
+        return Ok(TaskResult(module));
+    }
     result.extend(module);
     // The action plugin's own conversion, for files an older wrapper wrote with 0 and 1.
     for key in ["started", "finished"] {
@@ -113,6 +119,9 @@ fn answer(args: &Map<String, Value>) -> Result<TaskResult, String> {
     result.entry("changed").or_insert(Value::Bool(false));
     Ok(TaskResult(result))
 }
+
+/// The argument a bridged action plugin's own `async_status` call carries: the module alone.
+pub const MODULE_ONLY: &str = "_volant_module_only";
 
 /// The module's status answer. A file that cannot be read or parsed is a job still writing it,
 /// as the reference reads it: `data` is still `None` when `json.loads` raises.

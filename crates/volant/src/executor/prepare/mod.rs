@@ -243,24 +243,13 @@ pub(super) fn prepare(
                     task.index_var.as_deref().unwrap_or_default(),
                     "ansible_loop",
                 ],
+                defer: index > 0 && !task.break_when.is_empty() && carry.is_none(),
             },
             &mut loop_error,
             warnings,
         ) {
             Ok(fields) => fields,
-            Err(err) if element.is_some() => {
-                let mut failed = Fields::failed(item_failure(task, &err));
-                // Measured on ansible-core 2.19.12: an item whose `ignore_errors` failed to
-                // render counts as ignored, so the loop prints `...ignoring` unless another
-                // item failed for good.
-                if err
-                    .0
-                    .starts_with("Error processing keyword 'ignore_errors'")
-                {
-                    failed.ignore_errors = Some(true);
-                }
-                failed
-            }
+            Err(err) if element.is_some() => failed_fields(task, &err),
             Err(err) => return Err(err),
         };
         // As `environment`: a keyword the reference renders before the module runs, so an
@@ -298,6 +287,7 @@ pub(super) fn prepare(
             notify,
             label_error,
             label_raised,
+            deferred: fields.deferred,
         };
         if let Some(carry) = &mut carry {
             carry.take(&item, templar);
@@ -310,17 +300,7 @@ pub(super) fn prepare(
                     raises(label_for(task, item.element.as_ref(), &after, templar))?;
             }
         }
-        // An item that runs nothing reports its label's failure over its result now.
-        if let Some(result) = item.skipped.as_mut()
-            && let Some(message) = item.label_error.take()
-        {
-            label_failed(&message, result);
-        }
-        if let Some(result) = item.skipped.as_mut()
-            && let Some(message) = &item.label_raised
-        {
-            *result = label_raised_result(task, message);
-        }
+        settle_label(task, &mut item);
         let ends = item.label_raised.is_some();
         items.push(item);
         // The task ends at this item: nothing behind it is rendered or runs.
@@ -403,6 +383,77 @@ pub(super) fn prepare(
     Ok(Prepared::Remote(
         items, escalation, delegate, payload, None, connect,
     ))
+}
+
+/// What an item whose fields failed to render runs with: nothing, and its failure.
+fn failed_fields(task: &crate::playbook::PlayTask, err: &TemplateError) -> Fields {
+    let mut failed = Fields::failed(item_failure(task, err));
+    // Measured on ansible-core 2.19.12: an item whose `ignore_errors` failed to render counts
+    // as ignored, so the loop prints `...ignoring` unless another item failed for good.
+    if err
+        .0
+        .starts_with("Error processing keyword 'ignore_errors'")
+    {
+        failed.ignore_errors = Some(true);
+    }
+    failed
+}
+
+/// An item that runs nothing reports its label's failure over its result now.
+fn settle_label(task: &crate::playbook::PlayTask, item: &mut Item) {
+    if let Some(result) = item.skipped.as_mut()
+        && let Some(message) = item.label_error.take()
+    {
+        label_failed(&message, result);
+    }
+    if let Some(result) = item.skipped.as_mut()
+        && let Some(message) = &item.label_raised
+    {
+        *result = label_raised_result(task, message);
+    }
+}
+
+/// The arguments and keywords of an item [`prepare`] left for the loop to reach, rendered now,
+/// and the warnings the render raised. Measured on ansible-core 2.19.12: an item behind a
+/// `break_when` that ended the loop renders none of them, so a lookup in its `msg` never runs.
+pub(in crate::executor) fn render_deferred(
+    task: &crate::playbook::PlayTask,
+    plan: &PlayPlan,
+    templar: &Templar,
+    host: &str,
+    item: &mut Item,
+    index: usize,
+) -> Vec<String> {
+    let mut warnings = Vec::new();
+    if !std::mem::take(&mut item.deferred) {
+        return warnings;
+    }
+    let at = fields::Noting {
+        prepare: crate::profile::next_prepare(),
+        host,
+        later_item: true,
+        item: index,
+        loop_names: [
+            task.loop_var.as_str(),
+            task.index_var.as_deref().unwrap_or_default(),
+            "ansible_loop",
+        ],
+        defer: false,
+    };
+    let fields = fields::render_rest(task, plan, templar, &item.vars, &at, &mut warnings)
+        .unwrap_or_else(|err| failed_fields(task, &err));
+    if fields.skipped.is_some() {
+        item.notify.clear();
+    }
+    item.skipped = fields.skipped;
+    item.args = fields.args;
+    item.args_untrusted = fields.args_untrusted;
+    item.environment = fields.environment;
+    item.ignore_errors = fields.ignore_errors;
+    item.check_mode = fields.check_mode;
+    item.diff = fields.diff;
+    settle_label(task, item);
+    warnings
 }
 
 /// An item's label, the message it fails with, and the error that ends the task after it.

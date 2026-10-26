@@ -89,6 +89,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   What a YAML key written twice in one mapping gets: `warn` keeps the last value and prints where the second key is, `error` refuses the file, `ignore` keeps the last value and says nothing.
 </Option>
 
+<Option name="facts_modules" id="defaults-facts-modules" default="smart" env="ANSIBLE_FACTS_MODULES">
+  The fact modules the play's fact gathering runs, `smart` (`setup`) unless set. A literal list in the plays, their tasks or the inventory (`ansible_facts_modules`) is read too; a module named only by a template cannot be run.
+</Option>
+
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
   Print the statistics that `set_stats` collected after the recap.
 </Option>

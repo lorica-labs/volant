@@ -1,3 +1,3 @@
-crates/volant/src/cli/run.rs 717
+crates/volant/src/cli/run.rs 713
 crates/volant/src/executor/coordinator/mod.rs 852
-crates/volant/src/executor/driver/mod.rs 2546
+crates/volant/src/executor/driver/mod.rs 2531

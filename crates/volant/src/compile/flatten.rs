@@ -251,10 +251,16 @@ pub(crate) fn compile(
     // Named `ansible.legacy.setup`, as the reference's `gather_facts` plugin runs it: a
     // `library/setup.py` beside the playbook answers the gathering there, measured on
     // ansible-core 2.19.12, where `ansible.builtin.setup` would never find it.
+    // A play that names fact modules besides `setup` gathers through the reference's own plugin.
+    let module = if crate::action_plugins::facts_modules::extra().is_empty() {
+        "ansible.legacy.setup"
+    } else {
+        "ansible.legacy.gather_facts"
+    };
     let gather = PlayTask {
         name: "Gathering Facts".to_string(),
         named: true,
-        module: "ansible.legacy.setup".to_string(),
+        module: module.to_string(),
         // Measured on ansible-core 2.19.12: `always` only when the play has no tags. A tagged
         // play gathers when its own tags are selected, and `--tags always` or `--tags other`
         // leaves it alone.

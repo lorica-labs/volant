@@ -40,6 +40,19 @@ pub(in crate::executor) fn step_tasks(
     out
 }
 
+/// The task one item sends, when it sends one: see [`step_tasks`].
+pub(in crate::executor) fn step_task(
+    task: &PlayTask,
+    item: &Item,
+    python: &Result<Option<(&ModulePayload, &str)>, TaskResult>,
+    result: &mut Option<TaskResult>,
+) -> Option<Task> {
+    let one = std::slice::from_mut(result);
+    step_tasks(task, std::slice::from_ref(item), python, one)
+        .pop()
+        .map(|(_, built)| built)
+}
+
 /// The name the reference gives a task's action in its messages: a builtin by its resolved
 /// FQCN, a collection's by the name the task wrote.
 pub(in crate::executor) fn action_fqcn(module: &str) -> String {

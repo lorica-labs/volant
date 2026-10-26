@@ -1,0 +1,14 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Gathering Facts] *********************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": [\n        1,\n        true\n    ]\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [Gathering Facts] *********************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": [\n        1,\n        true\n    ]\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [gather_facts] ************************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": {\n        \"exception\": \"(traceback unavailable)\",\n        \"failed\": true,\n        \"finished\": true,\n        \"invocation\": {\n            \"module_args\": {\n                \"fail\": false\n            }\n        },\n        \"msg\": \"the module broke\"\n    }\n}\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": [\n        \"gather_subset\",\n        \"module_setup\",\n        \"my_fact\"\n    ]\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

@@ -38,6 +38,8 @@ pub(in crate::executor) struct PluginStart<'a> {
     /// Where an `async` task's `ASYNC` and `RETRYING` lines go, and the step they belong to.
     pub(in crate::executor) tx: &'a tokio::sync::mpsc::Sender<crate::executor::coordinator::Event>,
     pub(in crate::executor) index: usize,
+    /// The loop's first item, or the task's one: its retry lines go out as they happen.
+    pub(in crate::executor) first_item: bool,
 }
 
 impl PluginStart<'_> {
@@ -165,7 +167,8 @@ pub(in crate::executor) async fn run_plugin_attempts<C: AgentChannel, R: Relink<
             Attempt::Done(r) => return Ok(Some(r)),
             // Shown as it happens when a job is waited for: its `ASYNC` lines came out as they
             // were decided, and the reference prints each attempt's retry line before the next.
-            Attempt::Again(left, failed) if polls(task) => {
+            // The first item's too: nothing of the task shows before it.
+            Attempt::Again(left, failed) if polls(task) || start.first_item => {
                 announce_retry(
                     start.tx,
                     host,

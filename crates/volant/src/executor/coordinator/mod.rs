@@ -31,8 +31,8 @@ mod types;
 use arrivals::{Arrivals, arrivals};
 use display::{arrived, header, header_for, report_result, switch_header};
 use events::{
-    Held, answer, book, debug_ask, debugging, show_now, shows_a_line, unreachable_ask,
-    unreachable_left,
+    Held, answer, book, debug_ask, debugging, show_now, shows_a_line, step_of, streams,
+    unreachable_ask, unreachable_left, verdict,
 };
 use meta::{MetaContext, apply_meta};
 use publish::{Coordinator, Rendering, keep_links, take_links, task_name};
@@ -241,6 +241,8 @@ pub(super) async fn run_batch(
     let free = plan.strategy.free();
     let mut last_banner: Option<usize> = None;
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
+    // The first host to start each step, whose banner goes up before anything shows under it.
+    let mut started: HashMap<usize, String> = HashMap::new();
     let mut gone: HashSet<String> = HashSet::new();
     // The templated names the drivers rendered at their own step, by host and step.
     let mut names: HashMap<(String, usize), String> = HashMap::new();
@@ -314,6 +316,9 @@ pub(super) async fn run_batch(
                 }
             };
         }
+        if let Some(starter) = started.get(&index) {
+            step_header!(starter);
+        }
         for host in &play_hosts {
             loop {
                 // The batch is lost: every host of it is out of the play, the way the reference
@@ -376,21 +381,7 @@ pub(super) async fn run_batch(
                 }
                 match rx.recv().await {
                     Some(event @ Event::Result { .. }) => {
-                        let (key, lost, sank) = if let Event::Result {
-                            host,
-                            index,
-                            outcome,
-                            ..
-                        } = &event
-                        {
-                            (
-                                (host.clone(), *index),
-                                *outcome == Outcome::Failed,
-                                matches!(outcome, Outcome::Failed | Outcome::Rescued),
-                            )
-                        } else {
-                            unreachable!()
-                        };
+                        let (key, lost, sank) = verdict(&event);
                         let event = if let Some(waiting) = held.get_mut(&key) {
                             waiting.hold(event, lost, sank)
                         } else {
@@ -442,16 +433,7 @@ pub(super) async fn run_batch(
                         | Event::Display { .. }
                         | Event::UnreachableIgnored { .. }),
                     ) => {
-                        let (host, index) = match &event {
-                            Event::Banner { host, index }
-                            | Event::Retrying { host, index, .. }
-                            | Event::Warning { host, index, .. }
-                            | Event::Display { host, index, .. }
-                            | Event::UnreachableIgnored { host, index, .. } => {
-                                (host.clone(), *index)
-                            }
-                            _ => unreachable!(),
-                        };
+                        let at = step_of(&event).expect("a line of a step");
                         if free {
                             show_now(
                                 event,
@@ -463,10 +445,26 @@ pub(super) async fn run_batch(
                                 stats,
                                 out,
                             );
+                        } else if at == key && streams(&event, pending.get(&key)) {
+                            step_header!(host);
+                            for line in pending.remove(&key).into_iter().flatten().chain([event]) {
+                                report_result(line, stats, out);
+                            }
                         } else {
-                            pending.entry((host, index)).or_default().push(event);
+                            pending.entry(at).or_default().push(event);
                         }
                     }
+                    // The banner of a step a host starts goes up at once when it is this step's.
+                    Some(Event::Started {
+                        host: starter,
+                        index: at,
+                    }) if !free => {
+                        if at == index {
+                            step_header!(&starter);
+                        }
+                        started.entry(at).or_insert(starter);
+                    }
+                    Some(Event::Started { .. }) => {}
                     Some(Event::Include {
                         host,
                         index,
@@ -805,7 +803,7 @@ pub(super) async fn run_batch(
             // An include whose request arrives here is one the step loop will never reach: it
             // has already ended, because every host of the batch has left it. There is nothing
             // left to splice the steps in for, and nothing left to run them.
-            Event::Include { .. } => {}
+            Event::Include { .. } | Event::Started { .. } => {}
             event @ (Event::Result { .. }
             | Event::Retrying { .. }
             | Event::Warning { .. }

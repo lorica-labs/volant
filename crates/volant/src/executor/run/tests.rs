@@ -3340,6 +3340,7 @@ async fn copy_attempts<C: AgentChannel>(
         host_named_dest_dirs: None,
         tx: &sink,
         index: 0,
+        first_item: false,
     };
     let mut lefts = Vec::new();
     let ran = run_plugin_attempts(

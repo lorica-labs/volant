@@ -867,18 +867,12 @@ pub(super) async fn drive_host(
             if !batch.is_empty() && calls_lookup(task) {
                 break;
             }
-            // The banner's name, rendered here, at the step's own point, against the variables
-            // this host has now; the coordinator prints it rather than rendering its own later.
-            if Templar::is_template(&task.name) {
-                let spoken = render_name(step, &name, &plan, &live, &templar, &store);
-                let _ = tx
-                    .send(Event::Named {
-                        host: name.clone(),
-                        index: pos,
-                        name: spoken,
-                    })
-                    .await;
-            }
+            // The banner's name, rendered here against this host's variables, and the banner itself
+            // when the step runs now: the first of a batch. A `meta` has banners of its own.
+            let spoken = Templar::is_template(&task.name)
+                .then(|| render_name(step, &name, &plan, &live, &templar, &store));
+            let runs = batch.is_empty() && step.kind != StepKind::Meta;
+            driver.starting(pos, spoken, runs).await;
             let mut warnings = Vec::new();
             let preparing = Instant::now();
             // The reference never reads the `when` of these, so a condition that cannot be
@@ -1228,6 +1222,12 @@ pub(super) async fn drive_host(
                                 };
                                 match judge_attempt(task, item, ran, attempt, retry, &templar) {
                                     Attempt::Done(r) => break r,
+                                    // The first item's goes out as it happens: see the plugin path.
+                                    Attempt::Again(left, failed) if ii == 0 => {
+                                        let named = names[ii].clone();
+                                        announce_retry(&tx, &name, pos, named, task, left, failed)
+                                            .await;
+                                    }
                                     Attempt::Again(left, failed) => mine.push((left, failed)),
                                 }
                                 if let Some(failed) = retry.sleep_failure() {
@@ -1999,8 +1999,8 @@ pub(super) async fn drive_host(
                                 received[0][ii] = Some(r);
                                 continue 'items;
                             }
-                            // As it happens for a job that is waited for: see the plugin path.
-                            Attempt::Again(left, failed) if polls(task) => {
+                            // As it happens for a polled job and the first item: see the plugin path.
+                            Attempt::Again(left, failed) if polls(task) || ii == 0 => {
                                 announce_retry(
                                     &tx,
                                     &name,
@@ -2224,7 +2224,7 @@ pub(super) async fn drive_host(
                         // fact only under `delegate_facts`; the warning comes either way.
                         // And only on the first attempt: a retried task's final result is a later
                         // attempt's, which found the interpreter already known. The warning stays.
-                        let retried = bi == 0 && lefts.get(i).is_some_and(|left| !left.is_empty());
+                        let retried = results[i].1.0.get("attempts").is_some_and(|n| n != 1);
                         // Nor on a polled job's, which is the job's last status: measured, it
                         // carries no fact and the next task discovers the interpreter again.
                         if (batch_delegate.is_none() || task.delegates_facts())

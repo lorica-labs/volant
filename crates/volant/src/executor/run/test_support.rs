@@ -20,6 +20,7 @@ use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
 pub(super) fn local_item(args: Value) -> Item {
     Item {
+        deferred: false,
         element: None,
         label: None,
         args: vars(args),
@@ -326,6 +327,7 @@ pub(super) fn modules_sent(agent: &FakeAgent) -> Vec<&str> {
 
 pub(super) fn bare_item() -> Item {
     Item {
+        deferred: false,
         element: None,
         label: None,
         args: Map::new(),

@@ -27,10 +27,10 @@ fn batch_ids_start_in_a_range_of_their_own() {
 /// A plugin batch is exactly one step, and anything else ends the host naming the steps.
 #[test]
 fn a_plugin_batch_holds_its_one_step_and_nothing_else() {
-    assert_eq!(plugin_step(&[(4, ())]), Ok(&(4, ())));
-    let err = plugin_step(&[(4, ()), (5, ())]).expect_err("two steps");
+    assert_eq!(plugin_step(&mut [(4, ())]), Ok(&mut (4, ())));
+    let err = plugin_step(&mut [(4, ()), (5, ())]).expect_err("two steps");
     assert!(err.contains("[4, 5]"), "{err}");
-    plugin_step::<()>(&[]).expect_err("no step");
+    plugin_step::<()>(&mut []).expect_err("no step");
 }
 
 fn with_arg(module: &str, key: &str, value: &str) -> PlayTask {

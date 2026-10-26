@@ -184,6 +184,9 @@ pub(in crate::executor) struct Item {
     /// The message of a `loop_control.label` that raised on anything but an undefined name. The
     /// item runs, then the task fails with this error, and no item behind it runs.
     pub(in crate::executor) label_raised: Option<String>,
+    /// Set until the loop reaches an item whose arguments and keywords wait for it: see
+    /// [`super::render_deferred`].
+    pub(in crate::executor) deferred: bool,
 }
 
 /// What an item whose fields failed to render reports once the loop reaches it. Measured on

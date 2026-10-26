@@ -1,0 +1,6 @@
+# The fields of a loop item render when the loop reaches it: a `break_when` that ends the loop
+# leaves the items behind it unrendered, so a lookup in their arguments never runs and their
+# `environment` is never read. Covers a controller-side task, a module, an action plugin and an
+# include.
+args: [break.yml]
+needs: [ansible-core]

@@ -224,12 +224,19 @@ impl Bridged {
         match outcome {
             Ok(Value::Object(map)) => {
                 let raised_skip = map.contains_key(crate::executor::RAISED_SKIP);
+                let deprecation = map.get(crate::executor::DEPRECATION_TEXT).cloned();
                 let mut result = TaskResult(map);
                 crate::executor::drop_internal_keys(&mut result);
                 if raised_skip {
                     result
                         .0
                         .insert(crate::executor::RAISED_SKIP.into(), Value::Bool(true));
+                }
+                // The helper's own key, which the driver shows after the task's warnings.
+                if let Some(text) = deprecation {
+                    result
+                        .0
+                        .insert(crate::executor::DEPRECATION_TEXT.into(), text);
                 }
                 result
             }

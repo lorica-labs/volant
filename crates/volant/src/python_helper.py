@@ -543,6 +543,11 @@ def resolve_one(name):
         if collection_of(hop) is not None:
             track_collection(collection_of(hop))
     if not module.resolved:
+        # An action plugin with no module of its name: the reference refuses a task only when
+        # neither loader answers to it.
+        action = action_loader.find_plugin_with_context(name)
+        if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
+            return {"action_plugin": action.resolved_fqcn, "with_module": False}
         # A `runtime.yml` redirect into a collection nobody installed: the install hint names
         # the collection at the end of the chain, not the one the playbook wrote.
         last = module.redirect_list[-1] if module.redirect_list else name

@@ -6,6 +6,65 @@ The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 
 ## [Unreleased]
 
+## [0.1.0-alpha.13](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.12...v0.1.0-alpha.13) - 2026-10-26
+
+### Added
+
+- *(transport)* run the agent over AWS Systems Manager sessions ([#1011](https://github.com/lorica-labs/volant/pull/1011))
+- *(executor)* run the fact modules a play names ([#1005](https://github.com/lorica-labs/volant/pull/1005))
+- *(cli)* run volant console natively, one ad hoc task per line ([#999](https://github.com/lorica-labs/volant/pull/999))
+- *(cli)* run volant pull natively, with git and no Python ([#989](https://github.com/lorica-labs/volant/pull/989))
+- *(transport)* run the agent in pods through kubectl ([#991](https://github.com/lorica-labs/volant/pull/991))
+- *(transport)* drive the community.general.lxd and incus connections ([#982](https://github.com/lorica-labs/volant/pull/982))
+- *(yaml)* warn about a mapping key written twice ([#977](https://github.com/lorica-labs/volant/pull/977))
+- *(transport)* drive the containers.podman.buildah connection ([#973](https://github.com/lorica-labs/volant/pull/973))
+- *(transport)* drive the community.general.chroot connection ([#965](https://github.com/lorica-labs/volant/pull/965))
+- *(agent)* create a missing link natively in file ([#952](https://github.com/lorica-labs/volant/pull/952))
+- *(transport)* drive the containers.podman.podman connection ([#962](https://github.com/lorica-labs/volant/pull/962))
+- *(transport)* copy the agent into a target with no shell ([#954](https://github.com/lorica-labs/volant/pull/954))
+- *(transport)* drive the community.docker.docker connection ([#946](https://github.com/lorica-labs/volant/pull/946))
+- *(transport)* run the agent link over an exec command ([#944](https://github.com/lorica-labs/volant/pull/944))
+- *(transport)* resolve connection names through ansible-core ([#942](https://github.com/lorica-labs/volant/pull/942))
+- *(agent)* keep a private apt cache where the host turns it off ([#974](https://github.com/lorica-labs/volant/pull/974))
+- *(agent)* run apt natively with policy_rc_d and apt-mark ([#947](https://github.com/lorica-labs/volant/pull/947))
+
+### Fixed
+
+- *(executor)* print a task's banner and retry lines as they happen ([#1010](https://github.com/lorica-labs/volant/pull/1010))
+- *(executor)* render a loop item's fields when the loop reaches it ([#1008](https://github.com/lorica-labs/volant/pull/1008))
+- *(agent)* hand shell and raw lines to /bin/sh as the reference does ([#1002](https://github.com/lorica-labs/volant/pull/1002))
+- *(bridge)* give a bridged lookup the hostvars it reads ([#1000](https://github.com/lorica-labs/volant/pull/1000))
+- *(bridge)* resolve action-only plugins and keep their deprecation ([#1004](https://github.com/lorica-labs/volant/pull/1004))
+- *(bridge)* hand a lookup the variables that do not render ([#998](https://github.com/lorica-labs/volant/pull/998))
+- *(executor)* keep the vault mark through a string filter in set_fact ([#997](https://github.com/lorica-labs/volant/pull/997))
+- *(bridge)* give a plugin the action name the task wrote ([#990](https://github.com/lorica-labs/volant/pull/990))
+- *(template)* report a missing src as the reference raises it ([#992](https://github.com/lorica-labs/volant/pull/992))
+- *(vault)* point each undecryptable value's error at its own tag ([#993](https://github.com/lorica-labs/volant/pull/993))
+- *(agent)* give stat's failure its errno cause ([#985](https://github.com/lorica-labs/volant/pull/985))
+- *(bridge)* print a plugin's deprecation after its warnings ([#988](https://github.com/lorica-labs/volant/pull/988))
+- *(copy)* word a source the controller cannot read as the reference ([#987](https://github.com/lorica-labs/volant/pull/987))
+- *(agent)* return invocation from command and shell ([#983](https://github.com/lorica-labs/volant/pull/983))
+- *(yaml)* keep escapes in template literals of YAML values ([#981](https://github.com/lorica-labs/volant/pull/981))
+- *(executor)* keep the vault mark on a bare vaulted set_fact ([#980](https://github.com/lorica-labs/volant/pull/980))
+- *(inventory)* list only the host named all when one exists ([#970](https://github.com/lorica-labs/volant/pull/970))
+- *(playbook)* word a missing role or playbook as [ERROR] ([#976](https://github.com/lorica-labs/volant/pull/976))
+- *(vars)* order and ungroup hosts that group_by moves ([#972](https://github.com/lorica-labs/volant/pull/972))
+- *(playbook)* know a playbook's plugin directories before its imports ([#971](https://github.com/lorica-labs/volant/pull/971))
+- *(vars)* keep the inventory's order in the keys of groups ([#969](https://github.com/lorica-labs/volant/pull/969))
+- *(template)* fail a division by zero as Python does ([#967](https://github.com/lorica-labs/volant/pull/967))
+- *(template)* render another host's variable in that host's context ([#966](https://github.com/lorica-labs/volant/pull/966))
+- *(template)* answer the vars magic variable ([#963](https://github.com/lorica-labs/volant/pull/963))
+- *(collection)* match module_defaults groups on the resolved name ([#961](https://github.com/lorica-labs/volant/pull/961))
+- *(playbook)* print a task's load error as an [ERROR] block ([#960](https://github.com/lorica-labs/volant/pull/960))
+- *(executor)* report include load failures and register includes ([#957](https://github.com/lorica-labs/volant/pull/957))
+- *(executor)* register a task that fails before it runs ([#959](https://github.com/lorica-labs/volant/pull/959))
+- *(agent)* fail the task when the agent dies under it ([#949](https://github.com/lorica-labs/volant/pull/949))
+- *(executor)* end a loop at the item whose label raises ([#950](https://github.com/lorica-labs/volant/pull/950))
+- *(transport)* make a missing remote_tmp as the login user ([#951](https://github.com/lorica-labs/volant/pull/951))
+- *(agent)* ask apt-cache policy again only after a cache update ([#964](https://github.com/lorica-labs/volant/pull/964))
+- *(agent)* read extended attribute names, not only their size ([#956](https://github.com/lorica-labs/volant/pull/956))
+- *(agent)* write a plugin's put_file onto an existing file ([#953](https://github.com/lorica-labs/volant/pull/953))
+
 ## [0.1.0-alpha.12](https://github.com/lorica-labs/volant/compare/v0.1.0-alpha.11...v0.1.0-alpha.12) - 2026-10-25
 
 ### Added

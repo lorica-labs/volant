@@ -56,24 +56,29 @@ fn fqdn(node: &str) -> String {
     let Ok(name) = CString::new(node) else {
         return node.to_string();
     };
-    let mut found: *mut libc::addrinfo = std::ptr::null_mut();
-    // SAFETY: `name` is a terminated string, the hints may be null, and `found` is freed below.
-    if unsafe {
+    let mut list = std::mem::MaybeUninit::<*mut libc::addrinfo>::uninit();
+    // SAFETY: `name` is a terminated string and the hints may be null; on success `list` holds
+    // the list `getaddrinfo` allocated, freed below.
+    let rc = unsafe {
         libc::getaddrinfo(
             name.as_ptr(),
             std::ptr::null(),
             std::ptr::null(),
-            &raw mut found,
+            list.as_mut_ptr(),
         )
-    } != 0
-        || found.is_null()
-    {
+    };
+    if rc != 0 {
         return node.to_string();
     }
+    // SAFETY: written by the successful call above.
+    let Some(found) = std::ptr::NonNull::new(unsafe { list.assume_init() }) else {
+        return node.to_string();
+    };
     let mut host = [0 as libc::c_char; 1025];
-    // SAFETY: `found` is the list `getaddrinfo` returned; its first entry's address is read.
+    // SAFETY: `found` is the non-null list `getaddrinfo` returned; its first entry's address is
+    // read before the list is freed, and `host` is terminated by `getnameinfo` on success.
     let resolved = unsafe {
-        let first = &*found;
+        let first = found.as_ref();
         let rc = libc::getnameinfo(
             first.ai_addr,
             first.ai_addrlen,
@@ -83,7 +88,7 @@ fn fqdn(node: &str) -> String {
             0,
             libc::NI_NAMEREQD,
         );
-        libc::freeaddrinfo(found);
+        libc::freeaddrinfo(found.as_ptr());
         (rc == 0).then(|| CStr::from_ptr(host.as_ptr()).to_string_lossy().into_owned())
     };
     resolved.unwrap_or_else(|| node.to_string())

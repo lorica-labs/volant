@@ -1,0 +1,10 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    my_good: ok
+    my_bad: "{{ nope }}"
+  tasks:
+    - debug: {msg: "{{ lookup('listvars') }}"}
+    - debug: {msg: "{{ lookup('readvar', 'my_good') }}"}
+    - debug: {msg: "{{ lookup('readvar', 'my_bad') }}"}
+      ignore_errors: true

@@ -105,6 +105,7 @@ async fn controller_side(
             check_mode: item.check_mode == Some(true),
             diff: item.diff == Some(true),
             async_val: task.async_val,
+            action: &task.module,
         },
     );
     let mut last = None;
@@ -211,12 +212,16 @@ fn written_keys(item: &Item) -> Vec<String> {
         .unwrap_or_default()
 }
 
-/// The `!vault` value a `set_fact` key takes as it is, when its value is a bare `{{ x }}` of a
-/// vaulted `x`. Measured on ansible-core 2.19.12: the fact keeps the vault mark, so `is
-/// vault_encrypted` holds for it, where a filter or a concatenation drops it.
+/// The `!vault` value a `set_fact` key takes as it is, when its value is `{{ x }}` or
+/// `{{ x | string }}` of a vaulted `x`. Measured on ansible-core 2.19.12: the fact keeps the vault
+/// mark, so `is vault_encrypted` holds for it, where a concatenation drops it.
 fn vaulted_fact(task: &PlayTask, item: &Item, key: &str) -> Option<String> {
     let text = task.args.get(key)?.as_str()?;
-    let name = text.trim().strip_prefix("{{")?.strip_suffix("}}")?.trim();
+    let inner = text.trim().strip_prefix("{{")?.strip_suffix("}}")?.trim();
+    let name = inner
+        .strip_suffix("string")
+        .and_then(|rest| rest.trim_end().strip_suffix('|'))
+        .map_or(inner, str::trim_end);
     if name.is_empty() || !name.chars().all(|c| c == '_' || c.is_ascii_alphanumeric()) {
         return None;
     }
@@ -355,6 +360,7 @@ fn local_result(
                     );
                     return refused;
                 }
+                crate::vault::begin_failures();
                 match templar.evaluate(var, &item.vars) {
                     Ok(v) => r.insert(var.to_string(), v),
                     // A vaulted value no secret opens is not an undefined name: it fails the

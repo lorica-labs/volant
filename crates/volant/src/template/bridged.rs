@@ -164,7 +164,7 @@ pub(super) fn lookup(
         .lookup_needs(name)
         .map_err(|err| failed(kind, name, err))?;
     let mut vars = Map::new();
-    let mut read = |key: &str| -> Result<(), Error> {
+    let read = |vars: &mut Map<String, serde_json::Value>, key: &str| -> Result<(), Error> {
         if let Some(value) = state.lookup(key).filter(|v| !v.is_undefined()) {
             vars.insert(key.to_string(), to_json(kind, name, &value)?);
         }
@@ -175,11 +175,12 @@ pub(super) fn lookup(
         .copied()
         .chain(needs.names.iter().map(String::as_str))
     {
-        read(key)?;
+        read(&mut vars, key)?;
     }
     if needs.all {
         // A plugin that lists the variables gets every one the host has. One that cannot be
-        // sent (an object only Jinja holds) or rendered is left out, as the plugin cannot read it.
+        // sent (an object only Jinja holds) is left out; one that does not render goes as its
+        // template, which the plugin renders when it reads it and fails on as the reference does.
         let names: Vec<String> = state
             .lookup(super::CONTEXT_KEY)
             .and_then(|root| root.try_iter().ok())
@@ -189,14 +190,93 @@ pub(super) fn lookup(
             .filter(|n| !n.starts_with("__volant_") && n != "volant_version" && n != "hostvars")
             .collect();
         for key in &names {
-            let _ = read(key);
+            if read(&mut vars, key).is_ok() && vars.contains_key(key) {
+                continue;
+            }
+            if let Some(raw) = unrendered(state, key) {
+                vars.insert(key.clone(), serde_json::json!({ UNRENDERED: raw }));
+            }
         }
+    }
+    if (needs.all || needs.names.iter().any(|n| n == "hostvars"))
+        && let Some(hosts) = hostvars(state)
+    {
+        vars.insert("hostvars".into(), serde_json::json!({ HOSTVARS: hosts }));
     }
     super::lookups::taint(state);
     bridge
         .call(kind, name, &args, &kwargs, Some(&vars))
         .map(|value| super::bigint::to_template(&value))
         .map_err(|err| failed(kind, name, err))
+}
+
+/// What `hostvars` is sent as: `{HOSTVARS: {host: {"vars", "trusted"}}}`.
+const HOSTVARS: &str = "__volant_hostvars__";
+
+/// Every host's variables as an action plugin's `hostvar` ask answers them: the helper renders a
+/// variable when the plugin reads it, in that host's context, and a host holding a managed
+/// host's value is data. Measured on ansible-core 2.19.12 with `merge_variables` and `groups=`.
+fn hostvars(state: &State) -> Option<Map<String, serde_json::Value>> {
+    let root = state.lookup(super::CONTEXT_KEY)?;
+    let context = root.downcast_object_ref::<super::context::Context>()?;
+    let hosts = context.hostvars.as_ref()?;
+    let groups = context
+        .shared
+        .as_ref()
+        .and_then(|shared| shared.get("groups"))
+        .and_then(serde_json::Value::as_object);
+    Some(
+        hosts
+            .iter()
+            .map(|(host, entry)| {
+                let mut vars = crate::vars::settled(entry).into_owned();
+                // `group_names` is a magic variable the entry does not carry: the groups that
+                // hold the host, `all` aside, sorted, as `hostvars[host]` answers it.
+                if let (serde_json::Value::Object(map), Some(groups)) = (&mut vars, groups)
+                    && !map.contains_key("group_names")
+                {
+                    let mut names: Vec<&String> = groups
+                        .iter()
+                        .filter(|(name, members)| {
+                            *name != "all"
+                                && members
+                                    .as_array()
+                                    .is_some_and(|m| m.iter().any(|h| h.as_str() == Some(host)))
+                        })
+                        .map(|(name, _)| name)
+                        .collect();
+                    names.sort();
+                    map.insert("group_names".into(), serde_json::json!(names));
+                }
+                (
+                    host.clone(),
+                    serde_json::json!({
+                        "vars": vars,
+                        "trusted": !context.untrusted_hosts.contains(host),
+                    }),
+                )
+            })
+            .collect(),
+    )
+}
+
+/// What a variable the helper renders itself is sent as: `{UNRENDERED: template}`.
+const UNRENDERED: &str = "__volant_template__";
+
+/// The template a variable of the playbook holds, as written, when it is one: what a read that
+/// does not render leaves. A managed host's text is never one.
+fn unrendered(state: &State, key: &str) -> Option<String> {
+    let root = state.lookup(super::CONTEXT_KEY)?;
+    let context = root.downcast_object_ref::<super::context::Context>()?;
+    if context.untrusted.contains(key) {
+        return None;
+    }
+    let raw = context
+        .vars
+        .get(key)
+        .or_else(|| context.base.as_ref().and_then(|base| base.get(key)))?
+        .as_str()?;
+    super::Templar::is_template(raw).then(|| raw.to_string())
 }
 
 /// The keyword arguments of a call, by name.

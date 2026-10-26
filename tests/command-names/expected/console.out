@@ -1,0 +1,28 @@
+$ ansible-console -i console.yml -f 1 < session
+rc=0
+Welcome to the ansible console. Type help or ? to list commands.
+
+u@all (3)[f:1]$ h1
+h2
+h3
+u@all (3)[f:1]$ u@web (2)[f:1]$ h1 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+h2 | SUCCESS => {
+    "changed": false,
+    "ping": "pong"
+}
+u@web (2)[f:1]$ h1 | CHANGED | rc=0 >>
+hi
+h2 | CHANGED | rc=0 >>
+hi
+u@web (2)[f:1]$ h1 | CHANGED | rc=0 >>
+there
+h2 | CHANGED | rc=0 >>
+there
+u@web (2)[f:1]$ u@web (2)[f:2]$ u@web (2)[f:2]# Set the number of forks to use per task
+Usage: forks <number>
+u@web (2)[f:2]# 
+Ansible-console was exited.
+--- stderr

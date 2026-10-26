@@ -401,6 +401,8 @@ pub(crate) struct Context<'a> {
     pub diff: bool,
     /// The task's `async` seconds, which the plugin reads off its task as the reference's does.
     pub async_val: u64,
+    /// The action as the task wrote it, before a `runtime.yml` redirect: `self._task.action`.
+    pub action: &'a str,
 }
 
 /// The plugin for `kind`. A written one given a shape it does not take hands the item to

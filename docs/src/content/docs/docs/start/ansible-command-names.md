@@ -16,10 +16,10 @@ Volant runs the nine programs of ansible-core 2.19.12. Each one is a `volant` su
 | `ansible-doc` | [`volant doc`](/docs/reference/cli/doc/) | ansible-core's own tool | installed on first use |
 | `ansible-config` | [`volant config`](/docs/reference/cli/config/) | ansible-core's own tool | installed on first use |
 | `ansible-galaxy` | [`volant galaxy`](/docs/reference/cli/galaxy/) | ansible-core's own tool | installed on first use |
-| `ansible-pull` | [`volant pull`](/docs/reference/cli/pull/) | ansible-core's own tool, with Volant's engine for its two steps | installed on first use |
+| `ansible-pull` | [`volant pull`](/docs/reference/cli/pull/) | Volant | not needed for a `git` checkout |
 | `ansible-console` | [`volant console`](/docs/reference/cli/console/) | Volant | not needed for the native modules |
 
-The managed runtime installs itself the first time a command needs it, as it does for a playbook, and prints one line on standard error when it does. [The managed runtime](/docs/reference/runtime/) describes it. You do not need to install ansible, but four of the nine commands run ansible-core's own code from that runtime.
+The managed runtime installs itself the first time a command needs it, as it does for a playbook, and prints one line on standard error when it does. [The managed runtime](/docs/reference/runtime/) describes it. You do not need to install ansible, but three of the nine commands run ansible-core's own code from that runtime.
 
 ## Keeping your command lines
 
@@ -61,12 +61,12 @@ For `ansible`, `ansible-vault` and `ansible-inventory`, the output, the options 
 | A file one tool encrypts, the other decrypts, for the default id and for a label | `a_file_one_tool_encrypts_the_other_decrypts` |
 | `volant inventory` prints ansible-inventory's JSON and YAML bytes: key order, four-space indent, PyYAML anchors | `crates/volant/tests/inventory_golden.rs` over `golden/inventories/cases.yml`, and `inventory_cli.rs` |
 | `volant config` and `volant galaxy` print what the tool prints | `crates/volant/tests/tools_cli.rs` |
-| `volant pull` prints what `ansible-pull` prints, except one line (below) | `a_pull_prints_what_the_reference_pull_prints` in `console_pull.rs` |
+| `volant pull` prints the playbook run and the `-o` line as `ansible-pull` does, and checks out without Python | `a_pull_prints_what_the_reference_pull_prints` and `a_pull_checks_out_and_runs_without_python` in `console_pull.rs` |
 | `volant console` prints what `ansible-console` prints for its commands, modules and shell lines on a pipe, and needs no Python for native modules | `the_console_reads_its_commands_from_a_pipe` and `the_console_runs_without_python` in `console_pull.rs` |
 | The links `install` makes, the lines it prints and what `remove` leaves alone | `crates/volant/tests/shims.rs` |
 | Which names map to which command, and no other name does | the tests in `crates/volant/src/cli/program.rs` |
 
-The options each native command accepts are listed on its own page: [`volant adhoc`](/docs/reference/cli/adhoc/), [`volant vault`](/docs/reference/cli/vault/) and [`volant inventory`](/docs/reference/cli/inventory/). An option that is not listed there is refused, never ignored.
+The options each native command accepts are listed on its own page: [`volant adhoc`](/docs/reference/cli/adhoc/), [`volant vault`](/docs/reference/cli/vault/), [`volant inventory`](/docs/reference/cli/inventory/) and [`volant pull`](/docs/reference/cli/pull/). An option that is not listed there is refused, never ignored.
 
 ## What differs
 
@@ -74,7 +74,7 @@ The options each native command accepts are listed on its own page: [`volant adh
 - `--version` prints `ansible [core 2.19.12]` (or the program's name) and the paths. The Python, Jinja and PyYAML lines are left out when Volant finds no interpreter with ansible-core, because `--version` installs nothing. See [`volant adhoc`](/docs/reference/cli/adhoc/).
 - `executable location` in `--version` is the program as it was started: `volant`, or the link. See [`volant doc`](/docs/reference/cli/doc/#terminal-exit-code-and---version).
 - `ansible-inventory --toml` needs no Python package, where the reference needs `tomli-w`, and a `null` value gives one `[ERROR]` line instead of a traceback (both exit 250). See [`volant inventory`](/docs/reference/cli/inventory/).
-- `volant pull` shows `<cache>/volant/pull/ansible-pull` on the second line of its output, where `ansible-pull` shows the path of its script. See [`volant pull`](/docs/reference/cli/pull/).
+- `volant pull` prints its first two lines before what its steps print, and its checkout starts no Python. See [`volant pull`](/docs/reference/cli/pull/#differences-from-ansible-pull).
 - `volant config dump` shows `COLLECTIONS_PATHS` as set by the environment once the runtime has a `collections/` directory. See [`volant config`](/docs/reference/cli/config/#the-collections-path).
 - `ansible-vault view` goes through a pager only on a terminal, with `PAGER`, then `ANSIBLE_PAGER`, then `[defaults] pager`, then `less`. See [Vault](/docs/variables/vault/).
 - `volant adhoc` and `volant playbook` use Volant's engine, so the differences listed in [Will my playbook run?](/docs/start/compatibility/) and on [`volant adhoc`](/docs/reference/cli/adhoc/#actions-that-are-not-modules) apply.
@@ -87,4 +87,4 @@ The options each native command accepts are listed on its own page: [`volant adh
 | `volant vault` | done | a file error, such as `create` on an existing file | a usage error | | a bad option, such as two files with `--output` | |
 | `volant inventory` | printed | | a usage error | | no action or two actions, or a bad `--host` or `--graph` target | |
 
-`volant playbook` uses the codes on [Exit codes](/docs/reference/exit-codes/). The four tools that run in ansible-core's runtime return the tool's own code, or 1 with an `[ERROR]:` line when the interpreter cannot be started.
+`volant playbook` uses the codes on [Exit codes](/docs/reference/exit-codes/). The three tools that run in ansible-core's runtime return the tool's own code, or 1 with an `[ERROR]:` line when the interpreter cannot be started. `volant pull` exits 2 when the checkout fails, 5 for an options error or when no playbook is found, and otherwise with the playbook's code.

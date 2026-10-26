@@ -1,0 +1,148 @@
+$ ansible-pull -U <work>/repo -d <work>/dest
+rc=0
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+localhost | CHANGED => {
+    "after": "<commit>",
+    "before": null,
+    "changed": true
+}
+[WARNING]: No inventory was parsed, only implicit localhost is available
+[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+
+PLAY [localhost] ***************************************************************
+
+TASK [debug] *******************************************************************
+ok: [localhost] => {
+    "msg": "by name v1"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+--- stderr
+$ ansible-pull -U <work>/repo -d <work>/dest -o
+rc=0
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+localhost | SUCCESS => {
+    "after": "<commit>",
+    "before": "<commit>",
+    "changed": false,
+    "remote_url_changed": false
+}
+Repository has not changed, quitting: b'localhost | SUCCESS => {\n    "after": "<commit>",\n    "before": "<commit>",\n    "changed": false,\n    "remote_url_changed": false\n}\n'
+--- stderr
+$ ansible-pull -U <work>/repo -d <work>/dest -o
+rc=0
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+localhost | CHANGED => {
+    "after": "<commit>",
+    "before": "<commit>",
+    "changed": true,
+    "remote_url_changed": false
+}
+[WARNING]: No inventory was parsed, only implicit localhost is available
+[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+
+PLAY [localhost] ***************************************************************
+
+TASK [debug] *******************************************************************
+ok: [localhost] => {
+    "msg": "by name v2"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+--- stderr
+$ ansible-pull -U <work>/repo -d <work>/dest --purge local.yml
+rc=0
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+localhost | SUCCESS => {
+    "after": "<commit>",
+    "before": "<commit>",
+    "changed": false,
+    "remote_url_changed": false
+}
+[WARNING]: No inventory was parsed, only implicit localhost is available
+[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+
+PLAY [localhost] ***************************************************************
+
+TASK [debug] *******************************************************************
+ok: [localhost] => {
+    "msg": "local"
+}
+
+PLAY RECAP *********************************************************************
+localhost                  : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   
+
+--- stderr
+$ test -e dest
+rc=1
+$ ansible-pull -U <work>/absent -d <work>/gone
+rc=2
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+[ERROR]: Task failed: Module failed: fatal: '<work>/absent' does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+Origin: <adhoc 'git' task>
+
+{'action': 'git', 'args': {'name': '<work>/absent', 'dest': '<work>/gone', [...]
+
+localhost | FAILED! => {
+    "changed": false,
+    "cmd": "/usr/bin/git ls-remote file://<work>/absent -h refs/heads/HEAD",
+    "msg": "fatal: '<work>/absent' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.",
+    "rc": 128,
+    "stderr": "fatal: '<work>/absent' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n",
+    "stderr_lines": [
+        "fatal: '<work>/absent' does not appear to be a git repository",
+        "fatal: Could not read from remote repository.",
+        "",
+        "Please make sure you have the correct access rights",
+        "and the repository exists."
+    ],
+    "stdout": "",
+    "stdout_lines": []
+}
+--- stderr
+$ ansible-pull -U <work>/absent -d <work>/gone -f
+rc=5
+[WARNING]: Could not match supplied host pattern, ignoring: <host>
+[ERROR]: Task failed: Module failed: fatal: '<work>/absent' does not appear to be a git repository
+fatal: Could not read from remote repository.
+
+Please make sure you have the correct access rights
+and the repository exists.
+Origin: <adhoc 'git' task>
+
+{'action': 'git', 'args': {'name': '<work>/absent', 'dest': '<work>/gone', [...]
+
+localhost | FAILED! => {
+    "changed": false,
+    "cmd": "/usr/bin/git ls-remote file://<work>/absent -h refs/heads/HEAD",
+    "msg": "fatal: '<work>/absent' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.",
+    "rc": 128,
+    "stderr": "fatal: '<work>/absent' does not appear to be a git repository\nfatal: Could not read from remote repository.\n\nPlease make sure you have the correct access rights\nand the repository exists.\n",
+    "stderr_lines": [
+        "fatal: '<work>/absent' does not appear to be a git repository",
+        "fatal: Could not read from remote repository.",
+        "",
+        "Please make sure you have the correct access rights",
+        "and the repository exists."
+    ],
+    "stdout": "",
+    "stdout_lines": []
+}
+--- stderr
+[WARNING]: Unable to update repository. Continuing with (forced) run of playbook.
+[WARNING]: <work>/gone/<host>.yml: File does not exist
+<work>/gone/<host>.yml: File does not exist
+<work>/gone/local.yml: File does not exist
+
+[ERROR]: Could not find a playbook to run.

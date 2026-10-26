@@ -1,0 +1,5 @@
+- hosts: w1
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{{ lookup('community.general.merge_variables', 'x_', groups=['web']) }}"}
+    - debug: {msg: "{{ lookup('community.general.merge_variables', 'x_') }}"}

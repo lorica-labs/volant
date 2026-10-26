@@ -21,6 +21,7 @@ Volant llega a un host administrado, le deja un pequeño agente estático (un pr
 | `chroot` | Ejecuta el agente en un árbol de directorios del controlador mediante `chroot`, como `community.general.chroot`. Consulta [Directorios chroot](#directorios-chroot). |
 | `buildah` | Ejecuta el agente en un contenedor de trabajo de Buildah mediante `buildah run`, como `containers.podman.buildah`. Consulta [Contenedores de trabajo de Buildah](#contenedores-de-trabajo-de-buildah). |
 | `lxd` | Ejecuta el agente en una instancia de LXD mediante `lxc exec`, como `community.general.lxd`; `community.general.incus` hace lo mismo para Incus. Consulta [Instancias de LXD e Incus](#instancias-de-lxd-e-incus). |
+| `kubectl` | Ejecuta el agente en un contenedor de un pod de Kubernetes mediante `kubectl exec`, como `kubernetes.core.kubectl`. Consulta [Pods de Kubernetes](#pods-de-kubernetes). |
 
 Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resuelve `ansible-playbook`, una vez por nombre y por ejecución. `ansible.builtin.ssh` y `ansible.builtin.local` se resuelven en los dos plugins de arriba y se ejecutan. Un nombre corto que una colección heredó de ansible-core se dirige a esa colección cuando está instalada:
 
@@ -37,7 +38,7 @@ Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resue
 
 Con `-vvv`, un nombre redirigido muestra `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` bajo la primera tarea que lo usa en un host, una línea por salto.
 
-Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `kubernetes.core.kubectl`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
+Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `amazon.aws.aws_ssm`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
 
 Un nombre que no se resuelve en nada hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Eso incluye un nombre corto dirigido a una colección que no está instalada, como `docker` sin community.docker, tras el aviso que ansible-core muestra para él, y `paramiko`, que ansible-core 2.19.12 no tiene con ese nombre. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
 
@@ -106,6 +107,28 @@ El agente arranca con `buildah run [--user U] <contenedor> -- <agente>`. Volant 
 | `ansible_lxd_executable`, `ansible_incus_executable` | La shell con la que se ejecutan los comandos. Gana a `ansible_executable`; `/bin/sh` por defecto. |
 
 El usuario es `ansible_user`, la palabra clave `remote_user` o `-u`, `root` por defecto. Para cualquier otro usuario, cada comando pasa por el método de escalada, `/bin/su <user> -c` salvo que `lxd_become_method` o `incus_become_method` nombre otro. Una instancia sin shell recibe el agente con `lxc file push` o `incus file push` cuando el usuario es root. Una instancia que no existe o está parada deja el host inalcanzable con las palabras del plugin, como `instance not running: web`; Incus añade el servidor remoto y el proyecto. Con `-vvvv` las líneas muestran `ESTABLISH LXD CONNECTION FOR USER: <user>` (`Incus` para Incus), la línea `INFO:` del plugin para un usuario que no es root y luego una línea `EXEC [...]` por comando.
+
+## Pods de Kubernetes
+
+`ansible_connection: kubectl`, o `kubernetes.core.kubectl`, ejecuta un play en un contenedor de un pod mediante `kubectl exec -i`. Los dos nombres necesitan kubernetes.core instalado en el controlador y `kubectl` en tu `PATH`.
+
+| Variable | Qué hace |
+|---|---|
+| `ansible_kubectl_pod` | El pod. Sin ella, el pod es `ansible_host` o, si no, el nombre del inventario. |
+| `ansible_kubectl_container` | El contenedor, para un pod que tiene más de uno. |
+| `ansible_kubectl_namespace` | El namespace. |
+| `ansible_kubectl_kubeconfig`, `ansible_kubectl_config` | El archivo kubeconfig. Un kubeconfig dado como mapeo va a un archivo temporal privado, que se borra al final de la ejecución. |
+| `ansible_kubectl_extra_args` | Más argumentos para `kubectl`, separados por espacios. |
+| `ansible_kubectl_local_env_vars` | Un mapeo de variables que se ponen en el entorno de cada comando `kubectl`. |
+| `ansible_kubectl_context` | El contexto dentro del kubeconfig. |
+| `ansible_kubectl_server`, `ansible_kubectl_host` | El servidor de la API. |
+| `ansible_kubectl_username`, `ansible_kubectl_user`, `ansible_kubectl_password` | Un usuario y una contraseña para el servidor de la API. |
+| `ansible_kubectl_token`, `ansible_kubectl_api_key` | Un token bearer para el servidor de la API. |
+| `ansible_kubectl_client_cert`, `ansible_kubectl_cert_file`, `ansible_kubectl_client_key`, `ansible_kubectl_key_file` | El certificado de cliente y su clave. |
+| `ansible_kubectl_ca_cert`, `ansible_kubectl_ssl_ca_cert` | La autoridad de certificación del servidor de la API. |
+| `ansible_kubectl_validate_certs`, `ansible_kubectl_verify_ssl` | Se pasa tal cual tras `--insecure-skip-tls-verify`, como hace el plugin: `true` da `True`, y `false` no añade nada. |
+
+Cada opción también puede venir de la variable de entorno `K8S_AUTH_*` que lee el plugin, a la que gana una variable de host. Las opciones llegan a `kubectl` en el orden del plugin. Los comandos se ejecutan con el usuario del contenedor: el plugin no puede elegir uno, así que `ansible_user` se ignora. Un contenedor sin shell no puede recibir el agente, porque `kubectl cp` necesita `tar` en él. Un pod que no existe, un namespace que no existe y un pod terminado dejan el host inalcanzable con lo que dijo `kubectl`. Con `-vvvv` las líneas muestran `ESTABLISH kubectl CONNECTION` y luego una línea `EXEC [...]` por comando, con la contraseña y el token como `********`.
 
 ## Variables de host
 

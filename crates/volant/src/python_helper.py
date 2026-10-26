@@ -543,6 +543,11 @@ def resolve_one(name):
         if collection_of(hop) is not None:
             track_collection(collection_of(hop))
     if not module.resolved:
+        # An action plugin with no module of its name: the reference refuses a task only when
+        # neither loader answers to it.
+        action = action_loader.find_plugin_with_context(name)
+        if action.resolved and action.plugin_resolved_name != "ansible.builtin.normal":
+            return {"action_plugin": action.resolved_fqcn, "with_module": False}
         # A `runtime.yml` redirect into a collection nobody installed: the install hint names
         # the collection at the end of the chain, not the one the playbook wrote.
         last = module.redirect_list[-1] if module.redirect_list else name
@@ -977,13 +982,23 @@ def call(request):
         return {"error": {"kind": "plugin", "message": "a %s needs the value it is given" % kind}}
     expression = EXPRESSIONS[kind] if kind == "lookup" else EXPRESSIONS[kind] % name
     try:
-        variables = request.get("vars") or {}
+        variables = {
+            # A variable the controller could not render is its template, rendered when the plugin
+            # reads it, so a failure is raised there as the reference raises it.
+            key: trust_as_template(value["__volant_template__"])
+            if isinstance(value, dict) and set(value) == {"__volant_template__"}
+            else value
+            for key, value in (request.get("vars") or {}).items()
+        }
         # The loader a lookup resolves relative names and runs commands through, anchored where
         # the reference anchors it: the playbook's directory, else the first search path entry.
         loader = DataLoader()
         anchor = variables.get("playbook_dir") or next(iter(variables.get("ansible_search_path") or []), None)
         if isinstance(anchor, str) and anchor:
             loader.set_basedir(anchor)
+        hosts = variables.get("hostvars")
+        if isinstance(hosts, dict) and set(hosts) == {"__volant_hostvars__"}:
+            variables["hostvars"] = PreloadedHostVars(hosts["__volant_hostvars__"], loader)
         templar = Templar(loader=loader, variables=variables)
         # The environment resolves a plugin on `in`, which may raise the not-found error or the
         # load error of a broken plugin file: both are answered below like a failed call.
@@ -1330,6 +1345,23 @@ class LazyHostVars(collections.abc.Mapping):
     def __len__(self):
         return len(self._names)
 
+    def raw_get(self, host):
+        # `HostVars.raw_get`: the host's variables, not rendered.
+        return self._variables(host)
+
+
+class PreloadedHostVars(LazyHostVars):
+    """`hostvars` for a lookup, whose call cannot ask the controller: every host's variables
+    sent with the call, in the shape a `hostvar` ask is answered."""
+
+    def __init__(self, hosts, loader):
+        super().__init__(None, list(hosts), loader)
+        for host, value in hosts.items():
+            self._asked[host] = trusted_as_template(value["vars"]) if value["trusted"] else value["vars"]
+
+    def _variables(self, host):
+        return self._asked.get(host) if isinstance(host, str) else None
+
 
 def result_compat(result, warning_ctx):
     """`TaskExecutor._apply_task_result_compat` of ansible-core 2.19.12: the warnings and
@@ -1418,6 +1450,7 @@ def run_action(ident, request):
     parts = shim()
     name = request["name"]
     fields = dict(request.get("task") or {})
+    written = fields.pop("_volant_action", None) or name
     # The action is `name`, and the controller has merged the module defaults into the arguments.
     for keyword in ("action", "local_action", "module_defaults"):
         if keyword in fields:
@@ -1453,7 +1486,7 @@ def run_action(ident, request):
                 loader.set_basedir(anchor)
             task_vars["hostvars"] = LazyHostVars(ident, names, loader)
             templar = Templar(loader=loader, variables=task_vars)
-            fields["action"] = name
+            fields["action"] = written
             # A play of its own: `post_validate` reads the play's action groups, which hold nothing
             # here since no module_defaults reach the plugin.
             task = Task.load(fields, block=Block(play=Play()), loader=loader)

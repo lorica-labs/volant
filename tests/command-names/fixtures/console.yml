@@ -1,0 +1,11 @@
+web:
+  hosts:
+    h1:
+    h2:
+db:
+  hosts:
+    h3:
+all:
+  vars:
+    ansible_connection: local
+    ansible_python_interpreter: "{{ ansible_playbook_python }}"

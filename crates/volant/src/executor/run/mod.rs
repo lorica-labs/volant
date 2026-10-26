@@ -34,7 +34,7 @@ pub(super) use judge::{break_after, broke_before, empty_loop_result, finish, loo
 pub(super) use links::reuse_or_connect;
 pub(super) use local::{run_local, set_fact_names};
 pub(super) use output::asks_to_be_hidden;
-pub(crate) use output::{RAISED_SKIP, drop_internal_keys};
+pub(crate) use output::{DEPRECATION_TEXT, RAISED_SKIP, drop_internal_keys};
 pub(super) use output::{classify, classify_as};
 #[cfg(test)]
 pub(super) use plugin::protocol_task;

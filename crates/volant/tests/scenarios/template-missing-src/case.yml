@@ -1,0 +1,4 @@
+# A template whose src is nowhere: Task failed: and the message, chained at the task.
+stderr: true
+needs: [ansible-core]
+args: [-i, inv.ini, play.yml]

@@ -52,6 +52,11 @@ pub(in crate::executor) fn record_registered(
     // reading `r.invocation` fails there. `-vvv` still shows it, from the result itself.
     if let Value::Object(map) = &mut value {
         map.remove("invocation");
+        // A deprecation's text is only shown: the result keeps it in `deprecations`.
+        let warnings: Vec<&String> = warnings
+            .iter()
+            .filter(|w| !w.starts_with(crate::render::RAW_WARNING))
+            .collect();
         if !warnings.is_empty() && short_name(&task.module) != "pause" {
             map.insert("warnings".into(), json!(warnings));
         }

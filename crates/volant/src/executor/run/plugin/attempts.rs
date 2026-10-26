@@ -44,7 +44,7 @@ impl PluginStart<'_> {
     /// What the plugin of `item` is started with.
     pub(in crate::executor) fn context<'s>(
         &'s self,
-        task: &PlayTask,
+        task: &'s PlayTask,
         item: &'s Item,
         warnings: &'s mut Vec<String>,
     ) -> crate::action_plugins::Context<'s> {
@@ -68,6 +68,7 @@ impl PluginStart<'_> {
             check_mode: item.check_mode == Some(true),
             diff: item.diff == Some(true),
             async_val: task.async_val,
+            action: &task.module,
         }
     }
 }

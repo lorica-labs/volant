@@ -154,8 +154,9 @@ pub fn vaulted_value(host: &str, name: &str) -> Option<String> {
 /// Where each `!vault` value of the files this run loaded is written, by its ciphertext.
 static WRITTEN_AT: LazyLock<Mutex<HashMap<String, Origin>>> = LazyLock::new(Mutex::default);
 
-/// Where each undecryptable-value failure came from, by its message. Two different values that
-/// fail with one message share the entry the later failure wrote.
+/// Where each undecryptable-value failure came from, by its message, since the last
+/// [`begin_failures`]. Two values that fail with one message in one render keep the first: a
+/// render stops at the first value that fails.
 static FAILED_AT: LazyLock<Mutex<HashMap<String, Origin>>> = LazyLock::new(Mutex::default);
 
 pub fn note_origin(ciphertext: &str, origin: Origin) {
@@ -173,9 +174,17 @@ pub fn undecryptable(ciphertext: &str, reason: &str) -> String {
         FAILED_AT
             .lock()
             .expect("origins lock")
-            .insert(message.clone(), origin.clone());
+            .entry(message.clone())
+            .or_insert_with(|| origin.clone());
     }
     message
+}
+
+/// Forgets the failures recorded so far: what fails next is what the render about to start
+/// reads. Measured on ansible-core 2.19.12, a task reading two values that fail with one message
+/// points at the value it read first.
+pub fn begin_failures() {
+    FAILED_AT.lock().expect("origins lock").clear();
 }
 
 /// Where the value whose failure `message` words is written.

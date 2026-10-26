@@ -14,6 +14,7 @@ mod inventory;
 mod passwords;
 mod plays;
 mod program;
+mod pull;
 mod run;
 mod runtime;
 mod setup;
@@ -34,9 +35,10 @@ pub use inventory::{InventoryArgs, inventory};
 pub(crate) use plays::replay;
 pub use plays::run;
 pub use program::{TOOLS, subcommand_for};
+pub use pull::{PullArgs, pull};
 pub use runtime::{RuntimeCommand, runtime};
 pub use shims::{ShimsCommand, shims};
-pub use tool::{ToolArgs, config, doc, galaxy, pull};
+pub use tool::{ToolArgs, config, doc, galaxy};
 pub use vault::{VaultArgs, vault};
 
 #[cfg(test)]

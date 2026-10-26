@@ -1,19 +1,53 @@
 ---
-sourceHash: 5a60f05341da
+sourceHash: 45a0f89e46bd
 title: volant pull
-description: Klont ein Repository und führt dessen Playbook mit ansible-pull aus, wobei für den Lauf Volants eigene Engine dient.
+description: Checkt ein Repository mit git aus und führt sein Playbook auf dieser Maschine aus, wie ansible-pull, ohne Python für den Checkout.
 ---
 
-`volant pull` führt das `ansible-pull` von ansible-core 2.19.12 mit dem Interpreter aus, den Volant für einen Playbook-Lauf wählt, und funktioniert daher ohne installiertes ansible-core.
+`volant pull` ist das `ansible-pull` von ansible-core 2.19.12, in Rust geschrieben. Es checkt ein Repository auf der Maschine aus, auf der es läuft, und führt dann ein Playbook daraus gegen dieselbe Maschine aus. Es ist für den Lauf aus cron gedacht. Der Checkout braucht `git` und kein Python. Das Playbook läuft mit Volants Engine, so wie [`volant playbook`](/de/docs/reference/cli/) es ausführt, und installiert die verwaltete Runtime nur, wenn das Playbook Python braucht.
 
 ```sh
-volant pull [ARGS...]
+volant pull -U URL [-d DIR] [-C REV] [-i INV]... [-e VARS]... [-t TAGS] [--skip-tags TAGS] [-l SUBSET]
+            [--check] [--diff] [--flush-cache] [-o] [-s N] [-f] [--clean] [--purge] [--full]
+            [--accept-host-key] [--verify-commit] [--track-subs] [--private-key FILE] [-m MODULE]
+            [-v...] [vault and password options] [PLAYBOOK...]
 ```
 
-Jedes Argument geht unverändert an `ansible-pull`: `-U`, `-d`, `-C`, `-f`, `-o`, `--purge`, `-i`, `-e` und die übrigen gehören dem Werkzeug. Interpreter, Umgebung, Terminal und Exit-Code funktionieren wie bei [`volant doc`](/de/docs/reference/cli/doc/).
+## Die Schritte
 
-`ansible-pull` startet `ansible` für den Checkout und `ansible-playbook` für den Lauf, aus dem Verzeichnis seines eigenen Pfads. Volant hält dafür ein Verzeichnis bereit, `pull` unter seinem Cache (`$XDG_CACHE_HOME/volant/` oder `~/.cache/volant/`), mit Modus `0700`, und verlinkt darin `ansible` und `ansible-playbook` mit der laufenden `volant`-Binärdatei. Unter diesen Namen gestartet, verhält sich `volant` wie [`volant adhoc`](/de/docs/reference/cli/adhoc/) und [`volant playbook`](/de/docs/reference/cli/), sodass beide Schritte Volants Engine nutzen. Die Links werden bei der ersten Verwendung angelegt und ersetzt, wenn die `volant`-Binärdatei umzieht. Der Checkout-Schritt führt das Modul `git` aus, das das Python der Runtime und `git` auf dem Rechner braucht.
+1. `-U` nennt das Repository und `-d` das Verzeichnis, in das es ausgecheckt wird. Das Standardverzeichnis ist `~/.ansible/pull/<fqdn>` (`$ANSIBLE_HOME/pull/<fqdn>`), wobei `<fqdn>` der vollständige Name der Maschine ist. Ein relatives `-d` wird absolut gemacht.
+2. Der Befehl gibt `Starting Ansible Pull at <Datum und Uhrzeit>` aus, dann seine eigene Befehlszeile.
+3. Der Checkout klont das Repository, oder holt es und aktualisiert den Arbeitsbaum, so wie das Modul `git` es mit `depth=1` tut. Der Klon ist flach, außer mit `--full`, und endet auf dem Branch, dem Tag oder dem Commit, den `-C` nennt. Das Ergebnis wird ausgegeben, wie `ansible -m git` es ausgibt: `localhost | CHANGED => {...}` mit `before` und `after`, oder `SUCCESS`, wenn sich nichts geändert hat. Ein Fehlschlag gibt den `[ERROR]`-Block und `FAILED!` aus, und der Befehl endet mit 2. Lokale Änderungen an verfolgten Dateien lassen den Checkout fehlschlagen, außer mit `--clean`.
+4. Das Playbook wird gewählt. Jedes auf der Befehlszeile genannte Playbook wird im Checkout gesucht. Ohne Namen wird das erste vorhandene aus `<fqdn>.yml`, `<hostname>.yml` und `local.yml` genommen. Wird nichts gefunden, warnt der Befehl für jede fehlende Datei und endet mit 5 und `Could not find a playbook to run.`
+5. Das Playbook läuft aus dem Checkout als `ansible-playbook -c local`. Es ist auf `localhost`, die Namen der Maschine und `127.0.0.1` begrenzt, oder auf `-l`, wenn es angegeben ist. Jede `-i`-Quelle, die im Checkout existiert oder ein Komma enthält, wird weitergegeben. Der Exit-Code ist der des Playbooks.
 
-Die zweite Zeile, die `ansible-pull` ausgibt, ist seine eigene Kommandozeile. Sie zeigt `<cache>/volant/pull/ansible-pull`, wo ein direkt gestartetes `ansible-pull` den Pfad seines Skripts zeigt. Das ist der einzige Unterschied in der Ausgabe.
+Beide Schritte schreiben auf die Standardausgabe, Warnungen und Fehler eingeschlossen, weil `ansible-pull` sie dorthin kopiert. Die Warnungen des Befehls selbst, für `-f` und für ein fehlendes Playbook, gehen auf die Standardfehlerausgabe.
 
-`ansible-pull` liest seine beiden Kindprozesse über Pipes in kleinen Stücken, sodass eine Warnung von einem von ihnen durch gleichzeitig geschriebene Ausgabe zerschnitten werden kann.
+## Optionen
+
+| Option | Wirkung |
+|---|---|
+| `-o`, `--only-if-changed` | Das Playbook nur ausführen, wenn der Checkout etwas geändert hat. Sonst `Repository has not changed, quitting: b'...'` ausgeben, mit der Ausgabe des Checkouts als Python-Bytes-Literal, und mit 0 enden. |
+| `-s N`, `--sleep N` | Vor dem Checkout eine zufällige Zahl von Sekunden warten, von 0 bis N-1, und `Sleeping for <n> seconds...` ausgeben, wenn diese Zahl nicht 0 ist. Ein Wert, der keine positive Zahl ist, endet mit 5. |
+| `-f`, `--force` | Wenn der Checkout fehlschlägt, `Unable to update repository. Continuing with (forced) run of playbook.` warnen und das Playbook des vorigen Checkouts ausführen. |
+| `--clean` | Lokale Änderungen im Checkout verwerfen (`force=yes`). |
+| `--purge` | Den Checkout nach dem Playbook-Lauf entfernen, was auch sein Ergebnis ist. |
+| `--full` | Die ganze Historie klonen. |
+| `-C REV`, `--checkout REV` | Der Branch, der Tag oder der Commit, der ausgecheckt wird. |
+| `--verify-commit` | Die GPG-Signatur des ausgecheckten Commits oder des Tags prüfen und anhalten, wenn sie sich nicht bestätigen lässt. |
+| `--track-subs` | Die Submodule auf den neuesten Commit ihres Branches bringen. |
+| `--accept-host-key` | Einen unbekannten Host-Schlüssel des ssh-Servers des Repositorys annehmen. |
+| `--private-key FILE` | Der ssh-Schlüssel für das Repository. |
+| `-m MODULE` | `git`, der Standard, läuft nativ. `subversion`, `hg` und `bzr` führen dieses Modul über [`volant adhoc`](/de/docs/reference/cli/adhoc/) aus, das die verwaltete Runtime braucht. Jeder andere Name endet mit 5. |
+| `-e`, `-t`, `--skip-tags`, `-l`, `--check`, `--diff`, `--flush-cache`, `-K`, `--become-password-file`, `--connection-password-file`, `--vault-id`, `--vault-password-file`, `-v` | An den Playbook-Lauf weitergegeben. `-e` und `-v` gehen auch an den Checkout. |
+
+`-u`, `-c`, `-T`, die Optionen für ssh-Argumente, `-k`, `-J`, `-M` und `--list-hosts` werden angenommen und tun nichts, wie in `ansible-pull`.
+
+## Unterschiede zu ansible-pull
+
+- Auf einer Pipe gibt `ansible-pull` seine ersten zwei Zeilen nach allem aus, was seine Schritte ausgegeben haben, weil seine eigene Ausgabe gepuffert ist. Volant gibt sie zuerst aus, wie beide es auf einem Terminal tun.
+- Der Checkout läuft einmal, auf `localhost`. Wenn eine `-i`-Datei vor dem Checkout existiert und diese Maschine unter ihrem eigenen Namen führt, macht `ansible-pull` den Checkout auch auf diesem Host.
+- Mit `-i` enthält das Ergebnis des Checkouts der Referenz auch `ansible_facts.discovered_interpreter_python`, mit einer Warnung über den gefundenen Interpreter. Der native Checkout startet kein Python, also wird keines von beiden ausgegeben.
+- Der vollständige Name ergibt sich aus der Auflösung des Maschinennamens und dann seiner Adresse. Wenn der kanonische Name keinen Punkt hat und einer seiner Aliasse schon, nimmt Pythons `socket.getfqdn()` den Alias und Volant nicht.
+- Mit `-v` steht die Zeile zur Konfigurationsdatei vor den Warnungen des Checkouts. Auf einer Pipe hängt die Reihenfolge der Referenz vom Zeitpunkt ab.
+- `--purge` meldet ein Verzeichnis, das es nicht entfernen kann, mit dem Wortlaut des Fehlers des Betriebssystems.

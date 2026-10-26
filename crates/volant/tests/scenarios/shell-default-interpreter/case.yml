@@ -1,0 +1,3 @@
+# Without `executable`, `shell` and `raw` hand their line to `/bin/sh`, which `$0` names, and
+# a failing `raw` is worded as its action words it.
+args: [-i, inv.ini, play.yml]

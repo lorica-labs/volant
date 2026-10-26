@@ -57,6 +57,7 @@ pub(super) fn render_fields(
     warnings: &mut Vec<String>,
 ) -> Result<Fields, TemplateError> {
     let mut skipped = None;
+    crate::vault::begin_failures();
     for condition in &task.when {
         crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         at.note(templar, condition, true);

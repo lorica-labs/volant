@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - template: {src: nosuch.j2, dest: "{{ playbook_dir }}/out.txt"}
+      ignore_errors: true
+      register: r
+    - debug: {var: r}
+    - template: {src: /nonexistent/nosuch.j2, dest: "{{ playbook_dir }}/out.txt"}

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `volant console` and `volant pull`: ansible-core's own tools, run from the interpreter of the
-//! reference. `pull` needs `git`, which every machine that runs the reference suite has.
+//! `volant console`, ansible-core's own tool run from the interpreter of the reference, and the
+//! native `volant pull`. `pull` needs `git`, which every machine that runs the test suite has.
 #![cfg(unix)]
 
 #[path = "common/process.rs"]
@@ -123,70 +123,147 @@ fn git(dir: &Path, args: &[&str]) {
 
 fn pull(python: &Path, dir: &Path, args: &[&str]) -> Output {
     let mut command = Command::new(VOLANT);
-    command.arg("pull").args(["-i", "localhost,"]).args(args);
+    command.arg("pull").args(args);
     env_of(&mut command, dir, python);
     run(&mut command, None)
 }
 
-/// A pull clones and runs the playbook through the links; a second pull with `-o` stops at once;
-/// an unreachable URL exits 2. The links directory is private.
+/// `volant pull` with no Python anywhere: `PATH` holds `git` alone and no interpreter is named.
+fn pull_alone(dir: &Path, path: &Path, args: &[&str]) -> Output {
+    let mut command = Command::new(VOLANT);
+    command
+        .arg("pull")
+        .args(args)
+        .current_dir(dir)
+        .env("HOME", dir)
+        .env("XDG_CACHE_HOME", dir.join("cache"))
+        .env("PATH", path)
+        .env_remove("VOLANT_PYTHON")
+        .env_remove("VIRTUAL_ENV")
+        .env_remove("ANSIBLE_CONFIG");
+    run(&mut command, None)
+}
+
+fn commit_site(repo: &Path, msg: &str) {
+    std::fs::write(
+        repo.join("site.yml"),
+        format!(
+            "- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: {{msg: {msg}}}
+"
+        ),
+    )
+    .unwrap();
+    git(repo, &["add", "."]);
+    git(repo, &["commit", "-qm", msg]);
+}
+
+fn text(out: &Output) -> String {
+    format!(
+        "{}{}",
+        String::from_utf8_lossy(&out.stdout),
+        String::from_utf8_lossy(&out.stderr)
+    )
+}
+
+/// The native pull with no Python: shallow clone and run, `-o` twice, `--clean` over local edits,
+/// a missing playbook (exit 5), an unreachable URL (exit 2), and `--purge`.
 #[test]
-fn a_pull_runs_the_playbook_through_the_links() {
-    let Some(python) = python::reference_python() else {
-        return;
-    };
+fn a_pull_checks_out_and_runs_without_python() {
     let dir = tempfile::tempdir().unwrap();
+    let bin = dir.path().join("bin");
+    std::fs::create_dir(&bin).unwrap();
+    let found = std::env::split_paths(&std::env::var_os("PATH").unwrap())
+        .map(|d| d.join("git"))
+        .find(|p| p.is_file())
+        .expect("git is installed");
+    std::os::unix::fs::symlink(found, bin.join("git")).unwrap();
     let repo = dir.path().join("repo");
     std::fs::create_dir(&repo).unwrap();
     git(&repo, &["init", "-q"]);
+    commit_site(&repo, "one");
+    commit_site(&repo, "two");
+    let (url, dest) = (repo.to_str().unwrap(), dir.path().join("dest"));
+    let base = ["-U", url, "-d", dest.to_str().unwrap()];
+    let go = |extra: &[&str]| pull_alone(dir.path(), &bin, &[&base[..], extra].concat());
+
+    let first = go(&["site.yml"]);
+    assert_eq!(first.status.code(), Some(0), "{}", text(&first));
+    let shown = text(&first);
+    assert!(shown.starts_with("Starting Ansible Pull at "), "{shown}");
+    assert!(shown.contains("localhost | CHANGED => {"), "{shown}");
+    assert!(shown.contains("\"before\": null,"), "{shown}");
+    assert!(shown.contains("\"msg\": \"two\""), "{shown}");
+    let count = Command::new("git")
+        .args(["rev-list", "--count", "HEAD"])
+        .current_dir(&dest)
+        .output()
+        .unwrap();
+    assert_eq!(
+        String::from_utf8_lossy(&count.stdout).trim(),
+        "1",
+        "a shallow clone"
+    );
+
+    let again = go(&["-o", "site.yml"]);
+    assert_eq!(again.status.code(), Some(0));
+    let shown = text(&again);
+    assert!(
+        shown.contains("Repository has not changed, quitting: b'localhost | SUCCESS => {\\n"),
+        "{shown}"
+    );
+    assert!(!shown.contains("PLAY ["), "{shown}");
+
+    commit_site(&repo, "three");
+    let newer = go(&["-o", "site.yml"]);
+    assert_eq!(newer.status.code(), Some(0));
+    assert!(
+        text(&newer).contains("\"msg\": \"three\""),
+        "{}",
+        text(&newer)
+    );
+
     std::fs::write(
-        repo.join("site.yml"),
-        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug: {msg: local site}\n",
+        dest.join("site.yml"),
+        "edited
+",
     )
     .unwrap();
-    git(&repo, &["add", "."]);
-    git(&repo, &["commit", "-qm", "site"]);
-    let (repo, dest) = (repo.to_str().unwrap(), dir.path().join("dest"));
-    let dest = dest.to_str().unwrap();
-
-    let first = pull(&python, dir.path(), &["-U", repo, "-d", dest, "site.yml"]);
-    let text = String::from_utf8_lossy(&first.stdout);
-    assert_eq!(first.status.code(), Some(0), "{text}{:?}", first.stderr);
-    assert!(text.contains("PLAY RECAP"), "{text}");
-    assert!(Path::new(dest).join("site.yml").is_file());
-    let links = dir.path().join("cache/volant/pull");
-    assert_eq!(
-        std::fs::metadata(&links).unwrap().permissions().mode() & 0o777,
-        0o700
-    );
+    let refused = go(&["site.yml"]);
+    assert_eq!(refused.status.code(), Some(2));
     assert!(
-        text.contains(&format!("{}/ansible-pull -", links.display())),
-        "{text}"
+        text(&refused).contains("Local modifications exist in the destination: "),
+        "{}",
+        text(&refused)
     );
-    for name in ["ansible", "ansible-playbook"] {
-        let target = std::fs::read_link(links.join(name)).unwrap();
-        assert_eq!(target.file_name().unwrap(), "volant", "{name}");
-    }
+    let cleaned = go(&["--clean", "site.yml"]);
+    assert_eq!(cleaned.status.code(), Some(0), "{}", text(&cleaned));
 
-    let again = pull(
-        &python,
-        dir.path(),
-        &["-U", repo, "-d", dest, "-o", "site.yml"],
-    );
-    let text = String::from_utf8_lossy(&again.stdout);
-    assert_eq!(again.status.code(), Some(0), "{text}");
+    let missing = go(&["nosuch.yml"]);
+    assert_eq!(missing.status.code(), Some(5));
+    let err = String::from_utf8_lossy(&missing.stderr);
     assert!(
-        text.contains("Repository has not changed, quitting"),
-        "{text}"
+        err.ends_with(
+            "[ERROR]: Could not find a playbook to run.
+"
+        ),
+        "{err}"
     );
 
-    let missing = dir.path().join("absent");
-    let gone = pull(
-        &python,
+    let absent = dir.path().join("absent");
+    let gone = pull_alone(
         dir.path(),
-        &["-U", missing.to_str().unwrap(), "-d", "d2", "site.yml"],
+        &bin,
+        &["-U", absent.to_str().unwrap(), "-d", "d2", "site.yml"],
     );
-    assert_eq!(gone.status.code(), Some(2), "{gone:?}");
+    assert_eq!(gone.status.code(), Some(2));
+    assert!(text(&gone).contains("[ERROR]: Task failed: Module failed: fatal: "));
+
+    let purged = go(&["--purge", "site.yml"]);
+    assert_eq!(purged.status.code(), Some(0));
+    assert!(!dest.exists());
 }
 
 /// A pseudo-terminal: our end, and the end the child gets.
@@ -341,7 +418,10 @@ fn masked(out: &Output, dest: &Path) -> Vec<String> {
         .map(|line| {
             if line.starts_with("Starting Ansible Pull at") {
                 "Starting Ansible Pull at <time>".to_owned()
-            } else if let Some((_, rest)) = line.split_once("ansible-pull -") {
+            } else if let Some((_, rest)) = line
+                .split_once("ansible-pull -")
+                .or_else(|| line.split_once("volant pull -"))
+            {
                 format!("<argv0> -{rest}")
             } else {
                 line.to_owned()
@@ -354,11 +434,12 @@ fn masked(out: &Output, dest: &Path) -> Vec<String> {
 #[test]
 fn a_pull_prints_what_the_reference_pull_prints() {
     // Compared: the exit codes, the two header lines of the pull itself (times and the program
-    // path masked; it prints them after its children's output), the playbook run from its
-    // `PLAY [` line on, and the line of a second pull with `-o`. Not compared: the checkout's
-    // warnings and result. `ansible-pull` copies its children's standard output and error 10
+    // path masked; on a pipe the reference prints them after its children's output, Volant
+    // first, as both do on a terminal), the playbook run from its `PLAY [` line on, and the line
+    // of a second pull with `-o`. Not compared: the checkout's warnings and result. `ansible-pull` copies its children's standard output and error 10
     // bytes at a time, so where both hold data at once they cut each other mid-line, and when
-    // that happens depends on timing.
+    // that happens depends on timing. No `-i`: with one, the reference discovers an interpreter
+    // for the checkout and prints it in the result, where the native checkout starts none.
     let Some(python) = python::reference_python() else {
         return;
     };
@@ -385,7 +466,6 @@ del sys.argv[1]
 main()",
             ])
             .arg(bin.join("ansible-pull"))
-            .args(["-i", "localhost,"])
             .args(args);
         env_of(&mut command, dir, &python);
         run(&mut command, None)
@@ -419,7 +499,14 @@ main()",
                     .iter()
                     .position(|l| l.starts_with("PLAY ["))
                     .expect("a play");
-                lines[start..].to_vec()
+                let header = |l: &&String| {
+                    l.starts_with("Starting Ansible Pull") || l.starts_with("<argv0>")
+                };
+                lines[start..]
+                    .iter()
+                    .filter(|l| !header(l))
+                    .cloned()
+                    .collect::<Vec<_>>()
             };
             assert_eq!(from(&mine), from(&theirs));
         } else {

@@ -168,6 +168,11 @@ fn civil_from_days(days: i64) -> (i64, u32, u32) {
     )
 }
 
+/// The controller's local time, `datetime.now().strftime(format)`.
+pub(crate) fn local_now(format: &str) -> String {
+    strftime::format(&DateTime::now(false), format)
+}
+
 /// The day count from 1970-01-01 of a calendar date.
 fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let month = i64::from(month);

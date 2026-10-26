@@ -1998,6 +1998,7 @@ async fn plugin_item_on<R: Relink<FakeAgent>>(
                 check_mode: false,
                 diff: false,
                 async_val: 0,
+                action: "probe",
             },
         );
         run_plugin_item(

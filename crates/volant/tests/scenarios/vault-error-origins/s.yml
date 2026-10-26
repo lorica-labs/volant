@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  vars_files: [one.yml, two.yml]
+  tasks:
+    - debug: {msg: "{{ one }} {{ two }}"}
+      ignore_errors: true
+    - set_fact: {x: "{{ two }}", y: "{{ one }}"}
+      ignore_errors: true
+    - debug: {msg: "{{ [two, one] }}"}

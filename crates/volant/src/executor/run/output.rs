@@ -29,6 +29,9 @@ pub(super) fn give_terminals(tasks: &mut [Task], close: Option<String>) {
 /// The key the Python helper sets on a result it built from `AnsibleActionSkip`.
 pub(crate) const RAISED_SKIP: &str = "_volant_raised_skip";
 
+/// Where the helper leaves the text of a deprecation a plugin raised, for the driver to show.
+pub(crate) const DEPRECATION_TEXT: &str = "_volant_deprecation_text";
+
 /// `stdout_lines` and `stderr_lines`, for a result that carries `stdout` or `stderr` and not the
 /// list beside it. The reference's `_execute_module` adds both to every
 /// module result that lacks them, so a Python module's result has them there; here the agent

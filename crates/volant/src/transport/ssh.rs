@@ -130,8 +130,12 @@ impl Reach for SshTarget {
         self.ssh_argv_with(command, payload)
     }
 
-    fn environment(&self) -> Result<Vec<(&'static str, std::ffi::OsString)>, ConnectError> {
-        self.askpass_environment()
+    fn environment(&self) -> Result<Vec<(std::ffi::OsString, std::ffi::OsString)>, ConnectError> {
+        Ok(self
+            .askpass_environment()?
+            .into_iter()
+            .map(|(key, value)| (key.into(), value))
+            .collect())
     }
 
     fn trace_exec(&self, argv: &[String]) {

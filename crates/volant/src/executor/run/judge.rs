@@ -276,7 +276,9 @@ fn lay_returned_facts(
 pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
     let cause = result.0.remove(CAUSE_KEY);
     if result.failed() {
-        let local = volant_protocol::modules::local(&task.module).is_some();
+        // `raw` is the reference's action plugin, whose failure is the action's own.
+        let local = volant_protocol::modules::local(&task.module).is_some()
+            || short_name(&task.module) == "raw";
         let by = match result.0.get("exception") {
             Some(e) if !local && !python_falsy(e) => "Module",
             _ => "Action",

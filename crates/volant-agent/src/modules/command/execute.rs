@@ -74,11 +74,12 @@ pub(crate) fn execute(
     let mut argv: Vec<String> = match from_argv {
         Some(list) => list,
         // `executable` is the shell the line is handed to, and selecting it is the whole point of
-        // writing the argument: `sh` is a fallback, not the answer to every task.
+        // writing the argument. Without it the reference starts `/bin/sh`, which a failing line
+        // names in its message (`/bin/sh: 1: nosuch: not found`), so the fallback is that path.
         None if uses_shell && !raw.is_empty() => vec![
             args.get("executable")
                 .and_then(Value::as_str)
-                .unwrap_or("sh")
+                .unwrap_or("/bin/sh")
                 .to_string(),
             "-c".into(),
             raw.to_string(),

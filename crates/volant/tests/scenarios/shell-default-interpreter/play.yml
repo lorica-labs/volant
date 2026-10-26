@@ -1,0 +1,13 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - shell: echo $0
+      register: by_shell
+    - raw: echo $0
+      register: by_raw
+    - debug:
+        msg: "{{ by_shell.stdout }} {{ by_raw.stdout | trim }}"
+    - shell: echo "$0 failed" >&2; exit 3
+      ignore_errors: true
+    - raw: echo "$0 failed" >&2; exit 3
+      ignore_errors: true

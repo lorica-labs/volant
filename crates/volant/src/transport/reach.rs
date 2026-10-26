@@ -52,4 +52,10 @@ pub(super) trait Reach: Sync {
     fn over_ssh(&self) -> Option<&SshTarget> {
         None
     }
+
+    /// The shell this target keeps open, which runs each command in place of a local command
+    /// line: a Session Manager session's.
+    fn in_band(&self) -> Option<&tokio::sync::Mutex<super::ssm::Shell>> {
+        None
+    }
 }

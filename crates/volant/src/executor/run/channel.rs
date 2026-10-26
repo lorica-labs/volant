@@ -177,6 +177,7 @@ pub(super) fn with_connect_timeout(transport: &Transport, timeout: Option<Durati
     match (timeout, &mut transport) {
         (Some(timeout), Transport::Ssh(target)) => target.connect_timeout = seconds(timeout),
         (Some(timeout), Transport::Exec(target)) => target.connect_timeout = seconds(timeout),
+        (Some(timeout), Transport::Ssm(target)) => target.connect_timeout = seconds(timeout),
         _ => {}
     }
     transport

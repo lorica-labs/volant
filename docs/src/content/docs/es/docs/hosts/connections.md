@@ -22,6 +22,7 @@ Volant llega a un host administrado, le deja un pequeño agente estático (un pr
 | `buildah` | Ejecuta el agente en un contenedor de trabajo de Buildah mediante `buildah run`, como `containers.podman.buildah`. Consulta [Contenedores de trabajo de Buildah](#contenedores-de-trabajo-de-buildah). |
 | `lxd` | Ejecuta el agente en una instancia de LXD mediante `lxc exec`, como `community.general.lxd`; `community.general.incus` hace lo mismo para Incus. Consulta [Instancias de LXD e Incus](#instancias-de-lxd-e-incus). |
 | `kubectl` | Ejecuta el agente en un contenedor de un pod de Kubernetes mediante `kubectl exec`, como `kubernetes.core.kubectl`. Consulta [Pods de Kubernetes](#pods-de-kubernetes). |
+| `aws_ssm` | Ejecuta el agente en una instancia EC2 mediante una sesión de AWS Systems Manager, como `amazon.aws.aws_ssm`. Consulta [Sesiones de AWS Systems Manager](#sesiones-de-aws-systems-manager). |
 
 Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resuelve `ansible-playbook`, una vez por nombre y por ejecución. `ansible.builtin.ssh` y `ansible.builtin.local` se resuelven en los dos plugins de arriba y se ejecutan. Un nombre corto que una colección heredó de ansible-core se dirige a esa colección cuando está instalada:
 
@@ -38,7 +39,7 @@ Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resue
 
 Con `-vvv`, un nombre redirigido muestra `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` bajo la primera tarea que lo usa en un host, una línea por salto.
 
-Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `amazon.aws.aws_ssm`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
+Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `community.general.jail`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
 
 Un nombre que no se resuelve en nada hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Eso incluye un nombre corto dirigido a una colección que no está instalada, como `docker` sin community.docker, tras el aviso que ansible-core muestra para él, y `paramiko`, que ansible-core 2.19.12 no tiene con ese nombre. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
 
@@ -129,6 +130,22 @@ El usuario es `ansible_user`, la palabra clave `remote_user` o `-u`, `root` por 
 | `ansible_kubectl_validate_certs`, `ansible_kubectl_verify_ssl` | Se pasa tal cual tras `--insecure-skip-tls-verify`, como hace el plugin: `true` da `True`, y `false` no añade nada. |
 
 Cada opción también puede venir de la variable de entorno `K8S_AUTH_*` que lee el plugin, a la que gana una variable de host. Las opciones llegan a `kubectl` en el orden del plugin. Los comandos se ejecutan con el usuario del contenedor: el plugin no puede elegir uno, así que `ansible_user` se ignora. Un contenedor sin shell no puede recibir el agente, porque `kubectl cp` necesita `tar` en él. Un pod que no existe, un namespace que no existe y un pod terminado dejan el host inalcanzable con lo que dijo `kubectl`. Con `-vvvv` las líneas muestran `ESTABLISH kubectl CONNECTION` y luego una línea `EXEC [...]` por comando, con la contraseña y el token como `********`.
+
+## Sesiones de AWS Systems Manager
+
+`ansible_connection: amazon.aws.aws_ssm` ejecuta un play en una instancia EC2 mediante AWS Systems Manager Session Manager, sin puerto de entrada, par de claves ni bastión. El nombre corto `aws_ssm` llega a él a través de community.aws, así que también hace falta esa colección. El controlador necesita `session-manager-plugin` y boto3 en su Python, y la instancia el agente de SSM.
+
+| Variable | Qué hace |
+|---|---|
+| `ansible_aws_ssm_instance_id` | La instancia. Sin ella, la instancia es `ansible_host` o, si no, el nombre del inventario. |
+| `ansible_aws_ssm_region` | La región; si no, `AWS_DEFAULT_REGION` o `AWS_REGION`; `us-east-1` por defecto. |
+| `ansible_aws_ssm_profile` | El perfil de AWS; si no, `AWS_PROFILE`. |
+| `ansible_aws_ssm_access_key_id`, `ansible_aws_ssm_secret_access_key`, `ansible_aws_ssm_session_token` | Las credenciales; si no, las variables de entorno `AWS_*` del mismo nombre y, si no, lo que encuentre boto3. Nunca se muestran, tampoco con `-vvvv`. |
+| `ansible_aws_ssm_plugin` | El programa `session-manager-plugin`; si no, `AWS_SESSION_MANAGER_PLUGIN`, `/usr/local/bin/session-manager-plugin` o el de tu `PATH`. |
+| `ansible_aws_ssm_document` | El documento de SSM que inicia la sesión; la shell por defecto de la cuenta si no se define. |
+| `ansible_aws_ssm_timeout` | Cuántos segundos tiene la sesión para responder en cada paso de la conexión; 60 por defecto. |
+
+Los comandos se ejecutan con el usuario de la sesión, `ssm-user` en Amazon Linux. `become` elige otro, y `ansible_user` se ignora, como con el plugin. Volant no envía nada por S3, así que las variables `ansible_aws_ssm_bucket_*` que necesita el plugin no se leen. El terminal de la sesión solo devuelve UTF-8 válido, así que el agente habla con el controlador en líneas base64, a unos 400 KiB/s en cada sentido, y la primera ejecución en una instancia sube el agente una vez, en unos diez segundos. Una instancia que el agente de SSM no gestiona, o unas credenciales rechazadas, dejan el host inalcanzable con las palabras de boto3, donde el plugin hace fallar la tarea. Cuando termina la ejecución, o se mata el controlador, la sesión se cierra y el agente se detiene con ella. Con `-vvvv` las líneas muestran `ESTABLISH SSM CONNECTION TO: <instance>` y luego una línea `EXEC: <comando>` por comando.
 
 ## Variables de host
 

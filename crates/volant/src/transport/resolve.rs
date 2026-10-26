@@ -211,6 +211,7 @@ mod tests {
             Transport::Local => "local",
             Transport::Ssh(_) => "ssh",
             Transport::Exec(_) => "exec",
+            Transport::Ssm(_) => "ssm",
         };
         assert_eq!(got, want);
     }
@@ -311,8 +312,8 @@ mod tests {
     )]
     #[case(
         ConnectionNames::default(),
-        "amazon.aws.aws_ssm",
-        Some("host 'h': connection 'amazon.aws.aws_ssm' is not supported")
+        "community.general.jail",
+        Some("host 'h': connection 'community.general.jail' is not supported")
     )]
     #[case(ConnectionNames::default(), "docker", None)]
     #[case(asked().0, "broken", None)]

@@ -35,7 +35,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
-| collection connection | 7 | 0 | 0 | 23 |
+| collection connection | 8 | 0 | 0 | 22 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -699,7 +699,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `amazon.aws.aws_ssm` | <span class="kw kw-no">later</span> | another connection |
+| `amazon.aws.aws_ssm` | <span class="kw kw-runs">runs</span> |  |
 | `ansible.netcommon.grpc` | <span class="kw kw-no">later</span> | another connection |
 | `ansible.netcommon.httpapi` | <span class="kw kw-no">later</span> | another connection |
 | `ansible.netcommon.libssh` | <span class="kw kw-no">later</span> | another connection |

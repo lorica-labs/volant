@@ -361,6 +361,17 @@ jobs:
       - name: Runtime tools script
         working-directory: dist/command-names
         run: sh runtime-tools.sh
+      - name: Pull and console scripts
+        working-directory: dist/command-names
+        run: |
+          set -eu
+          failed=0
+          for script in pull console; do
+            echo "::group::$script"
+            sh "$script.sh" || failed=1
+            echo "::endgroup::"
+          done
+          exit "$failed"
       - if: failure()
         uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
         with:

@@ -1,5 +1,5 @@
 namespace: acme
-name: probe
+name: redirect
 version: 1.0.0
 readme: README.md
 authors: [x]

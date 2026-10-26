@@ -2,7 +2,7 @@ requires_ansible: ">=2.15"
 plugin_routing:
   action:
     oldprobe:
-      redirect: acme.probe.probe
+      redirect: acme.redirect.probe
   modules:
     oldprobe:
-      redirect: acme.probe.probe
+      redirect: acme.redirect.probe

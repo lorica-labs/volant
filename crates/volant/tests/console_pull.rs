@@ -83,9 +83,8 @@ fn the_console_reads_its_commands_from_a_pipe() {
     assert_eq!(history.permissions().mode() & 0o777, 0o600);
 }
 
-/// The native console with no interpreter to find and no runtime to install: its own commands
-/// and a module the agent runs natively. A module that needed Python would print the runtime's
-/// installation line, or its failure, into the session.
+/// The console with no runtime installed and no interpreter named: a module needing Python would
+/// print the runtime's installation into the session.
 #[test]
 fn the_console_runs_without_python() {
     let dir = tempfile::tempdir().unwrap();

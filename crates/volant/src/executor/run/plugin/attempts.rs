@@ -14,7 +14,7 @@ use crate::template::Templar;
 use crate::vars::HostVars;
 
 use super::item::run_plugin_item;
-use crate::executor::run::async_job::{Polled, announce_retry, async_dir, poll_job, polls};
+use crate::executor::run::async_job::{Polled, announce_retry, async_dir, poll_job, polls, shown};
 use crate::executor::run::channel::{AgentChannel, Relink};
 use crate::executor::run::output::TTY_KEY;
 use crate::executor::run::retry::{Attempt, Retry, RetryLine, judge_attempt};
@@ -176,9 +176,10 @@ pub(in crate::executor) async fn run_plugin_attempts<C: AgentChannel, R: Relink<
                     crate::executor::prepare::retry_name(task, &item.vars, start.templar),
                     task,
                     left,
-                    failed,
+                    failed.clone(),
                 )
                 .await;
+                lefts.extend((!polls(task)).then(|| (left, shown(failed))));
             }
             Attempt::Again(left, failed) => lefts.push((left, failed)),
         }

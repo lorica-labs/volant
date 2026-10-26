@@ -32,8 +32,8 @@ use super::run::{
     judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
     record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
     replayed, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
-    running_host_vars, silent_discovery, stamp_discovery, step_task, step_tasks, take_warnings,
-    task_fails,
+    running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
+    take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -867,8 +867,7 @@ pub(super) async fn drive_host(
             if !batch.is_empty() && calls_lookup(task) {
                 break;
             }
-            // The banner's name, rendered here against this host's variables, and the banner itself
-            // when the step runs now: the first of a batch. A `meta` has banners of its own.
+            // The banner's name, and the banner when the step runs now: a batch's first, no `meta`.
             let spoken = Templar::is_template(&task.name)
                 .then(|| render_name(step, &name, &plan, &live, &templar, &store));
             let runs = batch.is_empty() && step.kind != StepKind::Meta;
@@ -1222,11 +1221,11 @@ pub(super) async fn drive_host(
                                 };
                                 match judge_attempt(task, item, ran, attempt, retry, &templar) {
                                     Attempt::Done(r) => break r,
-                                    // The first item's goes out as it happens: see the plugin path.
                                     Attempt::Again(left, failed) if ii == 0 => {
-                                        let named = names[ii].clone();
-                                        announce_retry(&tx, &name, pos, named, task, left, failed)
+                                        let (named, again) = (names[ii].clone(), failed.clone());
+                                        announce_retry(&tx, &name, pos, named, task, left, again)
                                             .await;
+                                        mine.push((left, shown(failed)));
                                     }
                                     Attempt::Again(left, failed) => mine.push((left, failed)),
                                 }
@@ -2008,9 +2007,10 @@ pub(super) async fn drive_host(
                                     retry_name(task, &item.vars, &templar),
                                     task,
                                     left,
-                                    failed,
+                                    failed.clone(),
                                 )
                                 .await;
+                                lefts[ii].extend((!polls(task)).then(|| (left, shown(failed))));
                             }
                             Attempt::Again(left, failed) => lefts[ii].push((left, failed)),
                         }
@@ -2224,7 +2224,7 @@ pub(super) async fn drive_host(
                         // fact only under `delegate_facts`; the warning comes either way.
                         // And only on the first attempt: a retried task's final result is a later
                         // attempt's, which found the interpreter already known. The warning stays.
-                        let retried = results[i].1.0.get("attempts").is_some_and(|n| n != 1);
+                        let retried = bi == 0 && lefts.get(i).is_some_and(|left| !left.is_empty());
                         // Nor on a polled job's, which is the job's last status: measured, it
                         // carries no fact and the next task discovers the interpreter again.
                         if (batch_delegate.is_none() || task.delegates_facts())

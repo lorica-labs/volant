@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! End-to-end runs over `kubernetes.core.kubectl` against a real cluster. Ignored by default:
-//! they need `kubectl` reaching a cluster (`KUBECONFIG`), kubernetes.core on
+//! they need `kubectl` reaching a cluster (`KUBECONFIG`, else `~/.kube/config`), kubernetes.core on
 //! `ANSIBLE_COLLECTIONS_PATH`, and `VOLANT_AGENT_DIR` holding `volant-agent-<triple>`.
 //! `VOLANT_KUBECTL_TEST_IMAGE` picks the pods' image, `python:3.12-alpine` by default.
 #![cfg(target_os = "linux")]
@@ -119,7 +119,13 @@ fn kubectl_runs_a_play_in_a_pod() {
     ns.pod("app1", &["sleep", "infinity"], "Ready");
     let dir = tempfile::tempdir().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let kubeconfig = std::env::var("KUBECONFIG").expect("KUBECONFIG names the cluster");
+    // Where `kubectl` itself looks: `KUBECONFIG`, else `~/.kube/config`, which `kind` writes.
+    let kubeconfig = std::env::var("KUBECONFIG").unwrap_or_else(|_| {
+        format!(
+            "{}/.kube/config",
+            std::env::var("HOME").expect("HOME is set")
+        )
+    });
     write_play(
         dir.path(),
         &[

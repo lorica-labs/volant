@@ -58,9 +58,32 @@ pub(super) fn start(ctx: Context<'_>) -> Box<dyn Plugin> {
         Ok(of) => copy_bytes(of),
         Err(msg) => match lookup_in {
             Some(file) => failing_with(lookup_failure(&msg, &file)),
+            None if msg.starts_with("Could not find or access '") => {
+                failing_with(missing_source(&msg))
+            }
             None => failing(msg),
         },
     }
+}
+
+/// A `src` nowhere on the controller: the plugin raises an `AnsibleError`, so measured on
+/// ansible-core 2.19.12 the block says `Task failed: ` and the message, `Task failed.` at the
+/// task, then the message again as its cause; the result keeps `msg` as it is.
+fn missing_source(msg: &str) -> TaskResult {
+    let mut failed = TaskResult::failed_with(msg);
+    failed.0.insert("changed".into(), Value::Bool(false));
+    failed.0.insert(
+        crate::render::ERROR_KEY.into(),
+        Value::from(format!("Task failed: {msg}")),
+    );
+    failed.0.insert(
+        crate::render::CHAIN_KEY.into(),
+        Value::Array(vec![crate::render::cause(msg, None, None)]),
+    );
+    failed
+        .0
+        .insert(crate::executor::RAISED_KEY.into(), Value::Bool(true));
+    failed
 }
 
 /// A lookup, filter or test that failed while the template rendered: the plugin raised it from inside the

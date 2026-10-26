@@ -2,6 +2,8 @@
 //! End-to-end runs over `containers.podman.buildah` against real working containers. Ignored by
 //! default: they need `buildah`, containers.podman on `ANSIBLE_COLLECTIONS_PATH`, and
 //! `VOLANT_AGENT_DIR` holding `volant-agent-<triple>` for the images' architecture.
+//! `VOLANT_BUILDAH_TEST_IMAGE` picks the image, `docker.io/library/alpine:3.20` by default, and
+//! `VOLANT_BUILDAH_TEST_NO_SHELL_IMAGE` the one with no `/bin/sh`.
 #![cfg(target_os = "linux")]
 
 use std::fmt::Write as _;
@@ -27,7 +29,10 @@ impl Working {
     }
 
     fn alpine() -> Working {
-        Working::from("docker.io/library/alpine:3.20")
+        Working::from(
+            &std::env::var("VOLANT_BUILDAH_TEST_IMAGE")
+                .unwrap_or_else(|_| "docker.io/library/alpine:3.20".into()),
+        )
     }
 }
 
@@ -104,6 +109,86 @@ fn buildah_builds_an_image_with_what_the_play_wrote() {
     assert_eq!(String::from_utf8_lossy(&read.stdout), "built by a play");
 }
 
+/// The inode and modification time of the agent the first run cached under root's `remote_tmp`:
+/// an upload writes a new copy and renames it over the old one, so a second run that uploaded
+/// nothing leaves both as they were.
+const CACHED_AGENT: &str = "stat -c '%i %Y' /root/.ansible/tmp/volant-agent-*/volant-agent";
+/// A user of the image, `volant`, who may run anything through `sudo` with no password.
+const WITH_SUDO_USER: &str = "adduser -D volant && apk add --no-cache sudo >/dev/null && echo 'volant ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/volant";
+
+const AS_USER_AND_ROOT: &str = "    - ansible.builtin.command: id -un\n      register: who\n    - ansible.builtin.command: id -un\n      become: true\n      register: root\n    - ansible.builtin.debug:\n        msg: \"{{ who.stdout }} then {{ root.stdout }}\"\n";
+
+/// `command` run to completion, its stdout trimmed.
+fn ran(command: &[&str]) -> String {
+    let out = Command::new(command[0])
+        .args(&command[1..])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{command:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+/// A second run finds the agent the first one cached and uploads nothing.
+#[test]
+#[ignore = "needs buildah, containers.podman and a musl agent"]
+fn buildah_reuses_the_cached_agent_on_a_second_run() {
+    let working = Working::alpine();
+    let dir = tempfile::tempdir().unwrap();
+    let cached = || ran(&["buildah", "run", &working.0, "--", "sh", "-c", CACHED_AGENT]);
+    let mut before = String::new();
+    for round in 0..2 {
+        let out = play(
+            dir.path(),
+            &[(&working.0, "")],
+            "    - ansible.builtin.command: id -un\n",
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if round == 0 {
+            before = cached();
+            assert!(!before.is_empty(), "no cached agent");
+        }
+    }
+    assert_eq!(cached(), before, "the second run uploaded the agent again");
+}
+
+/// `ansible_user` names a user of the image other than root, and `become` reaches root through
+/// the image's `sudo`.
+#[test]
+#[ignore = "needs buildah, containers.podman and a musl agent"]
+fn buildah_runs_as_another_user_and_becomes_root_through_sudo() {
+    let working = Working::alpine();
+    ran(&[
+        "buildah",
+        "run",
+        &working.0,
+        "--",
+        "sh",
+        "-c",
+        WITH_SUDO_USER,
+    ]);
+    let dir = tempfile::tempdir().unwrap();
+    let out = play(
+        dir.path(),
+        &[(&working.0, ", ansible_user: volant")],
+        AS_USER_AND_ROOT,
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("\"msg\": \"volant then root\""), "{stdout}");
+}
+
 #[test]
 #[ignore = "needs buildah, containers.podman and a musl agent"]
 fn buildah_reports_a_container_it_does_not_know() {
@@ -124,7 +209,10 @@ fn buildah_reports_a_container_it_does_not_know() {
 #[test]
 #[ignore = "needs buildah, containers.podman and a musl agent"]
 fn buildah_reaches_a_working_container_with_no_shell() {
-    let working = Working::from("gcr.io/distroless/static-debian12:debug-nonroot");
+    let working = Working::from(
+        &std::env::var("VOLANT_BUILDAH_TEST_NO_SHELL_IMAGE")
+            .unwrap_or_else(|_| "gcr.io/distroless/static-debian12:debug-nonroot".into()),
+    );
     let dir = tempfile::tempdir().unwrap();
     let out = play(
         dir.path(),

@@ -452,6 +452,40 @@ scratch-test controller busybox="/bin/busybox":
     docker build -q -t "$image" "$work" > /dev/null
     docker run --rm --network none "$image" playbook -i /inventory.ini /site.yml
 
+# The ignored end-to-end tests of the container connections named, one after the other, against
+# the runtimes installed here: docker, podman, buildah, chroot, kubectl or lxd. CONTRIBUTING lists
+# what each one needs. The chroot tests run as root, through sudo when you are not; kubectl's ten
+# idle minutes are left to a run by hand. A runtime that fails does not stop the next one.
+container-test +runtimes:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    for runtime in {{runtimes}}; do
+        case "$runtime" in
+            docker | podman | buildah | chroot | kubectl) program="$runtime" ;;
+            lxd) program=lxc ;;
+            *) echo "no container tests for '$runtime': name docker, podman, buildah, chroot, kubectl or lxd"; exit 1 ;;
+        esac
+        command -v "$program" >/dev/null || { echo "the $runtime tests need $program, which is not on PATH"; exit 1; }
+    done
+    "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }
+    # An unoptimised agent: these tests check the connection, and the release build's fat LTO
+    # takes longer than a runtime's tests.
+    cargo build -p volant-agent --target x86_64-unknown-linux-musl
+    mkdir -p target/agents-debug
+    cp target/x86_64-unknown-linux-musl/debug/volant-agent target/agents-debug/volant-agent-x86_64-unknown-linux-musl
+    export VOLANT_AGENT_DIR="$PWD/target/agents-debug"
+    runner="CARGO_TARGET_$(rustc -vV | sed -n 's/^host: //p' | tr 'a-z-' 'A-Z_')_RUNNER"
+    failed=()
+    for runtime in {{runtimes}}; do
+        if [ "$runtime" = chroot ] && [ "$(id -u)" != 0 ]; then
+            as=("$runner=sudo --preserve-env --set-home")
+        else
+            as=()
+        fi
+        env "${as[@]}" cargo nextest run -p volant --test "${runtime}_e2e" --run-ignored ignored-only --no-tests=fail --test-threads 1 -E "test(/^${runtime}_/) - test(/ten_idle_minutes/)" || failed+=("$runtime")
+    done
+    [ ${#failed[@]} = 0 ] || { echo "failed: ${failed[*]}"; exit 1; }
+
 # Tests that need an sshd on localhost and a key in VOLANT_SSH_TEST_KEY (see CONTRIBUTING). The
 # native module tests among them change the machine they run on: they go to the host
 # VOLANT_TARGET_HOST names, through your own ssh configuration, and to localhost only on a GitHub

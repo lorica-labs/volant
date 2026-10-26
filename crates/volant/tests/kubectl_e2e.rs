@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! End-to-end runs over `kubernetes.core.kubectl` against a real cluster. Ignored by default:
-//! they need `kubectl` reaching a cluster (`KUBECONFIG`), kubernetes.core on
+//! they need `kubectl` reaching a cluster (`KUBECONFIG`, else `~/.kube/config`), kubernetes.core on
 //! `ANSIBLE_COLLECTIONS_PATH`, and `VOLANT_AGENT_DIR` holding `volant-agent-<triple>`.
 //! `VOLANT_KUBECTL_TEST_IMAGE` picks the pods' image, `python:3.12-alpine` by default.
 #![cfg(target_os = "linux")]
@@ -119,7 +119,13 @@ fn kubectl_runs_a_play_in_a_pod() {
     ns.pod("app1", &["sleep", "infinity"], "Ready");
     let dir = tempfile::tempdir().unwrap();
     let tmp = tempfile::tempdir().unwrap();
-    let kubeconfig = std::env::var("KUBECONFIG").expect("KUBECONFIG names the cluster");
+    // Where `kubectl` itself looks: `KUBECONFIG`, else `~/.kube/config`, which `kind` writes.
+    let kubeconfig = std::env::var("KUBECONFIG").unwrap_or_else(|_| {
+        format!(
+            "{}/.kube/config",
+            std::env::var("HOME").expect("HOME is set")
+        )
+    });
     write_play(
         dir.path(),
         &[
@@ -172,6 +178,66 @@ fn kubectl_runs_a_play_in_a_pod() {
         .filter(|name| name.to_string_lossy().starts_with("volant-kubeconfig-"))
         .collect();
     assert!(left.is_empty(), "{left:?}");
+}
+
+/// The inode and modification time of the agent the first run cached under root's `remote_tmp`:
+/// an upload writes a new copy and renames it over the old one, so a second run that uploaded
+/// nothing leaves both as they were.
+const CACHED_AGENT: &str = "stat -c '%i %Y' /root/.ansible/tmp/volant-agent-*/volant-agent";
+
+/// `command` run to completion, its stdout trimmed.
+fn ran(command: &[&str]) -> String {
+    let out = Command::new(command[0])
+        .args(&command[1..])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{command:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+
+/// A second run finds the agent the first one cached and uploads nothing.
+#[test]
+#[ignore = "needs a cluster, kubernetes.core and the agent"]
+fn kubectl_reuses_the_cached_agent_on_a_second_run() {
+    let ns = Namespace::new("cache");
+    ns.pod("app1", &["sleep", "infinity"], "Ready");
+    let dir = tempfile::tempdir().unwrap();
+    let cached = || {
+        ran(&[
+            "kubectl",
+            "exec",
+            "-n",
+            &ns.0,
+            "app1",
+            "--",
+            "sh",
+            "-c",
+            CACHED_AGENT,
+        ])
+    };
+    let mut before = String::new();
+    for round in 0..2 {
+        let out = play(
+            dir.path(),
+            &[("app1", format!("ansible_kubectl_namespace: {}", ns.0))],
+            "    - ansible.builtin.command: id -un\n",
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if round == 0 {
+            before = cached();
+            assert!(!before.is_empty(), "no cached agent");
+        }
+    }
+    assert_eq!(cached(), before, "the second run uploaded the agent again");
 }
 
 /// A pod or a namespace that does not exist, and a pod that has finished, leave the host

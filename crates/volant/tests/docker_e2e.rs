@@ -9,7 +9,8 @@
 
 use std::fmt::Write as _;
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
+use std::time::{Duration, Instant};
 
 /// A container of this test's own, removed when the test ends however it ends.
 struct Container(String);
@@ -62,6 +63,16 @@ impl Container {
     }
 }
 
+impl Container {
+    fn processes(&self) -> String {
+        let out = Command::new("docker")
+            .args(["exec", &self.0, "ps", "-o", "args"])
+            .output()
+            .unwrap();
+        String::from_utf8_lossy(&out.stdout).into_owned()
+    }
+}
+
 impl Drop for Container {
     fn drop(&mut self) {
         let _ = Command::new("docker").args(["rm", "-f", &self.0]).output();
@@ -70,6 +81,11 @@ impl Drop for Container {
 
 /// Runs `site.yml` from `dir` against `hosts`, each line of it the host's inventory variables.
 fn play(dir: &Path, hosts: &[(&str, &str)], tasks: &str) -> Output {
+    playbook(dir, hosts, tasks).output().expect("volant runs")
+}
+
+/// [`play`]'s command, written and not yet started.
+fn playbook(dir: &Path, hosts: &[(&str, &str)], tasks: &str) -> Command {
     let mut inventory = String::from("all:\n  hosts:\n");
     for (host, vars) in hosts {
         let _ = writeln!(
@@ -83,11 +99,11 @@ fn play(dir: &Path, hosts: &[(&str, &str)], tasks: &str) -> Output {
         format!("- hosts: all\n  gather_facts: false\n  tasks:\n{tasks}"),
     )
     .unwrap();
-    Command::new(env!("CARGO_BIN_EXE_volant"))
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
         .args(["playbook", "-i", "inventory.yml", "site.yml"])
-        .current_dir(dir)
-        .output()
-        .expect("volant runs")
+        .current_dir(dir);
+    command
 }
 
 const WHO_AM_I: &str = r"    - name: Who am I
@@ -126,6 +142,81 @@ fn docker_runs_a_play_in_a_running_container() {
         ),
         "{stdout}"
     );
+}
+
+/// The inode and modification time of the agent the first run cached under root's `remote_tmp`:
+/// an upload writes a new copy and renames it over the old one, so a second run that uploaded
+/// nothing leaves both as they were.
+const CACHED_AGENT: &str = "stat -c '%i %Y' /root/.ansible/tmp/volant-agent-*/volant-agent";
+/// A user of the image, `volant`, who may run anything through `sudo` with no password.
+const WITH_SUDO_USER: &str = "adduser -D volant && apk add --no-cache sudo >/dev/null && echo 'volant ALL=(ALL) NOPASSWD: ALL' > /etc/sudoers.d/volant";
+
+const AS_USER_AND_ROOT: &str = "    - ansible.builtin.command: id -un\n      register: who\n    - ansible.builtin.command: id -un\n      become: true\n      register: root\n    - ansible.builtin.debug:\n        msg: \"{{ who.stdout }} then {{ root.stdout }}\"\n";
+
+/// `command` run to completion, its stdout trimmed.
+fn ran(command: &[&str]) -> String {
+    let out = Command::new(command[0])
+        .args(&command[1..])
+        .output()
+        .unwrap();
+    assert!(
+        out.status.success(),
+        "{command:?}: {}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    String::from_utf8_lossy(&out.stdout).trim().to_string()
+}
+/// A second run finds the agent the first one cached and uploads nothing.
+#[test]
+#[ignore = "needs docker, community.docker and a musl agent"]
+fn docker_reuses_the_cached_agent_on_a_second_run() {
+    let app = Container::running("cache");
+    let dir = tempfile::tempdir().unwrap();
+    let cached = || ran(&["docker", "exec", &app.0, "sh", "-c", CACHED_AGENT]);
+    let mut before = String::new();
+    for round in 0..2 {
+        let out = play(
+            dir.path(),
+            &[("app1", &format!("ansible_docker_host: {}", app.0))],
+            WHO_AM_I,
+        );
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        assert!(
+            out.status.success(),
+            "{stdout}{}",
+            String::from_utf8_lossy(&out.stderr)
+        );
+        if round == 0 {
+            before = cached();
+            assert!(!before.is_empty(), "no cached agent");
+        }
+    }
+    assert_eq!(cached(), before, "the second run uploaded the agent again");
+}
+
+/// `ansible_user` names a user of the image other than root, and `become` reaches root through
+/// the image's `sudo`.
+#[test]
+#[ignore = "needs docker, community.docker and a musl agent"]
+fn docker_runs_as_another_user_and_becomes_root_through_sudo() {
+    let app = Container::running("sudo");
+    ran(&["docker", "exec", &app.0, "sh", "-c", WITH_SUDO_USER]);
+    let dir = tempfile::tempdir().unwrap();
+    let out = play(
+        dir.path(),
+        &[(
+            "app1",
+            &format!("ansible_docker_host: {}, ansible_user: volant", app.0),
+        )],
+        AS_USER_AND_ROOT,
+    );
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    assert!(stdout.contains("\"msg\": \"volant then root\""), "{stdout}");
 }
 
 /// A container that does not exist, one that is stopped, and a user the image does not have
@@ -191,5 +282,43 @@ fn docker_reaches_a_container_with_no_shell() {
             String::from_utf8_lossy(&out.stderr)
         );
         assert!(stdout.contains("\"who.stdout\": \"nonroot\""), "{stdout}");
+    }
+}
+
+/// The controller killed with SIGKILL closes `docker exec -i`'s stdin, and the agent behind it
+/// stops on end of input, so nothing is left running in the container.
+#[test]
+#[ignore = "needs docker, community.docker and a musl agent"]
+fn docker_leaves_no_agent_behind_a_killed_controller() {
+    let app = Container::running("killed");
+    let dir = tempfile::tempdir().unwrap();
+    let mut controller = playbook(
+        dir.path(),
+        &[("app1", &format!("ansible_host: {}", app.0))],
+        "    - ansible.builtin.command: sleep 30
+",
+    )
+    .stdout(Stdio::null())
+    .stderr(Stdio::null())
+    .spawn()
+    .expect("volant runs");
+    let started = Instant::now();
+    while !app.processes().contains("volant-agent") {
+        assert!(
+            started.elapsed() < Duration::from_secs(60),
+            "the agent never started"
+        );
+        std::thread::sleep(Duration::from_millis(200));
+    }
+    controller.kill().unwrap();
+    let _ = controller.wait();
+    let killed = Instant::now();
+    while app.processes().contains("volant-agent") {
+        assert!(
+            killed.elapsed() < Duration::from_secs(5),
+            "an agent outlived its controller: {}",
+            app.processes()
+        );
+        std::thread::sleep(Duration::from_millis(200));
     }
 }

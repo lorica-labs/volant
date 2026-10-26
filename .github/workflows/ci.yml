@@ -45,9 +45,11 @@ jobs:
         run: |
           set -euo pipefail
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
-            echo code=true >> "$GITHUB_OUTPUT"
-            echo build=true >> "$GITHUB_OUTPUT"
-            echo containers=true >> "$GITHUB_OUTPUT"
+            {
+              echo code=true
+              echo build=true
+              echo containers=true
+            } >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # The checkout is the merge commit: its first parent is the base branch.

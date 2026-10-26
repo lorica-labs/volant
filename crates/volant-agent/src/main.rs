@@ -68,7 +68,10 @@ fn main() {
     outlive_the_hangup();
     let remote_tmp = blobs::remote_tmp();
     blobs::sweep(&remote_tmp);
-    let served = serve(&remote_tmp);
+    // A link that only text crosses whole, such as a Session Manager shell: the frames travel
+    // as base64 lines. See `volant_protocol::lines`.
+    let lines = std::env::args().nth(1).as_deref() == Some("--lines");
+    let served = serve(&remote_tmp, lines);
     // Whichever way the conversation ended. A panic on this thread unwinds past this line, and a
     // killed agent never reaches it: both leave their directory to the next agent's sweep.
     blobs::end_connection(&remote_tmp);
@@ -135,14 +138,19 @@ fn guard_reader(
     }
 }
 
-fn serve(remote_tmp: &str) -> io::Result<()> {
+fn serve(remote_tmp: &str, lines: bool) -> io::Result<()> {
     // A reader thread turns stdin into messages so the executor can notice `Cancel`
     // while a task is running. It also reads the blob frame after each `put_blob`, so nothing
     // else ever takes a blob for a message.
     let (tx, rx) = mpsc::channel::<io::Result<blobs::Incoming>>();
     thread::spawn(move || {
         guard_reader(&tx, |tx| {
-            let mut stdin = BufReader::new(io::stdin().lock());
+            let stdin = io::stdin().lock();
+            let mut stdin: Box<dyn io::BufRead> = if lines {
+                Box::new(BufReader::new(volant_protocol::lines::Reader::new(stdin)))
+            } else {
+                Box::new(BufReader::new(stdin))
+            };
             loop {
                 match blobs::read_incoming(&mut stdin) {
                     Ok(Some(Ok(incoming))) => {
@@ -163,7 +171,12 @@ fn serve(remote_tmp: &str) -> io::Result<()> {
         });
     });
 
-    let mut out = BufWriter::new(io::stdout().lock());
+    let stdout = io::stdout().lock();
+    let mut out: BufWriter<Box<dyn io::Write>> = BufWriter::new(if lines {
+        Box::new(volant_protocol::lines::Writer::new(stdout))
+    } else {
+        Box::new(stdout)
+    });
     let mut send =
         |msg: &FromAgent| -> io::Result<()> { write_frame(&mut out, &serde_json::to_vec(msg)?) };
 

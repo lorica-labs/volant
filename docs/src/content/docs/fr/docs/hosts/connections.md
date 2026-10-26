@@ -22,6 +22,7 @@ Volant atteint un hôte géré, y dépose un petit agent statique (un programme 
 | `buildah` | Lance l'agent dans un conteneur de travail Buildah via `buildah run`, comme `containers.podman.buildah`. Voir [Conteneurs de travail Buildah](#conteneurs-de-travail-buildah). |
 | `lxd` | Lance l'agent dans une instance LXD via `lxc exec`, comme `community.general.lxd` ; `community.general.incus` fait de même pour Incus. Voir [Instances LXD et Incus](#instances-lxd-et-incus). |
 | `kubectl` | Lance l'agent dans un conteneur d'un pod Kubernetes via `kubectl exec`, comme `kubernetes.core.kubectl`. Voir [Pods Kubernetes](#pods-kubernetes). |
+| `aws_ssm` | Lance l'agent sur une instance EC2 via une session AWS Systems Manager, comme `amazon.aws.aws_ssm`. Voir [Sessions AWS Systems Manager](#sessions-aws-systems-manager). |
 
 Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-playbook` le résout, une fois par nom et par exécution. `ansible.builtin.ssh` et `ansible.builtin.local` se résolvent vers les deux plugins ci-dessus et s'exécutent. Un nom court qu'une collection a repris à ansible-core est routé vers cette collection quand elle est installée :
 
@@ -38,7 +39,7 @@ Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-pla
 
 Avec `-vvv`, un nom routé affiche `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` sous la première tâche qui l'utilise sur un hôte, une ligne par étape.
 
-Un nom qui se résout vers un plugin que Volant ne pilote pas encore, comme `winrm`, `psrp` ou `amazon.aws.aws_ssm`, rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
+Un nom qui se résout vers un plugin que Volant ne pilote pas encore, comme `winrm`, `psrp` ou `community.general.jail`, rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
 
 Un nom qui ne se résout vers rien fait échouer la tâche avec `the connection plugin '<name>' was not found`, comme dans Ansible. Cela comprend un nom court routé vers une collection qui n'est pas installée, comme `docker` sans community.docker, après l'avertissement qu'ansible-core affiche pour lui, et `paramiko`, qu'ansible-core 2.19.12 ne porte pas sous ce nom. Cela vaut que la valeur soit la connexion de l'hôte lui-même, celle d'une cible de `delegate_to`, ou celle de l'hôte qui exécute une tâche `run_once`.
 
@@ -129,6 +130,22 @@ L'utilisateur est `ansible_user`, le mot-clé `remote_user` ou `-u`, `root` par 
 | `ansible_kubectl_validate_certs`, `ansible_kubectl_verify_ssl` | Passée telle quelle après `--insecure-skip-tls-verify`, comme le fait le plugin : `true` donne `True`, et `false` n'ajoute rien. |
 
 Chaque option peut aussi venir de la variable d'environnement `K8S_AUTH_*` que lit le plugin, sur laquelle une variable d'hôte l'emporte. Les options arrivent à `kubectl` dans l'ordre du plugin. Les commandes s'exécutent sous l'utilisateur du conteneur : le plugin ne peut pas en choisir un, donc `ansible_user` est ignoré. Un conteneur sans shell ne peut pas recevoir l'agent, car `kubectl cp` y demande `tar`. Un pod absent, un namespace absent ou un pod terminé rendent l'hôte injoignable avec ce qu'a dit `kubectl`. Avec `-vvvv`, les lignes affichent `ESTABLISH kubectl CONNECTION`, puis une ligne `EXEC [...]` par commande, où le mot de passe et le jeton apparaissent comme `********`.
+
+## Sessions AWS Systems Manager
+
+`ansible_connection: amazon.aws.aws_ssm` exécute un play sur une instance EC2 via AWS Systems Manager Session Manager, sans port entrant, sans paire de clés ni bastion. Le nom court `aws_ssm` y mène par community.aws, qu'il faut donc aussi installer. Le contrôleur a besoin de `session-manager-plugin` et de boto3 dans son Python, et l'instance de l'agent SSM.
+
+| Variable | Rôle |
+|---|---|
+| `ansible_aws_ssm_instance_id` | L'instance. Sans elle, l'instance est `ansible_host`, sinon le nom d'inventaire. |
+| `ansible_aws_ssm_region` | La région, sinon `AWS_DEFAULT_REGION` ou `AWS_REGION` ; `us-east-1` par défaut. |
+| `ansible_aws_ssm_profile` | Le profil AWS, sinon `AWS_PROFILE`. |
+| `ansible_aws_ssm_access_key_id`, `ansible_aws_ssm_secret_access_key`, `ansible_aws_ssm_session_token` | Les identifiants, sinon les variables d'environnement `AWS_*` de même nom, sinon ce que trouve boto3. Ils ne sont jamais affichés, `-vvvv` compris. |
+| `ansible_aws_ssm_plugin` | Le programme `session-manager-plugin`, sinon `AWS_SESSION_MANAGER_PLUGIN`, `/usr/local/bin/session-manager-plugin` ou celui de votre `PATH`. |
+| `ansible_aws_ssm_document` | Le document SSM que la session démarre ; le shell par défaut du compte s'il n'est pas défini. |
+| `ansible_aws_ssm_timeout` | Le nombre de secondes dont la session dispose pour répondre à chaque étape de la connexion ; 60 par défaut. |
+
+Les commandes s'exécutent sous l'utilisateur de la session, `ssm-user` sur Amazon Linux. `become` en choisit un autre, et `ansible_user` est ignoré, comme avec le plugin. Volant n'envoie rien par S3 : les variables `ansible_aws_ssm_bucket_*` dont le plugin a besoin ne sont pas lues. Le terminal de la session ne renvoie que de l'UTF-8 valide, donc l'agent parle au contrôleur en lignes base64, à environ 400 Kio/s dans chaque sens, et la première exécution sur une instance y envoie l'agent une fois, en une dizaine de secondes. Une instance que l'agent SSM ne gère pas, ou des identifiants refusés, rendent l'hôte injoignable avec les mots de boto3, là où le plugin fait échouer la tâche. À la fin de l'exécution, ou si le contrôleur est tué, la session se ferme et l'agent s'arrête avec elle. Avec `-vvvv`, les lignes affichent `ESTABLISH SSM CONNECTION TO: <instance>`, puis une ligne `EXEC: <commande>` par commande.
 
 ## Variables d'hôte
 

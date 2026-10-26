@@ -24,6 +24,7 @@ mod resolve;
 mod session;
 mod shell;
 mod ssh;
+mod ssm;
 mod tar;
 pub mod trace;
 
@@ -45,6 +46,7 @@ pub(crate) use names::{first_set, secret_text};
 pub use podman::PodmanSettings;
 pub use resolve::{ConnectionNames, Resolution, ResolveConnection};
 pub(crate) use shell::validate_remote_tmp;
+pub use ssm::SsmTarget;
 pub(crate) use trace::shell_quote;
 
 #[cfg(test)]

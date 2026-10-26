@@ -22,6 +22,7 @@ Volant erreicht einen verwalteten Host, legt dort einen kleinen statischen Agent
 | `buildah` | Startet den Agent über `buildah run` in einem Buildah-Arbeitscontainer, wie `containers.podman.buildah`. Siehe [Buildah-Arbeitscontainer](#buildah-arbeitscontainer). |
 | `lxd` | Startet den Agent über `lxc exec` in einer LXD-Instanz, wie `community.general.lxd`; `community.general.incus` tut dasselbe für Incus. Siehe [LXD- und Incus-Instanzen](#lxd--und-incus-instanzen). |
 | `kubectl` | Startet den Agent über `kubectl exec` in einem Container eines Kubernetes-Pods, wie `kubernetes.core.kubectl`. Siehe [Kubernetes-Pods](#kubernetes-pods). |
+| `aws_ssm` | Startet den Agent über eine AWS-Systems-Manager-Sitzung auf einer EC2-Instanz, wie `amazon.aws.aws_ssm`. Siehe [AWS-Systems-Manager-Sitzungen](#aws-systems-manager-sitzungen). |
 
 Jeder andere Name wird vom ansible-core des Controllers aufgelöst, so wie `ansible-playbook` ihn auflöst, einmal pro Name und Lauf. `ansible.builtin.ssh` und `ansible.builtin.local` lösen sich zu den beiden Plugins oben auf und laufen. Ein kurzer Name, den eine Collection von ansible-core übernommen hat, wird zu dieser Collection geleitet, wenn sie installiert ist:
 
@@ -38,7 +39,7 @@ Jeder andere Name wird vom ansible-core des Controllers aufgelöst, so wie `ansi
 
 Mit `-vvv` gibt ein umgeleiteter Name `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` unter dem ersten Task aus, der ihn auf einem Host verwendet, eine Zeile pro Schritt.
 
-Ein Name, der sich zu einem Plugin auflöst, das Volant noch nicht steuert, etwa `winrm`, `psrp` oder `amazon.aws.aws_ssm`, macht den Host nicht erreichbar, mit `connection '<full name>' is not supported`, und der übrige Lauf geht weiter. Die [Unterstützungsmatrix](/de/docs/reference/parity/#collection-connection) listet jedes Verbindungs-Plugin der Collections im Paket auf.
+Ein Name, der sich zu einem Plugin auflöst, das Volant noch nicht steuert, etwa `winrm`, `psrp` oder `community.general.jail`, macht den Host nicht erreichbar, mit `connection '<full name>' is not supported`, und der übrige Lauf geht weiter. Die [Unterstützungsmatrix](/de/docs/reference/parity/#collection-connection) listet jedes Verbindungs-Plugin der Collections im Paket auf.
 
 Ein Name, der sich zu nichts auflöst, lässt den Task mit `the connection plugin '<name>' was not found` fehlschlagen, wie bei Ansible. Dazu gehört ein kurzer Name, der zu einer nicht installierten Collection geleitet wird, etwa `docker` ohne community.docker, nach der Warnung, die ansible-core dafür ausgibt, und `paramiko`, das ansible-core 2.19.12 unter diesem Namen nicht mitbringt. Das gilt unabhängig davon, ob der Wert die eigene Verbindung des Hosts ist, die eines `delegate_to`-Ziels oder die des Hosts, der einen `run_once`-Task ausführt.
 
@@ -129,6 +130,22 @@ Der Benutzer ist `ansible_user`, das Schlüsselwort `remote_user` oder `-u`, sta
 | `ansible_kubectl_validate_certs`, `ansible_kubectl_verify_ssl` | Wird unverändert nach `--insecure-skip-tls-verify` übergeben, wie beim Plugin: `true` ergibt `True`, und `false` fügt nichts hinzu. |
 
 Jede Option kann auch aus der Umgebungsvariable `K8S_AUTH_*` kommen, die das Plugin liest; eine Hostvariable hat Vorrang. Die Optionen erreichen `kubectl` in der Reihenfolge des Plugins. Befehle laufen als Benutzer des Containers: Das Plugin kann keinen wählen, daher wird `ansible_user` ignoriert. Ein Container ohne Shell kann den Agent nicht aufnehmen, da `kubectl cp` darin `tar` braucht. Ein fehlender Pod, ein fehlender Namespace und ein beendeter Pod machen den Host nicht erreichbar, mit dem, was `kubectl` gemeldet hat. Mit `-vvvv` zeigen die Zeilen `ESTABLISH kubectl CONNECTION`, dann eine `EXEC [...]`-Zeile pro Befehl, in der Passwort und Token als `********` erscheinen.
+
+## AWS-Systems-Manager-Sitzungen
+
+`ansible_connection: amazon.aws.aws_ssm` führt ein Play über AWS Systems Manager Session Manager auf einer EC2-Instanz aus, ohne eingehenden Port, Schlüsselpaar oder Bastion. Der kurze Name `aws_ssm` führt über community.aws dorthin, das daher ebenfalls installiert sein muss. Der Controller braucht `session-manager-plugin` und boto3 in seinem Python, die Instanz den SSM-Agent.
+
+| Variable | Wirkung |
+|---|---|
+| `ansible_aws_ssm_instance_id` | Die Instanz. Ohne sie ist die Instanz `ansible_host`, sonst der Inventory-Name. |
+| `ansible_aws_ssm_region` | Die Region, sonst `AWS_DEFAULT_REGION` oder `AWS_REGION`; standardmäßig `us-east-1`. |
+| `ansible_aws_ssm_profile` | Das AWS-Profil, sonst `AWS_PROFILE`. |
+| `ansible_aws_ssm_access_key_id`, `ansible_aws_ssm_secret_access_key`, `ansible_aws_ssm_session_token` | Die Zugangsdaten, sonst die gleichnamigen `AWS_*`-Umgebungsvariablen, sonst was boto3 findet. Sie werden nie ausgegeben, auch nicht mit `-vvvv`. |
+| `ansible_aws_ssm_plugin` | Das Programm `session-manager-plugin`, sonst `AWS_SESSION_MANAGER_PLUGIN`, `/usr/local/bin/session-manager-plugin` oder das in Ihrem `PATH`. |
+| `ansible_aws_ssm_document` | Das SSM-Dokument, das die Sitzung startet; ohne Angabe die Standard-Shell des Kontos. |
+| `ansible_aws_ssm_timeout` | Wie viele Sekunden die Sitzung für jeden Schritt des Verbindungsaufbaus hat; standardmäßig 60. |
+
+Befehle laufen als Benutzer der Sitzung, `ssm-user` unter Amazon Linux. `become` wählt einen anderen, und `ansible_user` wird ignoriert, wie beim Plugin. Volant schickt nichts über S3, daher werden die `ansible_aws_ssm_bucket_*`-Variablen, die das Plugin braucht, nicht gelesen. Das Terminal der Sitzung gibt nur gültiges UTF-8 zurück, daher spricht der Agent mit dem Controller in Base64-Zeilen, mit etwa 400 KiB/s in jede Richtung, und der erste Lauf auf einer Instanz lädt den Agent einmal hoch, in etwa zehn Sekunden. Eine Instanz, die der SSM-Agent nicht verwaltet, oder abgewiesene Zugangsdaten machen den Host mit den Worten von boto3 nicht erreichbar, wo das Plugin die Task scheitern lässt. Wenn der Lauf endet oder der Controller beendet wird, schließt sich die Sitzung und der Agent stoppt mit ihr. Mit `-vvvv` zeigen die Zeilen `ESTABLISH SSM CONNECTION TO: <instance>`, dann eine `EXEC: <Befehl>`-Zeile pro Befehl.
 
 ## Hostvariablen
 

@@ -264,6 +264,14 @@ async fn run_capturing<T: Reach + ?Sized>(
 ) -> Result<Captured, ConnectError> {
     let argv = target.command_line(remote_command, stdin.is_some());
     target.trace_exec(&argv);
+    if let Some(shell) = target.in_band() {
+        let captured = shell.lock().await.run(remote_command, stdin).await?;
+        target.trace_result(&captured);
+        return match target.connection_failure(&captured, offered) {
+            Some(failure) => Err(failure),
+            None => Ok(captured),
+        };
+    }
     let mut command = Command::new(&argv[0]);
     command
         .args(&argv[1..])

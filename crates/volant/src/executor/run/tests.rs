@@ -4741,7 +4741,7 @@ async fn a_connect_timeout_reaches_the_connection_as_ssh_s_connecttimeout() {
         let kept = Transport::for_host(&host, &defaults).expect("an ssh transport");
         let argv = |t: &Transport| match t {
             Transport::Ssh(target) => target.ssh_argv("true").join(" "),
-            Transport::Local | Transport::Exec(_) => panic!("an ssh transport"),
+            Transport::Local | Transport::Exec(_) | Transport::Ssm(_) => panic!("an ssh transport"),
         };
         let fresh = with_connect_timeout(&kept, Some(Duration::from_millis(2500)));
         assert!(
@@ -4785,7 +4785,7 @@ fn shared_to_h1(dir: &Path) -> Transport {
 async fn socket_of(transport: &Transport) -> Option<Box<Path>> {
     match transport {
         Transport::Ssh(target) => target.resolved().await.control_path,
-        Transport::Local | Transport::Exec(_) => None,
+        Transport::Local | Transport::Exec(_) | Transport::Ssm(_) => None,
     }
 }
 

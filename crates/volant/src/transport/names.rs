@@ -84,6 +84,18 @@ pub(super) const KUBECTL_VALIDATE_CERTS: [&str; 2] = [
     "ansible_kubectl_verify_ssl",
 ];
 
+/// amazon.aws 10.1.2's `amazon.aws.aws_ssm`, each read here. Its bucket options are not: files
+/// do not go through S3.
+pub(super) const AWS_SSM_INSTANCE_ID: [&str; 1] = ["ansible_aws_ssm_instance_id"];
+pub(super) const AWS_SSM_REGION: [&str; 1] = ["ansible_aws_ssm_region"];
+pub(super) const AWS_SSM_PROFILE: [&str; 1] = ["ansible_aws_ssm_profile"];
+pub(super) const AWS_SSM_ACCESS_KEY_ID: [&str; 1] = ["ansible_aws_ssm_access_key_id"];
+pub(super) const AWS_SSM_SECRET_ACCESS_KEY: [&str; 1] = ["ansible_aws_ssm_secret_access_key"];
+pub(super) const AWS_SSM_SESSION_TOKEN: [&str; 1] = ["ansible_aws_ssm_session_token"];
+pub(super) const AWS_SSM_PLUGIN: [&str; 1] = ["ansible_aws_ssm_plugin"];
+pub(super) const AWS_SSM_DOCUMENT: [&str; 1] = ["ansible_aws_ssm_document"];
+pub(super) const AWS_SSM_TIMEOUT: [&str; 1] = ["ansible_aws_ssm_timeout"];
+
 /// Every name above, for the scan that checks a managed host cannot set any of them through
 /// the facts it returns.
 #[cfg(test)]
@@ -124,6 +136,15 @@ pub(crate) fn all() -> impl Iterator<Item = &'static str> {
         .chain(KUBECTL_CLIENT_KEY)
         .chain(KUBECTL_CA_CERT)
         .chain(KUBECTL_VALIDATE_CERTS)
+        .chain(AWS_SSM_INSTANCE_ID)
+        .chain(AWS_SSM_REGION)
+        .chain(AWS_SSM_PROFILE)
+        .chain(AWS_SSM_ACCESS_KEY_ID)
+        .chain(AWS_SSM_SECRET_ACCESS_KEY)
+        .chain(AWS_SSM_SESSION_TOKEN)
+        .chain(AWS_SSM_PLUGIN)
+        .chain(AWS_SSM_DOCUMENT)
+        .chain(AWS_SSM_TIMEOUT)
 }
 
 /// The value of the first of `names` the host sets.

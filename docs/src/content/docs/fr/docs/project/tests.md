@@ -1,5 +1,5 @@
 ---
-sourceHash: 91122208fedb
+sourceHash: 16609510f0ba
 title: Tests
 description: Comment Volant est vérifié par rapport à ansible-core, les types de réponse enregistrée, et comment ajouter un scénario.
 ---
@@ -17,7 +17,7 @@ Chaque type d'enregistrement a un nom, et `just golden <kind>` le régénère.
 | `scenario` | L'exécution d'un playbook : le code de sortie et toute la sortie standard | Tous les jobs, avec `reference.rs` |
 | `shadow` | Un run d'un scénario choisi à travers le callback `volant.compat.record`, compressé dans `crates/volant/tests/golden/shadow` ; l'exemple du callback est aussi vérifié sous chaque ansible-core qu'il prend en charge (`just compat-matrix`) | Tous les jobs, avec `shadow_golden.rs`, qui rejoue chaque enregistrement et n'attend aucune divergence |
 | `module` | Ce que chaque module natif a répondu sur une vraie machine | Le job `ssh` et `just test-reference`, avec `reference_modules.rs` |
-| `command-names` | La sortie des scripts de `tests/command-names`, qui appellent `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config` et `ansible-galaxy` | Le job `command-names` |
+| `command-names` | La sortie des scripts de `tests/command-names`, qui appellent `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-pull` et `ansible-console` | Le job `command-names` |
 
 Rien dans un enregistrement n'est modifié à la main. Changez l'entrée, lancez `just golden <kind>` avec ansible-core 2.19.12 installé, et lisez le diff. Le lancer sur un arbre inchangé laisse les fichiers exactement comme ils étaient. Le type `module` a aussi besoin de `sudo`, de systemd, d'apt et de cron, parce qu'il crée un compte et une unité sur la machine.
 

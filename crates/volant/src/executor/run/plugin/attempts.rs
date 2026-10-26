@@ -14,7 +14,7 @@ use crate::template::Templar;
 use crate::vars::HostVars;
 
 use super::item::run_plugin_item;
-use crate::executor::run::async_job::{Polled, announce_retry, async_dir, poll_job, polls};
+use crate::executor::run::async_job::{Polled, announce_retry, async_dir, poll_job, polls, shown};
 use crate::executor::run::channel::{AgentChannel, Relink};
 use crate::executor::run::output::TTY_KEY;
 use crate::executor::run::retry::{Attempt, Retry, RetryLine, judge_attempt};
@@ -38,6 +38,8 @@ pub(in crate::executor) struct PluginStart<'a> {
     /// Where an `async` task's `ASYNC` and `RETRYING` lines go, and the step they belong to.
     pub(in crate::executor) tx: &'a tokio::sync::mpsc::Sender<crate::executor::coordinator::Event>,
     pub(in crate::executor) index: usize,
+    /// The loop's first item, or the task's one: its retry lines go out as they happen.
+    pub(in crate::executor) first_item: bool,
 }
 
 impl PluginStart<'_> {
@@ -165,7 +167,8 @@ pub(in crate::executor) async fn run_plugin_attempts<C: AgentChannel, R: Relink<
             Attempt::Done(r) => return Ok(Some(r)),
             // Shown as it happens when a job is waited for: its `ASYNC` lines came out as they
             // were decided, and the reference prints each attempt's retry line before the next.
-            Attempt::Again(left, failed) if polls(task) => {
+            // The first item's too: nothing of the task shows before it.
+            Attempt::Again(left, failed) if polls(task) || start.first_item => {
                 announce_retry(
                     start.tx,
                     host,
@@ -173,9 +176,10 @@ pub(in crate::executor) async fn run_plugin_attempts<C: AgentChannel, R: Relink<
                     crate::executor::prepare::retry_name(task, &item.vars, start.templar),
                     task,
                     left,
-                    failed,
+                    failed.clone(),
                 )
                 .await;
+                lefts.extend((!polls(task)).then(|| (left, shown(failed))));
             }
             Attempt::Again(left, failed) => lefts.push((left, failed)),
         }

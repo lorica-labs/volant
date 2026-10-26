@@ -152,6 +152,7 @@ pub(super) async fn run_plugin_items(
             host_named_dest_dirs: look.options.host_named_dest_dirs.as_deref(),
             tx: look.tx,
             index: look.index,
+            first_item: ii == 0,
         };
         let ran = if let Some(replayed) = look.replayed {
             replayed.attempts(ii, item, retry, look.templar, &mut lefts[ii])
@@ -272,6 +273,7 @@ async fn run_grouped(
             host_named_dest_dirs: look.options.host_named_dest_dirs.as_deref(),
             tx: look.tx,
             index: look.index,
+            first_item: false,
         })
         .collect();
     let mut warnings: Vec<Vec<String>> = vec![Vec::new(); look.items.len()];

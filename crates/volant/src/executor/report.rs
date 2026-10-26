@@ -134,7 +134,8 @@ pub(super) async fn report_task(
     }
     let mut first_failure: Option<TaskResult> = None;
     for (i, (element, r)) in results.iter().enumerate() {
-        for (left, attempt) in retries.get(i).into_iter().flatten() {
+        let unsent = |(_, attempt): &&RetryLine| !attempt.0.contains_key(super::run::SHOWN);
+        for (left, attempt) in retries.get(i).into_iter().flatten().filter(unsent) {
             let _ = tx
                 .send(Event::Retrying {
                     host: host.to_string(),

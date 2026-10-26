@@ -46,6 +46,19 @@ impl Driver<'_> {
         &items[ii]
     }
 
+    /// What the coordinator prints over the step at `index` before it runs: its name as rendered
+    /// for this host, when it is a template, and the banner itself when the step `runs` now.
+    pub(super) async fn starting(&self, index: usize, spoken: Option<String>, runs: bool) {
+        let host = self.name.to_string();
+        if let Some(name) = spoken {
+            let host = host.clone();
+            let _ = self.tx.send(Event::Named { host, index, name }).await;
+        }
+        if runs {
+            let _ = self.tx.send(Event::Started { host, index }).await;
+        }
+    }
+
     /// The connection the step at `index` runs over on `target`, and the `-vvv` redirect lines
     /// resolving its name gave, printed under that step as the reference prints them.
     pub(super) async fn reach(

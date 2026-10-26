@@ -45,6 +45,16 @@ pub(super) fn async_refusal(task: &PlayTask) -> Option<TaskResult> {
     Some(refused)
 }
 
+/// The mark of a retry line [`announce_retry`] already sent: the task's report leaves it out, and
+/// the line still says the item retried.
+pub(in crate::executor) const SHOWN: &str = "_volant_retry_shown";
+
+/// `failed`, marked as a retry line already sent.
+pub(in crate::executor) fn shown(mut failed: TaskResult) -> TaskResult {
+    failed.0.insert(SHOWN.into(), Value::Bool(true));
+    failed
+}
+
 /// The `FAILED - RETRYING` line of an attempt, sent at once rather than with the task's result.
 pub(in crate::executor) async fn announce_retry(
     tx: &tokio::sync::mpsc::Sender<crate::executor::coordinator::Event>,

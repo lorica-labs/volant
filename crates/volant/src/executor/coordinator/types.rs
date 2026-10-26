@@ -200,6 +200,10 @@ pub(in crate::executor) enum Event {
     /// shows one `TASK [meta]` banner per live host with nothing underneath, two banners in a
     /// row for two hosts, and none at all for a host that has already left the play.
     Banner { host: String, index: usize },
+    /// This host starts step `index`, the first of a batch, which runs now. Measured on
+    /// ansible-core 2.19.12, a step's banner is printed when it starts, so a task that waits
+    /// shows its name while it waits rather than once it is done.
+    Started { host: String, index: usize },
     /// A host is done with this play and hands back the connections it wants kept open.
     Finished {
         host: String,

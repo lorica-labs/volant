@@ -232,6 +232,44 @@ pub(super) fn shows_a_line(event: &Event) -> bool {
     }
 }
 
+/// The host and the step a line of a step's display belongs to.
+pub(super) fn step_of(event: &Event) -> Option<(String, usize)> {
+    match event {
+        Event::Result { host, index, .. }
+        | Event::Retrying { host, index, .. }
+        | Event::Warning { host, index, .. }
+        | Event::Display { host, index, .. }
+        | Event::UnreachableIgnored { host, index, .. }
+        | Event::Banner { host, index } => Some((host.clone(), *index)),
+        _ => None,
+    }
+}
+
+/// Whether a line of the step's current host shows at once: a retry line, which the reference
+/// prints while the task waits, when no result of the step is queued in front of it.
+pub(super) fn streams(event: &Event, queued: Option<&Vec<Event>>) -> bool {
+    matches!(event, Event::Retrying { .. })
+        && queued.is_none_or(|q| !q.iter().any(|e| matches!(e, Event::Result { .. })))
+}
+
+/// The step key of a result, whether it fails its host, and whether it ends its block's run.
+pub(super) fn verdict(event: &Event) -> ((String, usize), bool, bool) {
+    let Event::Result {
+        host,
+        index,
+        outcome,
+        ..
+    } = event
+    else {
+        unreachable!("only a result has a verdict")
+    };
+    (
+        (host.clone(), *index),
+        *outcome == Outcome::Failed,
+        matches!(outcome, Outcome::Failed | Outcome::Rescued),
+    )
+}
+
 /// Writes one event the moment it arrives, behind the banner its task needs.
 #[expect(
     clippy::too_many_arguments,
@@ -247,15 +285,7 @@ pub(super) fn show_now(
     stats: &mut Stats,
     out: &mut Renderer,
 ) {
-    let at = match &event {
-        Event::Result { host, index, .. }
-        | Event::Retrying { host, index, .. }
-        | Event::Display { host, index, .. }
-        | Event::UnreachableIgnored { host, index, .. }
-        | Event::Banner { host, index } => Some((host.clone(), *index)),
-        _ => None,
-    };
-    if let Some((host, index)) = at
+    if let Some((host, index)) = step_of(&event)
         && shows_a_line(&event)
     {
         switch_header(last, index, &host, plan, progress_tx, state, names, out);

@@ -32,8 +32,8 @@ use super::run::{
     judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
     record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
     replayed, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
-    running_host_vars, silent_discovery, stamp_discovery, step_task, step_tasks, take_warnings,
-    task_fails,
+    running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
+    take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -867,18 +867,11 @@ pub(super) async fn drive_host(
             if !batch.is_empty() && calls_lookup(task) {
                 break;
             }
-            // The banner's name, rendered here, at the step's own point, against the variables
-            // this host has now; the coordinator prints it rather than rendering its own later.
-            if Templar::is_template(&task.name) {
-                let spoken = render_name(step, &name, &plan, &live, &templar, &store);
-                let _ = tx
-                    .send(Event::Named {
-                        host: name.clone(),
-                        index: pos,
-                        name: spoken,
-                    })
-                    .await;
-            }
+            // The banner's name, and the banner when the step runs now: a batch's first, no `meta`.
+            let spoken = Templar::is_template(&task.name)
+                .then(|| render_name(step, &name, &plan, &live, &templar, &store));
+            let runs = batch.is_empty() && step.kind != StepKind::Meta;
+            driver.starting(pos, spoken, runs).await;
             let mut warnings = Vec::new();
             let preparing = Instant::now();
             // The reference never reads the `when` of these, so a condition that cannot be
@@ -1228,6 +1221,12 @@ pub(super) async fn drive_host(
                                 };
                                 match judge_attempt(task, item, ran, attempt, retry, &templar) {
                                     Attempt::Done(r) => break r,
+                                    Attempt::Again(left, failed) if ii == 0 => {
+                                        let (named, again) = (names[ii].clone(), failed.clone());
+                                        announce_retry(&tx, &name, pos, named, task, left, again)
+                                            .await;
+                                        mine.push((left, shown(failed)));
+                                    }
                                     Attempt::Again(left, failed) => mine.push((left, failed)),
                                 }
                                 if let Some(failed) = retry.sleep_failure() {
@@ -1999,8 +1998,8 @@ pub(super) async fn drive_host(
                                 received[0][ii] = Some(r);
                                 continue 'items;
                             }
-                            // As it happens for a job that is waited for: see the plugin path.
-                            Attempt::Again(left, failed) if polls(task) => {
+                            // As it happens for a polled job and the first item: see the plugin path.
+                            Attempt::Again(left, failed) if polls(task) || ii == 0 => {
                                 announce_retry(
                                     &tx,
                                     &name,
@@ -2008,9 +2007,10 @@ pub(super) async fn drive_host(
                                     retry_name(task, &item.vars, &templar),
                                     task,
                                     left,
-                                    failed,
+                                    failed.clone(),
                                 )
                                 .await;
+                                lefts[ii].extend((!polls(task)).then(|| (left, shown(failed))));
                             }
                             Attempt::Again(left, failed) => lefts[ii].push((left, failed)),
                         }

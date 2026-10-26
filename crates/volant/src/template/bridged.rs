@@ -164,7 +164,7 @@ pub(super) fn lookup(
         .lookup_needs(name)
         .map_err(|err| failed(kind, name, err))?;
     let mut vars = Map::new();
-    let mut read = |key: &str| -> Result<(), Error> {
+    let read = |vars: &mut Map<String, serde_json::Value>, key: &str| -> Result<(), Error> {
         if let Some(value) = state.lookup(key).filter(|v| !v.is_undefined()) {
             vars.insert(key.to_string(), to_json(kind, name, &value)?);
         }
@@ -175,11 +175,12 @@ pub(super) fn lookup(
         .copied()
         .chain(needs.names.iter().map(String::as_str))
     {
-        read(key)?;
+        read(&mut vars, key)?;
     }
     if needs.all {
         // A plugin that lists the variables gets every one the host has. One that cannot be
-        // sent (an object only Jinja holds) or rendered is left out, as the plugin cannot read it.
+        // sent (an object only Jinja holds) is left out; one that does not render goes as its
+        // template, which the plugin renders when it reads it and fails on as the reference does.
         let names: Vec<String> = state
             .lookup(super::CONTEXT_KEY)
             .and_then(|root| root.try_iter().ok())
@@ -189,7 +190,12 @@ pub(super) fn lookup(
             .filter(|n| !n.starts_with("__volant_") && n != "volant_version" && n != "hostvars")
             .collect();
         for key in &names {
-            let _ = read(key);
+            if read(&mut vars, key).is_ok() && vars.contains_key(key) {
+                continue;
+            }
+            if let Some(raw) = unrendered(state, key) {
+                vars.insert(key.clone(), serde_json::json!({ UNRENDERED: raw }));
+            }
         }
     }
     super::lookups::taint(state);
@@ -197,6 +203,25 @@ pub(super) fn lookup(
         .call(kind, name, &args, &kwargs, Some(&vars))
         .map(|value| super::bigint::to_template(&value))
         .map_err(|err| failed(kind, name, err))
+}
+
+/// What a variable the helper renders itself is sent as: `{UNRENDERED: template}`.
+const UNRENDERED: &str = "__volant_template__";
+
+/// The template a variable of the playbook holds, as written, when it is one: what a read that
+/// does not render leaves. A managed host's text is never one.
+fn unrendered(state: &State, key: &str) -> Option<String> {
+    let root = state.lookup(super::CONTEXT_KEY)?;
+    let context = root.downcast_object_ref::<super::context::Context>()?;
+    if context.untrusted.contains(key) {
+        return None;
+    }
+    let raw = context
+        .vars
+        .get(key)
+        .or_else(|| context.base.as_ref().and_then(|base| base.get(key)))?
+        .as_str()?;
+    super::Templar::is_template(raw).then(|| raw.to_string())
 }
 
 /// The keyword arguments of a call, by name.

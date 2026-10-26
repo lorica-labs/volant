@@ -1,5 +1,5 @@
 ---
-sourceHash: 37a3f4cfcd5c
+sourceHash: 06ef4c920b21
 title: Nombres de comandos de ansible
 description: Qué comando de Volant sustituye a cada programa de ansible-core, qué es igual, qué difiere y cómo conservar tus líneas de comandos.
 ---
@@ -14,13 +14,13 @@ Volant ejecuta los nueve programas de ansible-core 2.19.12. Cada uno es un subco
 | `ansible-playbook` | [`volant playbook`](/es/docs/reference/cli/), `volant-playbook` | Volant | se instala en el primer uso que necesita Python |
 | `ansible-vault` | [`volant vault`](/es/docs/reference/cli/vault/) | Volant | no hace falta |
 | `ansible-inventory` | [`volant inventory`](/es/docs/reference/cli/inventory/) | Volant | no hace falta, salvo para los plugins de inventario de las colecciones |
-| `ansible-doc` | [`volant doc`](/es/docs/reference/cli/doc/) | la herramienta propia de ansible-core | se instala en el primer uso |
+| `ansible-doc` | [`volant doc`](/es/docs/reference/cli/doc/) | Volant | no hace falta para los módulos nativos |
 | `ansible-config` | [`volant config`](/es/docs/reference/cli/config/) | la herramienta propia de ansible-core | se instala en el primer uso |
 | `ansible-galaxy` | [`volant galaxy`](/es/docs/reference/cli/galaxy/) | la herramienta propia de ansible-core | se instala en el primer uso |
 | `ansible-pull` | [`volant pull`](/es/docs/reference/cli/pull/) | la herramienta propia de ansible-core, con el motor de Volant para sus dos pasos | se instala en el primer uso |
 | `ansible-console` | [`volant console`](/es/docs/reference/cli/console/) | la herramienta propia de ansible-core | se instala en el primer uso |
 
-El runtime administrado se instala solo la primera vez que un comando lo necesita, como con un playbook, e imprime una línea en el error estándar cuando lo hace. [El runtime administrado](/es/docs/reference/runtime/) lo describe. No necesitas instalar ansible, pero cinco de los nueve comandos ejecutan el código propio de ansible-core desde ese runtime. `volant console` ejecuta las tareas con el ejecutor de ansible-core, no con el de Volant.
+El runtime administrado se instala solo la primera vez que un comando lo necesita, como con un playbook, e imprime una línea en el error estándar cuando lo hace. [El runtime administrado](/es/docs/reference/runtime/) lo describe. No necesitas instalar ansible, pero cuatro de los nueve comandos ejecutan el código propio de ansible-core desde ese runtime.
 
 ## Conservar tus líneas de comandos
 
@@ -63,7 +63,7 @@ Para `ansible`, `ansible-vault` y `ansible-inventory`, la salida, las opciones l
 | `volant inventory` imprime los bytes JSON y YAML de ansible-inventory: orden de claves, sangría de cuatro espacios, anclas de PyYAML | `crates/volant/tests/inventory_golden.rs` sobre `golden/inventories/cases.yml`, e `inventory_cli.rs` |
 | `volant config` y `volant galaxy` imprimen lo que imprime la herramienta | `crates/volant/tests/tools_cli.rs` |
 | `volant pull` imprime lo que imprime `ansible-pull`, salvo una línea (abajo) | `a_pull_prints_what_the_reference_pull_prints` en `console_pull.rs` |
-| `volant console` lee sus comandos de una tubería como `ansible-console` | `the_console_reads_its_commands_from_a_pipe` |
+| `volant console` imprime en una tubería lo que imprime `ansible-console` para sus comandos, módulos y líneas de shell, y no necesita Python para los módulos nativos | `the_console_reads_its_commands_from_a_pipe` y `the_console_runs_without_python` en `console_pull.rs` |
 | Los enlaces que crea `install`, las líneas que imprime y lo que `remove` deja | `crates/volant/tests/shims.rs` |
 | Qué nombres corresponden a qué comando, y ningún otro | los tests de `crates/volant/src/cli/program.rs` |
 
@@ -88,4 +88,4 @@ Las opciones que acepta cada comando nativo están listadas en su propia página
 | `volant vault` | hecho | un error de archivo, como `create` sobre un archivo existente | un error de uso | | una opción incorrecta, como dos archivos con `--output` | |
 | `volant inventory` | impreso | | un error de uso | | ninguna acción o dos acciones, o un destino incorrecto de `--host` o `--graph` | |
 
-`volant playbook` usa los códigos de [Códigos de salida](/es/docs/reference/exit-codes/). Las cinco herramientas que se ejecutan en el runtime de ansible-core devuelven el código propio de la herramienta, o 1 con una línea `[ERROR]:` cuando no se puede iniciar el intérprete.
+`volant playbook` usa los códigos de [Códigos de salida](/es/docs/reference/exit-codes/). Las cuatro herramientas que se ejecutan en el runtime de ansible-core devuelven el código propio de la herramienta, o 1 con una línea `[ERROR]:` cuando no se puede iniciar el intérprete.

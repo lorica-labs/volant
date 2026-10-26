@@ -6,7 +6,7 @@ use clap::{Args, Parser};
 
 use crate::python::Facts;
 
-#[derive(Parser, Debug, Default)]
+#[derive(Parser, Debug, Default, Clone)]
 #[command(disable_version_flag = true)]
 pub struct PlaybookArgs {
     /// Playbook files, run in order.
@@ -93,6 +93,17 @@ pub struct PlaybookArgs {
     /// Print the version and the ansible-core release it matches, and stop.
     #[arg(long = "version")]
     pub version: bool,
+    /// A console session's command: what the session already asked and showed.
+    #[arg(skip)]
+    pub carried: Option<std::sync::Arc<std::sync::Mutex<Carried>>>,
+}
+
+/// What a console session keeps from one command to the next: the passwords it asked once, and
+/// the warnings and error blocks already written, which the reference writes once per process.
+#[derive(Debug, Default)]
+pub struct Carried {
+    pub passwords: (Option<String>, Option<String>),
+    pub shown: crate::render::Shown,
 }
 
 /// The inventory a run reads and the subset of it the run is narrowed to.
@@ -309,6 +320,35 @@ pub struct AdhocArgs {
     pub escalation: BecomeArgs,
     #[command(flatten)]
     pub vault: VaultSecretArgs,
+}
+
+impl PlaybookArgs {
+    /// A console command's renderer takes over what the session already wrote.
+    pub(super) fn lend_shown(&self, out: &mut crate::render::Renderer) {
+        if let Some(carried) = &self.carried {
+            let mut carried = carried.lock().expect("one command at a time");
+            out.set_shown(std::mem::take(&mut carried.shown));
+        }
+    }
+
+    /// And hands it back, with what the command wrote.
+    pub(super) fn keep_shown(&self, out: &mut crate::render::Renderer) {
+        if let Some(carried) = &self.carried {
+            carried.lock().expect("one command at a time").shown = out.take_shown();
+        }
+    }
+
+    /// The passwords a console session asked when it started.
+    pub(super) fn carried_passwords(&self) -> Option<(Option<String>, Option<String>)> {
+        let carried = self.carried.as_ref()?;
+        Some(
+            carried
+                .lock()
+                .expect("one command at a time")
+                .passwords
+                .clone(),
+        )
+    }
 }
 
 impl AdhocArgs {

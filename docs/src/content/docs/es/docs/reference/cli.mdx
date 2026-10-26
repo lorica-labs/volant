@@ -1,5 +1,5 @@
 ---
-sourceHash: c8d1a4701202
+sourceHash: f625b14c1ec2
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -11,7 +11,7 @@ volant playbook [OPTIONS] <PLAYBOOK>...
 volant-playbook [OPTIONS] <PLAYBOOK>...
 volant adhoc [OPTIONS] <PATTERN>
 volant config [ARGS...]
-volant console [ARGS...]
+volant console [pattern] [OPTIONS]
 volant doc [ARGS...]
 volant galaxy [ARGS...]
 volant pull [ARGS...]
@@ -27,7 +27,7 @@ Cada uno de los demás comandos tiene su propia página: [`volant adhoc`](/es/do
 
 `volant playbook` acepta las mismas opciones que `ansible-playbook`, en las que existen. `volant-playbook` es el mismo programa con un nombre que se parece al que conoces. Los playbooks que se pasan juntos se ejecutan en orden, y cada uno imprime su propio recap.
 
-En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-console`, `ansible-pull` o `ansible-inventory`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy`, `volant console`, `volant pull` o `volant inventory`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. `volant doc`, `config`, `galaxy`, `console` y `pull` ejecutan las herramientas propias de ansible-core desde el runtime de Python de Volant; la única diferencia en su salida es la ruta que `volant pull` muestra para `ansible-pull` en su segunda línea, consulta [`volant pull`](/es/docs/reference/cli/pull/). Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
+En Linux y macOS, el binario `volant` también se comporta según el nombre con el que se inició (el nombre de archivo de `argv[0]`). Iniciado como `ansible-playbook`, `ansible-vault`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-console`, `ansible-pull` o `ansible-inventory`, mediante un enlace simbólico o un enlace duro, se comporta como `volant playbook`, `volant vault`, `volant doc`, `volant config`, `volant galaxy`, `volant console`, `volant pull` o `volant inventory`, con los mismos argumentos, la misma salida y los mismos códigos de salida. Iniciado como `ansible`, se comporta como `volant adhoc`. `volant doc`, `config`, `galaxy` y `pull` ejecutan las herramientas propias de ansible-core desde el runtime de Python de Volant; la única diferencia en su salida es la ruta que `volant pull` muestra para `ansible-pull` en su segunda línea, consulta [`volant pull`](/es/docs/reference/cli/pull/). `volant console` es propio de Volant; [`volant console`](/es/docs/reference/cli/console/) indica en qué difiere. Un error de uso sale con 2 y nombra el programa tal como se inició. Cualquier otro nombre conserva el comportamiento habitual de `volant`.
 
 Cuando una opción tiene una clave de `ansible.cfg` o una variable de entorno, la entrada la nombra. La opción gana a ambas; [Configuración](/es/docs/reference/configuration/) explica el orden.
 

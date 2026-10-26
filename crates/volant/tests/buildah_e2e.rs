@@ -2,6 +2,8 @@
 //! End-to-end runs over `containers.podman.buildah` against real working containers. Ignored by
 //! default: they need `buildah`, containers.podman on `ANSIBLE_COLLECTIONS_PATH`, and
 //! `VOLANT_AGENT_DIR` holding `volant-agent-<triple>` for the images' architecture.
+//! `VOLANT_BUILDAH_TEST_IMAGE` picks the image, `docker.io/library/alpine:3.20` by default, and
+//! `VOLANT_BUILDAH_TEST_NO_SHELL_IMAGE` the one with no `/bin/sh`.
 #![cfg(target_os = "linux")]
 
 use std::fmt::Write as _;
@@ -27,7 +29,10 @@ impl Working {
     }
 
     fn alpine() -> Working {
-        Working::from("docker.io/library/alpine:3.20")
+        Working::from(
+            &std::env::var("VOLANT_BUILDAH_TEST_IMAGE")
+                .unwrap_or_else(|_| "docker.io/library/alpine:3.20".into()),
+        )
     }
 }
 
@@ -124,7 +129,10 @@ fn buildah_reports_a_container_it_does_not_know() {
 #[test]
 #[ignore = "needs buildah, containers.podman and a musl agent"]
 fn buildah_reaches_a_working_container_with_no_shell() {
-    let working = Working::from("gcr.io/distroless/static-debian12:debug-nonroot");
+    let working = Working::from(
+        &std::env::var("VOLANT_BUILDAH_TEST_NO_SHELL_IMAGE")
+            .unwrap_or_else(|_| "gcr.io/distroless/static-debian12:debug-nonroot".into()),
+    );
     let dir = tempfile::tempdir().unwrap();
     let out = play(
         dir.path(),

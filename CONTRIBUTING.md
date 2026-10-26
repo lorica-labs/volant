@@ -30,6 +30,7 @@ just setup
 | `just test-one <crate> <pattern>` | One crate's tests matching a pattern, for the edit-and-retry loop. |
 | `just coverage` | Line coverage, gated at the floor CI enforces. |
 | `just ssh-test` | The tests that run a playbook over a real `ssh`, see below. |
+| `just container-test <runtime>` | The tests that run a playbook over a real container connection, see below. |
 | `just smoke-embedded` | Builds a controller with its agents embedded, as a release does, and runs one task with no agent beside it. |
 | `just link-check <archive \| target=file>...` | Checks that release binaries link what they promise: a static musl binary, a glibc binary that needs no glibc above 2.17, a macOS binary with system libraries only. |
 | `just scratch-test <controller>` | Runs a static controller in a `FROM scratch` container, as the release gate does. Needs Docker and a static busybox. |
@@ -38,7 +39,7 @@ just setup
 | `just docs-keywords`, `just docs-modules` | Regenerate the keyword and module reference pages from the source tables. |
 | `just ci-local` | Runs the CI workflow locally. Needs Docker and `gh extension install nektos/gh-act`. |
 
-CI runs more than `just check`: the SSH tests, the coverage floor, a musl build, the link checks of the static and glibc controllers, the controller in a `FROM scratch` container, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS.
+CI runs more than `just check`: the SSH tests, the container connection tests, the coverage floor, a musl build, the link checks of the static and glibc controllers, the controller in a `FROM scratch` container, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS.
 
 ### SSH tests
 
@@ -59,6 +60,23 @@ The `ssh_*` tests run a playbook over a real `ssh`, so `just check` leaves them 
 The test of the `ansible_password` variable also needs an account on that sshd that logs in with a password. Name it in `VOLANT_SSH_TEST_PASSWORD_USER` and give its password in `VOLANT_SSH_TEST_PASSWORD`. Without them the test says so and passes.
 
 The tests only talk to `localhost`, which is why CI can run them unchanged.
+
+### Container connection tests
+
+The `<runtime>_*` tests run a playbook through a real container runtime, so `just check` leaves them out. `just container-test <runtime>` runs one runtime's tests. It builds the musl agent first and stops with a message when the runtime's program is not on your `PATH`. Every runtime also needs `VOLANT_PYTHON`, set up as for the SSH tests, and the plugin's collection on `ANSIBLE_COLLECTIONS_PATH`:
+
+| Runtime | Program | Collection | What else |
+|---|---|---|---|
+| `docker` | `docker`, usable without `sudo` | community.docker | |
+| `podman` | `podman`, rootless works | containers.podman | |
+| `buildah` | `buildah`, rootless works | containers.podman | |
+| `chroot` | `chroot` | community.general | `VOLANT_CHROOT_TEST_TREE` naming a root filesystem, such as an unpacked Alpine image. Its `/bin/sh` is checked on your machine, as ansible-core checks it, so Alpine's link to `/bin/busybox` needs a busybox there too. The tests run as root, through `sudo` when you are not. |
+| `kubectl` | `kubectl` reaching a cluster | kubernetes.core | A cluster such as kind or k3s, through `KUBECONFIG`. The ten-minute idle-link test runs only by hand. |
+| `lxd` | `lxc` talking to an initialised LXD | community.general | |
+
+Each test file names the variables that pick its images, such as `VOLANT_DOCKER_TEST_IMAGE`. CI pins them by digest.
+
+Two connections have no CI job: Incus, because the runner has no package for it, and `aws_ssm`, because it needs an AWS account. To run the Incus test against your own server, run `just agent-musl`, then `VOLANT_AGENT_DIR=target/agents cargo nextest run -p volant --test lxd_e2e --run-ignored ignored-only -E 'test(/^incus_/)'`.
 
 ### The compile benchmark
 

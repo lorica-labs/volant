@@ -35,6 +35,7 @@ jobs:
     outputs:
       code: ${{ steps.diff.outputs.code }}
       build: ${{ steps.diff.outputs.build }}
+      containers: ${{ steps.diff.outputs.containers }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -46,6 +47,7 @@ jobs:
           if [ "$GITHUB_EVENT_NAME" != pull_request ]; then
             echo code=true >> "$GITHUB_OUTPUT"
             echo build=true >> "$GITHUB_OUTPUT"
+            echo containers=true >> "$GITHUB_OUTPUT"
             exit 0
           fi
           # The checkout is the merge commit: its first parent is the base branch.
@@ -61,6 +63,14 @@ jobs:
             echo build=true >> "$GITHUB_OUTPUT"
           else
             echo build=false >> "$GITHUB_OUTPUT"
+          fi
+          # The container connections' end-to-end tests: what links the agent, the agent, and
+          # the tests and recipe themselves. A merge to main runs them whatever it changed.
+          containers='^(justfile$|\.github/workflows/ci\.yml$|crates/volant-agent/|crates/volant-protocol/|crates/volant/src/transport/|crates/volant/tests/[a-z]+_e2e\.rs$)'
+          if grep -Eq "$containers" <<<"$changed"; then
+            echo containers=true >> "$GITHUB_OUTPUT"
+          else
+            echo containers=false >> "$GITHUB_OUTPUT"
           fi
 
   lint:
@@ -515,3 +525,81 @@ jobs:
           # The native module tests create an account, a group and a unit on the machine they
           # run on. This runner is thrown away with the job, so they may use its localhost.
           VOLANT_NATIVE_TESTS_ON_LOCALHOST: "1"
+
+  containers:
+    needs: changes
+    if: needs.changes.outputs.containers == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - runtime: docker
+            collection: community.docker==4.8.5
+          - runtime: podman
+            collection: containers.podman==1.18.0
+          - runtime: buildah
+            collection: containers.podman==1.18.0
+          - runtime: chroot
+            collection: community.general==11.4.2
+          - runtime: kubectl
+            collection: kubernetes.core==6.2.0
+          - runtime: lxd
+            collection: community.general==11.4.2
+    env:
+      # Each image pinned by the digest of its index, so every architecture gets the same one.
+      ALPINE: docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+      NO_SHELL: gcr.io/distroless/static-debian12:debug-nonroot@sha256:d5563cc7f2f44313f332e91138cc8c6a158899afeeeab2fce3b0f9ccdb3cf9ee
+      POD_IMAGE: docker.io/library/python:3.12-alpine@sha256:b658b05ce9c4eb97ec6fc19424818a1f31993659c2b505a532f470e83807815d
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+        with:
+          target: x86_64-unknown-linux-musl
+      - uses: taiki-e/install-action@1e29709c0ec63babbe8f266397a465f29a825f91 # v2
+        with:
+          tool: nextest,just
+      - run: sudo apt-get update && sudo apt-get install -y --no-install-recommends musl-tools
+      - name: Install the controller Python and the plugin's collection
+        env:
+          COLLECTION: ${{ matrix.collection }}
+        run: |
+          set -euo pipefail
+          python3 -m venv .venv
+          .venv/bin/python -m pip install ansible-core==2.19.12
+          .venv/bin/ansible-galaxy collection install -p "$PWD/.collections" "$COLLECTION"
+          echo "VOLANT_PYTHON=$PWD/.venv/bin/python" >> "$GITHUB_ENV"
+          echo "ANSIBLE_COLLECTIONS_PATH=$PWD/.collections" >> "$GITHUB_ENV"
+      - name: Point the tests at the pinned images
+        run: |
+          set -euo pipefail
+          {
+            echo "VOLANT_DOCKER_TEST_IMAGE=$ALPINE"
+            echo "VOLANT_DOCKER_TEST_NO_SHELL_IMAGE=$NO_SHELL"
+            echo "VOLANT_PODMAN_TEST_IMAGE=$ALPINE"
+            echo "VOLANT_PODMAN_TEST_NO_SHELL_IMAGE=$NO_SHELL"
+            echo "VOLANT_BUILDAH_TEST_IMAGE=$ALPINE"
+            echo "VOLANT_BUILDAH_TEST_NO_SHELL_IMAGE=$NO_SHELL"
+            echo "VOLANT_KUBECTL_TEST_IMAGE=$POD_IMAGE"
+          } >> "$GITHUB_ENV"
+      - name: Unpack the Alpine image as the chroot tree
+        if: matrix.runtime == 'chroot'
+        run: |
+          set -euo pipefail
+          # Alpine's /bin/sh links to /bin/busybox, and the plugin checks it with os.stat on the
+          # controller, as ansible-core does: the link has to resolve here too.
+          sudo apt-get install -y --no-install-recommends busybox
+          sudo mkdir /srv/alpine
+          docker export "$(docker create "$ALPINE")" | sudo tar -x -C /srv/alpine
+          echo "VOLANT_CHROOT_TEST_TREE=/srv/alpine" >> "$GITHUB_ENV"
+      - name: Start a kind cluster
+        if: matrix.runtime == 'kubectl'
+        run: kind create cluster --wait 120s
+      - uses: canonical/setup-lxd@8c6a87bfb56aa48f3fb9b830baa18562d8bfd4ee # v1
+        if: matrix.runtime == 'lxd'
+        with:
+          channel: 5.21/stable
+      - run: just container-test ${{ matrix.runtime }}

@@ -84,6 +84,9 @@ pub struct Config {
     /// `[defaults] show_custom_stats` or `ANSIBLE_SHOW_CUSTOM_STATS`: print what `set_stats`
     /// collected after the recap. Off by default, as in the reference.
     pub show_custom_stats: bool,
+    /// `[defaults] facts_modules` or `ANSIBLE_FACTS_MODULES`: the fact modules `gather_facts`
+    /// runs, `smart` unless said.
+    pub facts_modules: Vec<String>,
     /// `[defaults] duplicate_dict_key` or `ANSIBLE_DUPLICATE_YAML_DICT_KEY`: what a YAML key
     /// written twice gets, `warn` unless said.
     pub duplicate_dict_key: Option<String>,
@@ -316,6 +319,9 @@ impl Config {
             config.duplicate_dict_key = Some(mode);
         }
         crate::yaml::set_duplicate_keys(config.duplicate_dict_key.as_deref().unwrap_or("warn"));
+        if let Ok(names) = std::env::var("ANSIBLE_FACTS_MODULES") {
+            config.facts_modules = tag_list(&names);
+        }
         if let Ok(flag) = std::env::var("ANSIBLE_SHOW_CUSTOM_STATS")
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {

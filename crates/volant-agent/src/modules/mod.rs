@@ -192,9 +192,15 @@ pub fn ran_natively() -> Ran {
 /// missing `changed` and nothing more, whichever code wrote the result, the Python module or
 /// the native standing in for it.
 pub fn module_result(mut result: Map<String, Value>) -> TaskResult {
-    result.entry("changed").or_insert(Value::Bool(false));
+    if !AS_WRITTEN.load(std::sync::atomic::Ordering::Relaxed) {
+        result.entry("changed").or_insert(Value::Bool(false));
+    }
     TaskResult(result)
 }
+
+/// Set in the process that runs an `async` job: the reference's wrapper writes the module's
+/// output to the status file as it is, with no `changed` added, measured on ansible-core 2.19.12.
+pub static AS_WRITTEN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// Runs `module` with each of the task's files taken out of the connection's staging directory
 /// and named in its

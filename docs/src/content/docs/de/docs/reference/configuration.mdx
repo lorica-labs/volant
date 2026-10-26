@@ -1,5 +1,5 @@
 ---
-sourceHash: 1f43b5ded964
+sourceHash: 69b5b94dc1eb
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -88,6 +88,10 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 
 <Option name="duplicate_dict_key" id="defaults-duplicate-dict-key" default="warn" env="ANSIBLE_DUPLICATE_YAML_DICT_KEY">
   Was ein YAML-Schlüssel bekommt, der in einer Zuordnung zweimal steht: `warn` behält den letzten Wert und zeigt, wo der zweite Schlüssel steht, `error` weist die Datei ab, `ignore` behält den letzten Wert ohne Meldung.
+</Option>
+
+<Option name="facts_modules" id="defaults-facts-modules" default="smart" env="ANSIBLE_FACTS_MODULES">
+  Die Fakten-Module, die das Sammeln der Fakten einer Play ausführt, `smart` (`setup`), wenn nichts gesetzt ist. Eine wörtliche Liste in den Plays, ihren Tasks oder im Inventar (`ansible_facts_modules`) wird ebenfalls gelesen; ein Modul, das nur ein Template nennt, kann nicht ausgeführt werden.
 </Option>
 
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">

@@ -144,6 +144,8 @@ async fn run_all(
             play.gather_facts = false;
         }
     }
+    let plays_of = playbooks.iter().flat_map(|pb| &pb.plays);
+    crate::action_plugins::facts_modules::configure(&config.facts_modules, plays_of, &inventory);
     let mode = Listing {
         tasks: args.list_tasks,
         tags: args.list_tags,
@@ -312,8 +314,7 @@ async fn run_all(
     let (python, helper) = match built {
         Ok(built) => built,
         Err(e) => {
-            // The reference's ad hoc run fails each host with a module nothing answers to, rather
-            // than refusing the run.
+            // The reference's ad hoc run fails each host with a module nothing answers to.
             if let Plays::Adhoc(adhoc) = plays
                 && adhoc.is_unresolved(&e)
                 && let Some(play) = playbooks.first().and_then(|pb| pb.plays.first())
@@ -327,6 +328,7 @@ async fn run_all(
             ));
         }
     };
+    crate::action_plugins::facts_modules::settle(python.as_ref());
     for play in compiled.iter().flatten() {
         preflight::check_collection_actions(play).map_err(|e| Refusal::or(4, e))?;
     }

@@ -313,7 +313,24 @@ pub(super) fn without_error(r: &TaskResult) -> TaskResult {
         !k.starts_with("_ansible_")
             && (!k.starts_with("_volant_") || k == crate::template::unknown::CENSORED)
     });
+    // `strip_internal_keys` goes all the way down: measured on ansible-core 2.19.12, a registered
+    // `gather_facts` result holds no `_ansible_facts_gathered` in its `ansible_facts`.
+    for value in r.0.values_mut() {
+        strip_internal(value);
+    }
     r
+}
+
+/// The `_ansible_` keys of every mapping inside `value`, taken out.
+fn strip_internal(value: &mut Value) {
+    match value {
+        Value::Object(map) => {
+            map.retain(|k, _| !k.starts_with("_ansible_"));
+            map.values_mut().for_each(strip_internal);
+        }
+        Value::Array(items) => items.iter_mut().for_each(strip_internal),
+        _ => {}
+    }
 }
 
 /// What the reference quotes under `Origin: <unknown>` for the argument check it puts in front of

@@ -7,4 +7,3 @@
     - debug: {msg: "{{ lookup('listvars') }}"}
     - debug: {msg: "{{ lookup('readvar', 'my_good') }}"}
     - debug: {msg: "{{ lookup('readvar', 'my_bad') }}"}
-      ignore_errors: true

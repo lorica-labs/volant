@@ -1,17 +1,19 @@
 ---
 title: volant console
-description: Run ad hoc commands in an interactive shell with ansible-console, run from Volant's Python runtime.
+description: An interactive shell that runs one ad hoc task per line with Volant's engine, as ansible-console does.
 ---
 
-`volant console` runs `ansible-console` of ansible-core 2.19.12 in the interpreter Volant chooses for a playbook run, so it works without ansible-core installed. It is ansible-core's own program: it runs tasks with ansible-core's executor, not Volant's.
+`volant console` is the `ansible-console` of ansible-core 2.19.12, written in Rust. Each line you type runs as one ad hoc task on the current hosts, with Volant's engine, as [`volant adhoc`](/docs/reference/cli/adhoc/) runs it. A session that runs only native modules starts no Python.
 
 ```sh
-volant console [ARGS...]
+volant console [pattern] [-i INV] [-l SUBSET] [-e VARS] [-f N] [-b] [--become-user USER] [--become-method METHOD]
+               [-u USER] [-c CONN] [-T SECS] [-C] [-D] [-M PATH] [--playbook-dir DIR] [--task-timeout N]
+               [vault, password and ssh options]
 ```
 
-Every argument goes to `ansible-console` unchanged, including `-h` and `--version`. The interpreter, the environment, the terminal, the exit code and `--version` work as for [`volant doc`](/docs/reference/cli/doc/).
+`pattern` is the hosts the session starts on, `all` by default. A pattern that leaves no host ends the command with exit 1.
 
-The console needs a terminal for its prompt:
+## The session
 
 ```
 Welcome to the ansible console. Type help or ? to list commands.
@@ -19,4 +21,40 @@ Welcome to the ansible console. Type help or ? to list commands.
 user@all (3)[f:5]$ 
 ```
 
-The prompt is the user, the pattern, the number of hosts and the forks, followed by `$ `, or `# ` after `become yes`. Type `exit` or press ctrl-d to leave: the console prints a blank line and `Ansible-console was exited.`, and exits with 0. With standard input on a pipe, it reads its commands from there and ends the same way at the end of the input.
+The prompt is the remote user (`-u`, else your account name), the current pattern, the number of hosts it selects and the forks, then `$ `, or `# ` when become is on and the become user is unset or `root`. On a terminal that takes colour, the prompt is bold white, or red for `# `.
+
+A line is read as `ansible-console` reads it:
+
+- An empty line does nothing. A line starting with `#` is a comment.
+- A line whose first word is one of the console's commands (below) runs that command.
+- A line whose first word names a module runs that module, with the rest of the line as its arguments, as `-a` reads them: `ping`, `command echo hi`, `ansible.builtin.copy src=a dest=/tmp/a`.
+- Any other line, or a line starting with `!`, runs the `shell` module with the whole line: `echo hi there`, `!uptime`.
+
+Results are printed as `volant adhoc` prints them. A failed task prints the `[ERROR]` block with `Origin: <unknown>`. A warning or an error block already printed in the session is not printed again.
+
+`exit`, `EOF` and ctrl-d print a blank line and `Ansible-console was exited.`, and the session exits with 0. Ctrl-c at the prompt prints the banner and the prompt again. Ctrl-c while a task runs stops it with `[ERROR]: User interrupted execution`, and the session goes on. With standard input on a pipe, the commands are read line by line, nothing is echoed, and the end of the input ends the session.
+
+On a terminal, the line is edited with history and Tab completion. Tab completes the command and module names, host and group names after `cd`, and the options of the modules Volant runs natively. The history is read from `~/.ansible-console_history` at the start and written back at the end, one command per line, in a file created with mode `0600`. A history file written by a libedit build of Python (`_HiStOrY_V2_` on its first line) is read too.
+
+## Commands
+
+| Command | Effect |
+|---|---|
+| `cd [PATTERN]` | Changes the current hosts to `PATTERN` when it matches hosts. Otherwise prints `no host matched` and changes nothing. `cd` alone selects `*`, and `cd /` or `cd *` selects `all`. |
+| `list`, `list groups` | Prints the current hosts, or every group, one per line. |
+| `forks N`, `serial N` | Sets the forks. `forks 0` prints `forks must be greater than or equal to 1`. |
+| `become BOOL` | Turns become on or off. |
+| `become_user USER`, `become_method METHOD`, `remote_user USER` | Set the become user, the become method and the login user. |
+| `check BOOL`, `diff BOOL` | Turn check mode and diff mode on or off, and print the new value. |
+| `timeout N` | Sets the task timeout in seconds; `0` disables it. |
+| `verbosity N` | Sets the verbosity, as `-v` does. |
+| `collections A,B` | Sets the collections short module names are looked up in; `collections none` resets them. |
+| `shell LINE` | Runs `LINE` with the `shell` module. |
+| `help [NAME]`, `?` | Without a name, lists every command and module. With one, prints the command's help, or the module's description and options. |
+
+`help` for a module reads its documentation from the managed runtime's ansible-core, and prints `[ERROR]: No documentation found for <name>.` when there is no runtime. Only full module names have help, as in `ansible-console`: `help ping` prints `*** No help on ping`. The module list is ansible-core's builtin modules and the modules of the collections installed where the configuration looks for collections.
+
+## Differences from ansible-console
+
+- `forks x` and `serial x` end the session with exit 250 and the `[ERROR]: Unexpected Exception` line, as the reference does, but without its Python traceback.
+- On a terminal, the control sequences that redraw the line are rustyline's, not GNU readline's. After ctrl-c at the prompt, the banner starts on a new line.

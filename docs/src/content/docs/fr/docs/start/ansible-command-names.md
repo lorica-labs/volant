@@ -1,5 +1,5 @@
 ---
-sourceHash: b74cf526136c
+sourceHash: 98256eaf2ac7
 title: Les noms des commandes ansible
 description: Quelle commande de Volant remplace chaque programme d'ansible-core, ce qui est identique, ce qui diffère, et comment garder vos lignes de commande.
 ---
@@ -18,9 +18,9 @@ Volant exécute les neuf programmes d'ansible-core 2.19.12. Chacun est une sous-
 | `ansible-config` | [`volant config`](/fr/docs/reference/cli/config/) | l'outil propre d'ansible-core | installé à la première utilisation |
 | `ansible-galaxy` | [`volant galaxy`](/fr/docs/reference/cli/galaxy/) | l'outil propre d'ansible-core | installé à la première utilisation |
 | `ansible-pull` | [`volant pull`](/fr/docs/reference/cli/pull/) | Volant | inutile pour un checkout `git` |
-| `ansible-console` | [`volant console`](/fr/docs/reference/cli/console/) | l'outil propre d'ansible-core | installé à la première utilisation |
+| `ansible-console` | [`volant console`](/fr/docs/reference/cli/console/) | Volant | inutile pour les modules natifs |
 
-Le runtime géré s'installe lui-même la première fois qu'une commande en a besoin, comme pour un playbook, et affiche une ligne sur l'erreur standard quand il le fait. [Le runtime géré](/fr/docs/reference/runtime/) le décrit. Vous n'avez pas besoin d'installer ansible, mais quatre des neuf commandes exécutent le code propre d'ansible-core depuis ce runtime. `volant console` exécute les tâches avec l'exécuteur d'ansible-core, pas celui de Volant.
+Le runtime géré s'installe lui-même la première fois qu'une commande en a besoin, comme pour un playbook, et affiche une ligne sur l'erreur standard quand il le fait. [Le runtime géré](/fr/docs/reference/runtime/) le décrit. Vous n'avez pas besoin d'installer ansible, mais trois des neuf commandes exécutent le code propre d'ansible-core depuis ce runtime.
 
 ## Garder vos lignes de commande
 
@@ -63,7 +63,7 @@ Pour `ansible`, `ansible-vault` et `ansible-inventory`, la sortie, les options l
 | `volant inventory` affiche les octets JSON et YAML d'ansible-inventory : ordre des clés, indentation de quatre espaces, ancres PyYAML | `crates/volant/tests/inventory_golden.rs` sur `golden/inventories/cases.yml`, et `inventory_cli.rs` |
 | `volant config` et `volant galaxy` affichent ce qu'affiche l'outil | `crates/volant/tests/tools_cli.rs` |
 | `volant pull` affiche l'exécution du playbook et la ligne de `-o` comme `ansible-pull`, et fait le checkout sans Python | `a_pull_prints_what_the_reference_pull_prints` et `a_pull_checks_out_and_runs_without_python` dans `console_pull.rs` |
-| `volant console` lit ses commandes depuis un tube comme `ansible-console` | `the_console_reads_its_commands_from_a_pipe` |
+| `volant console` affiche sur un tube ce qu'affiche `ansible-console` pour ses commandes, ses modules et ses lignes shell, et n'a pas besoin de Python pour les modules natifs | `the_console_reads_its_commands_from_a_pipe` et `the_console_runs_without_python` dans `console_pull.rs` |
 | Les liens que crée `install`, les lignes qu'il affiche et ce que `remove` laisse | `crates/volant/tests/shims.rs` |
 | Quels noms correspondent à quelle commande, et aucun autre | les tests de `crates/volant/src/cli/program.rs` |
 
@@ -88,4 +88,4 @@ Les options que chaque commande native accepte sont listées sur sa propre page 
 | `volant vault` | terminé | une erreur de fichier, comme `create` sur un fichier existant | une erreur d'usage | | une mauvaise option, comme deux fichiers avec `--output` | |
 | `volant inventory` | affiché | | une erreur d'usage | | aucune action ou deux actions, ou une mauvaise cible de `--host` ou `--graph` | |
 
-`volant playbook` utilise les codes de [Codes de sortie](/fr/docs/reference/exit-codes/). Les quatre outils qui s'exécutent dans le runtime d'ansible-core renvoient le code propre de l'outil, ou 1 avec une ligne `[ERROR]:` quand l'interpréteur ne peut pas être démarré. `volant pull` sort avec 2 quand le checkout échoue, avec 5 pour une erreur d'options ou quand aucun playbook n'est trouvé, et sinon avec le code du playbook.
+`volant playbook` utilise les codes de [Codes de sortie](/fr/docs/reference/exit-codes/). Les trois outils qui s'exécutent dans le runtime d'ansible-core renvoient le code propre de l'outil, ou 1 avec une ligne `[ERROR]:` quand l'interpréteur ne peut pas être démarré. `volant pull` sort avec 2 quand le checkout échoue, avec 5 pour une erreur d'options ou quand aucun playbook n'est trouvé, et sinon avec le code du playbook.

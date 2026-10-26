@@ -1,0 +1,21 @@
+name: Cancel on close
+
+# A pull request that is merged or closed while its CI run is still going leaves that run going:
+# nothing else starts in its concurrency group. This run joins the group the CI workflow gives the
+# pull request, which cancels the CI run in progress, and then does nothing.
+on:
+  pull_request:
+    types: [closed]
+
+permissions: {}
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  cancel:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - run: "true"

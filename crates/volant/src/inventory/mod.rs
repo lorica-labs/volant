@@ -368,6 +368,16 @@ impl Inventory {
     }
 
     /// The names `all` selects, in the order `resolve("all")` gives them, without their variables.
+    /// Every group's name, sorted: what `ansible-console`'s `list groups` prints. The reference
+    /// always has `all` and `ungrouped`, even empty.
+    pub fn group_names(&self) -> Vec<String> {
+        let mut names: Vec<String> = self.groups.iter().map(|g| g.name.clone()).collect();
+        names.extend(["all".to_string(), "ungrouped".to_string()]);
+        names.sort();
+        names.dedup();
+        names
+    }
+
     pub fn all_host_names(&self) -> Vec<String> {
         self.all_hosts()
     }

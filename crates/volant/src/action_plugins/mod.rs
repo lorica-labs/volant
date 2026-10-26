@@ -4,8 +4,7 @@
 //!
 //! Measured on ansible-core 2.19.12 from `action_loader`: 28 action plugins, 72 builtin modules,
 //! 27 names in both. A module with a plugin cannot be run by sending its payload to the agent:
-//! the action plugin is where its real behaviour lives. `script` reads its file on the
-//! controller, `wait_for_connection` waits there for the host. A plugin not written here runs as
+//! the action plugin is where its real behaviour lives. A plugin not written here runs as
 //! ansible-core's own, in the controller's Python helper (`bridged`), and so does a written one
 //! given a shape it does not take, before it has asked the host anything.
 //!
@@ -18,6 +17,7 @@
 mod bridged;
 pub(crate) mod copy;
 mod dnf;
+pub(crate) mod facts_modules;
 mod fetch;
 pub(crate) mod files;
 mod package;
@@ -193,7 +193,7 @@ pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
         // What each plugin's `_execute_module` names in ansible-core 2.19.12. The others only
         // run commands and put files, which need no payload.
         Kind::Bridged("assemble") => &["assemble", "copy", "file", "stat"],
-        Kind::Bridged("gather_facts") => &["setup"],
+        Kind::Bridged("gather_facts") => facts_modules::modules(),
         Kind::Bridged("uri") => &["uri"],
         Kind::Bridged("wait_for_connection") => &["ping"],
         Kind::Bridged(name) => collection_actions()

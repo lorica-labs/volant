@@ -20,6 +20,7 @@ Volant reaches a managed host, puts a small static agent there (a program that r
 | `chroot` | Runs the agent in a directory tree on the controller through `chroot`, as `community.general.chroot` does. See [Chroot directories](#chroot-directories). |
 | `buildah` | Runs the agent in a Buildah working container through `buildah run`, as `containers.podman.buildah` does. See [Buildah working containers](#buildah-working-containers). |
 | `lxd` | Runs the agent in an LXD instance through `lxc exec`, as `community.general.lxd` does; `community.general.incus` does the same for Incus. See [LXD and Incus instances](#lxd-and-incus-instances). |
+| `kubectl` | Runs the agent in a container of a Kubernetes pod through `kubectl exec`, as `kubernetes.core.kubectl` does. See [Kubernetes pods](#kubernetes-pods). |
 
 Any other name is resolved by the controller's ansible-core, the way `ansible-playbook` resolves it, once per name and per run. `ansible.builtin.ssh` and `ansible.builtin.local` resolve to the two plugins above and run. A short name that a collection took over from ansible-core is routed to that collection when it is installed:
 
@@ -36,7 +37,7 @@ Any other name is resolved by the controller's ansible-core, the way `ansible-pl
 
 With `-vvv`, a routed name prints `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` under the first task that uses it on a host, one line per hop.
 
-A name that resolves to a plugin Volant does not drive yet, such as `winrm`, `psrp` or `kubernetes.core.kubectl`, makes the host unreachable with `connection '<full name>' is not supported`, and the rest of the run continues. The [support matrix](/docs/reference/parity/#collection-connection) lists every connection plugin of the collections in the package.
+A name that resolves to a plugin Volant does not drive yet, such as `winrm`, `psrp` or `amazon.aws.aws_ssm`, makes the host unreachable with `connection '<full name>' is not supported`, and the rest of the run continues. The [support matrix](/docs/reference/parity/#collection-connection) lists every connection plugin of the collections in the package.
 
 A name that resolves to nothing fails the task with `the connection plugin '<name>' was not found`, as Ansible does. That includes a short name routed to a collection that is not installed, such as `docker` without community.docker, after the warning ansible-core prints for it, and `paramiko`, which ansible-core 2.19.12 does not carry under that name. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
 
@@ -105,6 +106,28 @@ The agent starts with `buildah run [--user U] <container> -- <agent>`. Volant ne
 | `ansible_lxd_executable`, `ansible_incus_executable` | The shell commands run under. It beats `ansible_executable`; `/bin/sh` by default. |
 
 The user is `ansible_user`, the `remote_user` keyword or `-u`, `root` by default. For any other user, every command goes through the become method, `/bin/su <user> -c` unless `lxd_become_method` or `incus_become_method` names another. An instance with no shell gets the agent through `lxc file push` or `incus file push` when the user is root. A missing instance and a stopped one make the host unreachable with the plugin's words, such as `instance not running: web`; Incus adds the remote and the project. With `-vvvv` the lines show `ESTABLISH LXD CONNECTION FOR USER: <user>` (`Incus` for Incus), the plugin's `INFO:` line for a user other than root, then one `EXEC [...]` line per command.
+
+## Kubernetes pods
+
+`ansible_connection: kubectl`, or `kubernetes.core.kubectl`, runs a play in a container of a pod through `kubectl exec -i`. Both names need kubernetes.core installed on the controller and `kubectl` on your `PATH`.
+
+| Variable | What it does |
+|---|---|
+| `ansible_kubectl_pod` | The pod. Without it, the pod is `ansible_host`, else the inventory name. |
+| `ansible_kubectl_container` | The container, for a pod that has more than one. |
+| `ansible_kubectl_namespace` | The namespace. |
+| `ansible_kubectl_kubeconfig`, `ansible_kubectl_config` | The kubeconfig file. A kubeconfig given as a mapping goes to a private temporary file, removed at the end of the run. |
+| `ansible_kubectl_extra_args` | More arguments for `kubectl`, split on spaces. |
+| `ansible_kubectl_local_env_vars` | A mapping of variables set in the environment of every `kubectl` command. |
+| `ansible_kubectl_context` | The context in the kubeconfig. |
+| `ansible_kubectl_server`, `ansible_kubectl_host` | The API server. |
+| `ansible_kubectl_username`, `ansible_kubectl_user`, `ansible_kubectl_password` | A user name and password for the API server. |
+| `ansible_kubectl_token`, `ansible_kubectl_api_key` | A bearer token for the API server. |
+| `ansible_kubectl_client_cert`, `ansible_kubectl_cert_file`, `ansible_kubectl_client_key`, `ansible_kubectl_key_file` | The client certificate and its key. |
+| `ansible_kubectl_ca_cert`, `ansible_kubectl_ssl_ca_cert` | The certificate authority of the API server. |
+| `ansible_kubectl_validate_certs`, `ansible_kubectl_verify_ssl` | Given as it is after `--insecure-skip-tls-verify`, as the plugin does: `true` gives `True`, and `false` adds nothing. |
+
+Each option can also come from the `K8S_AUTH_*` environment variable the plugin reads, which a host variable beats. The flags reach `kubectl` in the plugin's order. Commands run as the container's user: the plugin cannot pick one, so `ansible_user` is ignored. A container with no shell cannot take the agent, since `kubectl cp` needs `tar` in it. A missing pod, a missing namespace and a finished pod make the host unreachable with what `kubectl` said. With `-vvvv` the lines show `ESTABLISH kubectl CONNECTION`, then one `EXEC [...]` line per command, with the password and the token shown as `********`.
 
 ## Host variables
 

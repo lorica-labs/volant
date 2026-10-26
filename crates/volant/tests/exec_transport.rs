@@ -102,6 +102,9 @@ impl Runtime {
             unavailable: None,
             quiet_stderr: false,
             failures: Vec::new(),
+            env: Vec::new(),
+            secrets: Vec::new(),
+            kept: None,
             info: None,
             copy: Some(volant::transport::CopyInto {
                 feed: volant::transport::Feed::TarStdin,

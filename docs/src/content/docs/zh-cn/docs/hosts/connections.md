@@ -21,6 +21,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 | `chroot` | 通过 `chroot` 在控制节点上的目录树里运行 agent，与 `community.general.chroot` 相同。见 [chroot 目录](#chroot-目录)。 |
 | `buildah` | 通过 `buildah run` 在 Buildah 工作容器里运行 agent，与 `containers.podman.buildah` 相同。见 [Buildah 工作容器](#buildah-工作容器)。 |
 | `lxd` | 通过 `lxc exec` 在 LXD 实例里运行 agent，与 `community.general.lxd` 相同；`community.general.incus` 对 Incus 做同样的事。见 [LXD 和 Incus 实例](#lxd-和-incus-实例)。 |
+| `kubectl` | 通过 `kubectl exec` 在 Kubernetes pod 的容器里运行 agent，与 `kubernetes.core.kubectl` 相同。见 [Kubernetes pod](#kubernetes-pod)。 |
 
 其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
@@ -37,7 +38,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 
 使用 `-vvv` 时，被转向的名字会在某台主机上第一个使用它的 task 下打印 `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot`，每一跳一行。
 
-解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `kubernetes.core.kubectl`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
+解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `amazon.aws.aws_ssm`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
 
 什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
@@ -106,6 +107,28 @@ agent 用 `buildah run [--user U] <容器> -- <agent>` 启动。Volant 从不运
 | `ansible_lxd_executable`、`ansible_incus_executable` | 命令运行所用的 shell。它优先于 `ansible_executable`；默认为 `/bin/sh`。 |
 
 用户是 `ansible_user`、`remote_user` 关键字或 `-u`，默认为 `root`。对其他任何用户，每条命令都通过提权方法执行，默认是 `/bin/su <user> -c`，除非 `lxd_become_method` 或 `incus_become_method` 指定了别的方法。用户为 root 时，没有 shell 的实例通过 `lxc file push` 或 `incus file push` 获得 agent。实例不存在或已停止时，主机不可达，消息使用插件的措辞，例如 `instance not running: web`；Incus 还会加上远程服务器和项目。使用 `-vvvv` 时，会显示 `ESTABLISH LXD CONNECTION FOR USER: <user>`（Incus 为 `Incus`），对非 root 用户还有插件的 `INFO:` 行，然后每条命令一行 `EXEC [...]`。
+
+## Kubernetes pod
+
+`ansible_connection: kubectl` 或 `kubernetes.core.kubectl` 通过 `kubectl exec -i` 在 pod 的容器里执行 play。两个名字都需要控制节点上装有 kubernetes.core，并且 `kubectl` 在 `PATH` 中。
+
+| 变量 | 作用 |
+|---|---|
+| `ansible_kubectl_pod` | pod。未设置时，pod 为 `ansible_host`，否则为清单名。 |
+| `ansible_kubectl_container` | 容器，用于有多个容器的 pod。 |
+| `ansible_kubectl_namespace` | namespace。 |
+| `ansible_kubectl_kubeconfig`、`ansible_kubectl_config` | kubeconfig 文件。以映射给出的 kubeconfig 会写入一个私有临时文件，运行结束时删除。 |
+| `ansible_kubectl_extra_args` | 传给 `kubectl` 的额外参数，按空格拆分。 |
+| `ansible_kubectl_local_env_vars` | 一个变量映射，设置到每条 `kubectl` 命令的环境中。 |
+| `ansible_kubectl_context` | kubeconfig 中的 context。 |
+| `ansible_kubectl_server`、`ansible_kubectl_host` | API 服务器。 |
+| `ansible_kubectl_username`、`ansible_kubectl_user`、`ansible_kubectl_password` | 访问 API 服务器的用户名和密码。 |
+| `ansible_kubectl_token`、`ansible_kubectl_api_key` | 访问 API 服务器的 bearer token。 |
+| `ansible_kubectl_client_cert`、`ansible_kubectl_cert_file`、`ansible_kubectl_client_key`、`ansible_kubectl_key_file` | 客户端证书及其私钥。 |
+| `ansible_kubectl_ca_cert`、`ansible_kubectl_ssl_ca_cert` | API 服务器的证书颁发机构。 |
+| `ansible_kubectl_validate_certs`、`ansible_kubectl_verify_ssl` | 与插件一样，原样放在 `--insecure-skip-tls-verify` 之后：`true` 得到 `True`，`false` 则不添加任何内容。 |
+
+每个选项也可以来自插件读取的 `K8S_AUTH_*` 环境变量，主机变量优先于它。参数按插件的顺序传给 `kubectl`。命令以容器的用户运行：插件无法选择用户，因此 `ansible_user` 会被忽略。没有 shell 的容器无法接收 agent，因为 `kubectl cp` 需要容器里有 `tar`。pod 不存在、namespace 不存在或 pod 已结束时，主机不可达，消息为 `kubectl` 的输出。使用 `-vvvv` 时，会显示 `ESTABLISH kubectl CONNECTION`，然后每条命令一行 `EXEC [...]`，其中密码和 token 显示为 `********`。
 
 ## 主机变量
 

@@ -129,6 +129,9 @@ pub(super) fn target(
             .then(|| format!("{} command not found in PATH", flavor.program())),
         quiet_stderr: false,
         failures,
+        env: Vec::new(),
+        secrets: Vec::new(),
+        kept: None,
         info: (!root).then(|| {
             format!(
                 "INFO: Running as non-root user: {user}, trying to run '{} exec' with become method: {method}",
@@ -183,7 +186,7 @@ fn failures(
 }
 
 /// The first `name` on `path` that can run.
-fn program(name: &str, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
+pub(super) fn program(name: &str, path: Option<&std::ffi::OsStr>) -> Option<PathBuf> {
     std::env::split_paths(path?)
         .map(|dir| dir.join(name))
         .find(|file| {

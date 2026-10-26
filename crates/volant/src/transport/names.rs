@@ -60,6 +60,30 @@ pub(super) const INCUS: [&str; 4] = [
     "ansible_incus_executable",
 ];
 
+/// kubernetes.core 6.2.0's `kubernetes.core.kubectl`.
+pub(super) const KUBECTL_POD: [&str; 1] = ["ansible_kubectl_pod"];
+pub(super) const KUBECTL_CONTAINER: [&str; 1] = ["ansible_kubectl_container"];
+pub(super) const KUBECTL_NAMESPACE: [&str; 1] = ["ansible_kubectl_namespace"];
+pub(super) const KUBECTL_EXTRA_ARGS: [&str; 1] = ["ansible_kubectl_extra_args"];
+pub(super) const KUBECTL_LOCAL_ENV_VARS: [&str; 1] = ["ansible_kubectl_local_env_vars"];
+pub(super) const KUBECTL_KUBECONFIG: [&str; 2] =
+    ["ansible_kubectl_config", "ansible_kubectl_kubeconfig"];
+pub(super) const KUBECTL_CONTEXT: [&str; 1] = ["ansible_kubectl_context"];
+pub(super) const KUBECTL_SERVER: [&str; 2] = ["ansible_kubectl_server", "ansible_kubectl_host"];
+pub(super) const KUBECTL_USERNAME: [&str; 2] = ["ansible_kubectl_user", "ansible_kubectl_username"];
+pub(super) const KUBECTL_PASSWORD: [&str; 1] = ["ansible_kubectl_password"];
+pub(super) const KUBECTL_TOKEN: [&str; 2] = ["ansible_kubectl_api_key", "ansible_kubectl_token"];
+pub(super) const KUBECTL_CLIENT_CERT: [&str; 2] =
+    ["ansible_kubectl_client_cert", "ansible_kubectl_cert_file"];
+pub(super) const KUBECTL_CLIENT_KEY: [&str; 2] =
+    ["ansible_kubectl_client_key", "ansible_kubectl_key_file"];
+pub(super) const KUBECTL_CA_CERT: [&str; 2] =
+    ["ansible_kubectl_ca_cert", "ansible_kubectl_ssl_ca_cert"];
+pub(super) const KUBECTL_VALIDATE_CERTS: [&str; 2] = [
+    "ansible_kubectl_validate_certs",
+    "ansible_kubectl_verify_ssl",
+];
+
 /// Every name above, for the scan that checks a managed host cannot set any of them through
 /// the facts it returns.
 #[cfg(test)]
@@ -85,6 +109,21 @@ pub(crate) fn all() -> impl Iterator<Item = &'static str> {
         .chain(CHROOT_EXECUTABLE)
         .chain(LXD)
         .chain(INCUS)
+        .chain(KUBECTL_POD)
+        .chain(KUBECTL_CONTAINER)
+        .chain(KUBECTL_NAMESPACE)
+        .chain(KUBECTL_EXTRA_ARGS)
+        .chain(KUBECTL_LOCAL_ENV_VARS)
+        .chain(KUBECTL_KUBECONFIG)
+        .chain(KUBECTL_CONTEXT)
+        .chain(KUBECTL_SERVER)
+        .chain(KUBECTL_USERNAME)
+        .chain(KUBECTL_PASSWORD)
+        .chain(KUBECTL_TOKEN)
+        .chain(KUBECTL_CLIENT_CERT)
+        .chain(KUBECTL_CLIENT_KEY)
+        .chain(KUBECTL_CA_CERT)
+        .chain(KUBECTL_VALIDATE_CERTS)
 }
 
 /// The value of the first of `names` the host sets.

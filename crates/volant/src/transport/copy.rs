@@ -104,6 +104,7 @@ impl ExecTarget {
         self.trace_exec(&argv);
         let child = Command::new(&argv[0])
             .args(&argv[1..])
+            .envs(self.environment()?)
             .stdin(Stdio::piped())
             .stdout(Stdio::piped())
             .stderr(self.link_stderr())
@@ -241,6 +242,7 @@ impl ExecTarget {
         let run = async {
             let mut child = Command::new(&argv[0])
                 .args(&argv[1..])
+                .envs(self.environment().unwrap_or_default())
                 .stdin(if stdin.is_some() {
                     Stdio::piped()
                 } else {

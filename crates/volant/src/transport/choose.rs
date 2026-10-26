@@ -202,6 +202,9 @@ impl Transport {
             super::chroot::PLUGIN => Ok(Transport::Exec(super::chroot::target(
                 host_name, vars, defaults,
             )?)),
+            super::kubectl::PLUGIN => Ok(Transport::Exec(super::kubectl::target(
+                host_name, vars, defaults,
+            )?)),
             other => match super::lxd::Flavor::of(other) {
                 Some(flavor) => Ok(Transport::Exec(super::lxd::target(
                     flavor, host_name, vars, defaults, keywords,

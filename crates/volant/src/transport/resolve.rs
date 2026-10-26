@@ -311,8 +311,8 @@ mod tests {
     )]
     #[case(
         ConnectionNames::default(),
-        "kubernetes.core.kubectl",
-        Some("host 'h': connection 'kubernetes.core.kubectl' is not supported")
+        "amazon.aws.aws_ssm",
+        Some("host 'h': connection 'amazon.aws.aws_ssm' is not supported")
     )]
     #[case(ConnectionNames::default(), "docker", None)]
     #[case(asked().0, "broken", None)]

@@ -18,6 +18,12 @@ allow = [
   "Unicode-3.0",
   "Zlib",
 ]
+# The console's line editor reaches the Windows clipboard through these two, under the Boost
+# licence (OSI approved, compatible with the GPL). Allowed for them alone.
+exceptions = [
+  { allow = ["BSL-1.0"], crate = "clipboard-win" },
+  { allow = ["BSL-1.0"], crate = "error-code" },
+]
 
 [bans]
 multiple-versions = "warn"

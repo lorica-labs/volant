@@ -61,6 +61,8 @@ minijinja-contrib = { version = "=3.0.1", default-features = false, features = [
 pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
 regex = "1"
 rstest = "0.27"
+# The console's line editor: history and completion on a terminal, nothing else.
+rustyline = { version = "19", default-features = false }
 saphyr = "0.2.0"
 saphyr-parser = "0.2.1"
 serde = { version = "1", features = ["derive"] }

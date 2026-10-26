@@ -241,8 +241,8 @@ pub(super) async fn run_batch(
     let free = plan.strategy.free();
     let mut last_banner: Option<usize> = None;
     let mut pending: HashMap<(String, usize), Vec<Event>> = HashMap::new();
-    // The first host to start each step, whose banner goes up before anything shows under it.
-    let mut started: HashMap<usize, String> = HashMap::new();
+    // The first host to start each step, and the started steps whose banner is up already.
+    let (mut started, mut headed) = (HashMap::<usize, String>::new(), HashSet::<usize>::new());
     let mut gone: HashSet<String> = HashSet::new();
     // The templated names the drivers rendered at their own step, by host and step.
     let mut names: HashMap<(String, usize), String> = HashMap::new();
@@ -312,7 +312,7 @@ pub(super) async fn run_batch(
                     let live = progress_tx.borrow().clone();
                     let spoken = names.get(&($host.to_string(), index));
                     header(&step, &task_name(&step, $host, &plan, &live, state, spoken), out);
-                    header_shown = true;
+                    header_shown = true; if started.contains_key(&index) { headed.insert(index); }
                 }
             };
         }
@@ -336,8 +336,8 @@ pub(super) async fn run_batch(
                     // one of its own per live host.
                     for event in pending.remove(&key).unwrap_or_default() {
                         let banner = matches!(event, Event::Banner { .. });
-                        // A banner always brings its header.
-                        header_shown &= !banner;
+                        // A banner always brings its header, unless its started step has one up.
+                        header_shown &= !banner || headed.contains(&index);
                         if banner || shows_a_line(&event) {
                             step_header!(host);
                         }
@@ -459,10 +459,10 @@ pub(super) async fn run_batch(
                         host: starter,
                         index: at,
                     }) if !free => {
+                        let starter = started.entry(at).or_insert(starter).clone();
                         if at == index {
                             step_header!(&starter);
                         }
-                        started.entry(at).or_insert(starter);
                     }
                     Some(Event::Started { .. }) => {}
                     Some(Event::Include {
@@ -797,13 +797,13 @@ pub(super) async fn run_batch(
             // result reaching here is one the task loop above never read - which happens when
             // its host entered `gone` before that task's `TaskDone`. Report it rather than drop
             // it: a task missing from the recap is the one failure this file cannot afford.
-            Event::Banner { index, .. } => {
+            Event::Banner { index, .. } if !headed.contains(&index) => {
                 header_for(index, &plan, &play_hosts, &progress_tx, state, &names, out);
             }
             // An include whose request arrives here is one the step loop will never reach: it
             // has already ended, because every host of the batch has left it. There is nothing
             // left to splice the steps in for, and nothing left to run them.
-            Event::Include { .. } | Event::Started { .. } => {}
+            Event::Include { .. } | Event::Started { .. } | Event::Banner { .. } => {}
             event @ (Event::Result { .. }
             | Event::Retrying { .. }
             | Event::Warning { .. }
@@ -822,7 +822,9 @@ pub(super) async fn run_batch(
     for (_, events) in leftover {
         for event in events {
             if let Event::Banner { index, .. } = &event {
-                header_for(*index, &plan, &play_hosts, &progress_tx, state, &names, out);
+                if !headed.contains(index) {
+                    header_for(*index, &plan, &play_hosts, &progress_tx, state, &names, out);
+                }
                 continue;
             }
             report_result(event, stats, out);

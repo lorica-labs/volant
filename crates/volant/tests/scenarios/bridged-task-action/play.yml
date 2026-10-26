@@ -1,8 +1,8 @@
 - hosts: h1
   gather_facts: false
   tasks:
-    - acme.probe.oldprobe:
+    - acme.redirect.oldprobe:
       register: old
-    - acme.probe.probe:
+    - acme.redirect.probe:
       register: new
     - debug: {msg: "{{ [old.action, old.ran, new.action, new.ran] }}"}

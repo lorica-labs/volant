@@ -1,0 +1,8 @@
+# A vaulted value no secret opens: the Origin of its error is its own tag, in a play's,
+# a block's or a task's vars as in a vars file, and a task reading two such values points
+# at the one it read first.
+stderr: true
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, --vault-password-file, pw_wrong, vars.yml]
+  - args: [-i, inv.ini, --vault-password-file, pw_wrong, s.yml]

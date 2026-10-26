@@ -355,6 +355,7 @@ fn local_result(
                     );
                     return refused;
                 }
+                crate::vault::begin_failures();
                 match templar.evaluate(var, &item.vars) {
                     Ok(v) => r.insert(var.to_string(), v),
                     // A vaulted value no secret opens is not an undefined name: it fails the

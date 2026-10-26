@@ -367,7 +367,9 @@ pub(crate) fn vault_data(ciphertext: &str) -> String {
 /// written in `text`, the file `source`: a failure to read the value points to its tag, as
 /// PyYAML marks it. A value inside a list has no position of its own and is left out.
 pub(crate) fn note_vault_origins(docs: &[Yaml<'_>], origins: &Origins, source: &str, text: &str) {
-    let path: std::sync::Arc<str> = source.into();
+    let path: std::sync::Arc<str> = std::fs::canonicalize(source)
+        .map_or_else(|_| source.to_string(), |p| p.display().to_string())
+        .into();
     // The parser marks a block scalar where its content starts; the tag is the first `!vault` on
     // the key's line after the key.
     let tag_at = |(line, col): (usize, usize)| {

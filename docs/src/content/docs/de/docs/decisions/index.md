@@ -1,5 +1,5 @@
 ---
-sourceHash: 15cf72956526
+sourceHash: 0530d307d885
 title: Entscheidungsdokumente
 description: Die Entscheidungen, die prägen, was Volants Benutzer sehen, und warum sie getroffen wurden.
 sidebar:
@@ -24,3 +24,4 @@ Ein Dokument wird nicht umgeschrieben, sobald es akzeptiert ist. Ändert eine sp
 | [0009](/de/docs/decisions/0009-interface-crates-mit-or-apache/) | Die Engine unter GPL-3.0-or-later halten und Crates, die eine öffentliche Schnittstelle beschreiben, unter MIT OR Apache-2.0 lizenzieren. |
 | [0010](/de/docs/decisions/0010-core-version-profiles/) | Jedes Projekt wählt die ansible-core-Version, die Volant nachbildet (`2.19` oder `latest`), was Ansible entfernt hat, bleibt mit einer Warnung erhalten, und `volant upgrade-plan` listet auf, was ein Upgrade ändert. |
 | [0011](/de/docs/decisions/0011-extensions-and-eject/) | Ansible nur durch Schlüssel erweitern, die ein Befehl in einfaches Ansible zurückschreiben kann (`volant eject`, `volant check --portable`). |
+| [0012](/de/docs/decisions/0012-galaxy-http-and-archives/) | `volant galaxy` lädt über HTTP im eigenen Prozess (`ureq`, `rustls`, der CA-Speicher des Systems) und entpackt mit den Crates `tar` und `flate2`; `git` und `gpg` bleiben externe Programme. |

@@ -1,5 +1,5 @@
 ---
-sourceHash: 15cf72956526
+sourceHash: 0530d307d885
 title: Fiches de décision
 description: Les décisions qui déterminent ce que voient les utilisateurs de Volant, et pourquoi elles ont été prises.
 sidebar:
@@ -24,3 +24,4 @@ Une fiche n'est pas réécrite une fois acceptée. Quand une décision ultérieu
 | [0009](/fr/docs/decisions/0009-interface-crates-mit-or-apache/) | Garder le moteur sous GPL-3.0-or-later, et placer sous MIT OR Apache-2.0 les crates qui décrivent une interface publique. |
 | [0010](/fr/docs/decisions/0010-core-version-profiles/) | Laisser chaque projet choisir la version d'ansible-core que Volant reproduit (`2.19` ou `latest`), garder avec un avertissement ce qu'Ansible a retiré, et lister ce que change une montée de version (`volant upgrade-plan`). |
 | [0011](/fr/docs/decisions/0011-extensions-and-eject/) | N'étendre Ansible que par des clés qu'une commande sait réécrire en Ansible simple (`volant eject`, `volant check --portable`). |
+| [0012](/fr/docs/decisions/0012-galaxy-http-and-archives/) | `volant galaxy` télécharge en HTTP dans son propre processus (`ureq`, `rustls`, le magasin de certificats du système) et décompresse avec les crates `tar` et `flate2` ; `git` et `gpg` restent des programmes externes. |

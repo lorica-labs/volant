@@ -1,5 +1,5 @@
 ---
-sourceHash: 15cf72956526
+sourceHash: 0530d307d885
 title: 决策记录
 description: 塑造 Volant 用户所见内容的决策，以及做出这些决策的原因。
 sidebar:
@@ -24,3 +24,4 @@ sidebar:
 | [0009](/zh-cn/docs/decisions/0009-interface-crates-mit-or-apache/) | 引擎保持 GPL-3.0-or-later，描述公共接口的 crate 采用 MIT OR Apache-2.0 许可。 |
 | [0010](/zh-cn/docs/decisions/0010-core-version-profiles/) | 每个项目选择 Volant 复现的 ansible-core 版本（`2.19` 或 `latest`），Ansible 移除的功能带警告保留，`volant upgrade-plan` 列出升级会改变的内容。 |
 | [0011](/zh-cn/docs/decisions/0011-extensions-and-eject/) | 只通过命令能改写回普通 Ansible 的键来扩展 Ansible（`volant eject`、`volant check --portable`）。 |
+| [0012](/zh-cn/docs/decisions/0012-galaxy-http-and-archives/) | `volant galaxy` 在进程内通过 HTTP 下载（`ureq`、`rustls`、系统 CA 证书库），用 `tar` 和 `flate2` crate 解包；`git` 和 `gpg` 仍是外部程序。 |

@@ -27,6 +27,8 @@ extend-exclude = [
 ]
 
 [default.extend-words]
+# The `flate2` crate, named in decision record 0012.
+flate = "flate"
 # Keys of the reference's `stat` result, which the native `stat` returns under the same names.
 woth = "woth"
 writeable = "writeable"

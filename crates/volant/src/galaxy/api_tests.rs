@@ -3,7 +3,9 @@
 use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
 
-use super::api::{Files, Server, Servers, VersionInfo, galaxy_error, galaxy_yml};
+use super::api::download::galaxy_yml;
+use super::api::servers::Servers;
+use super::api::{Files, Server, VersionInfo, galaxy_error};
 use super::settings::ServerSettings;
 
 const SCRIPT: &str = concat!(

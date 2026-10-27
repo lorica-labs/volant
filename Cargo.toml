@@ -89,7 +89,9 @@ shlex = "2"
 # Decision record 0012: collection and role archives, read entry by entry.
 tar = { version = "0.4", default-features = false }
 # Decision record 0012: the galaxy HTTP client, blocking, without its bundled roots.
-ureq = { version = "3.5", default-features = false, features = ["rustls-no-provider"] }
+ureq = { version = "3.5", default-features = false, features = [
+  "rustls-no-provider",
+] }
 tempfile = "3"
 tokio = { version = "1", features = [
   "rt-multi-thread",

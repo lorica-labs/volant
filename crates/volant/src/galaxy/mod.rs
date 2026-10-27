@@ -4,6 +4,16 @@
 
 use std::path::{Path, PathBuf};
 
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the install from a Galaxy server is its first caller"
+    )
+)]
+pub mod api;
+#[cfg(test)]
+mod api_tests;
 pub mod artifact;
 #[cfg(test)]
 mod artifact_tests;

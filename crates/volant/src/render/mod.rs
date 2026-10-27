@@ -66,6 +66,8 @@ pub struct Renderer {
     minimal: Option<String>,
     /// `result_format = yaml`: a result is dumped as YAML rather than JSON.
     yaml: bool,
+    /// `pretty_results`, `None` when it is not set.
+    pretty: Option<bool>,
     /// `-o`: the `oneline` callback prints the results, not `minimal`.
     oneline: bool,
     /// `-t`: the directory the `tree` callback writes one file per host in.
@@ -133,6 +135,7 @@ impl Renderer {
             path_on_failure: false,
             minimal: None,
             yaml: false,
+            pretty: None,
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -168,6 +171,7 @@ impl Renderer {
             path_on_failure: false,
             minimal: None,
             yaml: false,
+            pretty: None,
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -199,9 +203,11 @@ impl Renderer {
         self.oneline
     }
 
-    /// Dumps results as YAML: the callbacks' `result_format = yaml`.
-    pub fn set_result_yaml(&mut self) {
-        self.yaml = true;
+    /// The `result_format` and `pretty_results` options of `default` and `minimal`: results
+    /// dumped as YAML rather than JSON, and pretty or not whatever the verbosity.
+    pub fn set_result_format(&mut self, yaml: bool, pretty: Option<bool>) {
+        self.yaml = yaml;
+        self.pretty = pretty;
     }
 
     /// Serves the diffs of the results this renderer prints.

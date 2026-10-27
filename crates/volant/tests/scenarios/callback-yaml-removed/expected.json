@@ -1,0 +1,5 @@
+{
+  "code": 1,
+  "stderr": "[ERROR]: The 'community.general.yaml' callback plugin has been removed. The plugin has been superseded by the option `result_format=yaml` in callback plugin ansible.builtin.default from ansible-core 2.13 onwards. This feature was removed from collection 'community.general' version 12.0.0.\n",
+  "stdout": ""
+}

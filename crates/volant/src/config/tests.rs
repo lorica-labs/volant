@@ -999,3 +999,34 @@ fn the_callback_settings_are_read_from_the_environment() {
         unsafe { std::env::remove_var(name) };
     }
 }
+
+/// `callback_format_pretty` reads a word that is no boolean as false, from the file and from the
+/// environment, which wins.
+#[test]
+fn pretty_results_is_read_leniently() {
+    assert_eq!(
+        cfg("[defaults]\ncallback_format_pretty = maybe\n", ".")
+            .callbacks
+            .pretty_results,
+        Some(false)
+    );
+    assert_eq!(
+        cfg("[defaults]\ncallback_format_pretty = Yes\n", ".")
+            .callbacks
+            .pretty_results,
+        Some(true)
+    );
+    assert_eq!(cfg("", ".").callbacks.pretty_results, None);
+    let names = [
+        ("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg"),
+        ("ANSIBLE_CALLBACK_FORMAT_PRETTY", "true"),
+    ];
+    // nextest gives each test a process of its own, so no other thread reads the variables.
+    for (name, value) in names {
+        unsafe { std::env::set_var(name, value) };
+    }
+    assert_eq!(Config::load().unwrap().callbacks.pretty_results, Some(true));
+    for (name, _) in names {
+        unsafe { std::env::remove_var(name) };
+    }
+}

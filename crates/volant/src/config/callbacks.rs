@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The settings that choose the callbacks a run prints through: `stdout_callback`,
-//! `callbacks_enabled`, `callback_plugins` and `bin_ansible_callbacks`.
+//! `callbacks_enabled`, `callback_plugins` and `bin_ansible_callbacks`, and `callback_format_pretty`.
 
-use super::settings::boolean;
+use super::settings::{boolean, callback_flag};
 use std::path::{Path, PathBuf};
 
 use super::paths::path_list;
@@ -21,6 +21,9 @@ pub struct Callbacks {
     /// `ANSIBLE_LOAD_CALLBACK_PLUGINS`, else `[defaults] bin_ansible_callbacks`: whether the ad hoc
     /// command loads the configured callbacks.
     pub adhoc_loads: bool,
+    /// `ANSIBLE_CALLBACK_FORMAT_PRETTY`, else `[defaults] callback_format_pretty`: the
+    /// `pretty_results` of `default` and `minimal`. A word that is no boolean reads as false.
+    pub pretty_results: Option<bool>,
 }
 
 /// One key of `[defaults]`; a key that is not one of the four is left alone.
@@ -35,6 +38,7 @@ pub(super) fn ini(
         "stdout_callback" => callbacks.stdout = Some(value.trim().to_string()),
         "callbacks_enabled" => callbacks.enabled = tag_list(value),
         "callback_plugins" => callbacks.plugin_dirs = path_list(value, base),
+        "callback_format_pretty" => callbacks.pretty_results = Some(callback_flag(value)),
         "bin_ansible_callbacks" => {
             callbacks.adhoc_loads = boolean("DEFAULT_LOAD_CALLBACK_PLUGINS", origin, value.trim())?;
         }
@@ -53,6 +57,9 @@ pub(super) fn env(callbacks: &mut Callbacks) -> anyhow::Result<()> {
     }
     if let Ok(paths) = std::env::var("ANSIBLE_CALLBACK_PLUGINS") {
         callbacks.plugin_dirs = path_list(&paths, Path::new(""));
+    }
+    if let Ok(flag) = std::env::var("ANSIBLE_CALLBACK_FORMAT_PRETTY") {
+        callbacks.pretty_results = Some(callback_flag(&flag));
     }
     if let Ok(flag) = std::env::var("ANSIBLE_LOAD_CALLBACK_PLUGINS") {
         callbacks.adhoc_loads = boolean(

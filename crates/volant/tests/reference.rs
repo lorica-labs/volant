@@ -405,6 +405,10 @@ fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
     // A command's timings, which differ between two runs of the reference itself.
     let timed = regex::Regex::new(r#""(start|end|delta)": "[^"]*""#).expect("the pattern compiles");
     let stdout = timed.replace_all(stdout, r#""$1": "<time>""#);
+    // The same in a result `result_format = yaml` dumps.
+    let timed_yaml =
+        regex::Regex::new(r"(?m)^( +)(start|end|delta): '[^']*'$").expect("the pattern compiles");
+    let stdout = timed_yaml.replace_all(&stdout, "$1$2: <time>");
     // `-vv` opens with a block of the machine's paths in the reference and with Volant's own
     // version line here: the generator writes the same placeholder for the block.
     let version = regex::Regex::new(r"(?m)^volant .* \(ansible-core [0-9.]+ compatible\)\n")

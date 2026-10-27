@@ -1,0 +1,4 @@
+# `pretty_results` set to a word that is no boolean reads as off: a `debug` loses its indent too.
+needs: [ansible-core]
+env: {"ANSIBLE_CALLBACK_FORMAT_PRETTY": "maybe"}
+args: [-v, -i, inv.ini, results.yml]

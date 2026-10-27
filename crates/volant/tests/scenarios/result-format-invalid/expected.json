@@ -1,0 +1,5 @@
+{
+  "code": 5,
+  "stderr": "[ERROR]: Invalid value 'xml' for config 'result_format' for 'default' callback plugin. Valid values are: json, yaml\n",
+  "stdout": ""
+}

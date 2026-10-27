@@ -1,0 +1,4 @@
+# `yaml` routes to `community.general.yaml`, which the pinned community.general has removed.
+env: {"ANSIBLE_STDOUT_CALLBACK": "yaml"}
+stderr: true
+args: [-i, inv.ini, results.yml]

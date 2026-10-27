@@ -1,0 +1,4 @@
+# A `result_format` the callback does not offer stops the run before the play: exit status 5.
+env: {"ANSIBLE_CALLBACK_RESULT_FORMAT": "xml"}
+stderr: true
+args: [-i, inv.ini, results.yml]

@@ -166,14 +166,7 @@ impl Renderer {
                 censored_body(result)
             } else {
                 let mut body = result.0.clone();
-                let items = result
-                    .0
-                    .get(super::LOOP_RESULTS)
-                    .filter(|_| self.minimal.is_some());
                 body.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
-                if let Some(items) = items.filter(|_| !censored) {
-                    body.insert("results".into(), items.clone());
-                }
                 for key in [
                     "failed",
                     "skipped",
@@ -191,7 +184,7 @@ impl Renderer {
                 body
             };
             line.push_str("Result was: ");
-            line.push_str(&ansible_json_indented(&serde_json::Value::Object(body), 0));
+            line.push_str(&self.dump_result(body, verbose_always(result, censored), None));
         }
         let _ = writeln!(self.out, "{line}");
     }
@@ -252,14 +245,7 @@ impl Renderer {
         }
         let verbose = verbose_always(result, censored);
         let body = self.shown_body(result, dump, censored);
-        // `_dump_results` indents by 4 for a result carrying [`VERBOSE_ALWAYS`] and for every
-        // result from `-vvv` on.
-        let pretty = verbose || self.verbosity > 2;
-        let json = if pretty {
-            ansible_json_indented(&serde_json::Value::Object(body), 0)
-        } else {
-            ansible_json(&serde_json::Value::Object(body))
-        };
+        let json = self.dump_result(body, verbose, None);
         let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
         // A censored `debug` still goes through the cleanup above - which is what leaves its
         // body as `{"censored": ...}` with no `changed` - but shows nothing at verbosity 0:
@@ -368,23 +354,52 @@ pub(super) fn rc_text(body: &serde_json::Map<String, serde_json::Value>) -> Stri
 }
 
 impl Renderer {
-    /// `_dump_results(result, indent=4)`: JSON with sorted keys, or with `result_format = yaml`
-    /// a line break and the YAML dump indented by four (`textwrap.indent`), `stdout_lines` and
-    /// `stderr_lines` written `<omitted>` beside their text. The trailing line break is the
-    /// line's own.
-    pub(super) fn minimal_dump(
+    /// `_dump_results(result, indent=4)`, the `minimal` callback's.
+    pub(super) fn minimal_dump(&self, body: serde_json::Map<String, serde_json::Value>) -> String {
+        self.dump_result(body, false, Some(4))
+    }
+
+    /// `_dump_results` of ansible-core 2.19.12, for a body already cleaned: JSON with sorted keys,
+    /// or with `result_format = yaml` a line break and the YAML dump indented by four
+    /// (`textwrap.indent`). The indent is four for a result carrying [`VERBOSE_ALWAYS`]
+    /// (`verbose_always`), from `-vvv` on, for YAML unless `pretty_results` says otherwise, and
+    /// when `pretty_results` is on; `pretty_results` off takes it away whatever asked for it. With
+    /// YAML and `pretty_results` not off, `stdout_lines` and `stderr_lines` are written
+    /// `<omitted>` beside their text and a block of text is cleaned to keep its block form. The
+    /// trailing line break is the line's own.
+    pub(super) fn dump_result(
         &self,
         mut body: serde_json::Map<String, serde_json::Value>,
+        verbose_always: bool,
+        indent: Option<usize>,
     ) -> String {
+        let indent = match self.pretty {
+            Some(false) => None,
+            pretty => indent.or_else(|| {
+                (verbose_always
+                    || (pretty.is_none() && self.yaml)
+                    || pretty == Some(true)
+                    || self.verbosity > 2)
+                    .then_some(4)
+            }),
+        };
         if !self.yaml {
-            return ansible_json_indented(&serde_json::Value::Object(body), 0);
+            let body = serde_json::Value::Object(body);
+            return match indent {
+                Some(_) => ansible_json_indented(&body, 0),
+                None => ansible_json(&body),
+            };
         }
-        for (text, lines) in [("stdout", "stdout_lines"), ("stderr", "stderr_lines")] {
-            if body.contains_key(text) && body.contains_key(lines) {
-                body.insert(lines.into(), "<omitted>".into());
+        let lossy = self.pretty != Some(false);
+        if lossy {
+            for (text, lines) in [("stdout", "stdout_lines"), ("stderr", "stderr_lines")] {
+                if body.contains_key(text) && body.contains_key(lines) {
+                    body.insert(lines.into(), "<omitted>".into());
+                }
             }
         }
-        let dumped = crate::template::callback_yaml(&serde_json::Value::Object(body));
+        let dumped =
+            crate::template::callback_yaml(&serde_json::Value::Object(body), indent, lossy);
         let mut out = String::from("\n");
         // `str.splitlines(keepends=True)`'s boundaries; a line of whitespace only gets no prefix.
         let breaks = |c: char| {

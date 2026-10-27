@@ -7,7 +7,7 @@ use volant_protocol::TaskResult;
 
 use super::{CENSORED, FAILED, Renderer, UNREACHABLE};
 
-use super::recap_json::{ansible_json, ansible_json_indented};
+use super::recap_json::ansible_json;
 
 /// What the reference's callback prints in front of a failure's line: `[ERROR]: ` and the
 /// failure's message, then, when the task's file is known, `Origin: <file>:<line>:<col>` and the
@@ -413,10 +413,9 @@ impl Renderer {
             Some(d) => format!("{host} -> {d}"),
             None => host.to_string(),
         };
-        let json = if self.verbosity > 2 {
-            ansible_json_indented(&body, 0)
-        } else {
-            ansible_json(&body)
+        let json = match body {
+            serde_json::Value::Object(body) => self.dump_result(body, false, None),
+            other => ansible_json(&other),
         };
         let line = format!("fatal: [{who}]: UNREACHABLE! => {json}");
         let _ = writeln!(self.out, "{}", self.paint(UNREACHABLE, &line));

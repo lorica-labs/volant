@@ -1,0 +1,4 @@
+# `result_format = yaml` on the `minimal` callback of a playbook.
+needs: [ansible-core]
+env: {"ANSIBLE_STDOUT_CALLBACK": "minimal", "ANSIBLE_CALLBACK_RESULT_FORMAT": "yaml"}
+args: [-i, inv.ini, results.yml]

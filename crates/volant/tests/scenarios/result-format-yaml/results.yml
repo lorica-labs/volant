@@ -1,0 +1,31 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: changed
+      command: echo chg
+    - name: two lines
+      command: printf "a\nb"
+      changed_when: false
+    - name: unicode
+      debug:
+        msg: "héllo: [x]"
+    - name: nested
+      debug:
+        var: nested
+      vars:
+        nested:
+          list: [1, 2.5, true, null]
+          "key: x": long line long line long line long line long line long line long line long line long line long line long
+          trailing: "a  \nb\tc"
+    - name: items
+      debug:
+        msg: "{{ item }}"
+      loop: [a, b]
+    - name: skipped
+      debug:
+        msg: never
+      when: false
+    - name: failing
+      fail:
+        msg: boom
+      ignore_errors: true

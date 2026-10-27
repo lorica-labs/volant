@@ -1,5 +1,5 @@
 ---
-sourceHash: dd6d5d30aedb
+sourceHash: cd192131ee62
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -102,7 +102,7 @@ Ces cas diffèrent d'`ansible-playbook` sans message avant l'exécution, ou avec
 
 | Quoi | Ce qui se passe |
 |---|---|
-| `callback_plugins/`, `vars_plugins/`, `result_format` | Ignorés. Les résultats d'un playbook sont affichés en JSON. |
+| `callback_plugins/`, `vars_plugins/` | Ignorés. |
 | `stdout_callback` nommant le callback d'une collection, comme `json` ou `yaml` | L'exécution s'arrête avant le premier play avec `Could not load '<name>' callback plugin.`, qu'ansible-core n'affiche que pour un plugin non installé. `default`, `minimal`, `oneline` et `tree` fonctionnent. |
 | `callbacks_enabled` | Chaque nom est ignoré avec `[WARNING]: Skipping callback plugin '<name>', unable to load`, qu'ansible-core n'affiche que pour un plugin introuvable. `volant.compat.record` est ignoré sans avertissement. |
 | `volant check`, `inventory`, `vault`, `doc`, `config` et `galaxy` | Elles n'existent pas. `volant` a `playbook`, `adhoc`, `runtime` et `shims`. |

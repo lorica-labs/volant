@@ -22,15 +22,21 @@ mod scalar;
 use emitter::{dump, emit};
 
 /// A task result as the callbacks dump it with `result_format = yaml` (`_dump_results`): block
-/// style, four-space indent, keys sorted, and a string with a line break as a literal block.
-pub(crate) fn callback_yaml(value: &serde_json::Value) -> String {
+/// style, keys sorted, a string with a line break as a literal block. `indent` is PyYAML's, two
+/// when none is given; `lossy` is `pretty_results` on, which cleans such a string to keep the
+/// block form.
+pub(crate) fn callback_yaml(
+    value: &serde_json::Value,
+    indent: Option<usize>,
+    lossy: bool,
+) -> String {
     emit(
         &super::bigint::to_template(value),
-        4,
+        indent.unwrap_or(2),
         None,
         Some(false),
         true,
-        true,
+        Some(lossy),
         false,
     )
 }
@@ -41,7 +47,7 @@ pub(crate) fn callback_yaml(value: &serde_json::Value) -> String {
 /// once under an anchor, `&id001`, and as the alias `*id001` after. A `!vault` value is its
 /// ciphertext under the tag, text marked unsafe is the text.
 pub(crate) fn inventory_yaml(value: &Value) -> String {
-    emit(value, 2, None, Some(false), true, false, true)
+    emit(value, 2, None, Some(false), true, None, true)
 }
 
 /// A JSON value as a node of [`inventory_yaml`]'s document; a clone of it is the same node.

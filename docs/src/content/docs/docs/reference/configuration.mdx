@@ -98,7 +98,15 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
-  The callback that prints the run. `default` prints the banners, a line per result and the recap. `minimal` prints each result as the ad hoc command does, `host | CHANGED | rc=0 >>` and the output for a command, `host | SUCCESS => ` and the result as JSON otherwise, with no banner, no recap and no line per loop item. `oneline` prints the same results on one line each; ansible-core 2.19.12 deprecates it and Volant prints its warning once on standard error. `tree` prints nothing on standard output. The `ansible.builtin.` names work too. Any other name, such as the collections' `json` and `yaml`, stops the run before the first play with `[ERROR]: Could not load '<name>' callback plugin.` and exit code 1.
+  The callback that prints the run. `default` prints the banners, a line per result and the recap. `minimal` prints each result as the ad hoc command does, `host | CHANGED | rc=0 >>` and the output for a command, `host | SUCCESS => ` and the result as JSON otherwise, with no banner, no recap and no line per loop item. `oneline` prints the same results on one line each; ansible-core 2.19.12 deprecates it and Volant prints its warning once on standard error. `tree` prints nothing on standard output. The `ansible.builtin.` names work too. `yaml` stops the run with exit code 1 and the error community.general prints since 12.0.0, which removed that plugin: `callback_result_format = yaml` replaces it. Any other name, such as `json`, stops the run before the first play with `[ERROR]: Could not load '<name>' callback plugin.` and exit code 1.
+</Option>
+
+<Option name="callback_result_format" id="defaults-callback-result-format" default="json" env="ANSIBLE_CALLBACK_RESULT_FORMAT">
+  How `default` and `minimal` write a result: `json`, or `yaml`, where the result follows `=>` on the next lines, indented four spaces, and a text with line breaks is a literal block. Any other value stops the run before the first play with exit code 5. `oneline` always writes JSON.
+</Option>
+
+<Option name="callback_format_pretty" id="defaults-callback-format-pretty" env="ANSIBLE_CALLBACK_FORMAT_PRETTY">
+  The `pretty_results` of `default` and `minimal`. Unset, a JSON result is indented only for a `debug`, an `assert` and from `-vvv` on, and a YAML result is pretty. On, every result is indented four spaces. Off, none is, a `debug` included. Pretty YAML writes `stdout_lines` and `stderr_lines` as `<omitted>` beside their text, nests by four spaces, and drops the trailing spaces and tabs of a block of text so it stays a block; YAML that is not pretty keeps every value as it is and nests by two. A word that is not a boolean reads as off.
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">

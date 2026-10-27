@@ -66,6 +66,8 @@ struct State {
     order: Vec<String>,
     criteria: HashMap<String, Vec<Request>>,
     pins: HashMap<String, String>,
+    /// The versions that met every request of a collection when its last request came.
+    candidates: HashMap<String, Vec<String>>,
 }
 
 impl State {
@@ -84,7 +86,6 @@ struct Resolver<'a> {
     index: &'a mut dyn Index,
     options: &'a Options,
     rejections: HashMap<String, usize>,
-    versions: HashMap<String, Vec<String>>,
     /// The requests of the last collection that could not be met.
     conflict: Vec<Request>,
 }
@@ -96,20 +97,22 @@ pub fn resolve(
     options: &Options,
 ) -> Result<Resolution, Failure> {
     let mut state = State::default();
-    for request in requests {
-        state.ask(request.clone());
-    }
     let mut resolver = Resolver {
         index,
         options,
         rejections: HashMap::new(),
-        versions: HashMap::new(),
         conflict: Vec::new(),
     };
-    for fqcn in state.order.clone() {
-        if resolver.matches(&fqcn, &state.criteria[&fqcn])?.is_empty() {
-            return Err(impossible(&state.criteria[&fqcn]));
+    // Each request asks the index again, as `resolvelib` calls `find_matches` for each: the
+    // servers see the same requests.
+    for request in requests {
+        state.ask(request.clone());
+        let asked = state.criteria[&request.fqcn].clone();
+        let found = resolver.matches(&request.fqcn, &asked)?;
+        if found.is_empty() {
+            return Err(impossible(&asked));
         }
+        state.candidates.insert(request.fqcn.clone(), found);
     }
     match resolver.solve(state)? {
         Some(done) => Ok(done
@@ -131,7 +134,8 @@ impl Resolver<'_> {
         else {
             return Ok(Some(state));
         };
-        for version in self.matches(&fqcn, &state.criteria[&fqcn])? {
+        let candidates = state.candidates.get(&fqcn).cloned().unwrap_or_default();
+        for version in candidates {
             let mut next = state.clone();
             next.pins.insert(fqcn.clone(), version.clone());
             let dependencies = if self.options.no_deps {
@@ -147,10 +151,13 @@ impl Resolver<'_> {
                     parent: Some((fqcn.clone(), version.clone())),
                 });
                 let asked = next.criteria[&dependency].clone();
-                let met = match next.pins.get(&dependency) {
-                    Some(pinned) => asked.iter().all(|r| meets(pinned, &r.range)),
-                    None => !self.matches(&dependency, &asked)?.is_empty(),
-                };
+                let found = self.matches(&dependency, &asked)?;
+                let met = !found.is_empty()
+                    && next
+                        .pins
+                        .get(&dependency)
+                        .is_none_or(|pinned| asked.iter().all(|r| meets(pinned, &r.range)));
+                next.candidates.insert(dependency.clone(), found);
                 if !met {
                     conflicted = Some(asked);
                     break;
@@ -183,11 +190,7 @@ impl Resolver<'_> {
         if !installed.is_empty() && !self.options.upgrade {
             return Ok(installed);
         }
-        if !self.versions.contains_key(fqcn) {
-            let versions = self.index.versions(fqcn)?;
-            self.versions.insert(fqcn.to_string(), versions);
-        }
-        let all = &self.versions[fqcn];
+        let all = self.index.versions(fqcn)?;
         let releases_exist = all.iter().any(|v| !is_pre_release(v));
         let pinned: Vec<&str> = asked
             .iter()

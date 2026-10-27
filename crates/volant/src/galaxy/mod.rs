@@ -4,13 +4,6 @@
 
 use std::path::{Path, PathBuf};
 
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the install from a Galaxy server is its first caller"
-    )
-)]
 pub mod api;
 #[cfg(test)]
 mod api_tests;
@@ -21,39 +14,14 @@ pub mod install;
 #[cfg(test)]
 mod requirement_tests;
 pub mod requirements;
-#[cfg_attr(
-    not(test),
-    expect(
-        dead_code,
-        reason = "the install from a Galaxy server is its first caller"
-    )
-)]
 pub mod resolve;
 #[cfg(test)]
 mod resolve_tests;
-// `allow`, not `expect`: its only callers are other unused modules, which older compilers count
-// as uses.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the install from a Galaxy server is its first caller"
-    )
-)]
 pub mod settings;
 #[cfg(test)]
 mod settings_tests;
 #[cfg(test)]
 mod tests;
-// `allow`, not `expect`: its only caller is the resolver, which older compilers count as a use
-// although nothing calls the resolver yet.
-#[cfg_attr(
-    not(test),
-    allow(
-        dead_code,
-        reason = "the install from a Galaxy server is its first caller"
-    )
-)]
 pub mod version;
 
 /// A failure, printed as `[ERROR]: <message>` and ending the run with `code`.
@@ -94,13 +62,6 @@ impl Failure {
     }
 
     /// The message with its cause on the same line, as a warning quotes it.
-    #[cfg_attr(
-        not(test),
-        allow(
-            dead_code,
-            reason = "the install from a Galaxy server is its first caller"
-        )
-    )]
     pub fn summary(&self) -> String {
         match &self.cause {
             Some(cause) => format!("{}: {cause}", self.message),
@@ -249,4 +210,39 @@ pub fn one_of_roles_requirements(
         )),
         Some(file) => requirements_file(file).map(Some),
     }
+}
+
+/// A new directory under `dir` named `prefix` and eight characters of `[a-z0-9_]`, as Python's
+/// `mkdtemp` names one.
+pub fn temp_dir(dir: &Path, prefix: &str) -> Result<PathBuf, Failure> {
+    const LETTERS: &[u8] = b"abcdefghijklmnopqrstuvwxyz0123456789_";
+    for attempt in 0u32..100 {
+        let seed = format!(
+            "{:?}{}{attempt}{prefix}",
+            std::time::SystemTime::now(),
+            std::process::id()
+        );
+        let hash = blake3::hash(seed.as_bytes());
+        let suffix: String = hash.as_bytes()[..8]
+            .iter()
+            .map(|b| char::from(LETTERS[usize::from(*b) % LETTERS.len()]))
+            .collect();
+        let path = dir.join(format!("{prefix}{suffix}"));
+        let mut builder = std::fs::DirBuilder::new();
+        builder.recursive(false);
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::DirBuilderExt as _;
+            builder.mode(0o700);
+        }
+        match builder.create(&path) {
+            Ok(()) => return Ok(path),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(e) => return Err(Failure::error(e.to_string())),
+        }
+    }
+    Err(Failure::error(format!(
+        "No usable temporary directory name under {}",
+        dir.display()
+    )))
 }

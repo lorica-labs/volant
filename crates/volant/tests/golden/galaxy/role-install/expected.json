@@ -16,6 +16,7 @@
     "GET /api/v1/roles/1/versions/?page_size=50",
     "GET /roles/demo/web/1.1.0.tar.gz"
   ],
+  "setup": [],
   "stderr": "",
   "stdout": "Starting galaxy role install process\n- downloading role 'web', owned by demo\n- downloading role from http://127.0.0.1:<golden-port>/roles/demo/web/1.1.0.tar.gz\n- extracting demo.web to <golden-tmp>/roles/demo.web\n- demo.web (1.1.0) was installed successfully\n",
   "tree": {

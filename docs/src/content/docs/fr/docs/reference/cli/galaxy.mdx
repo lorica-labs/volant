@@ -1,5 +1,5 @@
 ---
-sourceHash: 4e3480c849f9
+sourceHash: 40c0bf96eae7
 title: volant galaxy
 description: Les options d'ansible-galaxy, vérifiées par Volant lui-même, pendant que ses sous-commandes deviennent natives une par une.
 ---
@@ -32,7 +32,19 @@ Quand aucun chemin de collections configuré ne se trouve sous le `PATH` de `col
 
 `collection install` installe nativement une archive de collection : `volant galaxy collection install acme-demo-1.0.0.tar.gz -p DIR`. Le nom et la version viennent du `MANIFEST.json` de l'archive, pas du nom du fichier. La collection va sous `DIR/ansible_collections/<namespace>/<name>`, ou sous le premier chemin de collections sans `-p`. Seuls les fichiers que liste `FILES.json` sont écrits, chacun vérifié d'abord contre son SHA-256. Un fichier est en `0644`, ou en `0755` quand l'archive le marque exécutable. Une entrée qui atterrirait hors de la collection est refusée, tout comme un lien qui pointe hors d'elle. Une installation qui échoue ne laisse aucune collection à moitié écrite. La sortie, les messages et les codes de sortie sont ceux d'`ansible-galaxy`. Une collection déjà installée à la même version donne `Nothing to do. All requested collections are already installed. If you want to reinstall them, consider using `--force`.`, et `--force` la réinstalle par-dessus l'ancien arbre. Quand `PATH/ansible_collections` existe déjà, l'avertissement de `-p` dit que le chemin `appears to be part of the pip Ansible package`, comme le dit `ansible-galaxy`.
 
-Les serveurs Galaxy, les répertoires, les URL et git, une archive avec des dépendances, deux versions d'une même collection et les signatures sont refusés tant qu'ils ne sont pas natifs : `[ERROR]: volant galaxy collection install <what> is not supported yet`, code 1.
+Les répertoires, les URL, git et les signatures sont refusés tant qu'ils ne sont pas natifs : `[ERROR]: volant galaxy collection install from a directory, a URL or git is not supported yet`, ou `with signatures`, code 1.
+
+## Installer depuis des serveurs Galaxy
+
+`collection install` accepte aussi des noms, avec une plage au besoin : `demo.base`, `demo.base:1.0.0`, `"demo.base:>=1.0.0,<2.0.0"`, et les entrées de `-r`. Chaque nom est résolu auprès des serveurs avec ses dépendances, chacune à la plus haute version qui satisfait toutes les plages demandées, en revenant en arrière quand deux plages se contredisent. Les pré-versions ne comptent qu'avec `--pre` ou quand elles sont nommées exactement. Chaque archive est téléchargée, vérifiée contre le SHA-256 que donne le serveur, puis décompressée comme ci-dessus. Une collection installée depuis un serveur reçoit aussi `ansible_collections/<namespace>.<name>-<version>.info/GALAXY.yml`, qui note sa provenance. Une collection déjà installée à une version qui convient est gardée : `'<name>:<version>' is already installed, skipping.`
+
+`-n` saute les dépendances, `-U` amène les collections installées à la plus récente version de la plage, `-f` réinstalle les collections demandées et `--force-with-deps` aussi leurs dépendances, `-i` continue après une installation échouée avec un avertissement, et `--offline` n'interroge aucun serveur. Quand aucun jeu de versions ne satisfait toutes les plages, la commande échoue avec le message d'`ansible-galaxy`, qui liste les plages et se termine par un conseil sur `--pre` ; les objets Python qu'`ansible-galaxy` affiche après ce conseil sont omis.
+
+## Les serveurs Galaxy
+
+Les serveurs viennent de `-s`, sinon de `[galaxy] server_list` et des sections `[galaxy_server.<name>]` d'`ansible.cfg`, sinon de `GALAXY_SERVER`, `https://galaxy.ansible.com` par défaut. Chaque variable `ANSIBLE_GALAXY_*` passe avant le fichier. Chaque serveur accepte `url`, `token`, `validate_certs` et `timeout`. `--token` l'emporte sur le jeton du fichier, `-c` coupe la vérification des certificats, et `--timeout` fixe l'attente, 60 secondes par défaut. Un serveur injoignable est sauté avec l'avertissement d'`ansible-galaxy`, et le suivant est interrogé.
+
+Le jeton part dans `Authorization: Token <token>` et n'est jamais affiché. Sans jeton, le fichier de jeton est lu, `GALAXY_TOKEN_PATH`, par défaut `<ANSIBLE_HOME>/galaxy_token`, créé vide en mode `0600` s'il manque. Les proxys viennent de `https_proxy`, `http_proxy`, `all_proxy` et `no_proxy` ; contrairement à `ansible-galaxy`, qui choisit la variable selon le schéma de l'URL, la première d'entre elles qui est définie s'applique à toutes les URL. Les réponses sont gardées un jour dans `<ANSIBLE_HOME>/galaxy_cache/api.json`, le même fichier qu'utilise `ansible-galaxy`. `--no-cache` le laisse de côté et `--clear-response-cache` le vide. `username`, `password` et `auth_url` ne sont pas lus.
 
 ## Les fichiers de prérequis
 

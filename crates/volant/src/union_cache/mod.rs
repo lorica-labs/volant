@@ -24,14 +24,16 @@ use crate::python::{Resolved, Union};
 
 mod entry;
 mod key;
+mod probe;
 mod sweep;
 
 #[cfg(test)]
 pub use entry::load;
 pub use entry::{open, sources_from, store};
-pub use key::located;
+pub use key::{cache_dir, located};
 #[cfg(test)]
 pub use key::{interpreter_without_running, key};
+pub use probe::{recalled, remember};
 
 /// The manifest's own version. An entry written in another format is rebuilt, never read.
 ///

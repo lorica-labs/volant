@@ -224,26 +224,52 @@ pub(crate) fn has_ansible(python: &str) -> bool {
     {
         return known;
     }
-    let has = imports(python, "ansible", None);
+    let has = imports_ansible(python);
     if let Ok(mut seen) = PROBED.lock() {
         seen.insert(python.to_owned(), has);
     }
     has
 }
 
-/// Whether `python`, started in `dir` (the working directory when `None`), imports `module`.
-pub(super) fn imports(python: &str, module: &str, dir: Option<&Path>) -> bool {
+/// [`imports`] of `ansible`, taken from the union cache's directory while a yes kept there still
+/// stands, and kept there when it is a yes: see `union_cache::probe`.
+fn imports_ansible(python: &str) -> bool {
+    let dir = crate::union_cache::cache_dir();
+    if dir
+        .as_deref()
+        .is_some_and(|dir| crate::union_cache::recalled(dir, python))
+    {
+        return true;
+    }
+    let Some(found) = imports(python, "ansible", None) else {
+        return false;
+    };
+    if let Some(dir) = dir {
+        crate::union_cache::remember(&dir, python, Path::new(&found));
+    }
+    true
+}
+
+/// The file `module` is imported from when `python`, started in `dir` (the working directory when
+/// `None`), imports it, empty for a module without one; `None` when it does not.
+pub(super) fn imports(python: &str, module: &str, dir: Option<&Path>) -> Option<String> {
     let mut probe = Command::new(python);
-    probe.args([NO_CWD_IMPORTS, "-c", &format!("import {module}")]);
+    probe.args([
+        NO_CWD_IMPORTS,
+        "-c",
+        &format!("import sys, {module}; sys.stdout.write({module}.__file__ or '')"),
+    ]);
     if let Some(dir) = dir {
         probe.current_dir(dir);
     }
-    probe
+    let out = probe
         .stdin(Stdio::null())
-        .stdout(Stdio::null())
         .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
+        .output()
+        .ok()?;
+    out.status
+        .success()
+        .then(|| String::from_utf8_lossy(&out.stdout).into_owned())
 }
 
 /// What `volant runtime status` says about the resolution: the mode, the interpreter the next

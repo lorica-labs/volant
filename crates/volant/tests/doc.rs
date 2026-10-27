@@ -14,7 +14,7 @@ use std::time::Duration;
 /// A script that passes the ansible-core probe, then reports its arguments and ends as
 /// `FAKE_END` says: `exit N`, or a signal sent to itself.
 const FAKE: &str = "#!/bin/sh
-[ \"$3\" = \"import ansible\" ] && exit 0
+case \"$3\" in \"import sys, ansible;\"*) exit 0 ;; esac
 shift 3
 printf '%s\\n' \"$@\"
 eval \"$FAKE_END\"

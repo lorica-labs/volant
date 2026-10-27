@@ -75,8 +75,9 @@ pub(super) fn check_dir(dir: &Path) -> io::Result<()> {
     Ok(())
 }
 
-/// Whether `name` is one this cache writes: `<key>.zip`, `<key>.deflate`, `<key>.json`, or a
-/// temporary file of one of them. Nothing else in the directory is the sweep's to remove.
+/// Whether `name` is one this cache writes: `<key>.zip`, `<key>.deflate`, `<key>.json`, an
+/// interpreter's `<key>.probe`, or a temporary file of one of them. Nothing else in the directory
+/// is the sweep's to remove.
 fn written_here(name: &str) -> bool {
     let (Some(key), Some(rest)) = (name.get(..64), name.get(64..)) else {
         return false;
@@ -88,7 +89,7 @@ fn written_here(name: &str) -> bool {
             && parts.all(|n| !n.is_empty() && n.bytes().all(|b| b.is_ascii_digit()))
     };
     key.bytes().all(|b| matches!(b, b'0'..=b'9' | b'a'..=b'f'))
-        && [".zip", ".deflate", ".json"].iter().any(|ext| {
+        && [".zip", ".deflate", ".json", ".probe"].iter().any(|ext| {
             rest.strip_prefix(ext)
                 .is_some_and(|after| after.is_empty() || after.strip_prefix('.').is_some_and(tmp))
         })

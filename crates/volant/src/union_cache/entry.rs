@@ -62,7 +62,7 @@ pub fn open(dir: &Path, key: &CacheKey) -> io::Result<Option<Entry>> {
 /// opened: this user's, and writable by nobody else. The directory was checked by its path, and
 /// an account able to rename it (one owning a directory above it) can swap in its own between
 /// that check and this read; the files it brings are its own, and fail here.
-fn read_own(path: &Path) -> io::Result<Option<Vec<u8>>> {
+pub(super) fn read_own(path: &Path) -> io::Result<Option<Vec<u8>>> {
     let mut file = match fs::File::open(path) {
         Ok(file) => file,
         Err(err) if err.kind() == io::ErrorKind::NotFound => return Ok(None),

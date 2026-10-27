@@ -5762,7 +5762,7 @@ fn fake_python_answering(dir: &Path, answers: &[&[u8]]) -> std::path::PathBuf {
         &script,
         format!(
             "#!/bin/sh\n\
-             for word in \"$@\"; do if [ \"$word\" = 'import ansible' ]; then exit 0; fi; done\n\
+             for word in \"$@\"; do case \"$word\" in 'import sys, ansible;'*) exit 0 ;; esac; done\n\
              echo start >> '{dir}/starts.log'\n\
              cat '{dir}/answer.bin'\n\
              cat > /dev/null\n",

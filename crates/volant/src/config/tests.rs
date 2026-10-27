@@ -949,3 +949,55 @@ fn a_paramiko_setting_that_does_not_read_is_refused(#[case] text: &str) {
         "{text}"
     );
 }
+
+/// The environment beats `[paramiko_connection]`, the plugin's own variable beating the generic
+/// one where both are set.
+#[test]
+fn the_paramiko_environment_beats_the_file() {
+    let names = [
+        ("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg"),
+        ("ANSIBLE_PARAMIKO_REMOTE_USER", "env-user"),
+        ("ANSIBLE_REMOTE_PORT", "2000"),
+        ("ANSIBLE_REMOTE_PARAMIKO_PORT", "2001"),
+        ("ANSIBLE_PARAMIKO_PRIVATE_KEY_FILE", "/env/key"),
+        ("ANSIBLE_HOST_KEY_CHECKING", "yes"),
+        ("ANSIBLE_PARAMIKO_HOST_KEY_CHECKING", "no"),
+        ("ANSIBLE_PARAMIKO_HOST_KEY_AUTO_ADD", "yes"),
+        ("ANSIBLE_PARAMIKO_RECORD_HOST_KEYS", "no"),
+        ("ANSIBLE_PARAMIKO_LOOK_FOR_KEYS", "no"),
+        ("ANSIBLE_PARAMIKO_USE_RSA_SHA2_ALGORITHMS", "no"),
+        ("ANSIBLE_PARAMIKO_PTY", "no"),
+        ("ANSIBLE_PARAMIKO_PROXY_COMMAND", "nc %h %p"),
+        ("ANSIBLE_SSH_TIMEOUT", "8"),
+        ("ANSIBLE_PARAMIKO_TIMEOUT", "9"),
+        ("ANSIBLE_PARAMIKO_BANNER_TIMEOUT", "2.5"),
+    ];
+    // nextest gives each test a process of its own, so no other thread reads the variables.
+    for (name, value) in names {
+        unsafe { std::env::set_var(name, value) };
+    }
+    let paramiko = Config::load().unwrap().plugins.paramiko;
+    assert_eq!(
+        paramiko,
+        crate::transport::ParamikoSettings {
+            remote_user: Some("env-user".into()),
+            port: Some(2001),
+            defaults_port: None,
+            private_key_file: Some(PathBuf::from("/env/key")),
+            host_key_checking: Some(false),
+            host_key_auto_add: Some(true),
+            record_host_keys: Some(false),
+            look_for_keys: Some(false),
+            use_rsa_sha2_algorithms: Some(false),
+            proxy_command: Some("nc %h %p".into()),
+            pty: Some(false),
+            timeout: Some(Duration::from_secs(9)),
+            ssh_timeout: None,
+        }
+    );
+    unsafe { std::env::set_var("ANSIBLE_PARAMIKO_PTY", "maybe") };
+    assert!(Config::load().is_err());
+    for (name, _) in names {
+        unsafe { std::env::remove_var(name) };
+    }
+}

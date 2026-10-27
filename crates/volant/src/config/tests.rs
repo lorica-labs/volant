@@ -973,3 +973,29 @@ fn the_callback_settings_are_read_from_defaults() {
     );
     assert!(refused.is_err());
 }
+
+/// The environment beats the file for the four callback settings.
+#[test]
+fn the_callback_settings_are_read_from_the_environment() {
+    let names = [
+        ("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg"),
+        ("ANSIBLE_STDOUT_CALLBACK", " oneline "),
+        ("ANSIBLE_CALLBACKS_ENABLED", "timer,junit"),
+        ("ANSIBLE_CALLBACK_PLUGINS", "/a:/b"),
+        ("ANSIBLE_LOAD_CALLBACK_PLUGINS", "yes"),
+    ];
+    // nextest gives each test a process of its own, so no other thread reads the variables.
+    for (name, value) in names {
+        unsafe { std::env::set_var(name, value) };
+    }
+    let callbacks = Config::load().unwrap().callbacks;
+    assert_eq!(callbacks.stdout.as_deref(), Some("oneline"));
+    assert_eq!(callbacks.enabled, ["timer", "junit"]);
+    assert_eq!(callbacks.plugin_dirs.len(), 2);
+    assert!(callbacks.adhoc_loads);
+    unsafe { std::env::set_var("ANSIBLE_LOAD_CALLBACK_PLUGINS", "maybe") };
+    assert!(Config::load().is_err());
+    for (name, _) in names {
+        unsafe { std::env::remove_var(name) };
+    }
+}

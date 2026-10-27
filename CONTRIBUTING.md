@@ -39,7 +39,7 @@ just setup
 | `just docs-keywords`, `just docs-modules` | Regenerate the keyword and module reference pages from the source tables. |
 | `just ci-local` | Runs the CI workflow locally. Needs Docker and `gh extension install nektos/gh-act`. |
 
-CI runs more than `just check`: the SSH tests, the container connection tests, the coverage floor, a musl build, the link checks of the static and glibc controllers, the controller in a `FROM scratch` container, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS.
+CI runs more than `just check`: the SSH tests, the container connection tests, the coverage floor (on main, after the merge), a musl build, the link checks of the static and glibc controllers, the controller in a `FROM scratch` container, a build on the minimum supported Rust version, `cargo publish --dry-run`, and the tests again on macOS.
 
 ### SSH tests
 

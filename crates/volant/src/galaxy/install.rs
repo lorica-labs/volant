@@ -44,28 +44,42 @@ impl Wanted {
     }
 }
 
-/// The requirements the command line or a file gave, read: a tarball is opened now, so its
-/// errors come before any output, as the reference reads it while parsing.
-pub fn prepare(collections: &[Collection]) -> Result<Vec<Wanted>, Failure> {
-    collections
-        .iter()
-        .map(|c| match c.kind {
+/// The requirements the command line or a file gave, read: a tarball is opened and a git source
+/// cloned now, so their errors come before any output, as the reference reads them while
+/// parsing. The clones are removed when the returned directories are dropped.
+pub fn prepare(
+    collections: &[Collection],
+    ignore_certs: bool,
+    verbose: u8,
+) -> Result<(Vec<Wanted>, Vec<tempfile::TempDir>), Failure> {
+    let mut wanted = Vec::new();
+    let mut clones = Vec::new();
+    for c in collections {
+        let source = c.source.as_deref().unwrap_or_default();
+        wanted.push(match c.kind {
             Kind::File => {
-                let (tarball, meta) = Tarball::open(c.source.as_deref().unwrap_or_default())?;
-                Ok(Wanted::Tarball(tarball, meta))
+                let (tarball, meta) = Tarball::open(source)?;
+                Wanted::Tarball(tarball, meta)
             }
-            Kind::Dir => Ok(Wanted::Dir(Source::read(&super::resolve(
-                c.source.as_deref().unwrap_or_default(),
-            ))?)),
-            Kind::Galaxy => Ok(Wanted::Galaxy {
+            Kind::Dir => Wanted::Dir(Source::read(&super::resolve(source))?),
+            Kind::Git => {
+                let checkout = super::git::checkout(source, &c.version, ignore_certs, verbose)?;
+                let read = Source::read(&checkout.collection)?;
+                clones.push(checkout.clone);
+                Wanted::Dir(read)
+            }
+            Kind::Galaxy => Wanted::Galaxy {
                 fqcn: c.name.clone().unwrap_or_default(),
                 range: c.version.clone(),
-            }),
-            _ => Err(Failure::error(
-                "volant galaxy collection install from a URL, git or a namespace directory is not supported yet",
-            )),
-        })
-        .collect()
+            },
+            Kind::Url | Kind::Subdirs => {
+                return Err(Failure::error(
+                    "volant galaxy collection install from a URL or a namespace directory is not supported yet",
+                ));
+            }
+        });
+    }
+    Ok((wanted, clones))
 }
 
 /// The version and dependencies of each local collection, by `namespace.name`.

@@ -1,5 +1,5 @@
 ---
-sourceHash: deeb7b8f1e36
+sourceHash: 39eb8b50064e
 title: volant galaxy
 description: Les options d'ansible-galaxy, vérifiées par Volant lui-même, pendant que ses sous-commandes deviennent natives une par une.
 ---
@@ -32,7 +32,9 @@ Quand aucun chemin de collections configuré ne se trouve sous le `PATH` de `col
 
 `collection install` installe nativement une archive de collection : `volant galaxy collection install acme-demo-1.0.0.tar.gz -p DIR`. Le nom et la version viennent du `MANIFEST.json` de l'archive, pas du nom du fichier. La collection va sous `DIR/ansible_collections/<namespace>/<name>`, ou sous le premier chemin de collections sans `-p`. Seuls les fichiers que liste `FILES.json` sont écrits, chacun vérifié d'abord contre son SHA-256. Un fichier est en `0644`, ou en `0755` quand l'archive le marque exécutable. Une entrée qui atterrirait hors de la collection est refusée, tout comme un lien qui pointe hors d'elle. Une installation qui échoue ne laisse aucune collection à moitié écrite. La sortie, les messages et les codes de sortie sont ceux d'`ansible-galaxy`. Une collection déjà installée à la même version donne `Nothing to do. All requested collections are already installed. If you want to reinstall them, consider using `--force`.`, et `--force` la réinstalle par-dessus l'ancien arbre. Quand `PATH/ansible_collections` existe déjà, l'avertissement de `-p` dit que le chemin `appears to be part of the pip Ansible package`, comme le dit `ansible-galaxy`.
 
-Les URL, git, les répertoires d'espace de noms et les signatures sont refusés tant qu'ils ne sont pas natifs : `[ERROR]: volant galaxy collection install from a URL, git or a namespace directory is not supported yet`, ou `with signatures`, code 1.
+`collection install` accepte aussi un dépôt git : `git+<url>`, avec `,<ref>` pour une branche, une étiquette ou un commit, `HEAD` par défaut, et `#/<subdir>` pour une collection qui n'est pas à la racine du dépôt, comme `git+https://host/org/repo.git,v1.0.0` ou `git+file:///work/mono/.git#/collections/demo`. Dans un fichier de prérequis, c'est une entrée avec `type: git`, dont la `version` est la référence. Volant lance le `git` du système : un clone superficiel pour `HEAD`, un clone complet suivi d'une extraction sinon, puis installe l'extraction comme une arborescence source. Les messages de git ne s'affichent qu'à `-vvv`, car leur formulation change d'une version de git à l'autre. Un mot de passe dans l'URL est remplacé par `********` dans tous les messages. Sans `git` dans le `PATH`, la commande échoue avec `Could not find git executable to extract the collection from the Git repository`, code 1.
+
+Les URL d'archives, les répertoires d'espace de noms et les signatures sont refusés tant qu'ils ne sont pas natifs : `[ERROR]: volant galaxy collection install from a URL or a namespace directory is not supported yet`, ou `with signatures`, code 1.
 
 ## Construire une collection
 

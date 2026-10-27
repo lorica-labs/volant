@@ -8,6 +8,7 @@
     "<golden-tmp>/cols"
   ],
   "rc": 0,
+  "repos": [],
   "requests": [],
   "setup": [],
   "stderr": "[WARNING]: The specified collections path '<golden-tmp>/cols' is not part of the configured Ansible collections paths '<golden-tmp>/home/.ansible/collections:/usr/share/ansible/collections'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.\n[WARNING]: Failed to install collection demo.base:1.0.0 but skipping due to --ignore-errors being set. Error: Checksum mismatch for 'README.md' inside collection at '<golden-tmp>/demo-base-1.0.0.tar.gz'\n",

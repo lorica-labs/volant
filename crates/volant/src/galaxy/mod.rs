@@ -14,6 +14,9 @@ pub mod build;
 #[cfg(test)]
 mod build_tests;
 pub mod download;
+pub mod git;
+#[cfg(test)]
+mod git_tests;
 pub mod install;
 #[cfg(test)]
 mod requirement_tests;

@@ -60,7 +60,7 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
                         .map(|name| requirements::from_string(name))
                         .collect::<Result<_, _>>()?,
                 };
-            let wanted = install::prepare(&wanted)?;
+            let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs, verbose)?;
             let output = galaxy::resolve(download_path.as_deref().unwrap_or("./collections"));
             std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
             let mut servers = servers(common, cache, &config, verbose, false);
@@ -182,7 +182,7 @@ fn collection_install(
     if install.signatures.keyring.is_some() || !install.signatures.signatures.is_empty() {
         return Err(not_yet("with signatures"));
     }
-    let wanted = install::prepare(&wanted)?;
+    let (wanted, _clones) = install::prepare(&wanted, install.common.ignore_certs, verbose)?;
     // The runtime's own directory, which Volant appends to the search path, is not one the
     // reference would name.
     let runtime = crate::runtime::collections::active_dir();

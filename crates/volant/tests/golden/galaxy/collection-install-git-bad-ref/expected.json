@@ -1,0 +1,23 @@
+{
+  "args": [
+    "collection",
+    "install",
+    "git+file://<golden-tmp>/repo/.git,nope",
+    "-p",
+    "<golden-tmp>/cols"
+  ],
+  "rc": 1,
+  "repos": [
+    {
+      "path": "repo",
+      "sources": [
+        "src"
+      ]
+    }
+  ],
+  "requests": [],
+  "setup": [],
+  "stderr": "[ERROR]: Failed to switch a cloned Git repo `file://<golden-tmp>/repo/.git` to the requested revision `nope`: Command '('git', 'checkout', 'nope')' returned non-zero exit status 1.\n\nFailed to switch a cloned Git repo `file://<golden-tmp>/repo/.git` to the requested revision `nope`.\n\n<<< caused by >>>\n\nCommand '('git', 'checkout', 'nope')' returned non-zero exit status 1.\n\n",
+  "stdout": "",
+  "tree": {}
+}

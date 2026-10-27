@@ -1,0 +1,3 @@
+repos:
+  - {path: repo, sources: [v1, v2], tags: [v1.0.0]}
+args: [collection, install, "git+file://<golden-tmp>/repo/.git,v1.0.0", -p, "<golden-tmp>/cols"]

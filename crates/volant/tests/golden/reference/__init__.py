@@ -2,7 +2,8 @@
 """Records what the reference ansible-core does, for the golden kinds.
 
 `template` runs every row of cases.yml, `inventory` reads inventory.ini and its patterns,
-`scenario` runs every `tests/scenarios/<name>/case.yml`, and `module` runs the module play and
+`scenario` runs every `tests/scenarios/<name>/case.yml`, `galaxy` runs every
+`galaxy/<name>/case.yml` against a fake Galaxy server, and `module` runs the module play and
 writes `module/`. `generate.py` beside this package picks the kinds to record.
 """
 import os

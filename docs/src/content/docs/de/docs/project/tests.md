@@ -1,12 +1,12 @@
 ---
-sourceHash: 16609510f0ba
+sourceHash: fe803f5b1803
 title: Tests
 description: Wie Volant gegen ansible-core geprüft wird, die Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
 
 Volant muss sich wie ansible-core 2.19.12 verhalten. Der größte Teil der Testsuite ist deshalb ein Vergleich: ansible-core hat einmal etwas ausgeführt, seine Antwort wurde im Repository aufgezeichnet, und der Test führt Volant mit derselben Eingabe aus und vergleicht.
 
-## Die fünf Arten
+## Die Arten
 
 Jede Art von Aufzeichnung hat einen Namen, und `just golden <kind>` erzeugt sie neu.
 
@@ -17,9 +17,12 @@ Jede Art von Aufzeichnung hat einen Namen, und `just golden <kind>` erzeugt sie 
 | `scenario` | Ein Playbook-Lauf: der Exit-Code und die gesamte Standardausgabe | In jedem Job, mit `reference.rs` |
 | `shadow` | Ein Lauf eines ausgewählten Szenarios durch den Callback `volant.compat.record`, komprimiert in `crates/volant/tests/golden/shadow`; das eigene Beispiel des Callbacks wird zusätzlich unter jeder unterstützten ansible-core-Version geprüft (`just compat-matrix`) | Jeder Job, mit `shadow_golden.rs`, das jede Aufzeichnung wiederholt und keine Abweichung erwartet |
 | `module` | Was jedes native Modul auf einem echten Rechner geantwortet hat | Im Job `ssh` und mit `just test-reference`, mit `reference_modules.rs` |
+| `galaxy` | Ein `ansible-galaxy`-Befehl gegen einen falschen Galaxy-Server (`golden/reference/galaxy_server.py`): Exit-Code, Standardausgabe und -fehler, die Anfragen, die der Server gesehen hat, und die hinterlassenen Dateien mit ihrem SHA-256, in `crates/volant/tests/golden/galaxy/<case>/expected.json` | Jeder Job, mit `galaxy_golden.rs`, das für den Server Python 3 braucht |
 | `command-names` | Die Ausgabe der Skripte in `tests/command-names`, die `ansible`, `ansible-playbook`, `ansible-vault`, `ansible-inventory`, `ansible-doc`, `ansible-config`, `ansible-galaxy`, `ansible-pull` und `ansible-console` aufrufen | Der Job `command-names` |
 
 Nichts in einer Aufzeichnung wird von Hand bearbeitet. Ändern Sie die Eingabe, führen Sie `just golden <kind>` mit installiertem ansible-core 2.19.12 aus und lesen Sie den Diff. Auf einem unveränderten Baum ausgeführt, lässt es die Dateien genau so, wie sie waren. Die Art `module` braucht außerdem `sudo`, systemd, apt und cron, weil sie auf dem Rechner ein Konto und eine Unit anlegt.
+
+Ein `galaxy`-Fall ist eine `case.yml` mit `args`, den Argumenten nach `ansible-galaxy`, in denen `<golden-server>` für die URL des Servers und `<golden-tmp>` für das Arbeitsverzeichnis des Laufs steht. Der Server baut seine Collections und Rollen selbst, mit festen Zeiten und Besitzern, damit ein Archiv überall denselben SHA-256 hat. In einer Aufzeichnung steht für das Arbeitsverzeichnis `<golden-tmp>` und für den Port `<golden-port>`. Solange `volant galaxy` nicht nativ ist, spielt `galaxy_golden.rs` nur jede aufgezeichnete Anfrage gegen den Server ab.
 
 ## Der Job command-names
 

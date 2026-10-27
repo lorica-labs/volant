@@ -4,7 +4,7 @@ none is named. `module:<case or group>` records only those module cases. The int
 """
 import sys
 
-from reference import command_names, inventory, module, scenario, shadow, template
+from reference import command_names, galaxy, inventory, module, scenario, shadow, template
 from reference.run import Failed, check_reference
 
 # In this order when all run: `module` last, as the only kind that creates an account and a group
@@ -15,6 +15,7 @@ KINDS = {
     "scenario": scenario,
     "command-names": command_names,
     "shadow": shadow,
+    "galaxy": galaxy,
     "module": module,
 }
 

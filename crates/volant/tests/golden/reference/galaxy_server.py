@@ -13,6 +13,7 @@ import hashlib
 import http.server
 import io
 import json
+import socketserver
 import sys
 import tarfile
 import threading
@@ -260,6 +261,15 @@ class Fixtures:
         return None
 
 
+class Bound(http.server.ThreadingHTTPServer):
+    """The standard server without the reverse lookup of its own address `HTTPServer.server_bind`
+    makes, which takes seconds on some machines."""
+
+    def server_bind(self):
+        socketserver.TCPServer.server_bind(self)
+        self.server_name, self.server_port = self.server_address[:2]
+
+
 class Server:
     """The fake server on 127.0.0.1 and a free port, in a thread of this process."""
 
@@ -286,7 +296,7 @@ class Server:
             def log_message(self, *args):
                 pass
 
-        self.httpd = http.server.ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+        self.httpd = Bound(("127.0.0.1", 0), Handler)
         self.port = self.httpd.server_address[1]
         self.thread = threading.Thread(target=self.httpd.serve_forever, daemon=True)
 

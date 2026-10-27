@@ -10,6 +10,7 @@ use serde_json::{Map, Value};
 #[cfg(unix)]
 use super::key::CONFIG_BOUND;
 use super::key::{configs, expanded, key_from, plugin_files};
+use super::relocate::reads_through;
 use super::sweep::{sweep, sweep_within};
 use super::*;
 use crate::agent::BlobFrame;
@@ -109,6 +110,7 @@ fn some_key() -> CacheKey {
         &[],
         &[],
         Path::new("/work"),
+        true,
     )
 }
 
@@ -172,6 +174,7 @@ fn a_controller_or_environment_change_is_another_key() {
                 &[],
                 &[],
                 Path::new("/work"),
+                true,
             )
         };
         assert_eq!(with(&build(1)), with(&build(1)));
@@ -197,6 +200,7 @@ fn a_controller_or_environment_change_is_another_key() {
                 &env,
                 cfg,
                 Path::new(cwd),
+                true,
             )
         };
         let base = with(&[("TERM", "xterm")], &[], "/work");
@@ -226,6 +230,7 @@ fn a_controller_or_environment_change_is_another_key() {
                 &[],
                 &[],
                 Path::new("/work"),
+                true,
             ),
             // A Nix profile's `python3`: the same path and size, another store path behind it.
             key_from(
@@ -239,6 +244,7 @@ fn a_controller_or_environment_change_is_another_key() {
                 &[],
                 &[],
                 Path::new("/work"),
+                true,
             ),
             key_from(
                 None,
@@ -248,6 +254,7 @@ fn a_controller_or_environment_change_is_another_key() {
                 &[],
                 &[],
                 Path::new("/work"),
+                true,
             ),
         ] {
             assert_ne!(base, other);
@@ -274,6 +281,7 @@ fn plugin_key(dirs: &[PathBuf]) -> CacheKey {
         &[],
         &plugin_files(dirs, SystemTime::now() + Duration::from_secs(3)).expect("nothing recent"),
         Path::new("/work"),
+        true,
     )
 }
 
@@ -648,6 +656,7 @@ fn the_ansible_config_is_read_and_expanded_for_the_key() {
                 &[],
                 &found,
                 Path::new("/work"),
+                true,
             )
         };
         fs::write(&cfg, "[defaults]\ncollections_path = ./colls\n").unwrap();
@@ -827,4 +836,100 @@ fn the_sweep_keeps_the_cache_under_its_size_by_removing_the_least_used_entries()
             .starts_with(&keys[1].0)),
         "nothing of that entry is left"
     );
+}
+
+/// Unpinned, the key holds no working directory: the same project in another checkout files its
+/// union under the same key, and a path outside the directory still tells two keys apart.
+#[test]
+fn an_unpinned_key_does_not_name_the_working_directory() {
+    let modules = BTreeSet::from(["ping".to_string()]);
+    let at = |cwd: &str, outside: &str| {
+        let env: Vec<(OsString, OsString)> = vec![
+            ("ANSIBLE_CONFIG".into(), format!("{cwd}/x.cfg").into()),
+            ("ANSIBLE_COLLECTIONS_PATH".into(), outside.into()),
+        ];
+        let files = vec![
+            (PathBuf::from(cwd), Vec::new()),
+            (
+                PathBuf::from(format!("{cwd}/library/m.py")),
+                format!("{cwd}/library/m.py").into_bytes(),
+            ),
+        ];
+        key_from(
+            None,
+            &interpreter(),
+            &modules,
+            &[],
+            &env,
+            &files,
+            Path::new(cwd),
+            false,
+        )
+    };
+    assert_eq!(at("/a", "/c"), at("/b", "/c"));
+    assert_ne!(
+        at("/a", "/c"),
+        at("/a", "/d"),
+        "a path outside the directory"
+    );
+    assert_ne!(
+        at("/a", "/a2/c"),
+        at("/b", "/b2/c"),
+        "a sibling is not inside"
+    );
+    let pinned = |cwd: &str| {
+        key_from(
+            None,
+            &interpreter(),
+            &modules,
+            &[],
+            &[],
+            &[],
+            Path::new(cwd),
+            true,
+        )
+    };
+    assert_ne!(pinned("/a"), pinned("/b"));
+}
+
+/// What a build could read through the working directory without the key stamping it pins the
+/// key to the directory.
+#[test]
+fn a_relative_path_or_a_file_under_the_directory_pins_the_key() {
+    let cwd = scratch();
+    let cwd = cwd.path();
+    let env = |pairs: &[(&str, &str)]| -> Vec<(OsString, OsString)> {
+        pairs
+            .iter()
+            .map(|(n, v)| ((*n).into(), (*v).into()))
+            .collect()
+    };
+    let none = |env: &[(OsString, OsString)]| reads_through(cwd, env, &[], &[]);
+    assert!(!none(&env(&[
+        ("ANSIBLE_NOCOLOR", "1"),
+        ("ANSIBLE_MODULE_COMPRESSION", "ZIP_STORED"),
+        ("ANSIBLE_COLLECTIONS_PATH", "/c:~/c:$HOME/c"),
+        ("PYTHONUNBUFFERED", "1"),
+        ("TERM", "./x"),
+    ])));
+    for relative in [
+        ("ANSIBLE_COLLECTIONS_PATH", "collections"),
+        ("ANSIBLE_ROLES_PATH", "/r:roles"),
+        ("ANSIBLE_LIBRARY", "./lib"),
+        ("ANSIBLE_CONFIG", "ansible.cfg"),
+        ("ANSIBLE_SOMETHING", "sub/dir"),
+        ("PYTHONPATH", "src"),
+    ] {
+        assert!(none(&env(&[relative])), "{relative:?}");
+    }
+    let cfg = |path: &Path| reads_through(cwd, &[], &[(path.to_path_buf(), Vec::new())], &[]);
+    assert!(cfg(Path::new("./ansible.cfg")));
+    assert!(cfg(&cwd.join("conf/ansible.cfg")));
+    assert!(!cfg(Path::new("/etc/ansible/ansible.cfg")));
+    let play = cwd.join("play");
+    fs::create_dir(&play).unwrap();
+    let dirs = |dirs: &[PathBuf]| reads_through(cwd, &[], &[], dirs);
+    assert!(!dirs(std::slice::from_ref(&play)));
+    fs::create_dir(play.join("collections")).unwrap();
+    assert!(dirs(std::slice::from_ref(&play)));
 }

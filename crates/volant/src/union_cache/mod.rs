@@ -6,9 +6,10 @@
 //! was built from are unchanged costs about 1 ms for the 154 of them. So a run first looks for an
 //! entry under a key naming everything the build read that is not a file (this controller, the
 //! interpreter, the modules asked for, the `ANSIBLE_*` and `PYTHON*` environment, the
-//! `ansible.cfg` ansible-core would read, the working directory), then checks each file the helper
-//! reported reading still has its size and mtime, and the zip still has its hash. Anything short
-//! of that rebuilds, and nothing about the cache ever fails a run.
+//! `ansible.cfg` ansible-core would read, the working directory when a file could be read through
+//! it), then checks each file the helper reported reading still has its size and mtime, and the
+//! zip still has its hash. Anything short of that rebuilds, and nothing about the cache ever fails
+//! a run.
 //!
 //! An entry is only as trustworthy as the directory holding it, which is private to this user
 //! (0700, owner checked): the same perimeter as `~/.ansible`, whose collections and modules a
@@ -25,6 +26,7 @@ use crate::python::{Resolved, Union};
 mod entry;
 mod key;
 mod probe;
+mod relocate;
 mod sweep;
 
 #[cfg(test)]

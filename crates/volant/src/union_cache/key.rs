@@ -8,6 +8,7 @@ use std::io;
 use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use super::relocate::{reads_through, relative_to};
 use super::{CacheKey, FORMAT, InterpreterId, Place, Source};
 
 impl Place {
@@ -89,7 +90,8 @@ pub fn located(candidate: &str) -> Option<PathBuf> {
         .find(|path| path.is_file())
 }
 
-/// The key of this run's union, read from the process: its environment, its working directory,
+/// The key of this run's union, read from the process: its environment, its working directory
+/// when [`reads_through`] says the build can read a file through it,
 /// every `ansible.cfg` ansible-core might read (`configs`), and the files the playbooks' and
 /// roles' plugin directories hold (`plugin_files`). `None` when one of those files is too recent
 /// to vouch for: the run then builds and keeps nothing, as it does without a cache directory.
@@ -100,18 +102,20 @@ pub fn key(
     plugin_dirs: &[PathBuf],
 ) -> Option<CacheKey> {
     let env: Vec<(OsString, OsString)> = std::env::vars_os().collect();
-    let mut files = configs(
+    let cfgs = configs(
         std::env::var_os("ANSIBLE_CONFIG").as_deref(),
         std::env::var_os("HOME").as_deref().map(Path::new),
         Path::new("."),
     );
-    files.extend(plugin_files(plugin_dirs, SystemTime::now())?);
+    let mut stamped = plugin_files(plugin_dirs, SystemTime::now())?;
     // The `-M` directories hold modules directly, not under a `library/`.
-    files.extend(module_path_files(
+    stamped.extend(module_path_files(
         &crate::python::module_path(),
         SystemTime::now(),
     )?);
+    let files = (cfgs, stamped);
     let cwd = std::env::current_dir().unwrap_or_default();
+    let pinned = reads_through(&cwd, &env, &files.0, plugin_dirs);
     let controller = std::env::current_exe()
         .and_then(|exe| Source::now(&exe))
         .ok();
@@ -121,8 +125,9 @@ pub fn key(
         modules,
         asked,
         &env,
-        &files,
+        &files.0.into_iter().chain(files.1).collect::<Vec<_>>(),
         &cwd,
+        pinned,
     ))
 }
 
@@ -341,12 +346,15 @@ pub(super) fn expanded(
 /// [`key`] with the process's part handed in.
 ///
 /// The environment is `ANSIBLE_*` (every setting ansible-core reads there), `PYTHON*` (which
-/// ansible-core the interpreter imports) and `HOME` (where `~` puts the collections). The working
-/// directory is in because a relative path in either the environment or a relative
-/// `ANSIBLE_CONFIG` is read against it. `files` is every file read for the key, with its contents
-/// or its stamp. The controller's own binary (`controller`, its size and mtime) is in because the
+/// ansible-core the interpreter imports) and `HOME` (where `~` puts the collections). `files` is
+/// every file read for the key, with its contents or its stamp. The working directory is in when
+/// `pinned` ([`reads_through`]); otherwise every path under it is written relative to it. The controller's own binary (`controller`, its size and mtime) is in because the
 /// code that reads an entry back, refusals and fact keys, can change between two builds that
 /// share a version number.
+#[expect(
+    clippy::too_many_arguments,
+    reason = "everything a key names, each read from the process by `key`"
+)]
 pub(super) fn key_from(
     controller: Option<&Source>,
     interpreter: &InterpreterId,
@@ -355,7 +363,13 @@ pub(super) fn key_from(
     env: &[(OsString, OsString)],
     files: &[(PathBuf, Vec<u8>)],
     cwd: &Path,
+    pinned: bool,
 ) -> CacheKey {
+    let here = if pinned {
+        Vec::new()
+    } else {
+        cwd.as_os_str().as_encoded_bytes().to_vec()
+    };
     let mut hasher = blake3::Hasher::new();
     // Each field carries its length, so no two different lists hash as one.
     let mut field = |bytes: &[u8]| {
@@ -395,14 +409,16 @@ pub(super) fn key_from(
     read.sort();
     for (name, value) in read {
         field(name.as_encoded_bytes());
-        field(value.as_encoded_bytes());
+        field(&relative_to(value.as_encoded_bytes(), &here));
     }
     field(b"cfg");
     for (path, text) in files {
-        field(path.as_os_str().as_encoded_bytes());
-        field(text);
+        field(&relative_to(path.as_os_str().as_encoded_bytes(), &here));
+        field(&relative_to(text, &here));
     }
-    field(b"cwd");
-    field(cwd.as_os_str().as_encoded_bytes());
+    if pinned {
+        field(b"cwd");
+        field(cwd.as_os_str().as_encoded_bytes());
+    }
     CacheKey(hasher.finalize().to_hex().to_string())
 }

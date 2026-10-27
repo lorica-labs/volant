@@ -4,6 +4,10 @@
 
 use std::path::{Path, PathBuf};
 
+pub mod artifact;
+#[cfg(test)]
+mod artifact_tests;
+pub mod install;
 #[cfg(test)]
 mod requirement_tests;
 pub mod requirements;
@@ -56,7 +60,9 @@ pub fn collections_root(path: &Path) -> PathBuf {
 }
 
 /// The warning `collection install -p PATH` prints when no configured collections path lies
-/// under `PATH`. The reference compares the texts, so `/a/b` covers `/a/bc` too.
+/// under `PATH`. The reference compares the texts, so `/a/b` covers `/a/bc` too. Its collection
+/// finder also reads `PATH` once `PATH/ansible_collections` exists, and the warning then takes
+/// `PATH` for part of the Python package.
 pub fn collections_path_warning(path: &Path, configured: &[PathBuf]) -> Option<String> {
     let text = path.to_string_lossy();
     let managed = configured
@@ -64,6 +70,11 @@ pub fn collections_path_warning(path: &Path, configured: &[PathBuf]) -> Option<S
         .any(|p| collections_root(p).to_string_lossy().starts_with(&*text));
     if managed {
         return None;
+    }
+    if collections_root(path).is_dir() {
+        return Some(format!(
+            "The specified collections path '{text}' appears to be part of the pip Ansible package. Managing these directly with ansible-galaxy could break the Ansible package. Install collections to a configured collections path, which will take precedence over collections found in the PYTHONPATH."
+        ));
     }
     let joined: Vec<_> = configured.iter().map(|p| p.to_string_lossy()).collect();
     Some(format!(

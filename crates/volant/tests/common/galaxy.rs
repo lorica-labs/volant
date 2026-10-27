@@ -94,6 +94,9 @@ impl Drop for GalaxyServer {
 #[derive(serde::Deserialize)]
 pub struct Case {
     pub args: Vec<String>,
+    /// Runs made before `args`, not compared.
+    #[serde(default)]
+    pub setup: Vec<Vec<String>>,
     pub rc: i32,
     pub stdout: String,
     pub stderr: String,

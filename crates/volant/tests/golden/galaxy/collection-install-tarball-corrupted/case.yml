@@ -1,0 +1,1 @@
+args: [collection, install, demo-base-1.0.0.tar.gz, -p, "<golden-tmp>/cols"]

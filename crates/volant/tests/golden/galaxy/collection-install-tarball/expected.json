@@ -1,0 +1,20 @@
+{
+  "args": [
+    "collection",
+    "install",
+    "demo-base-1.0.0.tar.gz",
+    "-p",
+    "<golden-tmp>/cols"
+  ],
+  "rc": 0,
+  "requests": [],
+  "setup": [],
+  "stderr": "[WARNING]: The specified collections path '<golden-tmp>/cols' is not part of the configured Ansible collections paths '<golden-tmp>/home/.ansible/collections:/usr/share/ansible/collections'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.\n",
+  "stdout": "Starting galaxy collection install process\nProcess install dependency map\nStarting collection install process\nInstalling 'demo.base:1.0.0' to '<golden-tmp>/cols/ansible_collections/demo/base'\ndemo.base:1.0.0 was installed successfully\n",
+  "tree": {
+    "cols/ansible_collections/demo/base/FILES.json": "8e6ea5503d234c6f9e4a4258839316ba7f7d8c95a672a3719af322c80aa1c925",
+    "cols/ansible_collections/demo/base/MANIFEST.json": "e7be05dbb818de5279f8ad49c8abe98ca2c3a6a68a00b2472a4db32b4973bc2d",
+    "cols/ansible_collections/demo/base/README.md": "3296a0e7b923fe40c55cefd9654c660dd85b21e043332d264b444efcea030a05",
+    "cols/ansible_collections/demo/base/plugins/README.md": "45aa560f02db9804fea8a739581472d31ef6e35ad85fe6842e44fd4590ffb2e6"
+  }
+}

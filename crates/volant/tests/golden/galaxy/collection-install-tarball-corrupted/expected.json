@@ -1,0 +1,15 @@
+{
+  "args": [
+    "collection",
+    "install",
+    "demo-base-1.0.0.tar.gz",
+    "-p",
+    "<golden-tmp>/cols"
+  ],
+  "rc": 1,
+  "requests": [],
+  "setup": [],
+  "stderr": "[WARNING]: The specified collections path '<golden-tmp>/cols' is not part of the configured Ansible collections paths '<golden-tmp>/home/.ansible/collections:/usr/share/ansible/collections'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.\n[ERROR]: Checksum mismatch for 'README.md' inside collection at '<golden-tmp>/demo-base-1.0.0.tar.gz'\n",
+  "stdout": "Starting galaxy collection install process\nProcess install dependency map\nStarting collection install process\nInstalling 'demo.base:1.0.0' to '<golden-tmp>/cols/ansible_collections/demo/base'\n",
+  "tree": {}
+}

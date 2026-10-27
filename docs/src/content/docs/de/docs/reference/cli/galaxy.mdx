@@ -1,5 +1,5 @@
 ---
-sourceHash: ab0b67b3b3eb
+sourceHash: 4e3480c849f9
 title: volant galaxy
 description: Die Optionen von ansible-galaxy, von Volant selbst geprüft, während seine Unterbefehle einer nach dem anderen nativ werden.
 ---
@@ -27,6 +27,12 @@ Sie kommen vor jeder Arbeit, mit den Meldungen und Exit-Codes von `ansible-galax
 | `role list`, wenn keiner der Rollenpfade existiert | `[WARNING]: - the configured path <path> does not exist.` für jeden Pfad, danach `[ERROR]: - None of the provided paths were usable. Please specify a valid path with --roles-path` | 5 |
 
 Liegt kein konfigurierter Collections-Pfad unter dem `PATH` von `collection install -p PATH`, gibt der Befehl zuerst die Warnung von `ansible-galaxy` aus: `[WARNING]: The specified collections path '<PATH>' is not part of the configured Ansible collections paths '<paths>'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.` Das eigene `collections/`-Verzeichnis der Runtime, das Volant als letzten Eintrag an den Collections-Pfad anhängt, fehlt in `<paths>`.
+
+## Aus einem Tarball installieren
+
+`collection install` installiert einen Collection-Tarball nativ: `volant galaxy collection install acme-demo-1.0.0.tar.gz -p DIR`. Name und Version kommen aus dem `MANIFEST.json` des Tarballs, nicht aus dem Dateinamen. Die Collection kommt nach `DIR/ansible_collections/<namespace>/<name>`, ohne `-p` unter den ersten Collections-Pfad. Geschrieben werden nur die Dateien, die `FILES.json` auflistet, jede zuerst gegen ihren SHA-256 geprüft. Eine Datei bekommt `0644`, oder `0755`, wenn das Archiv sie als ausführbar markiert. Ein Eintrag, der außerhalb der Collection landen würde, wird abgelehnt, ebenso ein Link, der aus ihr hinauszeigt. Eine fehlgeschlagene Installation hinterlässt keine halb geschriebene Collection. Ausgabe, Meldungen und Exit-Codes sind die von `ansible-galaxy`. Eine bereits in derselben Version installierte Collection ergibt `Nothing to do. All requested collections are already installed. If you want to reinstall them, consider using `--force`.`, und `--force` installiert sie erneut über den alten Baum. Existiert `PATH/ansible_collections` schon, sagt die Warnung zu `-p`, der Pfad `appears to be part of the pip Ansible package`, wie `ansible-galaxy` es sagt.
+
+Galaxy-Server, Verzeichnisse, URLs und git, ein Tarball mit Abhängigkeiten, zwei Versionen derselben Collection und Signaturen werden abgelehnt, bis sie nativ sind: `[ERROR]: volant galaxy collection install <what> is not supported yet`, Exit 1.
 
 ## Anforderungsdateien
 

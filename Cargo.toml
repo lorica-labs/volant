@@ -45,6 +45,8 @@ anyhow = "1"
 blake3 = "1.8"
 clap = { version = "4", features = ["derive"] }
 ctr = "0.9"
+# Decision record 0012: gzip over the miniz_oxide already in the tree.
+flate2 = { version = "1.1", default-features = false, features = ["rust_backend"] }
 hmac = "0.12"
 indexmap = "2"
 insta = { version = "1", features = ["filters"] }
@@ -74,6 +76,8 @@ serde_json = { version = "1", features = [
 sha1_smol = "1.0"
 sha2 = "0.10"
 shlex = "2"
+# Decision record 0012: collection and role archives, read entry by entry.
+tar = { version = "0.4", default-features = false }
 tempfile = "3"
 tokio = { version = "1", features = [
   "rt-multi-thread",

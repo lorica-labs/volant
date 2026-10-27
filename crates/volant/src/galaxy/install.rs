@@ -33,7 +33,7 @@ pub enum Wanted {
 }
 
 impl Wanted {
-    fn request(&self) -> Request {
+    pub(super) fn request(&self) -> Request {
         match self {
             Self::Tarball(_, meta) => Request::direct(&meta.fqcn(), &meta.version),
             Self::Galaxy { fqcn, range } => Request::direct(fqcn, range),
@@ -63,7 +63,7 @@ pub fn prepare(collections: &[Collection]) -> Result<Vec<Wanted>, Failure> {
 }
 
 /// Where the versions and the dependencies come from: the tarballs given, then the servers.
-struct Mixed<'a> {
+pub(super) struct Mixed<'a> {
     tarballs: HashMap<String, (String, Vec<(String, String)>)>,
     servers: &'a mut Servers,
     /// The server each version was found on, the first that lists it.
@@ -71,7 +71,39 @@ struct Mixed<'a> {
     records: HashMap<(String, String), VersionInfo>,
 }
 
-impl Mixed<'_> {
+impl<'a> Mixed<'a> {
+    pub(super) fn new(
+        tarballs: HashMap<String, (String, Vec<(String, String)>)>,
+        servers: &'a mut Servers,
+    ) -> Self {
+        Self {
+            tarballs,
+            servers,
+            found: HashMap::new(),
+            records: HashMap::new(),
+        }
+    }
+
+    /// Downloads a pinned version from the server that listed it into a new directory under
+    /// `dir`, and returns the tarball.
+    pub(super) fn fetch(
+        &mut self,
+        fqcn: &str,
+        version: &str,
+        dir: &Path,
+    ) -> Result<PathBuf, Failure> {
+        let info = self.record(fqcn, version)?;
+        let at = self.at(fqcn, version);
+        self.servers.list[at].download(&info.download_url, &info.sha256, dir)
+    }
+
+    fn at(&self, fqcn: &str, version: &str) -> usize {
+        self.found
+            .get(&(fqcn.to_string(), version.to_string()))
+            .copied()
+            .unwrap_or(0)
+    }
+
     fn record(&mut self, fqcn: &str, version: &str) -> Result<VersionInfo, Failure> {
         let key = (fqcn.to_string(), version.to_string());
         if let Some(info) = self.records.get(&key) {
@@ -164,12 +196,7 @@ pub fn collections(
             files.insert(meta.fqcn(), tarball);
         }
     }
-    let mut index = Mixed {
-        tarballs,
-        servers,
-        found: HashMap::new(),
-        records: HashMap::new(),
-    };
+    let mut index = Mixed::new(tarballs, servers);
     let resolution = resolve::resolve(
         &requests,
         &mut index,
@@ -233,18 +260,13 @@ fn install_one(
         (tarball, None)
     } else {
         let info = index.record(fqcn, version)?;
-        let at = index
-            .found
-            .get(&(fqcn.to_string(), version.to_string()))
-            .copied()
-            .unwrap_or(0);
+        let at = index.at(fqcn, version);
         if downloads.is_none() {
             *downloads = Some(download_dir()?);
         }
-        let dir = downloads.as_deref().expect("made");
-        let server = &mut index.servers.list[at];
-        let file = server.download(&info.download_url, &info.sha256, dir)?;
+        let file = index.fetch(fqcn, version, downloads.as_deref().expect("made"))?;
         let (tarball, _) = Tarball::open(&file.display().to_string())?;
+        let server = &index.servers.list[at];
         if verbose >= 3 {
             println!(
                 "Collection '{shown}' obtained from server {} {}",
@@ -270,7 +292,7 @@ fn install_one(
 /// The directory downloads go to: a new `ansible-local-<pid><random>/tmp<random>` under
 /// `<ANSIBLE_HOME>/tmp`, as the reference's `DEFAULT_LOCAL_TMP` and artifacts manager make
 /// them. It is removed once the install is over.
-fn download_dir() -> Result<PathBuf, Failure> {
+pub(super) fn download_dir() -> Result<PathBuf, Failure> {
     let tmp = super::settings::ansible_home().join("tmp");
     std::fs::create_dir_all(&tmp).map_err(|e| Failure::error(e.to_string()))?;
     let local = super::temp_dir(&tmp, &format!("ansible-local-{}", std::process::id()))?;

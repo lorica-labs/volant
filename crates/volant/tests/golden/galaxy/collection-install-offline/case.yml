@@ -1,0 +1,3 @@
+setup:
+  - [collection, download, demo.app, -s, "<golden-server>", -p, "<golden-tmp>"]
+args: [collection, install, --offline, -r, requirements.yml, -p, "<golden-tmp>/cols"]

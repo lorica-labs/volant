@@ -1,5 +1,5 @@
 ---
-sourceHash: 40c0bf96eae7
+sourceHash: 4b76db5e89fc
 title: volant galaxy
 description: Las opciones de ansible-galaxy, comprobadas por el propio Volant, mientras sus subcomandos se vuelven nativos uno a uno.
 ---
@@ -39,6 +39,10 @@ Los directorios, las URL, git y las firmas se rechazan hasta que sean nativos: `
 `collection install` acepta también nombres, con un rango si hace falta: `demo.base`, `demo.base:1.0.0`, `"demo.base:>=1.0.0,<2.0.0"`, y las entradas de `-r`. Cada nombre se resuelve contra los servidores con sus dependencias, cada una en la versión más alta que cumple todos los rangos pedidos, retrocediendo cuando dos rangos chocan. Las versiones preliminares solo cuentan con `--pre` o cuando se nombran exactamente. Cada tarball se descarga, se comprueba contra el SHA-256 que da el servidor y se desempaqueta como arriba. Una colección instalada desde un servidor recibe también `ansible_collections/<namespace>.<name>-<version>.info/GALAXY.yml`, que anota su origen. Una colección ya instalada en una versión que encaja se conserva: `'<name>:<version>' is already installed, skipping.`
 
 `-n` omite las dependencias, `-U` lleva las colecciones instaladas a la versión más nueva del rango, `-f` reinstala las colecciones pedidas y `--force-with-deps` también sus dependencias, `-i` sigue tras una instalación fallida con un aviso, y `--offline` no consulta ningún servidor. Cuando ningún conjunto de versiones cumple todos los rangos, el comando falla con el mensaje de `ansible-galaxy`, que lista los rangos y termina con una pista sobre `--pre`; los objetos de Python que `ansible-galaxy` imprime después de esa pista se omiten.
+
+## Descargar para una instalación sin conexión
+
+`collection download` resuelve las colecciones pedidas con sus dependencias, como `install`, y guarda cada tarball en la carpeta que nombra `-p`, `./collections` por defecto. Después escribe allí un `requirements.yml` que lista los tarballs por nombre de archivo, con sus versiones. En una máquina sin red, `volant galaxy collection install --offline -r requirements.yml` ejecutado desde esa carpeta los instala sin consultar ningún servidor. Los nombres de archivo se leen desde el directorio de trabajo, como los lee `ansible-galaxy`. `-n` deja fuera las dependencias, y `-r` y `--pre` funcionan como en `install`. Con `--offline`, un nombre que ningún tarball aporta, o una dependencia que no está instalada, falla con el mensaje del resolvedor.
 
 ## Servidores Galaxy
 

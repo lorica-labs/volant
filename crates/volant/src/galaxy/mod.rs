@@ -10,6 +10,7 @@ mod api_tests;
 pub mod artifact;
 #[cfg(test)]
 mod artifact_tests;
+pub mod download;
 pub mod install;
 #[cfg(test)]
 mod requirement_tests;

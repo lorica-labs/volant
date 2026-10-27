@@ -1290,3 +1290,25 @@ fn origins_survive_a_merge_key() {
 fn template_literals_keep_their_escapes(#[case] text: &str, #[case] want: &str) {
     assert_eq!(walk::literal_escapes(text), want);
 }
+
+/// A quoted scalar whose continuation lines sit left of their parent loads as PyYAML loads it,
+/// where saphyr alone refuses it for its indentation.
+#[test]
+fn a_quoted_scalar_continued_left_of_its_parent_loads() {
+    assert_loads_as(&[
+        ("k: \"{{\n  x\n}}\"\n", json!({"k": "{{ x }}"})),
+        ("k: \"a\nb\"\n", json!({"k": "a b"})),
+        (
+            "k: 'one\ntwo ''q''\nthree'\n",
+            json!({"k": "one two 'q' three"}),
+        ),
+        ("k: \"a\\\"\nb\"\n", json!({"k": "a\" b"})),
+        ("m:\n  k: \"a\n b\"\n", json!({"m": {"k": "a b"}})),
+        ("- \"a\nb\"\n", json!(["a b"])),
+        ("x: \"é\"\nk: \"a\nb\"\n", json!({"x": "é", "k": "a b"})),
+        (
+            "a: \"x\ny\"\nb: \"p\n\nq\"\n",
+            json!({"a": "x y", "b": "p\nq"}),
+        ),
+    ]);
+}

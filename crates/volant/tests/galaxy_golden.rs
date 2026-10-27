@@ -21,20 +21,24 @@ fn the_fake_server_answers_every_recorded_request() {
         for request in &case.requests {
             let path = request.strip_prefix("GET ").expect("a GET");
             let (status, _) = server.get(path);
-            // ansible-galaxy first tries the server URL itself as the API root, which is not one.
-            let want = if path == "/" { 404 } else { 200 };
-            assert_eq!(status, want, "{name}: {request}");
+            // `/` is not an API root, which ansible-galaxy tries first; a collection the server
+            // does not have is a 404 too.
+            assert!(
+                status == 200 || status == 404,
+                "{name}: {request}: {status}"
+            );
         }
         assert_eq!(server.log(), case.requests, "{name}");
     }
 }
 
 /// The cases whose subcommand `volant galaxy` still refuses.
-const NOT_NATIVE: [&str; 2] = ["collection-install", "role-install"];
+const NOT_NATIVE: [&str; 1] = ["role-install"];
 
 /// `volant galaxy` against each case: the same exit code, output, requests and installed files.
 #[test]
 fn a_galaxy_case_matches_the_reference() {
+    let mut differences = Vec::new();
     for (name, case) in galaxy::cases() {
         if NOT_NATIVE.contains(&name.as_str()) {
             continue;
@@ -71,14 +75,39 @@ fn a_galaxy_case_matches_the_reference() {
         let out = volant(&case.args);
         let text =
             |b: &[u8]| galaxy::normalise(&String::from_utf8_lossy(b), tmp.as_path(), server.port);
-        assert_eq!(out.status.code(), Some(case.rc), "{name}: exit code");
-        assert_eq!(text(&out.stdout), case.stdout, "{name}: stdout");
-        assert_eq!(text(&out.stderr), case.stderr, "{name}: stderr");
-        assert_eq!(server.log()[seen..], case.requests, "{name}: requests");
-        assert_eq!(
-            galaxy::tree(tmp.as_path(), server.port, &inputs),
-            case.tree,
-            "{name}: files"
+        let mut differ = |what: &str, ours: String, theirs: String| {
+            if ours != theirs {
+                differences.push(format!(
+                    "{name}: {what}
+  volant: {ours}
+  ansible-galaxy: {theirs}"
+                ));
+            }
+        };
+        differ(
+            "exit code",
+            format!("{:?}", out.status.code()),
+            format!("{:?}", Some(case.rc)),
+        );
+        differ("stdout", text(&out.stdout), case.stdout.clone());
+        differ("stderr", text(&out.stderr), case.stderr.clone());
+        differ(
+            "requests",
+            format!("{:?}", &server.log()[seen..]),
+            format!("{:?}", case.requests),
+        );
+        differ(
+            "files",
+            format!("{:?}", galaxy::tree(tmp.as_path(), server.port, &inputs)),
+            format!("{:?}", case.tree),
         );
     }
+    assert!(
+        differences.is_empty(),
+        "{}",
+        differences.join(
+            "
+"
+        )
+    );
 }

@@ -9,6 +9,7 @@
   ],
   "rc": 0,
   "requests": [],
+  "setup": [],
   "stderr": "",
   "stdout": "Skipping install, no requirements found\n",
   "tree": {}

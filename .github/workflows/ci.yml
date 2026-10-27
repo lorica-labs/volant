@@ -111,11 +111,19 @@ jobs:
   # The steps are skipped, not the job: a skipped matrix job reports as `test`, never as
   # `test (ubuntu-latest)` or `test (macos-latest)`, the names the required checks wait for.
   test:
+    name: test (${{ matrix.os }}${{ matrix.shard && format(' {0}', matrix.shard) || '' }})
     needs: changes
     strategy:
       fail-fast: false
+      # The macOS runner has 3 cores and took about 6 minutes over the suite: two shards, each
+      # building from the cache and running half the tests, take it off the path to a merge.
       matrix:
-        os: [ubuntu-latest, macos-latest]
+        include:
+          - os: ubuntu-latest
+          - os: macos-latest
+            shard: 1/2
+          - os: macos-latest
+            shard: 2/2
     runs-on: ${{ matrix.os }}
     timeout-minutes: 40
     env:
@@ -147,7 +155,8 @@ jobs:
       - if: needs.changes.outputs.code == 'true' && (matrix.os != 'ubuntu-latest' || github.event_name == 'pull_request')
         env:
           NEXTEST_PROFILE: ${{ github.event_name == 'pull_request' && 'pr' || 'default' }}
-        run: cargo nextest run --workspace --no-tests=fail
+          SHARD: ${{ matrix.shard }}
+        run: cargo nextest run --workspace --no-tests=fail ${SHARD:+--partition "count:$SHARD"}
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
         run: cargo nextest run --workspace --no-run
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
@@ -163,6 +172,20 @@ jobs:
           token: ${{ secrets.CODECOV_TOKEN }}
           # A failed upload is not a reason to fail main: the floor above is the gate.
           fail_ci_if_error: false
+
+  # The name the main ruleset requires, for the two macOS shards: it passes when the test job
+  # passed or was skipped (nothing to test), and fails otherwise.
+  macos:
+    name: test (macos-latest)
+    needs: test
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULT: ${{ needs.test.result }}
+        run: |
+          case "$RESULT" in success | skipped) ;; *) echo "the test job ended $RESULT"; exit 1 ;; esac
 
   # A refactor or perf pull request changes no behaviour: no golden or snapshot moves, and the
   # list of tests is the one the merge base has, so a test is neither dropped nor renamed.
@@ -452,9 +475,16 @@ jobs:
           TARGET: ${{ matrix.arch }}-unknown-linux-gnu
         run: just link-check "$TARGET=target/$TARGET/release/volant" "$TARGET=target/$TARGET/release/volant-playbook"
 
-  ssh:
+  # Two halves on two runners, each with the same sshd, Python and collections: the tests over
+  # ssh, and the goldens and scenarios that need sudo, systemd or the recorded ansible-core.
+  ssh-tests:
+    name: ssh (${{ matrix.part }})
     needs: changes
     if: needs.changes.outputs.code == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        part: [e2e, needs]
     runs-on: ubuntu-latest
     timeout-minutes: 45
     steps:
@@ -533,11 +563,23 @@ jobs:
             exit 1
           fi
           echo "host python has no ansible-core, as required"
-      - run: just ssh-test
+      - run: just ssh-test-${{ matrix.part }}
         env:
           # The native module tests create an account, a group and a unit on the machine they
           # run on. This runner is thrown away with the job, so they may use its localhost.
           VOLANT_NATIVE_TESTS_ON_LOCALHOST: "1"
+
+  # The name the main ruleset requires, for the two halves of the ssh tests.
+  ssh:
+    needs: ssh-tests
+    if: ${{ !cancelled() }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - env:
+          RESULT: ${{ needs.ssh-tests.result }}
+        run: |
+          case "$RESULT" in success | skipped) ;; *) echo "the ssh tests ended $RESULT"; exit 1 ;; esac
 
   containers:
     name: containers (${{ matrix.runtimes }})

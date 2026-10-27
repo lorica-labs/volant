@@ -8,10 +8,12 @@ pub use args::GalaxyArgs;
 use args::{Collection, Kind, Role};
 
 use crate::config::Config;
-use crate::galaxy::artifact::{Meta, Tarball};
-use crate::galaxy::install;
+use crate::galaxy::api::servers::Servers;
+use crate::galaxy::api::{Files, Server};
 use crate::galaxy::requirements::{self, Requirements};
+use crate::galaxy::settings::{self, Settings};
 use crate::galaxy::{self, Failure};
+use crate::galaxy::{download, install};
 
 /// Runs `args` and returns the exit code.
 #[must_use]
@@ -40,16 +42,33 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
             return collection_install(install, &config, verbose);
         }
         Kind::Collection(Collection::Download {
-            collection,
+            common,
+            cache,
+            no_deps,
+            download_path,
             requirements,
-            ..
+            pre,
+            collection,
         }) => {
-            if let Some(file) =
-                galaxy::one_of_collections_requirements(collection, requirements.as_deref())?
-            {
-                requirements_of(&file, false, verbose)?;
-            }
-            "collection download"
+            let wanted =
+                match galaxy::one_of_collections_requirements(collection, requirements.as_deref())?
+                {
+                    Some(file) => requirements_of(&file, false, verbose)?.collections,
+                    None => collection
+                        .iter()
+                        .map(|name| requirements::from_string(name))
+                        .collect::<Result<_, _>>()?,
+                };
+            let wanted = install::prepare(&wanted)?;
+            let output = galaxy::resolve(download_path.as_deref().unwrap_or("./collections"));
+            std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
+            let mut servers = servers(common, cache, &config, verbose, false);
+            let options = install::Options {
+                no_deps: *no_deps,
+                pre: *pre,
+                ..install::Options::default()
+            };
+            return download::collections(wanted, &output, &mut servers, options);
         }
         Kind::Collection(Collection::Verify { requirements, .. }) => {
             if let Some(file) = requirements {
@@ -99,8 +118,8 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     )))
 }
 
-/// `collection install`: tarballs natively. Every other source, a dependency to resolve and a
-/// signature to check are refused until they are native.
+/// `collection install`: tarballs and names from Galaxy servers. Directories, URLs, git and
+/// signatures are refused until they are native.
 fn collection_install(
     install: &args::CollectionInstall,
     config: &Config,
@@ -129,20 +148,7 @@ fn collection_install(
     if install.signatures.keyring.is_some() || !install.signatures.signatures.is_empty() {
         return Err(not_yet("with signatures"));
     }
-    let mut tarballs: Vec<(Tarball, Meta)> = Vec::new();
-    for wanted in &wanted {
-        if wanted.kind != requirements::Kind::File {
-            return Err(not_yet("from a Galaxy server, a directory, a URL or git"));
-        }
-        let (tarball, meta) = Tarball::open(wanted.source.as_deref().unwrap_or_default())?;
-        if !install.no_deps && !meta.dependencies.is_empty() {
-            return Err(not_yet("of a collection with dependencies"));
-        }
-        if tarballs.iter().any(|(_, m)| m.fqcn() == meta.fqcn()) {
-            return Err(not_yet("of two versions of one collection"));
-        }
-        tarballs.push((tarball, meta));
-    }
+    let wanted = install::prepare(&wanted)?;
     // The runtime's own directory, which Volant appends to the search path, is not one the
     // reference would name.
     let runtime = crate::runtime::collections::active_dir();
@@ -167,8 +173,59 @@ fn collection_install(
         force_with_deps: install.force_with_deps,
         ignore_errors: install.ignore_errors,
         upgrade: install.upgrade,
+        no_deps: install.no_deps,
+        pre: install.pre,
     };
-    install::collections(&tarballs, &galaxy::collections_root(&path), options)
+    let mut servers = servers(
+        &install.common,
+        &install.cache,
+        config,
+        verbose,
+        install.offline,
+    );
+    install::collections(
+        wanted,
+        &galaxy::collections_root(&path),
+        &mut servers,
+        options,
+        verbose,
+    )
+}
+
+/// The servers a run asks, from the options, the environment and `ansible.cfg`. None under
+/// `--offline`.
+fn servers(
+    common: &args::Common,
+    cache: &args::Cache,
+    config: &Config,
+    verbose: u8,
+    offline: bool,
+) -> Servers {
+    if offline {
+        return Servers { list: Vec::new() };
+    }
+    let env = |name: &str| std::env::var(name).ok();
+    let settings = Settings::new(&config.galaxy, &env);
+    let options = settings::Options {
+        server: common.server.as_deref(),
+        token: common.token.as_deref(),
+        ignore_certs: common.ignore_certs,
+        timeout: common.timeout,
+    };
+    let cache_dir = settings.cache_dir();
+    let token_path = settings.token_path();
+    let files = Files {
+        cache_dir: (!cache.no_cache).then_some(cache_dir.as_path()),
+        clear_cache: cache.clear_response_cache,
+        token_path: &token_path,
+    };
+    Servers {
+        list: settings
+            .servers(&options)
+            .iter()
+            .map(|s| Server::new(s, &files, verbose))
+            .collect(),
+    }
 }
 
 /// The requirements file `-r` names, announced at `-vvv` as the reference does.

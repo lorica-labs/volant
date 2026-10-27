@@ -1,0 +1,1 @@
+args: [collection, download, demo.app, -s, "<golden-server>", -p, "<golden-tmp>/dl"]

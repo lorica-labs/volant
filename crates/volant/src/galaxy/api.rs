@@ -380,6 +380,7 @@ impl Server {
         Ok(versions)
     }
 
+    #[cfg(test)]
     /// [`Self::versions_of`] for one server alone.
     pub fn collection_versions(
         &mut self,

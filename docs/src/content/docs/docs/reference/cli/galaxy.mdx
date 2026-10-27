@@ -31,7 +31,23 @@ When no configured collections path lies under the `PATH` of `collection install
 
 `collection install` installs a collection tarball natively: `volant galaxy collection install acme-demo-1.0.0.tar.gz -p DIR`. The name and version come from the tarball's `MANIFEST.json`, not from the file name. The collection goes under `DIR/ansible_collections/<namespace>/<name>`, or under the first collections path without `-p`. Only the files `FILES.json` lists are written, each checked against its SHA-256 first. A file is `0644`, or `0755` when the archive marks it executable. An entry that would land outside the collection is refused, and so is a link that points outside it. A failed install leaves no half-written collection behind. The output, the messages and the exit codes are those of `ansible-galaxy`. A collection already installed at the same version gives `Nothing to do. All requested collections are already installed. If you want to reinstall them, consider using `--force`.`, and `--force` installs it again over the old tree. When `PATH/ansible_collections` already exists, the `-p` warning reads that the path `appears to be part of the pip Ansible package`, as `ansible-galaxy` says it.
 
-Galaxy servers, directories, URLs and git, a tarball with dependencies, two versions of one collection, and signatures are refused until they are native: `[ERROR]: volant galaxy collection install <what> is not supported yet`, exit 1.
+Directories, URLs, git and signatures are refused until they are native: `[ERROR]: volant galaxy collection install from a directory, a URL or git is not supported yet`, or `with signatures`, exit 1.
+
+## Installing from Galaxy servers
+
+`collection install` also takes names, with a range when wanted: `demo.base`, `demo.base:1.0.0`, `"demo.base:>=1.0.0,<2.0.0"`, and the entries of `-r`. Each name is resolved against the servers with its dependencies, each at the highest version that meets every range asked of it, backtracking when two ranges clash. Pre-releases count only with `--pre` or when named exactly. Every tarball is downloaded, checked against the SHA-256 the server gives, and unpacked as above. A collection installed from a server also gets `ansible_collections/<namespace>.<name>-<version>.info/GALAXY.yml`, which records where it came from. A collection already installed at a version that fits is kept: `'<name>:<version>' is already installed, skipping.`
+
+`-n` skips the dependencies, `-U` moves installed collections to the newest version in range, `-f` reinstalls the requested collections and `--force-with-deps` their dependencies too, `-i` goes on after a failed install with a warning, and `--offline` asks no server. When no set of versions meets every range, the command fails with the message of `ansible-galaxy`, which lists the ranges and ends with a hint about `--pre`; the Python objects `ansible-galaxy` prints after that hint are left out.
+
+## Downloading for an offline install
+
+`collection download` resolves the collections asked for with their dependencies, as `install` does, and saves each tarball in the folder `-p` names, `./collections` by default. It then writes a `requirements.yml` there listing the tarballs by file name, with their versions. On a machine with no network, `volant galaxy collection install --offline -r requirements.yml` run from that folder installs them without asking any server. The file names are read from the working directory, as `ansible-galaxy` reads them. `-n` leaves the dependencies out, and `-r` and `--pre` work as for `install`. Under `--offline`, a name that no tarball provides, or a dependency that is not installed, fails with the resolver's message.
+
+## Galaxy servers
+
+The servers come from `-s`, else from `[galaxy] server_list` and the `[galaxy_server.<name>]` sections of `ansible.cfg`, else from `GALAXY_SERVER`, `https://galaxy.ansible.com` by default. Every `ANSIBLE_GALAXY_*` variable comes before the file. Each server takes `url`, `token`, `validate_certs` and `timeout`. `--token` beats the file's token, `-c` turns certificate checks off, and `--timeout` sets how long to wait, 60 seconds by default. A server that cannot be reached is skipped with the warning of `ansible-galaxy`, and the next one is asked.
+
+The token is sent as `Authorization: Token <token>` and never printed. Without one, the token file is read, `GALAXY_TOKEN_PATH`, by default `<ANSIBLE_HOME>/galaxy_token`, created empty with mode `0600` when missing. Proxies come from `https_proxy`, `http_proxy`, `all_proxy` and `no_proxy`; unlike `ansible-galaxy`, which picks the variable by the URL's scheme, the first of them that is set applies to every URL. Answers are kept for a day in `<ANSIBLE_HOME>/galaxy_cache/api.json`, the same file `ansible-galaxy` uses. `--no-cache` leaves it aside and `--clear-response-cache` empties it. `username`, `password` and `auth_url` are not read.
 
 ## Requirements files
 

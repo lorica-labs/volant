@@ -13,10 +13,12 @@ caller is kept.
 
 `expected.json` holds the argv, the exit code, stdout, stderr, the requests the server saw in
 order, and every file left under the scratch directory outside the home, with the SHA-256 of its
-normalised text. Normalised means: the scratch directory reads `<golden-tmp>`, the server's port
+normalised text, or of its uncompressed content for a `.tar.gz`. Normalised means: the scratch directory reads `<golden-tmp>`, the server's port
 `<golden-port>`, ansible-galaxy's own download directory `<golden-galaxy-tmp>` with the random
-suffix of the file it downloads to `<golden-random>`, and a role's `install_date` `<golden-date>`.
+suffix of the file it downloads to `<golden-random>`, a role's `install_date` `<golden-date>`, and the Python objects after the resolver's `use --pre` hint
+are cut, ending it with a full stop.
 """
+import gzip
 import hashlib
 import os
 import re
@@ -37,11 +39,14 @@ KEYS = {"args", "setup"}
 # it ends with a random suffix.
 GALAXY_TMP = re.compile(r"\S*/\.ansible/tmp/ansible-local-[^/\s]+/tmp[^/\s]+/(\S+?)-[a-z0-9_]{8}(?=\s|$)", re.M)
 INSTALL_DATE = re.compile(r"^install_date: '[^'\n]*'$", re.M)
+# The resolver's hint ends with a dump of Python objects, which Volant does not reproduce.
+PRE_HINT = re.compile(r"(use --pre): .*$", re.M)
 
 
 def normalise(text, tmp, port):
     text = text.replace(tmp, TMP).replace(f"127.0.0.1:{port}", f"127.0.0.1:{PORT}")
     text = GALAXY_TMP.sub(r"<golden-galaxy-tmp>/\1-<golden-random>", text)
+    text = PRE_HINT.sub(r"\1.", text)
     return INSTALL_DATE.sub("install_date: '<golden-date>'", text)
 
 
@@ -63,6 +68,9 @@ def tree(tmp, port, skip=()):
             path = os.path.join(root, name)
             with open(path, "rb") as f:
                 data = f.read()
+            # The fake server gzips at run time, and zlib's output differs between platforms.
+            if name.endswith(".tar.gz"):
+                data = gzip.decompress(data)
             try:
                 data = normalise(data.decode("utf-8"), tmp, port).encode("utf-8")
             except UnicodeDecodeError:

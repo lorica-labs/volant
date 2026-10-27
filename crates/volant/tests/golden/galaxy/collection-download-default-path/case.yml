@@ -1,0 +1,1 @@
+args: [collection, download, demo.base, -s, "<golden-server>"]

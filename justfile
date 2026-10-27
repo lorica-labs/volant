@@ -491,10 +491,18 @@ container-test +runtimes:
 # VOLANT_TARGET_HOST names, through your own ssh configuration, and to localhost only on a GitHub
 # Actions runner whose workflow sets VOLANT_NATIVE_TESTS_ON_LOCALHOST=1; otherwise they fail and
 # say so.
-ssh-test: agent-musl
+ssh-test: ssh-test-e2e ssh-test-needs
+
+# The first half of `ssh-test`, which CI runs on a runner of its own: the `ssh_*` tests.
+ssh-test-e2e: agent-musl
     test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
     "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }
     VOLANT_AGENT_DIR="$PWD/target/agents" cargo nextest run --workspace --run-ignored ignored-only --no-tests=fail -E 'test(/^ssh_/)'
+
+# The second half of `ssh-test`: what needs the recorded ansible-core, sudo or systemd.
+ssh-test-needs: agent-musl
+    test -n "${VOLANT_SSH_TEST_KEY:-}" || { echo "VOLANT_SSH_TEST_KEY is not set"; exit 1; }
+    "${VOLANT_PYTHON:-}" -c 'import ansible' 2>/dev/null || { echo "VOLANT_PYTHON must name a python with ansible-core"; exit 1; }
     # The module goldens (`reference_modules`) and the two collection resolution tests of
     # python.rs, here because this is the job that names the recorded ansible-core in
     # VOLANT_PYTHON, which turns each comparison's skip into a failure. The module play needs

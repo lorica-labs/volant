@@ -18,6 +18,7 @@
     "GET /api/v3/collections/demo/base/versions/2.0.0/",
     "GET /api/v3/collections/demo/base/artifacts/demo-base-2.0.0.tar.gz"
   ],
+  "setup": [],
   "stderr": "[WARNING]: The specified collections path '<golden-tmp>/cols' is not part of the configured Ansible collections paths '<golden-tmp>/home/.ansible/collections:/usr/share/ansible/collections'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.\n",
   "stdout": "Starting galaxy collection install process\nProcess install dependency map\nStarting collection install process\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/base/artifacts/demo-base-2.0.0.tar.gz to <golden-galaxy-tmp>/demo-base-2.0.0-<golden-random>\nInstalling 'demo.base:2.0.0' to '<golden-tmp>/cols/ansible_collections/demo/base'\ndemo.base:2.0.0 was installed successfully\n",
   "tree": {

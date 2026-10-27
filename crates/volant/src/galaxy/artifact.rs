@@ -97,6 +97,11 @@ impl Tarball {
         Ok((tarball, meta))
     }
 
+    /// The tarball's absolute path.
+    pub fn path(&self) -> &Path {
+        &self.path
+    }
+
     /// Installs the collection into `dest`, `<path>/ansible_collections/<namespace>/<name>`,
     /// which does not exist. On failure nothing of it is left, nor its namespace directory once
     /// empty.

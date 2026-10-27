@@ -1,0 +1,28 @@
+{
+  "args": [
+    "collection",
+    "download",
+    "demo.app",
+    "-n",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/dl"
+  ],
+  "rc": 0,
+  "requests": [
+    "GET /",
+    "GET /api",
+    "GET /api/v3/collections/demo/app/",
+    "GET /api/v3/collections/demo/app/versions/?limit=100",
+    "GET /api/v3/collections/demo/app/versions/1.0.0/",
+    "GET /api/v3/collections/demo/app/artifacts/demo-app-1.0.0.tar.gz"
+  ],
+  "setup": [],
+  "stderr": "",
+  "stdout": "Process download dependency map\nStarting collection download process to '<golden-tmp>/dl'\nDownloading collection 'demo.app:1.0.0' to '<golden-tmp>/dl'\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/app/artifacts/demo-app-1.0.0.tar.gz to <golden-galaxy-tmp>/demo-app-1.0.0-<golden-random>\nCollection 'demo.app:1.0.0' was downloaded successfully\nWriting requirements.yml file of downloaded collections to '<golden-tmp>/dl/requirements.yml'\n",
+  "tree": {
+    "dl/demo-app-1.0.0.tar.gz": "cb0ac9b6cfc3ece591f31d112f2a2e706dad4b9a8d84305baa05ef4b6fbc38a9",
+    "dl/requirements.yml": "c1d52173518fa0d2036cddf7e92ff336e8691e61958b4fe1add129900af1a30b"
+  }
+}

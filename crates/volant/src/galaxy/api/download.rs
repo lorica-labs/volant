@@ -17,11 +17,7 @@ impl Server {
     pub fn download(&mut self, url: &str, sha256: &str, dir: &Path) -> Result<PathBuf, Failure> {
         let tarball = url.rsplit('/').next().unwrap_or("collection.tar.gz");
         let stem = tarball.strip_suffix(".tar.gz").unwrap_or(tarball);
-        let holder = tempfile::Builder::new()
-            .prefix(&format!("{stem}-"))
-            .tempdir_in(dir)
-            .map_err(|e| Failure::error(e.to_string()))?
-            .keep();
+        let holder = crate::galaxy::temp_dir(dir, &format!("{stem}-"))?;
         println!("Downloading {url} to {}", holder.display());
         let fail = |failure: Failure| {
             let _ = std::fs::remove_dir_all(&holder);

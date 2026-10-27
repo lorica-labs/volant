@@ -1,0 +1,3 @@
+setup:
+  - [collection, install, demo.base, -s, "<golden-server>", -p, "<golden-tmp>/cols"]
+args: [collection, install, demo.base, -s, "<golden-server>", -p, "<golden-tmp>/cols"]

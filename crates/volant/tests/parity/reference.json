@@ -648,6 +648,9 @@
    "action": [
     "amazon.aws.s3_object"
    ],
+   "callback": [
+    "amazon.aws.aws_resource_actions"
+   ],
    "connection": [
     "amazon.aws.aws_ssm"
    ],
@@ -826,6 +829,7 @@
     "ansible.netcommon.network_resource",
     "ansible.netcommon.telnet"
    ],
+   "callback": [],
    "connection": [
     "ansible.netcommon.grpc",
     "ansible.netcommon.httpapi",
@@ -906,6 +910,15 @@
     "ansible.posix.patch",
     "ansible.posix.synchronize"
    ],
+   "callback": [
+    "ansible.posix.cgroup_perf_recap",
+    "ansible.posix.debug",
+    "ansible.posix.json",
+    "ansible.posix.jsonl",
+    "ansible.posix.profile_roles",
+    "ansible.posix.profile_tasks",
+    "ansible.posix.timer"
+   ],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -941,6 +954,7 @@
     "ansible.utils.update_fact",
     "ansible.utils.validate"
    ],
+   "callback": [],
    "connection": [],
    "filter": [
     "ansible.utils.cidr_merge",
@@ -1035,6 +1049,7 @@
     "ansible.windows.win_template",
     "ansible.windows.win_updates"
    ],
+   "callback": [],
    "connection": [],
    "filter": [
     "ansible.windows.quote"
@@ -1228,6 +1243,7 @@
     "arista.eos.vrf",
     "arista.eos.vrf_global"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -1384,6 +1400,7 @@
   },
   "awx.awx": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -1452,6 +1469,7 @@
    "action": [
     "azure.azcollection.azure_rm_arcssh"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -1869,6 +1887,7 @@
     "check_point.mgmt.cp_mgmt_hosts",
     "check_point.mgmt.cp_mgmt_threat_layers"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -2694,6 +2713,7 @@
   },
   "chocolatey.chocolatey": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -2718,6 +2738,7 @@
   },
   "cisco.aci": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [
     "cisco.aci.aci_listify"
@@ -4370,6 +4391,7 @@
     "cisco.dnac.wireless_settings_rf_profiles_info",
     "cisco.dnac.wireless_settings_ssids_override_at_sites_info"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -6582,6 +6604,7 @@
   },
   "cisco.intersight": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -6746,6 +6769,7 @@
     "cisco.ios.vrf_address_family",
     "cisco.ios.vrf_global"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -6958,6 +6982,7 @@
     "cisco.iosxr.vrf_address_family",
     "cisco.iosxr.vrf_global"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -7692,6 +7717,7 @@
     "cisco.meraki.organizations_wireless_ssids_firewall_isolation_allowlist_entries_info",
     "cisco.meraki.organizations_wireless_ssids_statuses_by_device_info"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -8905,6 +8931,7 @@
   },
   "cisco.mso": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -9288,6 +9315,7 @@
     "cisco.nxos.vxlan_vtep_vni",
     "cisco.nxos.zone_zoneset"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -9641,6 +9669,7 @@
   },
   "cisco.ucs": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -9683,6 +9712,7 @@
   },
   "cloudscale_ch.cloud": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -9712,6 +9742,7 @@
   },
   "community.aws": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -9868,6 +9899,7 @@
   },
   "community.ciscosmb": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -9888,6 +9920,7 @@
    "action": [
     "community.crypto.openssl_privatekey_pipe"
    ],
+   "callback": [],
    "connection": [],
    "filter": [
     "community.crypto.gpg_fingerprint",
@@ -9953,6 +9986,7 @@
   },
   "community.digitalocean": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -10024,6 +10058,7 @@
   },
   "community.dns": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [
     "community.dns.get_public_suffix",
@@ -10072,6 +10107,7 @@
    "action": [
     "community.docker.docker_container_copy_into"
    ],
+   "callback": [],
    "connection": [
     "community.docker.docker",
     "community.docker.docker_api",
@@ -10135,6 +10171,36 @@
    "action": [
     "community.general.iptables_state",
     "community.general.shutdown"
+   ],
+   "callback": [
+    "community.general.cgroup_memory_recap",
+    "community.general.context_demo",
+    "community.general.counter_enabled",
+    "community.general.default_without_diff",
+    "community.general.dense",
+    "community.general.diy",
+    "community.general.elastic",
+    "community.general.jabber",
+    "community.general.log_plays",
+    "community.general.loganalytics",
+    "community.general.logdna",
+    "community.general.logentries",
+    "community.general.logstash",
+    "community.general.mail",
+    "community.general.nrdp",
+    "community.general.null",
+    "community.general.opentelemetry",
+    "community.general.print_task",
+    "community.general.say",
+    "community.general.selective",
+    "community.general.slack",
+    "community.general.splunk",
+    "community.general.sumologic",
+    "community.general.syslog_json",
+    "community.general.tasks_only",
+    "community.general.timestamp",
+    "community.general.unixy",
+    "community.general.yaml"
    ],
    "connection": [
     "community.general.chroot",
@@ -10833,6 +10899,9 @@
   },
   "community.grafana": {
    "action": [],
+   "callback": [
+    "community.grafana.grafana_annotations"
+   ],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -10859,6 +10928,7 @@
   },
   "community.hashi_vault": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [
     "community.hashi_vault.vault_login_token"
@@ -10909,6 +10979,7 @@
   },
   "community.hrobot": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -10946,6 +11017,7 @@
   },
   "community.library_inventory_filtering_v1": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -10958,6 +11030,7 @@
   },
   "community.libvirt": {
    "action": [],
+   "callback": [],
    "connection": [
     "community.libvirt.libvirt_lxc",
     "community.libvirt.libvirt_qemu"
@@ -10981,6 +11054,7 @@
   },
   "community.mongodb": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11017,6 +11091,7 @@
   },
   "community.mysql": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11037,6 +11112,7 @@
   },
   "community.okd": {
    "action": [],
+   "callback": [],
    "connection": [
     "community.okd.oc"
    ],
@@ -11068,6 +11144,7 @@
   },
   "community.postgresql": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11104,6 +11181,7 @@
   },
   "community.proxmox": {
    "action": [],
+   "callback": [],
    "connection": [
     "community.proxmox.proxmox_pct_remote"
    ],
@@ -11158,6 +11236,7 @@
   },
   "community.proxysql": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11182,6 +11261,7 @@
   },
   "community.rabbitmq": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11211,6 +11291,7 @@
   },
   "community.routeros": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [
     "community.routeros.join",
@@ -11240,6 +11321,7 @@
   },
   "community.sap_libs": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11264,6 +11346,7 @@
    "action": [
     "community.sops.load_vars"
    ],
+   "callback": [],
    "connection": [],
    "filter": [
     "community.sops._latest_version",
@@ -11286,6 +11369,7 @@
   },
   "community.vmware": {
    "action": [],
+   "callback": [],
    "connection": [
     "community.vmware.vmware_tools"
    ],
@@ -11482,6 +11566,7 @@
    "action": [
     "community.windows.win_pssession_configuration"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11610,6 +11695,7 @@
   },
   "community.zabbix": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -11718,6 +11804,7 @@
   },
   "containers.podman": {
    "action": [],
+   "callback": [],
    "connection": [
     "containers.podman.buildah",
     "containers.podman.podman"
@@ -11768,6 +11855,7 @@
   },
   "cyberark.conjur": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11782,6 +11870,7 @@
   },
   "cyberark.pas": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -11888,6 +11977,7 @@
     "dellemc.enterprise_sonic.vrrp",
     "dellemc.enterprise_sonic.vxlans"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -12164,6 +12254,7 @@
   },
   "dellemc.openmanage": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -12284,6 +12375,7 @@
   },
   "dellemc.powerflex": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -12313,6 +12405,7 @@
   },
   "dellemc.unity": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -12348,6 +12441,7 @@
     "f5networks.f5_modules.bigip_imish_config",
     "f5networks.f5_modules.bigiq"
    ],
+   "callback": [],
    "connection": [],
    "filter": [
     "f5networks.f5_modules.abspath",
@@ -12895,6 +12989,7 @@
   },
   "fortinet.fortimanager": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -15351,6 +15446,7 @@
   },
   "fortinet.fortios": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -16779,6 +16875,7 @@
   },
   "google.cloud": {
    "action": [],
+   "callback": [],
    "connection": [
     "google.cloud.iap"
    ],
@@ -16978,6 +17075,7 @@
   },
   "grafana.grafana": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17000,6 +17098,7 @@
   },
   "hetzner.hcloud": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [
     "hetzner.hcloud.load_balancer_status"
@@ -17055,6 +17154,7 @@
   },
   "hitachivantara.vspone_block": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17216,6 +17316,7 @@
   },
   "hitachivantara.vspone_object": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17260,6 +17361,7 @@
     "ibm.qradar.qradar_analytics_rules",
     "ibm.qradar.qradar_log_sources_management"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17312,6 +17414,7 @@
   },
   "ibm.storage_virtualize": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17373,6 +17476,7 @@
   },
   "ieisystem.inmanage": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17516,6 +17620,7 @@
   },
   "infinidat.infinibox": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [
     "infinidat.infinibox.delta_time"
@@ -17552,6 +17657,7 @@
   },
   "infoblox.nios_modules": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -17607,6 +17713,7 @@
   },
   "inspur.ispim": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17790,6 +17897,7 @@
     "junipernetworks.junos.vlans",
     "junipernetworks.junos.vrf"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -17960,6 +18068,7 @@
   },
   "kaytus.ksmanage": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -18120,6 +18229,7 @@
     "kubernetes.core.k8s_scale",
     "kubernetes.core.k8s_service"
    ],
+   "callback": [],
    "connection": [
     "kubernetes.core.kubectl"
    ],
@@ -18177,6 +18287,7 @@
   },
   "kubevirt.core": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -18195,6 +18306,7 @@
   },
   "lowlydba.sqlserver": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -18279,6 +18391,7 @@
     "microsoft.ad.domain_controller",
     "microsoft.ad.membership"
    ],
+   "callback": [],
    "connection": [],
    "filter": [
     "microsoft.ad.as_datetime",
@@ -18334,6 +18447,7 @@
   },
   "microsoft.iis": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -18364,6 +18478,7 @@
   },
   "netapp.cloudmanager": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -18390,6 +18505,7 @@
   },
   "netapp.ontap": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [
     "netapp.ontap.iso8601_duration_from_seconds",
@@ -18568,6 +18684,7 @@
   },
   "netapp.storagegrid": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -18615,6 +18732,7 @@
   },
   "netapp_eseries.santricity": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -18689,6 +18807,7 @@
   },
   "netbox.netbox": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -18796,6 +18915,7 @@
   },
   "ngine_io.cloudstack": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -18864,6 +18984,7 @@
   },
   "openstack.cloud": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -18977,6 +19098,9 @@
   },
   "ovirt.ovirt": {
    "action": [],
+   "callback": [
+    "ovirt.ovirt.stdout"
+   ],
    "connection": [],
    "filter": [
     "ovirt.ovirt.convert_to_bytes",
@@ -19066,6 +19190,7 @@
   },
   "purestorage.flasharray": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -19146,6 +19271,7 @@
   },
   "purestorage.flashblade": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -19212,6 +19338,7 @@
   },
   "ravendb.ravendb": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -19235,6 +19362,7 @@
     "splunk.es.splunk_data_inputs_monitor",
     "splunk.es.splunk_data_inputs_network"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -19286,6 +19414,7 @@
   },
   "telekom_mms.icinga_director": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -19343,6 +19472,9 @@
   },
   "theforeman.foreman": {
    "action": [],
+   "callback": [
+    "theforeman.foreman.foreman"
+   ],
    "connection": [],
    "filter": [
     "theforeman.foreman.cp_label"
@@ -19451,6 +19583,7 @@
   },
   "vmware.vmware": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -19507,6 +19640,7 @@
   },
   "vmware.vmware_rest": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -19663,6 +19797,7 @@
   },
   "vultr.cloud": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [
@@ -19745,6 +19880,7 @@
     "vyos.vyos.vlan",
     "vyos.vyos.vyos"
    ],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],
@@ -19879,6 +20015,7 @@
   },
   "wti.remote": {
    "action": [],
+   "callback": [],
    "connection": [],
    "filter": [],
    "inventory": [],

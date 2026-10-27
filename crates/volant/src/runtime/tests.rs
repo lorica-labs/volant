@@ -386,7 +386,7 @@ fn a_file_in_the_working_directory_is_not_imported_by_the_probe() {
         .status()
         .expect("python3 is on PATH wherever these tests run");
     assert_eq!(shadowed.code(), Some(7), "the file is not shadowing json");
-    assert!(resolve::imports("python3", "json", Some(tmp.path())));
+    assert!(resolve::imports("python3", "json", Some(tmp.path())).is_some());
 }
 
 /// The runtime's commands, `python -m ansible.cli.galaxy` among them, do not import a module from

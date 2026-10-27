@@ -1296,31 +1296,32 @@ fn template_literals_keep_their_escapes(#[case] text: &str, #[case] want: &str) 
 #[test]
 fn a_key_that_is_not_a_string_is_held_as_its_text() {
     assert_loads_as(&[
+        ("1: a\n", json!({"1": "a"})),
+        ("2.5: a\n", json!({"2.5": "a"})),
+        ("true: a\nfalse: b\n", json!({"true": "a", "false": "b"})),
+        ("~: a\n", json!({"None": "a"})),
+        ("m: {1: [x], 0: y}\n", json!({"m": {"1": ["x"], "0": "y"}})),
+    ]);
+}
+
+/// A quoted scalar whose continuation lines sit left of their parent loads as PyYAML loads it,
+/// where saphyr alone refuses it for its indentation.
+#[test]
+fn a_quoted_scalar_continued_left_of_its_parent_loads() {
+    assert_loads_as(&[
+        ("k: \"{{\n  x\n}}\"\n", json!({"k": "{{ x }}"})),
+        ("k: \"a\nb\"\n", json!({"k": "a b"})),
         (
-            "1: a
-",
-            json!({"1": "a"}),
+            "k: 'one\ntwo ''q''\nthree'\n",
+            json!({"k": "one two 'q' three"}),
         ),
+        ("k: \"a\\\"\nb\"\n", json!({"k": "a\" b"})),
+        ("m:\n  k: \"a\n b\"\n", json!({"m": {"k": "a b"}})),
+        ("- \"a\nb\"\n", json!(["a b"])),
+        ("x: \"é\"\nk: \"a\nb\"\n", json!({"x": "é", "k": "a b"})),
         (
-            "2.5: a
-",
-            json!({"2.5": "a"}),
-        ),
-        (
-            "true: a
-false: b
-",
-            json!({"true": "a", "false": "b"}),
-        ),
-        (
-            "~: a
-",
-            json!({"None": "a"}),
-        ),
-        (
-            "m: {1: [x], 0: y}
-",
-            json!({"m": {"1": ["x"], "0": "y"}}),
+            "a: \"x\ny\"\nb: \"p\n\nq\"\n",
+            json!({"a": "x y", "b": "p\nq"}),
         ),
     ]);
 }

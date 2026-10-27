@@ -675,7 +675,8 @@ fn apply_is_read_as_the_keywords_of_a_block(
 }
 
 /// Shapes the loader keeps for the pre-flight: a `set_fact` key
-/// typed by YAML, and a `meta` action whatever it names.
+/// typed by YAML, `true` and `1` being one key as in a Python dict, and a `meta` action whatever
+/// it names.
 #[test]
 fn what_the_loader_keeps_for_the_preflight() {
     let pb = parse(
@@ -686,14 +687,7 @@ fn what_the_loader_keeps_for_the_preflight() {
     let keys: Vec<&str> = first(&pb).args.keys().map(String::as_str).collect();
     assert_eq!(
         keys,
-        [
-            "{{ 1 }}",
-            "{{ 1.5 }}",
-            "{{ 2.0 }}",
-            "{{ True }}",
-            "{{ None }}",
-            "k"
-        ]
+        ["{{ 1 }}", "{{ 1.5 }}", "{{ 2.0 }}", "{{ None }}", "k"]
     );
     for action in ["noop", "end_play", "nosuchaction"] {
         let pb = parse(

@@ -101,18 +101,22 @@ fn duplicate_keys(source: &str) -> anyhow::Result<()> {
             line,
             col,
         };
-        let message = format!("Found duplicate mapping key '{key}'.");
+        let message = format!("Found duplicate mapping key {key}.");
         if mode == 1 {
             return Err(anyhow::Error::new(crate::playbook::Located {
                 message: format!("YAML parsing failed: {message}"),
                 origin,
             }));
         }
-        let located = crate::playbook::Located { message, origin };
+        // A boolean key carries no position in the reference, which shows the key in its place.
+        let text = if key == "True" || key == "False" {
+            format!("{message}\nOrigin: <unknown>\n\n{key}\n")
+        } else {
+            crate::playbook::Located { message, origin }.text()
+        };
         // Once, as the reference loads a file once: this engine reads some files again.
         static SAID: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
             std::sync::LazyLock::new(Default::default);
-        let text = located.text();
         if SAID.lock().expect("said lock").insert(text.clone()) {
             eprintln!("[WARNING]: {text}\nUsing last defined value only.\n");
         }

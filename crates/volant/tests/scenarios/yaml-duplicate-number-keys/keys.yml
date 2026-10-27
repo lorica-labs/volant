@@ -1,0 +1,14 @@
+a:
+  1: one
+  true: t
+b:
+  true: t
+  1: one
+c:
+  0: z
+  false: f
+  0.0: zz
+  1.0: o
+e:
+  "1": s
+  1: n

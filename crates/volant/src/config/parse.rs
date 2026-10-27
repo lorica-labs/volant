@@ -226,7 +226,8 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             | "callbacks_enabled"
             | "callback_plugins"
             | "bin_ansible_callbacks"
-            | "callback_format_pretty" => {
+            | "callback_format_pretty"
+            | "json_indent" => {
                 super::callbacks::ini(&mut config.callbacks, key.trim(), value, origin, base)?;
             }
             "enable_task_debugger" => {

@@ -1,5 +1,5 @@
 ---
-sourceHash: 9d379d1e2e93
+sourceHash: 71cedc265be6
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -99,7 +99,7 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 </Option>
 
 <Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
-  Le callback qui affiche l'exécution. `default` affiche les bannières, une ligne par résultat et le récapitulatif. `minimal` affiche chaque résultat comme la commande ad hoc, `host | CHANGED | rc=0 >>` et la sortie pour une commande, sinon `host | SUCCESS => ` et le résultat en JSON, sans bannière, sans récapitulatif et sans ligne par élément de boucle. `oneline` affiche les mêmes résultats sur une ligne chacun ; ansible-core 2.19.12 le déprécie et Volant affiche son avertissement une fois sur la sortie d'erreur. `tree` n'affiche rien sur la sortie standard. Les noms en `ansible.builtin.` fonctionnent aussi. `yaml` arrête l'exécution avec le code de sortie 1 et l'erreur que community.general affiche depuis 12.0.0, qui a retiré ce plugin : `callback_result_format = yaml` le remplace. Tout autre nom, comme `json`, arrête l'exécution avant le premier play avec `[ERROR]: Could not load '<name>' callback plugin.` et le code de sortie 1.
+  Le callback qui affiche l'exécution. `default` affiche les bannières, une ligne par résultat et le récapitulatif. `minimal` affiche chaque résultat comme la commande ad hoc, `host | CHANGED | rc=0 >>` et la sortie pour une commande, sinon `host | SUCCESS => ` et le résultat en JSON, sans bannière, sans récapitulatif et sans ligne par élément de boucle. `oneline` affiche les mêmes résultats sur une ligne chacun ; ansible-core 2.19.12 le déprécie et Volant affiche son avertissement une fois sur la sortie d'erreur. `tree` n'affiche rien sur la sortie standard. Les noms en `ansible.builtin.` fonctionnent aussi. `yaml` arrête l'exécution avec le code de sortie 1 et l'erreur que community.general affiche depuis 12.0.0, qui a retiré ce plugin : `callback_result_format = yaml` le remplace. `json` et `ansible.posix.json` n'affichent rien pendant l'exécution, puis toute l'exécution en un seul document JSON : chaque play et chaque tâche avec ses temps, son id et son chemin, le résultat de chaque hôte tel que la tâche l'a rendu avec son `action`, le récapitulatif par hôte et les données de `set_stats` quand `show_custom_stats` est activé. Les caractères hors ASCII sont écrits `\uXXXX`. Tout autre nom, comme `community.general.unixy`, arrête l'exécution avant le premier play avec `[ERROR]: Could not load '<name>' callback plugin.` et le code de sortie 1.
 </Option>
 
 <Option name="callback_result_format" id="defaults-callback-result-format" default="json" env="ANSIBLE_CALLBACK_RESULT_FORMAT">
@@ -108,6 +108,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 
 <Option name="callback_format_pretty" id="defaults-callback-format-pretty" env="ANSIBLE_CALLBACK_FORMAT_PRETTY">
   Le `pretty_results` de `default` et `minimal`. Non défini, un résultat JSON n'est indenté que pour un `debug`, un `assert` et à partir de `-vvv`, et un résultat YAML est lisible. Activé, chaque résultat est indenté de quatre espaces. Désactivé, aucun ne l'est, pas même un `debug`. Le YAML lisible écrit `stdout_lines` et `stderr_lines` en `<omitted>` à côté de leur texte, imbrique de quatre espaces et retire les espaces et tabulations de fin d'un bloc de texte pour qu'il reste un bloc ; le YAML non lisible garde chaque valeur telle quelle et imbrique de deux. Un mot qui n'est pas un booléen vaut désactivé.
+</Option>
+
+<Option name="json_indent" id="defaults-json-indent" default="4" env="ANSIBLE_JSON_INDENT">
+  Espaces par niveau du document du callback `json`. Zéro ou moins l'écrit sur une seule ligne.
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">

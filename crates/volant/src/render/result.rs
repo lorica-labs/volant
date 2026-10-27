@@ -211,8 +211,11 @@ impl Renderer {
         censored: bool,
         delegate: Option<&str>,
     ) {
-        // `minimal` and `oneline` show no loop item, only the task's own result.
+        // `minimal`, `oneline` and `json` show no loop item, only the task's own result.
         if label.is_some() && self.minimal.is_some() {
+            return;
+        }
+        if self.json_result(host, outcome, result, censored) {
             return;
         }
         let label = if censored {

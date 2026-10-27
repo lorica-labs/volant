@@ -1,5 +1,5 @@
 ---
-sourceHash: cd192131ee62
+sourceHash: f6341a3afda1
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -103,7 +103,7 @@ Ces cas diffèrent d'`ansible-playbook` sans message avant l'exécution, ou avec
 | Quoi | Ce qui se passe |
 |---|---|
 | `callback_plugins/`, `vars_plugins/` | Ignorés. |
-| `stdout_callback` nommant le callback d'une collection, comme `json` ou `yaml` | L'exécution s'arrête avant le premier play avec `Could not load '<name>' callback plugin.`, qu'ansible-core n'affiche que pour un plugin non installé. `default`, `minimal`, `oneline` et `tree` fonctionnent. |
+| `stdout_callback` nommant le callback d'une collection autre que `json`, comme `community.general.unixy` | L'exécution s'arrête avant le premier play avec `Could not load '<name>' callback plugin.`, qu'ansible-core n'affiche que pour un plugin non installé. `default`, `minimal`, `oneline`, `tree` et `json` fonctionnent. |
 | `callbacks_enabled` | Chaque nom est ignoré avec `[WARNING]: Skipping callback plugin '<name>', unable to load`, qu'ansible-core n'affiche que pour un plugin introuvable. `volant.compat.record` est ignoré sans avertissement. |
 | `volant check`, `inventory`, `vault`, `doc`, `config` et `galaxy` | Elles n'existent pas. `volant` a `playbook`, `adhoc`, `runtime` et `shims`. |
 | Une comparaison écrite entre deux littéraux de types que Python ne sait pas ordonner, comme `{{ 'a' < 1 }}` | Elle répond `false` ou `true` là où ansible-core échoue avec `'<' not supported between instances of 'str' and 'int'`. La bibliothèque de modèles calcule une comparaison de littéraux avant que Volant ne la voie. Avec une variable d'un côté ou de l'autre, la comparaison échoue comme dans ansible-core. |

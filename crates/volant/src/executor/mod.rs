@@ -19,7 +19,9 @@ mod report;
 mod run;
 mod state;
 
-pub(crate) use run::{DEPRECATION_TEXT, RAISED_KEY, RAISED_SKIP, drop_internal_keys};
+pub(crate) use run::{
+    DEPRECATION_TEXT, RAISED_KEY, RAISED_SKIP, drop_internal_keys, utc_timestamp,
+};
 
 use std::collections::HashMap;
 use std::path::PathBuf;

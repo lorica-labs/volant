@@ -46,6 +46,7 @@ pub(super) fn header_for(
 /// where an ordinary task says `TASK [...]`.
 pub(super) fn header(step: &Step, name: &str, out: &mut Renderer) {
     out.set_action(&step.task.module);
+    out.task_started(name, &step.task.module, step.task.origin.as_ref());
     match step.kind {
         StepKind::Handler(_) => out.handler(name),
         _ => out.task(name),

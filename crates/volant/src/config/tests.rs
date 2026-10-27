@@ -1030,3 +1030,39 @@ fn pretty_results_is_read_leniently() {
         unsafe { std::env::remove_var(name) };
     }
 }
+
+/// `json_indent` is a whole number, from the file or the environment.
+#[test]
+fn json_indent_is_read_as_a_number() {
+    assert_eq!(
+        cfg("[defaults]\njson_indent = 2\n", ".")
+            .callbacks
+            .json_indent,
+        Some(2)
+    );
+    let refused = parse(
+        "[defaults]\njson_indent = wide\n",
+        Path::new("."),
+        "ansible.cfg",
+    );
+    assert!(refused.is_err());
+}
+
+/// `ANSIBLE_JSON_INDENT` beats the file and must be a whole number too.
+#[test]
+fn json_indent_is_read_from_the_environment() {
+    let names = [
+        ("ANSIBLE_CONFIG", "/nonexistent/volant/ansible.cfg"),
+        ("ANSIBLE_JSON_INDENT", "3"),
+    ];
+    // nextest gives each test a process of its own, so no other thread reads the variables.
+    for (name, value) in names {
+        unsafe { std::env::set_var(name, value) };
+    }
+    assert_eq!(Config::load().unwrap().callbacks.json_indent, Some(3));
+    unsafe { std::env::set_var("ANSIBLE_JSON_INDENT", "wide") };
+    assert!(Config::load().is_err());
+    for (name, _) in names {
+        unsafe { std::env::remove_var(name) };
+    }
+}

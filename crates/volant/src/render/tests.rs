@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::error::annotated_lines;
 use super::*;
-use crate::stats::Outcome;
+use crate::stats::{CustomStats, Outcome, Stats};
 use rstest::rstest;
 use serde_json::json;
 use std::sync::{Arc, Mutex};
@@ -253,7 +253,7 @@ fn banners_recap_and_status_lines() {
     stats.record("localhost", Outcome::Changed, true);
     stats.record("localhost", Outcome::Ok, false);
     stats.record("localhost", Outcome::Ignored, false);
-    let out = capture(|r| r.recap(&stats));
+    let out = capture(|r| r.recap(&stats, None));
     let lines: Vec<&str> = out.lines().collect();
     assert!(lines[1].starts_with("PLAY RECAP ***"));
     assert_eq!(
@@ -372,8 +372,8 @@ fn colour_only_wraps_what_is_printed() {
     stats.record("localhost", Outcome::Changed, true);
     stats.record("localhost", Outcome::Ok, false);
     stats.record("localhost", Outcome::Ignored, false);
-    let plain = capture(|r| r.recap(&stats));
-    let coloured = capture_with_color(true, |r| r.recap(&stats));
+    let plain = capture(|r| r.recap(&stats, None));
+    let coloured = capture_with_color(true, |r| r.recap(&stats, None));
     assert_ne!(coloured, plain, "colour should change the output at all");
     assert_eq!(strip_ansi(&coloured), plain, "the recap columns");
 

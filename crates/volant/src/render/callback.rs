@@ -15,6 +15,8 @@ pub enum StdoutCallback {
     Minimal,
     Oneline,
     Tree,
+    /// ansible.posix's `json`, which `json` routes to.
+    Json,
 }
 
 impl StdoutCallback {
@@ -25,6 +27,7 @@ impl StdoutCallback {
             "minimal" => Some(Self::Minimal),
             "oneline" => Some(Self::Oneline),
             "tree" => Some(Self::Tree),
+            "json" | "ansible.posix.json" => Some(Self::Json),
             _ => None,
         }
     }
@@ -35,6 +38,7 @@ impl StdoutCallback {
             Self::Minimal => "minimal",
             Self::Oneline => "oneline",
             Self::Tree => "tree",
+            Self::Json => "ansible.posix.json",
         }
     }
 
@@ -55,6 +59,19 @@ impl Renderer {
         self.oneline = callback == StdoutCallback::Oneline;
         if callback == StdoutCallback::Tree {
             self.silence();
+        }
+        // Nothing but the document reaches stdout.
+        if callback == StdoutCallback::Json {
+            let out = std::mem::replace(&mut self.out, Box::new(std::io::sink()));
+            self.json = Some(Box::new(super::json_doc::JsonDoc::new(out, Some(4))));
+        }
+    }
+
+    /// `json_indent` of the `json` callback: spaces per level, the document on one line at zero
+    /// or below.
+    pub fn set_json_indent(&mut self, indent: i64) {
+        if let Some(doc) = &mut self.json {
+            doc.set_indent(usize::try_from(indent).ok().filter(|n| *n > 0));
         }
     }
 

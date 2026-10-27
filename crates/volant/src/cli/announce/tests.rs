@@ -56,7 +56,21 @@ fn the_loader_lines_name_the_stdout_callback(
 #[test]
 fn a_stdout_callback_this_engine_does_not_have_ends_the_run_with_status_1() {
     let mut config = Config::default();
-    config.callbacks.stdout = Some("json".into());
+    config.callbacks.stdout = Some("community.general.unixy".into());
     let mut out = Renderer::with_writer(Box::new(std::io::sink()), false, 79, 0);
     assert_eq!(load_callbacks(&config, &Plays::Files, &mut out), Err(1));
+}
+
+/// `json_indent` reaches the `json` callback's document.
+#[test]
+fn the_json_callback_takes_its_indent_from_the_configuration() {
+    let mut config = Config::default();
+    config.callbacks.stdout = Some("json".into());
+    config.callbacks.json_indent = Some(0);
+    let buf = Arc::new(Mutex::new(Vec::new()));
+    let mut out = Renderer::with_writer(Box::new(Shared(buf.clone())), false, 79, 0);
+    assert_eq!(load_callbacks(&config, &Plays::Files, &mut out), Ok(()));
+    out.recap(&crate::stats::Stats::default(), None);
+    let text = String::from_utf8(buf.lock().unwrap().clone()).unwrap();
+    assert_eq!(text.lines().count(), 1, "{text}");
 }

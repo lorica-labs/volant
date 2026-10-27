@@ -6,11 +6,11 @@ use std::io::Write;
 use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style};
 
-use crate::stats::{CustomStats, Stats};
-
 mod callback;
 mod error;
+mod json_doc;
 mod oneline;
+mod recap;
 mod recap_json;
 mod result;
 mod shorten;
@@ -23,7 +23,6 @@ pub use error::{
     AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, block_text, cause,
     concat_message, lead, task_failed,
 };
-use recap_json::dumps_indented;
 pub(crate) use recap_json::{ansible_json, ansible_json_indented};
 pub use shorten::shorten;
 pub use shown::Shown;
@@ -68,6 +67,8 @@ pub struct Renderer {
     yaml: bool,
     /// `pretty_results`, `None` when it is not set.
     pretty: Option<bool>,
+    /// The `json` callback's document, when it is the stdout callback.
+    json: Option<Box<json_doc::JsonDoc>>,
     /// `-o`: the `oneline` callback prints the results, not `minimal`.
     oneline: bool,
     /// `-t`: the directory the `tree` callback writes one file per host in.
@@ -136,6 +137,7 @@ impl Renderer {
             minimal: None,
             yaml: false,
             pretty: None,
+            json: None,
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -172,6 +174,7 @@ impl Renderer {
             minimal: None,
             yaml: false,
             pretty: None,
+            json: None,
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -240,6 +243,7 @@ impl Renderer {
     /// The banner of `play`: its name, or no name at all for a play whose `hosts` rendered to
     /// `none`, which the reference prints without brackets.
     pub fn play_of(&mut self, play: &crate::playbook::Play) {
+        self.json_play(&play.name, play.origin.as_ref());
         if play.nameless {
             self.banner("PLAY");
         } else {
@@ -427,71 +431,6 @@ impl Renderer {
             return;
         }
         let _ = writeln!(self.out, "{}", self.paint(SKIPPED, "...ignoring"));
-    }
-
-    /// What `set_stats` collected, after the recap: each host that asked for `per_host`, sorted,
-    /// then the run's own after a blank line. Nothing at all when nothing was collected.
-    pub fn custom_stats(&mut self, stats: &CustomStats) {
-        if stats.is_empty() || self.minimal.is_some() {
-            return;
-        }
-        let dump = |map: &serde_json::Map<String, serde_json::Value>| {
-            dumps_indented(&serde_json::Value::Object(map.clone()), 0, 1).replace('\n', "")
-        };
-        self.banner("CUSTOM STATS:");
-        let run = stats.run();
-        for (host, data) in stats.hosts() {
-            let _ = writeln!(self.out, "	{host}: {}", dump(data));
-        }
-        if !run.is_empty() {
-            let _ = writeln!(self.out);
-            let _ = writeln!(self.out, "	RUN: {}", dump(run));
-        }
-        let _ = writeln!(self.out);
-    }
-
-    /// The `minimal` callback prints no recap.
-    pub fn recap(&mut self, stats: &Stats) {
-        if self.minimal.is_some() {
-            return;
-        }
-        self.banner("PLAY RECAP");
-        for (host, h) in stats.hosts() {
-            let host_style = if h.failed > 0 || h.unreachable > 0 {
-                FAILED
-            } else if h.changed > 0 {
-                CHANGED
-            } else {
-                OK
-            };
-            let name = if self.color {
-                let painted = self.paint(host_style, host);
-                let width = HOST_COLUMN + (painted.len() - host.len());
-                format!("{painted:<width$}")
-            } else {
-                format!("{host:<HOST_COLUMN$}")
-            };
-            let field = |lead: &str, n: u32, style: Style| {
-                let text = format!("{lead}={n:<4}");
-                if n > 0 {
-                    self.paint(style, &text)
-                } else {
-                    text
-                }
-            };
-            let _ = writeln!(
-                self.out,
-                "{name} : {} {} {} {} {} {} {}",
-                field("ok", h.ok, OK),
-                field("changed", h.changed, CHANGED),
-                field("unreachable", h.unreachable, UNREACHABLE),
-                field("failed", h.failed, FAILED),
-                field("skipped", h.skipped, SKIPPED),
-                field("rescued", h.rescued, OK),
-                field("ignored", h.ignored, SKIPPED),
-            );
-        }
-        let _ = writeln!(self.out);
     }
 }
 

@@ -1,0 +1,41 @@
+- name: Results of every kind
+  hosts: all
+  gather_facts: false
+  tasks:
+    - name: changed
+      command: echo chg
+      notify: done
+    - name: message
+      debug:
+        msg: héllo
+    - name: items
+      debug:
+        msg: "{{ item }}"
+      loop: [a, b]
+    - name: skipped
+      debug:
+        msg: never
+      when: false
+    - name: secret
+      command: echo secret
+      no_log: true
+    - name: stats
+      set_stats:
+        data:
+          n: 1
+    - name: failing
+      fail:
+        msg: boom
+      ignore_errors: true
+  handlers:
+    - name: done
+      debug:
+        msg: handled
+
+- name: A fatal failure
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: fatal
+      fail:
+        msg: boom

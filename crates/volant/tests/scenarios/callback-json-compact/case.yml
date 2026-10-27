@@ -1,0 +1,4 @@
+# A `json_indent` of zero or less writes the document on one line.
+needs: [ansible-core]
+env: {"ANSIBLE_STDOUT_CALLBACK": "json", "ANSIBLE_JSON_INDENT": "0"}
+args: [-i, inv.ini, results.yml]

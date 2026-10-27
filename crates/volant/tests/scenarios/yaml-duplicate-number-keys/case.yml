@@ -1,0 +1,4 @@
+# Keys equal by value are one key, as in a Python dict: `1`, `1.0` and `true` keep the first
+# spelling and the last value, and the warning names the key as Python prints it.
+stderr: true
+args: [-i, inv.ini, play.yml]

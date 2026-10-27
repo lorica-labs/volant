@@ -1,0 +1,86 @@
+# SPDX-License-Identifier: GPL-3.0-or-later
+"""The `galaxy` kind: every `galaxy/<name>/case.yml`, run by `ansible-galaxy` against the fake Galaxy
+server of galaxy_server.py, recorded in `expected.json` beside it.
+
+case.yml holds `args`, the argv after `ansible-galaxy`, where `<golden-server>` stands for the
+server's URL and `<golden-tmp>` for the run's scratch directory. The run's home is
+`<golden-tmp>/home`, so no cache or configuration outlives it, and no `ANSIBLE_*` setting of the
+caller is kept.
+
+`expected.json` holds the argv, the exit code, stdout, stderr, the requests the server saw in
+order, and every file left under the scratch directory outside the home, with the SHA-256 of its
+normalised text. Normalised means: the scratch directory reads `<golden-tmp>`, the server's port
+`<golden-port>`, ansible-galaxy's own download directory `<golden-galaxy-tmp>` with the random
+suffix of the file it downloads to `<golden-random>`, and a role's `install_date` `<golden-date>`.
+"""
+import hashlib
+import os
+import re
+
+import yaml
+
+from . import GOLDEN
+from .galaxy_server import Server
+from .redact import TMP
+from .run import Failed, run, scratch, write_json
+
+CASES = os.path.join(GOLDEN, "galaxy")
+SERVER = "<golden-server>"
+PORT = "<golden-port>"
+KEYS = {"args"}
+# `Downloading <url> to <path>`: the path is a temporary directory under the home, and the file in
+# it ends with a random suffix.
+GALAXY_TMP = re.compile(r"\S*/\.ansible/tmp/ansible-local-[^/\s]+/tmp[^/\s]+/(\S+?)-[a-z0-9_]{8}(?=\s|$)", re.M)
+INSTALL_DATE = re.compile(r"^install_date: '[^'\n]*'$", re.M)
+
+
+def normalise(text, tmp, port):
+    text = text.replace(tmp, TMP).replace(f"127.0.0.1:{port}", f"127.0.0.1:{PORT}")
+    text = GALAXY_TMP.sub(r"<golden-galaxy-tmp>/\1-<golden-random>", text)
+    return INSTALL_DATE.sub("install_date: '<golden-date>'", text)
+
+
+def tree(tmp, port):
+    """Every file under `tmp` outside the home, by path, with the SHA-256 of its normalised text."""
+    files = {}
+    for root, dirs, names in os.walk(tmp):
+        if root == tmp:
+            dirs[:] = [d for d in dirs if d != "home"]
+        dirs.sort()
+        for name in sorted(names):
+            path = os.path.join(root, name)
+            with open(path, "rb") as f:
+                data = f.read()
+            try:
+                data = normalise(data.decode("utf-8"), tmp, port).encode("utf-8")
+            except UnicodeDecodeError:
+                pass
+            files[os.path.relpath(path, tmp).replace(os.sep, "/")] = hashlib.sha256(data).hexdigest()
+    return files
+
+
+def record():
+    names = sorted(n for n in os.listdir(CASES) if os.path.isfile(os.path.join(CASES, n, "case.yml")))
+    if not names:
+        raise Failed(f"no galaxy case under {CASES}")
+    for name in names:
+        directory = os.path.join(CASES, name)
+        with open(os.path.join(directory, "case.yml"), encoding="utf-8") as f:
+            case = yaml.safe_load(f)
+        unknown = set(case) - KEYS
+        if unknown or not isinstance(case.get("args"), list):
+            raise Failed(f"galaxy case {name}: case.yml takes `args`, a list, and nothing else")
+        with scratch() as tmp, Server() as server:
+            home = os.path.join(tmp, "home")
+            os.makedirs(home)
+            url = f"http://127.0.0.1:{server.port}/"
+            argv = ["ansible-galaxy"] + [a.replace(SERVER, url).replace(TMP, tmp) for a in case["args"]]
+            done = run(argv, cwd=tmp, extra_env={"HOME": home}, forward=())
+            write_json(os.path.join(directory, "expected.json"), {
+                "args": case["args"],
+                "rc": done.returncode,
+                "stdout": normalise(done.stdout, tmp, server.port),
+                "stderr": normalise(done.stderr, tmp, server.port),
+                "requests": list(server.log),
+                "tree": tree(tmp, server.port),
+            })

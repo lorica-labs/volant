@@ -47,14 +47,23 @@ fn line(text: &str) {
     let _ = writeln!(out, "{style}{text}{style:#}");
 }
 
-/// `<address> ESTABLISH SSH CONNECTION FOR USER: <user>`, `None` when no user is set.
+/// `<address> ESTABLISH SSH CONNECTION FOR USER: <user>`, `None` when no user is set. A
+/// `paramiko_ssh` host gets that plugin's line, which names the port and the address too.
 pub(super) fn established(target: &SshTarget) {
     if enabled() {
-        line(&format!(
-            "<{}> ESTABLISH SSH CONNECTION FOR USER: {}",
-            target.address,
-            target.user.as_deref().unwrap_or("None")
-        ));
+        let user = target.user.as_deref().unwrap_or("None");
+        line(&if target.own.paramiko {
+            format!(
+                "<{0}> ESTABLISH PARAMIKO SSH CONNECTION FOR USER: {user} on PORT {1} TO {0}",
+                target.address,
+                target.port.unwrap_or(22)
+            )
+        } else {
+            format!(
+                "<{}> ESTABLISH SSH CONNECTION FOR USER: {user}",
+                target.address
+            )
+        });
     }
 }
 

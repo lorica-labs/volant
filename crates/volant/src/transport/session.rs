@@ -29,6 +29,9 @@ impl SshTarget {
         agents: &AgentSource,
         escalation: Option<&Escalation>,
     ) -> Result<AgentLink, ConnectError> {
+        if self.own.paramiko {
+            super::paramiko::warn_deprecated();
+        }
         let resolved = self.resolved().await;
         super::trace::established(&resolved);
         let mut link = resolved.open(agents, escalation).await?;

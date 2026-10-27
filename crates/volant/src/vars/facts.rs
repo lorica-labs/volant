@@ -22,8 +22,8 @@ const CONNECTION_PLUGINS: [&str; 6] = [
 /// The collections' connection plugins this engine drives. ansible-core strips the settings of
 /// its own plugins only; these are stripped too, because a host that named its own
 /// `ansible_docker_host`, user or environment would choose where its next task runs.
-const ENGINE_CONNECTION_PLUGINS: [&str; 7] = [
-    "docker", "podman", "chroot", "lxd", "incus", "kubectl", "aws_ssm",
+const ENGINE_CONNECTION_PLUGINS: [&str; 8] = [
+    "docker", "podman", "chroot", "lxd", "incus", "kubectl", "aws_ssm", "paramiko",
 ];
 
 /// ansible-core 2.19.12's `MAGIC_VARIABLE_MAPPING` values, which include every
@@ -92,7 +92,12 @@ const RESTRICTED_FACTS: [&str; 39] = [
 /// `ansible_sudo_*`, `ansible_su_*` and `ansible_su_prompt_l10n` are the escalation settings of
 /// one method, read like their `ansible_become_*` twins: a host must not name its own `exe`,
 /// `user` or password.
-const ENGINE_RESTRICTED_FACTS: [&str; 13] = [
+///
+/// `ansible_host_key_checking` and `ansible_ssh_host_key_checking` turn host key checking off
+/// for a `paramiko_ssh` host: a host must not vouch for its own key.
+const ENGINE_RESTRICTED_FACTS: [&str; 15] = [
+    "ansible_host_key_checking",
+    "ansible_ssh_host_key_checking",
     "ansible_remote_tmp",
     "ansible_executable",
     "ansible_package_use",
@@ -114,7 +119,7 @@ const ENGINE_RESTRICTED_FACTS: [&str; 13] = [
 /// engine's own result keys - except `ansible_ssh_host_key_*`, which `setup` reports and which
 /// it always keeps.
 pub(super) fn restricted_fact(key: &str) -> bool {
-    if key.starts_with("ansible_ssh_host_key_") {
+    if key.starts_with("ansible_ssh_host_key_") && key != "ansible_ssh_host_key_checking" {
         return false;
     }
     let plugin_setting = CONNECTION_PLUGINS

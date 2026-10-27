@@ -30,7 +30,10 @@ use super::shell::validate_remote_tmp;
 /// value that starts with `-` would be taken as one and the remote command as the host. A value with whitespace or a control character is no address
 /// either. ansible-core 2.19.12 passes the value on unchecked, so this is stricter than the
 /// reference on purpose. `user@host` and IPv6 literals pass.
-fn ssh_address(host_name: &str, ansible_host: Option<(&str, String)>) -> anyhow::Result<String> {
+pub(super) fn ssh_address(
+    host_name: &str,
+    ansible_host: Option<(&str, String)>,
+) -> anyhow::Result<String> {
     let (variable, address) = match ansible_host {
         Some(set) => set,
         None => ("inventory_hostname", host_name.to_string()),
@@ -140,7 +143,7 @@ impl Transport {
             "local" | "ansible.builtin.local" => Ok(Transport::Local),
             "ssh" | "ansible.builtin.ssh" => Ok(Transport::Ssh(SshTarget {
                 address: ssh_address(host_name, first_named(&names::HOST))?,
-                port: port_of(vars).or(keywords.port),
+                port: port_of(vars, &names::PORT).or(keywords.port),
                 user: first_text(&names::USER)
                     .or_else(|| keywords.user.clone())
                     .or_else(|| defaults.remote_user.clone()),
@@ -159,6 +162,7 @@ impl Transport {
                         .transpose()?,
                     executable: first_text(&names::EXECUTABLE)
                         .unwrap_or_else(|| SSH_PROGRAM.to_string()),
+                    paramiko: false,
                 }),
                 common_args: setting_args(
                     host_name,
@@ -173,22 +177,12 @@ impl Transport {
                     &defaults.ssh_extra_args,
                 )?,
                 host_key_checking: defaults.host_key_checking,
-                connect_timeout: timeout_of(host_name, vars)?.unwrap_or(defaults.connect_timeout),
+                connect_timeout: timeout_of(host_name, vars, &names::TIMEOUT)?.unwrap_or(defaults.connect_timeout),
                 remote_tmp: remote_tmp_of(host_name, vars, defaults)?,
                 control_path: None,
                 dumped: None,
-                use_tty: host_setting(vars, "ansible_ssh_use_tty").map_or(
-                    defaults.ssh_use_tty,
-                    |value| match value {
-                        Value::Bool(on) => *on,
-                        Value::Number(n) => n.as_f64().is_some_and(|f| f != 0.0),
-                        // The reference reads a word it does not know as false.
-                        Value::String(text) => {
-                            crate::yaml::bool_from_str(text.trim()).unwrap_or(false)
-                        }
-                        other => crate::template::truthy(other),
-                    },
-                ),
+                use_tty: host_setting(vars, "ansible_ssh_use_tty")
+                    .map_or(defaults.ssh_use_tty, super::docker::flag),
             })),
             super::docker::PLUGIN => Ok(Transport::Exec(super::docker::target(
                 host_name, vars, defaults, keywords,
@@ -205,6 +199,9 @@ impl Transport {
             super::kubectl::PLUGIN => Ok(Transport::Exec(super::kubectl::target(
                 host_name, vars, defaults,
             )?)),
+            plugin if super::paramiko::PLUGINS.contains(&plugin) => Ok(Transport::Ssh(
+                super::paramiko::target(host_name, vars, defaults, keywords)?,
+            )),
             super::ssm::PLUGIN => Ok(Transport::Ssm(Box::new(super::ssm::target(
                 host_name, vars, defaults,
             )?))),

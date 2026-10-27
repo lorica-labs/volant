@@ -29,22 +29,22 @@ class Failed(Exception):
     """A run that cannot be recorded, with the reason."""
 
 
-def environment(config=EMPTY_CONFIG, extra=None):
-    """This process's environment without any `ANSIBLE_*` but the collection paths, then the
-    reference's own settings and `extra`."""
-    env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_") or k in FORWARDED}
+def environment(config=EMPTY_CONFIG, extra=None, forward=FORWARDED):
+    """This process's environment without any `ANSIBLE_*` but those `forward` names, the collection
+    paths by default, then the reference's own settings and `extra`."""
+    env = {k: v for k, v in os.environ.items() if not k.startswith("ANSIBLE_") or k in forward}
     env.update(ANSIBLE_CONFIG=config, ANSIBLE_NOCOLOR="1", ANSIBLE_CALLBACK_PLUGINS=CALLBACKS)
     env.update(extra or {})
     return env
 
 
-def run(argv, cwd=None, config=EMPTY_CONFIG, extra_env=None, deadline=DEADLINE):
+def run(argv, cwd=None, config=EMPTY_CONFIG, extra_env=None, deadline=DEADLINE, forward=FORWARDED):
     """`argv` under `environment()`, its stdout and stderr captured. The whole process group is
     killed at the deadline: a module's children hold the same pipes."""
     process = subprocess.Popen(
         argv,
         cwd=cwd,
-        env=environment(config, extra_env),
+        env=environment(config, extra_env, forward),
         # Nobody answers a prompt: the debugger reads the end of input and stops the run.
         stdin=subprocess.DEVNULL,
         stdout=subprocess.PIPE,

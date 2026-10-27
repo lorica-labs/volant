@@ -953,6 +953,7 @@ fn the_published_host_variables_are_the_ones_this_module_reads() {
         include_str!("lxd.rs"),
         include_str!("kubectl.rs"),
         include_str!("ssm.rs"),
+        include_str!("paramiko.rs"),
         include_str!("escalation/mod.rs"),
         include_str!("escalation/probe.rs"),
         include_str!("escalation/su.rs"),
@@ -968,7 +969,12 @@ fn the_published_host_variables_are_the_ones_this_module_reads() {
         .split("\"ansible_")
         .skip(1)
         .filter_map(|rest| rest.split_once('"').map(|(name, _)| name))
-        .filter(|name| !name.is_empty() && name.chars().all(|c| c.is_ascii_lowercase() || c == '_'))
+        .filter(|name| {
+            !name.is_empty()
+                && name
+                    .chars()
+                    .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+        })
         .collect();
     read.sort_unstable();
     read.dedup();

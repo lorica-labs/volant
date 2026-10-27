@@ -30,7 +30,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | vars | 1 | 0 | 0 | 0 |
 | cache | 2 | 0 | 0 | 0 |
 | callback | 3 | 0 | 0 | 2 |
-| connection | 2 | 0 | 0 | 4 |
+| connection | 4 | 0 | 0 | 2 |
 | collection module | 5903 | 0 | 0 | 3540 |
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
@@ -634,9 +634,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 
 | Name | Status | Note |
 |---|---|---|
-| `_paramiko_ssh` | <span class="kw kw-no">later</span> | another connection |
+| `_paramiko_ssh` | <span class="kw kw-runs">runs</span> | maps to the ssh transport; deprecated in ansible-core 2.19.12 |
 | `local` | <span class="kw kw-runs">runs</span> |  |
-| `paramiko_ssh` | <span class="kw kw-no">later</span> | another connection |
+| `paramiko_ssh` | <span class="kw kw-runs">runs</span> | maps to the ssh transport; deprecated in ansible-core 2.19.12 |
 | `psrp` | <span class="kw kw-no">later</span> | Windows |
 | `ssh` | <span class="kw kw-runs">runs</span> |  |
 | `winrm` | <span class="kw kw-no">later</span> | Windows |

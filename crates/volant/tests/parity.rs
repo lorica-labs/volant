@@ -155,8 +155,6 @@ const LATER: &[(&str, &str, &str)] = &[
     ("become", "runas", "Windows"),
     ("connection", "psrp", "Windows"),
     ("connection", "winrm", "Windows"),
-    ("connection", "_paramiko_ssh", "another connection"),
-    ("connection", "paramiko_ssh", "another connection"),
     ("shell", "cmd", "Windows"),
     ("shell", "powershell", "Windows"),
 ];
@@ -452,6 +450,10 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
                 ("strategy", "debug", Status::Runs) => {
                     (Status::Runs, keywords::DEBUGGER_NOTE.to_string())
                 }
+                ("connection", "paramiko_ssh" | "_paramiko_ssh", Status::Runs) => (
+                    Status::Runs,
+                    "maps to the ssh transport; deprecated in ansible-core 2.19.12".to_string(),
+                ),
                 _ => (s, note),
             };
             rows.push(row(category, &n, s, &note));

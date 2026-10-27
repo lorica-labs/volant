@@ -1325,3 +1325,18 @@ fn a_quoted_scalar_continued_left_of_its_parent_loads() {
         ),
     ]);
 }
+
+/// Keys equal by value are one key, as in a Python dict: the first spelling stays and the last
+/// value wins, measured on ansible-core 2.19.12.
+#[test]
+fn keys_equal_by_value_are_one_key() {
+    assert_loads_as(&[
+        ("1: one\ntrue: t\n", json!({"1": "t"})),
+        ("true: t\n1: one\n", json!({"true": "one"})),
+        (
+            "0: z\nfalse: f\n0.0: zz\n1.0: o\n",
+            json!({"0": "zz", "1.0": "o"}),
+        ),
+        ("\"1\": s\n1: n\n", json!({"1": "n"})),
+    ]);
+}

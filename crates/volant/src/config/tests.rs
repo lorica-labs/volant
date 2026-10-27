@@ -905,17 +905,58 @@ fn a_container_setting_that_does_not_read_is_refused(#[case] text: &str) {
     );
 }
 
+/// `paramiko_ssh` reads its own section, `[ssh_connection] timeout` and `[defaults] remote_port`,
+/// its own section beating the other two whatever their order in the file.
+#[test]
+fn the_paramiko_connection_reads_its_section() {
+    let config = cfg(
+        "[paramiko_connection]\nremote_user = ops\nremote_port = 2222\nprivate_key_file = /k\n\
+         host_key_checking = no\nhost_key_auto_add = yes\nrecord_host_keys = no\n\
+         look_for_keys = no\nuse_rsa_sha2_algorithms = no\nproxy_command = nc %h %p\npty = no\n\
+         timeout = 4\nbanner_timeout = 1.5\n\
+         [ssh_connection]\ntimeout = 9\n[defaults]\nremote_port = 2300\n",
+        ".",
+    );
+    let paramiko = &config.plugins.paramiko;
+    assert_eq!(
+        *paramiko,
+        crate::transport::ParamikoSettings {
+            remote_user: Some("ops".into()),
+            port: Some(2222),
+            defaults_port: Some(2300),
+            private_key_file: Some(PathBuf::from("/k")),
+            host_key_checking: Some(false),
+            host_key_auto_add: Some(true),
+            record_host_keys: Some(false),
+            look_for_keys: Some(false),
+            use_rsa_sha2_algorithms: Some(false),
+            proxy_command: Some("nc %h %p".into()),
+            pty: Some(false),
+            timeout: Some(Duration::from_secs(4)),
+            ssh_timeout: Some(Duration::from_secs(9)),
+        }
+    );
+}
+
+#[rstest::rstest]
+#[case("[paramiko_connection]\npty = maybe\n")]
+#[case("[paramiko_connection]\nremote_port = 70000\n")]
+#[case("[paramiko_connection]\nbanner_timeout = soon\n")]
+#[case("[defaults]\nremote_port = x\n")]
+fn a_paramiko_setting_that_does_not_read_is_refused(#[case] text: &str) {
+    assert!(
+        parse(text, Path::new("."), "ansible.cfg").is_err(),
+        "{text}"
+    );
+}
+
 /// The four callback settings of `[defaults]`, the list split on commas and the directories made
 /// absolute against the file's own.
 #[test]
 fn the_callback_settings_are_read_from_defaults() {
     let config = cfg(
-        "[defaults]
-stdout_callback = minimal
-callbacks_enabled = timer, profile_tasks,
-         callback_plugins = plugins:/opt/cb
-bin_ansible_callbacks = True
-",
+        "[defaults]\nstdout_callback = minimal\ncallbacks_enabled = timer, profile_tasks,\n\
+         callback_plugins = plugins:/opt/cb\nbin_ansible_callbacks = True\n",
         "/etc/x",
     );
     let callbacks = &config.callbacks;
@@ -925,14 +966,10 @@ bin_ansible_callbacks = True
     assert_eq!(callbacks.plugin_dirs.len(), 2);
     assert!(callbacks.plugin_dirs[0].ends_with("etc/x/plugins"));
     assert!(callbacks.plugin_dirs[1].ends_with("opt/cb"));
-    assert!(
-        parse(
-            "[defaults]
-bin_ansible_callbacks = maybe
-",
-            Path::new("."),
-            "ansible.cfg"
-        )
-        .is_err()
+    let refused = parse(
+        "[defaults]\nbin_ansible_callbacks = maybe\n",
+        Path::new("."),
+        "ansible.cfg",
     );
+    assert!(refused.is_err());
 }

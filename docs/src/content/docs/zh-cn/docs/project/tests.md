@@ -1,12 +1,12 @@
 ---
-sourceHash: 16609510f0ba
+sourceHash: fe803f5b1803
 title: 测试
 description: Volant 如何对照 ansible-core 进行检查，各种已记录的应答，以及如何添加场景。
 ---
 
 Volant 的行为必须与 ansible-core 2.19.12 一致。因此，测试套件的大部分是一种对比：ansible-core 运行过一次某个东西，它的应答被记录在仓库中，测试则用同样的输入运行 Volant 并进行比较。
 
-## 五种记录
+## 记录的种类
 
 每种记录都有一个名字，`just golden <kind>` 会重新生成它。
 
@@ -17,9 +17,12 @@ Volant 的行为必须与 ansible-core 2.19.12 一致。因此，测试套件的
 | `scenario` | 一次 playbook 运行：退出码和完整的标准输出 | 每个 job，通过 `reference.rs` |
 | `shadow` | 选定场景经由 `volant.compat.record` 回调的一次运行，压缩保存在 `crates/volant/tests/golden/shadow` 中；同时会在回调支持的每个 ansible-core 版本下检查回调自带的示例（`just compat-matrix`） | 每个 job，由 `shadow_golden.rs` 重放每份记录，要求没有差异 |
 | `module` | 每个原生模块在真实机器上的应答 | `ssh` job 和 `just test-reference`，通过 `reference_modules.rs` |
+| `galaxy` | 针对假 Galaxy 服务器（`golden/reference/galaxy_server.py`）运行的一条 `ansible-galaxy` 命令：退出码、标准输出和标准错误、服务器收到的请求，以及留下的文件及其 SHA-256，保存在 `crates/volant/tests/golden/galaxy/<case>/expected.json` | 每个 job，由 `galaxy_golden.rs` 运行，服务器需要 Python 3 |
 | `command-names` | `tests/command-names` 中脚本的输出，这些脚本调用 `ansible`、`ansible-playbook`、`ansible-vault`、`ansible-inventory`、`ansible-doc`、`ansible-config`、`ansible-galaxy`、`ansible-pull` 和 `ansible-console` | `command-names` job |
 
 记录中没有任何内容是手工编辑的。修改输入，在安装了 ansible-core 2.19.12 的情况下运行 `just golden <kind>`，然后阅读 diff。在未改动的树上运行它，文件会与原来完全一样。`module` 类别还需要 `sudo`、systemd、apt 和 cron，因为它会在机器上创建一个账户和一个 unit。
+
+`galaxy` 用例是一个包含 `args` 的 `case.yml`，`args` 是 `ansible-galaxy` 之后的参数，其中 `<golden-server>` 代表服务器的 URL，`<golden-tmp>` 代表本次运行的临时目录。服务器自己构建集合和角色，时间和所有者都是固定的，因此同一个归档在任何地方的 SHA-256 都相同。记录中临时目录写作 `<golden-tmp>`，端口写作 `<golden-port>`。在 `volant galaxy` 成为原生实现之前，`galaxy_golden.rs` 只把每条记录的请求对服务器重放一遍。
 
 ## command-names job
 

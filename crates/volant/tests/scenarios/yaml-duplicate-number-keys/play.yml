@@ -1,0 +1,5 @@
+- hosts: localhost
+  gather_facts: false
+  vars_files: [keys.yml]
+  tasks:
+    - debug: msg="{{ [a, b, c, e] }}"

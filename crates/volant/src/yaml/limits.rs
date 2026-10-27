@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use saphyr_parser::{Event, Marker, Parser, ScanError, SpannedEventReceiver};
+use saphyr_parser::{Event, Marker, Parser, ScalarStyle, ScanError, SpannedEventReceiver};
 
 /// What PyYAML says of a stream that holds a second document.
 pub(super) const SECOND_DOCUMENT: &str =
@@ -215,6 +215,27 @@ pub(super) fn take_duplicates() -> Vec<Duplicate> {
     DUPLICATES.with(|d| std::mem::take(&mut *d.borrow_mut()))
 }
 
+/// A mapping key as PyYAML's constructor compares it, and as its warning names it (Python's
+/// `repr`). A plain scalar that reads as a number or a boolean is that number, so `1`, `1.0` and
+/// `true` are one key, measured on ansible-core 2.19.12: `Found duplicate mapping key True.`
+fn key_identity(text: &str, plain: bool) -> (String, String) {
+    let resolved = if plain {
+        super::scalar::plain(std::borrow::Cow::Borrowed(text)).ok()
+    } else {
+        None
+    };
+    match resolved.as_ref().and_then(super::walk::key_number) {
+        Some(number) => (
+            format!("#{number}"),
+            super::walk::key_repr(resolved.as_ref()),
+        ),
+        None if matches!(resolved, Some(saphyr::Yaml::Value(saphyr::Scalar::Null))) => {
+            ("~".to_string(), "None".to_string())
+        }
+        None => (format!("'{text}"), super::scalar::py_repr(text)),
+    }
+}
+
 /// The scalar keys of every open mapping, to find one written twice as PyYAML's constructor
 /// does: the same text as a key of the same mapping, a merge key `<<` aside.
 #[derive(Default)]
@@ -227,11 +248,12 @@ struct Keys {
 impl Keys {
     fn see(&mut self, event: &Event<'_>, at: Marker) {
         match event {
-            Event::Scalar(text, ..) => {
+            Event::Scalar(text, style, _, tag) => {
                 if let Some(Some((keys, done))) = self.open.last_mut() {
-                    if *done % 2 == 0 && text.as_ref() != "<<" && !keys.insert(text.to_string()) {
-                        self.duplicates
-                            .push((text.to_string(), at.line(), at.col() + 1));
+                    let plain = *style == ScalarStyle::Plain && tag.is_none();
+                    let (same, shown) = key_identity(text, plain);
+                    if *done % 2 == 0 && text.as_ref() != "<<" && !keys.insert(same) {
+                        self.duplicates.push((shown, at.line(), at.col() + 1));
                     }
                     *done += 1;
                 }

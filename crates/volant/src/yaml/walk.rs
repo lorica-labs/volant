@@ -75,7 +75,11 @@ pub(super) fn lower(root: MarkedYaml<'_>, strict: bool) -> anyhow::Result<Yaml<'
                 YamlData::Mapping(map) if map.iter().all(|(k, v)| is_leaf(k) && is_leaf(v)) => {
                     let mut out = Mapping::new();
                     for (k, v) in map {
-                        out.insert(key_of(lower_scalar(k)?, strict)?, lower_scalar(v)?);
+                        insert(
+                            &mut out,
+                            key_of(lower_scalar(k)?, strict)?,
+                            lower_scalar(v)?,
+                        );
                     }
                     done = Some(Yaml::Mapping(out));
                 }
@@ -108,7 +112,7 @@ pub(super) fn lower(root: MarkedYaml<'_>, strict: bool) -> anyhow::Result<Yaml<'
                     if value.is_some() {
                         *key = Some(key_of(child, strict)?);
                     } else if let Some(key) = key.take() {
-                        out.insert(key, child);
+                        insert(out, key, child);
                     }
                 }
                 Some(Lowering::Tagged(_)) => {
@@ -144,6 +148,51 @@ pub(super) fn lower(root: MarkedYaml<'_>, strict: bool) -> anyhow::Result<Yaml<'
         if done.is_some() {
             open.pop();
         }
+    }
+}
+
+/// `key: value` into `out` as a Python dict takes it: a key equal by value to one already there
+/// (`1`, `1.0` and `true` are one key) keeps the first key's spelling and takes the last value.
+/// Measured on ansible-core 2.19.12: `{1: one, true: t}` is `{"1": "t"}`.
+fn insert<'a>(out: &mut Mapping<'a>, key: Yaml<'a>, value: Yaml<'a>) {
+    let same =
+        key_number(&key).and_then(|n| out.keys().find(|k| key_number(k).as_ref() == Some(&n)));
+    match same.cloned().and_then(|first| out.get_mut(&first)) {
+        Some(kept) => *kept = value,
+        None => {
+            out.insert(key, value);
+        }
+    }
+}
+
+/// The number a key is to Python's equality, when it is one: a boolean is 0 or 1, and a float
+/// with no fraction is the integer it equals. Held as text so that a key compares exactly.
+pub(super) fn key_number(key: &Yaml<'_>) -> Option<String> {
+    match key {
+        Yaml::Value(Scalar::Integer(i)) => Some(i.to_string()),
+        Yaml::Value(Scalar::Boolean(b)) => Some(u8::from(*b).to_string()),
+        Yaml::Value(Scalar::FloatingPoint(f)) => {
+            let f = f.into_inner();
+            Some(if f.fract() == 0.0 && f.abs() < 9.0e15 {
+                format!("{f:.0}")
+            } else {
+                format!("{f:?}")
+            })
+        }
+        _ => None,
+    }
+}
+
+/// A resolved key as Python's `repr` names it in a warning: `True`, `1`, `0.0`.
+pub(super) fn key_repr(key: Option<&Yaml<'_>>) -> String {
+    match key {
+        Some(Yaml::Value(Scalar::Boolean(true))) => "True".to_string(),
+        Some(Yaml::Value(Scalar::Boolean(false))) => "False".to_string(),
+        Some(Yaml::Value(Scalar::Integer(i))) => i.to_string(),
+        Some(Yaml::Value(scalar @ Scalar::FloatingPoint(_))) => {
+            crate::playbook::python_repr(&scalar_json(scalar, false))
+        }
+        _ => "None".to_string(),
     }
 }
 

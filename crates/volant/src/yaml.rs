@@ -13,6 +13,7 @@ use serde_json::Value;
 
 mod limits;
 mod merge;
+mod quoted;
 mod walk;
 
 use walk::{lower, mapping_addresses, mapping_starts};
@@ -56,9 +57,16 @@ fn marked<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<MarkedYaml<'a>>
     loader.early_parse(false);
     loader.allow_duplicate_keys(true);
     limits::take_duplicates();
-    merge::parse(text, source, &mut loader)
-        .and_then(|()| loader.error().cloned().map_or(Ok(()), |e| Err(e.into())))
-        .with_context(|| format!("{source}: invalid YAML"))?;
+    let parsed = merge::parse(text, source, &mut loader)
+        .and_then(|()| loader.error().cloned().map_or(Ok(()), |e| Err(e.into())));
+    // A quoted scalar PyYAML reads and saphyr refuses for its indentation: see `quoted`. The
+    // reindented text is kept for the run, as the values read from it borrow it.
+    if let Err(err) = &parsed
+        && let Some(fixed) = quoted::reindented(text, err)
+    {
+        return marked(Box::leak(fixed.into_boxed_str()), source);
+    }
+    parsed.with_context(|| format!("{source}: invalid YAML"))?;
     duplicate_keys(source)?;
     Ok(loader.into_documents())
 }

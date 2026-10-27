@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  vars_files: [keys.yml]
+  tasks:
+    - debug: var=d
+    - debug: var=b
+    - debug:
+        msg: "{{ [d[1], d[0], d[none], d[2.5], d.x, b[true], b[false], b[1 == 1], b[1], b[0], d[true], d[false], d[1.0]] }}"
+    - debug: msg="{{ d[3] | default('undef') }} {{ b[none] | default('undef') }}"
+    - set_fact: {e: "{{ b }}"}
+    - debug: msg="{{ e[true] }} {{ e[false] }}"

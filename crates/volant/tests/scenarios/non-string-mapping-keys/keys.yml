@@ -1,0 +1,9 @@
+d:
+  1: one
+  0: zero
+  ~: n
+  2.5: f25
+  x: s
+b:
+  true: t
+  false: f

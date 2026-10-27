@@ -310,15 +310,31 @@ fn scalar_array(items: &[Yaml<'_>]) -> Value {
     Value::Array(scalars.collect())
 }
 
+/// A mapping key as a JSON object holds it: a string as written, and a number, a boolean or null
+/// as the reference shows it, measured on ansible-core 2.19.12: `1:` is `"1"`, `2.5:` is
+/// `"2.5"`, `true:` is `"true"` and `~:` is `"None"`. `template::keys` finds them by value.
+fn key_text(key: &Yaml<'_>) -> anyhow::Result<String> {
+    Ok(match key {
+        Yaml::Value(Scalar::Integer(i)) => i.to_string(),
+        Yaml::Value(Scalar::FloatingPoint(f)) => {
+            crate::playbook::python_repr(&scalar_json(&Scalar::FloatingPoint(*f), false))
+        }
+        Yaml::Value(Scalar::Boolean(b)) => b.to_string(),
+        Yaml::Value(Scalar::Null) => "None".to_string(),
+        other => other
+            .as_str()
+            .ok_or_else(|| anyhow!("mapping keys must be strings"))?
+            .to_string(),
+    })
+}
+
 /// A mapping of scalars as JSON.
 fn scalar_object(map: &Mapping<'_>) -> anyhow::Result<Value> {
     let mut out = Map::new();
     for (k, v) in map {
-        let key = k
-            .as_str()
-            .ok_or_else(|| anyhow!("mapping keys must be strings"))?;
+        let key = key_text(k)?;
         if let Yaml::Value(scalar) = v {
-            out.insert(key.to_string(), scalar_json(scalar, false));
+            out.insert(key, scalar_json(scalar, false));
         }
     }
     Ok(Value::Object(out))
@@ -421,11 +437,7 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
             },
             Some(Converting::Object { entries, key, out }) => match entries.next() {
                 Some((k, v)) => {
-                    *key = Some(
-                        k.as_str()
-                            .ok_or_else(|| anyhow!("mapping keys must be strings"))?
-                            .to_string(),
-                    );
+                    *key = Some(key_text(k)?);
                     next = Some(v);
                 }
                 None => done = Some(Value::Object(std::mem::take(out))),

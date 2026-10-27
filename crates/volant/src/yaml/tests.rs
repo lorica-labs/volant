@@ -1290,3 +1290,37 @@ fn origins_survive_a_merge_key() {
 fn template_literals_keep_their_escapes(#[case] text: &str, #[case] want: &str) {
     assert_eq!(walk::literal_escapes(text), want);
 }
+
+/// A mapping key YAML reads as a number, a boolean or null is held as the text the reference
+/// shows for it, measured on ansible-core 2.19.12 with `debug: var=d`.
+#[test]
+fn a_key_that_is_not_a_string_is_held_as_its_text() {
+    assert_loads_as(&[
+        (
+            "1: a
+",
+            json!({"1": "a"}),
+        ),
+        (
+            "2.5: a
+",
+            json!({"2.5": "a"}),
+        ),
+        (
+            "true: a
+false: b
+",
+            json!({"true": "a", "false": "b"}),
+        ),
+        (
+            "~: a
+",
+            json!({"None": "a"}),
+        ),
+        (
+            "m: {1: [x], 0: y}
+",
+            json!({"m": {"1": ["x"], "0": "y"}}),
+        ),
+    ]);
+}

@@ -1,0 +1,3 @@
+# A mapping key YAML reads as a number, a boolean or null loads, shows as the reference shows it,
+# and a template finds its entry by that value: `d[1]`, `d[true]`, `d[none]`.
+args: [-i, inv.ini, play.yml]

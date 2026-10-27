@@ -23,9 +23,11 @@ pub mod resolve;
 mod resolve_tests;
 #[cfg(test)]
 mod tests;
+// `allow`, not `expect`: its only caller is the resolver, which older compilers count as a use
+// although nothing calls the resolver yet.
 #[cfg_attr(
     not(test),
-    expect(
+    allow(
         dead_code,
         reason = "the install from a Galaxy server is its first caller"
     )

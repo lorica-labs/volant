@@ -19,7 +19,7 @@ Volant is in pre-alpha. The [Volant roadmap board](https://github.com/orgs/loric
 | [v0.1.0-alpha.18](https://github.com/lorica-labs/volant/milestone/6) | A Windows controller: `volant.exe` |
 | [v0.1.0-alpha.19](https://github.com/lorica-labs/volant/milestone/7) | Windows hosts: winrm, psrp, runas and the PowerShell modules |
 
-[Parity gaps](https://github.com/lorica-labs/volant/milestone/12) lists the differences from ansible-core found so far. They are not tied to a release, and any of them can be fixed at any time.
+[Parity gaps](https://github.com/lorica-labs/volant/milestone/12) lists the differences from ansible-core found so far. They are not tied to a release, and any of them can be fixed at any time. [Parity gaps, third pass](https://github.com/lorica-labs/volant/milestone/14) holds the ones measured in October 2026: a playbook that gives another result, exit code or output under Volant.
 
 ## Taking an issue
 

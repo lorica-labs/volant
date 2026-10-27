@@ -1,5 +1,5 @@
 ---
-sourceHash: 12e3021ea96d
+sourceHash: 0f7f2af12690
 title: Roadmap
 description: Woran Volant arbeitet, Release für Release, und wo Sie einsteigen können.
 ---
@@ -20,7 +20,7 @@ Volant ist in der Pre-Alpha-Phase. Das [Volant-Roadmap-Board](https://github.com
 | [v0.1.0-alpha.18](https://github.com/lorica-labs/volant/milestone/6) | Ein Windows-Controller: `volant.exe` |
 | [v0.1.0-alpha.19](https://github.com/lorica-labs/volant/milestone/7) | Windows-Hosts: winrm, psrp, runas und die PowerShell-Module |
 
-[Paritätslücken](https://github.com/lorica-labs/volant/milestone/12) listet die bisher gefundenen Unterschiede zu ansible-core auf. Sie sind an kein Release gebunden, und jede kann jederzeit behoben werden.
+[Paritätslücken](https://github.com/lorica-labs/volant/milestone/12) listet die bisher gefundenen Unterschiede zu ansible-core auf. Sie sind an kein Release gebunden, und jede kann jederzeit behoben werden. [Paritätslücken, dritter Durchgang](https://github.com/lorica-labs/volant/milestone/14) sammelt die im Oktober 2026 gemessenen: ein Playbook, das unter Volant ein anderes Ergebnis, einen anderen Exit-Code oder eine andere Ausgabe liefert.
 
 ## Ein Issue übernehmen
 

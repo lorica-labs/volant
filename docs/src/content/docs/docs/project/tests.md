@@ -21,7 +21,7 @@ Each kind of recording has a name, and `just golden <kind>` regenerates it.
 
 Nothing in a recording is edited by hand. Change the input, run `just golden <kind>` with ansible-core 2.19.12 installed, and read the diff. Running it on an unchanged tree leaves the files exactly as they were. The `module` kind also needs `sudo`, systemd, apt and cron, because it creates an account and a unit on the machine.
 
-A `galaxy` case is a `case.yml` holding `args`, the arguments after `ansible-galaxy`, where `<golden-server>` stands for the server's URL and `<golden-tmp>` for the scratch directory of the run. The server builds its collections and roles itself, with fixed times and owners, so an archive has the same SHA-256 everywhere. In a recording the scratch directory reads `<golden-tmp>` and the port `<golden-port>`. Until `volant galaxy` is native, `galaxy_golden.rs` only replays each recorded request against the server.
+A `galaxy` case is a `case.yml` holding `args`, the arguments after `ansible-galaxy`, where `<golden-server>` stands for the server's URL and `<golden-tmp>` for the scratch directory of the run. The server builds its collections and roles itself, with fixed times and owners, so an archive has the same SHA-256 everywhere. In a recording the scratch directory reads `<golden-tmp>` and the port `<golden-port>`. Every other file in the case's directory is copied into the scratch directory, where the command runs, so `-r requirements.yml` can name one. `galaxy_golden.rs` replays each recorded request against the server, and runs `volant galaxy` on every case whose subcommand is native.
 
 ## The command-names job
 

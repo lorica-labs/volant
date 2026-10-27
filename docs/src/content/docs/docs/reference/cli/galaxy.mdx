@@ -27,6 +27,10 @@ These come before any work, with the messages and exit codes of `ansible-galaxy`
 
 When no configured collections path lies under the `PATH` of `collection install -p PATH`, the command prints the warning of `ansible-galaxy` first: `[WARNING]: The specified collections path '<PATH>' is not part of the configured Ansible collections paths '<paths>'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.` The runtime's own `collections/` directory, which Volant adds last to the collections path, is left out of `<paths>`.
 
+## Requirements files
+
+`-r` reads the requirements file as `ansible-galaxy` does: `collections:` and `roles:` in one file, or the old bare list of roles, which only `role install` accepts. An `include:` entry brings the roles of another file, named from the working directory. When `-r` is given twice, the last one counts. When the file has no entry for the command, `collection install` and `role install` print `Skipping install, no requirements found` and exit 0. `-vvv` prints `Reading requirement file at '<path>'` first. A malformed file fails with the message of `ansible-galaxy`, exit 1: no entries, keys other than `collections` and `roles`, a role entry with neither `name` nor `src`, a collection name that is not `namespace.name` and points at nothing, or an unknown `type`.
+
 ## Refused subcommands
 
 A subcommand that is not native yet fails with `[ERROR]: volant galaxy <subcommand> is not supported yet`, exit 1. `collection publish` and `role delete`, `search`, `import`, `setup` and `info` need a Galaxy account or the server's role database, and stay refused: `[ERROR]: volant galaxy <subcommand> is not supported`, exit 1.

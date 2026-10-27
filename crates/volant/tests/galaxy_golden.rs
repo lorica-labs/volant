@@ -31,7 +31,7 @@ fn the_fake_server_answers_every_recorded_request() {
 
 /// `volant galaxy` against each case: the same exit code, output, requests and installed files.
 #[test]
-#[ignore = "volant galaxy still runs the managed runtime's ansible-galaxy"]
+#[ignore = "volant galaxy refuses collection install and role install until they are native"]
 fn a_galaxy_case_matches_the_reference() {
     for (name, case) in galaxy::cases() {
         let Some(server) = GalaxyServer::start() else {

@@ -9,6 +9,7 @@ mod adhoc_usage;
 mod announce;
 mod args;
 mod console;
+mod galaxy;
 mod hosts;
 mod inventory;
 mod passwords;
@@ -31,6 +32,7 @@ pub use adhoc::adhoc;
 pub use adhoc_usage::usage_error as adhoc_usage_error;
 pub use args::{AdhocArgs, BecomeArgs, ConnectionArgs, HostsArgs, PlaybookArgs, VaultSecretArgs};
 pub use console::{ConsoleArgs, console};
+pub use galaxy::{GalaxyArgs, galaxy};
 pub use inventory::{InventoryArgs, inventory};
 pub(crate) use plays::replay;
 pub use plays::run;
@@ -38,7 +40,7 @@ pub use program::{TOOLS, subcommand_for};
 pub use pull::{PullArgs, pull};
 pub use runtime::{RuntimeCommand, runtime};
 pub use shims::{ShimsCommand, shims};
-pub use tool::{ToolArgs, config, doc, galaxy};
+pub use tool::{ToolArgs, config, doc};
 pub use vault::{VaultArgs, vault};
 
 #[cfg(test)]

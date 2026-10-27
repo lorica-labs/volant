@@ -36,7 +36,7 @@ pub(super) fn home() -> Option<PathBuf> {
 
 /// `path` with a leading `~` or `~/` replaced by the home directory, anchored on `base` when it
 /// is still relative.
-pub(super) fn expand_home(path: &str, base: &Path) -> PathBuf {
+pub(crate) fn expand_home(path: &str, base: &Path) -> PathBuf {
     match (path.strip_prefix('~'), home()) {
         (Some(rest), Some(home)) if rest.is_empty() || rest.starts_with('/') => {
             home.join(rest.trim_start_matches('/'))

@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
 use volant::cli::{
-    AdhocArgs, ConsoleArgs, InventoryArgs, PlaybookArgs, PullArgs, RuntimeCommand, ShimsCommand,
-    ToolArgs, VaultArgs,
+    AdhocArgs, ConsoleArgs, GalaxyArgs, InventoryArgs, PlaybookArgs, PullArgs, RuntimeCommand,
+    ShimsCommand, ToolArgs, VaultArgs,
 };
 
 /// Fast engine for Ansible playbooks.
@@ -24,7 +24,7 @@ enum Command {
     /// Show and validate the configuration, with the arguments of ansible-config.
     Config(ToolArgs),
     /// Install and list roles and collections, with the arguments of ansible-galaxy.
-    Galaxy(ToolArgs),
+    Galaxy(Box<GalaxyArgs>),
     /// Run ad hoc commands in an interactive shell, with the arguments of ansible-console.
     Console(Box<ConsoleArgs>),
     /// Clone a repository and run its playbook, with the arguments of ansible-pull.
@@ -104,7 +104,7 @@ fn main() {
         Command::Adhoc(args) => volant::cli::adhoc(*args),
         Command::Doc(args) => volant::cli::doc(args),
         Command::Config(args) => volant::cli::config(args),
-        Command::Galaxy(args) => volant::cli::galaxy(args),
+        Command::Galaxy(args) => volant::cli::galaxy(*args),
         Command::Console(args) => volant::cli::console(*args),
         Command::Pull(args) => volant::cli::pull(*args),
         Command::Inventory(args) => volant::cli::inventory(args),

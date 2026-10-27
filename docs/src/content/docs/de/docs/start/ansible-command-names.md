@@ -1,5 +1,5 @@
 ---
-sourceHash: 98256eaf2ac7
+sourceHash: 8dc270cc846e
 title: Ansible-Befehlsnamen
 description: Welcher Volant-Befehl welches Programm von ansible-core ersetzt, was gleich ist, was abweicht und wie Sie Ihre Kommandozeilen behalten.
 ---
@@ -16,11 +16,11 @@ Volant führt die neun Programme von ansible-core 2.19.12 aus. Jedes ist ein Unt
 | `ansible-inventory` | [`volant inventory`](/de/docs/reference/cli/inventory/) | Volant | nicht nötig, außer für Inventory-Plugins von Collections |
 | `ansible-doc` | [`volant doc`](/de/docs/reference/cli/doc/) | dem eigenen Werkzeug von ansible-core | bei der ersten Verwendung installiert |
 | `ansible-config` | [`volant config`](/de/docs/reference/cli/config/) | dem eigenen Werkzeug von ansible-core | bei der ersten Verwendung installiert |
-| `ansible-galaxy` | [`volant galaxy`](/de/docs/reference/cli/galaxy/) | dem eigenen Werkzeug von ansible-core | bei der ersten Verwendung installiert |
+| `ansible-galaxy` | [`volant galaxy`](/de/docs/reference/cli/galaxy/) | Volant, im Entstehen: die Unterbefehle werden abgelehnt, bis sie nativ sind | nicht nötig |
 | `ansible-pull` | [`volant pull`](/de/docs/reference/cli/pull/) | Volant | für einen `git`-Checkout nicht nötig |
 | `ansible-console` | [`volant console`](/de/docs/reference/cli/console/) | Volant | für die nativen Module nicht nötig |
 
-Die verwaltete Runtime installiert sich beim ersten Mal selbst, wenn ein Befehl sie braucht, wie bei einem Playbook, und gibt dabei eine Zeile auf der Standardfehlerausgabe aus. [Die verwaltete Runtime](/de/docs/reference/runtime/) beschreibt sie. Sie müssen ansible nicht installieren, aber drei der neun Befehle führen den eigenen Code von ansible-core aus dieser Runtime aus.
+Die verwaltete Runtime installiert sich beim ersten Mal selbst, wenn ein Befehl sie braucht, wie bei einem Playbook, und gibt dabei eine Zeile auf der Standardfehlerausgabe aus. [Die verwaltete Runtime](/de/docs/reference/runtime/) beschreibt sie. Sie müssen ansible nicht installieren, aber zwei der neun Befehle führen den eigenen Code von ansible-core aus dieser Runtime aus.
 
 ## Ihre Kommandozeilen behalten
 
@@ -61,7 +61,8 @@ Bei `ansible`, `ansible-vault` und `ansible-inventory` wurden die Ausgabe, die a
 | `volant vault` liefert die Meldungen, Exit-Codes, Dateimodi und Dateien von ansible-vault | `crates/volant/tests/vault_cli.rs` und die Szenario-Goldens `vault-*` für die Vault-Daten, die ein Playbook liest |
 | Eine Datei, die das eine Werkzeug verschlüsselt, entschlüsselt das andere, für die Standard-ID und für ein Label | `a_file_one_tool_encrypts_the_other_decrypts` |
 | `volant inventory` gibt die JSON- und YAML-Bytes von ansible-inventory aus: Schlüsselreihenfolge, Einrückung von vier Leerzeichen, PyYAML-Anker | `crates/volant/tests/inventory_golden.rs` über `golden/inventories/cases.yml` und `inventory_cli.rs` |
-| `volant config` und `volant galaxy` geben aus, was das Werkzeug ausgibt | `crates/volant/tests/tools_cli.rs` |
+| `volant config` gibt aus, was das Werkzeug ausgibt | `crates/volant/tests/tools_cli.rs` |
+| `volant galaxy` nimmt die Optionen von ansible-galaxy an und macht dessen erste Prüfungen mit denselben Meldungen | `crates/volant/src/galaxy/tests.rs` und `galaxy_golden.rs` gegen einen falschen Galaxy-Server |
 | `volant pull` gibt den Playbook-Lauf und die Zeile von `-o` wie `ansible-pull` aus und checkt ohne Python aus | `a_pull_prints_what_the_reference_pull_prints` und `a_pull_checks_out_and_runs_without_python` in `console_pull.rs` |
 | `volant console` gibt auf einer Pipe für seine Befehle, Module und Shell-Zeilen aus, was `ansible-console` ausgibt, und braucht für native Module kein Python | `the_console_reads_its_commands_from_a_pipe` und `the_console_runs_without_python` in `console_pull.rs` |
 | Die Links, die `install` anlegt, die Zeilen, die es ausgibt, und was `remove` stehen lässt | `crates/volant/tests/shims.rs` |

@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! `volant config` and `volant galaxy` against the script's own `main()` under the same
-//! interpreter: the same bytes and exit code, with no network.
+//! `volant config` against the script's own `main()` under the same interpreter: the same bytes
+//! and exit code, with no network.
 #![cfg(unix)]
 
 #[path = "common/process.rs"]
@@ -8,7 +8,7 @@ mod process;
 #[path = "common/python.rs"]
 mod python;
 
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::{Command, Output};
 use std::time::Duration;
 
@@ -129,61 +129,6 @@ fn config_validate_reports_the_volant_section() {
     same_as_reference("config", FORKS, &["validate", "-c", "ansible.cfg"]);
 }
 
-#[test]
-fn galaxy_prints_what_ansible_galaxy_prints() {
-    same_as_reference("galaxy", &[], &["collection", "list"]);
-    same_as_reference("galaxy", &[], &["role", "init", "myrole"]);
-    same_as_reference("galaxy", &[], &["role", "list"]);
-    same_as_reference("galaxy", &[], &["--bogus"]);
-}
-
-/// A collection built here installs from its tarball into `-p` and is listed there.
-#[test]
-fn a_collection_installs_from_a_tarball_and_is_listed() {
-    let Some(interpreter) = python::reference_python() else {
-        return;
-    };
-    let dir = scratch(&[]);
-    let src: PathBuf = dir.path().join("demo");
-    std::fs::create_dir_all(src.join("plugins")).expect("source tree");
-    std::fs::write(
-        src.join("galaxy.yml"),
-        "namespace: acme\nname: demo\nversion: 1.0.0\nreadme: README.md\nauthors: [a]\n",
-    )
-    .expect("galaxy.yml");
-    std::fs::write(src.join("README.md"), "demo\n").expect("readme");
-    let built = ours(
-        &interpreter,
-        "galaxy",
-        dir.path(),
-        &["collection", "build", "demo"],
-    );
-    assert_eq!(built.status.code(), Some(0), "{built:?}");
-    let target = dir.path().join("out");
-    let target = target.to_str().expect("utf-8 path");
-    let install = ours(
-        &interpreter,
-        "galaxy",
-        dir.path(),
-        &[
-            "collection",
-            "install",
-            "acme-demo-1.0.0.tar.gz",
-            "-p",
-            target,
-        ],
-    );
-    assert_eq!(install.status.code(), Some(0), "{install:?}");
-    let listed = ours(
-        &interpreter,
-        "galaxy",
-        dir.path(),
-        &["collection", "list", "-p", target],
-    );
-    let out = String::from_utf8_lossy(&listed.stdout);
-    assert!(out.contains("acme.demo") && out.contains("1.0.0"), "{out}");
-}
-
 /// With no `ansible.cfg` setting in the way, the file's `forks` is the value shown, and it names
 /// the file.
 #[test]
@@ -253,28 +198,26 @@ fn the_runtime_collections_directory_shows_as_an_environment_setting() {
     assert_eq!(line, want);
 }
 
-/// Started through links named `ansible-config` and `ansible-galaxy`, the binary answers as the
-/// subcommand, and the usage error names the program.
+/// Started through a link named `ansible-config`, the binary answers as the subcommand, and the
+/// usage error names the program.
 #[test]
-fn the_program_names_run_the_tools() {
+fn the_program_name_runs_the_tool() {
     let Some(interpreter) = python::reference_python() else {
         return;
     };
     let links = tempfile::tempdir().expect("temp dir");
-    for (name, tool) in [("ansible-config", "config"), ("ansible-galaxy", "galaxy")] {
-        let link = links.path().join(name);
-        std::os::unix::fs::symlink(VOLANT, &link).expect("symlink");
-        let (a, b) = (scratch(&[]), scratch(&[]));
-        let theirs = reference(&interpreter, tool, a.path(), &[], &["--bogus"]);
-        let mine = started(
-            &interpreter,
-            link.to_str().expect("utf-8"),
-            None,
-            b.path(),
-            &[],
-            &["--bogus"],
-        );
-        assert_eq!(text(&mine, b.path()), text(&theirs, a.path()), "{name}");
-        assert!(text(&mine, b.path()).2.contains(name), "{name}");
-    }
+    let link = links.path().join("ansible-config");
+    std::os::unix::fs::symlink(VOLANT, &link).expect("symlink");
+    let (a, b) = (scratch(&[]), scratch(&[]));
+    let theirs = reference(&interpreter, "config", a.path(), &[], &["--bogus"]);
+    let mine = started(
+        &interpreter,
+        link.to_str().expect("utf-8"),
+        None,
+        b.path(),
+        &[],
+        &["--bogus"],
+    );
+    assert_eq!(text(&mine, b.path()), text(&theirs, a.path()));
+    assert!(text(&mine, b.path()).2.contains("ansible-config"));
 }

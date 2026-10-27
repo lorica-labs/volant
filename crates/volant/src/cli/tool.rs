@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The `doc`, `config` and `galaxy` commands: the ansible-core program of the same name,
+//! The `doc` and `config` commands: the ansible-core program of the same name,
 //! run from the managed runtime.
 
 use std::ffi::OsString;
@@ -28,12 +28,6 @@ pub fn doc(args: ToolArgs) -> i32 {
 #[must_use]
 pub fn config(args: ToolArgs) -> i32 {
     through("config", args)
-}
-
-/// Runs `ansible-galaxy` and returns its exit code.
-#[must_use]
-pub fn galaxy(args: ToolArgs) -> i32 {
-    through("galaxy", args)
 }
 
 /// clap drops a leading `--`, which the tools read as the end of their options, so the

@@ -68,24 +68,3 @@ DEFAULT_FORKS(env: ANSIBLE_FORKS) = 7
 
 GALAXY_SERVERS:
 rc=0
-$ ansible-galaxy role init --init-path roles myrole
-- Role myrole was created successfully
-rc=0
-roles
-roles/myrole
-roles/myrole/README.md
-roles/myrole/defaults
-roles/myrole/defaults/main.yml
-roles/myrole/files
-roles/myrole/handlers
-roles/myrole/handlers/main.yml
-roles/myrole/meta
-roles/myrole/meta/main.yml
-roles/myrole/tasks
-roles/myrole/tasks/main.yml
-roles/myrole/templates
-roles/myrole/tests
-roles/myrole/tests/inventory
-roles/myrole/tests/test.yml
-roles/myrole/vars
-roles/myrole/vars/main.yml

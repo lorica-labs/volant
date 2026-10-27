@@ -1,0 +1,4 @@
+# An enabled callback that does not load: a warning, and the run goes on.
+args: [-i, inv.ini, pb.yml]
+env: {"ANSIBLE_CALLBACKS_ENABLED": "nosuch, also_missing"}
+stderr: true

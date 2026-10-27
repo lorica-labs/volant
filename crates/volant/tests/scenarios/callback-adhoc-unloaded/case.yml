@@ -1,0 +1,5 @@
+# The ad hoc command keeps `minimal` while bin_ansible_callbacks is off.
+program: ansible
+args: [all, -i, inv.ini, -a, echo hi]
+env: {"ANSIBLE_STDOUT_CALLBACK": "oneline"}
+stderr: true

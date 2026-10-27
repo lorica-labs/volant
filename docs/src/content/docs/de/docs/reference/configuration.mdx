@@ -1,5 +1,5 @@
 ---
-sourceHash: 69b5b94dc1eb
+sourceHash: cfa2a2949ed3
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -96,6 +96,22 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
   Gibt die Statistiken, die `set_stats` gesammelt hat, nach dem Recap aus.
+</Option>
+
+<Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
+  Der Callback, der den Lauf ausgibt. `default` gibt die Banner, eine Zeile pro Ergebnis und das Recap aus. `minimal` gibt jedes Ergebnis so aus wie der Ad-hoc-Befehl, `host | CHANGED | rc=0 >>` und die Ausgabe bei einem Befehl, sonst `host | SUCCESS => ` und das Ergebnis als JSON, ohne Banner, ohne Recap und ohne Zeile pro Schleifenelement. `oneline` gibt dieselben Ergebnisse je auf einer Zeile aus; ansible-core 2.19.12 markiert ihn als veraltet, und Volant gibt die Warnung einmal auf der Standardfehlerausgabe aus. `tree` gibt auf der Standardausgabe nichts aus. Die Namen mit `ansible.builtin.` funktionieren auch. Jeder andere Name, etwa `json` und `yaml` aus den Collections, beendet den Lauf vor dem ersten Play mit `[ERROR]: Could not load '<name>' callback plugin.` und Exit-Code 1.
+</Option>
+
+<Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
+  Weitere Callbacks, die neben dem Stdout-Callback laufen, als kommagetrennte Liste. Volant führt noch keinen davon aus: jeder Name gibt `[WARNING]: Skipping callback plugin '<name>', unable to load` aus, und der Lauf geht weiter. `volant.compat.record`, das [die Läufe von ansible-playbook aufzeichnet](/docs/reference/recording/), wird ohne Warnung übersprungen.
+</Option>
+
+<Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">
+  Weitere Verzeichnisse, in denen Callback-Plugins gesucht werden, durch `:` getrennt. Volant liest die Einstellung, lädt aber nur seine eigenen Callbacks.
+</Option>
+
+<Option name="bin_ansible_callbacks" id="defaults-bin-ansible-callbacks" default="false" env="ANSIBLE_LOAD_CALLBACK_PLUGINS">
+  Ob der Ad-hoc-Befehl die Callbacks oben lädt. Ausgeschaltet gibt er über `minimal` aus, oder mit `-o` über `oneline`, was auch immer `stdout_callback` sagt. Siehe [den Ad-hoc-Befehl](/de/docs/reference/cli/adhoc/).
 </Option>
 
 <Option name="vault_password_file" id="defaults-vault-password-file" flag="--vault-password-file" env="ANSIBLE_VAULT_PASSWORD_FILE">

@@ -949,3 +949,27 @@ fn a_paramiko_setting_that_does_not_read_is_refused(#[case] text: &str) {
         "{text}"
     );
 }
+
+/// The four callback settings of `[defaults]`, the list split on commas and the directories made
+/// absolute against the file's own.
+#[test]
+fn the_callback_settings_are_read_from_defaults() {
+    let config = cfg(
+        "[defaults]\nstdout_callback = minimal\ncallbacks_enabled = timer, profile_tasks,\n\
+         callback_plugins = plugins:/opt/cb\nbin_ansible_callbacks = True\n",
+        "/etc/x",
+    );
+    let callbacks = &config.callbacks;
+    assert_eq!(callbacks.stdout.as_deref(), Some("minimal"));
+    assert_eq!(callbacks.enabled, ["timer", "profile_tasks"]);
+    assert!(callbacks.adhoc_loads);
+    assert_eq!(callbacks.plugin_dirs.len(), 2);
+    assert!(callbacks.plugin_dirs[0].ends_with("etc/x/plugins"));
+    assert!(callbacks.plugin_dirs[1].ends_with("opt/cb"));
+    let refused = parse(
+        "[defaults]\nbin_ansible_callbacks = maybe\n",
+        Path::new("."),
+        "ansible.cfg",
+    );
+    assert!(refused.is_err());
+}

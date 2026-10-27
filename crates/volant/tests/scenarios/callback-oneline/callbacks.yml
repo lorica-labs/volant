@@ -1,0 +1,56 @@
+- name: Results of every kind
+  hosts: all
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: ok
+      command: echo hi
+      changed_when: false
+    - name: changed
+      command: echo chg
+      notify: done
+    - name: skip
+      debug:
+        msg: never
+      when: false
+    - name: debug
+      debug:
+        msg: hello
+    - name: loop
+      debug:
+        msg: "{{ item }}"
+      loop: [a, b]
+    - name: secret
+      command: echo secret
+      no_log: true
+    - name: a line with a diff
+      lineinfile:
+        line: x
+        create: true
+        path: "{{ playbook_dir }}/out-{{ inventory_hostname }}.txt"
+    - name: retried
+      shell: "test -f flag-{{ inventory_hostname }} || { touch flag-{{ inventory_hostname }}; exit 1; }"
+      register: r
+      until: r.rc == 0
+      retries: 2
+      delay: 0
+    - name: async
+      command: echo later
+      async: 10
+      check_mode: false
+      poll: 1
+    - name: failing
+      command: "false"
+      ignore_errors: true
+  handlers:
+    - name: done
+      debug:
+        msg: handled
+
+- name: A fatal failure
+  hosts: h1
+  gather_facts: false
+  tasks:
+    - name: fatal
+      fail:
+        msg: boom

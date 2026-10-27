@@ -1,0 +1,5 @@
+# The ad hoc command uses the configured stdout callback once bin_ansible_callbacks is on.
+program: ansible
+args: [all, -i, inv.ini, -a, echo hi]
+env: {"ANSIBLE_STDOUT_CALLBACK": "oneline", "ANSIBLE_LOAD_CALLBACK_PLUGINS": "yes"}
+stderr: true

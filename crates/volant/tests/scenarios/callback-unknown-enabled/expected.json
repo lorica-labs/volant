@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "stderr": "[WARNING]: Skipping callback plugin 'nosuch', unable to load\n[WARNING]: Skipping callback plugin 'also_missing', unable to load\n",
+  "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [ok] **********************************************************************\nchanged: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"hello\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

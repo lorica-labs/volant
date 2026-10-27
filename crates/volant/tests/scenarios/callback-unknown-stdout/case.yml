@@ -1,0 +1,4 @@
+# A stdout callback that does not load: an error before the play, and exit status 1.
+args: [-i, inv.ini, pb.yml]
+env: {"ANSIBLE_STDOUT_CALLBACK": "nosuch"}
+stderr: true

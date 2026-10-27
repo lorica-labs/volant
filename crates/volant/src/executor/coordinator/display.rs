@@ -45,6 +45,7 @@ pub(super) fn header_for(
 /// The banner one step gets: a handler says so, measured - `RUNNING HANDLER [second handler]`
 /// where an ordinary task says `TASK [...]`.
 pub(super) fn header(step: &Step, name: &str, out: &mut Renderer) {
+    out.set_action(&step.task.module);
     match step.kind {
         StepKind::Handler(_) => out.handler(name),
         _ => out.task(name),
@@ -105,6 +106,19 @@ pub(super) fn arrived(event: Event, stats: &mut Stats) -> Event {
     event
 }
 
+/// A line a step printed as it ran. The lines under no banner are the `default` callback's own
+/// `NOTIFIED HANDLER` lines.
+fn display(line: &str, shade: Shade, banner: bool, out: &mut Renderer) {
+    if !banner && out.shows_every_result() {
+        return;
+    }
+    match shade {
+        Shade::Plain => out.display(line),
+        Shade::Debug => out.debug(line),
+        Shade::Verbose(level) => out.verbose(level, line),
+    }
+}
+
 /// Puts one result line in the recap and on the terminal. Anything but an `Event::Result` is
 /// ignored, so both event loops can hand it whatever they hold.
 pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
@@ -130,12 +144,14 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
         }
         return;
     }
-    if let Event::Display { line, shade, .. } = &event {
-        match shade {
-            Shade::Plain => out.display(line),
-            Shade::Debug => out.debug(line),
-            Shade::Verbose(level) => out.verbose(*level, line),
-        }
+    if let Event::Display {
+        line,
+        shade,
+        banner,
+        ..
+    } = &event
+    {
+        display(line, *shade, *banner, out);
         return;
     }
     if let Event::UnreachableIgnored {
@@ -181,7 +197,8 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
     if counts {
         stats.tally(&host, outcome, result.changed());
     }
-    if show {
+    // `minimal` and `oneline` print every result the task hands over, a loop's aggregate too.
+    if show || (label.is_none() && out.shows_every_result()) {
         if let Some(error) = &error {
             out.error(error);
         }

@@ -1,0 +1,3 @@
+# The stdout callback from ansible.cfg, its deprecation silenced there too.
+args: [-i, inv.ini, pb.yml]
+stderr: true

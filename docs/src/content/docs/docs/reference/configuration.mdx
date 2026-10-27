@@ -97,6 +97,22 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Print the statistics that `set_stats` collected after the recap.
 </Option>
 
+<Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
+  The callback that prints the run. `default` prints the banners, a line per result and the recap. `minimal` prints each result as the ad hoc command does, `host | CHANGED | rc=0 >>` and the output for a command, `host | SUCCESS => ` and the result as JSON otherwise, with no banner, no recap and no line per loop item. `oneline` prints the same results on one line each; ansible-core 2.19.12 deprecates it and Volant prints its warning once on standard error. `tree` prints nothing on standard output. The `ansible.builtin.` names work too. Any other name, such as the collections' `json` and `yaml`, stops the run before the first play with `[ERROR]: Could not load '<name>' callback plugin.` and exit code 1.
+</Option>
+
+<Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
+  More callbacks to run beside the stdout one, as a comma-separated list. Volant runs none of them yet: each name prints `[WARNING]: Skipping callback plugin '<name>', unable to load` and the run goes on. `volant.compat.record`, which [records ansible-playbook's runs](/docs/reference/recording/), is skipped without a warning.
+</Option>
+
+<Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">
+  More directories to look for callback plugins in, separated by `:`. Volant reads the setting but loads only its own callbacks.
+</Option>
+
+<Option name="bin_ansible_callbacks" id="defaults-bin-ansible-callbacks" default="false" env="ANSIBLE_LOAD_CALLBACK_PLUGINS">
+  Whether the ad hoc command loads the callbacks above. Off, it prints through `minimal`, or `oneline` with `-o`, whatever `stdout_callback` says. See [the ad hoc command](/docs/reference/cli/adhoc/).
+</Option>
+
 <Option name="vault_password_file" id="defaults-vault-password-file" flag="--vault-password-file" env="ANSIBLE_VAULT_PASSWORD_FILE">
   A file holding the vault password, or an executable that prints it. The environment variable replaces the file's value, and the command line adds to whichever won. See [Vault](/docs/variables/vault/).
 </Option>

@@ -208,8 +208,8 @@ impl Adhoc {
 
     /// The notices of the callbacks `-o` and `-t` load, which the reference prints when the run
     /// starts: after the warnings of the pattern, and for no run that ends before it.
-    fn deprecate_callbacks(&self) {
-        for (shown, name) in [(self.one_line, "oneline"), (self.tree.is_some(), "tree")] {
+    fn deprecate_callbacks(&self, out: &Renderer) {
+        for (shown, name) in [(out.is_oneline(), "oneline"), (self.tree.is_some(), "tree")] {
             if shown {
                 playbook::print_deprecation_line(&format!(
                     "The {name} callback plugin is deprecated. This feature will be removed from ansible-core version 2.23."
@@ -261,14 +261,14 @@ impl Adhoc {
         let reaches = |host: &Host| limit.is_none_or(|allowed| allowed.contains(&host.name));
         let empty = !found.hosts.iter().any(reaches);
         let runs = !empty && !self.list_hosts && !self.missing_args;
-        if runs && !self.one_line && self.tree.is_none() {
+        if runs && !out.is_oneline() && self.tree.is_none() {
             return Ok(None);
         }
         // Prints the warnings of the pattern, once: the run's own pass has not happened, and with
         // a callback to load the notices follow them.
         let hosts = play_hosts(inventory, play, limit, out, &mut HashSet::new(), false)?;
         if runs {
-            self.deprecate_callbacks();
+            self.deprecate_callbacks(out);
             return Ok(None);
         }
         let bare = inventory.resolve("all").hosts.is_empty();
@@ -296,7 +296,7 @@ impl Adhoc {
         if !bare {
             out.warning("No hosts matched, nothing to do", false);
         }
-        self.deprecate_callbacks();
+        self.deprecate_callbacks(out);
         Ok(Some(0))
     }
 

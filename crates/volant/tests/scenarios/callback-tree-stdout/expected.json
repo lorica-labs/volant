@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "stderr": "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n[DEPRECATION WARNING]: The tree callback plugin is deprecated. This feature will be removed from ansible-core version 2.23.\n",
+  "stdout": ""
+}

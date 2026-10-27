@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use anstream::ColorChoice;
 use tokio::sync::watch;
 
-use super::announce::{announce_callbacks, banner_before_vars_refusal, options_dump};
+use super::announce::{banner_before_vars_refusal, load_callbacks, options_dump};
 use super::args::PlaybookArgs;
 use super::hosts::{ListingHosts, play_hosts, rendered, resolve_limit, tag_selection};
 use super::passwords::{ask_passwords, ssh_words};
@@ -96,20 +96,9 @@ async fn run_all(
         Err(code) => return Ok(code),
     };
     let show_custom_stats = config.show_custom_stats;
-    // `-o` loads `oneline` instead of `minimal`, and the option is `minimal`'s.
-    if let Plays::Adhoc(adhoc) = plays
-        && !adhoc.callbacks().0
-        && let Err(code) = super::adhoc::result_format(&config, out)
-    {
+    if let Err(code) = load_callbacks(&config, plays, out) {
         return Ok(code);
     }
-    announce_callbacks(
-        out,
-        match plays {
-            Plays::Adhoc(adhoc) => Some(adhoc.callbacks()),
-            Plays::Files | Plays::Replay(_) => None,
-        },
-    );
     let dump = if out.verbose_at(4) {
         options_dump(args, &config, forks)
     } else {
@@ -609,7 +598,10 @@ async fn run_all(
     // so a `?` returning past the shutdown would pay that for every live link in series.
     let plays: anyhow::Result<()> = async {
         'plays: for ((pb, steps), file) in playbooks.iter().zip(&compiled).zip(&files) {
-            out.playbook(file, pb.plays.len(), &dump);
+            // The ad hoc command has no playbook to count.
+            if !matches!(plays, Plays::Adhoc(_)) {
+                out.playbook(file, pb.plays.len(), &dump);
+            }
             for (play, compiled) in pb.plays.iter().zip(steps) {
                 if *stop_rx.borrow() {
                     break 'plays;

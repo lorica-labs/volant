@@ -1,5 +1,5 @@
 ---
-sourceHash: 39eb8b50064e
+sourceHash: ab31fe4cc00b
 title: volant galaxy
 description: Les options d'ansible-galaxy, vérifiées par Volant lui-même, pendant que ses sous-commandes deviennent natives une par une.
 ---
@@ -51,6 +51,12 @@ Les URL d'archives, les répertoires d'espace de noms et les signatures sont ref
 ## Télécharger pour une installation hors ligne
 
 `collection download` résout les collections demandées avec leurs dépendances, comme `install`, et enregistre chaque archive dans le dossier que nomme `-p`, `./collections` par défaut. Il y écrit ensuite un `requirements.yml` qui liste les archives par nom de fichier, avec leurs versions. Sur une machine sans réseau, `volant galaxy collection install --offline -r requirements.yml` lancé depuis ce dossier les installe sans interroger aucun serveur. Les noms de fichiers sont lus depuis le répertoire de travail, comme les lit `ansible-galaxy`. `-n` laisse les dépendances de côté, et `-r` et `--pre` fonctionnent comme pour `install`. Avec `--offline`, un nom qu'aucune archive ne fournit, ou une dépendance qui n'est pas installée, échoue avec le message du résolveur.
+
+## Lister et vérifier les collections
+
+`collection list [NAME] [-p PATH]... [--format human|json|yaml]` affiche, pour chaque répertoire de `-p` et du chemin des collections qui contient des collections, un bloc `# <path>/ansible_collections` avec le nom et la version de chaque collection, la version étant `*` quand la collection n'a pas de `MANIFEST.json`. Les colonnes sont aussi larges que le plus long nom et la plus longue version, comme `ansible-galaxy` les complète. `--format json` affiche `{"<path>": {"<namespace>.<name>": {"version": "<version>"}}}` sur une ligne, et `--format yaml` la même chose en YAML. Un `-p` qui n'existe pas donne un avertissement ; quand aucun chemin n'est lisible, la commande échoue avec le code 5. `ansible-galaxy` liste aussi la collection qu'ansible-core garde dans son propre paquet Python, `ansible._protomatter` ; Volant, qui n'a pas ce paquet, ne la liste pas.
+
+`collection verify NAME... [-p PATH] [--offline]` vérifie chaque collection installée : `MANIFEST.json`, puis `FILES.json` contre l'empreinte que donne le manifeste, puis chaque fichier contre la sienne, puis l'arborescence à la recherche de fichiers et de répertoires que `FILES.json` ne liste pas, `*.pyc` exceptés. Chaque différence est listée sous `Collection <name> contains modified content in the following files:`, et la commande sort avec 1. Sans `--offline`, l'archive du serveur pour la même version est téléchargée et son `MANIFEST.json` fait référence ; avec, c'est celui qui est installé. Une collection non installée, ou sans `MANIFEST.json`, est une erreur ; `-i` change les erreurs en avertissements.
 
 ## Les serveurs Galaxy
 

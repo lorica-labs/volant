@@ -1,5 +1,5 @@
 ---
-sourceHash: 39eb8b50064e
+sourceHash: ab31fe4cc00b
 title: volant galaxy
 description: Las opciones de ansible-galaxy, comprobadas por el propio Volant, mientras sus subcomandos se vuelven nativos uno a uno.
 ---
@@ -51,6 +51,12 @@ Las URL de tarballs, los directorios de espacio de nombres y las firmas se recha
 ## Descargar para una instalación sin conexión
 
 `collection download` resuelve las colecciones pedidas con sus dependencias, como `install`, y guarda cada tarball en la carpeta que nombra `-p`, `./collections` por defecto. Después escribe allí un `requirements.yml` que lista los tarballs por nombre de archivo, con sus versiones. En una máquina sin red, `volant galaxy collection install --offline -r requirements.yml` ejecutado desde esa carpeta los instala sin consultar ningún servidor. Los nombres de archivo se leen desde el directorio de trabajo, como los lee `ansible-galaxy`. `-n` deja fuera las dependencias, y `-r` y `--pre` funcionan como en `install`. Con `--offline`, un nombre que ningún tarball aporta, o una dependencia que no está instalada, falla con el mensaje del resolvedor.
+
+## Listar y verificar colecciones
+
+`collection list [NAME] [-p PATH]... [--format human|json|yaml]` imprime, por cada directorio de `-p` y de la ruta de colecciones que contiene colecciones, un bloque `# <path>/ansible_collections` con el nombre y la versión de cada colección, siendo la versión `*` cuando la colección no tiene `MANIFEST.json`. Las columnas son tan anchas como el nombre y la versión más largos, como las rellena `ansible-galaxy`. `--format json` imprime `{"<path>": {"<namespace>.<name>": {"version": "<version>"}}}` en una línea, y `--format yaml` lo mismo en YAML. Un `-p` que no existe da un aviso; cuando ninguna ruta se puede leer, el comando falla con la salida 5. `ansible-galaxy` lista también la colección que ansible-core guarda en su propio paquete de Python, `ansible._protomatter`; Volant, que no tiene ese paquete, no la lista.
+
+`collection verify NAME... [-p PATH] [--offline]` comprueba cada colección instalada: `MANIFEST.json`, luego `FILES.json` contra el hash que da el manifiesto, luego cada archivo contra el suyo, y luego el árbol en busca de archivos y directorios que `FILES.json` no lista, salvo `*.pyc`. Cada diferencia se lista bajo `Collection <name> contains modified content in the following files:`, y el comando sale con 1. Sin `--offline` se descarga el tarball del servidor de la misma versión y su `MANIFEST.json` es la referencia; con él, lo es el instalado. Una colección no instalada, o sin `MANIFEST.json`, es un error; `-i` convierte los errores en avisos.
 
 ## Servidores Galaxy
 

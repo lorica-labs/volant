@@ -22,7 +22,7 @@
   "stderr": "",
   "stdout": "Process download dependency map\nStarting collection download process to '<golden-tmp>/dl'\nDownloading collection 'demo.app:1.0.0' to '<golden-tmp>/dl'\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/app/artifacts/demo-app-1.0.0.tar.gz to <golden-galaxy-tmp>/demo-app-1.0.0-<golden-random>\nCollection 'demo.app:1.0.0' was downloaded successfully\nWriting requirements.yml file of downloaded collections to '<golden-tmp>/dl/requirements.yml'\n",
   "tree": {
-    "dl/demo-app-1.0.0.tar.gz": "7c58cbff5be5c4ed991196514442c000e5bc8638adbe6e3ef87e746cfb1d7ded",
+    "dl/demo-app-1.0.0.tar.gz": "cb0ac9b6cfc3ece591f31d112f2a2e706dad4b9a8d84305baa05ef4b6fbc38a9",
     "dl/requirements.yml": "c1d52173518fa0d2036cddf7e92ff336e8691e61958b4fe1add129900af1a30b"
   }
 }

@@ -183,7 +183,7 @@ pub fn copy_inputs(name: &str, tmp: &Path) -> Vec<String> {
 }
 
 /// Every file under `tmp` outside its `home` and `skip`, by path, with the SHA-256 of its
-/// normalised text.
+/// normalised text, or of its uncompressed content for a `.tar.gz`.
 pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMap<String, String> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("readable").flatten() {
@@ -210,7 +210,17 @@ pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMa
     files
         .into_iter()
         .map(|path| {
-            let data = std::fs::read(&path).expect("readable");
+            let mut data = std::fs::read(&path).expect("readable");
+            // The fake server gzips at run time, and zlib's output differs between platforms.
+            if path.to_string_lossy().ends_with(".tar.gz") {
+                let mut plain = Vec::new();
+                std::io::Read::read_to_end(
+                    &mut flate2::read::GzDecoder::new(&data[..]),
+                    &mut plain,
+                )
+                .expect("a gzip file");
+                data = plain;
+            }
             let data = match String::from_utf8(data) {
                 Ok(text) => normalise(&text, tmp, port).into_bytes(),
                 Err(e) => e.into_bytes(),

@@ -110,11 +110,16 @@ fn ping_over_fake(extra: Value) -> Option<(Vec<Value>, Value)> {
     crate::testing::write(dir.path(), "connection_plugins/fake.py", FAKE);
     let log = dir.path().join("calls.log");
     let python = std::env::var("VOLANT_PYTHON").unwrap_or_else(|_| "python3".into());
+    // Both temporary directories inside the test's own: making `~/.ansible/tmp` moves the mtime
+    // of a directory another test's union is traced against, which then reads as changed.
+    // nextest gives each test a process of its own, so no other thread reads the variable.
+    unsafe { std::env::set_var("ANSIBLE_LOCAL_TEMP", dir.path().join("local")) };
     let mut vars = json!({
         "inventory_hostname": "h1",
         "ansible_fake_log": log.display().to_string(),
         "ansible_password": PASSWORD,
         "ansible_python_interpreter": python,
+        "ansible_remote_tmp": dir.path().join("remote").display().to_string(),
     });
     vars.as_object_mut()
         .unwrap()

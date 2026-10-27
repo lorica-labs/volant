@@ -225,3 +225,74 @@ fn the_json_callback_prints_one_document_at_the_recap() {
     assert_eq!(tasks[1]["task"]["name"], "loop");
     assert_eq!(doc["custom_stats"], json!({}));
 }
+
+/// Every way a result can end, `no_log`, a task's path, the recap and the custom stats, in the
+/// default four-space form.
+#[test]
+fn the_json_document_carries_outcomes_stats_and_custom_stats() {
+    let book = crate::testing::play("- name: p\n  hosts: all\n  tasks: []\n");
+    let origin = crate::playbook::Origin {
+        path: "site.yml".into(),
+        line: 7,
+        col: 5,
+    };
+    let mut stats = Stats::default();
+    stats.tally("h1", Outcome::Failed, false);
+    let mut custom = crate::stats::CustomStats::default();
+    custom.record("h1", &json!({"data": {"n": 1}, "per_host": true}));
+    custom.record("h1", &json!({"data": {"total": 2}}));
+    let text = printed(Some(StdoutCallback::Json), 0, |out| {
+        out.play_of(&book.plays[0]);
+        out.task_started("t", "ansible.builtin.fail", Some(&origin));
+        let failed = result(json!({"msg": "boom", "failed": true}));
+        out.result("h1", Outcome::Failed, &failed, None, Dump::No, false, None);
+        let skipped = result(json!({"changed": false, "skipped": true}));
+        out.result(
+            "h2",
+            Outcome::Skipped,
+            &skipped,
+            None,
+            Dump::No,
+            false,
+            None,
+        );
+        let secret = result(json!({"changed": true, "stdout": "pw"}));
+        out.result("h3", Outcome::Changed, &secret, None, Dump::No, true, None);
+        out.recap(&stats, Some(&custom));
+    });
+    assert!(text.starts_with("{\n    \"custom_stats\""), "{text}");
+    let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let task = &doc["plays"][0]["tasks"][0];
+    assert!(
+        task["task"]["path"]
+            .as_str()
+            .unwrap()
+            .ends_with("site.yml:7"),
+        "{text}"
+    );
+    let hosts = &task["hosts"];
+    assert_eq!(
+        hosts["h1"],
+        json!({
+            "msg": "boom",
+            "failed": true,
+            "exception": "(traceback unavailable)",
+            "action": "ansible.builtin.fail",
+            "_ansible_no_log": false
+        })
+    );
+    assert_eq!(hosts["h2"]["skipped"], true);
+    assert_eq!(hosts["h3"]["_ansible_no_log"], true);
+    assert_eq!(hosts["h3"]["censored"], crate::render::CENSORED);
+    assert!(hosts["h3"].get("stdout").is_none(), "{text}");
+    assert_eq!(doc["stats"]["h1"]["failures"], 1);
+    assert_eq!(doc["custom_stats"], json!({"h1": {"n": 1}}));
+    assert_eq!(doc["global_custom_stats"], json!({"total": 2}));
+}
+
+/// `json_indent` changes nothing for another callback.
+#[test]
+fn the_json_indent_is_the_json_callback_s_alone() {
+    let text = printed(None, 0, |out| out.set_json_indent(0));
+    assert_eq!(text, "");
+}

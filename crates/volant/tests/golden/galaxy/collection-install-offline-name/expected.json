@@ -1,0 +1,18 @@
+{
+  "args": [
+    "collection",
+    "install",
+    "--offline",
+    "demo.base",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/cols"
+  ],
+  "rc": 1,
+  "requests": [],
+  "setup": [],
+  "stderr": "[WARNING]: The specified collections path '<golden-tmp>/cols' is not part of the configured Ansible collections paths '<golden-tmp>/home/.ansible/collections:/usr/share/ansible/collections'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.\n[ERROR]: Failed to resolve the requested dependencies map. Could not satisfy the following requirements:\n* demo.base:* (direct request)\nHint: Pre-releases hosted on Galaxy or Automation Hub are not installed by default unless a specific version is requested. To enable pre-releases globally, use --pre.\n\n",
+  "stdout": "Starting galaxy collection install process\nProcess install dependency map\n",
+  "tree": {}
+}

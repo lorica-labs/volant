@@ -10,10 +10,10 @@ use args::{Collection, Kind, Role};
 use crate::config::Config;
 use crate::galaxy::api::servers::Servers;
 use crate::galaxy::api::{Files, Server};
-use crate::galaxy::install;
 use crate::galaxy::requirements::{self, Requirements};
 use crate::galaxy::settings::{self, Settings};
 use crate::galaxy::{self, Failure};
+use crate::galaxy::{download, install};
 
 /// Runs `args` and returns the exit code.
 #[must_use]
@@ -42,16 +42,33 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
             return collection_install(install, &config, verbose);
         }
         Kind::Collection(Collection::Download {
-            collection,
+            common,
+            cache,
+            no_deps,
+            download_path,
             requirements,
-            ..
+            pre,
+            collection,
         }) => {
-            if let Some(file) =
-                galaxy::one_of_collections_requirements(collection, requirements.as_deref())?
-            {
-                requirements_of(&file, false, verbose)?;
-            }
-            "collection download"
+            let wanted =
+                match galaxy::one_of_collections_requirements(collection, requirements.as_deref())?
+                {
+                    Some(file) => requirements_of(&file, false, verbose)?.collections,
+                    None => collection
+                        .iter()
+                        .map(|name| requirements::from_string(name))
+                        .collect::<Result<_, _>>()?,
+                };
+            let wanted = install::prepare(&wanted)?;
+            let output = galaxy::resolve(download_path.as_deref().unwrap_or("./collections"));
+            std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
+            let mut servers = servers(common, cache, &config, verbose, false);
+            let options = install::Options {
+                no_deps: *no_deps,
+                pre: *pre,
+                ..install::Options::default()
+            };
+            return download::collections(wanted, &output, &mut servers, options);
         }
         Kind::Collection(Collection::Verify { requirements, .. }) => {
             if let Some(file) = requirements {

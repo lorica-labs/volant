@@ -1,5 +1,5 @@
 ---
-sourceHash: 40c0bf96eae7
+sourceHash: 4b76db5e89fc
 title: volant galaxy
 description: ansible-galaxy 的选项由 Volant 自己检查，其子命令正逐个改为原生实现。
 ---
@@ -39,6 +39,10 @@ volant galaxy role <init|remove|delete|list|search|import|setup|info|install> [O
 `collection install` 也接受名称，需要时可带版本范围：`demo.base`、`demo.base:1.0.0`、`"demo.base:>=1.0.0,<2.0.0"`，以及 `-r` 中的条目。每个名称连同其依赖一起针对服务器解析，每个依赖取满足所有所需范围的最高版本，两个范围冲突时回溯。预发布版本只在使用 `--pre` 或被精确指定时才计入。每个 tar 包先下载，再与服务器给出的 SHA-256 比对，然后按上文解包。从服务器安装的集合还会得到 `ansible_collections/<namespace>.<name>-<version>.info/GALAXY.yml`，记录其来源。已安装且版本合适的集合会被保留：`'<name>:<version>' is already installed, skipping.`
 
 `-n` 跳过依赖，`-U` 把已安装的集合升级到范围内的最新版本，`-f` 重新安装所请求的集合，`--force-with-deps` 连同其依赖一起重装，`-i` 在安装失败后给出警告并继续，`--offline` 不访问任何服务器。当没有一组版本能满足所有范围时，命令以 `ansible-galaxy` 的消息失败，该消息列出各个范围，并以关于 `--pre` 的提示结尾；`ansible-galaxy` 在提示之后打印的 Python 对象被省略。
+
+## 下载以便离线安装
+
+`collection download` 像 `install` 一样连同依赖解析所请求的集合，并把每个 tar 包保存到 `-p` 指定的文件夹，默认是 `./collections`。然后在其中写入一个 `requirements.yml`，按文件名列出这些 tar 包及其版本。在没有网络的机器上，从该文件夹运行 `volant galaxy collection install --offline -r requirements.yml` 即可安装，不访问任何服务器。文件名相对于工作目录读取，与 `ansible-galaxy` 一致。`-n` 不包含依赖，`-r` 和 `--pre` 与 `install` 中的作用相同。使用 `--offline` 时，没有 tar 包提供的名称或未安装的依赖会以解析器的消息失败。
 
 ## Galaxy 服务器
 

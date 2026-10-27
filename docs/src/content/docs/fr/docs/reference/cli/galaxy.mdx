@@ -1,5 +1,5 @@
 ---
-sourceHash: 40c0bf96eae7
+sourceHash: 4b76db5e89fc
 title: volant galaxy
 description: Les options d'ansible-galaxy, vérifiées par Volant lui-même, pendant que ses sous-commandes deviennent natives une par une.
 ---
@@ -39,6 +39,10 @@ Les répertoires, les URL, git et les signatures sont refusés tant qu'ils ne so
 `collection install` accepte aussi des noms, avec une plage au besoin : `demo.base`, `demo.base:1.0.0`, `"demo.base:>=1.0.0,<2.0.0"`, et les entrées de `-r`. Chaque nom est résolu auprès des serveurs avec ses dépendances, chacune à la plus haute version qui satisfait toutes les plages demandées, en revenant en arrière quand deux plages se contredisent. Les pré-versions ne comptent qu'avec `--pre` ou quand elles sont nommées exactement. Chaque archive est téléchargée, vérifiée contre le SHA-256 que donne le serveur, puis décompressée comme ci-dessus. Une collection installée depuis un serveur reçoit aussi `ansible_collections/<namespace>.<name>-<version>.info/GALAXY.yml`, qui note sa provenance. Une collection déjà installée à une version qui convient est gardée : `'<name>:<version>' is already installed, skipping.`
 
 `-n` saute les dépendances, `-U` amène les collections installées à la plus récente version de la plage, `-f` réinstalle les collections demandées et `--force-with-deps` aussi leurs dépendances, `-i` continue après une installation échouée avec un avertissement, et `--offline` n'interroge aucun serveur. Quand aucun jeu de versions ne satisfait toutes les plages, la commande échoue avec le message d'`ansible-galaxy`, qui liste les plages et se termine par un conseil sur `--pre` ; les objets Python qu'`ansible-galaxy` affiche après ce conseil sont omis.
+
+## Télécharger pour une installation hors ligne
+
+`collection download` résout les collections demandées avec leurs dépendances, comme `install`, et enregistre chaque archive dans le dossier que nomme `-p`, `./collections` par défaut. Il y écrit ensuite un `requirements.yml` qui liste les archives par nom de fichier, avec leurs versions. Sur une machine sans réseau, `volant galaxy collection install --offline -r requirements.yml` lancé depuis ce dossier les installe sans interroger aucun serveur. Les noms de fichiers sont lus depuis le répertoire de travail, comme les lit `ansible-galaxy`. `-n` laisse les dépendances de côté, et `-r` et `--pre` fonctionnent comme pour `install`. Avec `--offline`, un nom qu'aucune archive ne fournit, ou une dépendance qui n'est pas installée, échoue avec le message du résolveur.
 
 ## Les serveurs Galaxy
 

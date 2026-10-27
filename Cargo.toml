@@ -91,20 +91,12 @@ volant-protocol = { path = "crates/volant-protocol", version = "0.1.0-alpha.13" 
 [profile.dev]
 debug = "line-tables-only"
 
-# The vault derives a key with 10000 PBKDF2 rounds on every decrypt; unoptimised, that is seconds
-# per playbook run in the test profile.
-[profile.dev.package.sha2]
-opt-level = 3
-[profile.dev.package.hmac]
-opt-level = 3
-[profile.dev.package.pbkdf2]
-opt-level = 3
-[profile.dev.package.aes]
-opt-level = 3
-[profile.dev.package.ctr]
-opt-level = 3
-[profile.dev.package.cipher]
-opt-level = 3
+# Every dependency optimised, the workspace's own crates not: a test spends most of its time in
+# them (deflating the module union, hashing, the vault's 10000 PBKDF2 rounds, regex, YAML), and
+# they are built once and then cached, while the crates being edited keep their fast rebuild.
+# Measured on the whole suite with 8 threads: 2325 s of test time down to 1832 s.
+[profile.dev.package."*"]
+opt-level = 2
 
 [profile.release]
 lto = "fat"

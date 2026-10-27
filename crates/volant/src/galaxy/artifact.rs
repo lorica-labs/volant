@@ -97,6 +97,11 @@ impl Tarball {
         Ok((tarball, meta))
     }
 
+    /// The content of the member named `name`.
+    pub fn member(&self, name: &str) -> Option<Vec<u8>> {
+        self.members.get(name).map(|m| m.data.clone())
+    }
+
     /// The tarball's absolute path.
     pub fn path(&self) -> &Path {
         &self.path

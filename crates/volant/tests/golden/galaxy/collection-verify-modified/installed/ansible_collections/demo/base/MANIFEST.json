@@ -1,0 +1,30 @@
+{
+    "collection_info": {
+        "authors": [
+            "Volant"
+        ],
+        "dependencies": {},
+        "description": "The demo.base fixture.",
+        "documentation": null,
+        "homepage": null,
+        "issues": null,
+        "license": [
+            "GPL-3.0-or-later"
+        ],
+        "license_file": null,
+        "name": "base",
+        "namespace": "demo",
+        "readme": "README.md",
+        "repository": null,
+        "tags": [],
+        "version": "1.0.0"
+    },
+    "file_manifest_file": {
+        "chksum_sha256": "8e6ea5503d234c6f9e4a4258839316ba7f7d8c95a672a3719af322c80aa1c925",
+        "chksum_type": "sha256",
+        "format": 1,
+        "ftype": "file",
+        "name": "FILES.json"
+    },
+    "format": 1
+}

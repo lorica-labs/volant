@@ -1,0 +1,17 @@
+{
+  "args": [
+    "collection",
+    "verify",
+    "demo.base",
+    "-p",
+    "<golden-tmp>/installed",
+    "--offline"
+  ],
+  "rc": 1,
+  "repos": [],
+  "requests": [],
+  "setup": [],
+  "stderr": "",
+  "stdout": "Verifying 'demo.base:1.0.0'.\nInstalled collection found at '<golden-tmp>/installed/ansible_collections/demo/base'\nMANIFEST.json hash: e7be05dbb818de5279f8ad49c8abe98ca2c3a6a68a00b2472a4db32b4973bc2d\nCollection demo.base contains modified content in the following files:\n    README.md\n    extra.txt\n",
+  "tree": {}
+}

@@ -18,6 +18,7 @@ pub mod git;
 #[cfg(test)]
 mod git_tests;
 pub mod install;
+pub mod inventory;
 #[cfg(test)]
 mod requirement_tests;
 pub mod requirements;

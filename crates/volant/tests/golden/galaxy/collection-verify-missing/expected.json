@@ -1,0 +1,17 @@
+{
+  "args": [
+    "collection",
+    "verify",
+    "demo.nope",
+    "-p",
+    "<golden-tmp>/cols",
+    "--offline"
+  ],
+  "rc": 1,
+  "repos": [],
+  "requests": [],
+  "setup": [],
+  "stderr": "[ERROR]: Collection demo.nope is not installed in any of the collection paths.\n",
+  "stdout": "",
+  "tree": {}
+}

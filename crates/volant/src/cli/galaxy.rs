@@ -14,7 +14,7 @@ use crate::galaxy::build::Source;
 use crate::galaxy::requirements::{self, Requirements};
 use crate::galaxy::settings::{self, Settings};
 use crate::galaxy::{self, Failure};
-use crate::galaxy::{download, install};
+use crate::galaxy::{download, install, inventory};
 
 /// Runs `args` and returns the exit code.
 #[must_use]
@@ -36,6 +36,7 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
 }
 
 /// The checks the reference makes before the subcommand's work, then the refusal of that work.
+#[expect(clippy::too_many_lines)]
 fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     let config = Config::load().map_err(|e| Failure::error(e.to_string()))?;
     let name = match kind {
@@ -51,31 +52,40 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
             pre,
             collection,
         }) => {
-            let wanted =
-                match galaxy::one_of_collections_requirements(collection, requirements.as_deref())?
-                {
-                    Some(file) => requirements_of(&file, false, verbose)?.collections,
-                    None => collection
-                        .iter()
-                        .map(|name| requirements::from_string(name))
-                        .collect::<Result<_, _>>()?,
-                };
-            let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs, verbose)?;
-            let output = galaxy::resolve(download_path.as_deref().unwrap_or("./collections"));
-            std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
-            let mut servers = servers(common, cache, &config, verbose, false);
             let options = install::Options {
                 no_deps: *no_deps,
                 pre: *pre,
                 ..install::Options::default()
             };
-            return download::collections(wanted, &output, &mut servers, options, verbose);
+            let cache = (cache.no_cache, cache.clear_response_cache);
+            return collection_download(
+                common,
+                (collection, requirements.as_deref()),
+                download_path.as_deref(),
+                (options, cache),
+                &config,
+                verbose,
+            );
         }
-        Kind::Collection(Collection::Verify { requirements, .. }) => {
-            if let Some(file) = requirements {
-                requirements_of(&galaxy::requirements_file(file)?, false, verbose)?;
-            }
-            "collection verify"
+        Kind::Collection(Collection::Verify {
+            common,
+            collections_path,
+            ignore_errors,
+            offline,
+            requirements,
+            collection_name,
+            ..
+        }) => {
+            let flags = (*offline, *ignore_errors);
+            return collection_verify(
+                common,
+                collections_path,
+                requirements.as_deref(),
+                collection_name,
+                flags,
+                &config,
+                verbose,
+            );
         }
         Kind::Collection(Collection::Init { .. }) => "collection init",
         Kind::Collection(Collection::Build {
@@ -84,7 +94,23 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
             collection,
             ..
         }) => return collection_build(collection, output_path.as_deref(), *force, verbose),
-        Kind::Collection(Collection::List { .. }) => "collection list",
+        Kind::Collection(Collection::List {
+            collections_path,
+            format,
+            collection,
+            ..
+        }) => {
+            let given: Vec<_> = collections_path
+                .iter()
+                .map(|p| galaxy::resolve(p))
+                .collect();
+            return inventory::list(
+                &given,
+                &configured_collections(&config),
+                collection.as_deref(),
+                format.as_deref().unwrap_or("human"),
+            );
+        }
         Kind::Role(Role::Install {
             role_name,
             requirements,
@@ -152,6 +178,67 @@ fn collection_build(
     Ok(0)
 }
 
+/// `collection verify`: the collections named or listed, checked against their manifests or
+/// the servers' copies (`execute_verify`).
+fn collection_verify(
+    common: &args::Common,
+    collections_path: &[String],
+    requirements: Option<&str>,
+    collection_name: &[String],
+    (offline, ignore_errors): (bool, bool),
+    config: &Config,
+    verbose: u8,
+) -> Result<i32, Failure> {
+    let wanted = match galaxy::one_of_collections_requirements(collection_name, requirements)? {
+        Some(file) => requirements_of(&file, false, verbose)?.collections,
+        None => collection_name
+            .iter()
+            .map(|name| requirements::from_string(name))
+            .collect::<Result<_, _>>()?,
+    };
+    let mut paths: Vec<_> = collections_path
+        .iter()
+        .map(|p| galaxy::resolve(p))
+        .collect();
+    for path in configured_collections(config) {
+        if !paths.contains(&path) {
+            paths.push(path);
+        }
+    }
+    // `verify` has no cache options, and the reference runs it without the response cache.
+    let mut servers = servers(common, (true, false), config, verbose, offline);
+    let options = inventory::Verify {
+        paths: &paths,
+        offline,
+        ignore_errors,
+    };
+    inventory::verify(&wanted, &mut servers, &options)
+}
+
+/// `collection download`: the collections resolved and saved with a `requirements.yml`
+/// (`execute_download`).
+fn collection_download(
+    common: &args::Common,
+    (collection, requirements): (&[String], Option<&str>),
+    download_path: Option<&str>,
+    (options, cache): (install::Options, (bool, bool)),
+    config: &Config,
+    verbose: u8,
+) -> Result<i32, Failure> {
+    let wanted = match galaxy::one_of_collections_requirements(collection, requirements)? {
+        Some(file) => requirements_of(&file, false, verbose)?.collections,
+        None => collection
+            .iter()
+            .map(|name| requirements::from_string(name))
+            .collect::<Result<_, _>>()?,
+    };
+    let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs, verbose)?;
+    let output = galaxy::resolve(download_path.unwrap_or("./collections"));
+    std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
+    let mut servers = servers(common, cache, config, verbose, false);
+    download::collections(wanted, &output, &mut servers, options, verbose)
+}
+
 /// `collection install`: tarballs and names from Galaxy servers. Directories, URLs, git and
 /// signatures are refused until they are native.
 fn collection_install(
@@ -212,7 +299,7 @@ fn collection_install(
     };
     let mut servers = servers(
         &install.common,
-        &install.cache,
+        (install.cache.no_cache, install.cache.clear_response_cache),
         config,
         verbose,
         install.offline,
@@ -226,11 +313,23 @@ fn collection_install(
     )
 }
 
+/// The configured collections paths, without the runtime's own directory, which Volant appends
+/// and the reference would not name.
+fn configured_collections(config: &Config) -> Vec<std::path::PathBuf> {
+    let runtime = crate::runtime::collections::active_dir();
+    config
+        .collections_path
+        .iter()
+        .filter(|p| Some(*p) != runtime.as_ref())
+        .cloned()
+        .collect()
+}
+
 /// The servers a run asks, from the options, the environment and `ansible.cfg`. None under
 /// `--offline`.
 fn servers(
     common: &args::Common,
-    cache: &args::Cache,
+    (no_cache, clear_cache): (bool, bool),
     config: &Config,
     verbose: u8,
     offline: bool,
@@ -249,8 +348,8 @@ fn servers(
     let cache_dir = settings.cache_dir();
     let token_path = settings.token_path();
     let files = Files {
-        cache_dir: (!cache.no_cache).then_some(cache_dir.as_path()),
-        clear_cache: cache.clear_response_cache,
+        cache_dir: (!no_cache).then_some(cache_dir.as_path()),
+        clear_cache,
         token_path: &token_path,
     };
     Servers {

@@ -6,7 +6,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 
-use super::names::{self, first_set};
+use super::names::first_set;
 use crate::vars::host_setting;
 
 /// Connection settings from `ansible.cfg` and the command line; host variables override them.
@@ -223,6 +223,8 @@ pub struct HostOwn {
     pub password: Option<Secret>,
     /// The `ssh` program, `ssh` unless `ansible_ssh_executable` names another.
     pub executable: String,
+    /// Whether the host asked for `paramiko_ssh`, which runs on `ssh` and says so in its own words.
+    pub paramiko: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -274,9 +276,11 @@ impl std::fmt::Display for ConnectError {
 
 impl std::error::Error for ConnectError {}
 
-/// The connection plugins ansible-core 2.19.12 ships besides `local` and `ssh`, with the alias it
-/// routes to one of them: names that exist, which this release refuses rather than misreports.
-pub(super) const KNOWN_CONNECTIONS: &[&str] = &["paramiko", "paramiko_ssh", "psrp", "winrm"];
+/// The connection plugins ansible-core 2.19.12 ships besides `local` and `ssh`, with the aliases
+/// that load one of them: names that exist, which this release drives or refuses by name rather
+/// than misreports.
+pub(super) const KNOWN_CONNECTIONS: &[&str] =
+    &["paramiko", "paramiko_ssh", "_paramiko_ssh", "psrp", "winrm"];
 
 /// A connection the task fails for, rather than the host: an `ansible_connection` naming no
 /// plugin at all, or a plugin that refuses before it runs anything, as `chroot` refuses a
@@ -409,10 +413,10 @@ pub(super) fn as_map(vars: &Map<String, Value>) -> Map<String, Value> {
     vars.clone()
 }
 
-/// `ansible_ssh_port` or `ansible_port`, whether the inventory typed it as a number or quoted
-/// it as a string.
-pub(super) fn port_of(vars: &Map<String, Value>) -> Option<u16> {
-    let value = first_set(vars, &names::PORT)?;
+/// The first of `names` the host sets (`ansible_ssh_port` or `ansible_port` for ssh), whether
+/// the inventory typed it as a number or quoted it as a string.
+pub(super) fn port_of(vars: &Map<String, Value>, names: &[&str]) -> Option<u16> {
+    let value = first_set(vars, names)?;
     match value {
         Value::Number(_) => value.as_u64().and_then(|p| u16::try_from(p).ok()),
         Value::String(s) => s.trim().parse().ok(),
@@ -420,13 +424,15 @@ pub(super) fn port_of(vars: &Map<String, Value>) -> Option<u16> {
     }
 }
 
-/// `ansible_ssh_timeout` or `ansible_timeout`: the seconds `ssh` waits for the connection, a
-/// number or a quoted number. Anything else fails the host by name, the value in the message.
+/// The first of `names` the host sets (`ansible_ssh_timeout` or `ansible_timeout` for ssh): the
+/// seconds `ssh` waits for the connection, a number or a quoted number. Anything else fails the
+/// host by name, the value in the message.
 pub(super) fn timeout_of(
     host_name: &str,
     vars: &Map<String, Value>,
+    names: &[&str],
 ) -> anyhow::Result<Option<Duration>> {
-    let Some(value) = first_set(vars, &names::TIMEOUT) else {
+    let Some(value) = first_set(vars, names) else {
         return Ok(None);
     };
     let seconds = match value {

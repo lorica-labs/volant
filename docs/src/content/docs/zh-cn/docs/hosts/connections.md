@@ -1,5 +1,5 @@
 ---
-sourceHash: 8ebece6e812f
+sourceHash: ef0550cf334a
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -23,6 +23,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 | `lxd` | 通过 `lxc exec` 在 LXD 实例里运行 agent，与 `community.general.lxd` 相同；`community.general.incus` 对 Incus 做同样的事。见 [LXD 和 Incus 实例](#lxd-和-incus-实例)。 |
 | `kubectl` | 通过 `kubectl exec` 在 Kubernetes pod 的容器里运行 agent，与 `kubernetes.core.kubectl` 相同。见 [Kubernetes pod](#kubernetes-pod)。 |
 | `aws_ssm` | 通过 AWS Systems Manager 会话在 EC2 实例上运行 agent，与 `amazon.aws.aws_ssm` 相同。见 [AWS Systems Manager 会话](#aws-systems-manager-会话)。 |
+| `paramiko_ssh` | 用 OpenSSH 客户端代替 ansible-core 已弃用的 paramiko 连接；`paramiko` 也一样。见 [Paramiko](#paramiko)。 |
 
 其他任何名字都由控制节点上的 ansible-core 解析，与 `ansible-playbook` 的解析方式相同，每个名字每次运行只解析一次。`ansible.builtin.ssh` 和 `ansible.builtin.local` 解析为上面的两个插件并运行。collection 从 ansible-core 手中接管的短名字，在该 collection 已安装时被转到那个 collection：
 
@@ -41,7 +42,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 
 解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `community.general.jail`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
 
-什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
+什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `ansible.builtin.paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
 密码来自 `-k`、`--connection-password-file` 或 `ansible_password` 变量。Volant 通过 `SSH_ASKPASS` 和一个运行结束时会删除的私有临时文件把它交给 `ssh`，这需要 OpenSSH 8.4 或更高版本。随后 `ssh` 以 `BatchMode=no` 和 `NumberOfPasswordPrompts=1` 运行，所以一次错误的回答就会结束这次尝试。密码绝不会出现在命令行、程序的环境或输出中，`-vvvv` 也不例外。用 vault 加密的 `ansible_password` 与任何 vault 加密的变量一样工作。没有密码时，`ssh` 以 `BatchMode=yes` 运行，从不提示，所以需要密码或口令的主机会被报告为不可达，而不是让运行卡住。
 
@@ -146,6 +147,48 @@ agent 用 `buildah run [--user U] <容器> -- <agent>` 启动。Volant 从不运
 | `ansible_aws_ssm_timeout` | 会话在建立连接的每一步中可用的秒数；默认为 60。 |
 
 命令以会话的用户运行，在 Amazon Linux 上是 `ssm-user`。`become` 可以选择其他用户，`ansible_user` 会被忽略，与插件相同。Volant 不通过 S3 传输任何内容，因此插件需要的 `ansible_aws_ssm_bucket_*` 变量不会被读取。会话的终端只返回有效的 UTF-8，因此 agent 用 base64 行与控制节点通信，每个方向约 400 KiB/s；在某个实例上首次运行时会上传一次 agent，约需十秒。SSM agent 未管理的实例或被拒绝的凭据会使主机不可达，消息使用 boto3 的措辞，而插件在这种情况下会使任务失败。运行结束或控制节点被杀死时，会话关闭，agent 随之停止。使用 `-vvvv` 时，会显示 `ESTABLISH SSM CONNECTION TO: <instance>`，然后每条命令一行 `EXEC: <command>`。
+
+## Paramiko
+
+`ansible_connection: paramiko_ssh` 是 ansible-core 通过 Python paramiko 库建立的连接。ansible-core 2.19.12 把它标为弃用，并在 2.21 移除。Volant 改用 `ssh` 程序连接这些主机，所以不需要安装 paramiko。插件的每个选项都变成最接近的 `ssh` 选项，第一台连接的主机会打印 ansible-core 的警告，每次运行一次：
+
+```text
+[DEPRECATION WARNING]: The paramiko connection plugin is deprecated. This feature will be removed from ansible-core version 2.21.
+```
+
+`deprecation_warnings = False` 可以关掉它。`paramiko`、`_paramiko_ssh` 和 `ansible.builtin.paramiko_ssh` 是同一个插件。
+
+| 变量 | 作用 |
+|---|---|
+| `ansible_paramiko_host` | 地址。它优先于 `ansible_ssh_host`，后者优先于 `ansible_host`，再往后是 inventory 名字。 |
+| `ansible_paramiko_port` | `ssh -p`。优先于 `ansible_ssh_port` 和 `ansible_port`，再往后是 `port` 关键字、`ANSIBLE_REMOTE_PARAMIKO_PORT`、`ANSIBLE_REMOTE_PORT`、`[paramiko_connection] remote_port` 和 `[defaults] remote_port`。 |
+| `ansible_paramiko_user` | `ssh -l`。优先于 `ansible_ssh_user` 和 `ansible_user`，再往后是 `remote_user` 关键字、`ANSIBLE_PARAMIKO_REMOTE_USER`、`[paramiko_connection] remote_user` 和常规的远程用户设置。 |
+| `ansible_paramiko_private_key_file` | `ssh -i`。优先于 `ansible_ssh_private_key_file` 和 `ansible_private_key_file`，再往后是 `ANSIBLE_PARAMIKO_PRIVATE_KEY_FILE`、`[paramiko_connection] private_key_file` 和常规的密钥设置。 |
+| `ansible_paramiko_password`, `ansible_paramiko_pass` | 密码，按 `ssh` 主机的方式交给 `ssh`。它们优先于 `ansible_ssh_password`、`ansible_ssh_pass` 和 `ansible_password`。 |
+| `ansible_paramiko_timeout` | `ConnectTimeout`。优先于 `ansible_ssh_timeout`，再往后是 `ANSIBLE_PARAMIKO_TIMEOUT`、`ANSIBLE_SSH_TIMEOUT`、`[paramiko_connection] timeout`、`[ssh_connection] timeout` 和连接超时。与插件一样，不读 `ansible_timeout`。 |
+| `ansible_paramiko_host_key_checking`, `ansible_ssh_host_key_checking`, `ansible_host_key_checking` | 是否检查主机密钥，按这个顺序，再往后是 `ANSIBLE_PARAMIKO_HOST_KEY_CHECKING`、`ANSIBLE_SSH_HOST_KEY_CHECKING`、`ANSIBLE_HOST_KEY_CHECKING`、`[paramiko_connection] host_key_checking` 和 `[defaults] host_key_checking`。关闭时 `ssh` 得到 `StrictHostKeyChecking=no` 和 `UserKnownHostsFile=/dev/null`。 |
+| `ansible_paramiko_use_rsa_sha2_algorithms` | 关闭时 `ssh` 得到 `HostKeyAlgorithms=+ssh-rsa` 和 `PubkeyAcceptedAlgorithms=+ssh-rsa`，用于只把 RSA 密钥认作 `ssh-rsa` 的服务器。服务器提供 SHA-2 签名时，`ssh` 仍然优先用它们。也可以用 `ANSIBLE_PARAMIKO_USE_RSA_SHA2_ALGORITHMS` 和 `[paramiko_connection] use_rsa_sha2_algorithms`。 |
+| `ansible_paramiko_proxy_command` | `ProxyCommand`，`ssh` 会像 paramiko 一样替换 `%h`、`%p` 和 `%r`。也可以用 `ANSIBLE_PARAMIKO_PROXY_COMMAND` 和 `[paramiko_connection] proxy_command`。 |
+
+没有对应变量的选项来自 `ANSIBLE_PARAMIKO_<NAME>` 或 `[paramiko_connection]`：
+
+| 选项 | `ssh` 得到什么 |
+|---|---|
+| `host_key_auto_add` | 打开且主机密钥检查打开时：`StrictHostKeyChecking=accept-new`。新主机的密钥会被接受，变化了的密钥仍被拒绝。 |
+| `record_host_keys` | 关闭且主机密钥检查打开时：`UserKnownHostsFile=/dev/null ~/.ssh/known_hosts ~/.ssh/known_hosts2`。`ssh` 对照常用文件检查，并把新密钥写进第一个文件，而它什么都不保存。 |
+| `look_for_keys` | 关闭且给了密钥文件时：`IdentitiesOnly=yes`，只尝试这个密钥。没给密钥文件时不起作用。 |
+| `pty` | 关闭时：没有终端，与 `ssh` 的 `ansible_ssh_use_tty: false` 一样。 |
+| `banner_timeout` | 会读取并检查，但不起作用：`ssh` 没有这个设置。 |
+
+与插件不同的地方：
+
+- 与 paramiko 一样，不读 `~/.ssh/config` 和 `/etc/ssh/ssh_config`：每次 `ssh` 都带 `-F /dev/null`。`ansible_ssh_common_args`、`ansible_ssh_extra_args` 和 `ansible_ssh_executable` 也不读。
+- 主机密钥检查打开、`host_key_auto_add` 关闭时，未知的主机密钥会让主机不可达，并给出 `ssh` 的消息。插件会在终端上询问。
+- 失败消息都是 `ssh` 的，未知主机密钥和登录被拒都是如此，两种情况下主机都不可达，与插件一样。
+- `look_for_keys` 关闭且给了密钥文件时，`ssh-agent` 里的密钥也不会提供。paramiko 仍会提供它们。
+- 与 `ssh` 一样，到一台主机的连接在 task 之间共享。
+
+使用 `-vvvv` 时，第一行是 `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <user> on PORT <port> TO <address>`，后面是 `ssh` 主机的 `SSH: EXEC` 行。
 
 ## 主机变量
 

@@ -96,6 +96,34 @@ pub(super) const AWS_SSM_PLUGIN: [&str; 1] = ["ansible_aws_ssm_plugin"];
 pub(super) const AWS_SSM_DOCUMENT: [&str; 1] = ["ansible_aws_ssm_document"];
 pub(super) const AWS_SSM_TIMEOUT: [&str; 1] = ["ansible_aws_ssm_timeout"];
 
+/// ansible-core 2.19.12's `ansible.builtin.paramiko_ssh`, which reads the `ssh` names too.
+pub(super) const PARAMIKO_HOST: [&str; 3] =
+    ["ansible_paramiko_host", "ansible_ssh_host", "ansible_host"];
+pub(super) const PARAMIKO_PORT: [&str; 3] =
+    ["ansible_paramiko_port", "ansible_ssh_port", "ansible_port"];
+pub(super) const PARAMIKO_USER: [&str; 3] =
+    ["ansible_paramiko_user", "ansible_ssh_user", "ansible_user"];
+pub(super) const PARAMIKO_PRIVATE_KEY: [&str; 3] = [
+    "ansible_paramiko_private_key_file",
+    "ansible_ssh_private_key_file",
+    "ansible_private_key_file",
+];
+pub(super) const PARAMIKO_PASSWORD: [&str; 5] = [
+    "ansible_paramiko_password",
+    "ansible_paramiko_pass",
+    "ansible_ssh_password",
+    "ansible_ssh_pass",
+    "ansible_password",
+];
+pub(super) const PARAMIKO_TIMEOUT: [&str; 2] = ["ansible_paramiko_timeout", "ansible_ssh_timeout"];
+pub(super) const PARAMIKO_HOST_KEY_CHECKING: [&str; 3] = [
+    "ansible_paramiko_host_key_checking",
+    "ansible_ssh_host_key_checking",
+    "ansible_host_key_checking",
+];
+pub(super) const PARAMIKO_USE_RSA_SHA2: [&str; 1] = ["ansible_paramiko_use_rsa_sha2_algorithms"];
+pub(super) const PARAMIKO_PROXY_COMMAND: [&str; 1] = ["ansible_paramiko_proxy_command"];
+
 /// Every name above, for the scan that checks a managed host cannot set any of them through
 /// the facts it returns.
 #[cfg(test)]
@@ -145,6 +173,15 @@ pub(crate) fn all() -> impl Iterator<Item = &'static str> {
         .chain(AWS_SSM_PLUGIN)
         .chain(AWS_SSM_DOCUMENT)
         .chain(AWS_SSM_TIMEOUT)
+        .chain(PARAMIKO_HOST)
+        .chain(PARAMIKO_PORT)
+        .chain(PARAMIKO_USER)
+        .chain(PARAMIKO_PRIVATE_KEY)
+        .chain(PARAMIKO_PASSWORD)
+        .chain(PARAMIKO_TIMEOUT)
+        .chain(PARAMIKO_HOST_KEY_CHECKING)
+        .chain(PARAMIKO_USE_RSA_SHA2)
+        .chain(PARAMIKO_PROXY_COMMAND)
 }
 
 /// The value of the first of `names` the host sets.

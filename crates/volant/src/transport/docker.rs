@@ -24,6 +24,7 @@ pub struct PluginSettings {
     pub docker: DockerSettings,
     pub podman: super::podman::PodmanSettings,
     pub chroot: super::chroot::ChrootSettings,
+    pub paramiko: super::paramiko::ParamikoSettings,
 }
 
 /// What `ansible.cfg` and the environment say for the plugin; a host variable speaks over each.

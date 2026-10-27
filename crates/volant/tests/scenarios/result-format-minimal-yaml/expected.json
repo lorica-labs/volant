@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "h1 | CHANGED | rc=0 >>\nchg\nh1 | SUCCESS | rc=0 >>\na\nb\nh1 | SUCCESS => \n    msg: 'héllo: [x]'\nh1 | SUCCESS => \n    nested:\n        'key: x': long line long line long line long line long line long line long line\n            long line long line long line long\n        list:\n        - 1\n        - 2.5\n        - true\n        - null\n        trailing: |-\n            a\n            b       c\nh1 | SUCCESS => \n    msg: All items completed\nh1 | SKIPPED\n[ERROR]: Task failed: Action failed: boom\nOrigin: <golden-tmp>/results.yml:28:7\n\n26         msg: never\n27       when: false\n28     - name: failing\n         ^ column 7\n\nh1 | FAILED! => \n    changed: false\n    msg: boom\n"
+}

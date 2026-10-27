@@ -59,10 +59,32 @@ pub(super) fn announce(out: &mut Renderer, adhoc: Option<&PlaybookArgs>) {
     out.verbose(4, "Loading collection ansible.builtin from ");
 }
 
+/// What the pinned community.general (13.4.0) says of its `yaml` callback, which `yaml` routes to.
+const YAML_REMOVED: &str = "The 'community.general.yaml' callback plugin has been removed. The plugin has been superseded by the option `result_format=yaml` in callback plugin ansible.builtin.default from ansible-core 2.13 onwards. This feature was removed from collection 'community.general' version 12.0.0.";
+
+/// The `result_format` and `pretty_results` options of `default` and `minimal`, the first checked
+/// against its choices when the callback loads: `Err` is the exit code of a value it refuses,
+/// already said. An empty value is not a choice either (measured: exit 5).
+fn result_format(config: &Config, stdout: StdoutCallback, out: &mut Renderer) -> Result<(), i32> {
+    let yaml = match config.callback_result_format.as_deref() {
+        None | Some("json") => false,
+        Some("yaml") => true,
+        Some(other) => {
+            eprintln!(
+                "[ERROR]: Invalid value '{other}' for config 'result_format' for '{}' callback plugin. Valid values are: json, yaml",
+                stdout.name()
+            );
+            return Err(5);
+        }
+    };
+    out.set_result_format(yaml, config.callbacks.pretty_results);
+    Ok(())
+}
+
 /// Loads the run's callbacks, before the first playbook: the stdout one from `stdout_callback`,
 /// the enabled ones from `callbacks_enabled`, as ansible-core 2.19.12's `load_callbacks` does.
 /// `Err(code)` ends the run: a stdout callback this engine does not have, or a `result_format`
-/// `minimal` refuses.
+/// the callback refuses.
 ///
 /// The ad hoc command loads `oneline` for `-o`, and otherwise `minimal` unless
 /// `bin_ansible_callbacks` is on and `stdout_callback` names another.
@@ -83,6 +105,13 @@ pub(super) fn load_callbacks(
         Some(_) => "minimal",
         None => configured,
     };
+    if matches!(
+        name,
+        "yaml" | "ansible.builtin.yaml" | "community.general.yaml"
+    ) {
+        eprintln!("[ERROR]: {YAML_REMOVED}");
+        return Err(1);
+    }
     let Some(stdout) = StdoutCallback::named(name) else {
         eprintln!("[ERROR]: Could not load '{name}' callback plugin.");
         return Err(1);
@@ -100,8 +129,8 @@ pub(super) fn load_callbacks(
             }
         }
     }
-    if adhoc.is_some() && stdout == StdoutCallback::Minimal {
-        super::adhoc::result_format(config, out)?;
+    if matches!(stdout, StdoutCallback::Default | StdoutCallback::Minimal) {
+        result_format(config, stdout, out)?;
     }
     out.set_stdout_callback(stdout);
     // The ad hoc command prints the notice once its pattern is resolved.

@@ -40,20 +40,20 @@ pub(super) fn dump(
     let sort_keys = kwargs.get::<Option<bool>>("sort_keys")?.unwrap_or(true);
     kwargs.assert_all_used()?;
     Ok(emit(
-        value, indent, width, flow_style, sort_keys, false, false,
+        value, indent, width, flow_style, sort_keys, None, false,
     ))
 }
 
 /// The dump of `value` with the settings read. `literal` is the callbacks' dumper
-/// (`_AnsibleCallbackDumper` with `lossy`): a string holding a line break is written as a literal
-/// block, cleaned the way `_munge_data_for_lossy_yaml` cleans it.
+/// (`_AnsibleCallbackDumper`): a string holding a line break is written as a literal block, and
+/// with `Some(true)`, its `lossy`, cleaned first the way `_munge_data_for_lossy_yaml` cleans it.
 pub(super) fn emit(
     value: &Value,
     indent: usize,
     width: Option<usize>,
     flow_style: Option<bool>,
     sort_keys: bool,
-    literal: bool,
+    literal: Option<bool>,
     inventory: bool,
 ) -> String {
     // PyYAML's own bounds on the two settings: anything outside them is its default.
@@ -104,7 +104,7 @@ struct Emitter {
     best_width: usize,
     flow_style: Option<bool>,
     sort_keys: bool,
-    literal: bool,
+    literal: Option<bool>,
     /// `ansible-inventory`'s dumper: anchors for a node reached twice, `!vault` for vaulted
     /// text, text marked unsafe written as the text.
     inventory: bool,
@@ -277,10 +277,10 @@ impl Emitter {
     fn scalar_text(&mut self, v: &Value, simple_key: bool) {
         let (mut text, implicit) = scalar_text(v);
         // `_should_use_block`: Python's line breaks, which leave out `\r`.
-        let block = self.literal
+        let block = self.literal.is_some()
             && v.kind() == ValueKind::String
             && text.contains(['\n', '\u{85}', '\u{2028}', '\u{2029}']);
-        if block {
+        if block && self.literal == Some(true) {
             text = lossy(&text);
         }
         let chars: Vec<char> = text.chars().collect();

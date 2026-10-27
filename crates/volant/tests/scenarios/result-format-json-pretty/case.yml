@@ -1,0 +1,6 @@
+# `pretty_results` on with JSON: every result indented by four at any verbosity.
+needs: [ansible-core]
+env: {"ANSIBLE_CALLBACK_FORMAT_PRETTY": "yes"}
+runs:
+  - args: [-i, inv.ini, results.yml]
+  - args: [-v, -i, inv.ini, results.yml]

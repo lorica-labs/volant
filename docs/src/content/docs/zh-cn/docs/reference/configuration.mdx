@@ -1,5 +1,5 @@
 ---
-sourceHash: cfa2a2949ed3
+sourceHash: 9d379d1e2e93
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -99,7 +99,15 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
-  打印运行过程的 callback。`default` 打印横幅、每个结果一行以及汇总。`minimal` 像 ad hoc 命令一样打印每个结果：命令是 `host | CHANGED | rc=0 >>` 加输出，其他是 `host | SUCCESS => ` 加 JSON 结果，没有横幅、没有汇总，也没有每个循环项的行。`oneline` 把同样的结果各打印在一行上；ansible-core 2.19.12 把它标为弃用，Volant 会在标准错误上打印一次它的警告。`tree` 在标准输出上什么都不打印。带 `ansible.builtin.` 的名字也可以用。其他任何名字，例如 collection 里的 `json` 和 `yaml`，都会在第一个 play 之前以 `[ERROR]: Could not load '<name>' callback plugin.` 和退出码 1 停止运行。
+  打印运行过程的 callback。`default` 打印横幅、每个结果一行以及汇总。`minimal` 像 ad hoc 命令一样打印每个结果：命令是 `host | CHANGED | rc=0 >>` 加输出，其他是 `host | SUCCESS => ` 加 JSON 结果，没有横幅、没有汇总，也没有每个循环项的行。`oneline` 把同样的结果各打印在一行上；ansible-core 2.19.12 把它标为弃用，Volant 会在标准错误上打印一次它的警告。`tree` 在标准输出上什么都不打印。带 `ansible.builtin.` 的名字也可以用。`yaml` 会以退出码 1 和 community.general 自 12.0.0 起打印的错误停止运行，那个版本移除了这个插件：请改用 `callback_result_format = yaml`。其他任何名字，例如 `json`，都会在第一个 play 之前以 `[ERROR]: Could not load '<name>' callback plugin.` 和退出码 1 停止运行。
+</Option>
+
+<Option name="callback_result_format" id="defaults-callback-result-format" default="json" env="ANSIBLE_CALLBACK_RESULT_FORMAT">
+  `default` 和 `minimal` 怎样写出结果：`json`，或 `yaml`，此时结果写在 `=>` 之后的各行，缩进四个空格，带换行的文本写成字面块。其他任何值都会在第一个 play 之前以退出码 5 停止运行。`oneline` 总是写 JSON。
+</Option>
+
+<Option name="callback_format_pretty" id="defaults-callback-format-pretty" env="ANSIBLE_CALLBACK_FORMAT_PRETTY">
+  `default` 和 `minimal` 的 `pretty_results`。未设置时，JSON 结果只在 `debug`、`assert` 以及 `-vvv` 起缩进，YAML 结果是美化的。打开时，每个结果都缩进四个空格。关闭时，都不缩进，`debug` 也一样。美化的 YAML 在已有文本时把 `stdout_lines` 和 `stderr_lines` 写成 `<omitted>`，嵌套缩进四个空格，并去掉文本块行尾的空格和制表符，使它保持块形式；不美化的 YAML 保留每个值原样，嵌套缩进两个空格。不是布尔值的词按关闭处理。
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">

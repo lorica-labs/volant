@@ -125,3 +125,50 @@ fn the_default_callback_hides_a_loop_s_items() {
     });
     assert_eq!(text, "ok: [h1] => {\"changed\": false}\n");
 }
+
+/// `_dump_results`' indent: four for YAML and for `pretty_results`, none whatever asked for it
+/// once `pretty_results` is off; and YAML's `<omitted>` and nesting follow `pretty_results`.
+#[rstest]
+#[case::json(
+    false,
+    None,
+    false,
+    "ok: [h1] => {\"changed\": false, \"stdout\": \"a\", \"stdout_lines\": [\"a\"]}\n"
+)]
+#[case::json_pretty(
+    false,
+    Some(true),
+    false,
+    "ok: [h1] => {\n    \"changed\": false,\n    \"stdout\": \"a\",\n    \"stdout_lines\": [\n        \"a\"\n    ]\n}\n"
+)]
+#[case::json_debug_not_pretty(false, Some(false), true, "ok: [h1] => {\"msg\": \"a\"}\n")]
+#[case::yaml(
+    true,
+    None,
+    false,
+    "ok: [h1] => \n    changed: false\n    stdout: a\n    stdout_lines: <omitted>\n"
+)]
+#[case::yaml_exact(
+    true,
+    Some(false),
+    false,
+    "ok: [h1] => \n    changed: false\n    stdout: a\n    stdout_lines:\n    - a\n"
+)]
+fn the_result_format_and_pretty_results_shape_a_result(
+    #[case] yaml: bool,
+    #[case] pretty: Option<bool>,
+    #[case] debug: bool,
+    #[case] want: &str,
+) {
+    let body = if debug {
+        result(json!({"msg": "a", crate::render::VERBOSE_ALWAYS: true}))
+    } else {
+        result(json!({"changed": false, "stdout": "a", "stdout_lines": ["a"]}))
+    };
+    let dump = if debug { Dump::Debug } else { Dump::No };
+    let text = printed(None, 1, |out| {
+        out.set_result_format(yaml, pretty);
+        out.result("h1", Outcome::Ok, &body, None, dump, false, None);
+    });
+    assert_eq!(text, want);
+}

@@ -1,5 +1,5 @@
 ---
-sourceHash: cfa2a2949ed3
+sourceHash: 9d379d1e2e93
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -99,7 +99,15 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 </Option>
 
 <Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
-  Der Callback, der den Lauf ausgibt. `default` gibt die Banner, eine Zeile pro Ergebnis und das Recap aus. `minimal` gibt jedes Ergebnis so aus wie der Ad-hoc-Befehl, `host | CHANGED | rc=0 >>` und die Ausgabe bei einem Befehl, sonst `host | SUCCESS => ` und das Ergebnis als JSON, ohne Banner, ohne Recap und ohne Zeile pro Schleifenelement. `oneline` gibt dieselben Ergebnisse je auf einer Zeile aus; ansible-core 2.19.12 markiert ihn als veraltet, und Volant gibt die Warnung einmal auf der Standardfehlerausgabe aus. `tree` gibt auf der Standardausgabe nichts aus. Die Namen mit `ansible.builtin.` funktionieren auch. Jeder andere Name, etwa `json` und `yaml` aus den Collections, beendet den Lauf vor dem ersten Play mit `[ERROR]: Could not load '<name>' callback plugin.` und Exit-Code 1.
+  Der Callback, der den Lauf ausgibt. `default` gibt die Banner, eine Zeile pro Ergebnis und das Recap aus. `minimal` gibt jedes Ergebnis so aus wie der Ad-hoc-Befehl, `host | CHANGED | rc=0 >>` und die Ausgabe bei einem Befehl, sonst `host | SUCCESS => ` und das Ergebnis als JSON, ohne Banner, ohne Recap und ohne Zeile pro Schleifenelement. `oneline` gibt dieselben Ergebnisse je auf einer Zeile aus; ansible-core 2.19.12 markiert ihn als veraltet, und Volant gibt die Warnung einmal auf der Standardfehlerausgabe aus. `tree` gibt auf der Standardausgabe nichts aus. Die Namen mit `ansible.builtin.` funktionieren auch. `yaml` beendet den Lauf mit Exit-Code 1 und dem Fehler, den community.general seit 12.0.0 ausgibt, das dieses Plugin entfernt hat: `callback_result_format = yaml` ersetzt es. Jeder andere Name, etwa `json`, beendet den Lauf vor dem ersten Play mit `[ERROR]: Could not load '<name>' callback plugin.` und Exit-Code 1.
+</Option>
+
+<Option name="callback_result_format" id="defaults-callback-result-format" default="json" env="ANSIBLE_CALLBACK_RESULT_FORMAT">
+  Wie `default` und `minimal` ein Ergebnis schreiben: `json`, oder `yaml`, wobei das Ergebnis auf den Zeilen nach `=>` folgt, um vier Leerzeichen eingerückt, und ein Text mit Zeilenumbrüchen ein Literal-Block ist. Jeder andere Wert beendet den Lauf vor dem ersten Play mit Exit-Code 5. `oneline` schreibt immer JSON.
+</Option>
+
+<Option name="callback_format_pretty" id="defaults-callback-format-pretty" env="ANSIBLE_CALLBACK_FORMAT_PRETTY">
+  Das `pretty_results` von `default` und `minimal`. Nicht gesetzt, wird ein JSON-Ergebnis nur bei `debug`, `assert` und ab `-vvv` eingerückt, und ein YAML-Ergebnis ist hübsch. Eingeschaltet, wird jedes Ergebnis um vier Leerzeichen eingerückt. Ausgeschaltet, keines, auch kein `debug`. Hübsches YAML schreibt `stdout_lines` und `stderr_lines` als `<omitted>` neben ihren Text, verschachtelt um vier Leerzeichen und entfernt die Leerzeichen und Tabs am Ende eines Textblocks, damit er ein Block bleibt; nicht hübsches YAML lässt jeden Wert, wie er ist, und verschachtelt um zwei. Ein Wort, das kein Boolean ist, gilt als ausgeschaltet.
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">

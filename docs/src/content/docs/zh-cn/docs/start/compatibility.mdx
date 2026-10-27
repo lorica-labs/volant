@@ -1,5 +1,5 @@
 ---
-sourceHash: dd6d5d30aedb
+sourceHash: cd192131ee62
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -102,7 +102,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 | 内容 | 会发生什么 |
 |---|---|
-| `callback_plugins/`、`vars_plugins/`、`result_format` | 被忽略。playbook 的结果以 JSON 打印。 |
+| `callback_plugins/`、`vars_plugins/` | 被忽略。 |
 | `stdout_callback` 指定 collection 的 callback，例如 `json` 或 `yaml` | 运行在第一个 play 之前以 `Could not load '<name>' callback plugin.` 停止，而 ansible-core 只对未安装的插件打印这句。`default`、`minimal`、`oneline` 和 `tree` 可以用。 |
 | `callbacks_enabled` | 每个名字都以 `[WARNING]: Skipping callback plugin '<name>', unable to load` 被跳过，而 ansible-core 只对找不到的插件打印这句。`volant.compat.record` 被跳过，不打印警告。 |
 | `volant check`、`inventory`、`vault`、`doc`、`config` 和 `galaxy` | 它们不存在。`volant` 有 `playbook`、`adhoc`、`runtime` 和 `shims`。 |

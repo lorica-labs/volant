@@ -1,0 +1,7 @@
+# `result_format = yaml` on the `default` callback: each result as YAML on the lines after `=>`,
+# pretty unless said otherwise, at verbosity 0 and 1.
+needs: [ansible-core]
+env: {"ANSIBLE_CALLBACK_RESULT_FORMAT": "yaml"}
+runs:
+  - args: [-i, inv.ini, results.yml]
+  - args: [-v, -i, inv.ini, results.yml]

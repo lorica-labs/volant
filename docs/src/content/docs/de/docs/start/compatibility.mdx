@@ -1,5 +1,5 @@
 ---
-sourceHash: dd6d5d30aedb
+sourceHash: cd192131ee62
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
@@ -102,7 +102,7 @@ Diese Punkte weichen von `ansible-playbook` ab, ohne eine Meldung vor dem Lauf o
 
 | Was | Was geschieht |
 |---|---|
-| `callback_plugins/`, `vars_plugins/`, `result_format` | Werden ignoriert. Die Ergebnisse eines Playbooks werden als JSON ausgegeben. |
+| `callback_plugins/`, `vars_plugins/` | Werden ignoriert. |
 | `stdout_callback` mit einem Callback einer Collection, etwa `json` oder `yaml` | Der Lauf endet vor dem ersten Play mit `Could not load '<name>' callback plugin.`, was ansible-core nur für ein nicht installiertes Plugin ausgibt. `default`, `minimal`, `oneline` und `tree` funktionieren. |
 | `callbacks_enabled` | Jeder Name wird mit `[WARNING]: Skipping callback plugin '<name>', unable to load` übersprungen, was ansible-core nur für ein Plugin ausgibt, das es nicht findet. `volant.compat.record` wird ohne Warnung übersprungen. |
 | `volant check`, `inventory`, `vault`, `doc`, `config` und `galaxy` | Sie existieren nicht. `volant` hat `playbook`, `adhoc`, `runtime` und `shims`. |

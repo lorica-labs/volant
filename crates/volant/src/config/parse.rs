@@ -29,6 +29,12 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
         let Some((key, value)) = line.split_once('=') else {
             continue;
         };
+        if section == "galaxy" || section.starts_with("galaxy_server.") {
+            config
+                .galaxy
+                .push((section.clone(), key.trim().into(), value.trim().into()));
+            continue;
+        }
         if section == "privilege_escalation" {
             match key.trim() {
                 "become" => {

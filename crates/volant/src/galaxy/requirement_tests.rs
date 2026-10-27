@@ -238,11 +238,7 @@ fn a_collection_directory_and_a_namespace_directory() {
 fn a_number_entry_is_an_unexpected_exception() {
     assert_eq!(
         collection(&json!(42)),
-        Err(Failure {
-            message: "Unexpected Exception, this is probably a bug: unsupported type <class 'int'>"
-                .into(),
-            code: 250,
-        })
+        Err(Failure::unexpected("unsupported type <class 'int'>"))
     );
 }
 

@@ -31,6 +31,16 @@ pub mod requirements;
 pub mod resolve;
 #[cfg(test)]
 mod resolve_tests;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the install from a Galaxy server is its first caller"
+    )
+)]
+pub mod settings;
+#[cfg(test)]
+mod settings_tests;
 #[cfg(test)]
 mod tests;
 // `allow`, not `expect`: its only caller is the resolver, which older compilers count as a use
@@ -49,6 +59,8 @@ pub mod version;
 pub struct Failure {
     pub message: String,
     pub code: i32,
+    /// The error underneath, for one the reference prints as a `<<< caused by >>>` block.
+    pub cause: Option<String>,
 }
 
 impl Failure {
@@ -57,7 +69,56 @@ impl Failure {
         Self {
             message: message.into(),
             code: 1,
+            cause: None,
         }
+    }
+
+    /// An exception the reference does not handle: exit 250.
+    pub fn unexpected(what: &str) -> Self {
+        Self {
+            message: format!("Unexpected Exception, this is probably a bug: {what}"),
+            code: 250,
+            cause: None,
+        }
+    }
+
+    /// An error with the error underneath it, exit 1.
+    pub fn caused(message: impl Into<String>, cause: impl Into<String>) -> Self {
+        Self {
+            message: message.into(),
+            code: 1,
+            cause: Some(cause.into()),
+        }
+    }
+
+    /// The message with its cause on the same line, as a warning quotes it.
+    #[cfg_attr(
+        not(test),
+        expect(
+            dead_code,
+            reason = "the install from a Galaxy server is its first caller"
+        )
+    )]
+    pub fn summary(&self) -> String {
+        match &self.cause {
+            Some(cause) => format!("{}: {cause}", self.message),
+            None => self.message.clone(),
+        }
+    }
+
+    /// What `[ERROR]: ` is followed by. A message of several lines ends with an empty one.
+    pub fn shown(&self) -> String {
+        let mut text = match &self.cause {
+            Some(cause) => format!(
+                "{0}: {cause}\n\n{0}.\n\n<<< caused by >>>\n\n{cause}\n",
+                self.message
+            ),
+            None => self.message.clone(),
+        };
+        if text.contains('\n') && !text.ends_with('\n') {
+            text.push('\n');
+        }
+        text
     }
 
     /// An `AnsibleOptionsError` of the reference: exit 5.
@@ -65,6 +126,7 @@ impl Failure {
         Self {
             message: message.into(),
             code: 5,
+            cause: None,
         }
     }
 }

@@ -251,13 +251,10 @@ pub fn collection(entry: &Value) -> Result<Collection, Failure> {
             map
         }
         other => {
-            return Err(Failure {
-                message: format!(
-                    "Unexpected Exception, this is probably a bug: unsupported type <class '{}'>",
-                    python_type(other)
-                ),
-                code: 250,
-            });
+            return Err(Failure::unexpected(&format!(
+                "unsupported type <class '{}'>",
+                python_type(other)
+            )));
         }
     };
     let mut name = map.get("name").filter(|v| !v.is_null()).map(text);

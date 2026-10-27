@@ -3,7 +3,8 @@
 use std::io::{BufRead as _, BufReader};
 use std::process::{Child, Command, Stdio};
 
-use super::api::{Server, VersionInfo, galaxy_error, galaxy_yml};
+use super::api::{Files, Server, Servers, VersionInfo, galaxy_error, galaxy_yml};
+use super::settings::ServerSettings;
 
 const SCRIPT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
@@ -42,6 +43,23 @@ impl Fake {
         None
     }
 
+    /// The server as `-s` names it, with its response cache and token file under `home`.
+    fn server(&self, home: &std::path::Path) -> Server {
+        let settings = ServerSettings {
+            name: "cmd_arg".into(),
+            url: self.url(),
+            token: None,
+            validate_certs: true,
+            timeout: 60,
+        };
+        let files = Files {
+            cache_dir: Some(&home.join("galaxy_cache")),
+            clear_cache: false,
+            token_path: &home.join("galaxy_token"),
+        };
+        Server::new(&settings, &files, 0)
+    }
+
     fn url(&self) -> String {
         format!("http://127.0.0.1:{}/", self.port)
     }
@@ -72,7 +90,8 @@ fn the_requests_are_those_ansible_galaxy_makes() {
     let Some(fake) = Fake::start() else {
         return;
     };
-    let mut server = Server::new("cmd_arg", &fake.url(), 0);
+    let home = tempfile::tempdir().expect("a home");
+    let mut server = fake.server(home.path());
     assert_eq!(
         server
             .collection_versions("demo", "base")
@@ -103,7 +122,8 @@ fn a_version_record_gives_its_dependencies_and_download() {
     let Some(fake) = Fake::start() else {
         return;
     };
-    let mut server = Server::new("cmd_arg", &fake.url(), 0);
+    let home = tempfile::tempdir().expect("a home");
+    let mut server = fake.server(home.path());
     let info = server.version_info("demo", "app", "1.0.0").expect("record");
     assert_eq!(
         info.dependencies,
@@ -137,7 +157,8 @@ fn a_hash_mismatch_leaves_nothing() {
     let Some(fake) = Fake::start() else {
         return;
     };
-    let mut server = Server::new("cmd_arg", &fake.url(), 0);
+    let home = tempfile::tempdir().expect("a home");
+    let mut server = fake.server(home.path());
     let info = server.version_info("demo", "app", "1.0.0").expect("record");
     let dir = tempfile::tempdir().expect("a directory");
     let failed = server.download(&info.download_url, &"0".repeat(64), dir.path());
@@ -153,7 +174,8 @@ fn an_unknown_collection_has_no_versions() {
     let Some(fake) = Fake::start() else {
         return;
     };
-    let mut server = Server::new("cmd_arg", &fake.url(), 0);
+    let home = tempfile::tempdir().expect("a home");
+    let mut server = fake.server(home.path());
     assert!(
         server
             .collection_versions("demo", "nope")
@@ -169,7 +191,8 @@ fn the_galaxy_yml_is_written_as_ansible_galaxy_writes_it() {
     let Some(fake) = Fake::start() else {
         return;
     };
-    let mut server = Server::new("cmd_arg", &fake.url(), 0);
+    let home = tempfile::tempdir().expect("a home");
+    let mut server = fake.server(home.path());
     let info: VersionInfo = server
         .version_info("demo", "base", "1.1.0")
         .expect("record");
@@ -209,5 +232,76 @@ fn an_http_error_reads_as_ansible_galaxy_writes_it() {
             r#"{"errors": [{"code": "not_found", "detail": "Not found."}]}"#
         ),
         format!("{context} (HTTP Code: 404, Message: Not found. Code: not_found)")
+    );
+}
+
+fn unreachable(name: &str) -> ServerSettings {
+    ServerSettings {
+        name: name.into(),
+        url: "http://127.0.0.1:9/api/".into(),
+        token: None,
+        validate_certs: true,
+        timeout: 5,
+    }
+}
+
+/// A server that cannot be reached is skipped, and the next one answers.
+#[test]
+fn an_unreachable_server_is_skipped() {
+    let Some(fake) = Fake::start() else {
+        return;
+    };
+    let home = tempfile::tempdir().expect("a home");
+    let files = Files {
+        cache_dir: None,
+        clear_cache: false,
+        token_path: &home.path().join("galaxy_token"),
+    };
+    let mut servers = Servers {
+        list: vec![
+            Server::new(&unreachable("dead"), &files, 0),
+            fake.server(home.path()),
+        ],
+    };
+    let versions = servers.versions("demo.base").expect("the second answers");
+    assert_eq!(versions.len(), 3);
+    assert!(versions.iter().all(|(_, at)| *at == 1));
+    let mut alone = Servers {
+        list: vec![Server::new(&unreachable("dead"), &files, 0)],
+    };
+    let failure = alone.versions("demo.base").expect_err("none answers");
+    assert!(
+        failure.summary().starts_with(
+            "Unknown error when attempting to call Galaxy at 'http://127.0.0.1:9/api/': "
+        ),
+        "{}",
+        failure.summary()
+    );
+    assert!(failure.shown().contains("\n\n<<< caused by >>>\n\n"));
+}
+
+/// The proxy of the environment is used, and `no_proxy` lifts it. Each test runs in a process
+/// of its own under nextest, so the variables reach no other test.
+#[test]
+fn the_proxy_variables_are_honoured() {
+    let Some(fake) = Fake::start() else {
+        return;
+    };
+    let home = tempfile::tempdir().expect("a home");
+    unsafe {
+        std::env::set_var("http_proxy", "http://127.0.0.1:9");
+        std::env::remove_var("no_proxy");
+        std::env::remove_var("NO_PROXY");
+    }
+    let mut proxied = fake.server(home.path());
+    assert!(proxied.collection_versions("demo", "base").is_err());
+    unsafe { std::env::set_var("no_proxy", "127.0.0.1") };
+    let mut direct = fake.server(home.path());
+    assert_eq!(
+        direct
+            .collection_versions("demo", "base")
+            .expect("direct")
+            .len(),
+        3
     );
 }

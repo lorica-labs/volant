@@ -305,8 +305,5 @@ fn io(error: std::io::Error) -> Failure {
 
 /// An exception the reference does not handle, reported as it reports one: exit 250.
 fn unexpected(what: &str) -> Failure {
-    Failure {
-        message: format!("Unexpected Exception, this is probably a bug: {what}"),
-        code: 250,
-    }
+    Failure::unexpected(what)
 }

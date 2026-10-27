@@ -26,7 +26,7 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
     match run(&kind, args.verbose) {
         Ok(code) => code,
         Err(failure) => {
-            eprintln!("[ERROR]: {}", failure.message);
+            eprintln!("[ERROR]: {}", failure.shown());
             failure.code
         }
     }

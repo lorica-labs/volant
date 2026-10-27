@@ -3,14 +3,13 @@
 //! requests resolved with their dependencies, each tarball fetched and copied into the folder,
 //! and a `requirements.yml` naming them for an install with `--offline` from that folder.
 
-use std::collections::HashMap;
 use std::path::Path;
 
 use serde_json::json;
 
 use super::Failure;
 use super::api::servers::Servers;
-use super::install::{Mixed, Options, Wanted, download_dir};
+use super::install::{Local, Mixed, Options, Wanted, download_dir, locals};
 use super::resolve::{self, Request};
 
 /// Downloads `wanted` into `output` and returns the exit code.
@@ -19,19 +18,10 @@ pub fn collections(
     output: &Path,
     servers: &mut Servers,
     options: Options,
+    verbose: u8,
 ) -> Result<i32, Failure> {
     let requests: Vec<Request> = wanted.iter().map(Wanted::request).collect();
-    let mut given = HashMap::new();
-    let mut tarballs = HashMap::new();
-    for item in wanted {
-        if let Wanted::Tarball(tarball, meta) = item {
-            tarballs.insert(
-                meta.fqcn(),
-                (meta.version.clone(), meta.dependencies.clone()),
-            );
-            given.insert(meta.fqcn(), tarball.path().to_path_buf());
-        }
-    }
+    let (given, tarballs) = locals(wanted);
     let mut index = Mixed::new(tarballs, servers);
     println!("Process download dependency map");
     let resolution = resolve::resolve(
@@ -55,8 +45,10 @@ pub fn collections(
                 "Downloading collection '{fqcn}:{version}' to '{}'",
                 output.display()
             );
-            let source = if let Some(path) = given.get(fqcn) {
-                path.clone()
+            let source = if let Some(Local::Dir(source)) = given.get(fqcn) {
+                source.build(output, true, verbose)?
+            } else if let Some(Local::Tarball(tarball)) = given.get(fqcn) {
+                tarball.path().to_path_buf()
             } else {
                 if downloads.is_none() {
                     downloads = Some(download_dir()?);
@@ -67,8 +59,10 @@ pub fn collections(
                 .file_name()
                 .map(|n| n.to_string_lossy().into_owned())
                 .unwrap_or_default();
-            std::fs::copy(&source, output.join(&name))
-                .map_err(|e| Failure::error(e.to_string()))?;
+            if source != output.join(&name) {
+                std::fs::copy(&source, output.join(&name))
+                    .map_err(|e| Failure::error(e.to_string()))?;
+            }
             println!("Collection '{fqcn}:{version}' was downloaded successfully");
             listed.push(json!({"name": name, "version": version}));
         }

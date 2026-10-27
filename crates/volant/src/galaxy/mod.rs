@@ -31,9 +31,11 @@ pub mod requirements;
 pub mod resolve;
 #[cfg(test)]
 mod resolve_tests;
+// `allow`, not `expect`: its only callers are other unused modules, which older compilers count
+// as uses.
 #[cfg_attr(
     not(test),
-    expect(
+    allow(
         dead_code,
         reason = "the install from a Galaxy server is its first caller"
     )
@@ -94,7 +96,7 @@ impl Failure {
     /// The message with its cause on the same line, as a warning quotes it.
     #[cfg_attr(
         not(test),
-        expect(
+        allow(
             dead_code,
             reason = "the install from a Galaxy server is its first caller"
         )

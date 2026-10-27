@@ -51,7 +51,14 @@ impl Renderer {
         } else {
             result.0.clone()
         };
+        let items = result
+            .0
+            .get(super::LOOP_RESULTS)
+            .filter(|_| self.minimal.is_some());
         body.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
+        if let Some(items) = items.filter(|_| !censored) {
+            body.insert("results".into(), items.clone());
+        }
         // The reference's callback never shows `failed` or `skipped`: its `TaskResult` drops both
         // (`_IGNORE` in `executor/task_result.py`, 2.19.12) from every result it hands over, a loop
         // item's included. Measured on the `fatal:` line of a timed-out `pause`, a failed `copy`
@@ -149,13 +156,24 @@ impl Renderer {
         result: &TaskResult,
         censored: bool,
     ) {
+        // Only the `default` callback shows a retry.
+        if self.minimal.is_some() {
+            return;
+        }
         let mut line = format!("FAILED - RETRYING: [{host}]: {name} ({left} retries left).");
         if self.verbosity > 2 || verbose_always(result, censored) {
             let body = if censored {
                 censored_body(result)
             } else {
                 let mut body = result.0.clone();
+                let items = result
+                    .0
+                    .get(super::LOOP_RESULTS)
+                    .filter(|_| self.minimal.is_some());
                 body.retain(|k, _| !k.starts_with("_ansible_") && !k.starts_with("_volant_"));
+                if let Some(items) = items.filter(|_| !censored) {
+                    body.insert("results".into(), items.clone());
+                }
                 for key in [
                     "failed",
                     "skipped",
@@ -200,6 +218,10 @@ impl Renderer {
         censored: bool,
         delegate: Option<&str>,
     ) {
+        // `minimal` and `oneline` show no loop item, only the task's own result.
+        if label.is_some() && self.minimal.is_some() {
+            return;
+        }
         let label = if censored {
             label.map(|_| CENSORED_ITEM)
         } else {

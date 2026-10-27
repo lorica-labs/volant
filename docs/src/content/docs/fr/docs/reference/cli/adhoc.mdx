@@ -1,5 +1,5 @@
 ---
-sourceHash: bb42889a1a65
+sourceHash: 34b11b932609
 title: volant adhoc
 description: Exécute un module sur chaque hôte qui correspond à un motif, avec les options et la sortie d'ansible.
 ---
@@ -71,7 +71,7 @@ Une erreur d'usage sort avec 2. L'erreur standard porte le bloc `usage:` d'`ansi
 
 Chaque hôte affiche un résultat, comme le fait le callback `minimal` d'ansible. Un résultat de `command`, `shell` ou `raw` est `h1 | CHANGED | rc=0 >>`, puis sa sortie standard, son erreur standard et son `msg` collés sans rien entre eux. Tout autre résultat est `h1 | SUCCESS => ` suivi du résultat en JSON, indenté de quatre espaces, clés triées. Les statuts sont `SUCCESS`, `CHANGED`, `FAILED` (forme commande), `FAILED!` (forme JSON), `SKIPPED` et `UNREACHABLE!`. Avant un résultat en échec ou injoignable, la sortie standard porte le même bloc `[ERROR]` qu'affiche un playbook. Son `Origin:` est `<adhoc 'MODULE' task>`, suivi de la tâche telle qu'ansible la montre, coupée à 120 caractères.
 
-Le code de sortie est 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, et 4 quand un hôte n'a pas pu être joint, qu'il y ait ou non des hôtes en échec. `ANSIBLE_STDOUT_CALLBACK` ne change pas la sortie. Avec `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, ou `callback_result_format = yaml` sous `[defaults]` dans `ansible.cfg`, un résultat de forme JSON est affiché en YAML à la place, sur les lignes après `=>`, indenté de quatre espaces. Une chaîne avec des sauts de ligne devient un bloc littéral. Toute autre valeur, la valeur vide comprise, arrête la commande avec le code de sortie 5.
+Le code de sortie est 0 quand chaque hôte a réussi ou a été ignoré, 2 quand un hôte a échoué, et 4 quand un hôte n'a pas pu être joint, qu'il y ait ou non des hôtes en échec. `ANSIBLE_STDOUT_CALLBACK` ne change la sortie que si `bin_ansible_callbacks` est activé (`ANSIBLE_LOAD_CALLBACK_PLUGINS=true`) et qu'il nomme un autre callback que `default` : `oneline` affiche alors comme `-o`, et un nom que Volant n'a pas arrête la commande avec `Could not load`. `-o` l'emporte. Avec `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, ou `callback_result_format = yaml` sous `[defaults]` dans `ansible.cfg`, un résultat de forme JSON est affiché en YAML à la place, sur les lignes après `=>`, indenté de quatre espaces. Une chaîne avec des sauts de ligne devient un bloc littéral. Toute autre valeur, la valeur vide comprise, arrête la commande avec le code de sortie 5.
 
 ## Une ligne par hôte
 

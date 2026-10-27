@@ -8,6 +8,7 @@ use anstyle::{AnsiColor, Style};
 
 use crate::stats::{CustomStats, Stats};
 
+mod callback;
 mod error;
 mod oneline;
 mod recap_json;
@@ -16,6 +17,7 @@ mod shorten;
 mod shown;
 mod tree;
 
+pub use callback::{LOOP_RESULTS, StdoutCallback};
 pub(crate) use error::source_context;
 pub use error::{
     AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, block_text, cause,
@@ -294,17 +296,19 @@ impl Renderer {
     /// What the reference prints when a playbook starts at `-vv`: its banner, at `-vvvv` the
     /// options it was run with, and how many plays it holds.
     pub fn playbook(&mut self, file: &std::path::Path, plays: usize, options: &[String]) {
-        // The `minimal` callback has no playbook banner.
-        if self.verbosity < 2 || self.minimal.is_some() {
+        if self.verbosity < 2 {
             return;
         }
-        let base = file.file_name().map_or_else(
-            || file.display().to_string(),
-            |name| name.to_string_lossy().into_owned(),
-        );
-        self.banner(&format!("PLAYBOOK: {base}"));
-        for line in options {
-            self.verbose(4, line);
+        // The banner and the options are the `default` callback's; the count is the command's.
+        if self.minimal.is_none() {
+            let base = file.file_name().map_or_else(
+                || file.display().to_string(),
+                |name| name.to_string_lossy().into_owned(),
+            );
+            self.banner(&format!("PLAYBOOK: {base}"));
+            for line in options {
+                self.verbose(4, line);
+            }
         }
         self.verbose(2, &format!("{plays} plays in {}", file.display()));
     }
@@ -323,6 +327,9 @@ impl Renderer {
     /// role, by its bare name; and `=> (item=1)` behind either when a loop asked for it. It is
     /// painted like an `ok:` line, which is what the reference's own callback does with it.
     pub fn included(&mut self, what: &str, hosts: &[String], label: Option<&str>) {
+        if self.minimal.is_some() {
+            return;
+        }
         let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
         let line = format!("included: {what} for {}{item}", hosts.join(", "));
         let _ = writeln!(self.out, "{}", self.paint(OK, &line));
@@ -410,6 +417,9 @@ impl Renderer {
     /// own, with no result line before it: the reference shows the items and then this, never an
     /// aggregate line of its own.
     pub fn ignoring(&mut self) {
+        if self.minimal.is_some() {
+            return;
+        }
         let _ = writeln!(self.out, "{}", self.paint(SKIPPED, "...ignoring"));
     }
 

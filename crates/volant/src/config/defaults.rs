@@ -29,6 +29,7 @@ impl Default for Config {
             facts_modules: Vec::new(),
             duplicate_dict_key: None,
             show_task_path_on_failure: false,
+            callbacks: Callbacks::default(),
             callback_result_format: None,
             force_color: false,
             nocolor: false,

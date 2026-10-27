@@ -1,0 +1,10 @@
+# The `minimal` stdout callback over every kind of result, at three verbosities and in check and diff
+# mode: no banner and no recap, one line per result.
+needs: [ansible-core]
+env: {"ANSIBLE_STDOUT_CALLBACK": "minimal"}
+stderr: true
+modes: [check, diff]
+runs:
+  - args: [-i, inv.ini, callbacks.yml]
+  - args: [-v, -i, inv.ini, callbacks.yml]
+  - args: [-vv, -i, inv.ini, callbacks.yml]

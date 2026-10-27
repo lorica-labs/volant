@@ -282,8 +282,12 @@ fn aggregate(
         return (empty_loop_result(), true);
     }
     let aggregate = match registered_value(task, results) {
+        // The items are not part of the line the `default` callback prints; `minimal` and
+        // `oneline` show them, and read them back from here.
         Value::Object(mut m) => {
-            m.remove("results");
+            if let Some(items) = m.remove("results") {
+                m.insert(crate::render::LOOP_RESULTS.into(), items);
+            }
             TaskResult(m)
         }
         _ => TaskResult::default(),

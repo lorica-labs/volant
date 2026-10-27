@@ -101,7 +101,9 @@ These differ from `ansible-playbook` without a message before the run, or with a
 
 | What | What happens |
 |---|---|
-| `callback_plugins/`, `vars_plugins/`, `stdout_callback`, `callbacks_enabled`, `result_format` | Ignored. The output is the default one. |
+| `callback_plugins/`, `vars_plugins/`, `result_format` | Ignored. A playbook's results are printed as JSON. |
+| `stdout_callback` naming a collection's callback, such as `json` or `yaml` | The run stops before the first play with `Could not load '<name>' callback plugin.`, which ansible-core prints only for a plugin that is not installed. `default`, `minimal`, `oneline` and `tree` work. |
+| `callbacks_enabled` | Each name is skipped with `[WARNING]: Skipping callback plugin '<name>', unable to load`, which ansible-core prints only for a plugin it cannot find. `volant.compat.record` is skipped without a warning. |
 | `volant check`, `inventory`, `vault`, `doc`, `config` and `galaxy` | They do not exist. `volant` has `playbook`, `adhoc`, `runtime` and `shims`. |
 | A comparison written between two literals of types Python cannot order, such as `{{ 'a' < 1 }}` | It answers `false` or `true` where ansible-core fails with `'<' not supported between instances of 'str' and 'int'`. The template library works out a comparison of literals before Volant sees it. With a variable on either side the comparison fails as in ansible-core. |
 | A task with `no_log: true` that fails | On purpose. Volant prints `[ERROR]: Task failed: Action failed: <error censored due to no log>` and nothing else of the cause. ansible-core 2.19.12 prints the cause: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, the error of the module, and the `<<< caused by >>>` blocks. That text can hold a secret, such as the `msg` of a `fail` that names a password. The [security policy](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) counts a secret that reaches a log or a terminal where `no_log` hides it in ansible-core as a vulnerability, so Volant hides it. The `fatal:` line, the registered result and the recap are the same in both. To read the cause, run the task without `no_log`. |

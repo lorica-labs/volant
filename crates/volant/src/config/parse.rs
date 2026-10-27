@@ -213,6 +213,12 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             "show_task_path_on_failure" => {
                 config.show_task_path_on_failure = callback_flag(value);
             }
+            "stdout_callback"
+            | "callbacks_enabled"
+            | "callback_plugins"
+            | "bin_ansible_callbacks" => {
+                super::callbacks::ini(&mut config.callbacks, key.trim(), value, origin, base)?;
+            }
             "enable_task_debugger" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.enable_task_debugger = on;

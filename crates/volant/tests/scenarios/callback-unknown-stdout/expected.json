@@ -1,0 +1,5 @@
+{
+  "code": 1,
+  "stderr": "[ERROR]: Could not load 'nosuch' callback plugin.\n",
+  "stdout": ""
+}

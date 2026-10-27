@@ -1,5 +1,5 @@
 ---
-sourceHash: 4785cc48b4ad
+sourceHash: dd6d5d30aedb
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
@@ -102,7 +102,9 @@ Diese Punkte weichen von `ansible-playbook` ab, ohne eine Meldung vor dem Lauf o
 
 | Was | Was geschieht |
 |---|---|
-| `callback_plugins/`, `vars_plugins/`, `stdout_callback`, `callbacks_enabled`, `result_format` | Werden ignoriert. Die Ausgabe ist die Standardausgabe. |
+| `callback_plugins/`, `vars_plugins/`, `result_format` | Werden ignoriert. Die Ergebnisse eines Playbooks werden als JSON ausgegeben. |
+| `stdout_callback` mit einem Callback einer Collection, etwa `json` oder `yaml` | Der Lauf endet vor dem ersten Play mit `Could not load '<name>' callback plugin.`, was ansible-core nur für ein nicht installiertes Plugin ausgibt. `default`, `minimal`, `oneline` und `tree` funktionieren. |
+| `callbacks_enabled` | Jeder Name wird mit `[WARNING]: Skipping callback plugin '<name>', unable to load` übersprungen, was ansible-core nur für ein Plugin ausgibt, das es nicht findet. `volant.compat.record` wird ohne Warnung übersprungen. |
 | `volant check`, `inventory`, `vault`, `doc`, `config` und `galaxy` | Sie existieren nicht. `volant` hat `playbook`, `adhoc`, `runtime` und `shims`. |
 | Ein Vergleich zwischen zwei Literalen von Typen, die Python nicht ordnen kann, etwa `{{ 'a' < 1 }}` | Er liefert `false` oder `true`, wo ansible-core mit `'<' not supported between instances of 'str' and 'int'` fehlschlägt. Die Template-Bibliothek wertet einen Vergleich von Literalen aus, bevor Volant ihn sieht. Steht auf einer Seite eine Variable, schlägt der Vergleich wie in ansible-core fehl. |
 | Ein Task mit `no_log: true`, der fehlschlägt | Absicht. Volant gibt `[ERROR]: Task failed: Action failed: <error censored due to no log>` aus und sonst nichts von der Ursache. ansible-core 2.19.12 gibt die Ursache aus: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, den Fehler des Moduls und die Blöcke `<<< caused by >>>`. Dieser Text kann ein Geheimnis enthalten, etwa die `msg` eines `fail`, die ein Passwort nennt. Die [Sicherheitsrichtlinie](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) wertet ein Geheimnis, das in einem Log oder Terminal landet, wo `no_log` es in ansible-core verbirgt, als Sicherheitslücke, deshalb verbirgt Volant es. Die Zeile `fatal:`, das registrierte Ergebnis und der Recap sind in beiden gleich. Um die Ursache zu lesen, führen Sie den Task ohne `no_log` aus. |

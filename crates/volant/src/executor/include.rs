@@ -443,7 +443,9 @@ pub(super) async fn report_include(
             } else {
                 match registered_value(task, &results) {
                     Value::Object(mut m) => {
-                        m.remove("results");
+                        if let Some(items) = m.remove("results") {
+                            m.insert(crate::render::LOOP_RESULTS.into(), items);
+                        }
                         TaskResult(m)
                     }
                     _ => TaskResult::default(),

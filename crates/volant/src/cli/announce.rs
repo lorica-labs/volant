@@ -3,9 +3,11 @@
 use std::path::PathBuf;
 
 use super::args::PlaybookArgs;
+use super::plays::Plays;
 use crate::config::Config;
 use crate::inventory::Source;
-use crate::render::Renderer;
+use crate::playbook;
+use crate::render::{Renderer, StdoutCallback};
 
 /// What `--version` prints, and what `-vv` opens the run with in place of the reference's block
 /// of machine paths: Volant's own version and the ansible-core release it matches.
@@ -57,36 +59,87 @@ pub(super) fn announce(out: &mut Renderer, adhoc: Option<&PlaybookArgs>) {
     out.verbose(4, "Loading collection ansible.builtin from ");
 }
 
-/// The lines before the first playbook: the stdout callback loaded, and the two the reference
-/// sets aside. Its line names the plugin file, which has no counterpart here, so it names the
-/// engine's own callback.
+/// Loads the run's callbacks, before the first playbook: the stdout one from `stdout_callback`,
+/// the enabled ones from `callbacks_enabled`, as ansible-core 2.19.12's `load_callbacks` does.
+/// `Err(code)` ends the run: a stdout callback this engine does not have, or a `result_format`
+/// `minimal` refuses.
 ///
-/// `adhoc` is `(one_line, tree)` for `ansible`, which loads `minimal` as its stdout callback, or
-/// `oneline` for `-o`, and `tree` beside it for `-t`.
-pub(super) fn announce_callbacks(out: &mut Renderer, adhoc: Option<(bool, bool)>) {
-    let (stdout, skipped) = match adhoc {
-        Some((true, _)) => ("oneline", ["default", "minimal"]),
-        Some((false, _)) => ("minimal", ["default", "oneline"]),
-        None => ("default", ["minimal", "oneline"]),
+/// The ad hoc command loads `oneline` for `-o`, and otherwise `minimal` unless
+/// `bin_ansible_callbacks` is on and `stdout_callback` names another.
+pub(super) fn load_callbacks(
+    config: &Config,
+    plays: &Plays<'_>,
+    out: &mut Renderer,
+) -> Result<(), i32> {
+    let adhoc = match plays {
+        Plays::Adhoc(adhoc) => Some(*adhoc),
+        Plays::Files | Plays::Replay(_) => None,
+    };
+    let configured = config.callbacks.stdout.as_deref().unwrap_or("default");
+    let loads = adhoc.is_none() || config.callbacks.adhoc_loads;
+    let name = match adhoc {
+        Some(adhoc) if adhoc.callbacks().0 => "oneline",
+        Some(_) if loads && configured != "default" => configured,
+        Some(_) => "minimal",
+        None => configured,
+    };
+    let Some(stdout) = StdoutCallback::named(name) else {
+        eprintln!("[ERROR]: Could not load '{name}' callback plugin.");
+        return Err(1);
+    };
+    if loads {
+        // The enabled callbacks run beside the stdout one; this engine has none of its own yet.
+        // `volant.compat.record` records ansible-core's runs for this engine, which has nothing
+        // to record, so an `ansible.cfg` both share enables it without a word here.
+        for enabled in &config.callbacks.enabled {
+            if StdoutCallback::named(enabled).is_none() && !enabled.starts_with("volant.") {
+                out.warning(
+                    &format!("Skipping callback plugin '{enabled}', unable to load"),
+                    false,
+                );
+            }
+        }
+    }
+    if adhoc.is_some() && stdout == StdoutCallback::Minimal {
+        super::adhoc::result_format(config, out)?;
+    }
+    out.set_stdout_callback(stdout);
+    // The ad hoc command prints the notice once its pattern is resolved.
+    if adhoc.is_none()
+        && let Some(release) = stdout.removed_in()
+    {
+        playbook::print_deprecation_line(&format!(
+            "The {} callback plugin is deprecated. This feature will be removed from ansible-core version {release}.",
+            stdout.name()
+        ));
+    }
+    let kind = if stdout == StdoutCallback::Tree {
+        "aggregate"
+    } else {
+        "stdout"
     };
     out.verbose(
         4,
         &format!(
-            "Loading callback plugin {stdout} of type stdout, v2.0 from the built-in callback"
+            "Loading callback plugin {} of type {kind}, v2.0 from the built-in callback",
+            stdout.name()
         ),
     );
-    for callback in skipped {
-        out.verbose(
-            2,
-            &format!("Skipping callback '{callback}', as we already have a stdout callback."),
-        );
+    for skipped in ["default", "minimal", "oneline"] {
+        if skipped != stdout.name() {
+            out.verbose(
+                2,
+                &format!("Skipping callback '{skipped}', as we already have a stdout callback."),
+            );
+        }
     }
-    if adhoc.is_some_and(|(_, tree)| tree) {
+    if adhoc.is_some_and(|adhoc| adhoc.callbacks().1) {
         out.verbose(
             4,
             "Loading callback plugin tree of type aggregate, v2.0 from the built-in callback",
         );
     }
+    Ok(())
 }
 
 /// The sources a run reads: every `-i`, else the configuration's, else the reference's
@@ -273,7 +326,7 @@ pub(super) fn py_str(text: &str) -> String {
 pub(super) fn banner_before_vars_refusal(
     out: &mut Renderer,
     err: &anyhow::Error,
-    playbooks: &[crate::playbook::Playbook],
+    playbooks: &[playbook::Playbook],
 ) {
     let refused = err.downcast_ref::<crate::stats::Refusal>();
     if refused.is_some_and(|r| r.code == 4)
@@ -282,3 +335,6 @@ pub(super) fn banner_before_vars_refusal(
         out.play_of(play);
     }
 }
+
+#[cfg(test)]
+mod tests;

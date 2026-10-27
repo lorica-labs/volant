@@ -8,6 +8,7 @@ use std::time::Duration;
 
 use crate::executor::DEFAULT_CONNECT_TIMEOUT;
 
+mod callbacks;
 mod color;
 mod defaults;
 mod docker;
@@ -16,6 +17,7 @@ mod parse;
 mod paths;
 mod settings;
 
+pub use callbacks::Callbacks;
 pub(crate) use locate::{defaults_value, is_world_writable};
 use parse::parse;
 use paths::{default_collections_path, default_roles_path, expand_home, path_list};
@@ -97,6 +99,8 @@ pub struct Config {
     /// `[defaults] callback_result_format` or `ANSIBLE_CALLBACK_RESULT_FORMAT`, as written: how
     /// the `minimal` callback of `volant adhoc` dumps a result. Checked where it is used.
     pub callback_result_format: Option<String>,
+    /// The callbacks a run loads.
+    pub callbacks: Callbacks,
     /// `[defaults] force_color` or `ANSIBLE_FORCE_COLOR`: colour the output even when it is not a
     /// terminal. It wins over `nocolor` and `NO_COLOR`, as measured on ansible-core 2.19.12;
     /// only `--no-color` wins over it.
@@ -328,6 +332,7 @@ impl Config {
             config.show_custom_stats = on;
         }
         color::read_env(&mut config)?;
+        callbacks::env(&mut config.callbacks)?;
         // The environment wins over the file; an empty or unknown word reads as false, measured.
         if let Ok(flag) = std::env::var("ANSIBLE_SSH_USETTY") {
             config.ssh_usetty = callback_flag(&flag);

@@ -1,0 +1,4 @@
+# `tree` named as the stdout callback: an aggregate plugin, which prints nothing on stdout.
+args: [-i, inv.ini, pb.yml]
+env: {"ANSIBLE_STDOUT_CALLBACK": "tree", "ANSIBLE_CALLBACK_TREE_DIR": "tree"}
+stderr: true

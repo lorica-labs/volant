@@ -1,5 +1,5 @@
 ---
-sourceHash: bb42889a1a65
+sourceHash: 34b11b932609
 title: volant adhoc
 description: 在每台匹配模式的主机上运行一个模块，选项和输出与 ansible 一致。
 ---
@@ -71,7 +71,7 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 每台主机打印一个结果，与 ansible 的 `minimal` callback 的打印方式一致。`command`、`shell` 或 `raw` 的结果是 `h1 | CHANGED | rc=0 >>`，然后是它的 stdout、stderr 和 `msg`，之间不加任何内容。其他任何结果是 `h1 | SUCCESS => `，后面跟着 JSON 形式的结果，缩进四个空格，键已排序。状态有 `SUCCESS`、`CHANGED`、`FAILED`（命令形式）、`FAILED!`（JSON 形式）、`SKIPPED` 和 `UNREACHABLE!`。在失败或不可达的结果之前，标准输出会带有 playbook 打印的同一个 `[ERROR]` 块。它的 `Origin:` 是 `<adhoc 'MODULE' task>`，后面是 ansible 所展示的任务，截断到 120 个字符。
 
-当每台主机都成功或被跳过时，退出码为 0；有主机失败时为 2；有主机无法到达时为 4，不论是否同时有失败的主机。`ANSIBLE_STDOUT_CALLBACK` 不会改变输出。设置 `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`，或在 `ansible.cfg` 的 `[defaults]` 下设置 `callback_result_format = yaml` 时，JSON 形式的结果改为以 YAML 打印，位于 `=>` 之后的行中，缩进四个空格。含换行的字符串会变成字面量块。其他任何值（包括空值）都会使命令以退出码 5 停止。
+当每台主机都成功或被跳过时，退出码为 0；有主机失败时为 2；有主机无法到达时为 4，不论是否同时有失败的主机。只有在 `bin_ansible_callbacks` 打开（`ANSIBLE_LOAD_CALLBACK_PLUGINS=true`）且它指定 `default` 以外的 callback 时，`ANSIBLE_STDOUT_CALLBACK` 才会改变输出：这时 `oneline` 的打印方式与 `-o` 相同，Volant 没有的名字会让命令以 `Could not load` 停止。`-o` 优先。设置 `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`，或在 `ansible.cfg` 的 `[defaults]` 下设置 `callback_result_format = yaml` 时，JSON 形式的结果改为以 YAML 打印，位于 `=>` 之后的行中，缩进四个空格。含换行的字符串会变成字面量块。其他任何值（包括空值）都会使命令以退出码 5 停止。
 
 ## 每台主机一行
 

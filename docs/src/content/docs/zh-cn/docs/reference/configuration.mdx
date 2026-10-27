@@ -1,5 +1,5 @@
 ---
-sourceHash: 69b5b94dc1eb
+sourceHash: cfa2a2949ed3
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -96,6 +96,22 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
   在汇总之后打印 `set_stats` 收集的统计信息。
+</Option>
+
+<Option name="stdout_callback" id="defaults-stdout-callback" default="default" env="ANSIBLE_STDOUT_CALLBACK">
+  打印运行过程的 callback。`default` 打印横幅、每个结果一行以及汇总。`minimal` 像 ad hoc 命令一样打印每个结果：命令是 `host | CHANGED | rc=0 >>` 加输出，其他是 `host | SUCCESS => ` 加 JSON 结果，没有横幅、没有汇总，也没有每个循环项的行。`oneline` 把同样的结果各打印在一行上；ansible-core 2.19.12 把它标为弃用，Volant 会在标准错误上打印一次它的警告。`tree` 在标准输出上什么都不打印。带 `ansible.builtin.` 的名字也可以用。其他任何名字，例如 collection 里的 `json` 和 `yaml`，都会在第一个 play 之前以 `[ERROR]: Could not load '<name>' callback plugin.` 和退出码 1 停止运行。
+</Option>
+
+<Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
+  在 stdout callback 之外再运行的 callback，以逗号分隔。Volant 目前一个都不运行：每个名字都会打印 `[WARNING]: Skipping callback plugin '<name>', unable to load`，运行继续。`volant.compat.record`（用于[记录 ansible-playbook 的运行](/zh-cn/docs/reference/recording/)）会被跳过，不打印警告。
+</Option>
+
+<Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">
+  查找 callback 插件的其他目录，用 `:` 分隔。Volant 会读取这个设置，但只加载自己的 callback。
+</Option>
+
+<Option name="bin_ansible_callbacks" id="defaults-bin-ansible-callbacks" default="false" env="ANSIBLE_LOAD_CALLBACK_PLUGINS">
+  ad hoc 命令是否加载上面的 callback。关闭时，不论 `stdout_callback` 怎么设，它都用 `minimal` 打印，带 `-o` 时用 `oneline`。见 [ad hoc 命令](/zh-cn/docs/reference/cli/adhoc/)。
 </Option>
 
 <Option name="vault_password_file" id="defaults-vault-password-file" flag="--vault-password-file" env="ANSIBLE_VAULT_PASSWORD_FILE">

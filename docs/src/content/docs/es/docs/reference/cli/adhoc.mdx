@@ -1,5 +1,5 @@
 ---
-sourceHash: bb42889a1a65
+sourceHash: 34b11b932609
 title: volant adhoc
 description: Ejecuta un módulo en cada host que coincide con un patrón, con las opciones y la salida de ansible.
 ---
@@ -71,7 +71,7 @@ Un error de uso termina con 2. La salida de error estándar lleva el bloque `usa
 
 Cada host imprime un resultado, como lo imprime el callback `minimal` de ansible. Un resultado de `command`, `shell` o `raw` es `h1 | CHANGED | rc=0 >>`, y a continuación su stdout, su stderr y su `msg` unidos sin nada entre ellos. Cualquier otro resultado es `h1 | SUCCESS => ` seguido del resultado como JSON, con sangría de cuatro espacios y las claves ordenadas. Los estados son `SUCCESS`, `CHANGED`, `FAILED` (forma de comando), `FAILED!` (forma JSON), `SKIPPED` y `UNREACHABLE!`. Antes de un resultado fallido o inalcanzable, la salida estándar lleva el mismo bloque `[ERROR]` que imprime un playbook. Su `Origin:` es `<adhoc 'MODULE' task>`, seguido de la tarea tal como la muestra ansible, recortada a 120 caracteres.
 
-El código de salida es 0 cuando todos los hosts tuvieron éxito o se omitieron, 2 cuando un host falló, y 4 cuando no se pudo alcanzar un host, haya o no hosts fallidos. `ANSIBLE_STDOUT_CALLBACK` no cambia la salida. Con `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, o `callback_result_format = yaml` bajo `[defaults]` en `ansible.cfg`, un resultado de forma JSON se imprime en cambio como YAML, en las líneas después de `=>`, con sangría de cuatro espacios. Una cadena con saltos de línea se convierte en un bloque literal. Cualquier otro valor, incluido el vacío, detiene el comando con el código de salida 5.
+El código de salida es 0 cuando todos los hosts tuvieron éxito o se omitieron, 2 cuando un host falló, y 4 cuando no se pudo alcanzar un host, haya o no hosts fallidos. `ANSIBLE_STDOUT_CALLBACK` solo cambia la salida cuando `bin_ansible_callbacks` está activado (`ANSIBLE_LOAD_CALLBACK_PLUGINS=true`) y nombra un callback distinto de `default`: entonces `oneline` imprime como `-o`, y un nombre que Volant no tiene detiene el comando con `Could not load`. `-o` tiene prioridad. Con `ANSIBLE_CALLBACK_RESULT_FORMAT=yaml`, o `callback_result_format = yaml` bajo `[defaults]` en `ansible.cfg`, un resultado de forma JSON se imprime en cambio como YAML, en las líneas después de `=>`, con sangría de cuatro espacios. Una cadena con saltos de línea se convierte en un bloque literal. Cualquier otro valor, incluido el vacío, detiene el comando con el código de salida 5.
 
 ## Una línea por host
 

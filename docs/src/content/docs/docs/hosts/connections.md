@@ -39,7 +39,7 @@ Any other name is resolved by the controller's ansible-core, the way `ansible-pl
 
 With `-vvv`, a routed name prints `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` under the first task that uses it on a host, one line per hop.
 
-A name that resolves to a plugin Volant does not drive yet, such as `winrm`, `psrp` or `community.general.jail`, makes the host unreachable with `connection '<full name>' is not supported`, and the rest of the run continues. The [support matrix](/docs/reference/parity/#collection-connection) lists every connection plugin of the collections in the package.
+A name that resolves to a plugin Volant does not drive itself, such as `winrm`, `psrp`, `community.general.jail` or a plugin in a `connection_plugins/` directory beside the playbook, takes the second route: see [Connections only ansible-core has](#connections-only-ansible-core-has). Without the controller's ansible-core to ask, such a name makes the host unreachable with `connection '<full name>' is not supported`, and the rest of the run continues. The [support matrix](/docs/reference/parity/#collection-connection) lists every connection plugin of the collections in the package.
 
 A name that resolves to nothing fails the task with `the connection plugin '<name>' was not found`, as Ansible does. That includes a short name routed to a collection that is not installed, such as `docker` without community.docker, after the warning ansible-core prints for it, and `ansible.builtin.paramiko`, which ansible-core 2.19.12 does not carry under that name. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
 
@@ -188,6 +188,20 @@ What differs from the plugin:
 - The connection to a host is shared between tasks, as for `ssh`.
 
 With `-vvvv` the first line is `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <user> on PORT <port> TO <address>`, then the `SSH: EXEC` lines of an `ssh` host.
+
+## Connections only ansible-core has
+
+Volant reaches a host one of two ways. For `ssh`, `local` and the connections listed above, it runs its agent on the host and sends it the tasks. For any other connection plugin the controller's ansible-core can load, no agent runs: each task that needs the host goes to Volant's Python helper, which loads the connection plugin, connects, runs the task's action plugin over it as `ansible-playbook` would, and closes the connection again. ansible-core reads every option of the plugin from the host's variables, `ansible.cfg` and the environment, as it always does.
+
+Everything else about the run is unchanged: loops, `when`, `register`, `changed_when`, `failed_when`, `until` and `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, handlers, `async` with `poll: 0` and `async_status`, check mode and the recap. A task that runs on the controller, such as `debug` or `set_fact`, runs there as before.
+
+- A plugin that cannot connect makes the host unreachable with the plugin's own message.
+- The lines the plugin prints at `-vvv`, such as `<host> ESTABLISH ... CONNECTION`, are printed under the task at the same verbosity.
+- `ansible_password`, the plugin's other secret variables and the become password are written `********` in every line and every result.
+- No more helper processes run at once than `forks` allows.
+- `become` takes the escalation method of the task, `sudo` or `su`.
+
+Each task pays for starting the plugin's connection, as `ansible-playbook` does, so this route is slower per task than the agent's.
 
 ## Host variables
 

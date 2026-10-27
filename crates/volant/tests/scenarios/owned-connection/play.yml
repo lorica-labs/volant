@@ -1,0 +1,47 @@
+- name: An owned host beside an agent host
+  hosts: all
+  gather_facts: false
+  serial: 1
+  tasks:
+    - name: a command
+      command: echo hi
+      register: out
+    - name: what it registered
+      debug:
+        var: out.stdout
+    - name: items
+      command: "echo {{ item }}"
+      loop: [a, b]
+      changed_when: false
+    - name: retried
+      shell: "test -f flag-{{ inventory_hostname }} || { touch flag-{{ inventory_hostname }}; exit 1; }"
+      register: r
+      until: r.rc == 0
+      retries: 2
+      delay: 0
+    - name: hidden
+      command: echo secret
+      no_log: true
+    - name: started
+      command: echo later
+      async: 30
+      poll: 0
+      register: job
+    - name: a second for the job
+      wait_for:
+        timeout: 1
+    - name: its status
+      async_status:
+        jid: "{{ job.ansible_job_id }}"
+    - name: on the other host
+      command: hostname
+      delegate_to: "{{ 'h2' if inventory_hostname == 'h1' else 'h1' }}"
+      changed_when: false
+    - name: in check mode
+      file:
+        path: "{{ playbook_dir }}/never-{{ inventory_hostname }}"
+        state: touch
+      check_mode: true
+    - name: failing
+      command: "false"
+      ignore_errors: true

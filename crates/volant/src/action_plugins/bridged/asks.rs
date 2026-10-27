@@ -234,6 +234,8 @@ impl Bridged {
                 let deprecation = map.get(crate::executor::DEPRECATION_TEXT).cloned();
                 // The error that gathers others, which the error block frames: see `settle_failure`.
                 let cause = map.get("_volant_cause").cloned();
+                // What `Display` said over a link the helper owns, which the driver shows.
+                let display = map.get("_volant_display").cloned();
                 let mut result = TaskResult(map);
                 crate::executor::drop_internal_keys(&mut result);
                 if raised_skip {
@@ -249,6 +251,9 @@ impl Bridged {
                 }
                 if let Some(cause) = cause {
                     result.0.insert("_volant_cause".into(), cause);
+                }
+                if let Some(display) = display {
+                    result.0.insert("_volant_display".into(), display);
                 }
                 result
             }

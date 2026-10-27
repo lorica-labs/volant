@@ -1,5 +1,5 @@
 ---
-sourceHash: ef0550cf334a
+sourceHash: 174d07af9fd2
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -40,7 +40,7 @@ Tout autre nom est résolu par l'ansible-core du contrôleur, comme `ansible-pla
 
 Avec `-vvv`, un nom routé affiche `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` sous la première tâche qui l'utilise sur un hôte, une ligne par étape.
 
-Un nom qui se résout vers un plugin que Volant ne pilote pas encore, comme `winrm`, `psrp` ou `community.general.jail`, rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
+Un nom qui se résout vers un plugin que Volant ne pilote pas lui-même, comme `winrm`, `psrp`, `community.general.jail` ou un plugin dans un répertoire `connection_plugins/` à côté du playbook, prend la deuxième voie : voir [Connexions que seul ansible-core possède](#connexions-que-seul-ansible-core-possède). Sans l'ansible-core du contrôleur à interroger, un tel nom rend l'hôte injoignable avec `connection '<full name>' is not supported`, et le reste de l'exécution continue. La [matrice de prise en charge](/fr/docs/reference/parity/#collection-connection) liste tous les plugins de connexion des collections du paquet.
 
 Un nom qui ne se résout vers rien fait échouer la tâche avec `the connection plugin '<name>' was not found`, comme dans Ansible. Cela comprend un nom court routé vers une collection qui n'est pas installée, comme `docker` sans community.docker, après l'avertissement qu'ansible-core affiche pour lui, et `ansible.builtin.paramiko`, qu'ansible-core 2.19.12 ne porte pas sous ce nom. Cela vaut que la valeur soit la connexion de l'hôte lui-même, celle d'une cible de `delegate_to`, ou celle de l'hôte qui exécute une tâche `run_once`.
 
@@ -189,6 +189,20 @@ Ce qui diffère du plugin :
 - La connexion à un hôte est partagée entre les tâches, comme pour `ssh`.
 
 Avec `-vvvv`, la première ligne est `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <user> on PORT <port> TO <address>`, suivie des lignes `SSH: EXEC` d'un hôte `ssh`.
+
+## Connexions que seul ansible-core possède
+
+Volant joint un hôte par l'une de deux voies. Pour `ssh`, `local` et les connexions listées plus haut, il lance son agent sur l'hôte et lui envoie les tâches. Pour tout autre plugin de connexion que l'ansible-core du contrôleur sait charger, aucun agent ne tourne : chaque tâche qui a besoin de l'hôte va à l'assistant Python de Volant, qui charge le plugin de connexion, se connecte, exécute par lui le plugin d'action de la tâche comme `ansible-playbook` le ferait, puis referme la connexion. ansible-core lit chaque option du plugin dans les variables de l'hôte, dans `ansible.cfg` et dans l'environnement, comme toujours.
+
+Tout le reste de l'exécution est inchangé : boucles, `when`, `register`, `changed_when`, `failed_when`, `until` et `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, handlers, `async` avec `poll: 0` et `async_status`, le mode vérification et le récapitulatif. Une tâche qui s'exécute sur le contrôleur, comme `debug` ou `set_fact`, s'y exécute comme avant.
+
+- Un plugin qui ne peut pas se connecter rend l'hôte injoignable avec son propre message.
+- Les lignes que le plugin affiche à `-vvv`, comme `<host> ESTABLISH ... CONNECTION`, s'affichent sous la tâche à la même verbosité.
+- `ansible_password`, les autres variables secrètes du plugin et le mot de passe de become sont écrits `********` dans chaque ligne et chaque résultat.
+- Jamais plus de processus assistants ne tournent à la fois que `forks` ne le permet.
+- `become` prend la méthode d'escalade de la tâche, `sudo` ou `su`.
+
+Chaque tâche paie le démarrage de la connexion du plugin, comme avec `ansible-playbook`, donc cette voie est plus lente par tâche que celle de l'agent.
 
 ## Variables d'hôte
 

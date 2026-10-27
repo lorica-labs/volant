@@ -32,7 +32,7 @@ pub(super) use interpreter::{
     stamp_discovery, step_task, step_tasks, unsent,
 };
 pub(super) use judge::{break_after, broke_before, empty_loop_result, finish, loops, task_fails};
-pub(super) use links::reuse_or_connect;
+pub(super) use links::link_for;
 pub(super) use local::{run_local, set_fact_names};
 pub(super) use output::asks_to_be_hidden;
 pub(crate) use output::{DEPRECATION_TEXT, RAISED_SKIP, drop_internal_keys};

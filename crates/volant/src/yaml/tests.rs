@@ -1291,6 +1291,19 @@ fn template_literals_keep_their_escapes(#[case] text: &str, #[case] want: &str) 
     assert_eq!(walk::literal_escapes(text), want);
 }
 
+/// A mapping key YAML reads as a number, a boolean or null is held as the text the reference
+/// shows for it, measured on ansible-core 2.19.12 with `debug: var=d`.
+#[test]
+fn a_key_that_is_not_a_string_is_held_as_its_text() {
+    assert_loads_as(&[
+        ("1: a\n", json!({"1": "a"})),
+        ("2.5: a\n", json!({"2.5": "a"})),
+        ("true: a\nfalse: b\n", json!({"true": "a", "false": "b"})),
+        ("~: a\n", json!({"None": "a"})),
+        ("m: {1: [x], 0: y}\n", json!({"m": {"1": ["x"], "0": "y"}})),
+    ]);
+}
+
 /// A quoted scalar whose continuation lines sit left of their parent loads as PyYAML loads it,
 /// where saphyr alone refuses it for its indentation.
 #[test]

@@ -150,7 +150,7 @@ fn chained_item(
     if parent.is_undefined() {
         return Ok(minijinja::Value::UNDEFINED);
     }
-    let read = parent.get_item(&key).map(known)?;
+    let read = super::keys::item(&parent, &key).map(known)?;
     Ok(super::unknown::censored_read(&parent, read))
 }
 
@@ -255,7 +255,10 @@ fn mutable_item(
     if parent.is_undefined() {
         return Ok(minijinja::Value::UNDEFINED);
     }
-    Ok(made_mutable(state, known(parent.get_item(&key)?)))
+    Ok(made_mutable(
+        state,
+        known(super::keys::item(&parent, &key)?),
+    ))
 }
 
 pub(super) fn type_name(v: &Value) -> &'static str {

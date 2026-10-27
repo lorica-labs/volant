@@ -42,30 +42,41 @@ fn a_galaxy_case_matches_the_reference() {
         let Some(server) = GalaxyServer::start() else {
             return;
         };
-        let tmp = tempfile::tempdir().expect("a scratch directory");
-        let home = tmp.path().join("home");
+        let held = tempfile::tempdir().expect("a scratch directory");
+        // Canonical: the macOS temporary directory is a link, and the paths Volant prints are
+        // resolved ones.
+        let tmp = held.path().canonicalize().expect("a real path");
+        let home = tmp.as_path().join("home");
         std::fs::create_dir(&home).expect("a home");
-        let inputs = galaxy::copy_inputs(&name, tmp.path());
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
-        command
-            .arg("galaxy")
-            .args(galaxy::argv(&case.args, &server, tmp.path()))
-            .current_dir(tmp.path())
-            .env("HOME", &home);
-        for (key, _) in std::env::vars_os() {
-            if key.to_string_lossy().starts_with("ANSIBLE_") {
-                command.env_remove(key);
+        let inputs = galaxy::copy_inputs(&name, tmp.as_path());
+        let volant = |args: &[String]| {
+            let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
+            command
+                .arg("galaxy")
+                .args(galaxy::argv(args, &server, tmp.as_path()))
+                .current_dir(tmp.as_path())
+                .env("HOME", &home);
+            for (key, _) in std::env::vars_os() {
+                if key.to_string_lossy().starts_with("ANSIBLE_") {
+                    command.env_remove(key);
+                }
             }
+            process::run_within(&mut command, Duration::from_secs(120), None)
+        };
+        for args in &case.setup {
+            let out = volant(args);
+            assert!(out.status.success(), "{name}: setup {args:?}: {out:?}");
         }
-        let out = process::run_within(&mut command, Duration::from_secs(120), None);
+        let seen = server.log().len();
+        let out = volant(&case.args);
         let text =
-            |b: &[u8]| galaxy::normalise(&String::from_utf8_lossy(b), tmp.path(), server.port);
+            |b: &[u8]| galaxy::normalise(&String::from_utf8_lossy(b), tmp.as_path(), server.port);
         assert_eq!(out.status.code(), Some(case.rc), "{name}: exit code");
         assert_eq!(text(&out.stdout), case.stdout, "{name}: stdout");
         assert_eq!(text(&out.stderr), case.stderr, "{name}: stderr");
-        assert_eq!(server.log(), case.requests, "{name}: requests");
+        assert_eq!(server.log()[seen..], case.requests, "{name}: requests");
         assert_eq!(
-            galaxy::tree(tmp.path(), server.port, &inputs),
+            galaxy::tree(tmp.as_path(), server.port, &inputs),
             case.tree,
             "{name}: files"
         );

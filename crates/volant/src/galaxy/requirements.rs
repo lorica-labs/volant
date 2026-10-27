@@ -315,6 +315,26 @@ pub fn collection(entry: &Value) -> Result<Collection, Failure> {
     })
 }
 
+/// A collection named on the command line: an FQCN or a pointer as it is, `name:version`, or a
+/// name with a PEP 440 specifier such as `a.b>=1.0` (`Requirement.from_string`).
+pub fn from_string(input: &str) -> Result<Collection, Failure> {
+    let mut map = serde_json::Map::new();
+    if concrete(input) || is_collection_name(input) {
+        map.insert("name".into(), input.into());
+    } else if let Some((name, version)) = input.split_once(':') {
+        map.insert("name".into(), name.into());
+        if !version.is_empty() {
+            map.insert("version".into(), version.into());
+        }
+    } else if let Some(at) = input.find(['<', '>', '=', '!', '~']) {
+        map.insert("name".into(), input[..at].trim().into());
+        map.insert("version".into(), input[at..].replace(' ', "").into());
+    } else {
+        map.insert("name".into(), input.into());
+    }
+    collection(&Value::Object(map))
+}
+
 fn not_resolvable(name: Option<&str>, source: Option<&str>) -> Failure {
     let directory = |p: &str| {
         format!(

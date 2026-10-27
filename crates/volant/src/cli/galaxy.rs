@@ -8,6 +8,8 @@ pub use args::GalaxyArgs;
 use args::{Collection, Kind, Role};
 
 use crate::config::Config;
+use crate::galaxy::artifact::{Meta, Tarball};
+use crate::galaxy::install;
 use crate::galaxy::requirements::{self, Requirements};
 use crate::galaxy::{self, Failure};
 
@@ -35,32 +37,7 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     let config = Config::load().map_err(|e| Failure::error(e.to_string()))?;
     let name = match kind {
         Kind::Collection(Collection::Install(install)) => {
-            if let Some(file) = galaxy::one_of_collections_requirements(
-                &install.collection_name,
-                install.requirements.as_deref(),
-            )? && requirements_of(&file, false, verbose)?
-                .collections
-                .is_empty()
-            {
-                println!("Skipping install, no requirements found");
-                return Ok(0);
-            }
-            // The runtime's own directory, which Volant appends to the search path, is not one
-            // the reference would name.
-            let runtime = crate::runtime::collections::active_dir();
-            let configured: Vec<_> = config
-                .collections_path
-                .iter()
-                .filter(|p| Some(*p) != runtime.as_ref())
-                .cloned()
-                .collect();
-            if let Some(path) = &install.collections_path
-                && let Some(warning) =
-                    galaxy::collections_path_warning(&galaxy::resolve(path), &configured)
-            {
-                eprintln!("[WARNING]: {warning}");
-            }
-            "collection install"
+            return collection_install(install, &config, verbose);
         }
         Kind::Collection(Collection::Download {
             collection,
@@ -120,6 +97,78 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     Err(Failure::error(format!(
         "volant galaxy {name} is not supported yet"
     )))
+}
+
+/// `collection install`: tarballs natively. Every other source, a dependency to resolve and a
+/// signature to check are refused until they are native.
+fn collection_install(
+    install: &args::CollectionInstall,
+    config: &Config,
+    verbose: u8,
+) -> Result<i32, Failure> {
+    let wanted = match galaxy::one_of_collections_requirements(
+        &install.collection_name,
+        install.requirements.as_deref(),
+    )? {
+        Some(file) => requirements_of(&file, false, verbose)?.collections,
+        None => install
+            .collection_name
+            .iter()
+            .map(|name| requirements::from_string(name))
+            .collect::<Result<_, _>>()?,
+    };
+    if wanted.is_empty() {
+        println!("Skipping install, no requirements found");
+        return Ok(0);
+    }
+    let not_yet = |what: &str| {
+        Failure::error(format!(
+            "volant galaxy collection install {what} is not supported yet"
+        ))
+    };
+    if install.signatures.keyring.is_some() || !install.signatures.signatures.is_empty() {
+        return Err(not_yet("with signatures"));
+    }
+    let mut tarballs: Vec<(Tarball, Meta)> = Vec::new();
+    for wanted in &wanted {
+        if wanted.kind != requirements::Kind::File {
+            return Err(not_yet("from a Galaxy server, a directory, a URL or git"));
+        }
+        let (tarball, meta) = Tarball::open(wanted.source.as_deref().unwrap_or_default())?;
+        if !install.no_deps && !meta.dependencies.is_empty() {
+            return Err(not_yet("of a collection with dependencies"));
+        }
+        if tarballs.iter().any(|(_, m)| m.fqcn() == meta.fqcn()) {
+            return Err(not_yet("of two versions of one collection"));
+        }
+        tarballs.push((tarball, meta));
+    }
+    // The runtime's own directory, which Volant appends to the search path, is not one the
+    // reference would name.
+    let runtime = crate::runtime::collections::active_dir();
+    let configured: Vec<_> = config
+        .collections_path
+        .iter()
+        .filter(|p| Some(*p) != runtime.as_ref())
+        .cloned()
+        .collect();
+    let path = match &install.collections_path {
+        Some(path) => {
+            let path = galaxy::resolve(path);
+            if let Some(warning) = galaxy::collections_path_warning(&path, &configured) {
+                eprintln!("[WARNING]: {warning}");
+            }
+            path
+        }
+        None => configured.first().cloned().unwrap_or_default(),
+    };
+    let options = install::Options {
+        force: install.force,
+        force_with_deps: install.force_with_deps,
+        ignore_errors: install.ignore_errors,
+        upgrade: install.upgrade,
+    };
+    install::collections(&tarballs, &galaxy::collections_root(&path), options)
 }
 
 /// The requirements file `-r` names, announced at `-vvv` as the reference does.

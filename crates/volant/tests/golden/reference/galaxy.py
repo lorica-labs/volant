@@ -5,7 +5,9 @@ server of galaxy_server.py, recorded in `expected.json` beside it.
 case.yml holds `args`, the argv after `ansible-galaxy`, where `<golden-server>` stands for the
 server's URL and `<golden-tmp>` for the run's scratch directory. Every other file of the case's
 directory but `expected.json` is copied into the scratch directory, where the command runs, so
-`-r requirements.yml` names one of them; those copies are left out of the recorded tree. The run's home is
+`-r requirements.yml` names one of them; those copies are left out of the recorded tree. `setup`, a
+list of argvs in the same form, runs first and is not recorded, for a case that needs something
+installed already. The run's home is
 `<golden-tmp>/home`, so no cache or configuration outlives it, and no `ANSIBLE_*` setting of the
 caller is kept.
 
@@ -30,7 +32,7 @@ from .run import Failed, run, scratch, write_json
 CASES = os.path.join(GOLDEN, "galaxy")
 SERVER = "<golden-server>"
 PORT = "<golden-port>"
-KEYS = {"args"}
+KEYS = {"args", "setup"}
 # `Downloading <url> to <path>`: the path is a temporary directory under the home, and the file in
 # it ends with a random suffix.
 GALAXY_TMP = re.compile(r"\S*/\.ansible/tmp/ansible-local-[^/\s]+/tmp[^/\s]+/(\S+?)-[a-z0-9_]{8}(?=\s|$)", re.M)
@@ -79,7 +81,7 @@ def record():
             case = yaml.safe_load(f)
         unknown = set(case) - KEYS
         if unknown or not isinstance(case.get("args"), list):
-            raise Failed(f"galaxy case {name}: case.yml takes `args`, a list, and nothing else")
+            raise Failed(f"galaxy case {name}: case.yml takes `args`, a list, and `setup`, a list of them")
         with scratch() as tmp, Server() as server:
             home = os.path.join(tmp, "home")
             os.makedirs(home)
@@ -89,10 +91,19 @@ def record():
                 copy = shutil.copytree if os.path.isdir(source) else shutil.copy
                 copy(source, os.path.join(tmp, name))
             url = f"http://127.0.0.1:{server.port}/"
-            argv = ["ansible-galaxy"] + [a.replace(SERVER, url).replace(TMP, tmp) for a in case["args"]]
+
+            def command(args):
+                return ["ansible-galaxy"] + [a.replace(SERVER, url).replace(TMP, tmp) for a in args]
+
+            for args in case.get("setup") or []:
+                if run(command(args), cwd=tmp, extra_env={"HOME": home}, forward=()).returncode:
+                    raise Failed(f"galaxy case {name}: a setup run failed: {args}")
+            del server.log[:]
+            argv = command(case["args"])
             done = run(argv, cwd=tmp, extra_env={"HOME": home}, forward=())
             write_json(os.path.join(directory, "expected.json"), {
                 "args": case["args"],
+                "setup": case.get("setup") or [],
                 "rc": done.returncode,
                 "stdout": normalise(done.stdout, tmp, server.port),
                 "stderr": normalise(done.stderr, tmp, server.port),

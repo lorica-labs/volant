@@ -1435,11 +1435,156 @@ def captured_messages(result, warning_ctx):
         result["deprecations"] = [summary_shown(d) for d in deprecations]
 
 
+def owned_connection(link, context, task, task_vars, templar):
+    """The connection plugin `link` names, made as `TaskExecutor._get_connection` and
+    `_set_connection_options` make it: loaded with the play context, its become plugin set when
+    the task becomes (the one `link` names, else the task's method), and the options of the
+    connection, its shell and its become plugin read from the task's variables and keywords. It
+    is not connected yet."""
+    from ansible import constants as C
+    from ansible.errors import AnsibleError, AnsibleValueOmittedError
+    from ansible.module_utils.parsing.convert_bool import boolean
+    from ansible.plugins import loader as plugin_loader
+
+    name = link.get("connection")
+    context.connection = name
+    connection = plugin_loader.connection_loader.get(
+        name, context, new_stdin=None, task_uuid=task._uuid, ansible_playbook_pid=str(os.getppid())
+    )
+    if not connection:
+        raise AnsibleError("the connection plugin '%s' was not found" % name)
+    if task_vars.get("ansible_become") is not None:
+        becomes = boolean(templar.template(task_vars["ansible_become"]))
+    else:
+        becomes = task.become
+    become = None
+    if becomes:
+        if task_vars.get("ansible_become_method"):
+            method = templar.template(task_vars["ansible_become_method"])
+        else:
+            method = link.get("become") or task.become_method
+        become = plugin_loader.become_loader.get(method)
+        if not become:
+            raise AnsibleError(
+                "Invalid become method specified, could not find matching plugin: '%s'. "
+                "Use `ansible-doc -t become -l` to list available plugins." % method
+            )
+    try:
+        connection.set_become_plugin(become)
+    except AttributeError:
+        pass
+    if become:
+        context.set_become_plugin(become.name)
+    context.set_attributes_from_plugin(connection)
+    task_keys = task.dump_attrs()
+    # The task's own `timeout` is not the connection's, and its `retries` are not either.
+    task_keys["timeout"] = context.timeout
+    if context.password:
+        task_keys["password"] = context.password
+    task_keys.pop("retries", None)
+    connection.set_options(
+        task_keys=task_keys, var_options=connection._resolve_option_variables(task_vars, templar)
+    )
+
+    def plugin_options(kind, plugin):
+        options = {}
+        for key in C.config.get_plugin_vars(kind, plugin._load_name):
+            if key in task_vars:
+                try:
+                    options[key] = templar.template(task_vars[key])
+                except AnsibleValueOmittedError:
+                    pass
+        plugin.set_options(task_keys=task_keys, var_options=options)
+
+    plugin_options("shell", connection._shell)
+    if connection.become is not None:
+        if context.become_pass:
+            task_keys["become_pass"] = context.become_pass
+        plugin_options("become", connection.become)
+        for option in ("become_user", "become_flags", "become_exe", "become_pass"):
+            try:
+                setattr(context, option, connection.become.get_option(option))
+            except KeyError:
+                pass
+        context.prompt = connection.become.prompt
+    return connection
+
+
+@contextlib.contextmanager
+def displayed(events):
+    """What ansible-core's `Display` says while an owned link's action runs, appended to `events`
+    in order as `{level, host, text}` rather than printed: a `verbose` line at its level (`vvv` is
+    3), a plain `display` at 0, and a warning or a deprecation as `warning` and `deprecation`,
+    which still reach the result's own `warnings` and `deprecations` as well. Every level is kept;
+    the controller prints what its verbosity shows."""
+    from ansible.utils.display import Display
+
+    kept = Display.verbose, Display.display, Display.warning, Display.deprecated
+
+    def verbose(self, msg, host=None, caplevel=2):
+        events.append({"level": caplevel + 1, "host": host, "text": str(msg)})
+
+    def display(self, msg, *args, **kwargs):
+        events.append({"level": 0, "host": None, "text": str(msg)})
+
+    def warning(self, msg, *args, **kwargs):
+        events.append({"level": "warning", "host": None, "text": str(msg)})
+        return kept[2](self, msg, *args, **kwargs)
+
+    def deprecated(self, msg, *args, **kwargs):
+        events.append({"level": "deprecation", "host": None, "text": str(msg)})
+        return kept[3](self, msg, *args, **kwargs)
+
+    Display.verbose, Display.display, Display.warning, Display.deprecated = (
+        verbose, display, warning, deprecated
+    )
+    try:
+        yield
+    finally:
+        Display.verbose, Display.display, Display.warning, Display.deprecated = kept
+
+
+# The variables that hold a connection's or an escalation's secret.
+SECRET_VAR = re.compile(r"^ansible_(?:\w+_)?(?:pass|password|passwd|secret|token|passphrase)$")
+
+
+def without_secrets(value, task_vars, context):
+    """`value` with every secret the task's variables or play context hold written `********`,
+    in every string it holds, however deep."""
+    secrets = {
+        v for k, v in task_vars.items()
+        if isinstance(k, str) and SECRET_VAR.match(k) and isinstance(v, str) and v
+    }
+    secrets.update(
+        v for v in (getattr(context, "password", None), getattr(context, "become_pass", None))
+        if isinstance(v, str) and v
+    )
+    ordered = sorted(secrets, key=len, reverse=True)
+
+    def scrub(item):
+        if isinstance(item, str):
+            for secret in ordered:
+                item = item.replace(secret, "********")
+            return item
+        if isinstance(item, dict):
+            return {scrub(k): scrub(v) for k, v in item.items()}
+        if isinstance(item, list):
+            return [scrub(v) for v in item]
+        return item
+
+    return scrub(value) if ordered else value
+
+
 def run_action(ident, request):
     """One task's action plugin, run as ansible-core's `TaskExecutor` runs it: the plugin
     `action_loader` finds for `name`, given the task, the play context and the stand-in
     connection, then `run(task_vars=…)` and `cleanup()`. A failure of the plugin is its task's
-    failed result, shaped by ansible-core; only a request it cannot even start is an error."""
+    failed result, shaped by ansible-core; only a request it cannot even start is an error.
+
+    With `link.kind` `owned` the connection is a real connection plugin the helper makes
+    ([`owned_connection`]), connected before the plugin runs and closed once after it, on every
+    path; what `Display` says comes back in the value as `_volant_display`, and no secret of the
+    task's is in the value."""
     from ansible._internal import _display_utils
     from ansible._internal._errors import _error_utils
     from ansible.errors import AnsibleError, AnsibleTaskError
@@ -1453,6 +1598,14 @@ def run_action(ident, request):
 
     loaders()
     parts = shim()
+    link = request.get("link") or {}
+    owned = link.get("kind") == "owned"
+    events = []
+    if owned and "verbosity" in link:
+        # Plugins that test the verbosity themselves see the run's.
+        from ansible.utils.display import Display
+
+        Display().verbosity = int(link["verbosity"])
     name = request["name"]
     fields = dict(request.get("task") or {})
     written = fields.pop("_volant_action", None) or name
@@ -1468,8 +1621,10 @@ def run_action(ident, request):
     ssh_options = task_vars.pop("_volant_ssh_options", None) or {}
     # What the plugin says through `Display` is kept for its result, as `TaskExecutor._execute`
     # keeps it, rather than printed here.
-    with _display_utils.DeferredWarningContext(variables=task_vars) as warning_ctx:
+    shown = displayed(events) if owned else contextlib.nullcontext()
+    with _display_utils.DeferredWarningContext(variables=task_vars) as warning_ctx, shown:
         task = None
+        context = None
         try:
             context = PlayContext()
             for key, value in (request.get("play_context") or {}).items():
@@ -1500,35 +1655,49 @@ def run_action(ident, request):
                 # The role and file directories the controller compiled the task in, which the
                 # plugin's `_find_needle` reads off the task as the reference's role-bound task gives.
                 task.get_search_path = lambda: list(search_path)
-            action = plugin_loader.action_loader.get(
-                name,
-                task=task,
-                connection=parts["Link"](ident, shell, context, ssh_options),
-                play_context=context,
-                loader=loader,
-                templar=templar,
-                shared_loader_obj=plugin_loader,
-            )
-            if action is None:
-                raise AnsibleError("the handler '%s' was not found" % name)
+            if owned:
+                connection = owned_connection(link, context, task, task_vars, templar)
+            else:
+                connection = parts["Link"](ident, shell, context, ssh_options)
             try:
-                result = action.run(task_vars=task_vars)
-                if isinstance(result, dict):
-                    # What `TaskExecutor._execute` fills in on a result that came back, and a key
-                    # only this helper may set, which the plugin's own data cannot carry.
-                    for key in [key for key in result if str(key).startswith("_volant_")]:
-                        del result[key]
-                    result.setdefault("changed", False)
-                    result_compat(result, warning_ctx)
-                    # An error that gathers others (`gather_facts`'s failed modules) keeps its
-                    # shape for the controller's error block, which frames each one.
-                    event = getattr(result.get("exception"), "event", None)
-                    if event is not None and getattr(event, "events", None):
-                        result["_volant_cause"] = {
-                            "event": {"msg": event.msg, "events": [{"msg": e.msg} for e in event.events]}
-                        }
+                if owned:
+                    # Connected before the plugin runs, so a refusal is the host's, unreachable.
+                    connection._connect()
+                action = plugin_loader.action_loader.get(
+                    name,
+                    task=task,
+                    connection=connection,
+                    play_context=context,
+                    loader=loader,
+                    templar=templar,
+                    shared_loader_obj=plugin_loader,
+                )
+                if action is None:
+                    raise AnsibleError("the handler '%s' was not found" % name)
+                try:
+                    result = action.run(task_vars=task_vars)
+                    if isinstance(result, dict):
+                        # What `TaskExecutor._execute` fills in on a result that came back, and a
+                        # key only this helper may set, which the plugin's own data cannot carry.
+                        for key in [key for key in result if str(key).startswith("_volant_")]:
+                            del result[key]
+                        result.setdefault("changed", False)
+                        result_compat(result, warning_ctx)
+                        # An error that gathers others (`gather_facts`'s failed modules) keeps its
+                        # shape for the controller's error block, which frames each one.
+                        event = getattr(result.get("exception"), "event", None)
+                        if event is not None and getattr(event, "events", None):
+                            result["_volant_cause"] = {
+                                "event": {
+                                    "msg": event.msg,
+                                    "events": [{"msg": e.msg} for e in event.events],
+                                }
+                            }
+                finally:
+                    action.cleanup()
             finally:
-                action.cleanup()
+                if owned:
+                    connection.close()
         except Exception as failure:
             # As `TaskExecutor._execute` shapes it: what the exception contributes comes first, so a
             # connection failure is unreachable, `AnsibleActionSkip` skipped, `AnsibleActionFail`
@@ -1550,7 +1719,12 @@ def run_action(ident, request):
                 result["exception"] = traceback
     if isinstance(result, dict):
         captured_messages(result, warning_ctx)
-    return {"value": plain(result)}
+    value = plain(result)
+    if owned:
+        if isinstance(value, dict):
+            value["_volant_display"] = events
+        value = without_secrets(value, task_vars, context)
+    return {"value": value}
 
 
 def read_frame(stream):

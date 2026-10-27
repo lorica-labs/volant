@@ -1098,7 +1098,7 @@ fn the_bridge_runs_action_plugins(
     #[case] want_asks: &[&str],
     #[case] ends: Result<Value, &str>,
 ) {
-    use volant::bridge::{Ask, Bridge, BridgeError, Reply, TmpOp};
+    use volant::bridge::{ActionCall, Ask, Bridge, BridgeError, Reply, TmpOp};
 
     let Some(python) = python::reference_python() else {
         return;
@@ -1112,27 +1112,27 @@ fn the_bridge_runs_action_plugins(
     let bridge = Bridge::under(python, vec![work.clone()]);
     let mut asked = Vec::new();
     let deadline = std::time::Instant::now() + DEADLINE;
-    let got = bridge.run_action(
+    let call = ActionCall {
         name,
-        &serde_json::json!({ "args": args }),
-        &serde_json::json!({"a": {"b": 1}, "groups": {"all": ["h", "other"]}}),
-        &serde_json::json!({"connection": "ssh", "remote_addr": "h", "remote_user": "u"}),
-        deadline,
-        &mut |ask| {
-            let reply = match &ask {
-                Ask::Tmp(TmpOp::Make { .. }) => serde_json::json!("/tmp/ansible-tmp-1"),
-                Ask::Command { .. } => serde_json::json!({"rc": 0, "stdout": "hi\n", "stderr": ""}),
-                Ask::Module { .. } => serde_json::json!({"ping": "x"}),
-                Ask::HostVar { .. } => serde_json::json!({"vars": {"v": 7}, "trusted": true}),
-                _ => Value::Null,
-            };
-            asked.push(format!("{ask:?}"));
-            if name == "unreachable" {
-                return Reply::Error("the host is gone".into());
-            }
-            Reply::Value(reply)
-        },
-    );
+        task: &serde_json::json!({ "args": args }),
+        task_vars: &serde_json::json!({"a": {"b": 1}, "groups": {"all": ["h", "other"]}}),
+        play_context: &serde_json::json!({"connection": "ssh", "remote_addr": "h", "remote_user": "u"}),
+        link: None,
+    };
+    let got = bridge.run_action(&call, deadline, &mut |ask| {
+        let reply = match &ask {
+            Ask::Tmp(TmpOp::Make { .. }) => serde_json::json!("/tmp/ansible-tmp-1"),
+            Ask::Command { .. } => serde_json::json!({"rc": 0, "stdout": "hi\n", "stderr": ""}),
+            Ask::Module { .. } => serde_json::json!({"ping": "x"}),
+            Ask::HostVar { .. } => serde_json::json!({"vars": {"v": 7}, "trusted": true}),
+            _ => Value::Null,
+        };
+        asked.push(format!("{ask:?}"));
+        if name == "unreachable" {
+            return Reply::Error("the host is gone".into());
+        }
+        Reply::Value(reply)
+    });
     let _ = std::fs::remove_dir_all(&work);
     assert_eq!(asked, want_asks);
     match (got, ends) {

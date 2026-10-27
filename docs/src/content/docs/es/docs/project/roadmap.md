@@ -1,5 +1,5 @@
 ---
-sourceHash: 12e3021ea96d
+sourceHash: 0f7f2af12690
 title: Hoja de ruta
 description: Hacia qué trabaja Volant, versión por versión, y por dónde empezar a colaborar.
 ---
@@ -20,7 +20,7 @@ Volant está en fase pre-alfa. El [tablero de la hoja de ruta de Volant](https:/
 | [v0.1.0-alpha.18](https://github.com/lorica-labs/volant/milestone/6) | Un controlador Windows: `volant.exe` |
 | [v0.1.0-alpha.19](https://github.com/lorica-labs/volant/milestone/7) | Hosts Windows: winrm, psrp, runas y los módulos de PowerShell |
 
-[Parity gaps](https://github.com/lorica-labs/volant/milestone/12) enumera las diferencias con ansible-core encontradas hasta ahora. No están ligadas a ninguna versión y cualquiera de ellas se puede corregir en cualquier momento.
+[Parity gaps](https://github.com/lorica-labs/volant/milestone/12) enumera las diferencias con ansible-core encontradas hasta ahora. No están ligadas a ninguna versión y cualquiera de ellas se puede corregir en cualquier momento. [Parity gaps, third pass](https://github.com/lorica-labs/volant/milestone/14) reúne las medidas en octubre de 2026: un playbook que con Volant da otro resultado, otro código de salida u otra salida.
 
 ## Tomar una issue
 

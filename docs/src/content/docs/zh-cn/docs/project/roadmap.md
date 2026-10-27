@@ -1,5 +1,5 @@
 ---
-sourceHash: 12e3021ea96d
+sourceHash: 0f7f2af12690
 title: 路线图
 description: Volant 逐个版本的努力方向，以及从哪里接手工作。
 ---
@@ -20,7 +20,7 @@ Volant 处于 pre-alpha 阶段。[Volant 路线图看板](https://github.com/org
 | [v0.1.0-alpha.18](https://github.com/lorica-labs/volant/milestone/6) | Windows 控制节点：`volant.exe` |
 | [v0.1.0-alpha.19](https://github.com/lorica-labs/volant/milestone/7) | Windows 主机：winrm、psrp、runas 和 PowerShell 模块 |
 
-[对等性缺口](https://github.com/lorica-labs/volant/milestone/12)列出了目前发现的与 ansible-core 的差异。它们不绑定到某个版本，任何一个都可以随时修复。
+[对等性缺口](https://github.com/lorica-labs/volant/milestone/12)列出了目前发现的与 ansible-core 的差异。它们不绑定到某个版本，任何一个都可以随时修复。[对等性缺口，第三轮](https://github.com/lorica-labs/volant/milestone/14)收录了 2026 年 10 月测得的差异：同一个 playbook 在 Volant 下得到不同的结果、退出码或输出。
 
 ## 领取 issue
 

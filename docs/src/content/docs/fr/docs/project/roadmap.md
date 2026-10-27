@@ -1,5 +1,5 @@
 ---
-sourceHash: 12e3021ea96d
+sourceHash: 0f7f2af12690
 title: Feuille de route
 description: Ce vers quoi travaille Volant, version par version, et où reprendre le travail.
 ---
@@ -20,7 +20,7 @@ Volant est en pré-alpha. Le [tableau de la feuille de route de Volant](https://
 | [v0.1.0-alpha.18](https://github.com/lorica-labs/volant/milestone/6) | Un contrôleur Windows : `volant.exe` |
 | [v0.1.0-alpha.19](https://github.com/lorica-labs/volant/milestone/7) | Les hôtes Windows : winrm, psrp, runas et les modules PowerShell |
 
-[Écarts de parité](https://github.com/lorica-labs/volant/milestone/12) liste les différences avec ansible-core trouvées jusqu'ici. Elles ne sont liées à aucune version, et chacune peut être corrigée à tout moment.
+[Écarts de parité](https://github.com/lorica-labs/volant/milestone/12) liste les différences avec ansible-core trouvées jusqu'ici. Elles ne sont liées à aucune version, et chacune peut être corrigée à tout moment. [Écarts de parité, troisième passe](https://github.com/lorica-labs/volant/milestone/14) regroupe celles mesurées en octobre 2026 : un playbook qui donne sous Volant un autre résultat, un autre code de sortie ou une autre sortie.
 
 ## Prendre une issue
 

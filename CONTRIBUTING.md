@@ -57,6 +57,8 @@ The `ssh_*` tests run a playbook over a real `ssh`, so `just check` leaves them 
 
    It must not be the system `python3`. The tests use it as the controller's Python, and the point of the check is that the controller and the managed host use two different interpreters.
 
+`just ssh-test` runs two halves, which CI runs on two runners: `just ssh-test-e2e` for the `ssh_*` tests, and `just ssh-test-needs` for the goldens and scenarios that need the recorded ansible-core, `sudo` or systemd.
+
 The test of the `ansible_password` variable also needs an account on that sshd that logs in with a password. Name it in `VOLANT_SSH_TEST_PASSWORD_USER` and give its password in `VOLANT_SSH_TEST_PASSWORD`. Without them the test says so and passes.
 
 The tests only talk to `localhost`, which is why CI can run them unchanged.

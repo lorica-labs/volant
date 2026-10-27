@@ -1,21 +1,35 @@
 ---
-sourceHash: 54618d327674
+sourceHash: 31a90e7da9a3
 title: volant galaxy
-description: 用 ansible-galaxy 安装和列出角色与 collection，它在 Volant 的 Python 运行时中运行。
+description: ansible-galaxy 的选项由 Volant 自己检查，其子命令正逐个改为原生实现。
 ---
 
-`volant galaxy` 用 Volant 为 playbook 运行选择的解释器运行 ansible-core 2.19.12 的 `ansible-galaxy`，所以不装 ansible-core 也能工作。它打印脚本打印的内容，并以相同的退出码结束。
+`volant galaxy` 接受 ansible-core 2.19.12 中 `ansible-galaxy` 的子命令和选项，为它编写的脚本和 CI 任务无需修改命令行。它正在 Volant 中重写，不再依赖 Python 运行时。目前它解析选项并完成 `ansible-galaxy` 最先做的检查，然后在子命令的原生版本完成之前拒绝执行。
 
 ```sh
-volant galaxy [ARGS...]
+volant galaxy collection <download|init|build|publish|install|list|verify> [OPTIONS]
+volant galaxy role <init|remove|delete|list|search|import|setup|info|install> [OPTIONS]
 ```
 
-每个参数都原样交给 `ansible-galaxy`，包括 `-h` 和 `--version`。例如 `volant galaxy collection list`、`volant galaxy collection install community.general`、`volant galaxy collection install file.tar.gz -p DIR`、`volant galaxy role install NAME` 和 `volant galaxy role init NAME`。网络操作，包括 `-s` 和 `GALAXY_SERVERS` 指定的服务器，行为与 `ansible-galaxy` 相同。
+每个子命令都接受 `-s`/`--server`、`--token`/`--api-key`、`-c`/`--ignore-certs`、`--timeout` 和可重复的 `-v`。`collection download` 和 `collection install` 还接受 `--clear-response-cache` 和 `--no-cache`。未知选项或类型错误的值以 2 退出并打印用法。`volant galaxy --version` 打印 `ansible-galaxy` 的版本信息。
 
-解释器、环境变量、终端、退出码和 `--version` 的行为与 [`volant doc`](/zh-cn/docs/reference/cli/doc/) 相同。
+## 最先进行的检查
 
-## collection 装到哪里
+它们在任何实际工作之前进行，消息和退出码与 `ansible-galaxy` 相同：
 
-`collection install` 写入 `ANSIBLE_COLLECTIONS_PATH` 的第一项，默认是 `~/.ansible/collections`。Volant 的 playbook 会读取该目录。
+| 情况 | 消息 | 退出码 |
+|---|---|---|
+| `collection install` 同时给出名称和 `-r` | `[ERROR]: The positional collection_name arg and --requirements-file are mutually exclusive.` | 1 |
+| `collection install` 或 `download` 两者都没有 | `[ERROR]: You must specify a collection name or a requirements file.` | 1 |
+| `-r` 指向不存在的文件 | `[ERROR]: The requirements file '<path>' does not exist.` | 1 |
+| `role install` 既没有名称也没有 `-r` | `[ERROR]: - you must specify a user/role name or a roles file` | 5 |
+| `role install -r` 的文件不以 `.yml` 或 `.yaml` 结尾 | `[ERROR]: Invalid role requirements file, it must end with a .yml or .yaml extension` | 1 |
+| `role list` 时没有任何角色路径存在 | `[WARNING]: - the configured path <path> does not exist.` 每个路径一条，然后 `[ERROR]: - None of the provided paths were usable. Please specify a valid path with --roles-path` | 5 |
 
-运行时自己的 `collections/` 目录，也就是 `volant runtime install --collections` 填充的那个，被加在该路径的最后。因此 `volant galaxy collection list` 也会列出这些 collection，放在它们自己的 `# <dir>` 标题之下。角色安装到 `ansible-galaxy role install` 放置的位置，即 `roles_path` 的第一项。
+当 `collection install -p PATH` 的 `PATH` 之下没有任何已配置的集合路径时，命令先打印 `ansible-galaxy` 的警告：`[WARNING]: The specified collections path '<PATH>' is not part of the configured Ansible collections paths '<paths>'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.` Volant 追加在集合路径末尾的运行时自己的 `collections/` 目录不会出现在 `<paths>` 中。
+
+## 被拒绝的子命令
+
+尚未原生实现的子命令以 `[ERROR]: volant galaxy <subcommand> is not supported yet` 失败，退出码 1。`collection publish` 以及 `role delete`、`search`、`import`、`setup` 和 `info` 需要 Galaxy 账号或服务器的角色数据库，会一直被拒绝：`[ERROR]: volant galaxy <subcommand> is not supported`，退出码 1。
+
+`volant runtime install --collections` 仍使用运行时自带的 `ansible-galaxy` 安装集合。

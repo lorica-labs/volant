@@ -15,11 +15,11 @@ Volant runs the nine programs of ansible-core 2.19.12. Each one is a `volant` su
 | `ansible-inventory` | [`volant inventory`](/docs/reference/cli/inventory/) | Volant | not needed, except for inventory plugins of collections |
 | `ansible-doc` | [`volant doc`](/docs/reference/cli/doc/) | ansible-core's own tool | installed on first use |
 | `ansible-config` | [`volant config`](/docs/reference/cli/config/) | ansible-core's own tool | installed on first use |
-| `ansible-galaxy` | [`volant galaxy`](/docs/reference/cli/galaxy/) | ansible-core's own tool | installed on first use |
+| `ansible-galaxy` | [`volant galaxy`](/docs/reference/cli/galaxy/) | Volant, being written: the subcommands are refused until they are native | not needed |
 | `ansible-pull` | [`volant pull`](/docs/reference/cli/pull/) | Volant | not needed for a `git` checkout |
 | `ansible-console` | [`volant console`](/docs/reference/cli/console/) | Volant | not needed for the native modules |
 
-The managed runtime installs itself the first time a command needs it, as it does for a playbook, and prints one line on standard error when it does. [The managed runtime](/docs/reference/runtime/) describes it. You do not need to install ansible, but three of the nine commands run ansible-core's own code from that runtime.
+The managed runtime installs itself the first time a command needs it, as it does for a playbook, and prints one line on standard error when it does. [The managed runtime](/docs/reference/runtime/) describes it. You do not need to install ansible, but two of the nine commands run ansible-core's own code from that runtime.
 
 ## Keeping your command lines
 
@@ -60,7 +60,8 @@ For `ansible`, `ansible-vault` and `ansible-inventory`, the output, the options 
 | `volant vault` gives ansible-vault's messages, exit codes, file modes and files | `crates/volant/tests/vault_cli.rs`, and the `vault-*` scenario goldens for the vault data a playbook reads |
 | A file one tool encrypts, the other decrypts, for the default id and for a label | `a_file_one_tool_encrypts_the_other_decrypts` |
 | `volant inventory` prints ansible-inventory's JSON and YAML bytes: key order, four-space indent, PyYAML anchors | `crates/volant/tests/inventory_golden.rs` over `golden/inventories/cases.yml`, and `inventory_cli.rs` |
-| `volant config` and `volant galaxy` print what the tool prints | `crates/volant/tests/tools_cli.rs` |
+| `volant config` prints what the tool prints | `crates/volant/tests/tools_cli.rs` |
+| `volant galaxy` takes ansible-galaxy's options and makes its first checks with the same messages | `crates/volant/src/galaxy/tests.rs`, and `galaxy_golden.rs` against a fake Galaxy server |
 | `volant pull` prints the playbook run and the `-o` line as `ansible-pull` does, and checks out without Python | `a_pull_prints_what_the_reference_pull_prints` and `a_pull_checks_out_and_runs_without_python` in `console_pull.rs` |
 | `volant console` prints what `ansible-console` prints for its commands, modules and shell lines on a pipe, and needs no Python for native modules | `the_console_reads_its_commands_from_a_pipe` and `the_console_runs_without_python` in `console_pull.rs` |
 | The links `install` makes, the lines it prints and what `remove` leaves alone | `crates/volant/tests/shims.rs` |

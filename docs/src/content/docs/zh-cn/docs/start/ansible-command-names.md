@@ -1,5 +1,5 @@
 ---
-sourceHash: 98256eaf2ac7
+sourceHash: 8dc270cc846e
 title: ansible 命令名
 description: Volant 的哪个命令取代 ansible-core 的哪个程序，哪些相同，哪些不同，以及如何保留你的命令行。
 ---
@@ -16,11 +16,11 @@ Volant 运行 ansible-core 2.19.12 的九个程序。每一个都是 `volant` �
 | `ansible-inventory` | [`volant inventory`](/zh-cn/docs/reference/cli/inventory/) | Volant | 不需要，collection 的 inventory 插件除外 |
 | `ansible-doc` | [`volant doc`](/zh-cn/docs/reference/cli/doc/) | ansible-core 自己的工具 | 第一次使用时安装 |
 | `ansible-config` | [`volant config`](/zh-cn/docs/reference/cli/config/) | ansible-core 自己的工具 | 第一次使用时安装 |
-| `ansible-galaxy` | [`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/) | ansible-core 自己的工具 | 第一次使用时安装 |
+| `ansible-galaxy` | [`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/) | Volant，正在编写：子命令在成为原生实现之前会被拒绝 | 不需要 |
 | `ansible-pull` | [`volant pull`](/zh-cn/docs/reference/cli/pull/) | Volant | `git` 检出不需要 |
 | `ansible-console` | [`volant console`](/zh-cn/docs/reference/cli/console/) | Volant | 原生模块不需要 |
 
-托管运行时在某个命令第一次需要它时自行安装，与 playbook 一样，并在安装时于标准错误输出打印一行。[托管运行时](/zh-cn/docs/reference/runtime/)对它有说明。你不需要安装 ansible，但九个命令中有三个运行的是该运行时里 ansible-core 自己的代码。
+托管运行时在某个命令第一次需要它时自行安装，与 playbook 一样，并在安装时于标准错误输出打印一行。[托管运行时](/zh-cn/docs/reference/runtime/)对它有说明。你不需要安装 ansible，但九个命令中有两个运行的是该运行时里 ansible-core 自己的代码。
 
 ## 保留你的命令行
 
@@ -61,7 +61,8 @@ ansible-playbook -i hosts.ini site.yml
 | `volant vault` 给出 ansible-vault 的消息、退出码、文件权限和文件 | `crates/volant/tests/vault_cli.rs`，以及 playbook 读取的 vault 数据所对应的 `vault-*` 场景 golden |
 | 一个工具加密的文件，另一个工具能解密，默认 id 和带标签的 id 都一样 | `a_file_one_tool_encrypts_the_other_decrypts` |
 | `volant inventory` 打印 ansible-inventory 的 JSON 和 YAML 字节：键顺序、四个空格的缩进、PyYAML 锚点 | `crates/volant/tests/inventory_golden.rs`（基于 `golden/inventories/cases.yml`）和 `inventory_cli.rs` |
-| `volant config` 和 `volant galaxy` 打印工具所打印的内容 | `crates/volant/tests/tools_cli.rs` |
+| `volant config` 打印工具所打印的内容 | `crates/volant/tests/tools_cli.rs` |
+| `volant galaxy` 接受 ansible-galaxy 的选项，并以相同的消息完成它最先做的检查 | `crates/volant/src/galaxy/tests.rs`，以及针对假 Galaxy 服务器的 `galaxy_golden.rs` |
 | `volant pull` 打印的 playbook 运行和 `-o` 那一行与 `ansible-pull` 相同，检出时不用 Python | `console_pull.rs` 中的 `a_pull_prints_what_the_reference_pull_prints` 和 `a_pull_checks_out_and_runs_without_python` |
 | 在管道上，`volant console` 为它的命令、模块和 shell 行打印的内容与 `ansible-console` 相同，原生模块不需要 Python | `console_pull.rs` 中的 `the_console_reads_its_commands_from_a_pipe` 和 `the_console_runs_without_python` |
 | `install` 创建的链接、它打印的行，以及 `remove` 不动的内容 | `crates/volant/tests/shims.rs` |

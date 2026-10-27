@@ -1,21 +1,35 @@
 ---
-sourceHash: 54618d327674
+sourceHash: 31a90e7da9a3
 title: volant galaxy
-description: Installiert und listet Rollen und Collections mit ansible-galaxy, gestartet aus der Python-Runtime von Volant.
+description: Die Optionen von ansible-galaxy, von Volant selbst geprüft, während seine Unterbefehle einer nach dem anderen nativ werden.
 ---
 
-`volant galaxy` führt das `ansible-galaxy` von ansible-core 2.19.12 mit dem Interpreter aus, den Volant für einen Playbook-Lauf wählt, und funktioniert daher ohne installiertes ansible-core. Es gibt aus, was das Skript ausgibt, und endet mit demselben Code.
+`volant galaxy` nimmt die Unterbefehle und Optionen von `ansible-galaxy` aus ansible-core 2.19.12 an, damit Skripte und CI-Jobs, die dafür geschrieben sind, ihre Befehlszeilen behalten. Es wird gerade in Volant neu geschrieben, ohne die Python-Runtime. Heute liest es die Optionen und macht die Prüfungen, die `ansible-galaxy` zuerst macht, und lehnt dann den Unterbefehl ab, bis dessen native Version da ist.
 
 ```sh
-volant galaxy [ARGS...]
+volant galaxy collection <download|init|build|publish|install|list|verify> [OPTIONS]
+volant galaxy role <init|remove|delete|list|search|import|setup|info|install> [OPTIONS]
 ```
 
-Jedes Argument geht unverändert an `ansible-galaxy`, auch `-h` und `--version`. Zum Beispiel `volant galaxy collection list`, `volant galaxy collection install community.general`, `volant galaxy collection install file.tar.gz -p DIR`, `volant galaxy role install NAME` und `volant galaxy role init NAME`. Die Netzwerkoperationen, einschließlich der Server aus `-s` und `GALAXY_SERVERS`, verhalten sich wie bei `ansible-galaxy`.
+Jeder Unterbefehl nimmt `-s`/`--server`, `--token`/`--api-key`, `-c`/`--ignore-certs`, `--timeout` und `-v` an, das wiederholt werden kann. `collection download` und `collection install` nehmen auch `--clear-response-cache` und `--no-cache` an. Eine unbekannte Option oder ein Wert der falschen Art endet mit 2 und gibt die Verwendung aus. `volant galaxy --version` gibt den Versionsblock von `ansible-galaxy` aus.
 
-Interpreter, Umgebung, Terminal, Exit-Code und `--version` funktionieren wie bei [`volant doc`](/de/docs/reference/cli/doc/).
+## Die ersten Prüfungen
 
-## Wohin Collections gehen
+Sie kommen vor jeder Arbeit, mit den Meldungen und Exit-Codes von `ansible-galaxy`:
 
-`collection install` schreibt in den ersten Eintrag von `ANSIBLE_COLLECTIONS_PATH`, standardmäßig `~/.ansible/collections`. Die Playbooks von Volant lesen dieses Verzeichnis.
+| Fall | Meldung | Exit |
+|---|---|---|
+| `collection install` mit Namen und `-r` | `[ERROR]: The positional collection_name arg and --requirements-file are mutually exclusive.` | 1 |
+| `collection install` oder `download` ohne beides | `[ERROR]: You must specify a collection name or a requirements file.` | 1 |
+| `-r` nennt eine Datei, die es nicht gibt | `[ERROR]: The requirements file '<path>' does not exist.` | 1 |
+| `role install` ohne Namen und ohne `-r` | `[ERROR]: - you must specify a user/role name or a roles file` | 5 |
+| `role install -r` mit einer Datei, die nicht auf `.yml` oder `.yaml` endet | `[ERROR]: Invalid role requirements file, it must end with a .yml or .yaml extension` | 1 |
+| `role list`, wenn keiner der Rollenpfade existiert | `[WARNING]: - the configured path <path> does not exist.` für jeden Pfad, danach `[ERROR]: - None of the provided paths were usable. Please specify a valid path with --roles-path` | 5 |
 
-Das eigene Verzeichnis `collections/` der Runtime, das `volant runtime install --collections` füllt, wird diesem Pfad zuletzt hinzugefügt. `volant galaxy collection list` listet daher auch diese Collections, unter einer eigenen Kopfzeile `# <dir>`. Eine Rolle wird dorthin installiert, wo `ansible-galaxy role install` sie ablegt, in den ersten Eintrag von `roles_path`.
+Liegt kein konfigurierter Collections-Pfad unter dem `PATH` von `collection install -p PATH`, gibt der Befehl zuerst die Warnung von `ansible-galaxy` aus: `[WARNING]: The specified collections path '<PATH>' is not part of the configured Ansible collections paths '<paths>'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.` Das eigene `collections/`-Verzeichnis der Runtime, das Volant als letzten Eintrag an den Collections-Pfad anhängt, fehlt in `<paths>`.
+
+## Abgelehnte Unterbefehle
+
+Ein Unterbefehl, der noch nicht nativ ist, endet mit `[ERROR]: volant galaxy <subcommand> is not supported yet`, Exit 1. `collection publish` und `role delete`, `search`, `import`, `setup` und `info` brauchen ein Galaxy-Konto oder die Rollendatenbank des Servers und bleiben abgelehnt: `[ERROR]: volant galaxy <subcommand> is not supported`, Exit 1.
+
+`volant runtime install --collections` installiert Collections weiterhin mit dem `ansible-galaxy` der Runtime.

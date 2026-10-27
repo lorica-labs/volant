@@ -19,7 +19,8 @@ mod settings;
 
 pub(crate) use locate::{defaults_value, is_world_writable};
 use parse::parse;
-use paths::{default_collections_path, default_roles_path, expand_home, path_list};
+pub(crate) use paths::expand_home;
+use paths::{default_collections_path, default_roles_path, path_list};
 pub use settings::HostNamedPaths;
 use settings::{
     boolean, cache_plugin, callback_flag, forks, gathering, host_named_dest_dirs, host_named_paths,

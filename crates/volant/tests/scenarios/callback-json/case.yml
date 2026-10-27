@@ -1,0 +1,5 @@
+# The `json` stdout callback (`ansible.posix.json`): one JSON document for the run and nothing
+# else on stdout, ids and times masked.
+needs: [ansible-core]
+env: {"ANSIBLE_STDOUT_CALLBACK": "json"}
+args: [-i, inv.ini, results.yml]

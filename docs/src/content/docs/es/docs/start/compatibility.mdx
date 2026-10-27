@@ -1,5 +1,5 @@
 ---
-sourceHash: cd192131ee62
+sourceHash: f6341a3afda1
 title: ¿Se ejecutará mi playbook?
 description: Comprueba un proyecto de Ansible existente contra esta versión en unos segundos, sin tocar ningún host.
 ---
@@ -103,7 +103,7 @@ Estas diferencias con `ansible-playbook` aparecen sin ningún mensaje antes de l
 | Qué | Qué ocurre |
 |---|---|
 | `callback_plugins/`, `vars_plugins/` | Se ignoran. |
-| `stdout_callback` con el callback de una colección, como `json` o `yaml` | La ejecución se detiene antes del primer play con `Could not load '<name>' callback plugin.`, que ansible-core solo imprime para un plugin no instalado. `default`, `minimal`, `oneline` y `tree` funcionan. |
+| `stdout_callback` con el callback de una colección distinto de `json`, como `community.general.unixy` | La ejecución se detiene antes del primer play con `Could not load '<name>' callback plugin.`, que ansible-core solo imprime para un plugin no instalado. `default`, `minimal`, `oneline`, `tree` y `json` funcionan. |
 | `callbacks_enabled` | Cada nombre se omite con `[WARNING]: Skipping callback plugin '<name>', unable to load`, que ansible-core solo imprime para un plugin que no encuentra. `volant.compat.record` se omite sin aviso. |
 | Los comandos `volant check`, `inventory`, `vault`, `doc`, `config` y `galaxy` | No existen. `volant` tiene `playbook`, `adhoc`, `runtime` y `shims`. |
 | Una comparación escrita entre dos literales de tipos que Python no sabe ordenar, como `{{ 'a' < 1 }}` | Responde `false` o `true` donde ansible-core falla con `'<' not supported between instances of 'str' and 'int'`. La biblioteca de plantillas resuelve una comparación de literales antes de que Volant la vea. Con una variable en cualquiera de los dos lados, la comparación falla igual que en ansible-core. |

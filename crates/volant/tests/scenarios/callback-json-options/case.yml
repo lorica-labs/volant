@@ -1,0 +1,5 @@
+# `json_indent` and `show_custom_stats` of the `json` callback: two spaces, and the `set_stats` data
+# in the document.
+needs: [ansible-core]
+env: {"ANSIBLE_STDOUT_CALLBACK": "ansible.posix.json", "ANSIBLE_JSON_INDENT": "2", "ANSIBLE_SHOW_CUSTOM_STATS": "true"}
+args: [-i, inv.ini, results.yml]

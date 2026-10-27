@@ -1030,3 +1030,20 @@ fn pretty_results_is_read_leniently() {
         unsafe { std::env::remove_var(name) };
     }
 }
+
+/// `json_indent` is a whole number, from the file or the environment.
+#[test]
+fn json_indent_is_read_as_a_number() {
+    assert_eq!(
+        cfg("[defaults]\njson_indent = 2\n", ".")
+            .callbacks
+            .json_indent,
+        Some(2)
+    );
+    let refused = parse(
+        "[defaults]\njson_indent = wide\n",
+        Path::new("."),
+        "ansible.cfg",
+    );
+    assert!(refused.is_err());
+}

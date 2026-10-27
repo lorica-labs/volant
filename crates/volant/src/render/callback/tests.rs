@@ -47,7 +47,9 @@ fn result(value: serde_json::Value) -> TaskResult {
 #[case("ansible.builtin.minimal", Some(StdoutCallback::Minimal))]
 #[case("oneline", Some(StdoutCallback::Oneline))]
 #[case("ansible.builtin.tree", Some(StdoutCallback::Tree))]
-#[case("json", None)]
+#[case("json", Some(StdoutCallback::Json))]
+#[case("ansible.posix.json", Some(StdoutCallback::Json))]
+#[case("community.general.unixy", None)]
 #[case("community.general.yaml", None)]
 fn a_callback_is_known_by_its_short_and_its_full_name(
     #[case] name: &str,
@@ -80,7 +82,7 @@ fn only_the_default_callback_prints_banners_items_and_the_recap(#[case] callback
         );
         out.ignoring();
         out.included("inc.yml", &["h1".to_string()], None);
-        out.recap(&Stats::default());
+        out.recap(&Stats::default(), None);
     });
     assert_eq!(text, "");
 }
@@ -171,4 +173,55 @@ fn the_result_format_and_pretty_results_shape_a_result(
         out.result("h1", Outcome::Ok, &body, None, dump, false, None);
     });
     assert_eq!(text, want);
+}
+
+/// The `json` callback prints nothing as the run goes, then one document: each play and task with
+/// the results by host, `action` and `_ansible_no_log` added, a loop's items back under `results`
+/// with their labels, an unreachable host, and every character past ASCII escaped.
+#[test]
+fn the_json_callback_prints_one_document_at_the_recap() {
+    let book = crate::testing::play("- name: p\n  hosts: all\n  tasks: []\n");
+    let text = printed(Some(StdoutCallback::Json), 0, |out| {
+        out.set_json_indent(0);
+        out.play_of(&book.plays[0]);
+        out.task_started("t", "debug", None);
+        let message = result(json!({"msg": "héllo", "failed": false}));
+        out.result("h1", Outcome::Ok, &message, None, Dump::Debug, false, None);
+        out.ignoring();
+        out.task_started("loop", "debug", None);
+        let aggregate = result(json!({"changed": false, LOOP_RESULTS: [{"item": "a"}]}));
+        out.result("h1", Outcome::Ok, &aggregate, None, Dump::No, false, None);
+        out.unreachable("h2", "gone", false, None);
+        out.recap(&Stats::default(), None);
+    });
+    let escaped = format!("h{}u00e9llo", '\\');
+    assert!(text.is_ascii() && text.contains(&escaped), "{text}");
+    assert_eq!(text.lines().count(), 1, "{text}");
+    let doc: serde_json::Value = serde_json::from_str(&text).unwrap();
+    let play = &doc["plays"][0];
+    assert_eq!(play["play"]["name"], "p");
+    let tasks = play["tasks"].as_array().unwrap();
+    assert_eq!(
+        tasks[0]["hosts"]["h1"],
+        json!({"msg": "héllo", "action": "debug", "_ansible_no_log": false})
+    );
+    assert_eq!(
+        tasks[1]["hosts"]["h1"],
+        json!({
+            "changed": false,
+            "action": "debug",
+            "results": [{
+                "item": "a",
+                "_ansible_item_label": "a",
+                "_ansible_no_log": false,
+                "_ansible_verbose_always": true
+            }]
+        })
+    );
+    assert_eq!(
+        tasks[1]["hosts"]["h2"],
+        json!({"changed": false, "msg": "gone", "unreachable": true, "action": "debug"})
+    );
+    assert_eq!(tasks[1]["task"]["name"], "loop");
+    assert_eq!(doc["custom_stats"], json!({}));
 }

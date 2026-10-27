@@ -1,5 +1,5 @@
 ---
-sourceHash: cd192131ee62
+sourceHash: f6341a3afda1
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -103,7 +103,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 内容 | 会发生什么 |
 |---|---|
 | `callback_plugins/`、`vars_plugins/` | 被忽略。 |
-| `stdout_callback` 指定 collection 的 callback，例如 `json` 或 `yaml` | 运行在第一个 play 之前以 `Could not load '<name>' callback plugin.` 停止，而 ansible-core 只对未安装的插件打印这句。`default`、`minimal`、`oneline` 和 `tree` 可以用。 |
+| `stdout_callback` 指定 `json` 以外的 collection callback，例如 `community.general.unixy` | 运行在第一个 play 之前以 `Could not load '<name>' callback plugin.` 停止，而 ansible-core 只对未安装的插件打印这句。`default`、`minimal`、`oneline`、`tree` 和 `json` 可以用。 |
 | `callbacks_enabled` | 每个名字都以 `[WARNING]: Skipping callback plugin '<name>', unable to load` 被跳过，而 ansible-core 只对找不到的插件打印这句。`volant.compat.record` 被跳过，不打印警告。 |
 | `volant check`、`inventory`、`vault`、`doc`、`config` 和 `galaxy` | 它们不存在。`volant` 有 `playbook`、`adhoc`、`runtime` 和 `shims`。 |
 | 在两个 Python 无法排序的类型的字面量之间写比较，例如 `{{ 'a' < 1 }}` | 它会回答 `false` 或 `true`，而 ansible-core 会失败并报 `'<' not supported between instances of 'str' and 'int'`。模板库在 Volant 看到之前就算出了字面量的比较结果。任意一边是变量时，比较会像 ansible-core 一样失败。 |

@@ -181,7 +181,7 @@ pub(super) async fn pause(
         .and_then(volant_protocol::modules::arg_bool)
         .unwrap_or(true);
     let mut r = Map::new();
-    r.insert("start".into(), json!(timestamp()));
+    r.insert("start".into(), json!(utc_timestamp(' ')));
     let began = std::time::Instant::now();
     let mut user_input = String::new();
     match asked {
@@ -240,7 +240,7 @@ pub(super) async fn pause(
     r.insert("rc".into(), json!(0));
     r.insert("stderr".into(), json!(""));
     r.insert("stdout".into(), json!(format!("Paused for {shown} {unit}")));
-    r.insert("stop".into(), json!(timestamp()));
+    r.insert("stop".into(), json!(utc_timestamp(' ')));
     r.insert("user_input".into(), json!(user_input));
     Some(TaskResult(r))
 }
@@ -253,9 +253,9 @@ async fn interrupted(stop: &mut watch::Receiver<bool>) {
     }
 }
 
-/// Now, in the shape the reference's `pause` gives `start` and `stop`. UTC where the reference
-/// uses local time, as the agent's own timestamps are.
-fn timestamp() -> String {
+/// Now, in the shape the reference's `pause` gives `start` and `stop`, the date and the time
+/// joined by `sep`. UTC where the reference uses local time, as the agent's own timestamps are.
+pub(crate) fn utc_timestamp(sep: char) -> String {
     let since = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default();
@@ -271,7 +271,7 @@ fn timestamp() -> String {
     let y = yoe + era * 400 + i64::from(m <= 2);
     let day = secs.rem_euclid(86_400);
     format!(
-        "{y:04}-{m:02}-{d:02} {:02}:{:02}:{:02}.{:06}",
+        "{y:04}-{m:02}-{d:02}{sep}{:02}:{:02}:{:02}.{:06}",
         day / 3600,
         (day % 3600) / 60,
         day % 60,

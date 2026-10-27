@@ -133,6 +133,9 @@ pub(super) fn load_callbacks(
         result_format(config, stdout, out)?;
     }
     out.set_stdout_callback(stdout);
+    if let Some(indent) = config.callbacks.json_indent {
+        out.set_json_indent(indent);
+    }
     // The ad hoc command prints the notice once its pattern is resolved.
     if adhoc.is_none()
         && let Some(release) = stdout.removed_in()

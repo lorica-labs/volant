@@ -698,8 +698,6 @@ async fn run_all(
 
 /// The recap, then what `set_stats` collected when the run asks to see it.
 fn recap(out: &mut Renderer, stats: &Stats, state: &RunState, show_custom: bool) {
-    out.recap(stats);
-    if show_custom {
-        out.custom_stats(state.vars.lock().expect("vars lock").custom_stats());
-    }
+    let vars = state.vars.lock().expect("vars lock");
+    out.recap(stats, show_custom.then(|| vars.custom_stats()));
 }

@@ -405,6 +405,12 @@ fn normalise(stdout: &str, unordered: &[regex::Regex]) -> String {
     // A command's timings, which differ between two runs of the reference itself.
     let timed = regex::Regex::new(r#""(start|end|delta)": "[^"]*""#).expect("the pattern compiles");
     let stdout = timed.replace_all(stdout, r#""$1": "<time>""#);
+    // The play and task ids of the `json` callback, drawn anew by every run.
+    let ids = regex::Regex::new(
+        r#""id": "[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}""#,
+    )
+    .expect("the pattern compiles");
+    let stdout = ids.replace_all(&stdout, r#""id": "<id>""#);
     // The same in a result `result_format = yaml` dumps.
     let timed_yaml =
         regex::Regex::new(r"(?m)^( +)(start|end|delta): '[^']*'$").expect("the pattern compiles");

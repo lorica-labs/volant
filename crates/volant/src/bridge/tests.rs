@@ -241,18 +241,18 @@ fn act(
     let (send, done) = std::sync::mpsc::channel();
     std::thread::spawn(move || {
         let mut asked = Vec::new();
-        let ended = bridge.run_action(
-            "my.col.act",
-            &json!({"args": {}}),
-            &json!({}),
-            &json!({}),
-            deadline,
-            &mut |ask| {
-                let answer = reply(&ask);
-                asked.push(ask);
-                answer
-            },
-        );
+        let call = ActionCall {
+            name: "my.col.act",
+            task: &json!({"args": {}}),
+            task_vars: &json!({}),
+            play_context: &json!({}),
+            link: None,
+        };
+        let ended = bridge.run_action(&call, deadline, &mut |ask| {
+            let answer = reply(&ask);
+            asked.push(ask);
+            answer
+        });
         let _ = send.send((asked, ended));
     });
     done.recv_timeout(std::time::Duration::from_secs(60))
@@ -348,3 +348,5 @@ fn actions_that_cannot_start_a_helper_name_why_without_retrying() {
     }
     assert_eq!(starts.load(Ordering::SeqCst), 1);
 }
+
+mod owned;

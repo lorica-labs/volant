@@ -295,6 +295,57 @@ fn ssh_a_password_variable_logs_in_to_a_password_account() {
     let _ = std::fs::remove_dir_all(&dir);
 }
 
+/// `paramiko_ssh` runs on `ssh` with `-F /dev/null`, after ansible-core's deprecation warning,
+/// printed once and silenced by `deprecation_warnings`. `-vvvv` names the plugin.
+#[test]
+#[ignore = "needs sshd on localhost, run through just ssh-test"]
+fn ssh_paramiko_ssh_runs_on_the_ssh_program() {
+    let dir = tmp("paramiko");
+    let inv = dir.join("inventory.ini");
+    std::fs::write(
+        &inv,
+        format!(
+            "box ansible_connection=paramiko_ssh ansible_paramiko_host=127.0.0.1 ansible_paramiko_user={} ansible_paramiko_private_key_file={} ansible_remote_tmp={}
+",
+            user(),
+            key(),
+            remote_tmp(&dir).display(),
+        ),
+    )
+    .unwrap();
+    let inv = inv.display().to_string();
+    let warning = "[DEPRECATION WARNING]: The paramiko connection plugin is deprecated. This feature will be removed from ansible-core version 2.21.";
+    let out = volant(&["playbook", "-vvvv", "-i", &inv, &fixture("ssh/e2e.yml")]);
+    let text = both(&out);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains("\"msg\": \"ran on "), "{text}");
+    assert_eq!(text.matches(warning).count(), 1, "{text}");
+    let established = format!(
+        "<127.0.0.1> ESTABLISH PARAMIKO SSH CONNECTION FOR USER: {} on PORT 22 TO 127.0.0.1",
+        user()
+    );
+    assert!(text.contains(&established), "{text}");
+    let execs: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("SSH: EXEC ssh"))
+        .collect();
+    assert!(!execs.is_empty(), "{text}");
+    for exec in execs {
+        assert!(exec.contains("-F /dev/null"), "{exec}");
+    }
+    let quiet = volant_command()
+        .args(["playbook", "-i", &inv, &fixture("ssh/e2e.yml")])
+        .env("NO_COLOR", "1")
+        .env("ANSIBLE_HOST_KEY_CHECKING", "False")
+        .env("ANSIBLE_DEPRECATION_WARNINGS", "False")
+        .output()
+        .unwrap();
+    let text = both(&quiet);
+    assert_eq!(quiet.status.code(), Some(0), "{text}");
+    assert!(!text.contains("DEPRECATION"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 #[test]
 #[ignore = "needs sshd on localhost, run through just ssh-test"]
 fn ssh_an_outdated_cached_agent_is_replaced() {

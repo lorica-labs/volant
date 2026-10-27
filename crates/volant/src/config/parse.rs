@@ -133,6 +133,12 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
         if section == "chroot_connection" {
             super::docker::chroot_ini(&mut config.plugins.chroot, key.trim(), value, origin)?;
         }
+        if section == "paramiko_connection" {
+            super::paramiko::ini(&mut config.plugins.paramiko, key.trim(), value, origin)?;
+        }
+        if section == "ssh_connection" && key.trim() == "timeout" {
+            config.plugins.paramiko.ssh_timeout = Some(super::paramiko::seconds(origin, value)?);
+        }
         if section != "defaults" {
             continue;
         }
@@ -141,6 +147,9 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 config.plugins.podman.extra_args = Some(value.trim().to_string());
             }
             "executable" => config.plugins.chroot.executable = Some(value.trim().to_string()),
+            "remote_port" => {
+                config.plugins.paramiko.defaults_port = Some(super::paramiko::port(origin, value)?);
+            }
             _ => {}
         }
         match key.trim() {

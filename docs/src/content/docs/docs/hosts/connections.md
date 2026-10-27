@@ -22,6 +22,7 @@ Volant reaches a managed host, puts a small static agent there (a program that r
 | `lxd` | Runs the agent in an LXD instance through `lxc exec`, as `community.general.lxd` does; `community.general.incus` does the same for Incus. See [LXD and Incus instances](#lxd-and-incus-instances). |
 | `kubectl` | Runs the agent in a container of a Kubernetes pod through `kubectl exec`, as `kubernetes.core.kubectl` does. See [Kubernetes pods](#kubernetes-pods). |
 | `aws_ssm` | Runs the agent on an EC2 instance through an AWS Systems Manager session, as `amazon.aws.aws_ssm` does. See [AWS Systems Manager sessions](#aws-systems-manager-sessions). |
+| `paramiko_ssh` | Runs the OpenSSH client in place of ansible-core's deprecated paramiko connection; `paramiko` is the same. See [Paramiko](#paramiko). |
 
 Any other name is resolved by the controller's ansible-core, the way `ansible-playbook` resolves it, once per name and per run. `ansible.builtin.ssh` and `ansible.builtin.local` resolve to the two plugins above and run. A short name that a collection took over from ansible-core is routed to that collection when it is installed:
 
@@ -40,7 +41,7 @@ With `-vvv`, a routed name prints `redirecting (type: connection) ansible.builti
 
 A name that resolves to a plugin Volant does not drive yet, such as `winrm`, `psrp` or `community.general.jail`, makes the host unreachable with `connection '<full name>' is not supported`, and the rest of the run continues. The [support matrix](/docs/reference/parity/#collection-connection) lists every connection plugin of the collections in the package.
 
-A name that resolves to nothing fails the task with `the connection plugin '<name>' was not found`, as Ansible does. That includes a short name routed to a collection that is not installed, such as `docker` without community.docker, after the warning ansible-core prints for it, and `paramiko`, which ansible-core 2.19.12 does not carry under that name. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
+A name that resolves to nothing fails the task with `the connection plugin '<name>' was not found`, as Ansible does. That includes a short name routed to a collection that is not installed, such as `docker` without community.docker, after the warning ansible-core prints for it, and `ansible.builtin.paramiko`, which ansible-core 2.19.12 does not carry under that name. That applies whether the value is the host's own connection, a `delegate_to` target's, or that of the host running a `run_once` task.
 
 A password comes from `-k`, from `--connection-password-file` or from the `ansible_password` variable. Volant hands it to `ssh` through `SSH_ASKPASS` and a private temporary file that is removed at the end of the run, which needs OpenSSH 8.4 or later. `ssh` then runs with `BatchMode=no` and `NumberOfPasswordPrompts=1`, so one wrong answer ends the attempt. The password is never on a command line, in the environment of a program or in the output, `-vvvv` included. A vaulted `ansible_password` works like any vaulted variable. Without a password, `ssh` runs with `BatchMode=yes` and never prompts, so a host that would ask for a password or a passphrase is reported unreachable instead of hanging the run.
 
@@ -145,6 +146,48 @@ Each option can also come from the `K8S_AUTH_*` environment variable the plugin 
 | `ansible_aws_ssm_timeout` | How many seconds the session has to answer each step of the connection; 60 by default. |
 
 Commands run as the session's user, `ssm-user` on Amazon Linux. `become` picks another user, and `ansible_user` is ignored, as with the plugin. Volant sends nothing through S3, so the `ansible_aws_ssm_bucket_*` variables the plugin needs are not read. The session's terminal only hands back valid UTF-8, so the agent talks to the controller in base64 lines, at about 400 KiB/s each way, and the first run on an instance uploads the agent once, in about ten seconds. An instance the SSM agent does not manage, or credentials that are refused, make the host unreachable with boto3's words, where the plugin fails the task. When the run ends, or the controller is killed, the session closes and the agent stops with it. With `-vvvv` the lines show `ESTABLISH SSM CONNECTION TO: <instance>`, then one `EXEC: <command>` line per command.
+
+## Paramiko
+
+`ansible_connection: paramiko_ssh` is ansible-core's connection through the Python paramiko library. ansible-core 2.19.12 marks it deprecated and removes it in 2.21. Volant runs these hosts with the `ssh` program instead, so paramiko does not need to be installed. Each option of the plugin becomes the closest `ssh` option, and the first host to connect prints ansible-core's warning once per run:
+
+```text
+[DEPRECATION WARNING]: The paramiko connection plugin is deprecated. This feature will be removed from ansible-core version 2.21.
+```
+
+`deprecation_warnings = False` silences it. `paramiko`, `_paramiko_ssh` and `ansible.builtin.paramiko_ssh` are the same plugin.
+
+| Variable | What it does |
+|---|---|
+| `ansible_paramiko_host` | The address. It beats `ansible_ssh_host`, which beats `ansible_host`, then the inventory name. |
+| `ansible_paramiko_port` | `ssh -p`. It beats `ansible_ssh_port` and `ansible_port`, then the `port` keyword, `ANSIBLE_REMOTE_PARAMIKO_PORT`, `ANSIBLE_REMOTE_PORT`, `[paramiko_connection] remote_port` and `[defaults] remote_port`. |
+| `ansible_paramiko_user` | `ssh -l`. It beats `ansible_ssh_user` and `ansible_user`, then the `remote_user` keyword, `ANSIBLE_PARAMIKO_REMOTE_USER`, `[paramiko_connection] remote_user` and the usual remote user settings. |
+| `ansible_paramiko_private_key_file` | `ssh -i`. It beats `ansible_ssh_private_key_file` and `ansible_private_key_file`, then `ANSIBLE_PARAMIKO_PRIVATE_KEY_FILE`, `[paramiko_connection] private_key_file` and the usual key settings. |
+| `ansible_paramiko_password`, `ansible_paramiko_pass` | The password, handed to `ssh` as for an `ssh` host. They beat `ansible_ssh_password`, `ansible_ssh_pass` and `ansible_password`. |
+| `ansible_paramiko_timeout` | `ConnectTimeout`. It beats `ansible_ssh_timeout`, then `ANSIBLE_PARAMIKO_TIMEOUT`, `ANSIBLE_SSH_TIMEOUT`, `[paramiko_connection] timeout`, `[ssh_connection] timeout` and the connection timeout. `ansible_timeout` is not read, as with the plugin. |
+| `ansible_paramiko_host_key_checking`, `ansible_ssh_host_key_checking`, `ansible_host_key_checking` | Whether the host key is checked, in that order, then `ANSIBLE_PARAMIKO_HOST_KEY_CHECKING`, `ANSIBLE_SSH_HOST_KEY_CHECKING`, `ANSIBLE_HOST_KEY_CHECKING`, `[paramiko_connection] host_key_checking` and `[defaults] host_key_checking`. Off, `ssh` gets `StrictHostKeyChecking=no` and `UserKnownHostsFile=/dev/null`. |
+| `ansible_paramiko_use_rsa_sha2_algorithms` | Off, `ssh` gets `HostKeyAlgorithms=+ssh-rsa` and `PubkeyAcceptedAlgorithms=+ssh-rsa`, for a server that knows RSA keys only as `ssh-rsa`. `ssh` still prefers SHA-2 signatures with a server that offers them. Also `ANSIBLE_PARAMIKO_USE_RSA_SHA2_ALGORITHMS` and `[paramiko_connection] use_rsa_sha2_algorithms`. |
+| `ansible_paramiko_proxy_command` | `ProxyCommand`, where `ssh` expands `%h`, `%p` and `%r` as paramiko does. Also `ANSIBLE_PARAMIKO_PROXY_COMMAND` and `[paramiko_connection] proxy_command`. |
+
+The options with no variable come from `ANSIBLE_PARAMIKO_<NAME>` or `[paramiko_connection]`:
+
+| Option | What `ssh` gets |
+|---|---|
+| `host_key_auto_add` | On, with host key checking on: `StrictHostKeyChecking=accept-new`. A new host's key is accepted, a changed key is still refused. |
+| `record_host_keys` | Off, with host key checking on: `UserKnownHostsFile=/dev/null ~/.ssh/known_hosts ~/.ssh/known_hosts2`. `ssh` checks against the usual files and writes a new key to the first one, which keeps nothing. |
+| `look_for_keys` | Off, with a key file given: `IdentitiesOnly=yes`, so only that key is tried. Without a key file it changes nothing. |
+| `pty` | Off: no terminal, as `ansible_ssh_use_tty: false` does for `ssh`. |
+| `banner_timeout` | Read and checked, with no effect: `ssh` has no such setting. |
+
+What differs from the plugin:
+
+- `~/.ssh/config` and `/etc/ssh/ssh_config` are not read, as with paramiko: every `ssh` gets `-F /dev/null`. The `ansible_ssh_common_args`, `ansible_ssh_extra_args` and `ansible_ssh_executable` variables are not read either.
+- A host key that is not known, with host key checking on and `host_key_auto_add` off, makes the host unreachable with `ssh`'s message. The plugin asks on the terminal.
+- The failure messages are `ssh`'s, for an unknown host key as for a refused login, and the host is unreachable in both cases, as with the plugin.
+- With `look_for_keys` off and a key file given, the keys of `ssh-agent` are not offered either. Paramiko still offers them.
+- The connection to a host is shared between tasks, as for `ssh`.
+
+With `-vvvv` the first line is `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <user> on PORT <port> TO <address>`, then the `SSH: EXEC` lines of an `ssh` host.
 
 ## Host variables
 

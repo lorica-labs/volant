@@ -18,6 +18,7 @@ mod fused;
 mod kubectl;
 mod lxd;
 mod names;
+mod paramiko;
 mod podman;
 mod reach;
 mod resolve;
@@ -43,6 +44,7 @@ pub use exec::{ExecTarget, KeptFile, Lines};
 #[cfg(test)]
 pub(crate) use names::all as connection_variables;
 pub(crate) use names::{first_set, secret_text};
+pub use paramiko::ParamikoSettings;
 pub use podman::PodmanSettings;
 pub use resolve::{ConnectionNames, Resolution, ResolveConnection};
 pub(crate) use shell::validate_remote_tmp;

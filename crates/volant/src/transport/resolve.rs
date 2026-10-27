@@ -307,8 +307,8 @@ mod tests {
     #[rstest]
     #[case(
         ConnectionNames::default(),
-        "paramiko",
-        Some("host 'h': connection 'paramiko' is not supported")
+        "psrp",
+        Some("host 'h': connection 'psrp' is not supported")
     )]
     #[case(
         ConnectionNames::default(),

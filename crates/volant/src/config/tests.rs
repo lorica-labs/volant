@@ -904,3 +904,48 @@ fn a_container_setting_that_does_not_read_is_refused(#[case] text: &str) {
         "{text}"
     );
 }
+
+/// `paramiko_ssh` reads its own section, `[ssh_connection] timeout` and `[defaults] remote_port`,
+/// its own section beating the other two whatever their order in the file.
+#[test]
+fn the_paramiko_connection_reads_its_section() {
+    let config = cfg(
+        "[paramiko_connection]\nremote_user = ops\nremote_port = 2222\nprivate_key_file = /k\n\
+         host_key_checking = no\nhost_key_auto_add = yes\nrecord_host_keys = no\n\
+         look_for_keys = no\nuse_rsa_sha2_algorithms = no\nproxy_command = nc %h %p\npty = no\n\
+         timeout = 4\nbanner_timeout = 1.5\n\
+         [ssh_connection]\ntimeout = 9\n[defaults]\nremote_port = 2300\n",
+        ".",
+    );
+    let paramiko = &config.plugins.paramiko;
+    assert_eq!(
+        *paramiko,
+        crate::transport::ParamikoSettings {
+            remote_user: Some("ops".into()),
+            port: Some(2222),
+            defaults_port: Some(2300),
+            private_key_file: Some(PathBuf::from("/k")),
+            host_key_checking: Some(false),
+            host_key_auto_add: Some(true),
+            record_host_keys: Some(false),
+            look_for_keys: Some(false),
+            use_rsa_sha2_algorithms: Some(false),
+            proxy_command: Some("nc %h %p".into()),
+            pty: Some(false),
+            timeout: Some(Duration::from_secs(4)),
+            ssh_timeout: Some(Duration::from_secs(9)),
+        }
+    );
+}
+
+#[rstest::rstest]
+#[case("[paramiko_connection]\npty = maybe\n")]
+#[case("[paramiko_connection]\nremote_port = 70000\n")]
+#[case("[paramiko_connection]\nbanner_timeout = soon\n")]
+#[case("[defaults]\nremote_port = x\n")]
+fn a_paramiko_setting_that_does_not_read_is_refused(#[case] text: &str) {
+    assert!(
+        parse(text, Path::new("."), "ansible.cfg").is_err(),
+        "{text}"
+    );
+}

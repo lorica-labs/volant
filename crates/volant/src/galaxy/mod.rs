@@ -11,8 +11,26 @@ pub mod install;
 #[cfg(test)]
 mod requirement_tests;
 pub mod requirements;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the install from a Galaxy server is its first caller"
+    )
+)]
+pub mod resolve;
+#[cfg(test)]
+mod resolve_tests;
 #[cfg(test)]
 mod tests;
+#[cfg_attr(
+    not(test),
+    expect(
+        dead_code,
+        reason = "the install from a Galaxy server is its first caller"
+    )
+)]
+pub mod version;
 
 /// A failure, printed as `[ERROR]: <message>` and ending the run with `code`.
 #[derive(Debug, PartialEq, Eq)]

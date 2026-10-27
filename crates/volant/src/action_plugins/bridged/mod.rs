@@ -318,14 +318,14 @@ pub(super) fn start(
                 .recv()
                 .unwrap_or_else(|_| Reply::Error("the task ended before the host answered".into()))
         };
-        let outcome = bridge.run_action(
+        let call = crate::bridge::ActionCall {
             name,
-            &task,
-            &task_vars,
-            &play_context,
-            deadline,
-            &mut answer,
-        );
+            task: &task,
+            task_vars: &task_vars,
+            play_context: &play_context,
+            link: None,
+        };
+        let outcome = bridge.run_action(&call, deadline, &mut answer);
         let _ = to_plugin.send(FromHelper::Done(outcome));
         notify.notify_one();
     });

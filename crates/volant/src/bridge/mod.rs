@@ -19,11 +19,13 @@ use volant_protocol::frame::MAX_FRAME_LEN;
 
 use crate::python::{ActionHelper, PythonBuilder};
 
+mod actions;
+pub use actions::ActionCall;
 mod connections;
 mod conversation;
 mod wire;
 
-use conversation::{answer, converse, defaults_shape};
+use conversation::{answer, defaults_shape};
 pub(crate) use wire::split_failure;
 pub use wire::{Ask, BridgeError, PluginKind, Reply, TmpOp};
 
@@ -407,90 +409,6 @@ impl Bridge {
             return Err(why);
         }
         outcome
-    }
-
-    /// Runs the action plugin `name` for one task in a helper of the pool, as ansible-core runs
-    /// it: `task` holds the task's keywords and `args`, `task_vars` the host's variables,
-    /// `play_context` the fields of ansible-core's `PlayContext`. Each [`Ask`] the plugin makes
-    /// is answered by `asks`, one at a time. The value is the plugin's result, a failed one when
-    /// the plugin raised; it is data from the host and is never rendered again.
-    ///
-    /// # Errors
-    /// [`BridgeError::NotFound`] when ansible-core has no such action plugin, `Plugin` when the
-    /// request is refused, `Start` when no helper starts, and `Helper` when the helper dies,
-    /// breaks the protocol or is still running at `deadline`: every
-    /// wait for the helper ends there. A helper that ended any of those
-    /// ways is killed, and the next action starts another.
-    pub fn run_action(
-        &self,
-        name: &str,
-        task: &Value,
-        task_vars: &Value,
-        play_context: &Value,
-        deadline: Instant,
-        asks: &mut dyn FnMut(Ask) -> Reply,
-    ) -> Result<Value, BridgeError> {
-        let (mut helper, id) = self.action_helper()?;
-        let request = json!({"id": id, "action": {
-            "name": name, "task": task, "task_vars": task_vars, "play_context": play_context,
-        }})
-        .to_string();
-        if request.len() > MAX_FRAME_LEN {
-            self.lock_actions().idle.push(helper);
-            return Err(BridgeError::Helper(format!(
-                "the request for the action plugin '{name}' is {} bytes, over the {MAX_FRAME_LEN} byte limit",
-                request.len()
-            )));
-        }
-        match converse(&mut helper, id, name, &request, deadline, asks) {
-            Err(BridgeError::Helper(why)) => {
-                // What the helper left unsaid is not read: it is ended, and the pool loses it.
-                let status = helper.end();
-                Err(BridgeError::Helper(
-                    if why.starts_with("the Python helper exited") {
-                        format!("{why} ({status})")
-                    } else {
-                        why
-                    },
-                ))
-            }
-            outcome => {
-                self.lock_actions().idle.push(helper);
-                outcome
-            }
-        }
-    }
-
-    fn lock_actions(&self) -> MutexGuard<'_, Actions> {
-        self.actions
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner)
-    }
-
-    /// An idle helper of the pool, or a new one, and the id of the request it is about to get.
-    fn action_helper(&self) -> Result<(ActionHelper, u64), BridgeError> {
-        let mut actions = self.lock_actions();
-        if let Some(why) = &actions.broken {
-            return Err(why.clone());
-        }
-        actions.next += 1;
-        let id = actions.next;
-        // A helper that died while idle is dropped here, which reaps it, and never reused.
-        while let Some(mut helper) = actions.idle.pop() {
-            if helper.alive() {
-                return Ok((helper, id));
-            }
-        }
-        // Started without the lock: an action on another host need not wait for this start.
-        drop(actions);
-        match (self.start)() {
-            Ok(helper) => Ok((ActionHelper::new(helper), id)),
-            Err(err) => {
-                let why = BridgeError::Start(format!("{err:#}"));
-                self.lock_actions().broken = Some(why.clone());
-                Err(why)
-            }
-        }
     }
 }
 

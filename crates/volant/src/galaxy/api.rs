@@ -1,22 +1,30 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The read-only client of a Galaxy server's API v3, as ansible-galaxy 2.19.12 calls it
 //! (`galaxy/api.py`: `g_connect`, `_call_galaxy`, `get_collection_metadata`,
-//! `get_collection_versions`, `get_collection_version_metadata`; `_download_file`). HTTP goes
-//! through `ureq` with `rustls`, as decision record 0012 settles: the system's roots, the proxy
-//! of the environment, and no token sent again on a redirect to another host.
+//! `get_collection_versions`, `get_collection_version_metadata`, the response cache;
+//! `_download_file`; `MultiGalaxyAPIProxy` for several servers). HTTP goes through `ureq` with
+//! `rustls`, as decision record 0012 settles: the system's roots, the proxy of the environment,
+//! and no token sent again on a redirect to another host.
 
-use std::io::Write as _;
 use std::path::{Path, PathBuf};
 use std::time::Duration;
 
-use serde_json::Value;
-use sha2::{Digest as _, Sha256};
+use serde_json::{Value, json};
 
 use super::Failure;
+use super::settings::ServerSettings;
+
+mod cache;
+pub mod download;
+mod http;
+pub mod servers;
+
+use cache::{Cache, now, write_private};
+pub(super) use http::galaxy_error;
+use http::{absolute, cache_id, join, path_of};
 
 /// A server and what its discovery call found.
 pub struct Server {
-    /// The name ansible-galaxy gives it: `cmd_arg` for `-s`, `default`, or its section's name.
     pub name: String,
     /// The API root once found: the URL given, or that URL with `/api` added.
     api_server: String,
@@ -24,6 +32,11 @@ pub struct Server {
     versions: Vec<(String, String)>,
     agent: ureq::Agent,
     verbose: u8,
+    /// The token of the settings, else the one in the token file once read.
+    token: Option<String>,
+    /// The token file, read at the first call that needs it when the settings give no token.
+    token_file: Option<PathBuf>,
+    cache: Option<Cache>,
 }
 
 /// What a collection version's record gives.
@@ -42,9 +55,18 @@ pub struct VersionInfo {
     pub signatures: Vec<String>,
 }
 
+/// Where the cache and the token file are, and what to do with the cache.
+pub struct Files<'a> {
+    /// `None` under `--no-cache`.
+    pub cache_dir: Option<&'a Path>,
+    pub clear_cache: bool,
+    pub token_path: &'a Path,
+}
+
 impl Server {
-    /// A server at `url`, not called yet.
-    pub fn new(name: &str, url: &str, verbose: u8) -> Self {
+    /// A server, not called yet. Its response cache is loaded now, as the reference loads it
+    /// for each server it builds.
+    pub fn new(settings: &ServerSettings, files: &Files, verbose: u8) -> Self {
         let _ = rustls::crypto::ring::default_provider().install_default();
         let certs: Vec<_> = rustls_native_certs::load_native_certs()
             .certs
@@ -53,31 +75,64 @@ impl Server {
             .collect();
         let tls = ureq::tls::TlsConfig::builder()
             .root_certs(ureq::tls::RootCerts::new_with_certs(&certs))
+            .disable_verification(!settings.validate_certs)
             .build();
         let agent = ureq::Agent::config_builder()
             .tls_config(tls)
             .proxy(ureq::Proxy::try_from_env())
             .redirect_auth_headers(ureq::config::RedirectAuthHeaders::SameHost)
             .http_status_as_error(false)
-            .timeout_global(Some(Duration::from_secs(60)))
+            .timeout_global(Some(Duration::from_secs(settings.timeout)))
             .build()
             .into();
+        let cache = files
+            .cache_dir
+            .and_then(|dir| Cache::open(dir, files.clear_cache, verbose));
         Self {
-            name: name.to_string(),
-            api_server: url.to_string(),
+            name: settings.name.clone(),
+            api_server: settings.url.clone(),
             versions: Vec::new(),
             agent,
             verbose,
+            token: settings.token.clone(),
+            token_file: settings
+                .token
+                .is_none()
+                .then(|| files.token_path.to_path_buf()),
+            cache,
         }
     }
 
-    /// The API root, once [`Self::connect`] found it.
+    /// The API root, once found.
     pub fn api_server(&self) -> &str {
         &self.api_server
     }
 
-    /// The discovery call, made once: the URL as given, then with `/api` added when that one is
-    /// not an API root (`g_connect`).
+    /// The token to send: the settings', else the token file's, which is created empty when
+    /// missing (`GalaxyToken`). Never printed.
+    fn token(&mut self) -> Option<String> {
+        if let Some(path) = self.token_file.take() {
+            if !path.exists() {
+                let _ = write_private(&path, b"");
+                if self.verbose >= 3 {
+                    println!("Created {}", path.display());
+                }
+            }
+            if self.verbose >= 3 {
+                println!("Opened {}", path.display());
+            }
+            let text = std::fs::read_to_string(&path).unwrap_or_default();
+            self.token = text
+                .lines()
+                .find_map(|l| l.trim().strip_prefix("token:"))
+                .map(|t| t.trim().trim_matches(['\'', '"']).to_string())
+                .filter(|t| !t.is_empty());
+        }
+        self.token.clone()
+    }
+
+    /// The discovery call, made once: the URL as given, then with `/api` added when that one
+    /// fails (`g_connect`).
     fn connect(&mut self, action: &str) -> Result<(), Failure> {
         if self.versions.is_empty() {
             if self.verbose >= 4 {
@@ -91,14 +146,14 @@ impl Server {
             if url == "https://galaxy.ansible.com" || url == "https://galaxy.ansible.com/" {
                 url = "https://galaxy.ansible.com/api/".into();
             }
-            let found = match self.call(&url, &context) {
+            let found = match self.call(&url, &context, true, None) {
                 Ok(data) => data,
                 Err(first) => {
                     if url.ends_with("/api") || url.ends_with("/api/") {
                         return Err(first.failure());
                     }
                     url = join(&[&url, "/api/"]);
-                    match self.call(&url, &context) {
+                    match self.call(&url, &context, true, None) {
                         Ok(data) => data,
                         Err(e) if e.code == 404 => return Err(first.failure()),
                         Err(e) => return Err(e.failure()),
@@ -148,21 +203,69 @@ impl Server {
             .map(|(_, v)| v.as_str())
     }
 
-    /// One GET, its body read as JSON (`_call_galaxy`).
-    fn call(&self, url: &str, context: &str) -> Result<Value, CallError> {
+    /// One GET, its body read as JSON (`_call_galaxy`). With `cache`, an answer less than a day
+    /// old is taken from the response cache under `key`, the URL's path by default, and a new
+    /// one is kept there; the pages of a list are kept together under one key.
+    fn call(
+        &mut self,
+        url: &str,
+        context: &str,
+        cache: bool,
+        key: Option<&str>,
+    ) -> Result<Value, CallError> {
+        let key = key.map_or_else(|| path_of(url).to_string(), str::to_string);
+        let id = cache_id(url);
+        let query = url.split_once('?').map_or("", |(_, q)| q);
+        let paginated = query
+            .split('&')
+            .any(|p| p.starts_with("page=") || p.starts_with("offset="));
+        if cache && let Some(store) = &mut self.cache {
+            let server = store.server(&id);
+            match server.get(&key) {
+                Some(entry)
+                    if !paginated
+                        && entry["expires"]
+                            .as_str()
+                            .is_some_and(|e| e > now(0).as_str()) =>
+                {
+                    if entry["paginated"] == Value::Bool(true) {
+                        let results = entry["results"].clone();
+                        return Ok(if key.contains("/v3/") {
+                            json!({"links": {"next": null}, "results": results})
+                        } else {
+                            json!({"next": null, "results": results})
+                        });
+                    }
+                    return entry.get("results").cloned().ok_or(CallError {
+                        code: 0,
+                        failure: Failure::unexpected("'results'"),
+                    });
+                }
+                _ if !paginated => {
+                    server.insert(
+                        key.clone(),
+                        json!({"expires": now(86400), "paginated": false}),
+                    );
+                }
+                _ => {}
+            }
+        }
+        let token = self.token();
         if self.verbose >= 4 {
             println!("Calling Galaxy at {url}");
         }
         let unknown = |e: &dyn std::fmt::Display| CallError {
             code: 0,
-            message: format!("Unknown error when attempting to call Galaxy at '{url}': {e}"),
+            failure: Failure::caused(
+                format!("Unknown error when attempting to call Galaxy at '{url}'"),
+                e.to_string(),
+            ),
         };
-        let mut response = self
-            .agent
-            .get(url)
-            .header("Accept", "application/json")
-            .call()
-            .map_err(|e| unknown(&e))?;
+        let mut request = self.agent.get(url).header("Accept", "application/json");
+        if let Some(token) = &token {
+            request = request.header("Authorization", format!("Token {token}"));
+        }
+        let mut response = request.call().map_err(|e| unknown(&e))?;
         let status = response.status();
         let body = response
             .body_mut()
@@ -173,38 +276,42 @@ impl Server {
         if !status.is_success() {
             return Err(CallError {
                 code: status.as_u16(),
-                message: galaxy_error(context, url, status, &body),
+                failure: Failure::error(galaxy_error(context, url, status, &body)),
             });
         }
-        serde_json::from_str(&body).map_err(|_| CallError {
+        let data: Value = serde_json::from_str(&body).map_err(|_| CallError {
             code: 0,
-            message: format!("Failed to parse Galaxy response from '{url}' as JSON:\n{body}"),
-        })
+            failure: Failure::error(format!(
+                "Failed to parse Galaxy response from '{url}' as JSON:\n{body}"
+            )),
+        })?;
+        if cache && let Some(store) = &mut self.cache {
+            let entry = store.server(&id).entry(key).or_insert_with(|| json!({}));
+            let list = ["data", "results"]
+                .into_iter()
+                .find(|k| data.get(*k).is_some());
+            match list {
+                Some(list) => {
+                    entry["paginated"] = Value::Bool(true);
+                    if !entry["results"].is_array() {
+                        entry["results"] = json!([]);
+                    }
+                    let kept = entry["results"].as_array_mut().expect("an array");
+                    kept.extend(data[list].as_array().cloned().unwrap_or_default());
+                }
+                None => entry["results"] = data.clone(),
+            }
+        }
+        Ok(data)
     }
 
     /// Every version of a collection the server has, following the pages' `links.next`. A
     /// collection the server does not know has none.
-    pub fn collection_versions(
-        &mut self,
-        namespace: &str,
-        name: &str,
-    ) -> Result<Vec<String>, Failure> {
-        self.connect("get_collection_versions")?;
+    fn versions_of(&mut self, namespace: &str, name: &str) -> Result<Vec<String>, CallError> {
+        self.connect("get_collection_versions")
+            .map_err(CallError::other)?;
         let v3 = self.v3().unwrap_or("v3/").to_string();
-        let info_url = join(&[&self.api_server, &v3, "collections", namespace, name, "/"]);
-        let info_context = format!(
-            "Error when getting the collection info for {namespace}.{name} from {} ({})",
-            self.name, self.api_server
-        );
-        match self.call(&info_url, &info_context) {
-            Err(e) if e.code == 404 => return Ok(Vec::new()),
-            other => other.map_err(CallError::failure)?,
-        };
-        let context = format!(
-            "Error when getting available collection versions for {namespace}.{name} from {} ({})",
-            self.name, self.api_server
-        );
-        let mut url = join(&[
+        let first = join(&[
             &self.api_server,
             &v3,
             "collections",
@@ -213,28 +320,73 @@ impl Server {
             "versions",
             "/?limit=100",
         ]);
+        let key = path_of(&first).to_string();
+        if self.cache.is_some() {
+            let info_url = join(&[&self.api_server, &v3, "collections", namespace, name, "/"]);
+            let info_context = format!(
+                "Error when getting the collection info for {namespace}.{name} from {} ({})",
+                self.name, self.api_server
+            );
+            let modified = match self.call(&info_url, &info_context, false, None) {
+                Err(e) if e.code == 404 => return Ok(Vec::new()),
+                other => other?["updated_at"].clone(),
+            };
+            let id = cache_id(&first);
+            let store = self.cache.as_mut().expect("a cache");
+            let server = store.server(&id);
+            let fqcn = format!("{namespace}.{name}");
+            let cached = server
+                .entry("modified")
+                .or_insert_with(|| json!({}))
+                .get(&fqcn)
+                .cloned();
+            if cached.as_ref() != Some(&modified) {
+                server["modified"][&fqcn] = modified;
+                server.remove(&key);
+                store.save();
+            }
+        }
+        let context = format!(
+            "Error when getting available collection versions for {namespace}.{name} from {} ({})",
+            self.name, self.api_server
+        );
+        let mut url = first;
         let mut versions = Vec::new();
         loop {
-            let data = match self.call(&url, &context) {
+            let data = match self.call(&url, &context, true, Some(&key)) {
                 Err(e) if e.code == 404 => return Ok(Vec::new()),
-                other => other.map_err(CallError::failure)?,
+                other => other?,
             };
-            let key = if data.get("data").is_some() {
+            let list = if data.get("data").is_some() {
                 "data"
             } else {
                 "results"
             };
-            for entry in data[key].as_array().into_iter().flatten() {
+            for entry in data[list].as_array().into_iter().flatten() {
                 if let Some(v) = entry["version"].as_str() {
                     versions.push(v.to_string());
                 }
             }
             match data["links"]["next"].as_str() {
-                Some(next) if !next.is_empty() => url = absolute(&self.api_server, next)?,
+                Some(next) if !next.is_empty() => {
+                    url = absolute(&self.api_server, next).map_err(CallError::other)?;
+                }
                 _ => break,
             }
         }
+        if let Some(store) = &self.cache {
+            store.save();
+        }
         Ok(versions)
+    }
+
+    /// [`Self::versions_of`] for one server alone.
+    pub fn collection_versions(
+        &mut self,
+        namespace: &str,
+        name: &str,
+    ) -> Result<Vec<String>, Failure> {
+        self.versions_of(namespace, name).map_err(|e| e.failure)
     }
 
     /// The record of one version.
@@ -260,7 +412,12 @@ impl Server {
             "Error when getting collection version metadata for {namespace}.{name}:{version} from {} ({})",
             self.name, self.api_server
         );
-        let data = self.call(&url, &context).map_err(CallError::failure)?;
+        let data = self
+            .call(&url, &context, true, None)
+            .map_err(|e| e.failure)?;
+        if let Some(store) = &self.cache {
+            store.save();
+        }
         let text = |v: &Value| v.as_str().unwrap_or_default().to_string();
         let download = text(&data["download_url"]);
         if !download.contains("://") && !download.starts_with('/') {
@@ -285,162 +442,20 @@ impl Server {
                 .unwrap_or_default(),
         })
     }
-
-    /// Downloads `url` into a new directory under `dir`, named after the tarball, and returns the
-    /// file once its SHA-256 is `sha256` (`_download_file`). A mismatch leaves nothing behind.
-    pub fn download(&self, url: &str, sha256: &str, dir: &Path) -> Result<PathBuf, Failure> {
-        let tarball = url.rsplit('/').next().unwrap_or("collection.tar.gz");
-        let stem = tarball.strip_suffix(".tar.gz").unwrap_or(tarball);
-        let holder = tempfile::Builder::new()
-            .prefix(&format!("{stem}-"))
-            .tempdir_in(dir)
-            .map_err(|e| Failure::error(e.to_string()))?
-            .keep();
-        println!("Downloading {url} to {}", holder.display());
-        let fail = |message: String| {
-            let _ = std::fs::remove_dir_all(&holder);
-            Failure::error(message)
-        };
-        let mut response = self.agent.get(url).call().map_err(|e| {
-            fail(format!(
-                "Unknown error when attempting to call Galaxy at '{url}': {e}"
-            ))
-        })?;
-        if !response.status().is_success() {
-            return Err(fail(format!(
-                "Failed to download collection tar from '{url}' (HTTP Code: {})",
-                response.status().as_u16()
-            )));
-        }
-        let path = holder.join(tarball);
-        let partial = holder.join(format!(".{tarball}.volant-partial"));
-        let mut file = std::fs::File::create(&partial).map_err(|e| fail(e.to_string()))?;
-        let mut hasher = Sha256::new();
-        let mut reader = response.body_mut().as_reader();
-        let mut buffer = vec![0; 64 * 1024];
-        loop {
-            let n =
-                std::io::Read::read(&mut reader, &mut buffer).map_err(|e| fail(e.to_string()))?;
-            if n == 0 {
-                break;
-            }
-            hasher.update(&buffer[..n]);
-            file.write_all(&buffer[..n])
-                .map_err(|e| fail(e.to_string()))?;
-        }
-        drop(file);
-        let actual = format!("{:x}", hasher.finalize());
-        if !sha256.is_empty() {
-            if self.verbose >= 4 {
-                println!("Validating downloaded file hash {actual} with expected hash {sha256}");
-            }
-            if actual != sha256 {
-                return Err(fail("Mismatch artifact hash with downloaded file".into()));
-            }
-        }
-        std::fs::rename(&partial, &path).map_err(|e| fail(e.to_string()))?;
-        Ok(path)
-    }
 }
 
-/// The `GALAXY.yml` an install from a server writes under
-/// `<namespace>.<name>-<version>.info/` (`write_source_metadata`).
-pub fn galaxy_yml(info: &VersionInfo, server: &Server) -> String {
-    let source = serde_json::json!({
-        "download_url": info.download_url,
-        "format_version": "1.0.0",
-        "name": info.name,
-        "namespace": info.namespace,
-        "server": server.api_server(),
-        "signatures": info.signatures,
-        "version": info.version,
-        "version_url": info.href,
-    });
-    crate::template::inventory_yaml(&crate::template::yaml_node(&source))
-}
-
-/// A failed call: the HTTP code, 0 when there is none, and the message.
+/// A failed call: the HTTP code, 0 when there is none.
 struct CallError {
     code: u16,
-    message: String,
+    failure: Failure,
 }
 
 impl CallError {
+    fn other(failure: Failure) -> Self {
+        Self { code: 0, failure }
+    }
+
     fn failure(self) -> Failure {
-        Failure::error(self.message)
+        self.failure
     }
-}
-
-/// `GalaxyError`'s message for an HTTP error answer.
-pub(super) fn galaxy_error(
-    context: &str,
-    url: &str,
-    status: ureq::http::StatusCode,
-    body: &str,
-) -> String {
-    let code = status.as_u16();
-    let reason = status.canonical_reason().unwrap_or_default();
-    let info: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-    let parts: Vec<&str> = url.split('/').collect();
-    if parts.contains(&"v2") {
-        let message = info["message"].as_str().unwrap_or(reason);
-        let galaxy_code = info["code"].as_str().unwrap_or("Unknown");
-        format!("{context} (HTTP Code: {code}, Message: {message} Code: {galaxy_code})")
-    } else if parts.contains(&"v3") {
-        let errors = match info["errors"].as_array() {
-            Some(list) if !list.is_empty() => list.clone(),
-            _ => vec![Value::Null],
-        };
-        let lines: Vec<String> = errors
-            .iter()
-            .map(|e| {
-                let message = e["detail"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .or_else(|| e["title"].as_str().filter(|s| !s.is_empty()))
-                    .unwrap_or(reason);
-                let galaxy_code = e["code"]
-                    .as_str()
-                    .filter(|s| !s.is_empty())
-                    .unwrap_or("Unknown");
-                format!("(HTTP Code: {code}, Message: {message} Code: {galaxy_code})")
-            })
-            .collect();
-        format!("{context} {}", lines.join(", "))
-    } else {
-        let message = info["default"].as_str().unwrap_or(reason);
-        format!("{context} (HTTP Code: {code}, Message: {message})")
-    }
-}
-
-/// `_urljoin`: each part without its slashes, joined by one; a last part of `/` leaves the
-/// trailing slash, and one of `/?q` the query after it.
-fn join(parts: &[&str]) -> String {
-    parts
-        .iter()
-        .filter(|p| !p.is_empty())
-        .map(|p| p.trim_matches('/'))
-        .collect::<Vec<_>>()
-        .join("/")
-}
-
-/// `urljoin(api_server, link)` for a link that is a full URL or a path from the host's root.
-fn absolute(api_server: &str, link: &str) -> Result<String, Failure> {
-    if link.contains("://") {
-        return Ok(link.to_string());
-    }
-    if !link.starts_with('/') {
-        return Err(Failure::error(format!(
-            "Invalid non absolute pagination link: {link}"
-        )));
-    }
-    let root = api_server
-        .find("://")
-        .and_then(|at| {
-            api_server[at + 3..]
-                .find('/')
-                .map(|slash| &api_server[..at + 3 + slash])
-        })
-        .unwrap_or(api_server);
-    Ok(format!("{root}{link}"))
 }

@@ -186,6 +186,8 @@ pub struct Config {
     pub fact_caching_prefix: String,
     /// `gathering`: `implicit`, `explicit` or `smart`.
     pub gathering: String,
+    /// `[galaxy]` and `[galaxy_server.<name>]`: section, key and value, as written.
+    pub galaxy: Vec<(String, String, String)>,
 }
 
 /// A comma-separated list of tags, as the reference reads one from a file, from the environment

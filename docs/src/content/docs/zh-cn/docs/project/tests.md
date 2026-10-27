@@ -1,5 +1,5 @@
 ---
-sourceHash: fe803f5b1803
+sourceHash: e6b72df6570c
 title: 测试
 description: Volant 如何对照 ansible-core 进行检查，各种已记录的应答，以及如何添加场景。
 ---
@@ -22,7 +22,7 @@ Volant 的行为必须与 ansible-core 2.19.12 一致。因此，测试套件的
 
 记录中没有任何内容是手工编辑的。修改输入，在安装了 ansible-core 2.19.12 的情况下运行 `just golden <kind>`，然后阅读 diff。在未改动的树上运行它，文件会与原来完全一样。`module` 类别还需要 `sudo`、systemd、apt 和 cron，因为它会在机器上创建一个账户和一个 unit。
 
-`galaxy` 用例是一个包含 `args` 的 `case.yml`，`args` 是 `ansible-galaxy` 之后的参数，其中 `<golden-server>` 代表服务器的 URL，`<golden-tmp>` 代表本次运行的临时目录。服务器自己构建集合和角色，时间和所有者都是固定的，因此同一个归档在任何地方的 SHA-256 都相同。记录中临时目录写作 `<golden-tmp>`，端口写作 `<golden-port>`。在 `volant galaxy` 成为原生实现之前，`galaxy_golden.rs` 只把每条记录的请求对服务器重放一遍。
+`galaxy` 用例是一个包含 `args` 的 `case.yml`，`args` 是 `ansible-galaxy` 之后的参数，其中 `<golden-server>` 代表服务器的 URL，`<golden-tmp>` 代表本次运行的临时目录。服务器自己构建集合和角色，时间和所有者都是固定的，因此同一个归档在任何地方的 SHA-256 都相同。记录中临时目录写作 `<golden-tmp>`，端口写作 `<golden-port>`。用例目录中的其他文件会被复制到命令运行的临时目录中，因此 `-r requirements.yml` 可以指向其中之一。 `galaxy_golden.rs` 把每条记录的请求对服务器重放一遍，并对子命令已原生实现的每个用例运行 `volant galaxy`。
 
 ## command-names job
 

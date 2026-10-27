@@ -1,5 +1,5 @@
 ---
-sourceHash: fe803f5b1803
+sourceHash: e6b72df6570c
 title: Tests
 description: Comment Volant est vérifié par rapport à ansible-core, les types de réponse enregistrée, et comment ajouter un scénario.
 ---
@@ -22,7 +22,7 @@ Chaque type d'enregistrement a un nom, et `just golden <kind>` le régénère.
 
 Rien dans un enregistrement n'est modifié à la main. Changez l'entrée, lancez `just golden <kind>` avec ansible-core 2.19.12 installé, et lisez le diff. Le lancer sur un arbre inchangé laisse les fichiers exactement comme ils étaient. Le type `module` a aussi besoin de `sudo`, de systemd, d'apt et de cron, parce qu'il crée un compte et une unité sur la machine.
 
-Un cas `galaxy` est un `case.yml` qui contient `args`, les arguments après `ansible-galaxy`, où `<golden-server>` tient la place de l'URL du serveur et `<golden-tmp>` celle du répertoire de travail du run. Le serveur construit lui-même ses collections et ses rôles, avec des dates et des propriétaires fixes, pour qu'une archive ait le même SHA-256 partout. Dans un enregistrement, le répertoire de travail se lit `<golden-tmp>` et le port `<golden-port>`. Tant que `volant galaxy` n'est pas natif, `galaxy_golden.rs` ne fait que rejouer chaque requête enregistrée contre le serveur.
+Un cas `galaxy` est un `case.yml` qui contient `args`, les arguments après `ansible-galaxy`, où `<golden-server>` tient la place de l'URL du serveur et `<golden-tmp>` celle du répertoire de travail du run. Le serveur construit lui-même ses collections et ses rôles, avec des dates et des propriétaires fixes, pour qu'une archive ait le même SHA-256 partout. Dans un enregistrement, le répertoire de travail se lit `<golden-tmp>` et le port `<golden-port>`. Tout autre fichier du répertoire du cas est copié dans le répertoire de travail, où la commande tourne, pour que `-r requirements.yml` puisse en nommer un. `galaxy_golden.rs` rejoue chaque requête enregistrée contre le serveur, et lance `volant galaxy` sur chaque cas dont la sous-commande est native.
 
 ## Le job command-names
 

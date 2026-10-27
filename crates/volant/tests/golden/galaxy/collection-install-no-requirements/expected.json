@@ -1,0 +1,15 @@
+{
+  "args": [
+    "collection",
+    "install",
+    "-r",
+    "requirements.yml",
+    "-s",
+    "<golden-server>"
+  ],
+  "rc": 0,
+  "requests": [],
+  "stderr": "",
+  "stdout": "Skipping install, no requirements found\n",
+  "tree": {}
+}

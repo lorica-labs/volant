@@ -3,7 +3,9 @@
 server of galaxy_server.py, recorded in `expected.json` beside it.
 
 case.yml holds `args`, the argv after `ansible-galaxy`, where `<golden-server>` stands for the
-server's URL and `<golden-tmp>` for the run's scratch directory. The run's home is
+server's URL and `<golden-tmp>` for the run's scratch directory. Every other file of the case's
+directory but `expected.json` is copied into the scratch directory, where the command runs, so
+`-r requirements.yml` names one of them; those copies are left out of the recorded tree. The run's home is
 `<golden-tmp>/home`, so no cache or configuration outlives it, and no `ANSIBLE_*` setting of the
 caller is kept.
 
@@ -16,6 +18,7 @@ suffix of the file it downloads to `<golden-random>`, and a role's `install_date
 import hashlib
 import os
 import re
+import shutil
 
 import yaml
 
@@ -40,12 +43,19 @@ def normalise(text, tmp, port):
     return INSTALL_DATE.sub("install_date: '<golden-date>'", text)
 
 
-def tree(tmp, port):
-    """Every file under `tmp` outside the home, by path, with the SHA-256 of its normalised text."""
+def inputs(directory):
+    """The files of a case's directory that its run reads."""
+    return sorted(n for n in os.listdir(directory) if n not in ("case.yml", "expected.json"))
+
+
+def tree(tmp, port, skip=()):
+    """Every file under `tmp` outside the home and `skip`, by path, with the SHA-256 of its
+    normalised text."""
     files = {}
     for root, dirs, names in os.walk(tmp):
         if root == tmp:
-            dirs[:] = [d for d in dirs if d != "home"]
+            dirs[:] = [d for d in dirs if d != "home" and d not in skip]
+            names = [n for n in names if n not in skip]
         dirs.sort()
         for name in sorted(names):
             path = os.path.join(root, name)
@@ -73,6 +83,11 @@ def record():
         with scratch() as tmp, Server() as server:
             home = os.path.join(tmp, "home")
             os.makedirs(home)
+            given = inputs(directory)
+            for name in given:
+                source = os.path.join(directory, name)
+                copy = shutil.copytree if os.path.isdir(source) else shutil.copy
+                copy(source, os.path.join(tmp, name))
             url = f"http://127.0.0.1:{server.port}/"
             argv = ["ansible-galaxy"] + [a.replace(SERVER, url).replace(TMP, tmp) for a in case["args"]]
             done = run(argv, cwd=tmp, extra_env={"HOME": home}, forward=())
@@ -82,5 +97,5 @@ def record():
                 "stdout": normalise(done.stdout, tmp, server.port),
                 "stderr": normalise(done.stderr, tmp, server.port),
                 "requests": list(server.log),
-                "tree": tree(tmp, server.port),
+                "tree": tree(tmp, server.port, given),
             })

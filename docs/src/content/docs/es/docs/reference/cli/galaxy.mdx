@@ -1,5 +1,5 @@
 ---
-sourceHash: 31a90e7da9a3
+sourceHash: ab0b67b3b3eb
 title: volant galaxy
 description: Las opciones de ansible-galaxy, comprobadas por el propio Volant, mientras sus subcomandos se vuelven nativos uno a uno.
 ---
@@ -27,6 +27,10 @@ Van antes de cualquier trabajo, con los mensajes y códigos de salida de `ansibl
 | `role list` sin ninguna ruta de roles existente | `[WARNING]: - the configured path <path> does not exist.` por cada ruta, y después `[ERROR]: - None of the provided paths were usable. Please specify a valid path with --roles-path` | 5 |
 
 Cuando ninguna ruta de colecciones configurada está bajo el `PATH` de `collection install -p PATH`, el comando imprime primero el aviso de `ansible-galaxy`: `[WARNING]: The specified collections path '<PATH>' is not part of the configured Ansible collections paths '<paths>'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.` El directorio `collections/` del runtime, que Volant añade al final de la ruta de colecciones, no aparece en `<paths>`.
+
+## Archivos de requisitos
+
+`-r` lee el archivo de requisitos como `ansible-galaxy`: `collections:` y `roles:` en un mismo archivo, o la antigua lista simple de roles, que solo acepta `role install`. Una entrada `include:` trae los roles de otro archivo, cuya ruta se toma desde el directorio de trabajo. Si `-r` se da dos veces, cuenta el último. Si el archivo no tiene ninguna entrada para el comando, `collection install` y `role install` imprimen `Skipping install, no requirements found` y salen con 0. `-vvv` imprime primero `Reading requirement file at '<path>'`. Un archivo mal formado falla con el mensaje de `ansible-galaxy`, salida 1: sin entradas, claves distintas de `collections` y `roles`, una entrada de rol sin `name` ni `src`, un nombre de colección que no es `namespace.name` y no apunta a nada, o un `type` desconocido.
 
 ## Subcomandos rechazados
 

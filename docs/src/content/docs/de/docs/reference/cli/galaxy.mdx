@@ -1,5 +1,5 @@
 ---
-sourceHash: 31a90e7da9a3
+sourceHash: ab0b67b3b3eb
 title: volant galaxy
 description: Die Optionen von ansible-galaxy, von Volant selbst geprüft, während seine Unterbefehle einer nach dem anderen nativ werden.
 ---
@@ -27,6 +27,10 @@ Sie kommen vor jeder Arbeit, mit den Meldungen und Exit-Codes von `ansible-galax
 | `role list`, wenn keiner der Rollenpfade existiert | `[WARNING]: - the configured path <path> does not exist.` für jeden Pfad, danach `[ERROR]: - None of the provided paths were usable. Please specify a valid path with --roles-path` | 5 |
 
 Liegt kein konfigurierter Collections-Pfad unter dem `PATH` von `collection install -p PATH`, gibt der Befehl zuerst die Warnung von `ansible-galaxy` aus: `[WARNING]: The specified collections path '<PATH>' is not part of the configured Ansible collections paths '<paths>'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.` Das eigene `collections/`-Verzeichnis der Runtime, das Volant als letzten Eintrag an den Collections-Pfad anhängt, fehlt in `<paths>`.
+
+## Anforderungsdateien
+
+`-r` liest die Anforderungsdatei wie `ansible-galaxy`: `collections:` und `roles:` in einer Datei, oder die alte einfache Liste von Rollen, die nur `role install` annimmt. Ein Eintrag `include:` holt die Rollen einer anderen Datei, deren Pfad vom Arbeitsverzeichnis aus gilt. Wird `-r` zweimal angegeben, zählt das letzte. Hat die Datei keinen Eintrag für den Befehl, geben `collection install` und `role install` `Skipping install, no requirements found` aus und enden mit 0. `-vvv` gibt zuerst `Reading requirement file at '<path>'` aus. Eine fehlerhafte Datei scheitert mit der Meldung von `ansible-galaxy`, Exit 1: keine Einträge, andere Schlüssel als `collections` und `roles`, ein Rolleneintrag ohne `name` und ohne `src`, ein Collection-Name, der nicht `namespace.name` ist und auf nichts zeigt, oder ein unbekannter `type`.
 
 ## Abgelehnte Unterbefehle
 

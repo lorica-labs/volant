@@ -5,6 +5,7 @@
 use clap::{ArgAction, Args, Parser, Subcommand};
 
 use crate::config::Config;
+use crate::galaxy::requirements::{self, Requirements};
 use crate::galaxy::{self, Failure};
 
 /// Install and list roles and collections, with the arguments of ansible-galaxy.
@@ -14,8 +15,8 @@ pub struct GalaxyArgs {
     /// Show the program's version, configuration file and search paths, and exit.
     #[arg(long)]
     version: bool,
-    /// More output; repeat for more.
-    #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
+    /// More output; repeat for more. Taken before or after the subcommand.
+    #[arg(short = 'v', long = "verbose", action = ArgAction::Count, global = true)]
     verbose: u8,
     #[command(subcommand)]
     kind: Option<Kind>,
@@ -46,9 +47,6 @@ struct Common {
     /// The time to wait for operations against the galaxy server, defaults to 60s.
     #[arg(long, value_name = "TIMEOUT")]
     timeout: Option<u64>,
-    /// More output; repeat for more.
-    #[arg(short = 'v', long = "verbose", action = ArgAction::Count)]
-    verbose: u8,
 }
 
 /// The server response cache options.
@@ -104,6 +102,7 @@ struct Signatures {
 #[derive(Subcommand, Debug)]
 enum Collection {
     /// Download collections and their dependencies as a tarball for an offline install.
+    #[command(args_override_self = true)]
     Download {
         #[command(flatten)]
         common: Common,
@@ -124,6 +123,7 @@ enum Collection {
         collection: Vec<String>,
     },
     /// Initialize new collection with the base structure of a collection.
+    #[command(args_override_self = true)]
     Init {
         #[command(flatten)]
         common: Common,
@@ -142,6 +142,7 @@ enum Collection {
         collection_name: String,
     },
     /// Build an Ansible collection artifact that can be published to Ansible Galaxy.
+    #[command(args_override_self = true)]
     Build {
         #[command(flatten)]
         common: Common,
@@ -154,6 +155,7 @@ enum Collection {
         collection: Vec<String>,
     },
     /// Publish a collection artifact to Ansible Galaxy.
+    #[command(args_override_self = true)]
     Publish {
         #[command(flatten)]
         common: Common,
@@ -166,8 +168,10 @@ enum Collection {
         collection_path: String,
     },
     /// Install collection(s) from file(s), URL(s) or Ansible Galaxy.
+    #[command(args_override_self = true)]
     Install(Box<CollectionInstall>),
     /// Show the name and version of each collection installed in the collections_path.
+    #[command(args_override_self = true)]
     List {
         #[command(flatten)]
         common: Common,
@@ -180,6 +184,7 @@ enum Collection {
         collection: Option<String>,
     },
     /// Compare checksums with the collection(s) found on the server and the installed copy.
+    #[command(args_override_self = true)]
     Verify {
         #[command(flatten)]
         common: Common,
@@ -249,6 +254,7 @@ struct CollectionInstall {
 #[derive(Subcommand, Debug)]
 enum Role {
     /// Initialize new role with the base structure of a role.
+    #[command(args_override_self = true)]
     Init {
         #[command(flatten)]
         common: Common,
@@ -273,6 +279,7 @@ enum Role {
         role_name: String,
     },
     /// Delete roles from roles_path.
+    #[command(args_override_self = true)]
     Remove {
         #[command(flatten)]
         common: Common,
@@ -283,6 +290,7 @@ enum Role {
         role: Vec<String>,
     },
     /// Removes the role from Galaxy. It does not remove or alter the actual GitHub repository.
+    #[command(args_override_self = true)]
     Delete {
         #[command(flatten)]
         common: Common,
@@ -290,6 +298,7 @@ enum Role {
         github_repo: String,
     },
     /// Show the name and version of each role installed in the roles_path.
+    #[command(args_override_self = true)]
     List {
         #[command(flatten)]
         common: Common,
@@ -299,6 +308,7 @@ enum Role {
         role: Option<String>,
     },
     /// Search the Galaxy database by tags, platforms, author and multiple keywords.
+    #[command(args_override_self = true)]
     Search {
         #[command(flatten)]
         common: Common,
@@ -314,6 +324,7 @@ enum Role {
         searchterm: Vec<String>,
     },
     /// Import a role into a galaxy server.
+    #[command(args_override_self = true)]
     Import {
         #[command(flatten)]
         common: Common,
@@ -333,6 +344,7 @@ enum Role {
         github_repo: String,
     },
     /// Manage the integration between Galaxy and the given source.
+    #[command(args_override_self = true)]
     Setup {
         #[command(flatten)]
         common: Common,
@@ -351,6 +363,7 @@ enum Role {
         secret: String,
     },
     /// View more details about a specific role.
+    #[command(args_override_self = true)]
     Info {
         #[command(flatten)]
         common: Common,
@@ -364,6 +377,7 @@ enum Role {
         role: Vec<String>,
     },
     /// Install role(s) from file(s), URL(s) or Ansible Galaxy.
+    #[command(args_override_self = true)]
     Install {
         #[command(flatten)]
         common: Common,
@@ -402,7 +416,7 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
     let Some(kind) = args.kind else {
         return 2;
     };
-    match run(&kind) {
+    match run(&kind, args.verbose) {
         Ok(code) => code,
         Err(failure) => {
             eprintln!("[ERROR]: {}", failure.message);
@@ -412,14 +426,20 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
 }
 
 /// The checks the reference makes before the subcommand's work, then the refusal of that work.
-fn run(kind: &Kind) -> Result<i32, Failure> {
+fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     let config = Config::load().map_err(|e| Failure::error(e.to_string()))?;
     let name = match kind {
         Kind::Collection(Collection::Install(install)) => {
-            galaxy::one_of_collections_requirements(
+            if let Some(file) = galaxy::one_of_collections_requirements(
                 &install.collection_name,
                 install.requirements.as_deref(),
-            )?;
+            )? && requirements_of(&file, false, verbose)?
+                .collections
+                .is_empty()
+            {
+                println!("Skipping install, no requirements found");
+                return Ok(0);
+            }
             // The runtime's own directory, which Volant appends to the search path, is not one
             // the reference would name.
             let runtime = crate::runtime::collections::active_dir();
@@ -442,12 +462,16 @@ fn run(kind: &Kind) -> Result<i32, Failure> {
             requirements,
             ..
         }) => {
-            galaxy::one_of_collections_requirements(collection, requirements.as_deref())?;
+            if let Some(file) =
+                galaxy::one_of_collections_requirements(collection, requirements.as_deref())?
+            {
+                requirements_of(&file, false, verbose)?;
+            }
             "collection download"
         }
         Kind::Collection(Collection::Verify { requirements, .. }) => {
             if let Some(file) = requirements {
-                galaxy::requirements_file(file)?;
+                requirements_of(&galaxy::requirements_file(file)?, false, verbose)?;
             }
             "collection verify"
         }
@@ -459,7 +483,13 @@ fn run(kind: &Kind) -> Result<i32, Failure> {
             requirements,
             ..
         }) => {
-            galaxy::one_of_roles_requirements(role_name, requirements.as_deref())?;
+            if let Some(file) =
+                galaxy::one_of_roles_requirements(role_name, requirements.as_deref())?
+                && requirements_of(&file, true, verbose)?.roles.is_empty()
+            {
+                println!("Skipping install, no requirements found");
+                return Ok(0);
+            }
             "role install"
         }
         Kind::Role(Role::List { roles_path, .. }) => {
@@ -485,6 +515,18 @@ fn run(kind: &Kind) -> Result<i32, Failure> {
     Err(Failure::error(format!(
         "volant galaxy {name} is not supported yet"
     )))
+}
+
+/// The requirements file `-r` names, announced at `-vvv` as the reference does.
+fn requirements_of(
+    file: &std::path::Path,
+    old_format: bool,
+    verbose: u8,
+) -> Result<Requirements, Failure> {
+    if verbose >= 3 {
+        println!("Reading requirement file at '{}'", file.display());
+    }
+    requirements::read(file, old_format)
 }
 
 /// A subcommand that needs a Galaxy account or server-side data, which stays out of Volant.

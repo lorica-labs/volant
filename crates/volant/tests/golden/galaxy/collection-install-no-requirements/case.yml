@@ -1,0 +1,1 @@
+args: [collection, install, -r, requirements.yml, -s, "<golden-server>"]

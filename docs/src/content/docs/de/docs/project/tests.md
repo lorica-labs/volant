@@ -1,5 +1,5 @@
 ---
-sourceHash: fe803f5b1803
+sourceHash: e6b72df6570c
 title: Tests
 description: Wie Volant gegen ansible-core geprüft wird, die Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
@@ -22,7 +22,7 @@ Jede Art von Aufzeichnung hat einen Namen, und `just golden <kind>` erzeugt sie 
 
 Nichts in einer Aufzeichnung wird von Hand bearbeitet. Ändern Sie die Eingabe, führen Sie `just golden <kind>` mit installiertem ansible-core 2.19.12 aus und lesen Sie den Diff. Auf einem unveränderten Baum ausgeführt, lässt es die Dateien genau so, wie sie waren. Die Art `module` braucht außerdem `sudo`, systemd, apt und cron, weil sie auf dem Rechner ein Konto und eine Unit anlegt.
 
-Ein `galaxy`-Fall ist eine `case.yml` mit `args`, den Argumenten nach `ansible-galaxy`, in denen `<golden-server>` für die URL des Servers und `<golden-tmp>` für das Arbeitsverzeichnis des Laufs steht. Der Server baut seine Collections und Rollen selbst, mit festen Zeiten und Besitzern, damit ein Archiv überall denselben SHA-256 hat. In einer Aufzeichnung steht für das Arbeitsverzeichnis `<golden-tmp>` und für den Port `<golden-port>`. Solange `volant galaxy` nicht nativ ist, spielt `galaxy_golden.rs` nur jede aufgezeichnete Anfrage gegen den Server ab.
+Ein `galaxy`-Fall ist eine `case.yml` mit `args`, den Argumenten nach `ansible-galaxy`, in denen `<golden-server>` für die URL des Servers und `<golden-tmp>` für das Arbeitsverzeichnis des Laufs steht. Der Server baut seine Collections und Rollen selbst, mit festen Zeiten und Besitzern, damit ein Archiv überall denselben SHA-256 hat. In einer Aufzeichnung steht für das Arbeitsverzeichnis `<golden-tmp>` und für den Port `<golden-port>`. Jede andere Datei im Verzeichnis des Falls wird in das Arbeitsverzeichnis kopiert, in dem der Befehl läuft, sodass `-r requirements.yml` eine davon nennen kann. `galaxy_golden.rs` spielt jede aufgezeichnete Anfrage gegen den Server ab und führt `volant galaxy` für jeden Fall aus, dessen Unterbefehl nativ ist.
 
 ## Der Job command-names
 

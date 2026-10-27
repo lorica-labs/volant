@@ -1,5 +1,5 @@
 ---
-sourceHash: fe803f5b1803
+sourceHash: e6b72df6570c
 title: Tests
 description: Cómo se comprueba Volant contra ansible-core, los tipos de respuesta grabada y cómo añadir un escenario.
 ---
@@ -22,7 +22,7 @@ Cada tipo de grabación tiene un nombre, y `just golden <kind>` lo regenera.
 
 Nada de una grabación se edita a mano. Cambia la entrada, ejecuta `just golden <kind>` con ansible-core 2.19.12 instalado y lee el diff. Ejecutarlo en un árbol sin cambios deja los archivos exactamente como estaban. El tipo `module` necesita además `sudo`, systemd, apt y cron, porque crea una cuenta y una unidad en la máquina.
 
-Un caso `galaxy` es un `case.yml` con `args`, los argumentos después de `ansible-galaxy`, donde `<golden-server>` representa la URL del servidor y `<golden-tmp>` el directorio de trabajo de la ejecución. El servidor construye él mismo sus colecciones y roles, con horas y propietarios fijos, así que un archivo tiene el mismo SHA-256 en todas partes. En una grabación, el directorio de trabajo se lee `<golden-tmp>` y el puerto `<golden-port>`. Mientras `volant galaxy` no sea nativo, `galaxy_golden.rs` solo reproduce cada petición grabada contra el servidor.
+Un caso `galaxy` es un `case.yml` con `args`, los argumentos después de `ansible-galaxy`, donde `<golden-server>` representa la URL del servidor y `<golden-tmp>` el directorio de trabajo de la ejecución. El servidor construye él mismo sus colecciones y roles, con horas y propietarios fijos, así que un archivo tiene el mismo SHA-256 en todas partes. En una grabación, el directorio de trabajo se lee `<golden-tmp>` y el puerto `<golden-port>`. Cualquier otro archivo del directorio del caso se copia en el directorio de trabajo, donde se ejecuta el comando, así que `-r requirements.yml` puede nombrar uno de ellos. `galaxy_golden.rs` reproduce cada petición grabada contra el servidor y ejecuta `volant galaxy` en cada caso cuyo subcomando es nativo.
 
 ## El job command-names
 

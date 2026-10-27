@@ -5,6 +5,9 @@
 use std::path::{Path, PathBuf};
 
 #[cfg(test)]
+mod requirement_tests;
+pub mod requirements;
+#[cfg(test)]
 mod tests;
 
 /// A failure, printed as `[ERROR]: <message>` and ending the run with `code`.

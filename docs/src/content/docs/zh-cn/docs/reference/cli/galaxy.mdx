@@ -1,5 +1,5 @@
 ---
-sourceHash: 31a90e7da9a3
+sourceHash: ab0b67b3b3eb
 title: volant galaxy
 description: ansible-galaxy 的选项由 Volant 自己检查，其子命令正逐个改为原生实现。
 ---
@@ -27,6 +27,10 @@ volant galaxy role <init|remove|delete|list|search|import|setup|info|install> [O
 | `role list` 时没有任何角色路径存在 | `[WARNING]: - the configured path <path> does not exist.` 每个路径一条，然后 `[ERROR]: - None of the provided paths were usable. Please specify a valid path with --roles-path` | 5 |
 
 当 `collection install -p PATH` 的 `PATH` 之下没有任何已配置的集合路径时，命令先打印 `ansible-galaxy` 的警告：`[WARNING]: The specified collections path '<PATH>' is not part of the configured Ansible collections paths '<paths>'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.` Volant 追加在集合路径末尾的运行时自己的 `collections/` 目录不会出现在 `<paths>` 中。
+
+## 依赖文件
+
+`-r` 按 `ansible-galaxy` 的方式读取依赖文件：同一个文件中的 `collections:` 和 `roles:`，或旧式的纯角色列表（只有 `role install` 接受）。`include:` 条目引入另一个文件中的角色，其路径相对于工作目录。`-r` 给出两次时以最后一次为准。文件中没有该命令的条目时，`collection install` 和 `role install` 打印 `Skipping install, no requirements found` 并以 0 退出。`-vvv` 会先打印 `Reading requirement file at '<path>'`。格式错误的文件以 `ansible-galaxy` 的消息失败，退出码 1：没有条目、出现 `collections` 和 `roles` 以外的键、角色条目既无 `name` 也无 `src`、集合名不是 `namespace.name` 且不指向任何内容，或 `type` 未知。
 
 ## 被拒绝的子命令
 

@@ -29,17 +29,23 @@ fn the_fake_server_answers_every_recorded_request() {
     }
 }
 
+/// The cases whose subcommand `volant galaxy` still refuses.
+const NOT_NATIVE: [&str; 2] = ["collection-install", "role-install"];
+
 /// `volant galaxy` against each case: the same exit code, output, requests and installed files.
 #[test]
-#[ignore = "volant galaxy refuses collection install and role install until they are native"]
 fn a_galaxy_case_matches_the_reference() {
     for (name, case) in galaxy::cases() {
+        if NOT_NATIVE.contains(&name.as_str()) {
+            continue;
+        }
         let Some(server) = GalaxyServer::start() else {
             return;
         };
         let tmp = tempfile::tempdir().expect("a scratch directory");
         let home = tmp.path().join("home");
         std::fs::create_dir(&home).expect("a home");
+        let inputs = galaxy::copy_inputs(&name, tmp.path());
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
         command
             .arg("galaxy")
@@ -59,7 +65,7 @@ fn a_galaxy_case_matches_the_reference() {
         assert_eq!(text(&out.stderr), case.stderr, "{name}: stderr");
         assert_eq!(server.log(), case.requests, "{name}: requests");
         assert_eq!(
-            galaxy::tree(tmp.path(), server.port),
+            galaxy::tree(tmp.path(), server.port, &inputs),
             case.tree,
             "{name}: files"
         );

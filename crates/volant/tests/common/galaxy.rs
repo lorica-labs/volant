@@ -152,8 +152,36 @@ pub fn normalise(text: &str, tmp: &Path, port: u16) -> String {
         .into_owned()
 }
 
-/// Every file under `tmp` outside its `home`, by path, with the SHA-256 of its normalised text.
-pub fn tree(tmp: &Path, port: u16) -> std::collections::BTreeMap<String, String> {
+/// Copies the files a case's run reads, every file of its directory but `case.yml` and
+/// `expected.json`, into `tmp`, and returns their names.
+pub fn copy_inputs(name: &str, tmp: &Path) -> Vec<String> {
+    fn copy(from: &Path, to: &Path) {
+        if from.is_dir() {
+            std::fs::create_dir_all(to).expect("a directory");
+            for entry in std::fs::read_dir(from).expect("readable").flatten() {
+                copy(&entry.path(), &to.join(entry.file_name()));
+            }
+        } else {
+            std::fs::copy(from, to).expect("copied");
+        }
+    }
+    let dir = Path::new(CASES).join(name);
+    let mut names: Vec<String> = std::fs::read_dir(&dir)
+        .expect("readable")
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n != "case.yml" && n != "expected.json")
+        .collect();
+    names.sort();
+    for input in &names {
+        copy(&dir.join(input), &tmp.join(input));
+    }
+    names
+}
+
+/// Every file under `tmp` outside its `home` and `skip`, by path, with the SHA-256 of its
+/// normalised text.
+pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMap<String, String> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("readable").flatten() {
             let path = entry.path();
@@ -167,6 +195,9 @@ pub fn tree(tmp: &Path, port: u16) -> std::collections::BTreeMap<String, String>
     let mut files = Vec::new();
     for entry in std::fs::read_dir(tmp).expect("readable").flatten() {
         let path = entry.path();
+        if skip.iter().any(|s| entry.file_name() == s.as_str()) {
+            continue;
+        }
         if path.is_dir() && entry.file_name() != "home" {
             walk(&path, &mut files);
         } else if path.is_file() {

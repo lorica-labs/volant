@@ -161,8 +161,8 @@ jobs:
         name: The windows extras install into the runtime
         run: |
           set -euo pipefail
-          cargo run -q -p volant -- runtime install --extras windows
-          "$(cargo run -q -p volant -- runtime path)" -c "import winrm, pypsrp"
+          cargo run -q -p volant --bin volant -- runtime install --extras windows
+          "$(cargo run -q -p volant --bin volant -- runtime path)" -c "import winrm, pypsrp"
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
         run: cargo nextest run --workspace --no-run
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'

@@ -10,6 +10,7 @@ use args::{Collection, Kind, Role};
 use crate::config::Config;
 use crate::galaxy::api::servers::Servers;
 use crate::galaxy::api::{Files, Server};
+use crate::galaxy::build::Source;
 use crate::galaxy::requirements::{self, Requirements};
 use crate::galaxy::settings::{self, Settings};
 use crate::galaxy::{self, Failure};
@@ -59,7 +60,7 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
                         .map(|name| requirements::from_string(name))
                         .collect::<Result<_, _>>()?,
                 };
-            let wanted = install::prepare(&wanted)?;
+            let (wanted, _clones) = install::prepare(&wanted, common.ignore_certs, verbose)?;
             let output = galaxy::resolve(download_path.as_deref().unwrap_or("./collections"));
             std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
             let mut servers = servers(common, cache, &config, verbose, false);
@@ -68,7 +69,7 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
                 pre: *pre,
                 ..install::Options::default()
             };
-            return download::collections(wanted, &output, &mut servers, options);
+            return download::collections(wanted, &output, &mut servers, options, verbose);
         }
         Kind::Collection(Collection::Verify { requirements, .. }) => {
             if let Some(file) = requirements {
@@ -77,7 +78,12 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
             "collection verify"
         }
         Kind::Collection(Collection::Init { .. }) => "collection init",
-        Kind::Collection(Collection::Build { .. }) => "collection build",
+        Kind::Collection(Collection::Build {
+            force,
+            output_path,
+            collection,
+            ..
+        }) => return collection_build(collection, output_path.as_deref(), *force, verbose),
         Kind::Collection(Collection::List { .. }) => "collection list",
         Kind::Role(Role::Install {
             role_name,
@@ -118,6 +124,34 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     )))
 }
 
+/// `collection build`: each source tree, `.` by default, built into `--output-path`, `./` by
+/// default (`execute_build`).
+fn collection_build(
+    sources: &[String],
+    output: Option<&str>,
+    force: bool,
+    verbose: u8,
+) -> Result<i32, Failure> {
+    let output = galaxy::resolve(output.unwrap_or("./"));
+    if output.is_file() {
+        return Err(Failure::error(format!(
+            "- the output collection directory {} is a file - aborting",
+            output.display()
+        )));
+    }
+    std::fs::create_dir_all(&output).map_err(|e| Failure::error(e.to_string()))?;
+    let here = [".".to_string()];
+    let sources = if sources.is_empty() {
+        &here[..]
+    } else {
+        sources
+    };
+    for source in sources {
+        Source::read(&galaxy::resolve(source))?.build(&output, force, verbose)?;
+    }
+    Ok(0)
+}
+
 /// `collection install`: tarballs and names from Galaxy servers. Directories, URLs, git and
 /// signatures are refused until they are native.
 fn collection_install(
@@ -148,7 +182,7 @@ fn collection_install(
     if install.signatures.keyring.is_some() || !install.signatures.signatures.is_empty() {
         return Err(not_yet("with signatures"));
     }
-    let wanted = install::prepare(&wanted)?;
+    let (wanted, _clones) = install::prepare(&wanted, install.common.ignore_certs, verbose)?;
     // The runtime's own directory, which Volant appends to the search path, is not one the
     // reference would name.
     let runtime = crate::runtime::collections::active_dir();

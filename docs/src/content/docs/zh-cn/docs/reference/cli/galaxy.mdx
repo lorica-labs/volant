@@ -1,5 +1,5 @@
 ---
-sourceHash: 4b76db5e89fc
+sourceHash: 39eb8b50064e
 title: volant galaxy
 description: ansible-galaxy 的选项由 Volant 自己检查，其子命令正逐个改为原生实现。
 ---
@@ -32,7 +32,15 @@ volant galaxy role <init|remove|delete|list|search|import|setup|info|install> [O
 
 `collection install` 原生安装集合 tar 包：`volant galaxy collection install acme-demo-1.0.0.tar.gz -p DIR`。名称和版本取自 tar 包中的 `MANIFEST.json`，而不是文件名。集合安装到 `DIR/ansible_collections/<namespace>/<name>`，没有 `-p` 时安装到第一个集合路径下。只写入 `FILES.json` 列出的文件，每个文件先与其 SHA-256 比对。文件权限为 `0644`，归档标记为可执行时为 `0755`。会落到集合之外的条目会被拒绝，指向集合之外的链接也会被拒绝。安装失败不会留下写了一半的集合。输出、消息和退出码与 `ansible-galaxy` 相同。已安装相同版本的集合会得到 `Nothing to do. All requested collections are already installed. If you want to reinstall them, consider using `--force`.`，`--force` 会覆盖旧目录重新安装。`PATH/ansible_collections` 已存在时，`-p` 的警告会说该路径 `appears to be part of the pip Ansible package`，与 `ansible-galaxy` 一致。
 
-目录、URL、git 和签名在原生实现之前都会被拒绝：`[ERROR]: volant galaxy collection install from a directory, a URL or git is not supported yet`，或 `with signatures`，退出码 1。
+`collection install` 也接受 git 仓库：`git+<url>`，可用 `,<ref>` 指定分支、标签或提交（默认 `HEAD`），用 `#/<subdir>` 指定不在仓库根目录的集合，例如 `git+https://host/org/repo.git,v1.0.0` 或 `git+file:///work/mono/.git#/collections/demo`。在依赖文件中写作带 `type: git` 的条目，其 `version` 即引用。Volant 调用系统的 `git`：`HEAD` 时浅克隆，否则完整克隆后检出，然后把检出的目录当作源码目录安装。git 自身的消息只在 `-vvv` 时显示，因为其措辞随 git 版本变化。URL 中的密码在所有消息中都替换为 `********`。`PATH` 中没有 `git` 时，命令以 `Could not find git executable to extract the collection from the Git repository` 失败，退出码 1。
+
+tar 包 URL、命名空间目录和签名在原生实现之前都会被拒绝：`[ERROR]: volant galaxy collection install from a URL or a namespace directory is not supported yet`，或 `with signatures`，退出码 1。
+
+## 构建集合
+
+`collection build [PATH] [--output-path DIR] [-f]` 把带有 `galaxy.yml` 的源码目录（默认 `.`）构建成 `DIR`（默认 `./`）下的 `<namespace>-<name>-<version>.tar.gz`，并打印 `Created collection for <namespace>.<name> at <path>`。`galaxy.yml` 必须包含 `namespace`、`name`、`version`、`readme` 和 `authors`；缺少键或缺少 `galaxy.yml` 时以 `ansible-galaxy` 的消息失败。tar 包包含 `MANIFEST.json`、`FILES.json` 和源码目录，但不包含 `ansible-galaxy` 排除的内容：`galaxy.yml`、`.git` 及其他版本控制目录、`__pycache__`、`*.pyc`、`*.retry`、`tests/output`、该集合以前的构建产物，以及 `build_ignore` 列出的内容。文件权限为 `0644`，属主可执行时为 `0755`；目录内部的链接保持为链接，指向外部目录的链接会被跳过并给出警告。已存在的构建产物会报错，除非给出 `-f`。Volant 把所有时间写为 0、所有属主写为 root，因此同一目录构建两次得到相同的字节；`ansible-galaxy` 写入当前时间。带有 `manifest:` 键的 `galaxy.yml` 暂时会被拒绝。
+
+`collection install DIR` 以同样方式安装源码目录，不经过 tar 包，并在 `Installing` 和 `installed successfully` 两行之间打印 `Created collection for <namespace>.<name>:<version> at <path>`。`collection download` 会把源码目录构建到下载文件夹中。
 
 ## 从 Galaxy 服务器安装
 

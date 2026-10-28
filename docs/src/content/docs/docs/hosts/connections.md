@@ -273,6 +273,8 @@ ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 
 A host keeps its connection to the agent for the whole run, across plays. Tasks travel over that one connection instead of opening a new one each time. If the connection dies between two plays, Volant reconnects once, and a second failure reports the host unreachable.
 
+Hosts reached over `local` share their agents instead. Each of those agents runs on the controller as the same user, so a host that waits for the others hands its agent to the next host that runs, and the run keeps at most `forks` idle ones. A play on 500 local hosts holds about as many agents as `forks` allows, not 500. An escalated local agent stays with its host.
+
 Some tasks add a connection:
 
 - Escalation. A host that uses `become` holds a second connection, to an agent running as the target user. It is kept until the end of the play, so a play of escalated tasks starts one escalated agent, not one per task. A host holds at most one escalated connection at a time: escalating to a different user replaces it.

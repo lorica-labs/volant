@@ -1,0 +1,16 @@
+{
+  "args": [
+    "collection",
+    "build",
+    "src",
+    "--output-path",
+    "<golden-tmp>/out"
+  ],
+  "rc": 1,
+  "repos": [],
+  "requests": [],
+  "setup": [],
+  "stderr": "[ERROR]: The collection galaxy.yml path '<golden-tmp>/src/galaxy.yml' does not exist.\n",
+  "stdout": "",
+  "tree": {}
+}

@@ -1,0 +1,4 @@
+collections:
+  - name: ./repo/.git
+    type: git
+    version: main

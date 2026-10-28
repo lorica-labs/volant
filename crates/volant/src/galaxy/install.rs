@@ -11,6 +11,7 @@ use super::api::VersionInfo;
 use super::api::download::galaxy_yml;
 use super::api::servers::Servers;
 use super::artifact::{Meta, Tarball};
+use super::build::Source;
 use super::requirements::{Collection, Kind};
 use super::resolve::{self, Index, Request};
 use super::version::meets;
@@ -29,6 +30,7 @@ pub struct Options {
 /// A collection asked for: a tarball read already, or a name and a range for the servers.
 pub enum Wanted {
     Tarball(Tarball, Meta),
+    Dir(Source),
     Galaxy { fqcn: String, range: String },
 }
 
@@ -36,30 +38,81 @@ impl Wanted {
     pub(super) fn request(&self) -> Request {
         match self {
             Self::Tarball(_, meta) => Request::direct(&meta.fqcn(), &meta.version),
+            Self::Dir(source) => Request::direct(&source.fqcn(), &source.version()),
             Self::Galaxy { fqcn, range } => Request::direct(fqcn, range),
         }
     }
 }
 
-/// The requirements the command line or a file gave, read: a tarball is opened now, so its
-/// errors come before any output, as the reference reads it while parsing.
-pub fn prepare(collections: &[Collection]) -> Result<Vec<Wanted>, Failure> {
-    collections
-        .iter()
-        .map(|c| match c.kind {
+/// The requirements the command line or a file gave, read: a tarball is opened and a git source
+/// cloned now, so their errors come before any output, as the reference reads them while
+/// parsing. The clones are removed when the returned directories are dropped.
+pub fn prepare(
+    collections: &[Collection],
+    ignore_certs: bool,
+    verbose: u8,
+) -> Result<(Vec<Wanted>, Vec<tempfile::TempDir>), Failure> {
+    let mut wanted = Vec::new();
+    let mut clones = Vec::new();
+    for c in collections {
+        let source = c.source.as_deref().unwrap_or_default();
+        wanted.push(match c.kind {
             Kind::File => {
-                let (tarball, meta) = Tarball::open(c.source.as_deref().unwrap_or_default())?;
-                Ok(Wanted::Tarball(tarball, meta))
+                let (tarball, meta) = Tarball::open(source)?;
+                Wanted::Tarball(tarball, meta)
             }
-            Kind::Galaxy => Ok(Wanted::Galaxy {
+            Kind::Dir => Wanted::Dir(Source::read(&super::resolve(source))?),
+            Kind::Git => {
+                let checkout = super::git::checkout(source, &c.version, ignore_certs, verbose)?;
+                let read = Source::read(&checkout.collection)?;
+                clones.push(checkout.clone);
+                Wanted::Dir(read)
+            }
+            Kind::Galaxy => Wanted::Galaxy {
                 fqcn: c.name.clone().unwrap_or_default(),
                 range: c.version.clone(),
-            }),
-            _ => Err(Failure::error(
-                "volant galaxy collection install from a directory, a URL or git is not supported yet",
-            )),
-        })
-        .collect()
+            },
+            Kind::Url | Kind::Subdirs => {
+                return Err(Failure::error(
+                    "volant galaxy collection install from a URL or a namespace directory is not supported yet",
+                ));
+            }
+        });
+    }
+    Ok((wanted, clones))
+}
+
+/// The version and dependencies of each local collection, by `namespace.name`.
+pub(super) type Versions = HashMap<String, (String, Vec<(String, String)>)>;
+
+/// A collection given on the command line or in a file rather than found on a server.
+pub(super) enum Local {
+    Tarball(Tarball),
+    Dir(Source),
+}
+
+/// The local collections of `wanted`, and what the resolver reads of them: version and
+/// dependencies.
+pub(super) fn locals(wanted: Vec<Wanted>) -> (HashMap<String, Local>, Versions) {
+    let mut given = HashMap::new();
+    let mut index = HashMap::new();
+    for item in wanted {
+        match item {
+            Wanted::Tarball(tarball, meta) => {
+                index.insert(
+                    meta.fqcn(),
+                    (meta.version.clone(), meta.dependencies.clone()),
+                );
+                given.insert(meta.fqcn(), Local::Tarball(tarball));
+            }
+            Wanted::Dir(source) => {
+                index.insert(source.fqcn(), (source.version(), source.dependencies()));
+                given.insert(source.fqcn(), Local::Dir(source));
+            }
+            Wanted::Galaxy { .. } => {}
+        }
+    }
+    (given, index)
 }
 
 /// Where the versions and the dependencies come from: the tarballs given, then the servers.
@@ -72,10 +125,7 @@ pub(super) struct Mixed<'a> {
 }
 
 impl<'a> Mixed<'a> {
-    pub(super) fn new(
-        tarballs: HashMap<String, (String, Vec<(String, String)>)>,
-        servers: &'a mut Servers,
-    ) -> Self {
+    pub(super) fn new(tarballs: Versions, servers: &'a mut Servers) -> Self {
         Self {
             tarballs,
             servers,
@@ -185,17 +235,7 @@ pub fn collections(
         existing.clone()
     };
     println!("Process install dependency map");
-    let mut tarballs: HashMap<String, (String, Vec<(String, String)>)> = HashMap::new();
-    let mut files: HashMap<String, Tarball> = HashMap::new();
-    for item in wanted {
-        if let Wanted::Tarball(tarball, meta) = item {
-            tarballs.insert(
-                meta.fqcn(),
-                (meta.version.clone(), meta.dependencies.clone()),
-            );
-            files.insert(meta.fqcn(), tarball);
-        }
-    }
+    let (mut files, tarballs) = locals(wanted);
     let mut index = Mixed::new(tarballs, servers);
     let resolution = resolve::resolve(
         &requests,
@@ -249,14 +289,24 @@ fn install_one(
     version: &str,
     output: &Path,
     index: &mut Mixed,
-    files: &mut HashMap<String, Tarball>,
+    files: &mut HashMap<String, Local>,
     downloads: &mut Option<PathBuf>,
     verbose: u8,
 ) -> Result<(), Failure> {
     let (namespace, name) = fqcn.split_once('.').unwrap_or((fqcn, ""));
     let shown = format!("{fqcn}:{version}");
     let dest = output.join(namespace).join(name);
-    let (tarball, source) = if let Some(tarball) = files.remove(fqcn) {
+    let local = files.remove(fqcn);
+    if let Some(Local::Dir(source)) = local {
+        println!("Installing '{shown}' to '{}'", dest.display());
+        if dest.exists() {
+            std::fs::remove_dir_all(&dest).map_err(|e| Failure::error(e.to_string()))?;
+        }
+        source.install(&dest, verbose)?;
+        println!("{shown} was installed successfully");
+        return Ok(());
+    }
+    let (tarball, source) = if let Some(Local::Tarball(tarball)) = local {
         (tarball, None)
     } else {
         let info = index.record(fqcn, version)?;

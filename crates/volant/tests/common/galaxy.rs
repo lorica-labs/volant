@@ -90,6 +90,79 @@ impl Drop for GalaxyServer {
     }
 }
 
+/// A fixture repository: one commit per source directory, the tags on the first.
+#[derive(serde::Deserialize)]
+pub struct Repo {
+    pub path: String,
+    pub sources: Vec<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
+}
+
+/// Makes the case's repositories as `golden/reference/galaxy.py` makes them, with the same author
+/// and dates so their commits have the same hashes, and returns their top directories.
+pub fn make_repos(repos: &[Repo], tmp: &Path) -> Vec<String> {
+    let mut made = Vec::new();
+    for repo in repos {
+        let path = tmp.join(&repo.path);
+        std::fs::create_dir_all(&path).expect("a repository directory");
+        let git = |args: &[&str]| {
+            let status = Command::new("git")
+                .args(args)
+                .current_dir(&path)
+                .envs([
+                    ("GIT_AUTHOR_NAME", "Volant"),
+                    ("GIT_AUTHOR_EMAIL", "volant@example.invalid"),
+                    ("GIT_AUTHOR_DATE", "2026-01-01T00:00:00+00:00"),
+                    ("GIT_COMMITTER_NAME", "Volant"),
+                    ("GIT_COMMITTER_EMAIL", "volant@example.invalid"),
+                    ("GIT_COMMITTER_DATE", "2026-01-01T00:00:00+00:00"),
+                ])
+                .stdout(Stdio::null())
+                .stderr(Stdio::null())
+                .status()
+                .expect("git runs");
+            assert!(status.success(), "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"]);
+        for (number, source) in repo.sources.iter().enumerate() {
+            for entry in std::fs::read_dir(&path).expect("readable").flatten() {
+                if entry.file_name() != ".git" {
+                    let p = entry.path();
+                    if p.is_dir() {
+                        std::fs::remove_dir_all(&p).expect("removed");
+                    } else {
+                        std::fs::remove_file(&p).expect("removed");
+                    }
+                }
+            }
+            copy_tree(&tmp.join(source), &path);
+            // The index would trust a file of the same size and time as the one it replaces.
+            git(&["rm", "-r", "-q", "--cached", "--ignore-unmatch", "."]);
+            git(&["add", "-A"]);
+            git(&["commit", "-q", "-m", &format!("fixture {number}")]);
+            if number == 0 {
+                for tag in &repo.tags {
+                    git(&["tag", tag]);
+                }
+            }
+        }
+        made.push(repo.path.split('/').next().unwrap_or_default().to_string());
+    }
+    made
+}
+
+fn copy_tree(from: &Path, to: &Path) {
+    if from.is_dir() {
+        std::fs::create_dir_all(to).expect("a directory");
+        for entry in std::fs::read_dir(from).expect("readable").flatten() {
+            copy_tree(&entry.path(), &to.join(entry.file_name()));
+        }
+    } else {
+        std::fs::copy(from, to).expect("copied");
+    }
+}
+
 /// One case's `expected.json`.
 #[derive(serde::Deserialize)]
 pub struct Case {
@@ -97,6 +170,9 @@ pub struct Case {
     /// Runs made before `args`, not compared.
     #[serde(default)]
     pub setup: Vec<Vec<String>>,
+    /// Git repositories made before the runs.
+    #[serde(default)]
+    pub repos: Vec<Repo>,
     pub rc: i32,
     pub stdout: String,
     pub stderr: String,
@@ -150,9 +226,9 @@ pub fn normalise(text: &str, tmp: &Path, port: u16) -> String {
         .replace(&*tmp.to_string_lossy(), TMP)
         .replace(&format!("127.0.0.1:{port}"), &format!("127.0.0.1:{PORT}"));
     let text = galaxy_tmp.replace_all(&text, "<golden-galaxy-tmp>/$1-<golden-random>$2");
-    install_date
-        .replace_all(&text, "install_date: '<golden-date>'")
-        .into_owned()
+    let text = install_date.replace_all(&text, "install_date: '<golden-date>'");
+    let git = regex::Regex::new(r"Command '([\[(])'[^']*/git', ").expect("valid");
+    git.replace_all(&text, "Command '${1}'git', ").into_owned()
 }
 
 /// Copies the files a case's run reads, every file of its directory but `case.yml` and
@@ -183,7 +259,7 @@ pub fn copy_inputs(name: &str, tmp: &Path) -> Vec<String> {
 }
 
 /// Every file under `tmp` outside its `home` and `skip`, by path, with the SHA-256 of its
-/// normalised text, or of its uncompressed content for a `.tar.gz`.
+/// normalised text, or of its members for a `.tar.gz` (see [`members`]).
 pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMap<String, String> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("readable").flatten() {
@@ -211,15 +287,8 @@ pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMa
         .into_iter()
         .map(|path| {
             let mut data = std::fs::read(&path).expect("readable");
-            // The fake server gzips at run time, and zlib's output differs between platforms.
             if path.to_string_lossy().ends_with(".tar.gz") {
-                let mut plain = Vec::new();
-                std::io::Read::read_to_end(
-                    &mut flate2::read::GzDecoder::new(&data[..]),
-                    &mut plain,
-                )
-                .expect("a gzip file");
-                data = plain;
+                data = members(&data);
             }
             let data = match String::from_utf8(data) {
                 Ok(text) => normalise(&text, tmp, port).into_bytes(),
@@ -233,4 +302,45 @@ pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMa
             (name, format!("{:x}", Sha256::digest(&data)))
         })
         .collect()
+}
+
+/// A tarball as `golden/reference/galaxy.py` records it: its members sorted by name, each with
+/// its kind and content hash, a line each. Times, owners and compression do not count.
+fn members(data: &[u8]) -> Vec<u8> {
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(data));
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for entry in archive.entries().expect("a tarball") {
+        let mut entry = entry.expect("a member");
+        let name = entry
+            .path()
+            .expect("a name")
+            .to_string_lossy()
+            .trim_end_matches('/')
+            .to_string();
+        let line = match entry.header().entry_type() {
+            tar::EntryType::Directory => format!("{name} dir"),
+            tar::EntryType::Symlink => format!(
+                "{name} link {}",
+                entry
+                    .link_name()
+                    .ok()
+                    .flatten()
+                    .map(|l| l.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ),
+            _ => {
+                let mut content = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut content).expect("readable");
+                format!("{name} file {:x}", Sha256::digest(&content))
+            }
+        };
+        lines.push((name, line));
+    }
+    lines.sort();
+    lines
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
 }

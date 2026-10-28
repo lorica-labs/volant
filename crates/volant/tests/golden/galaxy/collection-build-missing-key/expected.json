@@ -1,0 +1,16 @@
+{
+  "args": [
+    "collection",
+    "build",
+    "src",
+    "--output-path",
+    "<golden-tmp>/out"
+  ],
+  "rc": 1,
+  "repos": [],
+  "requests": [],
+  "setup": [],
+  "stderr": "[ERROR]: The collection galaxy.yml at '<golden-tmp>/src/galaxy.yml' is missing the following mandatory keys: readme\n",
+  "stdout": "",
+  "tree": {}
+}

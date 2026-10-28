@@ -9,6 +9,7 @@
     "<golden-tmp>/cols"
   ],
   "rc": 0,
+  "repos": [],
   "requests": [],
   "setup": [
     [
@@ -32,8 +33,8 @@
     "cols/ansible_collections/demo/base/MANIFEST.json": "9202b19e231bf48c4ce421ee2e9fdef1527b8e339e6f5b64c87d37d9d442f289",
     "cols/ansible_collections/demo/base/README.md": "3296a0e7b923fe40c55cefd9654c660dd85b21e043332d264b444efcea030a05",
     "cols/ansible_collections/demo/base/plugins/README.md": "45aa560f02db9804fea8a739581472d31ef6e35ad85fe6842e44fd4590ffb2e6",
-    "demo-app-1.0.0.tar.gz": "cb0ac9b6cfc3ece591f31d112f2a2e706dad4b9a8d84305baa05ef4b6fbc38a9",
-    "demo-base-1.1.0.tar.gz": "cf7c20ff5200a67c04df6ac47efb3c4a8f481afa6302aa676bf93adb62bfd093",
+    "demo-app-1.0.0.tar.gz": "3b331de907834f0692db82adfda04670b1622fddb9c86ed20decfa6be125bcec",
+    "demo-base-1.1.0.tar.gz": "3635cd9bdace0b3f0ed5d5b16268f9812be29c0bfbd7f1cfe488ed3734dc6c73",
     "requirements.yml": "31d979e05bd27d1bfd0e3ae7ce991556568cff90c9c82d91ad5f469842038aac"
   }
 }

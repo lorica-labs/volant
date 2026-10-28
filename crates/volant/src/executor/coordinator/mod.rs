@@ -512,7 +512,7 @@ pub(super) async fn run_batch(
                             // would just idle until the run ends.
                             state.failed_hosts.insert(host.clone());
                         }
-                        keep_links(&mut state.links, links, failed).await;
+                        keep_links(&mut state.links, links, failed, &options.local).await;
                         gone.insert(host);
                         coordinator.publish(&state.failed_hosts, &plan.steps().steps);
                     }
@@ -742,7 +742,7 @@ pub(super) async fn run_batch(
                 if round.files_failure(&host, failed) {
                     state.failed_hosts.insert(host);
                 }
-                keep_links(&mut state.links, links, failed).await;
+                keep_links(&mut state.links, links, failed, &options.local).await;
                 coordinator.publish(&state.failed_hosts, &plan.steps().steps);
             }
             // A `meta` action whose step the loop above never reached still did what it did.

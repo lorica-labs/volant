@@ -52,7 +52,8 @@ fn a_galaxy_case_matches_the_reference() {
         let tmp = held.path().canonicalize().expect("a real path");
         let home = tmp.as_path().join("home");
         std::fs::create_dir(&home).expect("a home");
-        let inputs = galaxy::copy_inputs(&name, tmp.as_path());
+        let mut inputs = galaxy::copy_inputs(&name, tmp.as_path());
+        inputs.extend(galaxy::make_repos(&case.repos, tmp.as_path()));
         let volant = |args: &[String]| {
             let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_volant"));
             command

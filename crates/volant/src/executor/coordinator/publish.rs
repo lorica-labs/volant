@@ -14,7 +14,7 @@ use crate::vars::VarStore;
 
 use super::types::Progress;
 use crate::executor::prepare::{PlayPlan, host_vars, strategy_reads_as_true};
-use crate::executor::{Abort, LinkKey, RunOptions, RunState};
+use crate::executor::{Abort, LinkKey, LocalPool, RunOptions, RunState};
 /// The coordinator's published state: everything a publish reads, held in one place because it
 /// is read under one serialised view and nowhere else.
 pub(super) struct Coordinator<'a> {
@@ -256,11 +256,14 @@ pub(super) async fn keep_links(
     links: &mut HashMap<LinkKey, AgentLink>,
     handed_back: Vec<(LinkKey, AgentLink)>,
     failed: bool,
+    local: &LocalPool,
 ) {
     let mut closing = tokio::task::JoinSet::new();
     for (key, link) in handed_back {
         if failed || key.become_user.is_some() {
             closing.spawn(link.shutdown());
+        } else if LocalPool::shares(&key) {
+            local.give(link);
         } else {
             links.insert(key, link);
         }

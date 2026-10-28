@@ -44,6 +44,7 @@ pub(crate) use driver::{expressions, strings, task_strings};
 pub(crate) use play_checks::as_bool_value;
 use play_checks::{check_gather_keywords, load_play_vars_files, max_fail_percentage, play_flags};
 pub(crate) use play_hosts::{Context as HostsContext, is_templated, render_hosts};
+pub use run::LocalPool;
 pub use state::{Abort, LinkKey, PlayEnd, Reboots, RunState};
 
 /// Ansible's default `timeout`: seconds to establish a connection.
@@ -84,6 +85,9 @@ pub struct RunOptions {
     pub abort: Arc<Abort>,
     /// Which hosts a task of this run rebooted, shared by every host's driver.
     pub reboots: Arc<Reboots>,
+    /// The idle agents on the controller that hosts connecting over `local` share; see
+    /// [`LocalPool`]. Sized to `forks`.
+    pub local: Arc<LocalPool>,
     /// Where the run's timings go, for `--profile` and `VOLANT_PROFILE_JSON`.
     pub profile: Arc<crate::profile::Profile>,
     /// `--step`: present when each task is asked about, and set once the operator answers `c`,

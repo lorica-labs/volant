@@ -9,6 +9,7 @@
     "<golden-tmp>/dl"
   ],
   "rc": 0,
+  "repos": [],
   "requests": [
     "GET /",
     "GET /api",
@@ -26,8 +27,8 @@
   "stderr": "",
   "stdout": "Process download dependency map\nStarting collection download process to '<golden-tmp>/dl'\nDownloading collection 'demo.app:1.0.0' to '<golden-tmp>/dl'\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/app/artifacts/demo-app-1.0.0.tar.gz to <golden-galaxy-tmp>/demo-app-1.0.0-<golden-random>\nCollection 'demo.app:1.0.0' was downloaded successfully\nDownloading collection 'demo.base:1.1.0' to '<golden-tmp>/dl'\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/base/artifacts/demo-base-1.1.0.tar.gz to <golden-galaxy-tmp>/demo-base-1.1.0-<golden-random>\nCollection 'demo.base:1.1.0' was downloaded successfully\nWriting requirements.yml file of downloaded collections to '<golden-tmp>/dl/requirements.yml'\n",
   "tree": {
-    "dl/demo-app-1.0.0.tar.gz": "cb0ac9b6cfc3ece591f31d112f2a2e706dad4b9a8d84305baa05ef4b6fbc38a9",
-    "dl/demo-base-1.1.0.tar.gz": "cf7c20ff5200a67c04df6ac47efb3c4a8f481afa6302aa676bf93adb62bfd093",
+    "dl/demo-app-1.0.0.tar.gz": "3b331de907834f0692db82adfda04670b1622fddb9c86ed20decfa6be125bcec",
+    "dl/demo-base-1.1.0.tar.gz": "3635cd9bdace0b3f0ed5d5b16268f9812be29c0bfbd7f1cfe488ed3734dc6c73",
     "dl/requirements.yml": "31d979e05bd27d1bfd0e3ae7ce991556568cff90c9c82d91ad5f469842038aac"
   }
 }

@@ -1,5 +1,5 @@
 ---
-sourceHash: 4b76db5e89fc
+sourceHash: 39eb8b50064e
 title: volant galaxy
 description: Las opciones de ansible-galaxy, comprobadas por el propio Volant, mientras sus subcomandos se vuelven nativos uno a uno.
 ---
@@ -32,7 +32,15 @@ Cuando ninguna ruta de colecciones configurada está bajo el `PATH` de `collecti
 
 `collection install` instala de forma nativa un tarball de colección: `volant galaxy collection install acme-demo-1.0.0.tar.gz -p DIR`. El nombre y la versión vienen del `MANIFEST.json` del tarball, no del nombre del archivo. La colección va bajo `DIR/ansible_collections/<namespace>/<name>`, o bajo la primera ruta de colecciones sin `-p`. Solo se escriben los archivos que lista `FILES.json`, cada uno comprobado antes contra su SHA-256. Un archivo queda en `0644`, o en `0755` cuando el archivo comprimido lo marca como ejecutable. Una entrada que acabaría fuera de la colección se rechaza, igual que un enlace que apunta fuera de ella. Una instalación que falla no deja ninguna colección a medio escribir. La salida, los mensajes y los códigos de salida son los de `ansible-galaxy`. Una colección ya instalada en la misma versión da `Nothing to do. All requested collections are already installed. If you want to reinstall them, consider using `--force`.`, y `--force` la vuelve a instalar sobre el árbol anterior. Cuando `PATH/ansible_collections` ya existe, el aviso de `-p` dice que la ruta `appears to be part of the pip Ansible package`, como lo dice `ansible-galaxy`.
 
-Los directorios, las URL, git y las firmas se rechazan hasta que sean nativos: `[ERROR]: volant galaxy collection install from a directory, a URL or git is not supported yet`, o `with signatures`, salida 1.
+`collection install` acepta también un repositorio git: `git+<url>`, con `,<ref>` para una rama, una etiqueta o un commit, `HEAD` por defecto, y `#/<subdir>` para una colección que no está en la raíz del repositorio, como `git+https://host/org/repo.git,v1.0.0` o `git+file:///work/mono/.git#/collections/demo`. En un archivo de requisitos es una entrada con `type: git`, cuya `version` es la referencia. Volant ejecuta el `git` del sistema: un clon superficial para `HEAD`, uno completo con checkout si no, y luego instala el checkout como un árbol de código. Los mensajes de git solo se muestran con `-vvv`, porque su redacción cambia de una versión de git a otra. Una contraseña en la URL se sustituye por `********` en todos los mensajes. Sin `git` en el `PATH`, el comando falla con `Could not find git executable to extract the collection from the Git repository`, salida 1.
+
+Las URL de tarballs, los directorios de espacio de nombres y las firmas se rechazan hasta que sean nativos: `[ERROR]: volant galaxy collection install from a URL or a namespace directory is not supported yet`, o `with signatures`, salida 1.
+
+## Construir una colección
+
+`collection build [PATH] [--output-path DIR] [-f]` convierte un árbol de código con un `galaxy.yml`, `.` por defecto, en `<namespace>-<name>-<version>.tar.gz` dentro de `DIR`, `./` por defecto, e imprime `Created collection for <namespace>.<name> at <path>`. `galaxy.yml` necesita `namespace`, `name`, `version`, `readme` y `authors`; una clave que falta, o un `galaxy.yml` ausente, falla con el mensaje de `ansible-galaxy`. El tarball contiene `MANIFEST.json`, `FILES.json` y el árbol, sin lo que `ansible-galaxy` deja fuera: `galaxy.yml`, `.git` y los demás directorios de control de versiones, `__pycache__`, `*.pyc`, `*.retry`, `tests/output`, los artefactos anteriores de la colección y lo que lista `build_ignore`. Un archivo queda en `0644`, o en `0755` cuando su propietario puede ejecutarlo; un enlace dentro del árbol sigue siendo un enlace, y uno a un directorio de fuera se salta con un aviso. Un artefacto existente es un error salvo con `-f`. Volant escribe todas las horas como 0 y todos los propietarios como root, así que construir dos veces el mismo árbol da los mismos bytes; `ansible-galaxy` pone la hora actual. Un `galaxy.yml` con una clave `manifest:` se rechaza por ahora.
+
+`collection install DIR` instala un árbol de código del mismo modo, sin tarball, e imprime `Created collection for <namespace>.<name>:<version> at <path>` entre sus líneas `Installing` e `installed successfully`. `collection download` construye un árbol de código en la carpeta de descarga.
 
 ## Instalar desde servidores Galaxy
 

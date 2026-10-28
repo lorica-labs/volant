@@ -304,7 +304,7 @@ jobs:
     needs: runtime-binary
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    container: debian:stable-slim@sha256:a717a33469731894e77e912ea7d714e27c2dc38ee6554fd1a3102e92999cfc66
+    container: debian:stable-slim@sha256:9e3624ad785d0d322f0c69194c2c0ebba7bc5fda3e2c6523ac095b4f08a12ba7
     steps:
       - name: Install curl, the only tool the download needs
         run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates
@@ -352,7 +352,7 @@ jobs:
     needs: runtime-binary
     runs-on: ubuntu-latest
     timeout-minutes: 20
-    container: debian:stable-slim@sha256:a717a33469731894e77e912ea7d714e27c2dc38ee6554fd1a3102e92999cfc66
+    container: debian:stable-slim@sha256:9e3624ad785d0d322f0c69194c2c0ebba7bc5fda3e2c6523ac095b4f08a12ba7
     steps:
       - name: Install the download tools and git
         run: apt-get update && apt-get install -y --no-install-recommends curl ca-certificates git

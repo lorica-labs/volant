@@ -10,6 +10,7 @@
     "<golden-tmp>/cols"
   ],
   "rc": 0,
+  "repos": [],
   "requests": [
     "GET /api/v3/collections/demo/base/",
     "GET /api/v3/collections/demo/base/versions/2.0.0/",

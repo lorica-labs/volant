@@ -13,16 +13,17 @@ caller is kept.
 
 `expected.json` holds the argv, the exit code, stdout, stderr, the requests the server saw in
 order, and every file left under the scratch directory outside the home, with the SHA-256 of its
-normalised text, or of its uncompressed content for a `.tar.gz`. Normalised means: the scratch directory reads `<golden-tmp>`, the server's port
+normalised text, or of its members for a `.tar.gz` (see `members`). Normalised means: the scratch directory reads `<golden-tmp>`, the server's port
 `<golden-port>`, ansible-galaxy's own download directory `<golden-galaxy-tmp>` with the random
 suffix of the file it downloads to `<golden-random>`, a role's `install_date` `<golden-date>`, and the Python objects after the resolver's `use --pre` hint
 are cut, ending it with a full stop.
 """
-import gzip
 import hashlib
+import io
 import os
 import re
 import shutil
+import tarfile
 
 import yaml
 
@@ -55,6 +56,23 @@ def inputs(directory):
     return sorted(n for n in os.listdir(directory) if n not in ("case.yml", "expected.json"))
 
 
+def members(data):
+    """A tarball as its members, sorted by name: name, kind and content hash, a line each. The
+    times, owners and compression of the archive itself do not count: ansible-galaxy stamps a
+    build with the current time, and zlib's output differs between platforms."""
+    lines = []
+    with tarfile.open(fileobj=io.BytesIO(data)) as tar:
+        for member in sorted(tar.getmembers(), key=lambda m: m.name):
+            if member.isdir():
+                lines.append(f"{member.name} dir")
+            elif member.issym():
+                lines.append(f"{member.name} link {member.linkname}")
+            else:
+                content = tar.extractfile(member).read()
+                lines.append(f"{member.name} file {hashlib.sha256(content).hexdigest()}")
+    return "\n".join(lines).encode()
+
+
 def tree(tmp, port, skip=()):
     """Every file under `tmp` outside the home and `skip`, by path, with the SHA-256 of its
     normalised text."""
@@ -68,9 +86,8 @@ def tree(tmp, port, skip=()):
             path = os.path.join(root, name)
             with open(path, "rb") as f:
                 data = f.read()
-            # The fake server gzips at run time, and zlib's output differs between platforms.
             if name.endswith(".tar.gz"):
-                data = gzip.decompress(data)
+                data = members(data)
             try:
                 data = normalise(data.decode("utf-8"), tmp, port).encode("utf-8")
             except UnicodeDecodeError:

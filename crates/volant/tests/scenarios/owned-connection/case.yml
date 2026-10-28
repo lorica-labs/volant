@@ -1,0 +1,7 @@
+# A host whose connection is a plugin only ansible-core has (a copy of `local` beside the
+# playbook): every task it runs goes to the Python helper, and its output is the reference's, next
+# to a `local` host the agent serves.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-v, -i, inv.ini, play.yml]

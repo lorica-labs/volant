@@ -33,7 +33,7 @@ pub(super) use interpreter::{
 };
 pub(super) use judge::{break_after, broke_before, empty_loop_result, finish, loops, task_fails};
 pub use links::LocalPool;
-pub(super) use links::{release_at_barrier, reuse_or_connect};
+pub(super) use links::{link_for, release_at_barrier};
 pub(super) use local::{run_local, set_fact_names};
 pub(super) use output::asks_to_be_hidden;
 pub(crate) use output::{DEPRECATION_TEXT, RAISED_SKIP, drop_internal_keys};

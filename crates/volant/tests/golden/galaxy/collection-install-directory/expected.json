@@ -1,0 +1,19 @@
+{
+  "args": [
+    "collection",
+    "install",
+    "src",
+    "-p",
+    "<golden-tmp>/cols"
+  ],
+  "rc": 0,
+  "requests": [],
+  "setup": [],
+  "stderr": "[WARNING]: The specified collections path '<golden-tmp>/cols' is not part of the configured Ansible collections paths '<golden-tmp>/home/.ansible/collections:/usr/share/ansible/collections'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.\n",
+  "stdout": "Starting galaxy collection install process\nProcess install dependency map\nStarting collection install process\nInstalling 'acme.demo:1.0.0' to '<golden-tmp>/cols/ansible_collections/acme/demo'\nCreated collection for acme.demo:1.0.0 at <golden-tmp>/cols/ansible_collections/acme/demo\nacme.demo:1.0.0 was installed successfully\n",
+  "tree": {
+    "cols/ansible_collections/acme/demo/FILES.json": "60388952863d8420b93a75dc135a31d3f78aeae617937c676fad4f068725eb4c",
+    "cols/ansible_collections/acme/demo/MANIFEST.json": "1235bf5417a11eeb75a3f2dea1ebecda22a3d07fb7bd4f2b48486d83ab49cffb",
+    "cols/ansible_collections/acme/demo/README.md": "40a8cd43565863d2cc0ed14ff5bb6e7bf99b9bbe828778a9d3bc41fcb902c434"
+  }
+}

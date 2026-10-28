@@ -1,5 +1,5 @@
 ---
-sourceHash: 50783338dd11
+sourceHash: 55eb7eef1053
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -40,7 +40,7 @@ Cualquier otro nombre lo resuelve el ansible-core del controlador, como lo resue
 
 Con `-vvv`, un nombre redirigido muestra `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` bajo la primera tarea que lo usa en un host, una línea por salto.
 
-Un nombre que se resuelve en un plugin que Volant todavía no maneja, como `winrm`, `psrp` o `community.general.jail`, marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
+Un nombre que se resuelve en un plugin que Volant no maneja por sí mismo, como `winrm`, `psrp`, `community.general.jail` o un plugin en un directorio `connection_plugins/` junto al playbook, toma la segunda vía: consulta [Conexiones que solo tiene ansible-core](#conexiones-que-solo-tiene-ansible-core). Sin el ansible-core del controlador al que preguntar, ese nombre marca el host como inalcanzable con `connection '<full name>' is not supported` y el resto de la ejecución continúa. La [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection) enumera todos los plugins de conexión de las colecciones del paquete.
 
 Un nombre que no se resuelve en nada hace fallar la tarea con `the connection plugin '<name>' was not found`, como hace Ansible. Eso incluye un nombre corto dirigido a una colección que no está instalada, como `docker` sin community.docker, tras el aviso que ansible-core muestra para él, y `ansible.builtin.paramiko`, que ansible-core 2.19.12 no tiene con ese nombre. Esto vale tanto si el valor es la conexión del propio host, la de un destino de `delegate_to` o la del host que ejecuta una tarea `run_once`.
 
@@ -189,6 +189,20 @@ En qué se diferencia del plugin:
 - La conexión a un host se comparte entre tareas, como con `ssh`.
 
 Con `-vvvv`, la primera línea es `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <user> on PORT <port> TO <address>`, seguida de las líneas `SSH: EXEC` de un host `ssh`.
+
+## Conexiones que solo tiene ansible-core
+
+Volant llega a un host por una de dos vías. Para `ssh`, `local` y las conexiones de la lista anterior, ejecuta su agente en el host y le envía las tareas. Para cualquier otro plugin de conexión que el ansible-core del controlador pueda cargar, no hay agente: cada tarea que necesita el host va al ayudante Python de Volant, que carga el plugin de conexión, se conecta, ejecuta por ella el plugin de acción de la tarea como lo haría `ansible-playbook` y vuelve a cerrar la conexión. ansible-core lee cada opción del plugin de las variables del host, de `ansible.cfg` y del entorno, como siempre.
+
+Todo lo demás de la ejecución no cambia: bucles, `when`, `register`, `changed_when`, `failed_when`, `until` y `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, handlers, `async` con `poll: 0` y `async_status`, el modo de comprobación y el recap. Una tarea que se ejecuta en el controlador, como `debug` o `set_fact`, se ejecuta allí como antes.
+
+- Un plugin que no puede conectarse deja el host inalcanzable con el mensaje del propio plugin.
+- Las líneas que el plugin imprime con `-vvv`, como `<host> ESTABLISH ... CONNECTION`, se imprimen bajo la tarea con la misma verbosidad.
+- `ansible_password`, las demás variables secretas del plugin y la contraseña de become se escriben `********` en cada línea y cada resultado.
+- Nunca se ejecutan a la vez más procesos ayudantes de los que permite `forks`.
+- `become` usa el método de escalada de la tarea, `sudo` o `su`.
+
+Cada tarea paga el arranque de la conexión del plugin, como en `ansible-playbook`, así que esta vía es más lenta por tarea que la del agente.
 
 ## Variables de host
 

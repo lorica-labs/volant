@@ -1,0 +1,4 @@
+{
+  "code": 4,
+  "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [a command] ***************************************************************\n[ERROR]: Task failed: the device said no\nOrigin: <golden-tmp>/play.yml:4:7\n\n2   gather_facts: false\n3   tasks:\n4     - name: a command\n        ^ column 7\n\nfatal: [h1]: UNREACHABLE! => {\"changed\": false, \"msg\": \"Task failed: the device said no\", \"unreachable\": true}\nchanged: [h2]\n\nTASK [after] *******************************************************************\nok: [h2] => {\n    \"msg\": \"still here\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=0    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=2    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

@@ -172,6 +172,27 @@ pub(in crate::executor) fn release_at_barrier(
     pool.park(links, checked);
 }
 
+/// [`reuse_or_connect`], except for a host no agent runs on: its batch is carried by a stand-in,
+/// since the helper makes the connection for each task itself and the plugin it runs asks
+/// nothing of this one.
+pub(in crate::executor) async fn link_for<'a>(
+    links: &'a mut HashMap<LinkKey, AgentLink>,
+    checked: &mut HashMap<LinkKey, u64>,
+    key: &LinkKey,
+    escalation: Option<&Escalation>,
+    agents: &AgentSource,
+    options: &RunOptions,
+) -> Result<&'a mut AgentLink, ConnectError> {
+    if !matches!(key.transport, Transport::Python(_)) {
+        return reuse_or_connect(links, checked, key, escalation, agents, options).await;
+    }
+    if !links.contains_key(key) {
+        let link = AgentLink::dead().map_err(|e| ConnectError::Unreachable(e.to_string()))?;
+        links.insert(key.clone(), link);
+    }
+    Ok(links.get_mut(key).expect("inserted just above"))
+}
+
 /// What checking a kept link needs of it, so the check can be driven by a fake in tests.
 pub(super) trait KeptLink {
     async fn handshake(&mut self) -> anyhow::Result<()>;

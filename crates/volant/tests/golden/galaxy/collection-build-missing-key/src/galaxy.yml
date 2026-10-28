@@ -1,0 +1,9 @@
+namespace: acme
+name: demo
+version: 1.0.0
+authors: [Volant]
+description: The demo collection of the build cases.
+license: [GPL-3.0-or-later]
+tags: [demo]
+dependencies: {}
+repository: https://example.com/acme/demo

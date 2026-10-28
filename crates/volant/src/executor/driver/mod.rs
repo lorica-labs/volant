@@ -29,11 +29,11 @@ use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, Polled, Relinker, Replayed,
     RetryLine, announce_retry, any_retried, break_after, broke_before, chosen_interpreter,
     discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
-    judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
-    record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
-    release_at_barrier, replayed, requested_interpreter, retry_plans, reuse_or_connect,
-    run_agent_batch, run_local, running_host_vars, shown, silent_discovery, stamp_discovery,
-    step_task, step_tasks, take_warnings, task_fails,
+    judge_attempt, link_for, local_timed_out, notified_handlers, pause_lines, poll_job, polls,
+    python_for, record_facts, record_inventory_results, record_local_facts, record_registered,
+    refusal, release_at_barrier, replayed, requested_interpreter, retry_plans, run_agent_batch,
+    run_local, running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
+    take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -255,9 +255,8 @@ pub(super) async fn drive_host(
             }
         }
         if let Some((index, result)) = failed_at.take() {
-            // `r` at the debugger prompt: the step runs again from where the host stood before
-            // it, with the arguments the operator edited, and its first result counts for
-            // nothing.
+            // `r` at the debugger prompt: the step runs again from where the host stood before it,
+            // with the arguments the operator edited, and its first result counts for nothing.
             if let Some(args) = debugger::redo_of(&result) {
                 failed = failed_before;
                 edited = args.map(|args| (index, args));
@@ -314,9 +313,8 @@ pub(super) async fn drive_host(
                         pos = next + grown;
                         driver.cleanup = Some(end + grown);
                     }
-                    // Nothing left to clean up. Where the host goes from here is the single
-                    // test below, so `force_handlers` changes it in one place rather than
-                    // two.
+                    // Nothing left to clean up. Where the host goes from here is the single test
+                    // below, so `force_handlers` changes it in one place rather than two.
                     None => pos = n,
                 }
             }
@@ -345,10 +343,9 @@ pub(super) async fn drive_host(
         // Collect a batch of remote tasks up to the next boundary; report skips and run local
         // tasks as they come, in order.
         let mut batch: Vec<(usize, Vec<Item>)> = Vec::new();
-        // The module payload of each step of the batch that has one, by step. Per task rather
-        // than per item, because the module is the task's: a loop varies the arguments. Empty
-        // for every batch this release runs today, a Python module being refused before the
-        // first connection.
+        // The module payload of each step of the batch that has one, by step. Per task rather than
+        // per item, because the module is the task's: a loop varies the arguments. Empty for every
+        // batch this release runs today, a Python module being refused before the first connection.
         let mut payloads: HashMap<usize, (Box<ModulePayload>, Option<String>)> = HashMap::new();
         // The steps of the batch whose host picks its interpreter itself, each with whether the
         // reference warns about the choice. Those results carry the discovered interpreter.
@@ -400,10 +397,9 @@ pub(super) async fn drive_host(
             let step = &c.steps[pos];
             let task = &step.task;
             // A permit kept from the batch before goes back in front of every wait this loop can
-            // reach, because a permit held across one is a permit the hosts that have to reach
-            // that same point cannot have. The batch being empty is what says this is the kept
-            // permit and not the one this batch works under: no wait is reached with a batch in
-            // hand.
+            // reach, because a permit held across one is a permit the hosts that have to reach that
+            // same point cannot have. The batch being empty is what says this is the kept permit
+            // and not the one this batch works under: no wait is reached with a batch in hand.
             //
             // The escalated link does **not** go back with it. A permit is the run's own token
             // and another host is waiting for it; an escalated link is a process and a
@@ -1451,6 +1447,7 @@ pub(super) async fn drive_host(
                     {
                         break;
                     }
+                    let action = crate::action_plugins::kind_on(&transport, action);
                     let plans = retry_plans(task, &items, &templar);
                     // A loop that pauses or can break runs its items one at a time, like a retried
                     // one: the agent cannot be told to stop after an item it has not answered yet.
@@ -1598,7 +1595,7 @@ pub(super) async fn drive_host(
                 }
             }
             let connecting = Instant::now();
-            let connected = reuse_or_connect(
+            let connected = link_for(
                 &mut links,
                 &mut checked,
                 &key,
@@ -2119,6 +2116,9 @@ pub(super) async fn drive_host(
             }
             // Queued under the batch's first step, in front of the results it belongs with,
             // rather than written as it arrived: the coordinator owns everything a task shows.
+            driver
+                .show_display(batch.iter().map(|(i, _)| *i), &mut received)
+                .await;
             for message in logs.drain(..) {
                 let _ = tx
                     .send(Event::Warning {

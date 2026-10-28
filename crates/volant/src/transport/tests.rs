@@ -1063,6 +1063,7 @@ fn the_connection_keyword_ranks_between_the_host_and_the_command_line(
         Ok(Transport::Ssh(_)) => "ssh".to_string(),
         Ok(Transport::Exec(_)) => "exec".to_string(),
         Ok(Transport::Ssm(_)) => "ssm".to_string(),
+        Ok(Transport::Python(_)) => "python".to_string(),
         Err(err) => err.to_string(),
     };
     assert_eq!(got, want);
@@ -1645,9 +1646,7 @@ fn every_host_name_and_delegation_gets_its_own_master() {
                         .shared(SHARED.map(Path::new), &format!("web{n}"), Some("lb1"));
                 match transport {
                     Transport::Ssh(target) => target.control_path.expect("shared"),
-                    Transport::Local | Transport::Exec(_) | Transport::Ssm(_) => {
-                        panic!("expected ssh")
-                    }
+                    _ => panic!("expected ssh"),
                 }
             })
             .collect();
@@ -1667,7 +1666,7 @@ fn every_host_name_and_delegation_gets_its_own_master() {
         .shared(SHARED.map(Path::new), "web1", Some(delegate))
         {
             Transport::Ssh(target) => target.control_path,
-            Transport::Local | Transport::Exec(_) | Transport::Ssm(_) => panic!("expected ssh"),
+            _ => panic!("expected ssh"),
         };
         assert_ne!(via("lb1"), via("lb1-alias"));
     }

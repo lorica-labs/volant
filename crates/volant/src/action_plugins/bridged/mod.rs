@@ -275,9 +275,11 @@ pub(super) fn start(
     let running = flat_vars(ctx.running_vars);
     let mut task_vars = if ctx.delegated {
         let mut own = flat_vars(ctx.item_vars);
+        // Under the delegate's name, as `VariableManager._get_delegated_vars` files them.
+        let delegate = ctx.link.delegate.clone().unwrap_or_default();
         own.insert(
             "ansible_delegated_vars".into(),
-            Value::Object(running.clone()),
+            json!({ delegate: Value::Object(running.clone()) }),
         );
         own
     } else {
@@ -304,6 +306,16 @@ pub(super) fn start(
     );
     let play_context = play_context_of(&ctx, &running);
     let task_vars = Value::Object(task_vars);
+    // A host no agent runs on: the helper makes the connection itself, and the plugin's own
+    // become plugin when the task escalates.
+    let link = ctx.link.owned.as_ref().map(|connection| {
+        json!({
+            "kind": "owned",
+            "connection": connection,
+            "become": ctx.link.escalation.as_ref().map(|(method, _)| method),
+            "verbosity": crate::transport::trace::verbosity(),
+        })
+    });
     let (to_plugin, asks) = channel();
     let (replies, from_plugin) = channel::<Reply>();
     let ready = Arc::new(Notify::new());
@@ -323,7 +335,7 @@ pub(super) fn start(
             task: &task,
             task_vars: &task_vars,
             play_context: &play_context,
-            link: None,
+            link: link.as_ref(),
         };
         let outcome = bridge.run_action(&call, deadline, &mut answer);
         let _ = to_plugin.send(FromHelper::Done(outcome));

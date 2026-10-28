@@ -1,5 +1,5 @@
 ---
-sourceHash: 50783338dd11
+sourceHash: 55eb7eef1053
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -40,7 +40,7 @@ Volant 连接到受管主机，在那里放置一个小型静态 agent（运行�
 
 使用 `-vvv` 时，被转向的名字会在某台主机上第一个使用它的 task 下打印 `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot`，每一跳一行。
 
-解析为 Volant 尚未驱动的插件的名字，例如 `winrm`、`psrp` 或 `community.general.jail`，会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
+解析为 Volant 自己不驱动的插件的名字，例如 `winrm`、`psrp`、`community.general.jail`，或 playbook 旁 `connection_plugins/` 目录中的插件，会走第二条路线：见[只有 ansible-core 才有的连接](#只有-ansible-core-才有的连接)。如果没有控制器的 ansible-core 可问，这样的名字会让该主机不可达，消息为 `connection '<full name>' is not supported`，其余的运行继续。[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)列出了包中各个 collection 的全部连接插件。
 
 什么都解析不到的名字会让 task 失败，并给出 `the connection plugin '<name>' was not found`，与 Ansible 一样。这包括被转到未安装 collection 的短名字，例如没有 community.docker 时的 `docker`（在 ansible-core 为它打印的警告之后），以及 `ansible.builtin.paramiko`，ansible-core 2.19.12 不以这个名字提供它。不论这个值是主机自己的连接、`delegate_to` 目标的连接，还是运行 `run_once` task 的那台主机的连接，都是如此。
 
@@ -189,6 +189,20 @@ agent 用 `buildah run [--user U] <容器> -- <agent>` 启动。Volant 从不运
 - 与 `ssh` 一样，到一台主机的连接在 task 之间共享。
 
 使用 `-vvvv` 时，第一行是 `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <user> on PORT <port> TO <address>`，后面是 `ssh` 主机的 `SSH: EXEC` 行。
+
+## 只有 ansible-core 才有的连接
+
+Volant 用两种方式之一到达主机。对于 `ssh`、`local` 和上面列出的连接，它在主机上运行自己的 agent 并把 task 发给它。对于控制器的 ansible-core 能加载的其他任何连接插件，不运行 agent：每个需要主机的 task 都交给 Volant 的 Python 辅助进程，由它加载连接插件、建立连接、像 `ansible-playbook` 那样通过它运行 task 的 action 插件，然后关闭连接。ansible-core 照常从主机变量、`ansible.cfg` 和环境中读取插件的每个选项。
+
+运行的其他部分都不变：循环、`when`、`register`、`changed_when`、`failed_when`、`until` 和 `retries`、`ignore_errors`、`no_log`、`serial`、`delegate_to`、handler、带 `poll: 0` 的 `async` 和 `async_status`、检查模式以及汇总。在控制器上运行的 task，例如 `debug` 或 `set_fact`，照旧在控制器上运行。
+
+- 无法连接的插件会让主机不可达，并给出插件自己的消息。
+- 插件在 `-vvv` 下打印的行，例如 `<host> ESTABLISH ... CONNECTION`，会以相同的详细程度打印在 task 下。
+- `ansible_password`、插件的其他机密变量和 become 密码在每一行和每个结果中都写成 `********`。
+- 同时运行的辅助进程数量不会超过 `forks` 允许的数量。
+- `become` 使用 task 的提权方法，`sudo` 或 `su`。
+
+每个 task 都要付出建立插件连接的代价，与 `ansible-playbook` 一样，因此这条路线每个 task 比 agent 的路线慢。
 
 ## 主机变量
 

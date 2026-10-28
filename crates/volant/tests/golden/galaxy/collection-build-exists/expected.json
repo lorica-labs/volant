@@ -1,0 +1,25 @@
+{
+  "args": [
+    "collection",
+    "build",
+    "src",
+    "--output-path",
+    "<golden-tmp>/out"
+  ],
+  "rc": 1,
+  "requests": [],
+  "setup": [
+    [
+      "collection",
+      "build",
+      "src",
+      "--output-path",
+      "<golden-tmp>/out"
+    ]
+  ],
+  "stderr": "[ERROR]: The file '<golden-tmp>/out/acme-demo-1.0.0.tar.gz' already exists. You can use --force to re-create the collection artifact.\n",
+  "stdout": "",
+  "tree": {
+    "out/acme-demo-1.0.0.tar.gz": "bda916af60c9717cd6eceef0d07f0e1c0fbc73e993870a8fac53494671de2f08"
+  }
+}

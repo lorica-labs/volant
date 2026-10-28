@@ -29,6 +29,11 @@ pub fn configure(verbosity: u8, choice: ColorChoice) {
         .unwrap_or_else(std::sync::PoisonError::into_inner) = choice;
 }
 
+/// How many `-v`s the run was given.
+pub fn verbosity() -> u8 {
+    VERBOSITY.load(Ordering::Relaxed)
+}
+
 fn enabled() -> bool {
     VERBOSITY.load(Ordering::Relaxed) >= LEVEL_FROM
 }

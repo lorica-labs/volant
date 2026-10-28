@@ -5,10 +5,10 @@ use std::path::Path;
 
 use clap::Subcommand;
 
-use crate::runtime::collections;
 use crate::runtime::install::{self, installed};
 use crate::runtime::manifest::Manifest;
 use crate::runtime::pack;
+use crate::runtime::{collections, extras};
 use crate::runtime::{runtimes_dir, status};
 
 #[derive(Subcommand, Debug)]
@@ -19,6 +19,10 @@ pub enum RuntimeCommand {
         /// requirements file ending in .yml or .yaml.
         #[arg(long, num_args = 1.., value_name = "NAME_OR_FILE")]
         collections: Vec<String>,
+        /// Also install optional wheel sets: `windows` (pywinrm, pypsrp), `network` (paramiko,
+        /// ansible-pylibssh, ncclient). Comma-separated.
+        #[arg(long, value_delimiter = ',', value_name = "SET")]
+        extras: Vec<String>,
         /// Install from a file `volant runtime pack` made, with no download.
         #[arg(long, value_name = "FILE")]
         from: Option<std::path::PathBuf>,
@@ -30,6 +34,9 @@ pub enum RuntimeCommand {
     Pack {
         /// The file to write.
         file: std::path::PathBuf,
+        /// Install these optional wheel sets first, so the file carries them.
+        #[arg(long, value_delimiter = ',', value_name = "SET")]
+        extras: Vec<String>,
     },
     /// Show the managed runtime and whether it is installed.
     Status,
@@ -63,9 +70,11 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
     match command {
         RuntimeCommand::Install {
             collections,
+            extras,
             from,
             sha256,
         } => {
+            extras::known(&extras)?;
             let done = match &from {
                 Some(file) => {
                     let found = pack::verify(file, sha256.as_deref())?;
@@ -75,6 +84,19 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
                 None => install::install(&runtimes, &manifest)?,
             };
             println!("{} is installed in {}", done.id, done.dir.display());
+            if from.is_some() {
+                let have = extras::installed_sets(&done.dir);
+                if let Some(set) = extras.iter().find(|set| !have.contains(set)) {
+                    return Err(format!(
+                        "{} holds no {set:?} extras: pack it again with `volant runtime pack                          --extras {set}` on a host that has a network",
+                        from.as_deref().unwrap_or(Path::new("")).display()
+                    ));
+                }
+            }
+            extras::install(&runtimes, &manifest, &done, &extras)?;
+            if !extras.is_empty() {
+                println!("extras: {}", extras::installed_sets(&done.dir).join(", "));
+            }
             let (names, files) = collections::split(&collections, Path::is_file);
             if !names.is_empty() {
                 collections::install(&done, &collections::Source::Names(&names))?;
@@ -83,7 +105,13 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
                 collections::install(&done, &collections::Source::File(file))?;
             }
         }
-        RuntimeCommand::Pack { file } => {
+        RuntimeCommand::Pack { file, extras } => {
+            if !extras.is_empty() {
+                let done = installed(&runtimes, &manifest.id()).ok_or(
+                    "Volant's Python runtime is not installed: run `volant runtime install` first",
+                )?;
+                extras::install(&runtimes, &manifest, &done, &extras)?;
+            }
             let hash = pack::pack(&runtimes, &manifest, &file)?;
             println!("packed {}", file.display());
             println!("sha256 {hash}");

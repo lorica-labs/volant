@@ -1,5 +1,5 @@
 ---
-sourceHash: f052dfc7833f
+sourceHash: 13effd397cb2
 title: Die verwaltete Runtime
 description: Das Python und ansible-core, die Volant für sich selbst installiert, wo sie liegen, was sie herunterladen und wie Sie sie verwalten.
 ---
@@ -66,15 +66,43 @@ volant runtime install --collections requirements.yml
 
 Die Runtime enthält ansible-core und seine Abhängigkeiten und sonst nichts. Eine Collection, deren Plugins ein weiteres Python-Paket brauchen, etwa `jmespath` für `json_query`, funktioniert darin nicht. Nutzen Sie dafür Ihre eigene Umgebung mit `VOLANT_PYTHON`.
 
+## Optionale Wheel-Sets
+
+Manche Connection-Plugins brauchen Python-Pakete, die ansible-core nicht mitbringt. Zwei Sets davon sind für jede Plattform festgelegt, wie die Basis-Wheels, und werden nur auf Wunsch installiert:
+
+| Set | Pakete | Platz auf der Platte (Linux x86_64) |
+|---|---|---|
+| `windows` | pywinrm, pypsrp und ihre Abhängigkeiten | etwa 7 MB |
+| `network` | paramiko, ansible-pylibssh, ncclient und ihre Abhängigkeiten | etwa 31 MB |
+
+```sh
+volant runtime install --extras windows
+volant runtime install --extras windows,network
+```
+
+`--extras` installiert zuerst die Runtime, wenn sie fehlt, oder fügt die Sets der vorhandenen Runtime hinzu, ohne ihre Basis-Wheels anzufassen. Die Wheels werden gegen ihre festgelegten Hashes geprüft und mit `--require-hashes`, ohne Index und ohne Auflösung von Abhängigkeiten installiert. `volant runtime status` listet die installierten Sets. Für ansible-pylibssh gibt es keinen musl-Build, daher enthält das Set `network` auf Alpine und anderen musl-Rechnern nur paramiko und ncclient.
+
+Ein Lauf installiert kein Set. Verbindet sich ein Host eines Plays mit `winrm` oder `psrp` und ist das Python des Controllers die verwaltete Runtime ohne das Set `windows`, hält der Lauf vor jeder Verbindung an, mit Exit-Code 4:
+
+```text
+host 'win1': the winrm connection needs the "windows" runtime extras: run volant runtime install --extras windows
+```
+
+`network_cli` und `netconf` verlangen das Set `network` auf dieselbe Weise. Mit `VOLANT_PYTHON` lässt Volant den Interpreter, wie er ist, und der Fehler des Plugins nennt das fehlende Paket.
+
+Mit dem Set `windows` funktioniert `winrm` mit den Transporten `basic`, `plaintext`, `ssl`, `certificate` und `ntlm`, und `psrp` mit den Authentifizierungen `basic`, `certificate`, `ntlm` und `negotiate`, wobei `negotiate` auf NTLM zurückfällt. Kerberos und CredSSP brauchen Systembibliotheken und Pakete, die das Set nicht enthält: Nutzen Sie dafür Ihre eigene Umgebung mit `VOLANT_PYTHON`.
+
 ## Befehle
 
 | Befehl | Was er tut |
 |---|---|
 | `volant runtime install` | Installiert die Runtime, wenn sie fehlt. |
 | `volant runtime install --collections NAME_OR_FILE...` | Installiert zusätzlich Collections. |
+| `volant runtime install --extras SET,...` | Installiert auch optionale Wheel-Sets: `windows`, `network`. |
 | `volant runtime install --from FILE` | Installiert aus einer Datei, die `pack` erzeugt hat, ohne Download. |
 | `volant runtime install --from FILE --sha256 HASH` | Installiert aus der Datei nur, wenn ihr SHA-256 `HASH` ist. |
 | `volant runtime pack FILE` | Schreibt die installierte Runtime in eine Datei und gibt ihren SHA-256 aus. |
+| `volant runtime pack FILE --extras SET,...` | Fügt der Runtime zuerst die Sets hinzu, damit die Datei sie enthält. |
 | `volant runtime status` | Zeigt den Modus, den Interpreter, den der nächste Lauf verwendet, und die verwaltete Runtime. |
 | `volant runtime path` | Gibt das Python der verwalteten Runtime aus. Endet mit Exit-Code 1, wenn sie nicht installiert ist. |
 | `volant runtime remove [ID]` | Löscht die aktuelle Runtime oder die genannte. |
@@ -92,6 +120,13 @@ volant runtime install --from runtime.tar.gz --sha256 3f1c...e9
 ```
 
 `install --from` lehnt eine Datei ab, die für eine andere Plattform oder eine andere Runtime gemacht wurde, und nennt beide. `pack` gibt den SHA-256 der Datei in einer Zeile `sha256` aus. Mit `--sha256 HASH` lehnt `install --from` eine Datei mit abweichendem Hash vor dem Entpacken ab und zeigt beide Hashes. Ohne die Option gibt die Installation den Hash der verwendeten Datei aus, sodass Sie ihn selbst vergleichen können. Das Installieren eines Packs führt das darin enthaltene Python aus, übergeben Sie also den Hash, den Sie von dem Rechner erhalten haben, der es erzeugt hat.
+
+Die Datei enthält die Sets, die die Runtime hatte. Packen Sie mit `--extras`, um sie hinzuzufügen, und nennen Sie sie auf dem anderen Rechner erneut, wo `install --from` prüft, ob die Datei sie enthält:
+
+```sh
+volant runtime pack runtime.tar.gz --extras windows
+volant runtime install --from runtime.tar.gz --sha256 3f1c...e9 --extras windows
+```
 
 ## Ausschalten
 

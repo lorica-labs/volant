@@ -10,6 +10,8 @@ extend-exclude = [
   # The reference's plugin names: `just parity-reference` and `just docs-parity` write them.
   "crates/volant/tests/parity/reference.json",
   "crates/volant/src/later_actions.txt",
+  # Package names and wheel URLs, written by `just runtime-lock`.
+  "crates/volant/src/runtime/manifest.toml",
   # The filler words of `lipsum`, which are Latin.
   "crates/volant/src/template/lipsum_words.txt",
   "docs/src/content/docs/docs/reference/parity.md",

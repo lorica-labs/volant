@@ -31,9 +31,9 @@ use super::run::{
     discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
     judge_attempt, local_timed_out, notified_handlers, pause_lines, poll_job, polls, python_for,
     record_facts, record_inventory_results, record_local_facts, record_registered, refusal,
-    replayed, requested_interpreter, retry_plans, reuse_or_connect, run_agent_batch, run_local,
-    running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
-    take_warnings, task_fails,
+    release_at_barrier, replayed, requested_interpreter, retry_plans, reuse_or_connect,
+    run_agent_batch, run_local, running_host_vars, shown, silent_discovery, stamp_discovery,
+    step_task, step_tasks, take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -409,10 +409,10 @@ pub(super) async fn drive_host(
             // and another host is waiting for it; an escalated link is a process and a
             // connection on this host alone, which no other host is waiting for, so holding one
             // across a barrier delays nobody. Releasing it costs an `ssh`, a `sudo` and a
-            // handshake at the next escalated task, and under the strict `linear` every
-            // task raises a barrier. What the links are bounded by is `keep_links` at the end of
-            // the play, the failure arm at the top of this loop, and the rule below that a host
-            // holds at most one of them at a time.
+            // handshake at the next escalated task, and under the strict `linear` every task raises
+            // a barrier. Escalated links are bounded by `keep_links`, the failure arm above and the
+            // rule below of one at a time; the plain local agent does go back, to `LocalPool`,
+            // because every other host running on the controller can use that one.
             if batch.is_empty()
                 && permit.is_some()
                 && !plan.strategy.pinned()
@@ -424,7 +424,7 @@ pub(super) async fn drive_host(
                 ) || crate::compile::is_splice_point(&step.kind)
                     || driver.steps_over_a_splice_point(&c, pos))
             {
-                permit = None;
+                release_at_barrier(&mut permit, &mut links, &mut checked, &options.local);
             }
             // A step an include spliced in for other hosts. This host reports it and shows
             // nothing, exactly as it does for a handler it never notified: the coordinator's

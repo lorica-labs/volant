@@ -1,5 +1,5 @@
 ---
-sourceHash: ef0550cf334a
+sourceHash: 50783338dd11
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -259,6 +259,8 @@ ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ## 持久连接
 
 一台主机在整个运行期间（跨越多个 play）保持与 agent 的连接。task 通过这一个连接传输，而不是每次都打开新连接。如果连接在两个 play 之间断开，Volant 会重新连接一次，第二次失败则把该主机报告为不可达。
+
+通过 `local` 连接的主机则共享它们的 agent。这些 agent 都以同一用户在控制节点上运行，所以等待其他主机的主机会把自己的 agent 交给下一个运行的主机，整个运行最多保留 `forks` 个空闲的 agent。在 500 个本地主机上运行的 play 保留的 agent 数量大约与 `forks` 允许的一样多，而不是 500 个。提权的本地 agent 仍归它的主机所有。
 
 有些 task 会增加连接：
 

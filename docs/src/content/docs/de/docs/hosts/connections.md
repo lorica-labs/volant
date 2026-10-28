@@ -1,5 +1,5 @@
 ---
-sourceHash: ef0550cf334a
+sourceHash: 50783338dd11
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -259,6 +259,8 @@ ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ## Dauerhafte Verbindungen
 
 Ein Host behält seine Verbindung zum Agent für den ganzen Lauf, über Plays hinweg. Tasks laufen über diese eine Verbindung, statt jedes Mal eine neue zu öffnen. Bricht die Verbindung zwischen zwei Plays ab, verbindet Volant sich einmal neu, und ein zweiter Fehlschlag meldet den Host als nicht erreichbar.
+
+Hosts, die über `local` erreicht werden, teilen sich stattdessen ihre Agents. Jeder dieser Agents läuft auf dem Controller als derselbe Benutzer, also gibt ein Host, der auf die anderen wartet, seinen Agent an den nächsten laufenden Host weiter, und der Lauf behält höchstens `forks` untätige. Ein Play auf 500 lokalen Hosts hält etwa so viele Agents, wie `forks` erlaubt, nicht 500. Ein eskalierter lokaler Agent bleibt bei seinem Host.
 
 Manche Tasks fügen eine Verbindung hinzu:
 

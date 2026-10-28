@@ -17,7 +17,7 @@ use super::interpreter::{
 use super::judge::condition_vars;
 use super::judge::{apply_conditions, break_after, finish, settle_failure};
 #[cfg(unix)]
-use super::links::{check_kept, connect, reuse_or_connect};
+use super::links::{LocalPool, check_kept, connect, reuse_or_connect};
 #[cfg(unix)]
 use super::local::set_fact_names;
 use super::local::{run_local, set_fact_data};
@@ -5150,6 +5150,7 @@ async fn a_link_another_driver_keeps_is_checked_again_after_a_reboot() {
         stop,
         abort: Arc::new(super::super::Abort::new(stop_tx)),
         reboots: Arc::default(),
+        local: Arc::new(LocalPool::new(1)),
         profile: Arc::default(),
         step: None,
         replay: None,
@@ -5208,6 +5209,67 @@ async fn a_link_another_driver_keeps_is_checked_again_after_a_reboot() {
         link.shutdown().await;
     }
     answered.expect("the link h2 got is alive, not the one the reboot killed");
+}
+
+/// A host parks its plain local agent and keeps the escalated one; the pool keeps what fits, and
+/// the next host borrows the parked agent instead of starting one.
+#[cfg(unix)]
+#[tokio::test]
+async fn the_local_pool_hands_a_parked_agent_to_the_next_host() {
+    let (source, defaults) = local_agents();
+    let (stop_tx, stop) = watch::channel(false);
+    let options = RunOptions {
+        defaults: defaults.clone(),
+        forks: 1,
+        force_handlers: false,
+        batching: false,
+        host_named_paths: crate::config::HostNamedPaths::default(),
+        host_named_dest_dirs: None,
+        control_dir: None,
+        stop,
+        abort: Arc::new(super::super::Abort::new(stop_tx)),
+        reboots: Arc::default(),
+        local: Arc::new(LocalPool::new(1)),
+        profile: Arc::default(),
+        step: None,
+        replay: None,
+    };
+    let (plain, escalated) = (local_key("h1", None), local_key("h1", Some("root")));
+    let mut h1_links = HashMap::new();
+    let mut h1_checked = HashMap::from([(plain.clone(), 0), (escalated.clone(), 0)]);
+    for key in [&plain, &escalated] {
+        let link = connect(&Transport::Local, &source, &defaults, None).await;
+        h1_links.insert(key.clone(), link.expect("a real agent"));
+    }
+    assert!(LocalPool::shares(&plain) && !LocalPool::shares(&escalated));
+    options.local.park(&mut h1_links, &mut h1_checked);
+    assert_eq!(h1_links.keys().collect::<Vec<_>>(), [&escalated]);
+    assert_eq!(h1_checked.keys().collect::<Vec<_>>(), [&escalated]);
+    assert_eq!(options.local.idle(), 1);
+    // A second agent finds the pool full and is closed rather than kept.
+    let extra = connect(&Transport::Local, &source, &defaults, None).await;
+    options.local.give(extra.expect("a real agent"));
+    assert_eq!(options.local.idle(), 1);
+    let to_h2 = local_key("h2", None);
+    let (mut h2_links, mut h2_checked) = (HashMap::new(), HashMap::new());
+    let link = reuse_or_connect(
+        &mut h2_links,
+        &mut h2_checked,
+        &to_h2,
+        None,
+        &source,
+        &options,
+    )
+    .await
+    .expect("h2 borrows the parked agent");
+    link.handshake()
+        .await
+        .expect("the parked agent still answers");
+    assert_eq!(options.local.idle(), 0);
+    options.local.shutdown().await;
+    for (_, link) in h1_links.drain().chain(h2_links.drain()) {
+        link.shutdown().await;
+    }
 }
 
 /// The three results land where the reference puts them, a failed task lands nowhere, and a

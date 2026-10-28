@@ -1,5 +1,5 @@
 ---
-sourceHash: 39eb8b50064e
+sourceHash: ab31fe4cc00b
 title: volant galaxy
 description: ansible-galaxy 的选项由 Volant 自己检查，其子命令正逐个改为原生实现。
 ---
@@ -51,6 +51,12 @@ tar 包 URL、命名空间目录和签名在原生实现之前都会被拒绝：
 ## 下载以便离线安装
 
 `collection download` 像 `install` 一样连同依赖解析所请求的集合，并把每个 tar 包保存到 `-p` 指定的文件夹，默认是 `./collections`。然后在其中写入一个 `requirements.yml`，按文件名列出这些 tar 包及其版本。在没有网络的机器上，从该文件夹运行 `volant galaxy collection install --offline -r requirements.yml` 即可安装，不访问任何服务器。文件名相对于工作目录读取，与 `ansible-galaxy` 一致。`-n` 不包含依赖，`-r` 和 `--pre` 与 `install` 中的作用相同。使用 `--offline` 时，没有 tar 包提供的名称或未安装的依赖会以解析器的消息失败。
+
+## 列出和校验集合
+
+`collection list [NAME] [-p PATH]... [--format human|json|yaml]` 对 `-p` 和集合路径中每个含有集合的目录，打印一个 `# <path>/ansible_collections` 块，列出每个集合的名称和版本；集合没有 `MANIFEST.json` 时版本为 `*`。列宽等于最长的名称和版本，与 `ansible-galaxy` 的填充方式一致。`--format json` 在一行中打印 `{"<path>": {"<namespace>.<name>": {"version": "<version>"}}}`，`--format yaml` 以 YAML 打印相同内容。不存在的 `-p` 会给出警告；没有任何可读路径时命令以退出码 5 失败。`ansible-galaxy` 还会列出 ansible-core 放在自身 Python 包中的集合 `ansible._protomatter`；Volant 没有这样的包，不列出它。
+
+`collection verify NAME... [-p PATH] [--offline]` 校验每个已安装的集合：先是 `MANIFEST.json`，再按清单给出的哈希校验 `FILES.json`，再逐个校验每个文件，最后在目录树中查找 `FILES.json` 未列出的文件和目录（`*.pyc` 除外）。每处差异列在 `Collection <name> contains modified content in the following files:` 之下，命令以 1 退出。不带 `--offline` 时会下载服务器上同一版本的 tar 包，以其 `MANIFEST.json` 为准；带上时以已安装的为准。集合未安装或没有 `MANIFEST.json` 时报错；`-i` 把错误变为警告。
 
 ## Galaxy 服务器
 

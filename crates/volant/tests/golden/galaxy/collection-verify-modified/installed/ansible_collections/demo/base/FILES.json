@@ -1,0 +1,33 @@
+{
+    "files": [
+        {
+            "chksum_sha256": null,
+            "chksum_type": null,
+            "format": 1,
+            "ftype": "dir",
+            "name": "."
+        },
+        {
+            "chksum_sha256": null,
+            "chksum_type": null,
+            "format": 1,
+            "ftype": "dir",
+            "name": "plugins"
+        },
+        {
+            "chksum_sha256": "3296a0e7b923fe40c55cefd9654c660dd85b21e043332d264b444efcea030a05",
+            "chksum_type": "sha256",
+            "format": 1,
+            "ftype": "file",
+            "name": "README.md"
+        },
+        {
+            "chksum_sha256": "45aa560f02db9804fea8a739581472d31ef6e35ad85fe6842e44fd4590ffb2e6",
+            "chksum_type": "sha256",
+            "format": 1,
+            "ftype": "file",
+            "name": "plugins/README.md"
+        }
+    ],
+    "format": 1
+}

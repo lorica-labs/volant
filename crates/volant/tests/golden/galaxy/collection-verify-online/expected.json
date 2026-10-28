@@ -1,0 +1,40 @@
+{
+  "args": [
+    "collection",
+    "verify",
+    "demo.base",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/cols"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [
+    "GET /",
+    "GET /api",
+    "GET /api/v3/collections/demo/base/versions/1.0.0/",
+    "GET /api/v3/collections/demo/base/versions/1.0.0/",
+    "GET /api/v3/collections/demo/base/artifacts/demo-base-1.0.0.tar.gz"
+  ],
+  "setup": [
+    [
+      "collection",
+      "install",
+      "demo.base:1.0.0",
+      "-s",
+      "<golden-server>",
+      "-p",
+      "<golden-tmp>/cols"
+    ]
+  ],
+  "stderr": "",
+  "stdout": "Verifying 'demo.base:1.0.0'.\nInstalled collection found at '<golden-tmp>/cols/ansible_collections/demo/base'\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/base/artifacts/demo-base-1.0.0.tar.gz to <golden-galaxy-tmp>/demo-base-1.0.0-<golden-random>\nMANIFEST.json hash: e7be05dbb818de5279f8ad49c8abe98ca2c3a6a68a00b2472a4db32b4973bc2d\nSuccessfully verified that checksums for 'demo.base:1.0.0' match the remote collection.\n",
+  "tree": {
+    "cols/ansible_collections/demo.base-1.0.0.info/GALAXY.yml": "1773a47df41c38fff4c7041450ee0fb765e429cb937750dc743923a5c362d32a",
+    "cols/ansible_collections/demo/base/FILES.json": "8e6ea5503d234c6f9e4a4258839316ba7f7d8c95a672a3719af322c80aa1c925",
+    "cols/ansible_collections/demo/base/MANIFEST.json": "e7be05dbb818de5279f8ad49c8abe98ca2c3a6a68a00b2472a4db32b4973bc2d",
+    "cols/ansible_collections/demo/base/README.md": "3296a0e7b923fe40c55cefd9654c660dd85b21e043332d264b444efcea030a05",
+    "cols/ansible_collections/demo/base/plugins/README.md": "45aa560f02db9804fea8a739581472d31ef6e35ad85fe6842e44fd4590ffb2e6"
+  }
+}

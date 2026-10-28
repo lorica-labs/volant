@@ -1,0 +1,3 @@
+setup:
+  - [collection, install, "demo.base:1.0.0", -s, "<golden-server>", -p, "<golden-tmp>/cols"]
+args: [collection, verify, demo.base, -p, "<golden-tmp>/cols", --offline]

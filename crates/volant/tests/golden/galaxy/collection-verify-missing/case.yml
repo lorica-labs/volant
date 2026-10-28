@@ -1,0 +1,1 @@
+args: [collection, verify, demo.nope, -p, "<golden-tmp>/cols", --offline]

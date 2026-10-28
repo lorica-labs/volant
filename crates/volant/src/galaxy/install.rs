@@ -144,7 +144,12 @@ impl<'a> Mixed<'a> {
     ) -> Result<PathBuf, Failure> {
         let info = self.record(fqcn, version)?;
         let at = self.at(fqcn, version);
-        self.servers.list[at].download(&info.download_url, &info.sha256, dir)
+        self.servers.list[at].download(
+            &info.download_url,
+            &info.sha256,
+            dir,
+            &format!("{fqcn}:{version}"),
+        )
     }
 
     fn at(&self, fqcn: &str, version: &str) -> usize {
@@ -208,7 +213,7 @@ pub fn collections(
 ) -> Result<i32, Failure> {
     println!("Starting galaxy collection install process");
     std::fs::create_dir_all(output).map_err(|e| Failure::error(e.to_string()))?;
-    let existing = installed(output);
+    let existing = installed(output, verbose);
     let requests: Vec<Request> = wanted.iter().map(Wanted::request).collect();
     let forced = options.force || options.force_with_deps;
     let unsatisfied = requests.iter().any(|r| {
@@ -316,14 +321,6 @@ fn install_one(
         }
         let file = index.fetch(fqcn, version, downloads.as_deref().expect("made"))?;
         let (tarball, _) = Tarball::open(&file.display().to_string())?;
-        let server = &index.servers.list[at];
-        if verbose >= 3 {
-            println!(
-                "Collection '{shown}' obtained from server {} {}",
-                server.name,
-                server.api_server()
-            );
-        }
         (tarball, Some((info, at)))
     };
     println!("Installing '{shown}' to '{}'", dest.display());
@@ -351,7 +348,7 @@ pub(super) fn download_dir() -> Result<PathBuf, Failure> {
 
 /// The collections installed under `output`, by `namespace.name`, with the version their
 /// `MANIFEST.json` gives.
-pub fn installed(output: &Path) -> Vec<(String, String)> {
+pub fn installed(output: &Path, verbose: u8) -> Vec<(String, String)> {
     let dirs = |dir: &Path| -> Vec<PathBuf> {
         let mut found: Vec<PathBuf> = std::fs::read_dir(dir)
             .into_iter()
@@ -378,6 +375,12 @@ pub fn installed(output: &Path) -> Vec<(String, String)> {
                 info["name"].as_str(),
                 info["version"].as_str(),
             ) {
+                if verbose >= 3 {
+                    println!(
+                        "Found installed collection {ns}.{name}:{version} at '{}'",
+                        collection.display()
+                    );
+                }
                 out.push((format!("{ns}.{name}"), version.to_string()));
             }
         }

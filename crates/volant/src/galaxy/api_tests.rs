@@ -141,7 +141,12 @@ fn a_version_record_gives_its_dependencies_and_download() {
     assert_eq!(info.href, "/api/v3/collections/demo/app/versions/1.0.0/");
     let dir = tempfile::tempdir().expect("a directory");
     let file = server
-        .download(&info.download_url, &info.sha256, dir.path())
+        .download(
+            &info.download_url,
+            &info.sha256,
+            dir.path(),
+            "demo.base:1.0.0",
+        )
         .expect("downloaded");
     assert_eq!(file.file_name().expect("named"), "demo-app-1.0.0.tar.gz");
     assert!(
@@ -163,7 +168,12 @@ fn a_hash_mismatch_leaves_nothing() {
     let mut server = fake.server(home.path());
     let info = server.version_info("demo", "app", "1.0.0").expect("record");
     let dir = tempfile::tempdir().expect("a directory");
-    let failed = server.download(&info.download_url, &"0".repeat(64), dir.path());
+    let failed = server.download(
+        &info.download_url,
+        &"0".repeat(64),
+        dir.path(),
+        "demo.base:1.0.0",
+    );
     assert_eq!(
         failed.map_err(|f| f.message),
         Err("Mismatch artifact hash with downloaded file".to_string())

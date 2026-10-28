@@ -14,7 +14,13 @@ use crate::galaxy::Failure;
 impl Server {
     /// Downloads `url` into a new directory under `dir`, named after the tarball, and returns the
     /// file once its SHA-256 is `sha256` (`_download_file`). A mismatch leaves nothing behind.
-    pub fn download(&mut self, url: &str, sha256: &str, dir: &Path) -> Result<PathBuf, Failure> {
+    pub fn download(
+        &mut self,
+        url: &str,
+        sha256: &str,
+        dir: &Path,
+        collection: &str,
+    ) -> Result<PathBuf, Failure> {
         let tarball = url.rsplit('/').next().unwrap_or("collection.tar.gz");
         let stem = tarball.strip_suffix(".tar.gz").unwrap_or(tarball);
         let holder = crate::galaxy::temp_dir(dir, &format!("{stem}-"))?;
@@ -67,6 +73,12 @@ impl Server {
             }
         }
         std::fs::rename(&partial, &path).map_err(io)?;
+        if self.verbose >= 3 {
+            println!(
+                "Collection '{collection}' obtained from server {} {}",
+                self.name, self.api_server
+            );
+        }
         Ok(path)
     }
 }

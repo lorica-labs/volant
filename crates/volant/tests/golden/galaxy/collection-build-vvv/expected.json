@@ -1,0 +1,19 @@
+{
+  "args": [
+    "collection",
+    "build",
+    "src",
+    "--output-path",
+    "<golden-tmp>/out",
+    "-vvv"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [],
+  "setup": [],
+  "stderr": "",
+  "stdout": "<golden-banner>\nUsing <golden-config> as config file\nSkipping '<golden-tmp>/src/galaxy.yml' for collection build\nCreated collection for acme.demo at <golden-tmp>/out/acme-demo-1.0.0.tar.gz\n",
+  "tree": {
+    "out/acme-demo-1.0.0.tar.gz": "bda916af60c9717cd6eceef0d07f0e1c0fbc73e993870a8fac53494671de2f08"
+  }
+}

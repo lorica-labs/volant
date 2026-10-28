@@ -60,6 +60,8 @@ fn a_galaxy_case_matches_the_reference() {
                     command.env_remove(key);
                 }
             }
+            // The empty configuration the reference reads, which `-v` names.
+            command.env("ANSIBLE_CONFIG", galaxy::REFERENCE_CONFIG);
             process::run_within(&mut command, Duration::from_secs(120), None)
         };
         for args in &case.setup {

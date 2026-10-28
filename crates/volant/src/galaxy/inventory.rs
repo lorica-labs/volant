@@ -31,7 +31,12 @@ fn root(path: &Path) -> PathBuf {
 }
 
 /// The collections under `paths`, sorted by their directories.
-fn installed(paths: &[PathBuf], namespace: Option<&str>, name: Option<&str>) -> Vec<Installed> {
+fn installed(
+    paths: &[PathBuf],
+    namespace: Option<&str>,
+    name: Option<&str>,
+    verbose: u8,
+) -> Vec<Installed> {
     let mut found = BTreeSet::new();
     for path in paths {
         let root = root(path);
@@ -54,8 +59,15 @@ fn installed(paths: &[PathBuf], namespace: Option<&str>, name: Option<&str>) -> 
             if namespace.is_some_and(|n| n != ns) || name.is_some_and(|n| n != coll) {
                 return None;
             }
+            let version = version_of(&path);
+            if verbose >= 3 {
+                println!(
+                    "Found installed collection {ns}.{coll}:{version} at '{}'",
+                    path.display()
+                );
+            }
             Some(Installed {
-                version: version_of(&path),
+                version,
                 fqcn: format!("{ns}.{coll}"),
                 path,
             })
@@ -86,6 +98,7 @@ pub fn list(
     configured: &[PathBuf],
     name: Option<&str>,
     format: &str,
+    verbose: u8,
 ) -> Result<i32, Failure> {
     let (namespace, collection) = match name {
         Some(name) => {
@@ -105,7 +118,7 @@ pub fn list(
             paths.push(path.clone());
         }
     }
-    let found = installed(&paths, namespace, collection);
+    let found = installed(&paths, namespace, collection, verbose);
     let fqcn_width = found
         .iter()
         .map(|c| c.fqcn.chars().count())
@@ -229,6 +242,7 @@ pub struct Verify<'a> {
     pub paths: &'a [PathBuf],
     pub offline: bool,
     pub ignore_errors: bool,
+    pub verbose: u8,
 }
 
 /// `collection verify`: each requested collection checked against its own manifest, or against
@@ -259,20 +273,23 @@ pub fn verify(
     Ok(i32::from(failed))
 }
 
+/// `verify` takes names only.
+fn galaxy_only(want: &Collection) -> Result<(), Failure> {
+    let kind = match want.kind {
+        Kind::Galaxy => return Ok(()),
+        Kind::File => "file",
+        Kind::Dir => "dir",
+        Kind::Git => "git",
+        Kind::Url => "url",
+        Kind::Subdirs => "subdirs",
+    };
+    Err(Failure::error(format!(
+        "'{kind}' type is not supported. The format namespace.name is expected."
+    )))
+}
+
 fn verify_one(want: &Collection, servers: &mut Servers, options: &Verify) -> Result<bool, Failure> {
-    if want.kind != Kind::Galaxy {
-        let kind = match want.kind {
-            Kind::File => "file",
-            Kind::Dir => "dir",
-            Kind::Git => "git",
-            Kind::Url => "url",
-            Kind::Subdirs => "subdirs",
-            Kind::Galaxy => "galaxy",
-        };
-        return Err(Failure::error(format!(
-            "'{kind}' type is not supported. The format namespace.name is expected."
-        )));
-    }
+    galaxy_only(want)?;
     let fqcn = want.name.clone().unwrap_or_default();
     let dir = locate(&fqcn, options.paths)?;
     let local_version = version_of(&dir);
@@ -320,9 +337,17 @@ fn verify_one(want: &Collection, servers: &mut Servers, options: &Verify) -> Res
                 .to_string();
             (manifest, read(&files_name), None)
         }
-        Some((_, info, at)) => {
+        Some((version, info, at)) => {
             let holder = download_dir()?;
-            let file = servers.list[*at].download(&info.download_url, &info.sha256, &holder)?;
+            let file = servers.list[*at].download(
+                &info.download_url,
+                &info.sha256,
+                &holder,
+                &format!("{fqcn}:{version}"),
+            )?;
+            if options.verbose >= 3 {
+                println!("Remote collection cached as '{}'", file.display());
+            }
             let (tarball, _) = Tarball::open(&file.display().to_string())?;
             let manifest_data = tarball.member("MANIFEST.json").unwrap_or_default();
             let remote_hash = format!("{:x}", Sha256::digest(&manifest_data));

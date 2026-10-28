@@ -107,7 +107,13 @@ pub fn install(
         let mut role = queue[index].clone();
         index += 1;
         if !only.is_empty() && !only.contains(&role.name) {
+            if options.verbose >= 3 {
+                println!("Skipping role {}", role.name);
+            }
             continue;
+        }
+        if options.verbose >= 3 {
+            println!("Processing role {} ", role.name);
         }
         if let Some(info) = role.install_info() {
             let installed = &info["version"];

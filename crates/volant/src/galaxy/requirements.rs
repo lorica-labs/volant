@@ -49,7 +49,7 @@ pub struct Role {
 
 /// Reads `path`, which exists. `old_format` accepts the bare list of roles, as `role install`
 /// does and `collection install` does not.
-pub fn read(path: &Path, old_format: bool) -> Result<Requirements, Failure> {
+pub fn read(path: &Path, old_format: bool, verbose: u8) -> Result<Requirements, Failure> {
     let shown = path.display();
     let parsed = load(path).map_err(|e| {
         Failure::error(format!(
@@ -70,7 +70,7 @@ pub fn read(path: &Path, old_format: bool) -> Result<Requirements, Failure> {
                 ));
             }
             for entry in &entries {
-                out.roles.extend(role_entry(entry, path)?);
+                out.roles.extend(role_entry(entry, path, verbose)?);
             }
         }
         Value::Object(map) => {
@@ -86,7 +86,7 @@ pub fn read(path: &Path, old_format: bool) -> Result<Requirements, Failure> {
                 )));
             }
             for entry in items(map.get("roles")) {
-                out.roles.extend(role_entry(&entry, path)?);
+                out.roles.extend(role_entry(&entry, path, verbose)?);
             }
             for entry in items(map.get("collections")) {
                 out.collections.push(collection(&entry)?);
@@ -122,7 +122,7 @@ fn items(value: Option<&Value>) -> Vec<Value> {
 
 /// The roles one entry of a requirements file stands for: itself, or every role of the file its
 /// `include` names. The include path is read from the working directory, as the reference does.
-fn role_entry(entry: &Value, file: &Path) -> Result<Vec<Role>, Failure> {
+fn role_entry(entry: &Value, file: &Path, verbose: u8) -> Result<Vec<Role>, Failure> {
     if let Some(include) = entry.get("include") {
         let named = text(include);
         let included = Path::new(&named);
@@ -151,10 +151,48 @@ fn role_entry(entry: &Value, file: &Path) -> Result<Vec<Role>, Failure> {
             .collect();
     }
     let parsed = role(entry)?;
+    if verbose >= 3 {
+        println!("found role {} in yaml file", role_repr(entry, &parsed));
+    }
     if parsed.name.is_none() && parsed.src.is_none() {
         return Err(Failure::error("Must specify name or src for role"));
     }
     Ok(vec![parsed])
+}
+
+/// The dictionary `role_yaml_parse` returns, as Python prints it: a mapping's own keys in their
+/// order, then the ones it adds, `name`, `version` and `scm`.
+fn role_repr(entry: &Value, parsed: &Role) -> String {
+    const KEYS: [&str; 4] = ["name", "src", "scm", "version"];
+    let mut order: Vec<&str> = match entry {
+        Value::Object(map) if !map.contains_key("role") => map
+            .keys()
+            .filter_map(|k| KEYS.iter().find(|v| *v == k).copied())
+            .collect(),
+        _ => KEYS.to_vec(),
+    };
+    for key in ["name", "version", "scm"] {
+        if !order.contains(&key) {
+            order.push(key);
+        }
+    }
+    let value = |key: &str| match key {
+        "name" => &parsed.name,
+        "src" => &parsed.src,
+        "scm" => &parsed.scm,
+        _ => &parsed.version,
+    };
+    let items: Vec<String> = order
+        .iter()
+        .map(|key| match value(key) {
+            Some(v) => format!(
+                "'{key}': '{}'",
+                v.replace('\\', "\\\\").replace('\'', "\\'")
+            ),
+            None => format!("'{key}': None"),
+        })
+        .collect();
+    format!("{{{}}}", items.join(", "))
 }
 
 /// A role written as `src[,version[,name]]` or as a mapping (`RoleRequirement.role_yaml_parse`).

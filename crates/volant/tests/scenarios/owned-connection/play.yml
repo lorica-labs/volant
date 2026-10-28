@@ -34,7 +34,7 @@
       async_status:
         jid: "{{ job.ansible_job_id }}"
     - name: on the other host
-      command: hostname
+      command: echo delegated
       delegate_to: "{{ 'h2' if inventory_hostname == 'h1' else 'h1' }}"
       changed_when: false
     - name: in check mode

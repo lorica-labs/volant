@@ -338,7 +338,10 @@ fn collection_install(
     let path = match &install.collections_path {
         Some(path) => {
             let path = galaxy::resolve(path);
-            if let Some(warning) = galaxy::collections_path_warning(&path, &configured) {
+            // Volant searches the runtime's directory, so an install there is picked up.
+            if Some(&path) != runtime.as_ref()
+                && let Some(warning) = galaxy::collections_path_warning(&path, &configured)
+            {
                 eprintln!("[WARNING]: {warning}");
             }
             path

@@ -1,5 +1,5 @@
 ---
-sourceHash: 13effd397cb2
+sourceHash: 75fc765d3e37
 title: 托管运行时
 description: Volant 为自己安装的 Python 和 ansible-core，它们位于哪里、下载什么，以及如何管理。
 ---
@@ -64,33 +64,9 @@ volant runtime install --collections requirements.yml
 
 `--collections` 接受名字（每个可以带可选的 `:version`），或以 `.yml` 或 `.yaml` 结尾的 requirements 文件。这些 collection 会放到运行时内部的 `collections/` 中。Volant 在 `ANSIBLE_COLLECTIONS_PATH` 和 `[defaults] collections_path` 的路径之后才查找那里，所以你自己安装的 collection 优先。[`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/) 安装到该路径的第一项，默认是 `~/.ansible/collections`，并把运行时的目录列在最后。
 
+安装由 Volant 自己完成：`volant runtime install --collections` 运行 `volant galaxy collection install -p <runtime>/collections`，打印相同的行，这一步不需要 Python。
+
 运行时只包含 ansible-core 及其依赖，没有别的东西。插件需要其他 Python 包的 collection（例如 `json_query` 需要的 `jmespath`）在其中无法工作。这类情况请通过 `VOLANT_PYTHON` 使用你自己的环境。
-
-## 可选 wheel 集
-
-有些连接插件需要 ansible-core 不自带的 Python 包。其中两组包像基础 wheel 一样为每个平台固定，只在你要求时安装：
-
-| 集 | 包 | 磁盘占用（Linux x86_64） |
-|---|---|---|
-| `windows` | pywinrm、pypsrp 及其依赖 | 约 7 MB |
-| `network` | paramiko、ansible-pylibssh、ncclient 及其依赖 | 约 31 MB |
-
-```sh
-volant runtime install --extras windows
-volant runtime install --extras windows,network
-```
-
-运行时缺失时，`--extras` 先安装运行时；运行时已存在时，它把这些集加进去，不动基础 wheel。wheel 会按固定的哈希校验，并用 `--require-hashes`、不用索引、不解析依赖来安装。`volant runtime status` 列出已安装的集。ansible-pylibssh 没有 musl 构建，所以在 Alpine 和其他 musl 机器上，`network` 集只有 paramiko 和 ncclient。
-
-运行不会安装任何集。当 play 中的主机用 `winrm` 或 `psrp` 连接，而控制端的 Python 是没有 `windows` 集的托管运行时时，运行会在任何连接之前停止，退出码为 4：
-
-```text
-host 'win1': the winrm connection needs the "windows" runtime extras: run volant runtime install --extras windows
-```
-
-`network_cli` 和 `netconf` 以同样的方式要求 `network` 集。使用 `VOLANT_PYTHON` 时，Volant 不改动该解释器，插件自己的错误会说出缺少的包。
-
-有了 `windows` 集，`winrm` 可用 `basic`、`plaintext`、`ssl`、`certificate` 和 `ntlm` 传输，`psrp` 可用 `basic`、`certificate`、`ntlm` 和 `negotiate` 认证，其中 `negotiate` 回退到 NTLM。Kerberos 和 CredSSP 需要该集不包含的系统库和包：请为它们使用带 `VOLANT_PYTHON` 的自有环境。
 
 ## 命令
 
@@ -98,11 +74,9 @@ host 'win1': the winrm connection needs the "windows" runtime extras: run volant
 |---|---|
 | `volant runtime install` | 如果缺少运行时就安装它。 |
 | `volant runtime install --collections NAME_OR_FILE...` | 同时安装 collection。 |
-| `volant runtime install --extras SET,...` | 同时安装可选 wheel 集：`windows`、`network`。 |
 | `volant runtime install --from FILE` | 从 `pack` 生成的文件安装，不下载。 |
 | `volant runtime install --from FILE --sha256 HASH` | 只有当文件的 SHA-256 为 `HASH` 时才从该文件安装。 |
 | `volant runtime pack FILE` | 把已安装的运行时写入一个文件，并打印它的 SHA-256。 |
-| `volant runtime pack FILE --extras SET,...` | 先把这些集加入运行时，让文件带上它们。 |
 | `volant runtime status` | 显示模式、下一次运行使用的解释器，以及托管运行时。 |
 | `volant runtime path` | 打印托管运行时的 Python。未安装时以退出码 1 退出。 |
 | `volant runtime remove [ID]` | 删除当前的运行时，或指定的那个。 |
@@ -120,13 +94,6 @@ volant runtime install --from runtime.tar.gz --sha256 3f1c...e9
 ```
 
 `install --from` 会拒绝为其他平台或其他运行时制作的文件，并同时写明两者。`pack` 会在一行 `sha256` 中打印该文件的 SHA-256。使用 `--sha256 HASH` 时，`install --from` 会在解包之前拒绝哈希值不同的文件，并显示两个哈希值。不使用它时，安装会打印它所用文件的哈希值，方便你自己比对。安装一个包会运行其中的 Python，所以请使用你从制作它的那台机器上得到的哈希值。
-
-文件带有运行时已有的集。打包时用 `--extras` 加上它们，并在另一台机器上再次指明，`install --from` 会检查文件是否包含它们：
-
-```sh
-volant runtime pack runtime.tar.gz --extras windows
-volant runtime install --from runtime.tar.gz --sha256 3f1c...e9 --extras windows
-```
 
 ## 关闭
 

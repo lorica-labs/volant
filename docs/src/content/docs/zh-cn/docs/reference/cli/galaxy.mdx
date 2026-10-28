@@ -1,5 +1,5 @@
 ---
-sourceHash: ab31fe4cc00b
+sourceHash: af5451743cb8
 title: volant galaxy
 description: ansible-galaxy 的选项由 Volant 自己检查，其子命令正逐个改为原生实现。
 ---
@@ -73,6 +73,19 @@ tar 包 URL、命名空间目录和签名在原生实现之前都会被拒绝：
 ## 依赖文件
 
 `-r` 按 `ansible-galaxy` 的方式读取依赖文件：同一个文件中的 `collections:` 和 `roles:`，或旧式的纯角色列表（只有 `role install` 接受）。`include:` 条目引入另一个文件中的角色，其路径相对于工作目录。`-r` 给出两次时以最后一次为准。文件中没有该命令的条目时，`collection install` 和 `role install` 打印 `Skipping install, no requirements found` 并以 0 退出。`-vvv` 会先打印 `Reading requirement file at '<path>'`。格式错误的文件以 `ansible-galaxy` 的消息失败，退出码 1：没有条目、出现 `collections` 和 `roles` 以外的键、角色条目既无 `name` 也无 `src`、集合名不是 `namespace.name` 且不指向任何内容，或 `type` 未知。
+
+## 详细输出
+
+`-v` 在子命令之后计数，与 `ansible-galaxy` 一致；`ansible-galaxy` 会忽略写在子命令之前的 `-v`，Volant 则会计入。
+
+| 级别 | 增加的内容 |
+|---|---|
+| `-v` | `Using <path> as config file`，或 `No config file found; using defaults`。 |
+| `-vv` | 在该行之前打印 `--version` 的块：`ansible-galaxy [core <version>]`、`config file`、`configured module search path`、`ansible collection location`、`executable location`。只有控制节点的解释器有响应时才会出现 Python、Jinja 和 PyYAML 这几行，与 `volant adhoc` 相同。 |
+| `-vvv` | `Reading requirement file at '<file>'`、`found role <dict> in yaml file`、`Processing role <name> `、`Found installed collection <name>:<version> at '<path>'`、`Created <token file>` 或 `Opened <token file>`、`Collection '<name>:<version>' obtained from server <server> <url>`、`Remote collection cached as '<path>'`、`Skipping '<path>' for collection build`，以及 `git` 自身的输出。 |
+| `-vvvv` | `Validating downloaded file hash`。`ansible-galaxy` 的其他 HTTP 行（`Calling Galaxy at`、`Found API version`、响应缓存）不会打印。 |
+
+`ansible-galaxy` 还会报告 `ansible._protomatter`，即 ansible-core 放在自身 Python 包中的集合；Volant 没有这样的包，从不报告它。`role remove` 在删除前会向默认 Galaxy 服务器询问其 API，因此在 `-vvv` 时打印 `Opened <token file>`；Volant 删除角色时不联系任何服务器。
 
 ## 被拒绝的子命令
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: f6341a3afda1
+sourceHash: 3e883615a458
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -105,7 +105,7 @@ Ces cas diffèrent d'`ansible-playbook` sans message avant l'exécution, ou avec
 | `callback_plugins/`, `vars_plugins/` | Ignorés. |
 | `stdout_callback` nommant le callback d'une collection autre que `json`, comme `community.general.unixy` | L'exécution s'arrête avant le premier play avec `Could not load '<name>' callback plugin.`, qu'ansible-core n'affiche que pour un plugin non installé. `default`, `minimal`, `oneline`, `tree` et `json` fonctionnent. |
 | `callbacks_enabled` | Chaque nom est ignoré avec `[WARNING]: Skipping callback plugin '<name>', unable to load`, qu'ansible-core n'affiche que pour un plugin introuvable. `volant.compat.record` est ignoré sans avertissement. |
-| `volant check`, `inventory`, `vault`, `doc`, `config` et `galaxy` | Elles n'existent pas. `volant` a `playbook`, `adhoc`, `runtime` et `shims`. |
+| `volant check` et `volant lint` | Elles n'existent pas. Lancez-les avec ansible-core ou ansible-lint. |
 | Une comparaison écrite entre deux littéraux de types que Python ne sait pas ordonner, comme `{{ 'a' < 1 }}` | Elle répond `false` ou `true` là où ansible-core échoue avec `'<' not supported between instances of 'str' and 'int'`. La bibliothèque de modèles calcule une comparaison de littéraux avant que Volant ne la voie. Avec une variable d'un côté ou de l'autre, la comparaison échoue comme dans ansible-core. |
 | Une tâche avec `no_log: true` qui échoue | Volontaire. Volant affiche `[ERROR]: Task failed: Action failed: <error censored due to no log>` et rien d'autre sur la cause. ansible-core 2.19.12 affiche la cause : `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, l'erreur du module, et les blocs `<<< caused by >>>`. Ce texte peut contenir un secret, comme le `msg` d'un `fail` qui nomme un mot de passe. La [politique de sécurité](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) compte comme une vulnérabilité un secret qui atteint un journal ou un terminal là où `no_log` le cache dans ansible-core : Volant le cache donc. La ligne `fatal:`, le résultat enregistré et le récapitulatif sont identiques dans les deux. Pour lire la cause, exécutez la tâche sans `no_log`. |
 | SIGTERM | Volontaire. Volant s'arrête proprement : il annule les tâches en cours, supprime le répertoire qui contient le mot de passe de connexion, affiche le récapitulatif et se termine avec le code 99, comme pour Ctrl-C. `ansible-playbook` n'intercepte pas SIGTERM. Il meurt aussitôt avec le code 143 et n'affiche aucun récapitulatif. Mesuré avec `kill -TERM` pendant un `command: sleep` : 99 sous Volant, 143 sous ansible-core 2.19.12. |

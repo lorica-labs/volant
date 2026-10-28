@@ -1,5 +1,5 @@
 ---
-sourceHash: 13effd397cb2
+sourceHash: 75fc765d3e37
 title: El runtime administrado
 description: El Python y el ansible-core que Volant instala para sí mismo, dónde viven, qué descargan y cómo administrarlos.
 ---
@@ -64,33 +64,9 @@ volant runtime install --collections requirements.yml
 
 `--collections` acepta nombres, cada uno con un `:version` opcional, o un archivo de requisitos que termina en `.yml` o `.yaml`. Las colecciones van a `collections/` dentro del runtime. Volant mira allí después de las rutas de `ANSIBLE_COLLECTIONS_PATH` y de `[defaults] collections_path`, así que las colecciones que instalaste tú ganan. [`volant galaxy`](/es/docs/reference/cli/galaxy/) instala en la primera entrada de esa ruta, por defecto `~/.ansible/collections`, y lista el directorio del runtime al final.
 
+La instalación es la de Volant: `volant runtime install --collections` ejecuta `volant galaxy collection install -p <runtime>/collections`, imprime las mismas líneas y no necesita Python para ese paso.
+
 El runtime contiene ansible-core y sus dependencias y nada más. Una colección cuyos plugins necesitan otro paquete de Python, como `jmespath` para `json_query`, no funciona en él. Para esas, usa tu propio entorno con `VOLANT_PYTHON`.
-
-## Conjuntos opcionales de wheels
-
-Algunos plugins de conexión necesitan paquetes de Python que ansible-core no trae. Dos conjuntos de ellos están fijados para cada plataforma, como los wheels de base, y solo se instalan cuando los pides:
-
-| Conjunto | Paquetes | Tamaño en disco (Linux x86_64) |
-|---|---|---|
-| `windows` | pywinrm, pypsrp y sus dependencias | unos 7 MB |
-| `network` | paramiko, ansible-pylibssh, ncclient y sus dependencias | unos 31 MB |
-
-```sh
-volant runtime install --extras windows
-volant runtime install --extras windows,network
-```
-
-`--extras` instala primero el runtime si falta, o añade los conjuntos al runtime que ya está sin tocar sus wheels de base. Los wheels se comprueban contra sus hashes fijados y se instalan con `--require-hashes`, sin índice y sin resolver dependencias. `volant runtime status` lista los conjuntos instalados. ansible-pylibssh no tiene compilación para musl, así que el conjunto `network` en Alpine y otras máquinas musl solo tiene paramiko y ncclient.
-
-Una ejecución no instala ningún conjunto. Cuando un host de un play se conecta con `winrm` o `psrp` y el Python del controlador es el runtime gestionado sin el conjunto `windows`, la ejecución se detiene antes de cualquier conexión, con el código de salida 4:
-
-```text
-host 'win1': the winrm connection needs the "windows" runtime extras: run volant runtime install --extras windows
-```
-
-`network_cli` y `netconf` piden el conjunto `network` de la misma forma. Con `VOLANT_PYTHON`, Volant deja el intérprete como está, y el error del propio plugin nombra el paquete que le falta.
-
-Con el conjunto `windows`, `winrm` funciona con los transportes `basic`, `plaintext`, `ssl`, `certificate` y `ntlm`, y `psrp` con las autenticaciones `basic`, `certificate`, `ntlm` y `negotiate`, donde `negotiate` recurre a NTLM. Kerberos y CredSSP necesitan bibliotecas del sistema y paquetes que el conjunto no tiene: para ellos, usa tu propio entorno con `VOLANT_PYTHON`.
 
 ## Comandos
 
@@ -98,11 +74,9 @@ Con el conjunto `windows`, `winrm` funciona con los transportes `basic`, `plaint
 |---|---|
 | `volant runtime install` | Instala el runtime si falta. |
 | `volant runtime install --collections NAME_OR_FILE...` | Instala además colecciones. |
-| `volant runtime install --extras SET,...` | Instala también conjuntos opcionales de wheels: `windows`, `network`. |
 | `volant runtime install --from FILE` | Instala desde un archivo hecho con `pack`, sin descargar nada. |
 | `volant runtime install --from FILE --sha256 HASH` | Instala desde el archivo solo cuando su SHA-256 es `HASH`. |
 | `volant runtime pack FILE` | Escribe el runtime instalado en un archivo e imprime su SHA-256. |
-| `volant runtime pack FILE --extras SET,...` | Añade antes los conjuntos al runtime, para que el archivo los lleve. |
 | `volant runtime status` | Muestra el modo, el intérprete que usará la ejecución siguiente y el runtime administrado. |
 | `volant runtime path` | Imprime el Python del runtime administrado. Sale con código 1 cuando no está instalado. |
 | `volant runtime remove [ID]` | Elimina el runtime actual, o el que se nombra. |
@@ -120,13 +94,6 @@ volant runtime install --from runtime.tar.gz --sha256 3f1c...e9
 ```
 
 `install --from` rechaza un archivo hecho para otra plataforma u otro runtime, y nombra ambos. `pack` imprime el SHA-256 del archivo en una línea `sha256`. Con `--sha256 HASH`, `install --from` rechaza un archivo cuyo hash difiere, antes de descomprimirlo, y muestra ambos hashes. Sin él, la instalación imprime el hash del archivo que usó, para que puedas compararlo tú. Instalar un paquete ejecuta el Python que lleva dentro, así que pasa el hash que obtuviste de la máquina que lo hizo.
-
-El archivo lleva los conjuntos que tenía el runtime. Empaqueta con `--extras` para añadirlos, y vuelve a nombrarlos en la otra máquina, donde `install --from` comprueba que el archivo los tiene:
-
-```sh
-volant runtime pack runtime.tar.gz --extras windows
-volant runtime install --from runtime.tar.gz --sha256 3f1c...e9 --extras windows
-```
 
 ## Desactivarlo
 

@@ -15,7 +15,7 @@ use super::plays::Plays;
 use super::setup::{SetUp, set_up};
 use super::signals::spawn_signal_watcher;
 use crate::compile::{self, Compiled};
-use crate::executor::{self, Abort, RunOptions, RunState};
+use crate::executor::{self, Abort, LocalPool, RunOptions, RunState};
 use crate::inventory::Host;
 use crate::listing::{self, Listing};
 use crate::profile::{Phase, Profile, json_path, micros};
@@ -479,6 +479,7 @@ async fn run_all(
         stop: stop_rx.clone(),
         abort,
         reboots: Arc::default(),
+        local: Arc::new(LocalPool::new(forks)),
         profile: Arc::clone(profile),
         step: args.step.then(Arc::default),
         replay: plays.replay(),
@@ -677,6 +678,7 @@ async fn run_all(
     // blocking drop inside the runtime.
     let closing = std::time::Instant::now();
     state.shutdown_links().await;
+    options.local.shutdown().await;
     profile.phase(None, Phase::Shutdown, micros(closing));
     plays?;
     if *stop_rx.borrow() {

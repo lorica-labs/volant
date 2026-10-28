@@ -1,5 +1,5 @@
 ---
-sourceHash: 174d07af9fd2
+sourceHash: 55eb7eef1053
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -273,6 +273,8 @@ ssh web1 'rm -rf ~/.ansible/tmp/volant-agent-* ~/.ansible/tmp/volant-blobs-*'
 ## Connexions persistantes
 
 Un hôte garde sa connexion à l'agent pendant toute l'exécution, d'un play à l'autre. Les tâches circulent sur cette connexion unique au lieu d'en ouvrir une nouvelle à chaque fois. Si la connexion meurt entre deux plays, Volant se reconnecte une fois, et un second échec signale l'hôte injoignable.
+
+Les hôtes joints en `local` partagent plutôt leurs agents. Chacun de ces agents tourne sur le contrôleur sous le même utilisateur, donc un hôte qui attend les autres passe son agent au prochain hôte qui s'exécute, et le run garde au plus `forks` agents inactifs. Un play sur 500 hôtes locaux garde environ autant d'agents que `forks` le permet, pas 500. Un agent local escaladé reste avec son hôte.
 
 Certaines tâches ajoutent une connexion :
 

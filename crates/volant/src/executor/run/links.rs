@@ -34,6 +34,15 @@ pub(in crate::executor) async fn reuse_or_connect<'a>(
         }
         return Ok(links.get_mut(key).expect("inserted just above"));
     }
+    // A host reaching the controller as the connecting user borrows an idle agent there before
+    // starting one of its own; see `LocalPool`. It is checked like a link kept from a play before.
+    if !links.contains_key(key)
+        && LocalPool::shares(key)
+        && let Some(link) = options.local.take()
+    {
+        checked.remove(key);
+        links.insert(key.clone(), link);
+    }
     // Why the kept connection was not reused, kept only in case the reconnection below fails
     // too: on its own it is not a failure (a single reconnection is the designed recovery), but
     // discarding it silently would leave a reconnect failure reporting only its own cause.
@@ -76,6 +85,91 @@ pub(in crate::executor) async fn reuse_or_connect<'a>(
         links.insert(key.clone(), link);
     }
     Ok(links.get_mut(key).expect("connected just above"))
+}
+
+/// Agents on the controller itself, shared by every host that reaches it over `local` without
+/// escalating. Such an agent holds nothing of the host it serves - its stage directory, its
+/// background jobs and its warm Python servers belong to the machine and the user - so one host
+/// can hand it to the next. Kept per host instead, a play on 500 local hosts held 500 agents and
+/// 500 warm Python servers on the controller and ran out of memory where ansible-core, bounded by
+/// `forks`, used 1.7 GB. With the pool a run holds the agents of the hosts running at once and at
+/// most `cap` idle ones.
+pub struct LocalPool {
+    idle: std::sync::Mutex<Vec<AgentLink>>,
+    cap: usize,
+}
+
+impl LocalPool {
+    pub fn new(cap: usize) -> Self {
+        Self {
+            idle: std::sync::Mutex::new(Vec::new()),
+            cap,
+        }
+    }
+
+    /// Whether the link filed under `key` can serve any host: an agent on the controller, run as
+    /// the connecting user.
+    pub fn shares(key: &LinkKey) -> bool {
+        key.transport == Transport::Local && key.become_user.is_none()
+    }
+
+    fn take(&self) -> Option<AgentLink> {
+        self.idle.lock().expect("local pool lock").pop()
+    }
+
+    #[cfg(all(test, unix))]
+    pub(in crate::executor) fn idle(&self) -> usize {
+        self.idle.lock().expect("local pool lock").len()
+    }
+
+    /// Keeps `link` for the next host, or closes it when the pool is full, its agent is gone or
+    /// it is the stand-in of a host that never answered.
+    pub fn give(&self, link: AgentLink) {
+        let mut idle = self.idle.lock().expect("local pool lock");
+        if idle.len() < self.cap && !link.died() && !link.is_stand_in() {
+            idle.push(link);
+        } else {
+            drop(idle);
+            tokio::spawn(link.shutdown());
+        }
+    }
+
+    /// Hands the shareable links of a host over to the pool, forgetting that they were checked.
+    pub(in crate::executor) fn park(
+        &self,
+        links: &mut HashMap<LinkKey, AgentLink>,
+        checked: &mut HashMap<LinkKey, u64>,
+    ) {
+        let keys: Vec<LinkKey> = links.keys().filter(|k| Self::shares(k)).cloned().collect();
+        for key in keys {
+            checked.remove(&key);
+            if let Some(link) = links.remove(&key) {
+                self.give(link);
+            }
+        }
+    }
+
+    /// Closes every idle agent, concurrently, as `RunState::shutdown_links` closes the kept ones.
+    pub async fn shutdown(&self) {
+        let idle = std::mem::take(&mut *self.idle.lock().expect("local pool lock"));
+        let mut closing = tokio::task::JoinSet::new();
+        for link in idle {
+            closing.spawn(link.shutdown());
+        }
+        while closing.join_next().await.is_some() {}
+    }
+}
+
+/// The fork permit going back at a barrier, and the host's shared local agent with it: a host
+/// waiting there holds no agent another host could be running on.
+pub(in crate::executor) fn release_at_barrier(
+    permit: &mut Option<tokio::sync::OwnedSemaphorePermit>,
+    links: &mut HashMap<LinkKey, AgentLink>,
+    checked: &mut HashMap<LinkKey, u64>,
+    pool: &LocalPool,
+) {
+    *permit = None;
+    pool.park(links, checked);
 }
 
 /// [`reuse_or_connect`], except for a host no agent runs on: its batch is carried by a stand-in,

@@ -1435,6 +1435,23 @@ def captured_messages(result, warning_ctx):
         result["deprecations"] = [summary_shown(d) for d in deprecations]
 
 
+def handler_for(action):
+    """The action plugin `TaskExecutor._get_action_handler` gives a task over a connection the
+    helper owns: the module's own plugin when ansible-core has one (`shell`, `copy`, `ping`'s
+    `normal`), else the network group's plugin its prefix names, else `normal`."""
+    from ansible import constants as C
+    from ansible.plugins import loader as plugin_loader
+
+    collection, _, module = action.rpartition(".")
+    prefix = module.split("_")[0]
+    network = "%s.%s" % (collection, prefix) if collection else prefix
+    if plugin_loader.action_loader.has_plugin(action):
+        return action
+    if prefix in C.NETWORK_GROUP_MODULES and plugin_loader.action_loader.has_plugin(network):
+        return network
+    return "ansible.legacy.normal"
+
+
 def owned_connection(link, context, task, task_vars, templar):
     """The connection plugin `link` names, made as `TaskExecutor._get_connection` and
     `_set_connection_options` make it: loaded with the play context, its become plugin set when
@@ -1614,6 +1631,8 @@ def run_action(ident, request):
         if keyword in fields:
             message = "the task keyword %s is not supported for an action plugin yet" % keyword
             return {"error": {"kind": "plugin", "message": message}}
+    if owned and name in ("normal", "ansible.builtin.normal", "ansible.legacy.normal"):
+        name = handler_for(written)
     if not CALL_NAME.match(name) or not plugin_loader.action_loader.has_plugin(name):
         return {"error": {"kind": "not_found", "message": "the handler '%s' was not found" % name}}
     task_vars = dict(request.get("task_vars") or {})
@@ -1656,7 +1675,13 @@ def run_action(ident, request):
                 # plugin's `_find_needle` reads off the task as the reference's role-bound task gives.
                 task.get_search_path = lambda: list(search_path)
             if owned:
-                connection = owned_connection(link, context, task, task_vars, templar)
+                # A delegated task connects to the delegate, with the delegate's variables, as
+                # `TaskExecutor._execute` connects it.
+                connection_vars = task_vars
+                if task.delegate_to:
+                    delegated = task_vars.get("ansible_delegated_vars") or {}
+                    connection_vars = delegated.get(task.delegate_to) or {}
+                connection = owned_connection(link, context, task, connection_vars, templar)
             else:
                 connection = parts["Link"](ident, shell, context, ssh_options)
             try:

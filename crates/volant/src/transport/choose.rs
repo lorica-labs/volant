@@ -15,8 +15,8 @@ use crate::vars::host_setting;
 use super::control::{SSH_PROGRAM, control_path_for, user_sets_control};
 use super::defaults::{
     BecomeMethod, ConnectError, ConnectionDefaults, ConnectionFailsTask, ConnectionKeywords,
-    Escalation, HostOwn, KNOWN_CONNECTIONS, Secret, SshTarget, Transport, as_map, port_of,
-    setting_args, timeout_of,
+    Escalation, HostOwn, KNOWN_CONNECTIONS, PythonTarget, Secret, SshTarget, Transport, as_map,
+    port_of, setting_args, timeout_of,
 };
 use super::escalation::check_local_escalation;
 use super::escalation::{local_argv, local_su, preamble};
@@ -77,16 +77,24 @@ pub(super) fn remote_tmp_of(
 /// answered as before resolution existed: ansible-core's own plugins this release does not drive,
 /// and any dotted name, are kept so they are refused by name, and any other name is no plugin at
 /// all, which the reference fails the task for.
-fn plugin_of(host_name: &str, name: &str, names: &ConnectionNames) -> anyhow::Result<String> {
+///
+/// The flag says whether the controller found the plugin, which it can then run in the helper.
+fn plugin_of(
+    host_name: &str,
+    name: &str,
+    names: &ConnectionNames,
+) -> anyhow::Result<(String, bool)> {
     if matches!(name, "local" | "ssh") {
-        return Ok(name.to_string());
+        return Ok((name.to_string(), false));
     }
     match names.resolve(host_name, name).unwrap_or(None) {
-        Some(Resolution::Found { fqcn, .. }) => Ok(fqcn),
+        Some(Resolution::Found { fqcn, .. }) => Ok((fqcn, true)),
         Some(Resolution::Unusable(why)) => {
             bail!("host '{host_name}': connection '{name}' cannot be used: {why}")
         }
-        None if KNOWN_CONNECTIONS.contains(&name) || name.contains('.') => Ok(name.to_string()),
+        None if KNOWN_CONNECTIONS.contains(&name) || name.contains('.') => {
+            Ok((name.to_string(), false))
+        }
         Some(Resolution::Missing { warning }) => {
             Err(ConnectionFailsTask::not_found(name, warning).into())
         }
@@ -139,7 +147,8 @@ impl Transport {
             .or_else(|| keywords.connection.clone())
             .or_else(|| defaults.connection.clone());
         let name = connection.as_deref().unwrap_or("ssh");
-        match plugin_of(host_name, name, &defaults.names)?.as_str() {
+        let (plugin, loadable) = plugin_of(host_name, name, &defaults.names)?;
+        match plugin.as_str() {
             "local" | "ansible.builtin.local" => Ok(Transport::Local),
             "ssh" | "ansible.builtin.ssh" => Ok(Transport::Ssh(SshTarget {
                 address: ssh_address(host_name, first_named(&names::HOST))?,
@@ -209,6 +218,10 @@ impl Transport {
                 Some(flavor) => Ok(Transport::Exec(super::lxd::target(
                     flavor, host_name, vars, defaults, keywords,
                 )?)),
+                // A plugin the controller's ansible-core loads runs there, in the helper.
+                None if loadable => Ok(Transport::Python(PythonTarget {
+                    plugin: other.to_string(),
+                })),
                 None => bail!("host '{host_name}': connection '{other}' is not supported"),
             },
         }
@@ -266,7 +279,7 @@ impl Transport {
     /// The user the link logs in or runs as, when one is set.
     pub fn user(&self) -> Option<&str> {
         match self {
-            Transport::Local | Transport::Ssm(_) => None,
+            Transport::Local | Transport::Ssm(_) | Transport::Python(_) => None,
             Transport::Ssh(target) => target.user.as_deref(),
             Transport::Exec(target) => target.user.as_deref(),
         }
@@ -323,6 +336,11 @@ impl Transport {
             Transport::Ssh(target) => target.connect(agents, escalation).await,
             Transport::Exec(target) => target.connect(agents, escalation).await,
             Transport::Ssm(target) => target.connect(agents, escalation).await,
+            // The driver sends this host's tasks to the helper and never connects it.
+            Transport::Python(target) => Err(ConnectError::Unreachable(format!(
+                "no agent runs behind the connection '{}': its tasks run in the Python helper",
+                target.plugin
+            ))),
         }
     }
 }

@@ -1,0 +1,4 @@
+# A connection plugin only ansible-core has that refuses to connect: the host is unreachable with
+# the plugin's words, the other host goes on, and the recap counts it.
+needs: [ansible-core]
+args: [-i, inv.ini, play.yml]

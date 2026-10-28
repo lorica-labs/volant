@@ -212,29 +212,36 @@ mod tests {
             Transport::Ssh(_) => "ssh",
             Transport::Exec(_) => "exec",
             Transport::Ssm(_) => "ssm",
+            Transport::Python(_) => "python",
         };
         assert_eq!(got, want);
     }
 
+    /// A plugin the controller loads and the engine does not drive runs in the helper, under its
+    /// full name.
     #[rstest]
-    #[case(
-        "funcd",
-        "host 'h': connection 'community.general.funcd' is not supported"
-    )]
-    #[case(
-        "winrm",
-        "host 'h': connection 'ansible.builtin.winrm' is not supported"
-    )]
-    #[case(
-        "gone",
-        "host 'h': connection 'gone' cannot be used: AnsiblePluginRemovedError: removed"
-    )]
-    fn a_plugin_volant_does_not_drive_is_refused_by_its_full_name(
+    #[case("funcd", "community.general.funcd")]
+    #[case("winrm", "ansible.builtin.winrm")]
+    fn a_plugin_only_the_controller_loads_runs_in_the_helper(
         #[case] name: &str,
         #[case] want: &str,
     ) {
         let (names, _) = asked();
-        assert_eq!(transport(&names, name).unwrap_err().to_string(), want);
+        assert_eq!(
+            transport(&names, name).unwrap(),
+            Transport::Python(crate::transport::PythonTarget {
+                plugin: want.into()
+            })
+        );
+    }
+
+    #[test]
+    fn a_plugin_the_controller_refuses_is_refused_by_name() {
+        let (names, _) = asked();
+        assert_eq!(
+            transport(&names, "gone").unwrap_err().to_string(),
+            "host 'h': connection 'gone' cannot be used: AnsiblePluginRemovedError: removed"
+        );
     }
 
     #[rstest]

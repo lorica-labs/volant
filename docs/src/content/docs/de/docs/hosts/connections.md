@@ -1,5 +1,5 @@
 ---
-sourceHash: ef0550cf334a
+sourceHash: 174d07af9fd2
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -40,7 +40,7 @@ Jeder andere Name wird vom ansible-core des Controllers aufgelöst, so wie `ansi
 
 Mit `-vvv` gibt ein umgeleiteter Name `redirecting (type: connection) ansible.builtin.chroot to community.general.chroot` unter dem ersten Task aus, der ihn auf einem Host verwendet, eine Zeile pro Schritt.
 
-Ein Name, der sich zu einem Plugin auflöst, das Volant noch nicht steuert, etwa `winrm`, `psrp` oder `community.general.jail`, macht den Host nicht erreichbar, mit `connection '<full name>' is not supported`, und der übrige Lauf geht weiter. Die [Unterstützungsmatrix](/de/docs/reference/parity/#collection-connection) listet jedes Verbindungs-Plugin der Collections im Paket auf.
+Ein Name, der sich zu einem Plugin auflöst, das Volant nicht selbst steuert, etwa `winrm`, `psrp`, `community.general.jail` oder ein Plugin in einem Verzeichnis `connection_plugins/` neben dem Playbook, nimmt den zweiten Weg: siehe [Verbindungen, die nur ansible-core hat](#verbindungen-die-nur-ansible-core-hat). Ohne das ansible-core des Controllers, das gefragt werden kann, macht ein solcher Name den Host nicht erreichbar, mit `connection '<full name>' is not supported`, und der übrige Lauf geht weiter. Die [Unterstützungsmatrix](/de/docs/reference/parity/#collection-connection) listet jedes Verbindungs-Plugin der Collections im Paket auf.
 
 Ein Name, der sich zu nichts auflöst, lässt den Task mit `the connection plugin '<name>' was not found` fehlschlagen, wie bei Ansible. Dazu gehört ein kurzer Name, der zu einer nicht installierten Collection geleitet wird, etwa `docker` ohne community.docker, nach der Warnung, die ansible-core dafür ausgibt, und `ansible.builtin.paramiko`, das ansible-core 2.19.12 unter diesem Namen nicht mitbringt. Das gilt unabhängig davon, ob der Wert die eigene Verbindung des Hosts ist, die eines `delegate_to`-Ziels oder die des Hosts, der einen `run_once`-Task ausführt.
 
@@ -189,6 +189,20 @@ Was sich vom Plugin unterscheidet:
 - Die Verbindung zu einem Host wird zwischen den Tasks geteilt, wie bei `ssh`.
 
 Mit `-vvvv` lautet die erste Zeile `ESTABLISH PARAMIKO SSH CONNECTION FOR USER: <user> on PORT <port> TO <address>`, danach folgen die `SSH: EXEC`-Zeilen eines `ssh`-Hosts.
+
+## Verbindungen, die nur ansible-core hat
+
+Volant erreicht einen Host auf einem von zwei Wegen. Für `ssh`, `local` und die oben aufgeführten Verbindungen startet es seinen Agent auf dem Host und schickt ihm die Tasks. Für jedes andere Verbindungs-Plugin, das das ansible-core des Controllers laden kann, läuft kein Agent: jeder Task, der den Host braucht, geht an den Python-Helfer von Volant, der das Verbindungs-Plugin lädt, sich verbindet, das Action-Plugin des Tasks darüber ausführt wie `ansible-playbook` und die Verbindung wieder schließt. ansible-core liest jede Option des Plugins aus den Variablen des Hosts, der `ansible.cfg` und der Umgebung, wie immer.
+
+Alles andere am Lauf bleibt gleich: Schleifen, `when`, `register`, `changed_when`, `failed_when`, `until` und `retries`, `ignore_errors`, `no_log`, `serial`, `delegate_to`, Handler, `async` mit `poll: 0` und `async_status`, der Check-Modus und das Recap. Ein Task, der auf dem Controller läuft, etwa `debug` oder `set_fact`, läuft dort wie bisher.
+
+- Ein Plugin, das sich nicht verbinden kann, macht den Host mit der eigenen Meldung des Plugins unerreichbar.
+- Die Zeilen, die das Plugin bei `-vvv` ausgibt, etwa `<host> ESTABLISH ... CONNECTION`, erscheinen unter dem Task bei derselben Ausführlichkeit.
+- `ansible_password`, die anderen geheimen Variablen des Plugins und das Become-Passwort werden in jeder Zeile und jedem Ergebnis als `********` geschrieben.
+- Es laufen nie mehr Helfer-Prozesse gleichzeitig, als `forks` erlaubt.
+- `become` nimmt die Eskalationsmethode des Tasks, `sudo` oder `su`.
+
+Jeder Task bezahlt den Aufbau der Verbindung des Plugins, wie bei `ansible-playbook`, daher ist dieser Weg pro Task langsamer als der des Agents.
 
 ## Hostvariablen
 

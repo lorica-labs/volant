@@ -1209,8 +1209,18 @@ fn the_helper_names_the_files_a_union_came_from() {
         return;
     };
     let names = ["ansible.posix.sysctl".to_string(), "ping".to_string()];
-    let (_, traced) = helper.union(&names).unwrap();
-    let traced = traced.expect("every entry is named");
+    // A test running beside this one can make `~/.ansible/tmp` on a fresh machine, which moves a
+    // directory the trace records: the helper then rightly names nothing, as a file changed under
+    // two seconds ago. Once that window has passed, the same union is named.
+    let traced = (0..3)
+        .find_map(|_| {
+            let (_, traced) = helper.union(&names).unwrap();
+            if traced.is_none() {
+                std::thread::sleep(std::time::Duration::from_millis(2100));
+            }
+            traced
+        })
+        .expect("every entry is named");
     let python = std::env::var("VOLANT_PYTHON").unwrap();
     assert_eq!(traced.interpreter, std::fs::canonicalize(python).unwrap());
     let sources = traced.sources;

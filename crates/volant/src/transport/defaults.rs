@@ -189,6 +189,16 @@ pub enum Transport {
     Exec(super::ExecTarget),
     /// Run the agent behind an AWS Systems Manager session.
     Ssm(Box<super::SsmTarget>),
+    /// No agent: every task the host runs goes to the Python helper, which reaches the host
+    /// through the connection plugin the controller's ansible-core loads.
+    Python(PythonTarget),
+}
+
+/// A host only ansible-core can reach: the connection plugin's full name, every option of which
+/// ansible-core reads from the host's variables in the helper.
+#[derive(Debug, Clone, PartialEq, Eq, Hash)]
+pub struct PythonTarget {
+    pub plugin: String,
 }
 
 /// A password a host variable gave. It prints as `<redacted>`, so a derived `Debug` on a type

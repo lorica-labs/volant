@@ -36,8 +36,8 @@ pub use copy::{CopyInto, Feed};
 pub use defaults::{
     BecomeMethod, ConnectError, ConnectionDefaults, ConnectionFailsTask, ConnectionKeywords,
     Escalation, EscalationProgram, HostOwn, INCORRECT_SU_PASSWORD, INCORRECT_SUDO_PASSWORD,
-    MISSING_SUDO_PASSWORD, SU_PREMATURE_END, Secret, SshTarget, Transport, plugin_load_warning,
-    refused_escalation,
+    MISSING_SUDO_PASSWORD, PythonTarget, SU_PREMATURE_END, Secret, SshTarget, Transport,
+    plugin_load_warning, refused_escalation,
 };
 pub use docker::{DockerSettings, PluginSettings};
 pub use exec::{ExecTarget, KeptFile, Lines};

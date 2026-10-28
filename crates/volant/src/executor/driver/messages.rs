@@ -17,6 +17,48 @@ use crate::transport::{ConnectionKeywords, Transport};
 use super::Driver;
 
 impl Driver<'_> {
+    /// What the helper's `Display` said while a host no agent runs on ran the steps at
+    /// `indices`, taken out of each result, which holds it under `_volant_display`: each verbose
+    /// line at its level, `<host> ` in front when it names one, and a plain line as it is.
+    /// Warnings and deprecations reach the output through the result's own fields.
+    pub(super) async fn show_display(
+        &self,
+        indices: impl Iterator<Item = usize>,
+        results: &mut [Vec<Option<TaskResult>>],
+    ) {
+        for (index, items) in indices.zip(results.iter_mut()) {
+            for result in items.iter_mut().flatten() {
+                let Some(Value::Array(events)) = result.0.remove("_volant_display") else {
+                    continue;
+                };
+                for event in events {
+                    let text = event
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let line = match event.get("host").and_then(Value::as_str) {
+                        Some(host) => format!("<{host}> {text}"),
+                        None => text.to_string(),
+                    };
+                    let shade = match event.get("level").and_then(Value::as_u64) {
+                        Some(0) => Shade::Plain,
+                        Some(level) => Shade::Verbose(u8::try_from(level).unwrap_or(u8::MAX)),
+                        None => continue,
+                    };
+                    let host = self.name.to_string();
+                    let event = Event::Display {
+                        host,
+                        index,
+                        line,
+                        shade,
+                        banner: true,
+                    };
+                    let _ = self.tx.send(event).await;
+                }
+            }
+        }
+    }
+
     /// A `[WARNING]` for this host at the step at `index`, shown even under `no_log`.
     pub(super) async fn warn(&self, index: usize, message: String) {
         let _ = self

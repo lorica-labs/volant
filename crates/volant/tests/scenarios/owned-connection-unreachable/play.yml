@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: a command
+      command: echo hi
+    - name: after
+      debug:
+        msg: still here

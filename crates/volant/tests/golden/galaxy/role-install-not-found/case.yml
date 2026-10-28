@@ -1,0 +1,1 @@
+args: [role, install, demo.nope, -s, "<golden-server>", -p, "<golden-tmp>/roles"]

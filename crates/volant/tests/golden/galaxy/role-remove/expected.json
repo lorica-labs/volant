@@ -1,0 +1,26 @@
+{
+  "args": [
+    "role",
+    "remove",
+    "demo.web",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [],
+  "setup": [
+    [
+      "role",
+      "install",
+      "demo.web",
+      "-s",
+      "<golden-server>",
+      "-p",
+      "<golden-tmp>/roles"
+    ]
+  ],
+  "stderr": "",
+  "stdout": "- successfully removed demo.web\n",
+  "tree": {}
+}

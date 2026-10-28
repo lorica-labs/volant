@@ -1,0 +1,16 @@
+{
+  "args": [
+    "role",
+    "remove",
+    "demo.nope",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [],
+  "setup": [],
+  "stderr": "",
+  "stdout": "- demo.nope is not installed, skipping.\n",
+  "tree": {}
+}

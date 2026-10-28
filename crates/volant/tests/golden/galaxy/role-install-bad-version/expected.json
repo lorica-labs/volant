@@ -1,0 +1,23 @@
+{
+  "args": [
+    "role",
+    "install",
+    "demo.web,9.9.9",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 1,
+  "repos": [],
+  "requests": [
+    "GET /",
+    "GET /api",
+    "GET /api/v1/roles/?owner__username=demo&name=web",
+    "GET /api/v1/roles/1/versions/?page_size=50"
+  ],
+  "setup": [],
+  "stderr": "[WARNING]: - demo.web was NOT installed successfully: - the specified version (9.9.9) of demo.web was not found in the list of available versions ([{'created': '2026-01-01T00:00:00.000000Z', 'download_url': 'http://127.0.0.1:<golden-port>/roles/demo/web/1.0.0.tar.gz', 'id': 1, 'modified': '2026-01-01T00:00:00.000000Z', 'name': '1.0.0', 'version': '1.0.0'}, {'created': '2026-01-01T00:00:00.000000Z', 'download_url': 'http://127.0.0.1:<golden-port>/roles/demo/web/1.1.0.tar.gz', 'id': 2, 'modified': '2026-01-01T00:00:00.000000Z', 'name': '1.1.0', 'version': '1.1.0'}]).\n[ERROR]: - you can use --ignore-errors to skip failed roles and finish processing the list.\n",
+  "stdout": "Starting galaxy role install process\n- downloading role 'web', owned by demo\n",
+  "tree": {}
+}

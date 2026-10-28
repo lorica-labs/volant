@@ -1,0 +1,31 @@
+{
+  "args": [
+    "role",
+    "install",
+    "demo.nope",
+    "demo.web",
+    "-i",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [
+    "GET /",
+    "GET /api",
+    "GET /api/v1/roles/?owner__username=demo&name=nope",
+    "GET /api/v1/roles/?owner__username=demo&name=web",
+    "GET /api/v1/roles/1/versions/?page_size=50",
+    "GET /roles/demo/web/1.1.0.tar.gz"
+  ],
+  "setup": [],
+  "stderr": "[WARNING]: - demo.nope was NOT installed successfully: - sorry, demo.nope was not found on http://127.0.0.1:<golden-port>/api.\n",
+  "stdout": "Starting galaxy role install process\n- downloading role 'nope', owned by demo\n- downloading role 'web', owned by demo\n- downloading role from http://127.0.0.1:<golden-port>/roles/demo/web/1.1.0.tar.gz\n- extracting demo.web to <golden-tmp>/roles/demo.web\n- demo.web (1.1.0) was installed successfully\n",
+  "tree": {
+    "roles/demo.web/meta/.galaxy_install_info": "0b22cfa852e38fab6e2b225351c6ba0bd2d3d36f81f94ccdd9fb9a506b7dbf4b",
+    "roles/demo.web/meta/main.yml": "d65f4e3c3025e3647e25c952df0f701d2c02ade3cce0ad93bc18b045fad02a2b",
+    "roles/demo.web/tasks/main.yml": "dbf593e0f246a42be7f49e6deed618075cd0b1bd4f3b7698ea5154d5d519702a"
+  }
+}

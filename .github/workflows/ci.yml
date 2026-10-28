@@ -157,6 +157,12 @@ jobs:
           NEXTEST_PROFILE: ${{ github.event_name == 'pull_request' && 'pr' || 'default' }}
           SHARD: ${{ matrix.shard }}
         run: cargo nextest run --workspace --no-tests=fail ${SHARD:+--partition "count:$SHARD"}
+      - if: needs.changes.outputs.code == 'true' && matrix.shard == '1/2'
+        name: The windows extras install into the runtime
+        run: |
+          set -euo pipefail
+          cargo run -q -p volant --bin volant -- runtime install --extras windows
+          "$(cargo run -q -p volant --bin volant -- runtime path)" -c "import winrm, pypsrp"
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
         run: cargo nextest run --workspace --no-run
       - if: needs.changes.outputs.code == 'true' && matrix.os == 'ubuntu-latest' && github.event_name != 'pull_request'
@@ -345,6 +351,34 @@ jobs:
               git+https://github.com/ansible-collections/community.library_inventory_filtering.git,1.1.5
           fi
           ./volant playbook -i runtime-clean/inventory.yml runtime-clean/collection.yml
+      - name: The windows extras install into the runtime
+        working-directory: dist
+        run: |
+          set -euo pipefail
+          ./volant runtime install --extras windows
+          "$(./volant runtime path)" -c "import winrm, pypsrp"
+          ./volant runtime status | grep -q "extras: windows"
+
+  # The same on a musl machine, whose triple pins its own wheels.
+  runtime-musl:
+    needs: runtime-binary
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    container: docker.io/library/alpine:3.20@sha256:d9e853e87e55526f6b2917df91a2115c36dd7c696a35be12163d44e6e2a4b6bc
+    steps:
+      - name: Install curl and tar, the tools the download needs
+        run: apk add --no-cache curl ca-certificates tar
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8
+        with:
+          name: runtime-clean
+          path: dist
+      - name: The windows extras install with the runtime
+        working-directory: dist
+        run: |
+          set -eu
+          chmod +x volant
+          ./volant runtime install --extras windows
+          "$(./volant runtime path)" -c "import winrm, pypsrp"
 
   # Ordinary ansible scripts on a machine with no ansible and no Python, run through the
   # `ansible-*` names. Each script compares its output with a recording of ansible-core.

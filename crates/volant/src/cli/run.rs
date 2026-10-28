@@ -634,6 +634,14 @@ async fn run_all(
                     agents.local()?;
                     local_agent_checked = true;
                 }
+                let connection = play.connect.connection.as_deref();
+                crate::runtime::extras::check(
+                    &hosts,
+                    connection,
+                    &extra_for_check,
+                    &options.defaults,
+                )
+                .map_err(|e| Refusal::at(4, e))?;
                 state.played |= !hosts.is_empty();
                 let end = executor::run_play(
                     play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,

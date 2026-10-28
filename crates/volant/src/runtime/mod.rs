@@ -4,6 +4,7 @@
 //! the runtimes installed from them.
 
 pub(crate) mod collections;
+pub(crate) mod extras;
 pub(crate) mod fetch;
 pub(crate) mod install;
 pub(crate) mod manifest;
@@ -49,13 +50,23 @@ pub(crate) fn status(runtimes: &Path, manifest: &manifest::Manifest) -> String {
     let id = manifest.id();
     let mut lines = resolve::describe();
     lines.push(format!("managed runtime: {id}"));
-    lines.push(match install::installed(runtimes, &id) {
+    let installed = install::installed(runtimes, &id);
+    lines.push(match &installed {
         Some(done) => format!("  installed: {}", done.python.display()),
         None => format!(
             "  not installed: `volant runtime install` puts it in {}",
             runtimes.join(&id).display()
         ),
     });
+    if let Some(done) = &installed {
+        let sets = extras::installed_sets(&done.dir);
+        lines.push(if sets.is_empty() {
+            "  extras: none (`volant runtime install --extras windows,network` adds them)"
+                .to_owned()
+        } else {
+            format!("  extras: {}", sets.join(", "))
+        });
+    }
     lines.push(match host_triple() {
         Ok(triple) => format!("  platform: {triple}"),
         Err(e) => format!("  platform: {e}"),

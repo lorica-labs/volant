@@ -32,6 +32,23 @@ pub(crate) struct Platform {
     pub(crate) python: Artifact,
     /// ansible-core and every dependency, as wheels built for this platform.
     pub(crate) wheels: Vec<Wheel>,
+    /// The optional sets, by name: the wheels each adds on top of `wheels`.
+    pub(crate) extras: BTreeMap<String, Vec<Wheel>>,
+}
+
+/// The optional sets a runtime can add with `volant runtime install --extras`, and the packages
+/// each brings, as `lock.py` resolves them.
+pub(crate) const EXTRAS: [(&str, &str); 2] = [
+    ("windows", "pywinrm, pypsrp"),
+    ("network", "paramiko, ansible-pylibssh, ncclient"),
+];
+
+/// The modules that prove a set installed: its packages, less the ones a triple may lack.
+pub(crate) fn imports(set: &str) -> &'static str {
+    match set {
+        "windows" => "winrm, pypsrp",
+        _ => "paramiko, ncclient",
+    }
 }
 
 /// A file to download and the SHA-256 it must have, 64 lowercase hex digits.
@@ -106,28 +123,31 @@ fn read(text: &str) -> Result<Manifest, String> {
             .as_table()
             .ok_or_else(|| format!("platform.{triple} is not a table"))?;
         let python = artifact(table(entry, &at, "python")?, &format!("{at}python."))?;
-        let wheels = entry
-            .get("wheel")
-            .and_then(Item::as_array_of_tables)
-            .ok_or_else(|| format!("{at}wheel is missing or not an array of tables"))?
-            .iter()
-            .enumerate()
-            .map(|(i, wheel)| {
-                let at = format!("{at}wheel[{i}].");
-                Ok(Wheel {
-                    name: string(wheel, &at, "name")?,
-                    version: string(wheel, &at, "version")?,
-                    file: artifact(wheel, &at)?,
-                })
-            })
-            .collect::<Result<Vec<_>, String>>()?;
+        let wheels = wheel_list(entry.get("wheel"), &format!("{at}wheel"))?;
+        let mut extras = BTreeMap::new();
+        if let Some(sets) = entry.get("extras") {
+            let sets = sets
+                .as_table()
+                .ok_or_else(|| format!("{at}extras is not a table"))?;
+            for (name, set) in sets {
+                let set = wheel_list(Some(set), &format!("{at}extras.{name}"))?;
+                extras.insert(name.to_owned(), set);
+            }
+        }
         if !wheels
             .iter()
             .any(|wheel| wheel.name == "ansible-core" && wheel.version == ansible_core)
         {
             return Err(format!("{at}wheel has no ansible-core {ansible_core}"));
         }
-        platforms.insert(triple.to_owned(), Platform { python, wheels });
+        platforms.insert(
+            triple.to_owned(),
+            Platform {
+                python,
+                wheels,
+                extras,
+            },
+        );
     }
     Ok(Manifest {
         python: string(root, "", "python")?,
@@ -136,6 +156,23 @@ fn read(text: &str) -> Result<Manifest, String> {
         platforms,
         digest: format!("{:x}", <sha2::Sha256 as sha2::Digest>::digest(text)),
     })
+}
+
+/// The wheels an array of tables at `at` lists.
+fn wheel_list(item: Option<&Item>, at: &str) -> Result<Vec<Wheel>, String> {
+    item.and_then(Item::as_array_of_tables)
+        .ok_or_else(|| format!("{at} is missing or not an array of tables"))?
+        .iter()
+        .enumerate()
+        .map(|(i, wheel)| {
+            let at = format!("{at}[{i}].");
+            Ok(Wheel {
+                name: string(wheel, &at, "name")?,
+                version: string(wheel, &at, "version")?,
+                file: artifact(wheel, &at)?,
+            })
+        })
+        .collect()
 }
 
 fn table<'a>(parent: &'a Table, at: &str, key: &str) -> Result<&'a Table, String> {

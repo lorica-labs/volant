@@ -1,6 +1,6 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::fetch::{extract, fetch, fetch_with, sha256_of};
-use super::manifest::Manifest;
+use super::manifest::{EXTRAS, Manifest};
 use super::*;
 use crate::testing::scratch;
 
@@ -64,6 +64,26 @@ fn the_pinned_manifest_covers_every_triple() {
             platform.python.url
         );
         assert!(platform.wheels.len() > 1, "{triple} pins no dependency");
+        // Every set on every platform, none repeating a base wheel.
+        for (name, _) in EXTRAS {
+            let set = &platform.extras[name];
+            assert!(!set.is_empty(), "{triple} pins nothing for {name}");
+            for wheel in set {
+                assert!(
+                    !platform.wheels.iter().any(|base| base.name == wheel.name),
+                    "{triple}: {name} repeats {}",
+                    wheel.name
+                );
+            }
+        }
+        let names: Vec<&str> = platform.extras["windows"]
+            .iter()
+            .map(|wheel| wheel.name.as_str())
+            .collect();
+        assert!(
+            names.contains(&"pywinrm") && names.contains(&"pypsrp"),
+            "{names:?}"
+        );
     }
     assert_eq!(manifest.ansible_core, "2.19.12");
     manifest.platform(&host_triple().unwrap()).unwrap();

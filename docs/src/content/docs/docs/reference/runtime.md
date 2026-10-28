@@ -65,15 +65,43 @@ volant runtime install --collections requirements.yml
 
 The runtime holds ansible-core and its dependencies and nothing else. A collection whose plugins need another Python package, such as `jmespath` for `json_query`, does not work in it. For those, use your own environment with `VOLANT_PYTHON`.
 
+## Optional wheel sets
+
+Some connection plugins need Python packages ansible-core does not bring. Two sets of them are pinned for every platform, like the base wheels, and installed only when you ask:
+
+| Set | Packages | Size on disk (Linux x86_64) |
+|---|---|---|
+| `windows` | pywinrm, pypsrp and their dependencies | about 7 MB |
+| `network` | paramiko, ansible-pylibssh, ncclient and their dependencies | about 31 MB |
+
+```sh
+volant runtime install --extras windows
+volant runtime install --extras windows,network
+```
+
+`--extras` installs the runtime first when it is missing, or adds the sets to the runtime already there without touching its base wheels. The wheels are checked against their pinned hashes and installed with `--require-hashes`, no index and no dependency resolution. `volant runtime status` lists the sets installed. ansible-pylibssh has no musl build, so the `network` set on Alpine and other musl machines has paramiko and ncclient only.
+
+A run does not install a set. When a play's host connects with `winrm` or `psrp` and the controller's Python is the managed runtime without the `windows` set, the run stops before any connection, with exit code 4:
+
+```text
+host 'win1': the winrm connection needs the "windows" runtime extras: run volant runtime install --extras windows
+```
+
+`network_cli` and `netconf` ask for the `network` set the same way. With `VOLANT_PYTHON`, Volant leaves the interpreter as it is, and the plugin's own error names the package it misses.
+
+From the `windows` set, `winrm` works with the `basic`, `plaintext`, `ssl`, `certificate` and `ntlm` transports, and `psrp` with the `basic`, `certificate`, `ntlm` and `negotiate` authentications, where `negotiate` falls back to NTLM. Kerberos and CredSSP need system libraries and packages the set does not hold: use your own environment with `VOLANT_PYTHON` for them.
+
 ## Commands
 
 | Command | What it does |
 |---|---|
 | `volant runtime install` | Installs the runtime if it is missing. |
 | `volant runtime install --collections NAME_OR_FILE...` | Also installs collections. |
+| `volant runtime install --extras SET,...` | Also installs optional wheel sets: `windows`, `network`. |
 | `volant runtime install --from FILE` | Installs from a file made by `pack`, with no download. |
 | `volant runtime install --from FILE --sha256 HASH` | Installs from the file only when its SHA-256 is `HASH`. |
 | `volant runtime pack FILE` | Writes the installed runtime to a file and prints its SHA-256. |
+| `volant runtime pack FILE --extras SET,...` | Adds the sets to the runtime first, so the file carries them. |
 | `volant runtime status` | Shows the mode, the interpreter the next run uses, and the managed runtime. |
 | `volant runtime path` | Prints the managed runtime's Python. Exits with code 1 when it is not installed. |
 | `volant runtime remove [ID]` | Deletes the current runtime, or the one named. |
@@ -91,6 +119,13 @@ volant runtime install --from runtime.tar.gz --sha256 3f1c...e9
 ```
 
 `install --from` refuses a file made for another platform or another runtime, and names both. `pack` prints the SHA-256 of the file on a `sha256` line. With `--sha256 HASH`, `install --from` refuses a file whose hash differs, before unpacking it, and shows both hashes. Without it the install prints the hash of the file it used, so you can compare it yourself. Installing a pack runs the Python inside it, so pass the hash you got from the machine that made it.
+
+The file carries the sets the runtime held. Pack with `--extras` to add them, and name them again on the other machine, where `install --from` checks the file holds them:
+
+```sh
+volant runtime pack runtime.tar.gz --extras windows
+volant runtime install --from runtime.tar.gz --sha256 3f1c...e9 --extras windows
+```
 
 ## Turning it off
 

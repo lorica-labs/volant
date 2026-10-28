@@ -13,7 +13,7 @@ use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
 use super::fetch::{extract, fetch};
 use super::host_triple;
-use super::manifest::{Manifest, Platform};
+use super::manifest::{Manifest, Platform, Wheel};
 
 /// The file that says what a runtime holds. A directory without it is not a runtime.
 pub(super) const RECORD: &str = "RUNTIME.json";
@@ -93,7 +93,13 @@ pub(crate) fn install(runtimes: &Path, manifest: &Manifest) -> Result<Installed,
     let tarball = downloads.join(platform.python.filename()?);
     fetch(&platform.python.url, &platform.python.sha256, &tarball)?;
     let python = extract(&tarball, &stage)?;
-    install_wheels(&python, platform, &downloads.join("wheels"))?;
+    install_wheels(
+        &python,
+        &platform.wheels,
+        &downloads.join("wheels"),
+        "ansible-core",
+        &[],
+    )?;
     probe(&python, &manifest.ansible_core)?;
     write_record(&stage, &id, &triple, manifest, platform)?;
     let dir = runtimes.join(&id);
@@ -135,11 +141,18 @@ pub(crate) fn python_command(python: &Path) -> Command {
     command
 }
 
-/// Downloads every wheel the platform pins into `wheels`, each checked against its hash, and
-/// installs them with pip from that directory alone, which checks the hashes again.
-fn install_wheels(python: &Path, platform: &Platform, wheels: &Path) -> Result<(), String> {
+/// Downloads every wheel of `pinned` into `wheels`, each checked against its hash, and installs
+/// them with pip from that directory alone, which checks the hashes again. `what` names them in
+/// a failure; `more` goes to pip as it is.
+pub(super) fn install_wheels(
+    python: &Path,
+    pinned: &[Wheel],
+    wheels: &Path,
+    what: &str,
+    more: &[&str],
+) -> Result<(), String> {
     let mut requirements = Vec::new();
-    for wheel in &platform.wheels {
+    for wheel in pinned {
         let file = &wheel.file;
         fetch(&file.url, &file.sha256, &wheels.join(file.filename()?))?;
         requirements.push(format!(
@@ -159,13 +172,14 @@ fn install_wheels(python: &Path, platform: &Platform, wheels: &Path) -> Result<(
         .args(["--no-index", "--find-links"])
         .arg(wheels)
         .args(["--require-hashes", "--only-binary", ":all:"])
+        .args(more)
         .args(["--no-warn-script-location", "--quiet", "--requirement"])
         .arg(&list)
         .output()
         .map_err(|e| format!("cannot run {}: {e}", python.display()))?;
     if !output.status.success() {
         return Err(format!(
-            "pip could not install ansible-core into the runtime ({}): {}; check the free disk \
+            "pip could not install {what} into the runtime ({}): {}; check the free disk \
              space, then run `volant runtime install` again",
             output.status,
             String::from_utf8_lossy(&output.stderr).trim()

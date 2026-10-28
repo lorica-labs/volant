@@ -183,7 +183,7 @@ pub fn copy_inputs(name: &str, tmp: &Path) -> Vec<String> {
 }
 
 /// Every file under `tmp` outside its `home` and `skip`, by path, with the SHA-256 of its
-/// normalised text, or of its uncompressed content for a `.tar.gz`.
+/// normalised text, or of its members for a `.tar.gz` (see [`members`]).
 pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMap<String, String> {
     fn walk(dir: &Path, out: &mut Vec<PathBuf>) {
         for entry in std::fs::read_dir(dir).expect("readable").flatten() {
@@ -211,15 +211,8 @@ pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMa
         .into_iter()
         .map(|path| {
             let mut data = std::fs::read(&path).expect("readable");
-            // The fake server gzips at run time, and zlib's output differs between platforms.
             if path.to_string_lossy().ends_with(".tar.gz") {
-                let mut plain = Vec::new();
-                std::io::Read::read_to_end(
-                    &mut flate2::read::GzDecoder::new(&data[..]),
-                    &mut plain,
-                )
-                .expect("a gzip file");
-                data = plain;
+                data = members(&data);
             }
             let data = match String::from_utf8(data) {
                 Ok(text) => normalise(&text, tmp, port).into_bytes(),
@@ -233,4 +226,45 @@ pub fn tree(tmp: &Path, port: u16, skip: &[String]) -> std::collections::BTreeMa
             (name, format!("{:x}", Sha256::digest(&data)))
         })
         .collect()
+}
+
+/// A tarball as `golden/reference/galaxy.py` records it: its members sorted by name, each with
+/// its kind and content hash, a line each. Times, owners and compression do not count.
+fn members(data: &[u8]) -> Vec<u8> {
+    let mut archive = tar::Archive::new(flate2::read::GzDecoder::new(data));
+    let mut lines: Vec<(String, String)> = Vec::new();
+    for entry in archive.entries().expect("a tarball") {
+        let mut entry = entry.expect("a member");
+        let name = entry
+            .path()
+            .expect("a name")
+            .to_string_lossy()
+            .trim_end_matches('/')
+            .to_string();
+        let line = match entry.header().entry_type() {
+            tar::EntryType::Directory => format!("{name} dir"),
+            tar::EntryType::Symlink => format!(
+                "{name} link {}",
+                entry
+                    .link_name()
+                    .ok()
+                    .flatten()
+                    .map(|l| l.to_string_lossy().into_owned())
+                    .unwrap_or_default()
+            ),
+            _ => {
+                let mut content = Vec::new();
+                std::io::Read::read_to_end(&mut entry, &mut content).expect("readable");
+                format!("{name} file {:x}", Sha256::digest(&content))
+            }
+        };
+        lines.push((name, line));
+    }
+    lines.sort();
+    lines
+        .into_iter()
+        .map(|(_, l)| l)
+        .collect::<Vec<_>>()
+        .join("\n")
+        .into_bytes()
 }

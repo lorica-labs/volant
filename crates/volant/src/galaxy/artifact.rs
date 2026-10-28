@@ -155,7 +155,17 @@ impl Tarball {
                 self.path.display()
             )));
         };
-        let actual = format!("{:x}", Sha256::digest(&member.data));
+        // `tarfile.extractfile` follows a link to the member it points at, so a link's checksum
+        // is its target's.
+        let content = if member.kind == tar::EntryType::Symlink {
+            let base = Path::new(name).parent().unwrap_or(Path::new(""));
+            let target = folded(&base.join(member.link.as_deref().unwrap_or_default()));
+            let key = target.to_string_lossy().replace('\\', "/");
+            self.members.get(&key).map_or(&member.data, |m| &m.data)
+        } else {
+            &member.data
+        };
+        let actual = format!("{:x}", Sha256::digest(content));
         if expected.is_some_and(|e| !e.is_empty() && e != actual) {
             return Err(Failure::error(format!(
                 "Checksum mismatch for '{name}' inside collection at '{}'",

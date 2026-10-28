@@ -1,5 +1,5 @@
 ---
-sourceHash: 4b76db5e89fc
+sourceHash: deeb7b8f1e36
 title: volant galaxy
 description: Die Optionen von ansible-galaxy, von Volant selbst geprüft, während seine Unterbefehle einer nach dem anderen nativ werden.
 ---
@@ -32,7 +32,13 @@ Liegt kein konfigurierter Collections-Pfad unter dem `PATH` von `collection inst
 
 `collection install` installiert einen Collection-Tarball nativ: `volant galaxy collection install acme-demo-1.0.0.tar.gz -p DIR`. Name und Version kommen aus dem `MANIFEST.json` des Tarballs, nicht aus dem Dateinamen. Die Collection kommt nach `DIR/ansible_collections/<namespace>/<name>`, ohne `-p` unter den ersten Collections-Pfad. Geschrieben werden nur die Dateien, die `FILES.json` auflistet, jede zuerst gegen ihren SHA-256 geprüft. Eine Datei bekommt `0644`, oder `0755`, wenn das Archiv sie als ausführbar markiert. Ein Eintrag, der außerhalb der Collection landen würde, wird abgelehnt, ebenso ein Link, der aus ihr hinauszeigt. Eine fehlgeschlagene Installation hinterlässt keine halb geschriebene Collection. Ausgabe, Meldungen und Exit-Codes sind die von `ansible-galaxy`. Eine bereits in derselben Version installierte Collection ergibt `Nothing to do. All requested collections are already installed. If you want to reinstall them, consider using `--force`.`, und `--force` installiert sie erneut über den alten Baum. Existiert `PATH/ansible_collections` schon, sagt die Warnung zu `-p`, der Pfad `appears to be part of the pip Ansible package`, wie `ansible-galaxy` es sagt.
 
-Verzeichnisse, URLs, git und Signaturen werden abgelehnt, bis sie nativ sind: `[ERROR]: volant galaxy collection install from a directory, a URL or git is not supported yet` oder `with signatures`, Exit 1.
+URLs, git, Namespace-Verzeichnisse und Signaturen werden abgelehnt, bis sie nativ sind: `[ERROR]: volant galaxy collection install from a URL, git or a namespace directory is not supported yet` oder `with signatures`, Exit 1.
+
+## Eine Collection bauen
+
+`collection build [PATH] [--output-path DIR] [-f]` macht aus einem Quellbaum mit `galaxy.yml`, standardmäßig `.`, die Datei `<namespace>-<name>-<version>.tar.gz` in `DIR`, standardmäßig `./`, und gibt `Created collection for <namespace>.<name> at <path>` aus. `galaxy.yml` braucht `namespace`, `name`, `version`, `readme` und `authors`; ein fehlender Schlüssel oder eine fehlende `galaxy.yml` scheitert mit der Meldung von `ansible-galaxy`. Der Tarball enthält `MANIFEST.json`, `FILES.json` und den Baum, ohne das, was `ansible-galaxy` weglässt: `galaxy.yml`, `.git` und die anderen Verzeichnisse der Versionsverwaltung, `__pycache__`, `*.pyc`, `*.retry`, `tests/output`, frühere Artefakte der Collection und was `build_ignore` auflistet. Eine Datei bekommt `0644`, oder `0755`, wenn ihr Besitzer sie ausführen darf; ein Link innerhalb des Baums bleibt ein Link, einer auf ein Verzeichnis außerhalb wird mit einer Warnung übersprungen. Ein vorhandenes Artefakt ist ein Fehler, außer mit `-f`. Volant schreibt jede Zeit als 0 und jeden Besitzer als root, sodass zweimal derselbe Baum dieselben Bytes ergibt; `ansible-galaxy` setzt die aktuelle Zeit. Eine `galaxy.yml` mit einem Schlüssel `manifest:` wird vorerst abgelehnt.
+
+`collection install DIR` installiert einen Quellbaum ebenso, ohne Tarball, und gibt `Created collection for <namespace>.<name>:<version> at <path>` zwischen seinen Zeilen `Installing` und `installed successfully` aus. `collection download` baut einen Quellbaum in den Download-Ordner.
 
 ## Von Galaxy-Servern installieren
 

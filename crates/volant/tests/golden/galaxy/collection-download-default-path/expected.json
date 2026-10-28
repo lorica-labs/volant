@@ -20,7 +20,7 @@
   "stderr": "",
   "stdout": "Process download dependency map\nStarting collection download process to '<golden-tmp>/collections'\nDownloading collection 'demo.base:2.0.0' to '<golden-tmp>/collections'\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/base/artifacts/demo-base-2.0.0.tar.gz to <golden-galaxy-tmp>/demo-base-2.0.0-<golden-random>\nCollection 'demo.base:2.0.0' was downloaded successfully\nWriting requirements.yml file of downloaded collections to '<golden-tmp>/collections/requirements.yml'\n",
   "tree": {
-    "collections/demo-base-2.0.0.tar.gz": "33cd17e07d0d9ab00ecf3ce55ba30694a85570b2182591cf5e381780b509ebb6",
+    "collections/demo-base-2.0.0.tar.gz": "edf18698950f611362ef66457efa620498a1af5979517f61d45be8dde9bc0254",
     "collections/requirements.yml": "20b03e8cc647f5a31a707014fdc2f7a4e6a1163d701f9745aa225f8090763f7f"
   }
 }

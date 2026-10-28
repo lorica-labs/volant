@@ -1,0 +1,3 @@
+setup:
+  - [collection, build, src, --output-path, "<golden-tmp>/out"]
+args: [collection, build, src, --output-path, "<golden-tmp>/out"]

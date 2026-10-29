@@ -1,5 +1,5 @@
 ---
-sourceHash: d61771341944
+sourceHash: c05916ab716d
 title: Referenz der Template-Sprache
 description: Die Python-Methoden, String-Regeln, regulären Ausdrücke und Grenzen des Jinja2 von Volant, mit jedem Unterschied zu ansible-core.
 ---
@@ -231,7 +231,7 @@ Volant lehnt einen YAML-Text ab, den es nicht ohne Risiko laden kann. Der Fehler
 
 ### Lücken bei Template-Dateien
 
-- `template_host`, `template_uid`, `template_run_date` und `template_mtime` werden nicht gesetzt, anders als `template_path`, `template_fullpath` und `ansible_managed`.
+- `template_run_date` und `template_mtime` sind Text in der Form von Pythons `str` eines `datetime`, keine `datetime`-Werte: Sie werden gleich ausgegeben, und `type_debug` liefert `str`.
 - `line_statement_prefix` und `line_comment_prefix` in einer `#jinja2:`-Zeile werden mit Namen abgelehnt. Die Template-Engine von Volant und Jinja2 unterscheiden sich bei einer Leerzeile nach einer Zeilenanweisung und beim Zeilenumbruch eines Zeilenkommentars.
 - Ein Begrenzer, der länger als 64 Zeichen ist, und eine `#jinja2:`-Zeile, die länger als 16 KiB ist, werden mit einem Fehler abgelehnt, der die Option nennt. Klammern in einem `#jinja2:`-Wert verschachteln bis 200 Ebenen, wie in Python.
 - Ein `variable_end_string` oder `block_end_string`, das mit Leerraum beginnt, wird mit Namen abgelehnt. Ein leerer Begrenzer wird ebenfalls abgelehnt, wo Jinja2 ihn je nach Template unterschiedlich liest.

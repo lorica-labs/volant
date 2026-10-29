@@ -201,6 +201,9 @@ fn template_vars(
     } else {
         vars.insert("template_destpath".into(), Value::from(dest));
     }
+    for (name, value) in crate::template::file_vars(Path::new(fullpath)) {
+        vars.insert(name.into(), value);
+    }
     vars
 }
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: d61771341944
+sourceHash: c05916ab716d
 title: 模板语言参考
 description: Volant 的 Jinja2 所支持的 Python 方法、字符串规则、正则表达式和限制，以及与 ansible-core 的每一处差异。
 ---
@@ -232,7 +232,7 @@ Volant 会拒绝无法在没有风险的前提下加载的 YAML 文本。错误�
 
 ### 模板文件方面的缺口
 
-- `template_host`、`template_uid`、`template_run_date` 和 `template_mtime` 没有设置，与之不同的是 `template_path`、`template_fullpath` 和 `ansible_managed`。
+- `template_run_date` 和 `template_mtime` 是 Python 对 `datetime` 取 `str` 得到的文本，而不是 `datetime` 值：打印结果相同，但 `type_debug` 返回 `str`。
 - `#jinja2:` 行中的 `line_statement_prefix` 和 `line_comment_prefix` 会按名字被拒绝。Volant 的模板引擎与 Jinja2 在行语句之后的空行以及行注释的换行符上存在差异。
 - 超过 64 个字符的定界符和超过 16 KiB 的 `#jinja2:` 行会被拒绝，错误消息会点名该选项。`#jinja2:` 值中的括号最多嵌套 200 层，与 Python 一致。
 - 以空白开头的 `variable_end_string` 或 `block_end_string` 会按名字被拒绝。空的定界符同样被拒绝，而 Jinja2 对它的解读取决于模板。

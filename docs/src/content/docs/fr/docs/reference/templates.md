@@ -1,5 +1,5 @@
 ---
-sourceHash: d61771341944
+sourceHash: c05916ab716d
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -231,7 +231,7 @@ Volant refuse un texte YAML qu'il ne peut pas charger sans risque. L'erreur nomm
 
 ### Manques des fichiers modèles
 
-- `template_host`, `template_uid`, `template_run_date` et `template_mtime` ne sont pas définis, contrairement à `template_path`, `template_fullpath` et `ansible_managed`.
+- `template_run_date` et `template_mtime` sont du texte sous la forme du `str` Python d'un `datetime`, pas des valeurs `datetime` : ils s'affichent pareil, et `type_debug` donne `str`.
 - `line_statement_prefix` et `line_comment_prefix` dans une ligne `#jinja2:` sont refusés par leur nom. Le moteur de modèles de Volant et Jinja2 diffèrent sur une ligne vide après une instruction de ligne et sur le saut de ligne d'un commentaire de ligne.
 - Un délimiteur de plus de 64 caractères et une ligne `#jinja2:` de plus de 16 KiB sont refusés avec une erreur qui nomme l'option. Les parenthèses dans une valeur `#jinja2:` s'imbriquent sur 200 niveaux, comme dans Python.
 - Un `variable_end_string` ou un `block_end_string` qui commence par une espace est refusé par son nom. Un délimiteur vide est refusé aussi, là où Jinja2 le lit d'une façon qui dépend du modèle.

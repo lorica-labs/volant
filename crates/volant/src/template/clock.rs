@@ -173,6 +173,16 @@ pub(crate) fn local_now(format: &str) -> String {
     strftime::format(&DateTime::now(false), format)
 }
 
+/// Python's `str` of the local `datetime` of an instant.
+pub(super) fn local_python_str(secs: i64, microsecond: u32) -> String {
+    DateTime::from_local(secs, microsecond).python_str()
+}
+
+/// Python's `str` of `datetime.now()`.
+pub(super) fn now_python_str() -> String {
+    DateTime::now(false).python_str()
+}
+
 /// The current UTC time, `datetime.now(timezone.utc).strftime(format)`.
 pub(crate) fn utc_now(format: &str) -> String {
     strftime::format(&DateTime::now(true), format)

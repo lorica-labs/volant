@@ -89,7 +89,19 @@ pub(super) fn render_template(
         )));
     }
     TEMPLATE_DEPTH.set(depth + 1);
-    let out = render_template_at(state, name, path, text, base_dir, bridge, options);
+    // The lookup's own search path for includes: the file's directory, then `<p>/templates` and
+    // `<p>` for each entry of `ansible_search_path`.
+    let mut options = options.clone();
+    options.include_path = path.parent().map(Path::to_path_buf).into_iter().collect();
+    options
+        .include_path
+        .extend(crate::template::widened(search_path(state, base_dir)));
+    let out = render_template_at(state, name, path, text, base_dir, bridge, &options);
+    if let Err(e) = &out
+        && crate::template::is_not_found(&e.0)
+    {
+        super::super::include::note_asked_in(&e.0, path);
+    }
     TEMPLATE_DEPTH.set(depth);
     out.map(Value::from).map_err(|e| lookup_error(name, &e))
 }
@@ -187,6 +199,11 @@ pub(super) fn render_template_at(
 }
 
 pub(super) fn lookup_error(name: &str, e: &TemplateError) -> Error {
+    // An include the file asked for and the loader did not find is the render's own error, not
+    // the lookup's: the reference words it as it is.
+    if crate::template::is_not_found(&e.0) {
+        return crate::template::bridged::raise(e.0.clone());
+    }
     if e.is_undefined() {
         // Kept an undefined error, so the caller's own render reports it as one.
         let detail =

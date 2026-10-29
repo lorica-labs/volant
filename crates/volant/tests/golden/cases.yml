@@ -372,6 +372,12 @@
   vars: {items: [a, b]}
 - when: "items is contains('b')"
   vars: {items: [a, b]}
+- template: "{{ b is contains 'y' }} {{ b is contains 'x y' }} {{ 'x y z' is contains 'y z' }} {{ b is contains 'z' }}"
+  vars: {b: "x y"}
+- template: "{{ items is contains 'a' }} {{ items is contains 'ab' }}"
+  vars: {items: [a, b]}
+- template: "{{ conf is contains 'port' }} {{ conf is contains 8080 }}"
+  vars: {conf: {port: 8080}}
 # lookups
 - template: "{{ lookup('env', 'VOLANT_GOLDEN_ENV') }}"
 - template: "{{ lookup('env', 'VOLANT_GOLDEN_UNSET_ENV') }}"

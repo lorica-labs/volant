@@ -13,7 +13,7 @@ mod context;
 mod env;
 mod file;
 mod filters;
-pub(crate) use clock::{local_now, utc_now};
+pub(crate) use clock::{local_now, local_now_zoned, utc_now};
 pub(crate) use filters::python_json;
 pub(crate) use include::{asked_in, is_not_found, widened};
 mod globals;

@@ -1,5 +1,5 @@
 ---
-sourceHash: fd7538abfe30
+sourceHash: d7ee7e46b08e
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -30,7 +30,7 @@ role 的 `handlers/` 目录与它的 task 一起读取。在刷新时，role 的
 
 ## 依赖
 
-`meta/main.yml` 中的 `dependencies` 本身就是 role。它们先于请求它们的 role 运行，两个 role 共用的依赖只运行一次。`allow_duplicates: true` 可以为某个 role 关闭这种去重。
+`meta/main.yml` 中的 `dependencies` 本身就是 role。它们先于请求它们的 role 运行，两个 role 共用的依赖只运行一次。`allow_duplicates: true` 可以为某个 role 关闭这种去重。跨语句也是如此：play 的 `roles:` 已经运行过的 role，或之前的 `include_role` 已为某台主机引入的 role，不会作为之后 `import_role` 或 `include_role` 引入的 role 的依赖再次运行。
 
 去重看的不只是名字。条目的参数、它的 `vars:`、它的 `when:` 和它的 `*_from` 选择，都是它身份的一部分：
 
@@ -156,7 +156,7 @@ Volant 会在运行之前检查 include 带来的内容。到那时，主机已�
 
 ### include_vars
 
-`include_vars` 产生的是变量而不是步骤，所以它既不是静态的，也不是动态的。它是一个普通的控制节点端模块，读到的内容落在 facts 的优先级上。
+`include_vars` 产生的是变量而不是步骤，所以它既不是静态的，也不是动态的。它是一个普通的控制节点端模块，读到的内容与 Ansible 一样，排在 `set_fact` 和已注册的结果之下。
 
 | 问题 | 回答 |
 |---|---|
@@ -203,5 +203,3 @@ Volant 会在运行之前检查 include 带来的内容。到那时，主机已�
 - 循环内失败的 include 会打印通常的 `failed: [host] (item=...)` 行。Ansible 只在标准错误上打印一条 `[ERROR]`。
 - `allow_duplicates: false` 在 role 的 task 被引入时，就把该 role 算作该主机已运行。ansible-core 则在主机至少运行过它的一个 task 时才这么算，所以 task 全部被跳过的 role，在那里仍会再次运行。
 - `import_role` 上的 `allow_duplicates: false` 在 play 编译时比较各条语句，所以较早那条语句上的 `when` 不会改变某台主机的结果。
-- `include_vars: file=x.yml name=ns` 被当作一个原始参数读取，而不是拆分成 `key=value` 对，`import_tasks` 也有同样的限制。
-- `include_vars` 产生的内容，比 Ansible 放置它的位置高一级。只有遇到 `set_fact` 也写过的同名变量时你才会注意到：Ansible 里无论顺序如何，都是 `set_fact` 胜出，而在这里是后写入的胜出。

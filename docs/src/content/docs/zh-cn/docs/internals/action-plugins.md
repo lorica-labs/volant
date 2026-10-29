@@ -1,5 +1,5 @@
 ---
-sourceHash: fa3ecc77e124
+sourceHash: 93a0f9272733
 title: Action plugin
 description: Volant 如何运行 ansible-core 通过控制节点上的 action plugin 运行的模块，用 Rust 或通过 Python 桥接。
 ---
@@ -20,6 +20,8 @@ plugin 先对目标运行 `stat`，除非 `force: false`，否则会要求返回
 
 `remote_src: true` 会跳过这一切：`copy` 单独运行，使用 task 自己的参数，`src` 指向主机上已有的文件。
 
+超过 16 MiB 的文件不会被整个读入：插件在控制节点上计算它的哈希，并以 16 MiB 的块发送到主机，agent 在块到达时把它们写入磁盘。`unarchive` 也这样发送它的归档。
+
 在向主机询问任何事之前就会被拒绝的情况，信息用的是 ansible-core 自己的措辞：
 
 - `src (or content) is required`
@@ -28,7 +30,6 @@ plugin 先对目标运行 `stat`，除非 `force: false`，否则会要求返回
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`。Rust plugin 不复制目录，所以该 task 会在桥接上运行，由桥接来复制。
 - 在控制节点上不存在的 `src`，被包装为 `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`。
-- 大于一个帧的源文件会按大小被拒绝，在读取它之前。
 
 ## `template`
 
@@ -38,7 +39,7 @@ plugin 在 `templates/` 下找到模板，用 task 的变量和它自己的分�
 
 渲染时会在 task 自己的变量之上设置四个变量：`ansible_managed`（除非 task 已经设置了它）、`template_path`（task 所写的 `src`）、`template_fullpath`（在控制节点上找到的路径）和 `template_destpath`（渲染后的 `dest`，见下文）。ansible-core 还会设置的 `template_host`、`template_uid`、`template_run_date` 和 `template_mtime`，这里没有设置。
 
-`trim_blocks` 默认开启，`lstrip_blocks` 默认关闭，与 ansible-core 一致，文件末尾的换行会保留。`newline_sequence` 接受 `\n`、`\r` 或 `\r\n`，转义写法的四个字符与字面写法的读法相同。六个分隔符选项（`variable_start_string` 及其他五个）和模板文件中的 `#jinja2:` 首行，都按 ansible-core 的读法读取，见[渲染模板文件](/zh-cn/docs/variables/templating/#渲染模板文件)。`output_encoding` 可以写出 UTF-8、带签名的 UTF-8、Latin-1、ASCII、cp1252、ISO 8859-15、UTF-16 和 UTF-32，其他任何编码会被指出为尚不支持。使用 `{% include %}` 或 `{% import %}` 的模板会失败：这里没有任何东西会在渲染中途加载第二个文件。
+`trim_blocks` 默认开启，`lstrip_blocks` 默认关闭，与 ansible-core 一致，文件末尾的换行会保留。`newline_sequence` 接受 `\n`、`\r` 或 `\r\n`，转义写法的四个字符与字面写法的读法相同。六个分隔符选项（`variable_start_string` 及其他五个）和模板文件中的 `#jinja2:` 首行，都按 ansible-core 的读法读取，见[渲染模板文件](/zh-cn/docs/variables/templating/#渲染模板文件)。`output_encoding` 可以写出 UTF-8、带签名的 UTF-8、Latin-1、ASCII、cp1252、ISO 8859-15、UTF-16 和 UTF-32，其他任何编码会被指出为尚不支持。`{% include %}` 和 `{% import %}` 会依次在 `ansible_search_path` 的每一项、playbook 目录和模板文件自身所在目录中查找，先找其中的 `templates/`，再找该目录本身，与 ansible-core 相同。
 
 在向主机询问任何事之前就会被拒绝的情况：
 
@@ -49,7 +50,6 @@ plugin 在 `templates/` 下找到模板，用 task 的变量和它自己的分�
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`，针对为空或为 null 的分隔符选项
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - 在控制节点上不存在的 `src`，用 ansible-core 自己的措辞，这次没有 `AnsibleActionFail` 包装。
-- 大于一个帧的渲染结果会被拒绝，信息给出两个大小，在暂存任何东西之前。
 
 ## `package`
 
@@ -76,7 +76,7 @@ You should manually specify use_backend to tell the module whether to use the dn
 
 从主机读取的文件，只写到控制节点上 `dest` 之下，不写到别处。
 
-没有 `become` 时，plugin 先对源文件运行 `stat`，并保持已经匹配的本地文件不动；有 `become` 时，它直接用 `slurp`。字节总是通过 `slurp` 传回，严格解码，从不渲染，也从不放入变量。目标是 `dest/<inventory_hostname>/<src>`，除非 `flat: true` 直接把 `dest` 本身作为目标，或者在 `dest` 带有末尾斜杠时，目标是 `dest/<src 的 basename>`。
+没有 `become` 时，plugin 先对源文件运行 `stat`，并保持已经匹配的本地文件不动；有 `become` 时，它直接用 `slurp`。字节通过 `slurp` 传回，严格解码，从不渲染，也从不放入变量。超过 2 MiB 的文件接近 `slurp` 能携带的上限，改为按每块最多 16 MiB 读回，直接写入目标旁边的文件。有 `become` 时，这发生在 `slurp` 报告文件过大之后，并先用一次 `stat` 取得其校验和。目标是 `dest/<inventory_hostname>/<src>`，除非 `flat: true` 直接把 `dest` 本身作为目标，或者在 `dest` 带有末尾斜杠时，目标是 `dest/<src 的 basename>`。
 
 在 ansible-core 2.19.12 上的实测表明，用 `..` 向上爬的相对 `src` 会让 ansible-core 写到控制节点上 `dest` 之外：不带 `flat` 的 `src` 为 `../../../../../../../../tmp/x` 时会写出 `/tmp/x`。这里每个候选路径都在不接触文件系统的情况下构建并规范化，除非位于 `dest` 之下，否则会被拒绝，这发生在创建任何目录之前：
 
@@ -89,7 +89,7 @@ You should manually specify use_backend to tell the module whether to use the dn
 
 `dest` 之下任何位置的符号链接都会被拒绝，而不是被跟随，playbook 所构建的路径和主机回报的路径都是如此。
 
-`fail_on_missing` 默认开启，与 ansible-core 一致，源文件缺失或为目录时让 task 失败；`fail_on_missing: false` 会把这两种情况变成携带 ansible-core 自己信息的 `ok` 结果。无论哪种，其他任何失败仍会让 task 失败，例如因为模块服务的每流上限已到而被 agent 拒绝的读取。该上限是 `slurp` 经 base64 编码的 stdout 的 4 MiB，编码前的源文件约为 3 MiB。`validate_checksum` 会在保留写出的文件之前，用主机的校验和检查它的 SHA-1；不匹配会让 task 失败并删除已写出的内容，这与 ansible-core 不同，后者会把不匹配的文件留在写出的地方。被替换的文件保留其现有权限，所以再次 fetch 的 `0600` 文件仍是 `0600`。
+`fail_on_missing` 默认开启，与 ansible-core 一致，源文件缺失或为目录时让 task 失败；`fail_on_missing: false` 会把这两种情况变成携带 ansible-core 自己信息的 `ok` 结果。无论哪种，其他任何失败仍会让 task 失败，例如主机拒绝的读取。`validate_checksum` 会在保留写出的文件之前，用主机的校验和检查它的 SHA-1；不匹配会让 task 失败并删除已写出的内容，这与 ansible-core 不同，后者会把不匹配的文件留在写出的地方。被替换的文件保留其现有权限，所以再次 fetch 的 `0600` 文件仍是 `0600`。
 
 ### 受管主机指定的 dest
 
@@ -130,7 +130,6 @@ the 'dest' of this task was named by a managed host, and '/home/op/.ssh/x/' is n
 - `a '~' path is not supported yet on 'unarchive'`，针对 `dest` 或 `creates`。此时 task 在桥接上运行。
 - 在控制节点上不存在的 `src`：`Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`，针对在控制节点上被找到为目录的 `src`。
-- 大于一个帧的源文件会按大小被拒绝，在读取它之前。
 
 ## `reboot`
 

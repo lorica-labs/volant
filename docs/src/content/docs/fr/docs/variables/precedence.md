@@ -1,5 +1,5 @@
 ---
-sourceHash: 8577d9c13ab0
+sourceHash: 7aabf754eaae
 title: Priorité et facts
 description: Quelle source l'emporte quand deux définissent la même variable, les variables magiques, et comment les facts sont collectés, nommés et mis en cache.
 ---
@@ -19,13 +19,16 @@ Quand deux sources définissent la même variable, celle qui est plus bas dans c
 9. Les `vars_files` du play
 10. Le `vars/main.yml` d'un rôle
 11. Les `vars` d'une tâche
-12. `set_fact`, les résultats enregistrés et `include_vars`
-13. Les paramètres de rôle, et les `vars:` d'une instruction d'include dynamique
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` et les résultats enregistrés
+14. Les paramètres de rôle, et les `vars:` d'une instruction d'include dynamique
+15. `--extra-vars`
 
 [Rôles](/fr/docs/playbooks/roles/#variables-de-rôle) explique d'où viennent les trois couches de rôle et en quoi elles diffèrent.
 
 Un fichier de variables qui ne contient que `---` et des commentaires se charge comme un mapping vide, comme dans ansible-core. Un fichier qui contient un scalaire comme `42` reste refusé.
+
+Une entrée de `vars_files` peut être une liste de chemins. Le premier fichier de la liste qui existe est lu, les autres sont ignorés. Quand l'un de ses chemins utilise une variable sans valeur, toute l'entrée est ignorée avec l'avertissement `skipping vars_files item due to an undefined variable`.
 
 Un mapping peut reprendre les clés d'un autre avec une clé de fusion, `<<: *base`, dans tous les fichiers YAML que Volant lit : fichiers de variables, inventaires, playbooks et arguments de tâches. Les clés fusionnées viennent en premier, et une clé écrite à côté de `<<` remplace celle qui est fusionnée. Dans `<<: [*a, *b]`, le premier mapping l'emporte. Une valeur qui n'est ni un mapping ni une liste de mappings arrête le chargement, avec le message de PyYAML.
 

@@ -140,6 +140,9 @@ pub struct VarStore {
     host_line_vars: BTreeMap<String, Map<String, Value>>,
     group_names: BTreeMap<String, Vec<String>>,
     groups: BTreeMap<String, Vec<String>>,
+    /// What `include_vars` read, per host: the reference's vars cache, a layer of its own above a
+    /// task's `vars:` and under `facts`, so a `set_fact` of the same name wins whichever ran last.
+    included: BTreeMap<String, Map<String, Value>>,
     facts: BTreeMap<String, Map<String, Value>>,
     /// What modules returned under `ansible_facts`, flat and namespaced: the reference's host
     /// facts, a layer of their own that ranks over the inventory and under the play. Every name

@@ -1,5 +1,5 @@
 ---
-sourceHash: 8577d9c13ab0
+sourceHash: 7aabf754eaae
 title: 优先级与 facts
 description: 两个来源定义同一个变量时哪个胜出、魔法变量，以及 facts 如何收集、命名和缓存。
 ---
@@ -19,13 +19,16 @@ description: 两个来源定义同一个变量时哪个胜出、魔法变量，�
 9. play 的 `vars_files`
 10. role 的 `vars/main.yml`
 11. task 的 `vars`
-12. `set_fact`、已注册的结果和 `include_vars`
-13. role 参数，以及动态 include 语句的 `vars:`
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` 和已注册的结果
+14. role 参数，以及动态 include 语句的 `vars:`
+15. `--extra-vars`
 
 [Role、include 与 import](/zh-cn/docs/playbooks/roles/#role-变量)说明了三个 role 层从哪里来，以及它们有何不同。
 
 只含有 `---` 和注释的变量文件，会加载为空映射，与 ansible-core 一致。内容为标量（例如 `42`）的文件仍会被拒绝。
+
+`vars_files` 的一个条目可以是路径列表。读取列表中第一个存在的文件，其余的忽略。如果其中某个路径用到了没有值的变量，整个条目会被跳过，并给出警告 `skipping vars_files item due to an undefined variable`。
 
 在 Volant 读取的每一种 YAML 文件（变量文件、inventory、playbook 和 task 参数）中，映射都可以用合并键 `<<: *base` 取得另一个映射的键。合并来的键排在前面，写在 `<<` 旁边的键会替换合并来的键。在 `<<: [*a, *b]` 中，第一个映射胜出。不是映射、也不是映射列表的值会让加载停止，消息来自 PyYAML。
 

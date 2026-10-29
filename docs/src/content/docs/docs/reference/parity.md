@@ -29,14 +29,14 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | shell | 1 | 0 | 0 | 2 |
 | vars | 1 | 0 | 0 | 0 |
 | cache | 2 | 0 | 0 | 0 |
-| callback | 3 | 0 | 0 | 2 |
+| callback | 5 | 0 | 0 | 0 |
 | connection | 4 | 0 | 0 | 2 |
 | collection module | 9266 | 0 | 0 | 177 |
 | collection action plugin | 2073 | 0 | 0 | 11 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
 | collection connection | 11 | 0 | 0 | 19 |
-| collection callback | 1 | 0 | 0 | 38 |
+| collection callback | 3 | 0 | 0 | 36 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -545,7 +545,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `is_link` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `is_mount` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `is_same_file` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `isnan` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
+| `isnan` | <span class="kw kw-runs">runs</span> |  |
 | `issubset` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `issuperset` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `iterable` | <span class="kw kw-runs">runs</span> |  |
@@ -691,10 +691,10 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `default` | <span class="kw kw-runs">runs</span> |  |
-| `junit` | <span class="kw kw-no">later</span> | an aggregate callback |
+| `junit` | <span class="kw kw-runs">runs</span> |  |
 | `minimal` | <span class="kw kw-runs">runs</span> |  |
 | `oneline` | <span class="kw kw-runs">runs</span> |  |
-| `tree` | <span class="kw kw-no">later</span> | an aggregate callback |
+| `tree` | <span class="kw kw-runs">runs</span> |  |
 
 ## collection connection
 
@@ -741,8 +741,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `ansible.posix.json` | <span class="kw kw-runs">runs</span> |  |
 | `ansible.posix.jsonl` | <span class="kw kw-no">later</span> | another callback |
 | `ansible.posix.profile_roles` | <span class="kw kw-no">later</span> | another callback |
-| `ansible.posix.profile_tasks` | <span class="kw kw-no">later</span> | another callback |
-| `ansible.posix.timer` | <span class="kw kw-no">later</span> | another callback |
+| `ansible.posix.profile_tasks` | <span class="kw kw-runs">runs</span> |  |
+| `ansible.posix.timer` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.cgroup_memory_recap` | <span class="kw kw-no">later</span> | another callback |
 | `community.general.context_demo` | <span class="kw kw-no">later</span> | another callback |
 | `community.general.counter_enabled` | <span class="kw kw-no">later</span> | another callback |

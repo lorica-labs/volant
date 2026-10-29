@@ -10,10 +10,12 @@
 //! result again.
 
 use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
 
 use serde_json::{Map, Value};
 
-use super::copy::{CopyOf, copy_bytes, failing, failing_with, local_mode};
+use super::copy::{CopyOf, copy_bytes, failing, failing_with};
+use super::files::local_mode;
 use super::files::{check_host_named, not_found, search_paths};
 use super::{Context, Plugin};
 use crate::executor::as_bool_value;
@@ -89,7 +91,7 @@ fn missing_source(msg: &str) -> TaskResult {
 /// A lookup, filter or test that failed while the template rendered: the plugin raised it from inside the
 /// action, so the task says `Task failed: ` and the sentence, `changed: false`, and the error
 /// block chains the sentence again at the template file.
-fn lookup_failure(text: &str, file: &std::path::Path) -> TaskResult {
+fn lookup_failure(text: &str, file: &Path) -> TaskResult {
     let at = crate::playbook::Origin {
         path: file.display().to_string().into(),
         line: 0,
@@ -203,10 +205,7 @@ fn template_vars(
 }
 
 /// The rendered template and the arguments `copy` gets, or the task's failure.
-fn rendered(
-    ctx: &Context<'_>,
-    lookup_in: &mut Option<std::path::PathBuf>,
-) -> Result<CopyOf, String> {
+fn rendered(ctx: &Context<'_>, lookup_in: &mut Option<PathBuf>) -> Result<CopyOf, String> {
     let args = ctx.args;
     // The reference's checks, in its order and in its words.
     if string_arg(args, "state").is_some() {
@@ -270,13 +269,16 @@ fn rendered(
         newline_sequence: newline_sequence.into(),
         syntax,
         name: Some(src.clone()),
+        include_path: include_path(ctx.origin, ctx.playbook_dir, found),
         ..FileRender::default()
     };
     let out = ctx
         .templar
         .render_file(&text, Vars::from(&vars), &options)
         .map_err(|err| {
-            if err.0.starts_with("The ") && crate::template::is_plugin_failure(&err.0) {
+            if (err.0.starts_with("The ") && crate::template::is_plugin_failure(&err.0))
+                || crate::template::is_not_found(&err.0)
+            {
                 *lookup_in = Some(found.clone());
                 err.0
             } else {
@@ -294,7 +296,7 @@ fn rendered(
         args.insert("mode".into(), Value::String(local_mode(found)?));
     }
     Ok(CopyOf {
-        bytes,
+        payload: crate::action_plugins::files::Payload::Bytes(bytes),
         basename: found
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())
@@ -305,3 +307,22 @@ fn rendered(
 
 #[cfg(test)]
 mod tests;
+
+/// Where the file's `{% include %}` looks, as the reference's `template` action builds it: the
+/// task's `ansible_search_path`, then the playbook directory and the file's own, each with its
+/// `templates` directory first.
+fn include_path(
+    origin: &crate::compile::Origin,
+    playbook_dir: &Path,
+    found: &Path,
+) -> Vec<PathBuf> {
+    let mut entries: Vec<PathBuf> = Vec::new();
+    for dir in origin.search_dirs().chain([playbook_dir]) {
+        if !entries.iter().any(|e| e == dir) {
+            entries.push(dir.to_path_buf());
+        }
+    }
+    entries.push(playbook_dir.to_path_buf());
+    entries.extend(found.parent().map(Path::to_path_buf));
+    crate::template::widened(entries)
+}

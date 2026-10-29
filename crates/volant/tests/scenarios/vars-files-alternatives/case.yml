@@ -1,0 +1,3 @@
+# A vars_files entry that is a list reads its first file that exists, and an undefined variable
+# in one of its alternatives skips the whole entry with a warning.
+args: [-i, inv.ini, play.yml]

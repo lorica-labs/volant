@@ -307,7 +307,30 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     let register = match field(yaml, "register") {
         None => None,
         Some(Yaml::Value(Scalar::String(s))) => Some(s.to_string()),
-        Some(_) => bail!("task '{label}': 'register' must be a variable name"),
+        // Measured on ansible-core 2.19.12, exit 4 before the first play: the refusal at the
+        // value, with the rule for variable names under its cause.
+        Some(node) => {
+            let value = to_json(node).unwrap_or_default();
+            let cause = format!(
+                "Invalid variable name '{}' of type '{}'.",
+                crate::playbook::python_repr(&value),
+                crate::executor::python_type(&value)
+            );
+            match value_origin(node) {
+                Some(origin) => {
+                    return Err(super::origin::chained_refusal(
+                        &format!("Invalid 'register' specified: {cause}"),
+                        "Invalid 'register' specified.",
+                        &cause,
+                        Some(
+                            "Variable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.",
+                        ),
+                        origin,
+                    ));
+                }
+                None => bail!("task '{label}': Invalid 'register' specified: {cause}"),
+            }
+        }
     };
     // `loop` and every `with_<lookup>`, read in the order the reference's `preprocess_data` reads
     // them. A `with_` key is a loop whatever follows the prefix: whether that is a lookup plugin

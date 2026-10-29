@@ -212,7 +212,15 @@ pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
 pub(crate) struct FileBlob {
     /// Lowercase hex blake3 of the bytes, which names the blob the way the union's hash does.
     pub hash: String,
-    pub b64: String,
+    pub body: BlobBody,
+}
+
+/// Where a [`FileBlob`]'s bytes are when it is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BlobBody {
+    B64(String),
+    /// A controller file past [`files::ON_DISK_LEN`], read a piece at a time as it is sent.
+    Disk(PathBuf),
 }
 
 /// One module run on the host, on the plugin's behalf.
@@ -281,6 +289,9 @@ pub(crate) enum Step {
         remote: String,
         mode: Option<u32>,
     },
+    /// The host's file `remote` read into the controller file `local`, which exists, a piece at a
+    /// time. The next call is handed the SHA-1 of what was written as `checksum`, or the failure.
+    GetFile { remote: String, local: PathBuf },
     /// Nothing to run yet: the next call comes once `ready` is notified, or the item's time is
     /// up, and is handed nothing.
     Wait(Arc<tokio::sync::Notify>),

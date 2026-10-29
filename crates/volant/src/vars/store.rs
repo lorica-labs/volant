@@ -101,6 +101,7 @@ impl VarStore {
             host_line_vars,
             group_names,
             groups,
+            included: BTreeMap::new(),
             facts: BTreeMap::new(),
             gathered: BTreeMap::new(),
             warned_restricted: BTreeSet::new(),

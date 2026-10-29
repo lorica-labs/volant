@@ -1300,7 +1300,9 @@ async fn a_blob_goes_up_in_the_form_its_size_calls_for() {
     }
     {
         let bytes = [7u8; 100];
-        let blob = crate::action_plugins::files::blob_of("small", &bytes).expect("it fits");
+        let blob = crate::action_plugins::files::Payload::Bytes(bytes.to_vec())
+            .blob()
+            .unwrap();
         let mut agent = FakeAgent::answering(vec![state(&blob.hash, true)]);
         stage_files(
             &mut agent,
@@ -1332,6 +1334,117 @@ async fn a_blob_goes_up_in_the_form_its_size_calls_for() {
         );
         assert_eq!(agent.frames, [(2, b"PK\x03\x04".to_vec())]);
     }
+}
+
+/// A file of the host is read back a piece at a time into the controller file named, until a
+/// piece comes back empty, and the sum of what was written is the answer.
+#[tokio::test]
+async fn a_file_is_read_back_in_pieces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let local = tmp.path().join("got");
+    std::fs::write(&local, b"left over").unwrap();
+    let piece = |offset: u64, data: &[u8]| FromAgent::FileBytes {
+        offset,
+        len: data.len() as u64,
+        error: None,
+        data: data.to_vec(),
+    };
+    let mut agent = FakeAgent::answering(vec![
+        piece(0, b"first "),
+        piece(6, b"second"),
+        piece(12, b""),
+    ]);
+    let sum = super::transfer::get_file_within(
+        &mut agent,
+        "h1",
+        "/var/f",
+        &local,
+        &mut Vec::new(),
+        Duration::from_secs(5),
+    )
+    .await
+    .expect("the file came back");
+    assert_eq!(std::fs::read(&local).unwrap(), b"first second");
+    assert_eq!(sum, volant_protocol::encoding::sha1_hex(b"first second"));
+    let offsets: Vec<u64> = agent
+        .sent
+        .iter()
+        .map(|m| match m {
+            ToAgent::ReadFile { offset, .. } => *offset,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(offsets, [0, 6, 12]);
+
+    let mut agent = FakeAgent::answering(vec![FromAgent::FileBytes {
+        offset: 0,
+        len: 0,
+        error: Some("reading /var/f: denied".into()),
+        data: Vec::new(),
+    }]);
+    let err = super::transfer::get_file_within(
+        &mut agent,
+        "h1",
+        "/var/f",
+        &local,
+        &mut Vec::new(),
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err, "reading /var/f: denied");
+}
+
+/// Past the disk line a file goes up from disk in pieces, one in memory at a time, and the
+/// agent is asked to put them together.
+#[tokio::test]
+async fn a_file_past_the_disk_line_goes_up_in_pieces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let path = tmp.path().join("big.bin");
+    let len = crate::action_plugins::files::ON_DISK_LEN + 5;
+    let bytes: Vec<u8> = (0..len).map(|n| (n % 251) as u8).collect();
+    std::fs::write(&path, &bytes).unwrap();
+    let blob = crate::action_plugins::files::Payload::read(&path)
+        .unwrap()
+        .blob()
+        .unwrap();
+    assert_eq!(
+        blob.body,
+        crate::action_plugins::BlobBody::Disk(path.clone())
+    );
+    assert_eq!(blob.hash, blake3::hash(&bytes).to_hex().to_string());
+    let mut agent = FakeAgent::answering(vec![state(&blob.hash, true)]);
+    stage_files(
+        &mut agent,
+        "h1",
+        &[("src".into(), blob.clone())],
+        &mut Vec::new(),
+    )
+    .await
+    .expect("the agent stored it");
+    let piece = crate::action_plugins::files::ON_DISK_LEN;
+    assert_eq!(
+        agent.sent,
+        [
+            ToAgent::PutBlobPart {
+                hash: blob.hash.clone(),
+                offset: 0,
+                len: piece,
+                total: len,
+            },
+            ToAgent::PutBlobPart {
+                hash: blob.hash.clone(),
+                offset: piece,
+                len: 5,
+                total: len,
+            },
+            ToAgent::EndBlob {
+                hash: blob.hash.clone(),
+            },
+        ]
+    );
+    let sent: Vec<u8> = agent.frames.iter().flat_map(|(_, f)| f.clone()).collect();
+    assert!(sent == bytes, "the pieces are the file, in order");
 }
 
 /// A payload the agent refuses fails the batch, and the next batch of that host does not send
@@ -2755,7 +2868,7 @@ async fn a_plugin_item_ends_the_way_its_module_and_link_do() {
                 "src".to_string(),
                 crate::action_plugins::FileBlob {
                     hash: "cd".into(),
-                    b64: "eA==".into(),
+                    body: crate::action_plugins::BlobBody::B64("eA==".into()),
                 },
             )],
         };
@@ -3231,7 +3344,9 @@ async fn an_empty_batch_is_not_sent() {
 
 /// The file blob of `hello\n`, as the plugin stages it.
 fn hello_blob() -> crate::action_plugins::FileBlob {
-    crate::action_plugins::files::blob_of("hello.txt", b"hello\n").expect("it fits")
+    crate::action_plugins::files::Payload::Bytes(b"hello\n".to_vec())
+        .blob()
+        .unwrap()
 }
 
 /// A `hello\n` on the controller, copied to `dest`: the arguments `prepare` hands the plugin.

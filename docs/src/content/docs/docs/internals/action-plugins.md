@@ -19,6 +19,8 @@ The plugin runs `stat` on the destination first, asking for a SHA-1 unless `forc
 
 `remote_src: true` skips all of this: `copy` runs alone, with the task's own arguments, and `src` names a file already on the host.
 
+A file past 16 MiB is never read whole: the plugin hashes it on the controller and sends it to the host in pieces of 16 MiB, which the agent writes to disk as they arrive. `unarchive` sends its archive the same way.
+
 Rejected before the host is asked anything, in ansible-core's own words:
 
 - `src (or content) is required`
@@ -27,7 +29,6 @@ Rejected before the host is asked anything, in ansible-core's own words:
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`. The Rust plugin does not copy a directory, so the task runs on the bridge, which does.
 - A `src` that names nothing on the controller, wrapped as `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`.
-- A source larger than one frame is rejected by its size, before it is read.
 
 ## `template`
 
@@ -37,7 +38,7 @@ The plugin finds the template under `templates/`, renders it once with the task'
 
 Four variables are set for the render, on top of the task's own: `ansible_managed` (unless the task already set it), `template_path` (`src` as the task wrote it), `template_fullpath` (the path found on the controller) and `template_destpath` (`dest` as rendered, see below). `template_host`, `template_uid`, `template_run_date` and `template_mtime`, which ansible-core also sets, are not.
 
-`trim_blocks` defaults on and `lstrip_blocks` defaults off, as in ansible-core, and the file's trailing newline is kept. `newline_sequence` takes `\n`, `\r` or `\r\n`, the escaped four-character spelling read the same as the literal one. The six delimiter options (`variable_start_string` and its five relatives) and a `#jinja2:` first line in the template file are read as ansible-core reads them, see [Rendering a template file](/docs/variables/templating/#rendering-a-template-file). `output_encoding` writes UTF-8, UTF-8 with a signature, Latin-1, ASCII, cp1252, ISO 8859-15, UTF-16 and UTF-32, and names any other encoding as not supported yet. A template that uses `{% include %}` or `{% import %}` fails: nothing here loads a second file mid-render.
+`trim_blocks` defaults on and `lstrip_blocks` defaults off, as in ansible-core, and the file's trailing newline is kept. `newline_sequence` takes `\n`, `\r` or `\r\n`, the escaped four-character spelling read the same as the literal one. The six delimiter options (`variable_start_string` and its five relatives) and a `#jinja2:` first line in the template file are read as ansible-core reads them, see [Rendering a template file](/docs/variables/templating/#rendering-a-template-file). `output_encoding` writes UTF-8, UTF-8 with a signature, Latin-1, ASCII, cp1252, ISO 8859-15, UTF-16 and UTF-32, and names any other encoding as not supported yet. `{% include %}` and `{% import %}` look in `templates/` and then the directory itself, for each entry of `ansible_search_path`, the playbook directory and the template file's own directory, as ansible-core does.
 
 Rejected before the host is asked anything:
 
@@ -48,7 +49,6 @@ Rejected before the host is asked anything:
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`, for a delimiter option that is empty or null
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - A `src` that names nothing on the controller, in ansible-core's own words, with no `AnsibleActionFail` wrapper this time.
-- A render bigger than one frame is rejected, naming both sizes, before anything is staged.
 
 ## `package`
 
@@ -75,7 +75,7 @@ The module `yum` is not a module of its own in ansible-core 2.19: `yum`, `ansibl
 
 A file read from a host, written onto the controller under `dest` and nowhere else.
 
-Without `become` the plugin runs `stat` on the source first and leaves an already-matching local file alone; under `become` it goes straight to `slurp`. The bytes always travel back through `slurp`, decoded strictly, never rendered and never put in a variable. The destination is `dest/<inventory_hostname>/<src>`, unless `flat: true` names `dest` itself directly, or, with a trailing slash, `dest/<basename of src>`.
+Without `become` the plugin runs `stat` on the source first and leaves an already-matching local file alone; under `become` it goes straight to `slurp`. The bytes travel back through `slurp`, decoded strictly, never rendered and never put in a variable. A file past 2 MiB, close to the most `slurp` carries, is read back instead in pieces of at most 16 MiB, straight into a file beside the destination. Under `become` that happens once `slurp` says the file is too big, after a `stat` for its sum. The destination is `dest/<inventory_hostname>/<src>`, unless `flat: true` names `dest` itself directly, or, with a trailing slash, `dest/<basename of src>`.
 
 Measured on ansible-core 2.19.12, a relative `src` climbing with `..` makes ansible-core write outside `dest` on the controller: a `src` of `../../../../../../../../tmp/x` without `flat` writes `/tmp/x`. Here every candidate path is built and normalised without touching the filesystem, and refused unless it sits under `dest`, before a directory is even created:
 
@@ -88,7 +88,7 @@ This is checked twice: once on the `src` the playbook wrote, and again on the pa
 
 A symbolic link anywhere below `dest` is refused rather than followed, on both the path built from the playbook and the one the host names back.
 
-`fail_on_missing`, on by default as in ansible-core, fails the task on a missing source or a directory; `fail_on_missing: false` turns either into an `ok` result carrying ansible-core's own message instead. Either way, any other failure, such as a read the agent refuses because the module server's per-stream limit was reached, still fails the task. That limit is 4 MiB of `slurp`'s base64-encoded stdout, about 3 MiB of source file before encoding. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike ansible-core, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
+`fail_on_missing`, on by default as in ansible-core, fails the task on a missing source or a directory; `fail_on_missing: false` turns either into an `ok` result carrying ansible-core's own message instead. Either way, any other failure, such as a read the host denies, still fails the task. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike ansible-core, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
 
 ### A dest a managed host named
 
@@ -129,7 +129,6 @@ Rejected before the host is asked anything:
 - `a '~' path is not supported yet on 'unarchive'`, for `dest` or `creates`. The task then runs on the bridge.
 - A `src` that names nothing on the controller: `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, for a `src` found as a directory on the controller.
-- A source larger than one frame is rejected by its size, before it is read.
 
 ## `reboot`
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: fd7538abfe30
+sourceHash: d7ee7e46b08e
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -30,7 +30,7 @@ Le répertoire `handlers/` d'un rôle est lu avec ses tâches. Lors d'un flush, 
 
 ## Dépendances
 
-Les `dependencies` de `meta/main.yml` sont des rôles à part entière. Elles s'exécutent avant le rôle qui les a demandées, et une dépendance que deux rôles partagent s'exécute une seule fois. `allow_duplicates: true` désactive cette déduplication pour un rôle.
+Les `dependencies` de `meta/main.yml` sont des rôles à part entière. Elles s'exécutent avant le rôle qui les a demandées, et une dépendance que deux rôles partagent s'exécute une seule fois. `allow_duplicates: true` désactive cette déduplication pour un rôle. Cela vaut aussi d'une instruction à l'autre : un rôle que le `roles:` du play a exécuté, ou qu'un `include_role` précédent a amené pour un hôte, n'est pas exécuté de nouveau comme dépendance d'un rôle qu'un `import_role` ou un `include_role` amène plus tard.
 
 La déduplication regarde plus que le nom. Les paramètres de l'entrée, ses `vars:`, son `when:` et ses sélections `*_from` font tous partie de son identité :
 
@@ -156,7 +156,7 @@ Une valeur qui n'est pas un booléen dans `public`, `allow_duplicates` ou `roles
 
 ### include_vars
 
-`include_vars` produit des variables plutôt que des étapes : il n'est donc ni statique ni dynamique. C'est un module ordinaire côté contrôleur, et ce qu'il lit atterrit à la priorité des facts.
+`include_vars` produit des variables plutôt que des étapes : il n'est donc ni statique ni dynamique. C'est un module ordinaire côté contrôleur, et ce qu'il lit se place sous `set_fact` et les résultats enregistrés, comme dans Ansible.
 
 | Question | Réponse |
 |---|---|
@@ -203,5 +203,3 @@ Une instruction imbriquée sur 32 niveaux est rejetée. Un seul compteur couvre 
 - Un include en échec dans une boucle affiche la ligne habituelle `failed: [host] (item=...)`. Ansible n'affiche qu'un `[ERROR]` sur la sortie d'erreur standard.
 - `allow_duplicates: false` compte un rôle comme exécuté pour un hôte dès que ses tâches sont apportées. ansible-core le compte quand l'hôte a exécuté au moins une de ses tâches : un rôle dont toutes les tâches sont sautées s'exécute donc de nouveau là-bas.
 - `allow_duplicates: false` sur un `import_role` compare les instructions pendant la compilation du play : un `when` sur l'instruction précédente ne change donc pas le résultat pour un hôte.
-- `include_vars: file=x.yml name=ns` est lu comme un seul argument brut au lieu d'être découpé en paires `key=value`, la même limitation qu'a `import_tasks`.
-- Ce que produit `include_vars` se place un niveau au-dessus de l'endroit où Ansible le met. Vous ne le remarquez qu'avec un nom qu'un `set_fact` a aussi écrit : Ansible laisse gagner le `set_fact` dans les deux ordres, et ici l'écriture la plus tardive gagne.

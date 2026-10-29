@@ -204,7 +204,7 @@ mod tests {
     fn a_staged_file_is_not_shared_within_a_round() {
         let blob = |hash: &str| FileBlob {
             hash: hash.into(),
-            b64: String::new(),
+            body: crate::action_plugins::BlobBody::B64(String::new()),
         };
         let copy = |hash: &str| Sub {
             module: "copy",

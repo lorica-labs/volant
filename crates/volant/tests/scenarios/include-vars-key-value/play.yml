@@ -1,0 +1,7 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - include_vars: file=v.yml name=ns
+    - debug: {var: ns}
+    - include_vars: v.yml
+    - debug: {var: b}

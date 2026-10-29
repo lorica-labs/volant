@@ -241,6 +241,26 @@ fn facts_and_role_layers_rank_as_the_reference_ranks_them() {
         );
     }
     {
+        // ansible-core's vars cache: above a task's `vars:`, under `set_fact` in either order.
+        let inv = Inventory::parse_ini("h1\n").unwrap();
+        let mut store = VarStore::new(&inv, None, Path::new("."), Map::new()).unwrap();
+        store.set_fact("h1", "before", json!("set_fact"));
+        store.set_included("h1", "before", json!("include"), false);
+        store.set_included("h1", "after", json!("include"), false);
+        store.set_fact("h1", "after", json!("set_fact"));
+        store.set_included("h1", "task", json!("include"), false);
+        let mut sc = scope(&["h1"]);
+        sc.task_vars = json!({"task": "task"}).as_object().unwrap().clone();
+        let v = store.for_host("h1", &sc);
+        assert_eq!(v["before"], json!("set_fact"));
+        assert_eq!(v["after"], json!("set_fact"));
+        assert_eq!(v["task"], json!("include"), "include_vars beats task vars");
+        assert_eq!(
+            store.hostvars_shared("h1")["h1"]["before"],
+            json!("set_fact")
+        );
+    }
+    {
         let inv = Inventory::parse_ini("h1 d=inv-host\n").unwrap();
         let role = |extra: Map<String, Value>| Scope {
             role_defaults: json!({"d": "role-default", "shared": "role-default"})
@@ -667,14 +687,15 @@ impl Rng {
             all_play_hosts: vec!["h1".into(), "h2".into()].into(),
         }
     }
-    /// A write to the store: a gather, a trusted fact or an untrusted one.
+    /// A write to the store: a gather, an `include_vars`, a trusted fact or an untrusted one.
     fn write(&mut self, store: &mut VarStore) {
         let host = ["h1", "h2", "localhost"][self.below(3)];
-        match self.below(3) {
+        match self.below(4) {
             0 => {
                 store.gather_facts(host, &self.map(2));
             }
             1 => store.set_fact(host, &self.name(), self.value(2)),
+            2 => store.set_included(host, &self.name(), self.value(2), false),
             _ => store.set_untrusted_fact(host, &self.name(), self.value(2)),
         }
     }

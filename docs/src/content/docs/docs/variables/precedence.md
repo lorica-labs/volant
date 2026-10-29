@@ -18,13 +18,16 @@ When two sources define the same variable, the one further down this list wins. 
 9. Play `vars_files`
 10. A role's `vars/main.yml`
 11. Task `vars`
-12. `set_fact`, registered results and `include_vars`
-13. Role parameters, and the `vars:` of a dynamic include statement
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` and registered results
+14. Role parameters, and the `vars:` of a dynamic include statement
+15. `--extra-vars`
 
 [Roles](/docs/playbooks/roles/#role-variables) explains where the three role layers come from and how they differ.
 
 A vars file that holds only `---` and comments loads as an empty mapping, as in ansible-core. A file holding a scalar such as `42` is still refused.
+
+A `vars_files` entry may be a list of paths. The first file of the list that exists is read and the others are ignored. When one of its paths uses a variable that has no value, the whole entry is skipped with the warning `skipping vars_files item due to an undefined variable`.
 
 A mapping can take the keys of another with a merge key, `<<: *base`, in every YAML file Volant reads: variable files, inventories, playbooks and task arguments. The merged keys come first, and a key written next to `<<` replaces the merged one. In `<<: [*a, *b]` the first mapping wins. A value that is not a mapping or a list of mappings stops the load, with the message of PyYAML.
 

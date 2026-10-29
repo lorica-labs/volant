@@ -1,0 +1,19 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{% include 'inc.j2' %}"}
+    - debug: {msg: "{% import 'm.j2' as m %}{{ m.hi('x') }}"}
+    - debug: {msg: "{% from 'm.j2' import hi %}{{ hi(1) }}"}
+    - debug: {msg: "{{ lookup('template', 't.j2') }}"}
+    - template: {src: t.j2, dest: "{{ playbook_dir }}/t.txt"}
+    - debug: {msg: "{{ lookup('file', playbook_dir ~ '/t.txt') }}"}
+    - include_role: {name: r}
+    - debug: {msg: "{% include 'nope.j2' ignore missing %}x"}
+    - debug: {msg: "{% include 'templates/tinc.j2' %}"}
+    - debug: {msg: "{% include ['nope.j2', 'inc.j2'] %}"}
+    - template: {src: bad.j2, dest: "{{ playbook_dir }}/bad.txt"}
+      ignore_errors: true
+    - debug: {msg: "{{ lookup('template', 'bad.j2') }}"}
+      ignore_errors: true
+    - debug: {msg: "{% import 'nope.j2' as m %}"}
+      ignore_errors: true

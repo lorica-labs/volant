@@ -140,7 +140,7 @@ pub(crate) fn facts_read(
     let mut roles = reach.roles.clone();
     for (play, compiled) in plays {
         scan.map(&play.vars, "play vars");
-        for entry in &play.vars_files {
+        for entry in play.vars_files.iter().flatten() {
             if Templar::is_template(entry) {
                 scan.dynamic(&format!("vars_files entry {entry}"), "the play");
             } else {

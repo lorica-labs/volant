@@ -967,6 +967,8 @@ def call(request):
         return {"value": connections(request["args"])}
     if kind == "lookup_needs":
         return {"value": lookup_needs(request["args"][0])}
+    if kind == "reset_persistent":
+        return {"value": reset_persistent(request["args"])}
     if kind not in EXPRESSIONS:
         return {"error": {"kind": "plugin", "message": "unknown plugin kind '%s'" % kind}}
     # Jinja's own sentence for a filter or a test, ansible-core's for a lookup.
@@ -1527,6 +1529,49 @@ def owned_connection(link, context, task, task_vars, templar):
     return connection
 
 
+def persistent(connection, handler, context, task):
+    """What `TaskExecutor._get_action_handler_with_module_context` does for a connection that
+    keeps a process of its own (`network_cli`, `netconf`, `httpapi`): unless the handler needs no
+    connection, ansible-core's `start_connection` runs its stub with this helper's interpreter,
+    plugin paths and verbosity, or finds the socket an earlier task left, and the connection
+    talks to it. Returns the connection the handler gets and the socket path, `None` for any
+    other connection."""
+    from ansible import constants as C
+    from ansible.executor.task_executor import start_connection
+    from ansible.plugins import loader as plugin_loader
+    from ansible.utils.display import Display
+
+    keeps = (connection.supports_persistence and C.USE_PERSISTENT_CONNECTIONS)
+    if not (keeps or connection.force_persistence):
+        return connection, None
+    handler_class = plugin_loader.action_loader.get(handler, class_only=True)
+    if not getattr(handler_class, "_requires_connection", True):
+        local = plugin_loader.connection_loader.get("local", context, os.devnull)
+        local.set_options()
+        return local, None
+    display = Display()
+    context.timeout = connection.get_option("persistent_command_timeout")
+    display.vvvv("attempting to start connection", host=context.remote_addr)
+    display.vvvv("using connection plugin %s" % connection.transport, host=context.remote_addr)
+    socket_path = start_connection(context, connection.get_options(), task._uuid)
+    display.vvvv("local domain socket path is %s" % socket_path, host=context.remote_addr)
+    connection._socket_path = socket_path
+    return connection, socket_path
+
+
+def reset_persistent(paths):
+    """Ends the persistent connection processes behind `paths`, as `meta: reset_connection` and
+    the strategy's `cleanup` at the end of a play end them; one already gone is no error."""
+    from ansible.module_utils.connection import Connection, ConnectionError
+
+    for path in paths:
+        try:
+            Connection(path).reset()
+        except ConnectionError:
+            pass
+    return len(paths)
+
+
 @contextlib.contextmanager
 def displayed(events):
     """What ansible-core's `Display` says while an owned link's action runs, appended to `events`
@@ -1542,7 +1587,9 @@ def displayed(events):
         events.append({"level": caplevel + 1, "host": host, "text": str(msg)})
 
     def display(self, msg, *args, **kwargs):
-        events.append({"level": 0, "host": None, "text": str(msg)})
+        # A line meant for the log file alone, as a persistent connection's `log` message is.
+        if not kwargs.get("log_only"):
+            events.append({"level": 0, "host": None, "text": str(msg)})
 
     def warning(self, msg, *args, **kwargs):
         events.append({"level": "warning", "host": None, "text": str(msg)})
@@ -1601,7 +1648,8 @@ def run_action(ident, request):
     With `link.kind` `owned` the connection is a real connection plugin the helper makes
     ([`owned_connection`]), connected before the plugin runs and closed once after it, on every
     path; what `Display` says comes back in the value as `_volant_display`, and no secret of the
-    task's is in the value."""
+    task's is in the value. A connection that keeps a process of its own starts it first
+    ([`persistent`]), and its socket comes back as `_volant_socket`."""
     from ansible._internal import _display_utils
     from ansible._internal._errors import _error_utils
     from ansible.errors import AnsibleError, AnsibleTaskError
@@ -1618,6 +1666,7 @@ def run_action(ident, request):
     link = request.get("link") or {}
     owned = link.get("kind") == "owned"
     events = []
+    socket_path = None
     if owned and "verbosity" in link:
         # Plugins that test the verbosity themselves see the run's.
         from ansible.utils.display import Display
@@ -1686,7 +1735,10 @@ def run_action(ident, request):
                 connection = parts["Link"](ident, shell, context, ssh_options)
             try:
                 if owned:
-                    # Connected before the plugin runs, so a refusal is the host's, unreachable.
+                    connection, socket_path = persistent(connection, name, context, task)
+                if owned and socket_path is None:
+                    # Connected before the plugin runs, so a refusal is the host's, unreachable. A
+                    # persistent process that cannot start fails the task instead, as it does there.
                     connection._connect()
                 action = plugin_loader.action_loader.get(
                     name,
@@ -1748,6 +1800,8 @@ def run_action(ident, request):
     if owned:
         if isinstance(value, dict):
             value["_volant_display"] = events
+            if socket_path:
+                value["_volant_socket"] = socket_path
         value = without_secrets(value, task_vars, context)
     return {"value": value}
 

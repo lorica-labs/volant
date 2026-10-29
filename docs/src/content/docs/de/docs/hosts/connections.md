@@ -1,5 +1,5 @@
 ---
-sourceHash: 55eb7eef1053
+sourceHash: 4f71d0749a1f
 title: Verbindungen und become
 description: Wie Volant einen Host erreicht, welche Hostvariablen und ansible.cfg-Einstellungen es liest und wie become über sudo und su funktioniert.
 ---
@@ -203,6 +203,15 @@ Alles andere am Lauf bleibt gleich: Schleifen, `when`, `register`, `changed_when
 - `become` nimmt die Eskalationsmethode des Tasks, `sudo` oder `su`.
 
 Jeder Task bezahlt den Aufbau der Verbindung des Plugins, wie bei `ansible-playbook`, daher ist dieser Weg pro Task langsamer als der des Agents.
+
+### Verbindungen, die einen Prozess behalten
+
+`network_cli`, `netconf` und `httpapi` halten ihre Verbindung zum Gerät in einem eigenen Prozess, wie unter `ansible-playbook`. Vor der ersten Task, die das Gerät braucht, startet der Helper den `ansible-connection`-Stub von ansible-core mit dem Python, den Plugin-Pfaden und der Ausführlichkeit des Helpers. Der Stub startet den Prozess, der an einem Socket unter `~/.ansible/pc` lauscht, festgelegt durch `ANSIBLE_PERSISTENT_CONTROL_PATH_DIR` oder `[persistent_connection] control_path_dir`. Der Name des Sockets ist ein Hash aus Adresse, Port, Benutzer und Lauf, daher nutzt jede spätere Task für dasselbe Gerät den Prozess erneut, aus jedem Helper.
+
+- Ein Prozess, der nicht starten kann, lässt die Task mit seinem Fehler scheitern, nicht den Host. `-vvv` fügt seinen Traceback hinzu.
+- `meta: reset_connection` beendet den Prozess des Hosts, und das Ende jedes Plays beendet alle Prozesse, die seine Tasks gestartet haben, wie bei `ansible-playbook`. Ein Prozess, der `persistent_connect_timeout` Sekunden (standardmäßig 30) untätig bleibt, endet von selbst, und ein Befehl wartet höchstens `persistent_command_timeout` Sekunden (30).
+- Bei `-vvvv` erscheinen die Zeilen, die ansible-core beim Start des Prozesses ausgibt, etwa `<address> attempting to start connection` und `<address> local domain socket path is ...`, unter der Task.
+- `persistent_log_messages` protokolliert jeden Austausch mit dem Gerät, Passwörter eingeschlossen, und ansible-core warnt davor mit seinem eigenen Text.
 
 ## Hostvariablen
 

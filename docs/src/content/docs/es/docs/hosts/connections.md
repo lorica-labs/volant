@@ -1,5 +1,5 @@
 ---
-sourceHash: 55eb7eef1053
+sourceHash: 4f71d0749a1f
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -203,6 +203,15 @@ Todo lo demás de la ejecución no cambia: bucles, `when`, `register`, `changed_
 - `become` usa el método de escalada de la tarea, `sudo` o `su`.
 
 Cada tarea paga el arranque de la conexión del plugin, como en `ansible-playbook`, así que esta vía es más lenta por tarea que la del agente.
+
+### Conexiones que mantienen un proceso
+
+`network_cli`, `netconf` y `httpapi` mantienen su conexión con el dispositivo en un proceso propio, como bajo `ansible-playbook`. Antes de la primera tarea que necesita el dispositivo, el helper ejecuta el stub `ansible-connection` de ansible-core con el Python, las rutas de plugins y la verbosidad del helper. El stub arranca el proceso, que escucha en un socket bajo `~/.ansible/pc`, fijado por `ANSIBLE_PERSISTENT_CONTROL_PATH_DIR` o `[persistent_connection] control_path_dir`. El nombre del socket es un hash de la dirección, el puerto, el usuario y la ejecución, así que cada tarea posterior para el mismo dispositivo reutiliza el proceso, desde cualquier helper.
+
+- Un proceso que no puede arrancar hace fallar la tarea con su error, no el host. `-vvv` añade su traceback.
+- `meta: reset_connection` termina el proceso del host, y el final de cada play termina todos los procesos que arrancaron sus tareas, como hace `ansible-playbook`. Un proceso inactivo durante `persistent_connect_timeout` segundos (30 por defecto) termina solo, y un comando espera como mucho `persistent_command_timeout` segundos (30).
+- Con `-vvvv`, las líneas que ansible-core imprime al arrancar el proceso, como `<address> attempting to start connection` y `<address> local domain socket path is ...`, aparecen bajo la tarea.
+- `persistent_log_messages` registra cada intercambio con el dispositivo, contraseñas incluidas, y ansible-core lo advierte con su propio texto.
 
 ## Variables de host
 

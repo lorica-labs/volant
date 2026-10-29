@@ -69,8 +69,18 @@ impl Bridge {
                     },
                 ))
             }
-            outcome => {
+            mut outcome => {
                 self.lock_actions().idle.push(helper);
+                // The persistent process a task started is the host's until a reset ends it.
+                if let Ok(Value::Object(map)) = &mut outcome
+                    && let Some(Value::String(path)) = map.remove("_volant_socket")
+                    && let Some(host) = call
+                        .task_vars
+                        .get("inventory_hostname")
+                        .and_then(Value::as_str)
+                {
+                    self.note_socket(host, &path);
+                }
                 outcome
             }
         }

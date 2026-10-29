@@ -193,6 +193,28 @@ pub(in crate::executor) async fn link_for<'a>(
     Ok(links.get_mut(key).expect("inserted just above"))
 }
 
+/// `meta: reset_connection` for `host`: its links go, the shared ssh master with them, and so
+/// does the persistent connection process a task of the host started in the helper, whether or
+/// not a link is held for it. The next task opens them again.
+pub(in crate::executor) async fn reset_host(
+    links: &mut HashMap<LinkKey, AgentLink>,
+    checked: &mut HashMap<LinkKey, u64>,
+    host: &str,
+    templar: &crate::template::Templar,
+) {
+    let keys: Vec<LinkKey> = links.keys().filter(|k| k.host == host).cloned().collect();
+    for key in keys {
+        checked.remove(&key);
+        if let Some(link) = links.remove(&key) {
+            link.shutdown().await;
+        }
+        key.transport.stop_shared().await;
+    }
+    if let Some(bridge) = templar.bridge() {
+        bridge.reset_persistent(Some(host));
+    }
+}
+
 /// What checking a kept link needs of it, so the check can be driven by a fake in tests.
 pub(super) trait KeptLink {
     async fn handshake(&mut self) -> anyhow::Result<()>;

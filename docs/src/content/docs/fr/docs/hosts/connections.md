@@ -1,5 +1,5 @@
 ---
-sourceHash: 55eb7eef1053
+sourceHash: 4f71d0749a1f
 title: Connexions et become
 description: Comment Volant atteint un hôte, les variables d'hôte et les paramètres d'ansible.cfg qu'il lit, et comment become fonctionne avec sudo et su.
 ---
@@ -203,6 +203,15 @@ Tout le reste de l'exécution est inchangé : boucles, `when`, `register`, `chan
 - `become` prend la méthode d'escalade de la tâche, `sudo` ou `su`.
 
 Chaque tâche paie le démarrage de la connexion du plugin, comme avec `ansible-playbook`, donc cette voie est plus lente par tâche que celle de l'agent.
+
+### Connexions qui gardent un processus
+
+`network_cli`, `netconf` et `httpapi` gardent leur connexion à l'équipement dans un processus à part, comme sous `ansible-playbook`. Avant la première tâche qui a besoin de l'équipement, le helper lance le stub `ansible-connection` d'ansible-core avec le Python, les chemins de plugins et la verbosité du helper. Le stub démarre le processus, qui écoute sur un socket sous `~/.ansible/pc`, réglé par `ANSIBLE_PERSISTENT_CONTROL_PATH_DIR` ou `[persistent_connection] control_path_dir`. Le nom du socket est une empreinte de l'adresse, du port, de l'utilisateur et de l'exécution : toute tâche suivante pour le même équipement réutilise le processus, depuis n'importe quel helper.
+
+- Un processus qui ne démarre pas fait échouer la tâche avec son erreur, pas l'hôte. `-vvv` ajoute sa trace.
+- `meta: reset_connection` termine le processus de l'hôte, et la fin de chaque play termine tous les processus que ses tâches ont démarrés, comme le fait `ansible-playbook`. Un processus resté inactif `persistent_connect_timeout` secondes (30 par défaut) s'arrête de lui-même, et une commande attend au plus `persistent_command_timeout` secondes (30).
+- À `-vvvv`, les lignes qu'ansible-core affiche en démarrant le processus, comme `<address> attempting to start connection` et `<address> local domain socket path is ...`, s'affichent sous la tâche.
+- `persistent_log_messages` journalise chaque échange avec l'équipement, mots de passe compris, et ansible-core prévient avec son propre texte.
 
 ## Variables d'hôte
 

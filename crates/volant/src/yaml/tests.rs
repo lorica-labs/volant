@@ -1319,6 +1319,12 @@ fn a_quoted_scalar_continued_left_of_its_parent_loads() {
         ("m:\n  k: \"a\n b\"\n", json!({"m": {"k": "a b"}})),
         ("- \"a\nb\"\n", json!(["a b"])),
         ("x: \"é\"\nk: \"a\nb\"\n", json!({"x": "é", "k": "a b"})),
+        ("k: 'a\n\t\tb'\n", json!({"k": "a b"})),
+        (
+            "m:\n  k: \"a\n\t \tb\n\tc\"\n",
+            json!({"m": {"k": "a b c"}}),
+        ),
+        ("k: \"a\\\n\tb\"\n", json!({"k": "ab"})),
         (
             "a: \"x\ny\"\nb: \"p\n\nq\"\n",
             json!({"a": "x y", "b": "p\nq"}),

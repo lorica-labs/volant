@@ -3,8 +3,9 @@
 
 use std::collections::hash_map::Entry;
 use std::collections::{HashMap, HashSet};
+use std::sync::Arc;
 
-use crate::compile::Grafted;
+use crate::compile::{Compiled, Grafted};
 use crate::executor::include::IncludeGroup;
 
 /// One `included:` line: what it names, the hosts that show it, and the item's label.
@@ -75,8 +76,10 @@ pub(super) fn arrivals(
         let (group, hosts, runners) = grouped.remove(&key).expect("a key just inserted");
         lines.push((group.what, hosts, group.label));
         if !runners.is_empty() {
+            let mut expanded = group.expanded;
+            narrow_dependencies(&mut expanded, &runners, roles_run);
             expansions.push(Grafted {
-                expanded: group.expanded,
+                expanded,
                 params: group.params,
                 hosts: runners.into(),
             });
@@ -86,5 +89,36 @@ pub(super) fn arrivals(
         asking,
         lines,
         expansions,
+    }
+}
+
+/// A role that does not allow duplicates runs once per host. Measured on ansible-core 2.19.12: an
+/// `include_role` whose role depends on one the host has already run, in the play's `roles:` or
+/// through an earlier include, leaves it out for that host. Its steps are spliced in for the
+/// hosts that have not run it.
+fn narrow_dependencies(
+    expanded: &mut Compiled,
+    runners: &[String],
+    roles_run: &mut HashMap<String, HashSet<String>>,
+) {
+    for (index, role) in expanded.roles.iter().enumerate() {
+        let Some(id) = &role.dedup else { continue };
+        let hosts: Vec<String> = runners
+            .iter()
+            .filter(|host| {
+                roles_run
+                    .entry((*host).clone())
+                    .or_default()
+                    .insert(id.clone())
+            })
+            .cloned()
+            .collect();
+        if hosts.len() == runners.len() {
+            continue;
+        }
+        let hosts: Arc<[String]> = hosts.into();
+        for step in expanded.steps.iter_mut().filter(|s| s.role == Some(index)) {
+            step.hosts = Some(Arc::clone(&hosts));
+        }
     }
 }

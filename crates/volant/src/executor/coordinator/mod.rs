@@ -251,6 +251,15 @@ pub(super) async fn run_batch(
     // The role instances each host has had brought in, which is what `allow_duplicates: false`
     // is checked against.
     let mut roles_run: HashMap<String, HashSet<String>> = HashMap::new();
+    // The play's own role instances run for every host of it.
+    for id in plan.steps().roles.iter().filter_map(|r| r.dedup.as_ref()) {
+        for host in &play_hosts {
+            roles_run
+                .entry(host.clone())
+                .or_default()
+                .insert(id.clone());
+        }
+    }
     // What a host that could not be reached owes the terminal, by host and the step its batch
     // began at. The host leaves the play on arrival; its block and line print where the host
     // stands in the step's order, like a result, instead of in front of the hosts before it.

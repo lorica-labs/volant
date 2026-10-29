@@ -4,6 +4,7 @@
 
 #![cfg(target_os = "linux")]
 
+use std::fmt::Write as _;
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
@@ -11,11 +12,11 @@ use std::time::{Duration, Instant};
 /// `/proc` while it runs.
 fn peak_megabytes(dir: &std::path::Path, playbook: &str, hosts: usize) -> u64 {
     std::fs::write(dir.join("p.yml"), playbook).expect("the playbook is written");
-    let inventory: String = (1..=hosts)
-        .map(|n| format!("h{n} ansible_connection=local\n"))
-        .collect();
-    std::fs::write(dir.join("hosts.ini"), format!("[all]\n{inventory}"))
-        .expect("the inventory is written");
+    let mut inventory = String::from("[all]\n");
+    for n in 1..=hosts {
+        writeln!(inventory, "h{n} ansible_connection=local").expect("a String takes any write");
+    }
+    std::fs::write(dir.join("hosts.ini"), inventory).expect("the inventory is written");
     let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
         .args(["playbook", "-i", "hosts.ini", "p.yml"])
         .current_dir(dir)

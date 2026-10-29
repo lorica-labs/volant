@@ -35,8 +35,14 @@ fn posix() -> bool {
     found
 }
 
+/// Held by each run: the timings two runs at once would print are each other's load.
+static ONE_AT_A_TIME: std::sync::Mutex<()> = std::sync::Mutex::new(());
+
 /// The play under `program` in `dir`, with `env`, one fork so the hosts keep their order.
 fn run(program: &[&Path], dir: &Path, args: &[&str], env: &[(&str, &str)]) -> String {
+    let _turn = ONE_AT_A_TIME
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner);
     let out = Command::new(program[0])
         .args(&program[1..])
         .args(["-i", "inv.ini", "play.yml", "-f", "1"])
@@ -66,10 +72,8 @@ fn masked(text: &str) -> String {
             continue;
         }
         let mut line = line.to_string();
-        if let Some(at) = line.find(" (0:") {
-            if line.ends_with("* ") {
-                line = format!("<time>{}", &line[at..at + 1]);
-            }
+        if line.contains(" (") && line.ends_with("* ") {
+            line = "<time>".to_string();
         }
         if line.ends_with('s')
             && let Some((head, tail)) = line.rsplit_once(' ')

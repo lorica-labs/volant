@@ -1,5 +1,5 @@
 ---
-sourceHash: 3e883615a458
+sourceHash: 9cc672d25d6b
 title: ¿Se ejecutará mi playbook?
 description: Comprueba un proyecto de Ansible existente contra esta versión en unos segundos, sin tocar ningún host.
 ---
@@ -58,9 +58,9 @@ Un archivo que solo nombra un `include_tasks` o `include_role` dinámico se lee 
 | Bloques | `block`, `rescue`, `always` | |
 | Reutilización | roles y dependencias, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
 | Delegación | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
-| Módulos | los módulos de ansible-core para hosts Linux, incluidos `copy`, `template`, `dnf`, `service`, `uri` y `reboot`, y los módulos de las colecciones instaladas con sus plugins de acción | un plugin de acción de una colección que necesite Windows o un dispositivo de red, plugins de acción propios |
+| Módulos | los módulos de ansible-core para hosts Linux, incluidos `copy`, `template`, `dnf`, `service`, `uri` y `reboot`, y los módulos de las colecciones instaladas con sus plugins de acción | un plugin de acción de una colección que necesite Windows, plugins de acción propios |
 | Inventarios | archivos INI, YAML y TOML, directorios, scripts, plugins `constructed`, `generator` y de colecciones, varios `-i`, `group_vars`, `host_vars`, la caché de facts `jsonfile` | ninguno |
-| Conexiones | `ssh` con claves, un ssh-agent o una contraseña (`-k` o `ansible_password`, requiere OpenSSH 8.4 o posterior), `local` | otros plugins de conexión, Windows, dispositivos de red |
+| Conexiones | `ssh` con claves, un ssh-agent o una contraseña (`-k` o `ansible_password`, requiere OpenSSH 8.4 o posterior), `local`, y `network_cli`, `netconf` y `httpapi` para dispositivos de red | otros plugins de conexión, Windows |
 | Escalado de privilegios | `become` mediante `sudo` o `su`, con o sin contraseña | `doas` y otros métodos |
 | Plantillas | Jinja2 con los filtros, tests y lookups de Ansible, `!unsafe`, filtros y lookups de colecciones | algunos argumentos de filtros, enumerados en [Plantillas](/es/docs/variables/templating/) |
 | Modos de ejecución | ejecuciones normales, [`--check` y `--diff`](/es/docs/playbooks/check-and-diff/), [vault](/es/docs/variables/vault/), `--start-at-task`, `--step`, los cuatro comandos de listado | ninguno |
@@ -90,7 +90,7 @@ La comprobación previa detiene la ejecución antes de la primera conexión, ant
 | Un módulo integrado que esta versión no incluye | `module 'x' is not available in this release` | 4 |
 | Un argumento de cadena que es una sola plantilla | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | Un módulo o una colección que no se resuelve | `couldn't resolve module/action 'x' ...`, con el comando de instalación si falta una colección | 4 |
-| Un módulo de colección que necesita un plugin de acción para Windows o un dispositivo de red | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| Un módulo de colección que necesita un plugin de acción para Windows | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | Un `become_method` distinto de `sudo` y `su` | `become_method 'x' is not supported yet` | 2 |
 | Un rol en `roles:` o `import_role` que nadie encuentra | `the role 'x' was not found in ...` | 1 |
 

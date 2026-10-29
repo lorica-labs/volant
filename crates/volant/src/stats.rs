@@ -332,16 +332,17 @@ pub fn error_code(err: &anyhow::Error) -> i32 {
         .map_or(1, |refusal| refusal.code)
 }
 
-/// ansible-playbook's exit status: 2 for failed hosts, 4 for unreachable hosts, combined.
+/// ansible-playbook's exit status: 4 when a host is unreachable, else 2 when one failed. The
+/// reference's strategy returns one or the other, unreachable first (`StrategyBase.run`,
+/// ansible-core 2.19.12), never both: measured with two unreachable hosts and a failed one.
 pub fn exit_code(stats: &Stats) -> i32 {
-    let mut code = 0;
-    if !stats.failing.is_empty() || !stats.unreported.is_empty() {
-        code |= 2;
-    }
     if !stats.dark.is_empty() {
-        code |= 4;
+        4
+    } else if !stats.failing.is_empty() || !stats.unreported.is_empty() {
+        2
+    } else {
+        0
     }
-    code
 }
 
 #[cfg(test)]

@@ -187,6 +187,9 @@ pub struct PlayTask {
     /// task of a role lists as `role : name` while an unnamed one lists as its module alone,
     /// with no role prefix - and the banner prefixes both.
     pub named: bool,
+    /// The play's own `Gathering Facts`: its error block shows no origin, as the reference's task
+    /// built from no source line shows none, while `-vv` still prints the play's `task path:`.
+    pub implicit: bool,
     pub module: String,
     pub args: Map<String, Value>,
     /// The tags written here and on everything above it, sorted and free of duplicates. An
@@ -319,6 +322,7 @@ impl PlayTask {
         PlayTask {
             name: String::new(),
             named: false,
+            implicit: false,
             module: String::new(),
             args: Map::new(),
             tags: Vec::new(),

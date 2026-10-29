@@ -260,6 +260,7 @@ pub(crate) fn compile(
     let gather = PlayTask {
         name: "Gathering Facts".to_string(),
         named: true,
+        implicit: true,
         module: module.to_string(),
         // Measured on ansible-core 2.19.12: `always` only when the play has no tags. A tagged
         // play gathers when its own tags are selected, and `--tags always` or `--tags other`

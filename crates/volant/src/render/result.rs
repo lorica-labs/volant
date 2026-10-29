@@ -76,7 +76,10 @@ impl Renderer {
             }
         }
         // Registered and never shown: the reference's callback pops it off every line, measured.
+        // Its `_dump_results` pops the warnings and the deprecations too, which it shows apart.
         body.remove("exception");
+        body.remove("warnings");
+        body.remove("deprecations");
         body.remove(ERROR_KEY);
         if dump == Dump::Debug {
             // The reference's `_clean_results` for a `debug`, ansible-core 2.19.12: a result with

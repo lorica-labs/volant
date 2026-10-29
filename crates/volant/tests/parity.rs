@@ -159,6 +159,16 @@ const LATER: &[(&str, &str, &str)] = &[
     ("shell", "powershell", "Windows"),
 ];
 
+/// The note of a collection module or action plugin that needs a network device.
+const DEVICE: &str = "needs a device: runs over ansible-core's persistent connection";
+
+/// The connections ansible-core keeps in a persistent process, which run through the helper.
+const PERSISTENT: [&str; 3] = [
+    "ansible.netcommon.network_cli",
+    "ansible.netcommon.netconf",
+    "ansible.netcommon.httpapi",
+];
+
 /// Filters and tests the engine knows by name whose arguments fail in part. Decided here, from
 /// probes against ansible-core 2.19.12; a row that is fixed leaves the list in the same change.
 const ARGUMENT_GAPS: &[(&str, &str, &str)] = &[
@@ -464,6 +474,12 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         // What a module or action plugin needs beyond ssh or local (Windows, a network
         // device's persistent connection), as the generator read it from the collection.
         let later = |name: &str| c["later"][name].as_str();
+        // What needs a network device runs over ansible-core's persistent connection.
+        let device = |name: &str| {
+            c["device"]
+                .as_array()
+                .is_some_and(|names| names.iter().any(|n| n == name))
+        };
         let actions = names(c, &["action"]);
         let mut push = |kind: &str, name: &str, s: Status, note: &str| {
             rows.push(row(&format!("collection {kind}"), name, s, note));
@@ -472,6 +488,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             // A module that runs through an action plugin runs on the bridge, as that plugin.
             match (later(&m), c["module_action"][&m].as_str()) {
                 (Some(why), _) => push("module", &m, Status::Later, why),
+                (None, _) if device(&m) => push("module", &m, Status::Runs, DEVICE),
                 (None, Some(_)) => push("module", &m, Status::Runs, "through its action plugin"),
                 (None, None) => push("module", &m, Status::Runs, ""),
             }
@@ -479,6 +496,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         for a in &actions {
             match later(a) {
                 Some(why) => push("action plugin", a, Status::Later, why),
+                None if device(a) => push("action plugin", a, Status::Runs, DEVICE),
                 None => push(
                     "action plugin",
                     a,
@@ -528,7 +546,14 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
                     .downcast_ref::<volant::transport::ConnectionFailsTask>()
                     .is_some(),
             };
-            if driven {
+            if PERSISTENT.contains(&n.as_str()) {
+                push(
+                    "connection",
+                    &n,
+                    Status::Runs,
+                    "through ansible-core's persistent connection",
+                );
+            } else if driven {
                 push("connection", &n, Status::Runs, "");
             } else {
                 push("connection", &n, Status::Later, "another connection");
@@ -737,8 +762,8 @@ fn an_option_is_judged_on_every_spelling() {
     assert_eq!(status("-C, --check"), Some(Status::Runs));
 }
 
-/// A collection's module waits for a later release only when it needs another platform: a network
-/// device's persistent connection, or Windows.
+/// A collection's module waits for a later release only when it needs Windows; one that needs a
+/// network device runs over its persistent connection.
 #[test]
 fn a_module_waits_only_when_it_needs_another_platform() {
     let rows = matrix(&probe_dir("platform"));
@@ -751,7 +776,8 @@ fn a_module_waits_only_when_it_needs_another_platform() {
         status("community.vmware.vcenter_extension"),
         Some(Status::Runs)
     );
-    assert_eq!(status("cisco.ios.ios_acls"), Some(Status::Later));
+    assert_eq!(status("cisco.ios.ios_acls"), Some(Status::Runs));
+    assert_eq!(status("ansible.windows.win_copy"), Some(Status::Later));
 }
 
 /// Every builtin action plugin of the reference is implemented here or refused by name: a new one

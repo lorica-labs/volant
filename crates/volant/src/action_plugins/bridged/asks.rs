@@ -230,7 +230,12 @@ impl Bridged {
     pub(super) fn result_of(&self, outcome: Result<Value, BridgeError>) -> TaskResult {
         match outcome {
             Ok(Value::Object(map)) => {
-                let raised_skip = map.contains_key(crate::executor::RAISED_SKIP);
+                // The helper's marks of a raised skip or failure, which the judge reads.
+                let raised: Vec<&str> =
+                    [crate::executor::RAISED_SKIP, crate::executor::RAISED_FAIL]
+                        .into_iter()
+                        .filter(|key| map.contains_key(*key))
+                        .collect();
                 let deprecation = map.get(crate::executor::DEPRECATION_TEXT).cloned();
                 // The error that gathers others, which the error block frames: see `settle_failure`.
                 let cause = map.get("_volant_cause").cloned();
@@ -238,10 +243,8 @@ impl Bridged {
                 let display = map.get("_volant_display").cloned();
                 let mut result = TaskResult(map);
                 crate::executor::drop_internal_keys(&mut result);
-                if raised_skip {
-                    result
-                        .0
-                        .insert(crate::executor::RAISED_SKIP.into(), Value::Bool(true));
+                for key in raised {
+                    result.0.insert(key.into(), Value::Bool(true));
                 }
                 // The helper's own key, which the driver shows after the task's warnings.
                 if let Some(text) = deprecation {

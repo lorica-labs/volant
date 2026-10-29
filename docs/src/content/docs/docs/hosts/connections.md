@@ -212,6 +212,16 @@ Each task pays for starting the plugin's connection, as `ansible-playbook` does,
 - At `-vvvv` the lines ansible-core prints as it starts the process, such as `<address> attempting to start connection` and `<address> local domain socket path is ...`, are printed under the task.
 - `persistent_log_messages` logs every exchange with the device, passwords included, and ansible-core warns about it with its own text.
 
+## Network devices
+
+`ansible_connection: network_cli`, `netconf` or `httpapi`, or their full names under `ansible.netcommon`, reach a switch, a router or a firewall through ansible.netcommon's own plugins, which ansible-core loads in Volant's Python helper. The controller needs ansible.netcommon and ansible.utils installed, and the collection of the device's platform, such as `cisco.ios`. `ansible_network_os` names that platform (`cisco.ios.ios`). A `network_cli` host without it is unreachable with `Unable to automatically determine host network os`.
+
+The modules of the network collections, such as `ansible.netcommon.cli_command` or `cisco.ios.ios_config`, run on the controller as they do under `ansible-playbook`, and reach the device through the connection's persistent process. A module that needs another connection than the host's fails with its collection's own message, such as `Connection type local is not valid for this module`.
+
+Each connection needs Python packages ansible-core does not bring: paramiko or ansible-pylibssh for `network_cli`, ncclient for `netconf`. With Volant's managed runtime, `volant runtime install --extras network` installs them, and a run that needs them stops before the first connection while they are missing. With `VOLANT_PYTHON`, install them in that environment.
+
+The plugins read their own options from the host's variables, `ansible.cfg` and the environment, as `ansible-doc -t connection ansible.netcommon.network_cli` lists them.
+
 ## Host variables
 
 Volant reads these per host, from the inventory or from any other variable source. A test checks this list against the names the connection code reads, so it stays in sync with the engine.
@@ -365,7 +375,7 @@ Over a `local` connection `su` runs on a terminal of its own. A wrong password f
 
 ## Not there yet
 
-- Windows hosts and network devices.
+- Windows hosts.
 - The connection plugins other than `ssh` and `local`, listed in the [support matrix](/docs/reference/parity/#collection-connection).
 - `doas`, `pbrun` and the other become methods. They can be added as other ways to start the agent, without a protocol change.
 

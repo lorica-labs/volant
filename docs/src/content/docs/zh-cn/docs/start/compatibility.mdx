@@ -1,5 +1,5 @@
 ---
-sourceHash: 3e883615a458
+sourceHash: 9cc672d25d6b
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -58,9 +58,9 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 块 | `block`、`rescue`、`always` | |
 | 复用 | role 与依赖、`import_tasks`、`import_role`、`import_playbook`、`include_tasks`、`include_role`、`include_vars` | |
 | 委派 | `delegate_to`、`delegate_facts`、`local_action`、`run_once` | |
-| 模块 | ansible-core 面向 Linux 主机的模块，包括 `copy`、`template`、`dnf`、`service`、`uri` 和 `reboot`，以及已安装 collection 的模块和它们的 action 插件 | 需要 Windows 或网络设备的 collection action 插件，自己写的 action 插件 |
+| 模块 | ansible-core 面向 Linux 主机的模块，包括 `copy`、`template`、`dnf`、`service`、`uri` 和 `reboot`，以及已安装 collection 的模块和它们的 action 插件 | 需要 Windows 的 collection action 插件，自己写的 action 插件 |
 | Inventory | INI、YAML 和 TOML 文件，目录，脚本，`constructed`、`generator` 和 collection 插件，多个 `-i`，`group_vars`，`host_vars`，`jsonfile` facts 缓存 | 无 |
-| 连接 | `ssh`（密钥、ssh-agent 或密码：`-k` 或 `ansible_password`，需要 OpenSSH 8.4 或更高版本），`local` | 其他连接插件，Windows，网络设备 |
+| 连接 | `ssh`（密钥、ssh-agent 或密码：`-k` 或 `ansible_password`，需要 OpenSSH 8.4 或更高版本），`local`，以及用于网络设备的 `network_cli`、`netconf` 和 `httpapi` | 其他连接插件，Windows |
 | 提权 | 通过 `sudo` 或 `su` 的 `become`，带密码或不带密码 | `doas` 和其他方式 |
 | 模板 | Jinja2 加上 Ansible 的过滤器、测试器和 lookup，`!unsafe`，来自 collection 的过滤器和 lookup | 部分过滤器参数，列在[模板](/zh-cn/docs/variables/templating/)中 |
 | 运行方式 | 普通运行，[`--check` 和 `--diff`](/zh-cn/docs/playbooks/check-and-diff/)，[vault](/zh-cn/docs/variables/vault/)，`--start-at-task`，`--step`，四个列表命令 | 无 |
@@ -90,7 +90,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 这个版本不带的内置模块 | `module 'x' is not available in this release` | 4 |
 | 整个是一个模板的字符串参数 | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | 无法解析的模块或 collection | `couldn't resolve module/action 'x' ...`，缺少 collection 时还会附上安装命令 | 4 |
-| 需要 Windows 或网络设备 action 插件的 collection 模块 | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| 需要 Windows action 插件的 collection 模块 | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | `become_method` 不是 `sudo` 和 `su` | `become_method 'x' is not supported yet` | 2 |
 | `roles:` 或 `import_role` 中没有人能找到的 role | `the role 'x' was not found in ...` | 1 |
 

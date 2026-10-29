@@ -107,7 +107,7 @@ Not there yet: custom action, callback and vars plugins, the `stdout_callback` s
 
 - Your files stay yours: no conversion step and no new format.
 - Most of what this release does not support yet is named before the first connection. The [known gaps](https://volant.sh/docs/start/compatibility/#known-gaps) are the exceptions: there a run can ignore a setting or give a wrong result without an error.
-- Linux over SSH comes first. Windows and network devices come later.
+- Linux over SSH comes first. Network devices run through ansible.netcommon's connections. Windows comes later.
 - Volant collects no telemetry and makes no network call other than the ones your playbook asks for.
 
 ## Contributing

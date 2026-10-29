@@ -86,7 +86,7 @@ Your files stay yours. Volant reads Ansible's YAML and follows its variable prec
 
 It stops instead of guessing. Most of what this release does not support yet is named before the first connection, so a run rarely reports success after quietly skipping something you asked for. The [known gaps](/docs/start/compatibility/#known-gaps) are the exceptions. The check is called the [pre-flight check](/docs/internals/preflight/).
 
-It targets Linux over SSH first. The controller runs on Linux or macOS and drives Linux hosts. Windows and network devices come later.
+It targets Linux over SSH first. The controller runs on Linux or macOS and drives Linux hosts. Network devices run through ansible.netcommon's connections. Windows comes later.
 
 ## What Volant leaves on your machines
 

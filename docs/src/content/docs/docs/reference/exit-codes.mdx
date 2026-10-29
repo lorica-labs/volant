@@ -22,15 +22,11 @@ Volant exits with the codes `ansible-playbook` uses, so scripts and CI jobs writ
 </Option>
 
 <Option name="4" id="code-4">
-  At least one host was unreachable, or the playbook stopped before the run: it does not parse, or it uses something this release does not support yet.
+  At least one host was unreachable, whether or not others failed, as `ansible-playbook` reports it, or the playbook stopped before the run: it does not parse, or it uses something this release does not support yet.
 </Option>
 
 <Option name="5" id="code-5">
   A setting has a value it cannot take, such as `forks = many`, an unknown word for `gathering`, `runtime` or `host_named_paths`, or an `order` keyword the play does not know. The message names the key and the value.
-</Option>
-
-<Option name="6" id="code-6">
-  Some hosts failed and some were unreachable: 2 and 4 combined.
 </Option>
 
 <Option name="99" id="code-99">

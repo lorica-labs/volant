@@ -17,11 +17,18 @@ use super::HASHED;
 pub(super) fn matches_hash(at: &Path, hash: &str) -> io::Result<bool> {
     #[cfg(test)]
     HASHED.fetch_add(1, Ordering::Relaxed);
-    match fs::read(at) {
-        Ok(zip) => Ok(blake3::hash(&zip).to_hex().to_string() == hash),
+    match hash_file(at) {
+        Ok(actual) => Ok(actual == hash),
         Err(err) if err.kind() == io::ErrorKind::NotFound => Ok(false),
         Err(err) => Err(err),
     }
+}
+
+/// The blake3 of the file at `at`, read a block at a time: a staged file may be gigabytes.
+pub(crate) fn hash_file(at: &Path) -> io::Result<String> {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update_reader(fs::File::open(at)?)?;
+    Ok(hasher.finalize().to_hex().to_string())
 }
 
 /// Refuses a payload the filesystem cannot hold, before a byte of it is written.

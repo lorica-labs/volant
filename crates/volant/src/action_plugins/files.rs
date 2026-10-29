@@ -5,18 +5,13 @@ use std::path::{Component, Path, PathBuf};
 
 use serde_json::Value;
 use volant_protocol::TaskResult;
-use volant_protocol::encoding::b64_encode;
-use volant_protocol::frame::MAX_FRAME_LEN;
+use volant_protocol::encoding::{b64_encode, sha1_hex, sha1_hex_of};
 
 use std::collections::BTreeSet;
 
-use super::FileBlob;
+use super::{BlobBody, FileBlob};
 use crate::compile::Origin;
 use crate::config::HostNamedPaths;
-
-/// The largest file one blob carries: one frame, which holds the blob's bytes alone, raw or
-/// deflated to fewer.
-pub(crate) const MAX_FILE_LEN: usize = MAX_FRAME_LEN;
 
 /// Where the reference looks for a task's local file, in its order.
 ///
@@ -166,42 +161,78 @@ fn inside_task_directories(origin: &Origin, playbook_dir: &Path, subdir: &str, n
         .is_none_or(|path| under(path))
 }
 
-#[cfg(test)]
-thread_local! {
-    /// The frame limit the tests of this thread run with, so a test of the refusal does not build
-    /// a payload of the real size.
-    pub(crate) static FRAME_LIMIT: std::cell::Cell<usize> = const { std::cell::Cell::new(MAX_FILE_LEN) };
+/// Past this many bytes a controller file stays on disk: hashed and sent a piece at a time
+/// rather than read whole, so the memory of a transfer does not grow with the file.
+pub(crate) const ON_DISK_LEN: u64 = 16 * 1024 * 1024;
+
+/// What a task sends to the host: bytes in hand, or a controller file read as it goes.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum Payload {
+    Bytes(Vec<u8>),
+    Disk(PathBuf),
 }
 
-/// The most one frame carries: [`MAX_FILE_LEN`], or the test thread's own limit.
-fn frame_limit() -> usize {
-    #[cfg(test)]
-    return FRAME_LIMIT.get();
-    #[cfg(not(test))]
-    MAX_FILE_LEN
-}
-
-/// Refuses `len` bytes that could not fit in one frame, naming both sizes.
-pub(crate) fn fits(name: &str, len: usize) -> Result<(), String> {
-    let limit = frame_limit();
-    if len > limit {
-        return Err(format!(
-            "{name} is {len} bytes; one frame carries at most {limit}"
-        ));
+impl Payload {
+    /// The controller file at `path`, read whole up to [`ON_DISK_LEN`] and left on disk past it.
+    /// A vaulted file is read whole whatever its length, for its caller to decrypt.
+    pub(crate) fn read(path: &Path) -> std::io::Result<Payload> {
+        use std::io::Read;
+        let len = std::fs::metadata(path)?.len();
+        if len > ON_DISK_LEN {
+            let mut head = Vec::new();
+            std::fs::File::open(path)?.take(64).read_to_end(&mut head)?;
+            if !crate::vault::is_encrypted(&head) {
+                return Ok(Payload::Disk(path.to_path_buf()));
+            }
+        }
+        std::fs::read(path).map(Payload::Bytes)
     }
-    Ok(())
+
+    /// The SHA-1 of the bytes, the sum the host's `stat` reports.
+    pub(crate) fn sha1(&self) -> std::io::Result<String> {
+        match self {
+            Payload::Bytes(bytes) => Ok(sha1_hex(bytes)),
+            Payload::Disk(path) => sha1_hex_of(std::fs::File::open(path)?),
+        }
+    }
+
+    /// The bytes as a blob, named by their blake3 as the union is: the agent refuses a blob
+    /// whose bytes hash to anything else, a file that changed after it was hashed included.
+    pub(crate) fn blob(&self) -> std::io::Result<FileBlob> {
+        Ok(match self {
+            Payload::Bytes(bytes) => FileBlob {
+                hash: blake3::hash(bytes).to_hex().to_string(),
+                body: BlobBody::B64(b64_encode(bytes)),
+            },
+            Payload::Disk(path) => {
+                let mut hasher = blake3::Hasher::new();
+                hasher.update_reader(std::fs::File::open(path)?)?;
+                FileBlob {
+                    hash: hasher.finalize().to_hex().to_string(),
+                    body: BlobBody::Disk(path.clone()),
+                }
+            }
+        })
+    }
 }
 
-/// A file's bytes as a blob, refused when they could not fit in one frame.
-///
-/// Named by the blake3 of the bytes, as the union is: the agent refuses a blob whose bytes hash
-/// to anything else.
-pub(crate) fn blob_of(name: &str, bytes: &[u8]) -> Result<FileBlob, String> {
-    fits(name, bytes.len())?;
-    Ok(FileBlob {
-        hash: blake3::hash(bytes).to_hex().to_string(),
-        b64: b64_encode(bytes),
-    })
+/// `mode: preserve` read off a controller file, as the reference writes it: `0%03o`.
+#[cfg(unix)]
+pub(crate) fn local_mode(path: &Path) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)
+        .map_err(|err| format!("could not read the mode of {}: {err}", path.display()))?
+        .permissions()
+        .mode();
+    Ok(format!("0{:03o}", mode & 0o7777))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn local_mode(path: &Path) -> Result<String, String> {
+    Err(format!(
+        "mode: preserve reads a unix mode, and {} has none on this controller",
+        path.display()
+    ))
 }
 
 #[cfg(test)]

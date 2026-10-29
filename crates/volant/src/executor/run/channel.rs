@@ -24,6 +24,8 @@ pub(in crate::executor) trait AgentChannel {
     /// Sends the blob frame a `put_blob` is followed by.
     async fn ask_bytes(&mut self, bytes: &[u8]) -> std::io::Result<()>;
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>>;
+    /// Reads the frame a `file_bytes` is followed by, as it is.
+    async fn answer_bytes(&mut self) -> std::io::Result<Option<Vec<u8>>>;
     /// Asks for a batch to stop and waits for the agent to say it has, at most `grace`.
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool;
     /// Whether this channel stands in for a host that never answered.
@@ -198,6 +200,10 @@ impl AgentChannel for AgentLink {
 
     async fn answer(&mut self) -> std::io::Result<Option<FromAgent>> {
         self.recv().await
+    }
+
+    async fn answer_bytes(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        self.recv_bytes().await
     }
 
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool {

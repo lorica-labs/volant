@@ -127,7 +127,8 @@ pub(super) async fn send_batch<C: AgentChannel>(
             Ok(Some(
                 FromAgent::Ready { .. }
                 | FromAgent::BlobState { .. }
-                | FromAgent::PutFileDone { .. },
+                | FromAgent::PutFileDone { .. }
+                | FromAgent::FileBytes { .. },
             )) => {}
             Ok(None) => {
                 if died(link, &mut received).await {

@@ -149,7 +149,10 @@ fn sent(plugin: &mut dyn Plugin) -> Sub {
 fn staged_bytes(sub: &Sub) -> Vec<u8> {
     assert_eq!(sub.module, "copy");
     assert_eq!(sub.files.len(), 1, "{:?}", sub.files);
-    b64_decode(&sub.files[0].1.b64).unwrap()
+    let crate::action_plugins::BlobBody::B64(b64) = &sub.files[0].1.body else {
+        panic!("a render is staged from memory")
+    };
+    b64_decode(b64).unwrap()
 }
 
 /// The bytes a sub-task stages, as text.
@@ -545,25 +548,4 @@ fn what_cannot_be_rendered_is_refused_before_the_host_is_asked() {
     let mut plugin = start_plain(&dir, json!({"src": "include.j2", "dest": "/x"}));
     let msg = refused(plugin.as_mut());
     assert!(msg.contains("other.j2"), "{msg}");
-}
-
-/// A render too big for one frame is refused, naming both sizes, before anything is put on the
-/// host.
-#[test]
-fn a_render_bigger_than_a_frame_is_refused() {
-    crate::action_plugins::files::FRAME_LIMIT.set(1024);
-    let len = 1025;
-    let dir = with_template("big.j2", &"x".repeat(len));
-    let mut plugin = start_plain(&dir, json!({"src": "big.j2", "dest": "/x"}));
-    plugin.next(None);
-    let absent = TaskResult(map(json!({"stat": {"exists": false}})));
-    let Step::Done(result) = plugin.next(Some(absent)) else {
-        panic!("the render was sent")
-    };
-    assert_eq!(
-        result.0["msg"],
-        json!(format!(
-            "big.j2 is {len} bytes; one frame carries at most 1024"
-        ))
-    );
 }

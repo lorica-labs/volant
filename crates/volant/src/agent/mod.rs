@@ -324,6 +324,21 @@ impl AgentLink {
         self.stdin().flush().await
     }
 
+    /// The next frame as it is: the bytes a `file_bytes` is followed by.
+    pub async fn recv_bytes(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        match self.frames.recv().await {
+            Some(Ok(payload)) => {
+                crate::profile::count(
+                    crate::profile::Counter::WireInBytes,
+                    u64::try_from(payload.len()).unwrap_or(u64::MAX),
+                );
+                Ok(Some(payload))
+            }
+            Some(Err(e)) => Err(e),
+            None => Ok(None),
+        }
+    }
+
     /// `Ok(None)` when the agent closed its stdout cleanly. Awaits a channel fed by a
     /// dedicated reader task, so a dropped `recv` future never desyncs the stream.
     pub async fn recv(&mut self) -> std::io::Result<Option<FromAgent>> {

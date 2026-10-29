@@ -177,8 +177,13 @@ fn serve(remote_tmp: &str, lines: bool) -> io::Result<()> {
     } else {
         Box::new(stdout)
     });
-    let mut send =
-        |msg: &FromAgent| -> io::Result<()> { write_frame(&mut out, &serde_json::to_vec(msg)?) };
+    let mut send = |msg: &FromAgent| -> io::Result<()> {
+        write_frame(&mut out, &serde_json::to_vec(msg)?)?;
+        match msg {
+            FromAgent::FileBytes { data, .. } if !data.is_empty() => write_frame(&mut out, data),
+            _ => Ok(()),
+        }
+    };
 
     while let Ok(msg) = rx.recv() {
         let (msg, frame) = match msg {
@@ -218,12 +223,16 @@ fn serve(remote_tmp: &str, lines: bool) -> io::Result<()> {
             // Answered from the bytes, not from a file of that name: see the head of `blobs.rs`.
             // The same answer is given mid-batch by `runner::is_cancelled`, which is why it
             // lives in `blobs` rather than here.
-            ToAgent::HasBlob { .. } | ToAgent::PutBlob { .. } => {
+            ToAgent::HasBlob { .. }
+            | ToAgent::PutBlob { .. }
+            | ToAgent::PutBlobPart { .. }
+            | ToAgent::EndBlob { .. } => {
                 blobs::answer(remote_tmp, &msg, &frame, &mut send)?;
             }
             ToAgent::PutFile { hash, path, mode } => {
                 put_file::answer(remote_tmp, &hash, &path, mode, &mut send)?;
             }
+            ToAgent::ReadFile { path, offset, len } => send(&put_file::read(&path, offset, len))?,
             ToAgent::Warm { interpreter, blob } => python::warm(remote_tmp, &interpreter, &blob),
         }
     }

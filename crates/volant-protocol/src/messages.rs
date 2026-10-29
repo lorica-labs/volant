@@ -40,7 +40,12 @@ use serde_json::{Map, Value};
 ///
 /// 10 added `Task.only_if`: a task run only when an earlier task of its batch found a file with
 /// a given sum. An agent that did not know the field would run the task whatever it found.
-pub const PROTOCOL_VERSION: u32 = 10;
+///
+/// 11 added `PutBlobPart` and `EndBlob`: a staged file longer than one frame travels as pieces.
+/// An agent that did not know them would drop both as malformed and leave the controller waiting
+/// for the `BlobState` of a file it never stored. It also added `ReadFile`, answered by
+/// `FileBytes`: a file of the host read back a piece at a time, for `fetch`.
+pub const PROTOCOL_VERSION: u32 = 11;
 
 /// How the frame after a `PutBlob` carries the blob.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -92,6 +97,22 @@ pub enum ToAgent {
         #[serde(default, skip_serializing_if = "std::ops::Not::not")]
         staged: bool,
     },
+    /// One piece of a staged file too long for one frame: the next frame on the wire is `len` raw
+    /// bytes, which go at `offset` of the file the agent assembles for `hash`, `total` bytes in
+    /// all. The pieces come in order from offset 0, and an `EndBlob` follows the last one. Never
+    /// answered: a piece the agent could not write is logged, and the `EndBlob` refused.
+    PutBlobPart {
+        hash: String,
+        offset: u64,
+        len: u64,
+        total: u64,
+    },
+    /// The pieces of `hash` are all sent: the agent checks the file they make against its length
+    /// and its hash and stages it as a `PutBlob` with `staged` would. Answered by
+    /// [`FromAgent::BlobState`].
+    EndBlob {
+        hash: String,
+    },
     /// Moves the staged blob `hash` to `path`, an absolute path, atomically, with `mode` (0600
     /// when absent). Answered by [`FromAgent::PutFileDone`].
     PutFile {
@@ -99,6 +120,13 @@ pub enum ToAgent {
         path: String,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mode: Option<u32>,
+    },
+    /// Reads at most `len` bytes of the file at `path`, an absolute path, from `offset`. Answered
+    /// by [`FromAgent::FileBytes`].
+    ReadFile {
+        path: String,
+        offset: u64,
+        len: u64,
     },
     /// Start the Python server for the payload `blob` under `interpreter` now, so that it
     /// imports while the tasks before the first one that needs it run. Never answered: the
@@ -165,6 +193,19 @@ pub enum FromAgent {
         changed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// The answer to a `read_file`: `len` bytes read from `offset`, fewer than asked at the end of
+    /// the file and none past it, or `error` and nothing. Unless it is empty, the next frame on
+    /// the wire is the bytes themselves, and never a message.
+    FileBytes {
+        offset: u64,
+        len: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        /// The bytes, written as the frame after this message rather than inside it: the side
+        /// that sends it writes them there, and the side that reads it takes them from there.
+        #[serde(skip)]
+        data: Vec<u8>,
     },
 }
 

@@ -18,9 +18,10 @@ When two sources define the same variable, the one further down this list wins. 
 9. Play `vars_files`
 10. A role's `vars/main.yml`
 11. Task `vars`
-12. `set_fact`, registered results and `include_vars`
-13. Role parameters, and the `vars:` of a dynamic include statement
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` and registered results
+14. Role parameters, and the `vars:` of a dynamic include statement
+15. `--extra-vars`
 
 [Roles](/docs/playbooks/roles/#role-variables) explains where the three role layers come from and how they differ.
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 8ead271d5947
+sourceHash: 39514765b116
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -156,7 +156,7 @@ Une valeur qui n'est pas un booléen dans `public`, `allow_duplicates` ou `roles
 
 ### include_vars
 
-`include_vars` produit des variables plutôt que des étapes : il n'est donc ni statique ni dynamique. C'est un module ordinaire côté contrôleur, et ce qu'il lit atterrit à la priorité des facts.
+`include_vars` produit des variables plutôt que des étapes : il n'est donc ni statique ni dynamique. C'est un module ordinaire côté contrôleur, et ce qu'il lit se place sous `set_fact` et les résultats enregistrés, comme dans Ansible.
 
 | Question | Réponse |
 |---|---|
@@ -203,4 +203,3 @@ Une instruction imbriquée sur 32 niveaux est rejetée. Un seul compteur couvre 
 - Un include en échec dans une boucle affiche la ligne habituelle `failed: [host] (item=...)`. Ansible n'affiche qu'un `[ERROR]` sur la sortie d'erreur standard.
 - `allow_duplicates: false` compte un rôle comme exécuté pour un hôte dès que ses tâches sont apportées. ansible-core le compte quand l'hôte a exécuté au moins une de ses tâches : un rôle dont toutes les tâches sont sautées s'exécute donc de nouveau là-bas.
 - `allow_duplicates: false` sur un `import_role` compare les instructions pendant la compilation du play : un `when` sur l'instruction précédente ne change donc pas le résultat pour un hôte.
-- Ce que produit `include_vars` se place un niveau au-dessus de l'endroit où Ansible le met. Vous ne le remarquez qu'avec un nom qu'un `set_fact` a aussi écrit : Ansible laisse gagner le `set_fact` dans les deux ordres, et ici l'écriture la plus tardive gagne.

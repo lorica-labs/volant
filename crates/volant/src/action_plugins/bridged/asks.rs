@@ -7,7 +7,6 @@ use serde_json::{Value, json};
 use volant_protocol::TaskResult;
 use volant_protocol::modules::short_name;
 
-use super::super::files::fits;
 use super::super::{Step, Sub, is_gone};
 use super::helpers::{command_reply, failure_or, plain_path, raw};
 use super::{Bridged, Pending};
@@ -118,10 +117,6 @@ impl Bridged {
                 mode,
             } => {
                 let shown = local.display().to_string();
-                let len = std::fs::metadata(&local)
-                    .map_err(|err| Reply::Error(format!("could not read {shown}: {err}")))?
-                    .len();
-                fits(&shown, usize::try_from(len).unwrap_or(usize::MAX)).map_err(Reply::Error)?;
                 let bytes = std::fs::read(&local)
                     .map_err(|err| Reply::Error(format!("could not read {shown}: {err}")))?;
                 Ok((

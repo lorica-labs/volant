@@ -38,12 +38,12 @@ impl VarStore {
         let Some(gathered) = self.gathered.get(host) else {
             return names;
         };
-        let facts = self.facts.get(host);
         let above = [
             Some(&scope.play_vars),
             Some(&scope.role_vars),
             Some(&scope.task_vars),
-            facts,
+            self.included.get(host),
+            self.facts.get(host),
             Some(&scope.role_params),
             Some(&self.extra),
         ];
@@ -142,7 +142,7 @@ impl VarStore {
     /// `group_vars/<group>` (inventory then playbook), inventory host vars - an implicit
     /// `localhost`'s `local` connection among them - `host_vars/<host>`
     /// (inventory then playbook), gathered facts, play vars, vars_files, a role's `vars`, task
-    /// vars, `set_fact` and registered values, a role's parameters, extra vars, then the magic
+    /// vars, `include_vars`, `set_fact` and registered values, a role's parameters, extra vars, then the magic
     /// variables.
     ///
     /// The three role layers sit where ansible-core 2.19.12 puts them, each measured against the
@@ -170,6 +170,9 @@ impl VarStore {
         }
         extend(&mut vars, &scope.role_vars);
         extend(&mut vars, &scope.task_vars);
+        if let Some(included) = self.included.get(host) {
+            extend(&mut vars, included);
+        }
         if let Some(facts) = self.facts.get(host) {
             extend(&mut vars, facts);
         }
@@ -203,6 +206,7 @@ impl VarStore {
                 Some(&scope.play_vars),
                 Some(&scope.role_vars),
                 Some(&scope.task_vars),
+                self.included.get(host),
                 self.facts.get(host),
                 Some(&scope.role_params),
                 Some(&self.extra),
@@ -226,6 +230,9 @@ impl VarStore {
         extend(&mut map, &scope.vars_files.templated);
         extend(&mut map, &scope.role_vars);
         extend(&mut map, &scope.task_vars);
+        if let Some(included) = self.included.get(host) {
+            extend(&mut map, included);
+        }
         if let Some(facts) = self.facts.get(host) {
             extend(&mut map, facts);
         }
@@ -365,6 +372,9 @@ impl VarStore {
         match self.gathered.get(host) {
             Some(gathered) => extend(&mut base, gathered),
             None => extend(&mut base, no_facts()),
+        }
+        if let Some(included) = self.included.get(host) {
+            extend(&mut base, included);
         }
         if let Some(facts) = self.facts.get(host) {
             extend(&mut base, facts);

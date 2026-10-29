@@ -225,7 +225,10 @@ async fn an_agent_that_speaks_protocol_six_is_refused_at_the_handshake() {
         .unwrap_err();
     assert_eq!(
         err.to_string(),
-        "agent 0.1.0-alpha.7 speaks protocol 6, this controller speaks 10"
+        format!(
+            "agent 0.1.0-alpha.7 speaks protocol 6, this controller speaks {}",
+            PROTOCOL_VERSION
+        )
     );
 }
 

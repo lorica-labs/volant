@@ -1,5 +1,5 @@
 ---
-sourceHash: 0574d9982ed2
+sourceHash: ab275ab138bf
 title: Architektur
 description: Der Controller, der Agent und das Protokoll zwischen beiden, und wie ein Lauf durch alle drei fließt.
 ---
@@ -52,7 +52,7 @@ Der Agent, `crates/volant-agent`, ist eine statische Binärdatei, die einmal pro
 
 `crates/volant-protocol` definiert die Frames und Nachrichten, die beide Programme teilen. Der Controller startet den Agent über `ssh` und spricht das Protokoll für den Rest des Laufs über Standardeingabe und Standardausgabe dieses Prozesses. Frames sind JSON. Nur ein Blob mit Modulen oder eine bereitgestellte Datei folgt seiner Ankündigung als rohe Bytes, seit Protokollversion 6 deflate-komprimiert, wenn das kürzer ist. Die aktuelle Version ist 8. Eine Nachricht zu ändern bedeutet, `PROTOCOL_VERSION` zu erhöhen, und die Version des Agents ist Teil seines Cache-Pfads, sodass ein Controller nie mit einem Agent aus einem anderen Release spricht.
 
-Ein Frame ist höchstens 64 MiB groß, weil `slurp` und `fetch` eine Datei als einen String innerhalb eines Ergebnisses senden. Auch ein Ergebnis ist durch seinen Inhalt begrenzt: höchstens 500.000 Werte, 64 Verschachtelungsebenen und 500.000 Zeilen `stdout` und `stderr` zusammen (oder eine Zeile je 32 Byte Ausgabe, wenn das mehr ist). Ein Ergebnis über einer Grenze lässt diesen Task nur für diesen Host fehlschlagen, mit einer Meldung, die die Grenze und die Anzahl nennt. Jede andere Nachricht ist höchstens 1 MiB groß.
+Ein Frame ist höchstens 64 MiB groß, weil `slurp` eine Datei als einen String innerhalb eines Ergebnisses sendet. Auch ein Ergebnis ist durch seinen Inhalt begrenzt: höchstens 500.000 Werte, 64 Verschachtelungsebenen und 500.000 Zeilen `stdout` und `stderr` zusammen (oder eine Zeile je 32 Byte Ausgabe, wenn das mehr ist). Ein Ergebnis über einer Grenze lässt diesen Task nur für diesen Host fehlschlagen, mit einer Meldung, die die Grenze und die Anzahl nennt. Jede andere Nachricht ist höchstens 1 MiB groß.
 
 ## Ein Lauf von Anfang bis Ende
 

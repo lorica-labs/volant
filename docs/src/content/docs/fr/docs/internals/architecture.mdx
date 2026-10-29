@@ -1,5 +1,5 @@
 ---
-sourceHash: 0574d9982ed2
+sourceHash: ab275ab138bf
 title: Architecture
 description: Le contrôleur, l'agent et le protocole qui les relie, et comment une exécution circule entre les trois.
 ---
@@ -52,7 +52,7 @@ L'agent, `crates/volant-agent`, est un binaire statique, envoyé une fois par h�
 
 `crates/volant-protocol` définit les trames et les messages que les deux programmes partagent. Le contrôleur démarre l'agent par `ssh` et parle le protocole sur l'entrée et la sortie standard de ce processus jusqu'à la fin de l'exécution. Les trames sont en JSON, sauf qu'un blob de modules ou un fichier déposé suit son annonce sous forme d'octets bruts, compressés avec deflate quand c'est plus court, depuis la version 6 du protocole. La version actuelle est la 8. Modifier un message oblige à incrémenter `PROTOCOL_VERSION`, et la version de l'agent fait partie de son chemin de cache : un contrôleur ne parle donc jamais à un agent d'une autre version.
 
-Une trame fait au plus 64 MiB, car `slurp` et `fetch` envoient un fichier comme une seule chaîne dans un résultat. Un résultat est aussi borné par son contenu : au plus 500,000 valeurs, 64 niveaux d'imbrication et 500,000 lignes de `stdout` et `stderr` réunies (ou une ligne pour 32 octets de sortie quand c'est plus). Un résultat qui dépasse une borne fait échouer cette tâche pour cet hôte seul, avec un message qui donne la limite et le compte. Tout autre message fait au plus 1 MiB.
+Une trame fait au plus 64 MiB, car `slurp` envoie un fichier comme une seule chaîne dans un résultat. Un résultat est aussi borné par son contenu : au plus 500,000 valeurs, 64 niveaux d'imbrication et 500,000 lignes de `stdout` et `stderr` réunies (ou une ligne pour 32 octets de sortie quand c'est plus). Un résultat qui dépasse une borne fait échouer cette tâche pour cet hôte seul, avec un message qui donne la limite et le compte. Tout autre message fait au plus 1 MiB.
 
 ## Une exécution, de bout en bout
 

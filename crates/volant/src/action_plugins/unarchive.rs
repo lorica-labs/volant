@@ -22,7 +22,7 @@ use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
 use super::copy::{failing, stat, stat_of};
-use super::files::{ansible_bool, blob_of, check_host_named, fits, not_found, search_paths};
+use super::files::{Payload, ansible_bool, check_host_named, not_found, search_paths};
 use super::{Context, Plugin, Step, Sub, lost};
 use crate::compile::Origin;
 use crate::config::HostNamedPaths;
@@ -163,27 +163,19 @@ impl Unarchive {
                 "src is a directory, not an archive: {src}"
             )));
         }
-        let basename = found
-            .file_name()
-            .map(|n| n.to_string_lossy().into_owned())
-            .unwrap_or_default();
         let unreadable =
             |err: std::io::Error| format!("could not read src={}: {err}", found.display());
-        let len = match std::fs::metadata(found) {
-            Ok(meta) => meta.len(),
-            Err(err) => return Step::Done(TaskResult::failed_with(unreadable(err))),
-        };
-        if let Err(msg) = fits(&basename, usize::try_from(len).unwrap_or(usize::MAX)) {
-            return Step::Done(TaskResult::failed_with(msg));
-        }
-        let mut bytes = match std::fs::read(found) {
-            Ok(bytes) => bytes,
+        let mut payload = match Payload::read(found) {
+            Ok(payload) => payload,
             Err(err) => return Step::Done(TaskResult::failed_with(unreadable(err))),
         };
         // A vaulted archive is sent as plain bytes unless `decrypt: false` asks for it as is.
-        if decrypt && crate::vault::is_encrypted(&bytes) {
-            match crate::vault::decrypt(&bytes, &crate::vault::run_secrets()) {
-                Ok(plain) => bytes = plain,
+        if let Payload::Bytes(bytes) = &mut payload
+            && decrypt
+            && crate::vault::is_encrypted(bytes)
+        {
+            match crate::vault::decrypt(bytes, &crate::vault::run_secrets()) {
+                Ok(plain) => *bytes = plain,
                 Err(err) => {
                     return Step::Done(TaskResult::failed_with(format!(
                         "could not read src={}: {err}",
@@ -192,9 +184,9 @@ impl Unarchive {
                 }
             }
         }
-        let blob = match blob_of(&basename, &bytes) {
+        let blob = match payload.blob() {
             Ok(blob) => blob,
-            Err(msg) => return Step::Done(TaskResult::failed_with(msg)),
+            Err(err) => return Step::Done(TaskResult::failed_with(unreadable(err))),
         };
         args.remove("src");
         self.state = State::Module;

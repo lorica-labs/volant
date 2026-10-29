@@ -5,7 +5,6 @@ use std::path::Path;
 use serde_json::json;
 
 use super::*;
-use crate::action_plugins::files::MAX_FILE_LEN;
 use crate::config::HostNamedPaths;
 use crate::testing::scratch;
 
@@ -408,7 +407,9 @@ fn a_local_source_is_staged_and_sent() {
         sub.files,
         [(
             "src".to_string(),
-            blob_of("bundle.tar.gz", b"not-really-a-tarball").unwrap()
+            Payload::Bytes(b"not-really-a-tarball".to_vec())
+                .blob()
+                .unwrap()
         )]
     );
     let result = done(
@@ -446,27 +447,27 @@ fn remote_src_sends_the_module_alone() {
     assert!(sub.files.is_empty(), "nothing is staged: {:?}", sub.files);
 }
 
-/// A source too big for one frame is refused by its size, before it is read.
+/// A source past the disk line is staged from disk, never read whole.
 #[test]
-fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
+fn a_source_past_the_disk_line_is_sent_from_disk() {
     let dir_guard = layout();
     let dir = dir_guard.path().to_path_buf();
     let mut task_args = args(&dir, json!({}));
-    let big = std::fs::File::create(dir.join("files/big.tar.gz")).unwrap();
-    let len = MAX_FILE_LEN + 1;
-    big.set_len(u64::try_from(len).unwrap()).unwrap();
+    let path = dir.join("files/big.tar.gz");
+    let big = std::fs::File::create(&path).unwrap();
+    big.set_len(crate::action_plugins::files::ON_DISK_LEN + 1)
+        .unwrap();
     task_args.insert("src".into(), json!("big.tar.gz"));
     let mut plugin = start_plain(&task_args, &dir);
     run(plugin.as_mut(), None);
-    let result = done(
+    let sub = run(
         plugin.as_mut(),
-        json!({"stat": {"exists": true, "isdir": true}}),
+        Some(json!({"stat": {"exists": true, "isdir": true}})),
     );
+    assert_eq!(sub.module, "unarchive");
     assert_eq!(
-        result["msg"],
-        json!(format!(
-            "big.tar.gz is {len} bytes; one frame carries at most {MAX_FILE_LEN}"
-        ))
+        sub.files[0].1.body,
+        crate::action_plugins::BlobBody::Disk(path)
     );
 }
 

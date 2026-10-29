@@ -294,7 +294,7 @@ fn rendered(
         args.insert("mode".into(), Value::String(local_mode(found)?));
     }
     Ok(CopyOf {
-        bytes,
+        payload: crate::action_plugins::files::Payload::Bytes(bytes),
         basename: found
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())

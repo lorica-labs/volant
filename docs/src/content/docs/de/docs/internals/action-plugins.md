@@ -1,5 +1,5 @@
 ---
-sourceHash: fa3ecc77e124
+sourceHash: bd44eb3d24f2
 title: Action-Plugins
 description: Wie Volant die Module ausführt, die ansible-core über ein Action-Plugin auf dem Controller ausführt, in Rust oder auf der Python-Bridge.
 ---
@@ -20,6 +20,8 @@ Das Plugin führt zuerst `stat` auf dem Ziel aus und verlangt eine SHA-1, außer
 
 `remote_src: true` überspringt all das: `copy` läuft allein, mit den eigenen Argumenten des Tasks, und `src` benennt eine Datei, die schon auf dem Host liegt.
 
+Eine Datei über 16 MiB wird nie ganz gelesen: Das Plugin hasht sie auf dem Controller und schickt sie in Stücken von 16 MiB an den Host, die der Agent beim Eintreffen auf die Platte schreibt. `unarchive` schickt sein Archiv genauso.
+
 Abgelehnt, bevor der Host etwas gefragt wird, in den eigenen Worten von ansible-core:
 
 - `src (or content) is required`
@@ -28,7 +30,6 @@ Abgelehnt, bevor der Host etwas gefragt wird, in den eigenen Worten von ansible-
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`. Das Rust-Plugin kopiert kein Verzeichnis, daher läuft der Task auf der Bridge, die es kann.
 - Ein `src`, das auf dem Controller nichts benennt, verpackt als `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`.
-- Eine Quelle, die größer ist als ein Frame, wird nach ihrer Größe abgelehnt, bevor sie gelesen wird.
 
 ## `template`
 
@@ -49,7 +50,6 @@ Abgelehnt, bevor der Host etwas gefragt wird:
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`, bei einer Trennzeichen-Option, die leer oder null ist
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - Ein `src`, das auf dem Controller nichts benennt, in den eigenen Worten von ansible-core, diesmal ohne `AnsibleActionFail`-Hülle.
-- Ein Render, das größer ist als ein Frame, wird abgelehnt, mit beiden Größen, bevor etwas bereitgestellt wird.
 
 ## `package`
 
@@ -130,7 +130,6 @@ Abgelehnt, bevor der Host etwas gefragt wird:
 - `a '~' path is not supported yet on 'unarchive'`, für `dest` oder `creates`. Der Task läuft dann auf der Bridge.
 - Ein `src`, das auf dem Controller nichts benennt: `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, für ein `src`, das auf dem Controller als Verzeichnis gefunden wird.
-- Eine Quelle, die größer ist als ein Frame, wird nach ihrer Größe abgelehnt, bevor sie gelesen wird.
 
 ## `reboot`
 

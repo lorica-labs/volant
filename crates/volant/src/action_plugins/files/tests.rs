@@ -43,17 +43,39 @@ If you are using a module and expect the file to exist on the remote, see the re
     );
 }
 
-/// A file too big for one frame is refused before anything is encoded, naming both sizes.
+/// A controller file is read whole up to the disk line and left on disk past it, unless it is
+/// vaulted: its plain text is nowhere else.
 #[test]
-fn a_file_bigger_than_a_frame_is_refused_naming_both_sizes() {
-    FRAME_LIMIT.set(1024);
-    let big = vec![0u8; 1025];
-    let err = blob_of("big.bin", &big).expect_err("1025 bytes do not fit");
-    assert_eq!(err, "big.bin is 1025 bytes; one frame carries at most 1024");
-    assert!(blob_of("fits.bin", &big[..1024]).is_ok());
-    let blob = blob_of("x", b"x").expect("one byte fits");
-    assert_eq!(blob.b64, "eA==");
+fn a_file_past_the_disk_line_stays_on_disk_unless_vaulted() {
+    let tmp = tempfile::tempdir().unwrap();
+    let small = tmp.path().join("small");
+    std::fs::write(&small, b"x").unwrap();
+    let payload = Payload::read(&small).unwrap();
+    assert_eq!(payload, Payload::Bytes(b"x".to_vec()));
+    let blob = payload.blob().unwrap();
+    assert_eq!(blob.body, BlobBody::B64("eA==".into()));
     assert_eq!(blob.hash, blake3::hash(b"x").to_hex().to_string());
+    assert_eq!(payload.sha1().unwrap(), sha1_hex(b"x"));
+
+    let big = tmp.path().join("big");
+    std::fs::File::create(&big)
+        .unwrap()
+        .set_len(ON_DISK_LEN + 1)
+        .unwrap();
+    let payload = Payload::read(&big).unwrap();
+    assert_eq!(payload, Payload::Disk(big.clone()));
+    let zeros = vec![0u8; usize::try_from(ON_DISK_LEN + 1).unwrap()];
+    assert_eq!(payload.sha1().unwrap(), sha1_hex(&zeros));
+    assert_eq!(
+        payload.blob().unwrap().hash,
+        blake3::hash(&zeros).to_hex().to_string()
+    );
+
+    let vaulted = tmp.path().join("vaulted");
+    let mut text = b"$ANSIBLE_VAULT;1.1;AES256\n".to_vec();
+    text.resize(usize::try_from(ON_DISK_LEN + 1).unwrap(), b'0');
+    std::fs::write(&vaulted, &text).unwrap();
+    assert_eq!(Payload::read(&vaulted).unwrap(), Payload::Bytes(text));
 }
 
 /// What each mode does with a name a managed host chose, and with one it did not. `<pb>` is the

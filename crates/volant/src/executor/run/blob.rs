@@ -5,6 +5,8 @@ use std::time::Duration;
 
 use volant_protocol::{BatchOutcome, FromAgent, Task, TaskResult, ToAgent};
 
+use crate::action_plugins::BlobBody;
+use crate::action_plugins::files::ON_DISK_LEN;
 use crate::agent::{BlobFrame, BlobMemory};
 use crate::python::Union;
 
@@ -72,6 +74,46 @@ async fn place_blob<C: AgentChannel>(
     blob_state(link, host, hash, &put, Some(&frame.bytes), logs).await
 }
 
+/// The most one `put_blob_part` carries: a quarter of a frame, so the agent holds no more than
+/// that of a file at a time, and neither does this side.
+const PIECE_LEN: u64 = 16 * 1024 * 1024;
+
+/// Sends the `len` bytes `source` yields as the pieces of the staged file `hash`, one piece in
+/// memory at a time, then asks the agent to put them together: whether it holds the file now.
+/// A piece the agent could not write is in its logs by the time it answers no.
+async fn place_pieces<C: AgentChannel>(
+    link: &mut C,
+    host: &str,
+    hash: &str,
+    mut source: impl std::io::Read,
+    len: u64,
+    logs: &mut Vec<String>,
+) -> Result<bool, String> {
+    let mut piece = vec![0u8; usize::try_from(len.min(PIECE_LEN)).unwrap_or(0)];
+    let mut offset = 0;
+    while offset < len {
+        let size = usize::try_from((len - offset).min(PIECE_LEN)).unwrap_or(0);
+        source
+            .read_exact(&mut piece[..size])
+            .map_err(|err| format!("reading the file {hash} at {offset}: {err}"))?;
+        let part = ToAgent::PutBlobPart {
+            hash: hash.into(),
+            offset,
+            len: size as u64,
+            total: len,
+        };
+        link.ask(&part)
+            .await
+            .map_err(|err| format!("sending the file {hash}: {err}"))?;
+        link.ask_bytes(&piece[..size])
+            .await
+            .map_err(|err| format!("sending the file {hash}: {err}"))?;
+        offset += size as u64;
+    }
+    let end = ToAgent::EndBlob { hash: hash.into() };
+    blob_state(link, host, hash, &end, None, logs).await
+}
+
 /// Puts on the host every file a sub-task stages, whatever the link put there before: the
 /// hashes the agent now holds, or why one is not there, in the agent's own words.
 pub(super) async fn stage_files<C: AgentChannel>(
@@ -83,11 +125,31 @@ pub(super) async fn stage_files<C: AgentChannel>(
     let mut placed = BTreeSet::new();
     for (arg, blob) in files {
         let before = logs.len();
-        // Framed once for every host that is sent the same bytes.
-        let frame = crate::agent::frame(&blob.hash, &blob.b64);
-        let placed_now = place_blob(link, host, &blob.hash, frame, true, logs)
-            .await
-            .map_err(|err| format!("staging the file for '{arg}': {err}"))?;
+        let placed_now = match &blob.body {
+            // Bytes past one frame that were in hand anyway, rendered or decrypted.
+            BlobBody::B64(b64) if b64.len() as u64 / 4 * 3 > ON_DISK_LEN => {
+                match volant_protocol::encoding::b64_decode(b64) {
+                    Ok(bytes) => {
+                        let len = bytes.len() as u64;
+                        place_pieces(link, host, &blob.hash, &bytes[..], len, logs).await
+                    }
+                    Err(err) => Err(format!("decoding the file {}: {err}", blob.hash)),
+                }
+            }
+            // Framed once for every host that is sent the same bytes.
+            BlobBody::B64(b64) => {
+                let frame = crate::agent::frame(&blob.hash, b64);
+                place_blob(link, host, &blob.hash, frame, true, logs).await
+            }
+            BlobBody::Disk(path) => match std::fs::File::open(path).and_then(|file| {
+                let len = file.metadata()?.len();
+                Ok((file, len))
+            }) {
+                Ok((file, len)) => place_pieces(link, host, &blob.hash, file, len, logs).await,
+                Err(err) => Err(format!("reading {}: {err}", path.display())),
+            },
+        }
+        .map_err(|err| format!("staging the file for '{arg}': {err}"))?;
         if !placed_now {
             let prefix = format!("[{host}] ");
             let why: Vec<&str> = logs[before..]
@@ -146,10 +208,13 @@ pub(super) async fn put_file_within<C: AgentChannel>(
 ) -> Result<bool, String> {
     let hash = blake3::hash(bytes).to_hex().to_string();
     let before = logs.len();
-    let frame = async { Ok(std::sync::Arc::new(BlobFrame::packed(bytes.to_vec()))) };
-    let placed = place_blob(link, host, &hash, frame, true, logs)
-        .await
-        .map_err(|err| format!("staging the file for '{remote}': {err}"))?;
+    let placed = if bytes.len() as u64 > ON_DISK_LEN {
+        place_pieces(link, host, &hash, bytes, bytes.len() as u64, logs).await
+    } else {
+        let frame = async { Ok(std::sync::Arc::new(BlobFrame::packed(bytes.to_vec()))) };
+        place_blob(link, host, &hash, frame, true, logs).await
+    }
+    .map_err(|err| format!("staging the file for '{remote}': {err}"))?;
     if !placed {
         let prefix = format!("[{host}] ");
         let why: Vec<&str> = logs[before..]

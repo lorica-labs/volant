@@ -1,5 +1,5 @@
 ---
-sourceHash: fa3ecc77e124
+sourceHash: bd44eb3d24f2
 title: Action plugin
 description: Volant 如何运行 ansible-core 通过控制节点上的 action plugin 运行的模块，用 Rust 或通过 Python 桥接。
 ---
@@ -20,6 +20,8 @@ plugin 先对目标运行 `stat`，除非 `force: false`，否则会要求返回
 
 `remote_src: true` 会跳过这一切：`copy` 单独运行，使用 task 自己的参数，`src` 指向主机上已有的文件。
 
+超过 16 MiB 的文件不会被整个读入：插件在控制节点上计算它的哈希，并以 16 MiB 的块发送到主机，agent 在块到达时把它们写入磁盘。`unarchive` 也这样发送它的归档。
+
 在向主机询问任何事之前就会被拒绝的情况，信息用的是 ansible-core 自己的措辞：
 
 - `src (or content) is required`
@@ -28,7 +30,6 @@ plugin 先对目标运行 `stat`，除非 `force: false`，否则会要求返回
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`。Rust plugin 不复制目录，所以该 task 会在桥接上运行，由桥接来复制。
 - 在控制节点上不存在的 `src`，被包装为 `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`。
-- 大于一个帧的源文件会按大小被拒绝，在读取它之前。
 
 ## `template`
 
@@ -49,7 +50,6 @@ plugin 在 `templates/` 下找到模板，用 task 的变量和它自己的分�
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`，针对为空或为 null 的分隔符选项
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - 在控制节点上不存在的 `src`，用 ansible-core 自己的措辞，这次没有 `AnsibleActionFail` 包装。
-- 大于一个帧的渲染结果会被拒绝，信息给出两个大小，在暂存任何东西之前。
 
 ## `package`
 
@@ -130,7 +130,6 @@ the 'dest' of this task was named by a managed host, and '/home/op/.ssh/x/' is n
 - `a '~' path is not supported yet on 'unarchive'`，针对 `dest` 或 `creates`。此时 task 在桥接上运行。
 - 在控制节点上不存在的 `src`：`Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`，针对在控制节点上被找到为目录的 `src`。
-- 大于一个帧的源文件会按大小被拒绝，在读取它之前。
 
 ## `reboot`
 

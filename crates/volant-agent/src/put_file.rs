@@ -2,11 +2,13 @@
 //! `put_file`: a file the controller staged, moved to a path of the host.
 
 use std::fs;
-use std::io::{self, Write};
+use std::io;
 use std::path::Path;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 use volant_protocol::FromAgent;
+
+use crate::blobs::hash_file;
 
 /// The mode of a new file the task gave none for; an existing file keeps its own.
 const DEFAULT_MODE: u32 = 0o600;
@@ -93,12 +95,12 @@ fn put(staged: &Path, path: &Path, mode: Option<u32>) -> io::Result<bool> {
             "the path is a directory",
         ));
     }
-    let bytes = fs::read(staged)?;
+    // Hashed and copied a block at a time, never read whole: the file may be gigabytes.
     if let Some(held_mode) = held.as_ref().filter(|m| m.is_file()).and_then(mode_of) {
-        let same = fs::read(path).is_ok_and(|held| blake3::hash(&held) == blake3::hash(&bytes));
+        let same = hash_file(path).is_ok_and(|held| hash_file(staged).is_ok_and(|s| s == held));
         if !same {
             let mut file = open_in_place(path)?;
-            file.write_all(&bytes)?;
+            io::copy(&mut fs::File::open(staged)?, &mut file)?;
             file.sync_all()?;
         }
         let mode = mode.unwrap_or(held_mode);
@@ -115,7 +117,7 @@ fn put(staged: &Path, path: &Path, mode: Option<u32>) -> io::Result<bool> {
         TEMP.fetch_add(1, Ordering::Relaxed)
     ));
     let written = create(&temp, mode).and_then(|mut file| {
-        file.write_all(&bytes)?;
+        io::copy(&mut fs::File::open(staged)?, &mut file)?;
         file.sync_all()
     });
     // A mode the umask narrowed at creation is set outright before the file takes its name.

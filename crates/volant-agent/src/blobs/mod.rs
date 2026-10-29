@@ -24,8 +24,10 @@ use volant_protocol::{FromAgent, LogLevel, ToAgent};
 
 mod fs_guard;
 mod incoming;
+mod parts;
 mod stage;
 
+pub(crate) use fs_guard::hash_file;
 use fs_guard::{
     check_private, check_space, create_private, euid, free_bytes, matches_hash, nearest_existing,
     sync_dir,
@@ -199,6 +201,41 @@ where
                 })?;
             }
         },
+        // Answered at the end only: a piece that fails is said once, here, and the file it
+        // belonged to is gone by the time the `end_blob` asks for it.
+        ToAgent::PutBlobPart {
+            hash,
+            offset,
+            total,
+            ..
+        } => {
+            let written = frame
+                .as_ref()
+                .map_err(|why| io::Error::new(io::ErrorKind::InvalidData, why.clone()))
+                .and_then(|bytes| parts::write(remote_tmp, hash, *offset, *total, bytes));
+            if let Err(err) = written {
+                send(&FromAgent::Log {
+                    level: LogLevel::Error,
+                    message: format!("storing file {hash} at {offset}: {err}"),
+                })?;
+            }
+        }
+        ToAgent::EndBlob { hash } => {
+            let present = match parts::end(remote_tmp, hash) {
+                Ok(_) => true,
+                Err(err) => {
+                    send(&FromAgent::Log {
+                        level: LogLevel::Error,
+                        message: format!("storing file {hash}: {err}"),
+                    })?;
+                    false
+                }
+            };
+            send(&FromAgent::BlobState {
+                hash: hash.clone(),
+                present,
+            })?;
+        }
         _ => return Ok(false),
     }
     Ok(true)

@@ -169,7 +169,7 @@ fn the_native_fields_are_absent_on_the_wire_when_empty_and_default_on_the_way_in
     );
     assert_eq!(serde_json::from_str::<Ran>(&text).unwrap(), ran);
     assert_eq!(
-        PROTOCOL_VERSION, 10,
+        PROTOCOL_VERSION, 11,
         "additive fields do not move the version"
     );
 }
@@ -401,8 +401,8 @@ fn skipped_is_read_by_truthiness() {
 
 /// The version moves with the shape.
 #[test]
-fn the_protocol_version_is_ten() {
-    assert_eq!(PROTOCOL_VERSION, 10);
+fn the_protocol_version_is_eleven() {
+    assert_eq!(PROTOCOL_VERSION, 11);
 }
 
 #[test]

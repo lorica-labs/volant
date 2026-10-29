@@ -1,5 +1,5 @@
 ---
-sourceHash: fa3ecc77e124
+sourceHash: bd44eb3d24f2
 title: Plugins de acción
 description: Cómo Volant ejecuta los módulos que ansible-core ejecuta mediante un plugin de acción en el controlador, en Rust o en el bridge de Python.
 ---
@@ -20,6 +20,8 @@ El plugin ejecuta primero `stat` en el destino, pidiendo un SHA-1 salvo con `for
 
 `remote_src: true` se salta todo esto: `copy` se ejecuta solo, con los argumentos de la propia tarea, y `src` nombra un archivo que ya está en el host.
 
+Un archivo de más de 16 MiB nunca se lee entero: el plugin calcula su hash en el controlador y lo envía al host en trozos de 16 MiB, que el agente escribe en disco a medida que llegan. `unarchive` envía su archivo comprimido de la misma manera.
+
 Se rechaza antes de preguntarle nada al host, con las palabras de ansible-core:
 
 - `src (or content) is required`
@@ -28,7 +30,6 @@ Se rechaza antes de preguntarle nada al host, con las palabras de ansible-core:
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`. El plugin de Rust no copia un directorio, así que la tarea se ejecuta en el bridge, que sí lo hace.
 - Un `src` que no nombra nada en el controlador, envuelto como `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`.
-- Un origen mayor que un frame se rechaza por su tamaño, antes de leerlo.
 
 ## `template`
 
@@ -49,7 +50,6 @@ Se rechaza antes de preguntarle nada al host:
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`, para una opción de delimitador vacía o nula
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - Un `src` que no nombra nada en el controlador, con las palabras de ansible-core, esta vez sin la envoltura `AnsibleActionFail`.
-- Un renderizado mayor que un frame se rechaza, nombrando ambos tamaños, antes de preparar nada.
 
 ## `package`
 
@@ -130,7 +130,6 @@ Se rechaza antes de preguntarle nada al host:
 - `a '~' path is not supported yet on 'unarchive'`, para `dest` o `creates`. La tarea se ejecuta entonces en el bridge.
 - Un `src` que no nombra nada en el controlador: `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, para un `src` que se encuentra como directorio en el controlador.
-- Un origen mayor que un frame se rechaza por su tamaño, antes de leerlo.
 
 ## `reboot`
 

@@ -218,7 +218,10 @@ fn serve(remote_tmp: &str, lines: bool) -> io::Result<()> {
             // Answered from the bytes, not from a file of that name: see the head of `blobs.rs`.
             // The same answer is given mid-batch by `runner::is_cancelled`, which is why it
             // lives in `blobs` rather than here.
-            ToAgent::HasBlob { .. } | ToAgent::PutBlob { .. } => {
+            ToAgent::HasBlob { .. }
+            | ToAgent::PutBlob { .. }
+            | ToAgent::PutBlobPart { .. }
+            | ToAgent::EndBlob { .. } => {
                 blobs::answer(remote_tmp, &msg, &frame, &mut send)?;
             }
             ToAgent::PutFile { hash, path, mode } => {

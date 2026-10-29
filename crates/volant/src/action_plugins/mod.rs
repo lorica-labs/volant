@@ -212,7 +212,15 @@ pub(crate) fn modules_for(kind: Kind) -> &'static [&'static str] {
 pub(crate) struct FileBlob {
     /// Lowercase hex blake3 of the bytes, which names the blob the way the union's hash does.
     pub hash: String,
-    pub b64: String,
+    pub body: BlobBody,
+}
+
+/// Where a [`FileBlob`]'s bytes are when it is sent.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub(crate) enum BlobBody {
+    B64(String),
+    /// A controller file past [`files::ON_DISK_LEN`], read a piece at a time as it is sent.
+    Disk(PathBuf),
 }
 
 /// One module run on the host, on the plugin's behalf.

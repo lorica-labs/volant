@@ -1,5 +1,5 @@
 ---
-sourceHash: fa3ecc77e124
+sourceHash: bd44eb3d24f2
 title: Plugins d'action
 description: Comment Volant exécute les modules qu'ansible-core exécute par un plugin d'action sur le contrôleur, en Rust ou sur le pont Python.
 ---
@@ -20,6 +20,8 @@ Le plugin exécute d'abord `stat` sur la destination, en demandant un SHA-1 sauf
 
 `remote_src: true` saute tout cela : `copy` s'exécute seul, avec les arguments de la tâche, et `src` nomme un fichier déjà présent sur l'hôte.
 
+Un fichier de plus de 16 Mio n'est jamais lu en entier : le plugin le hache sur le contrôleur et l'envoie à l'hôte par morceaux de 16 Mio, que l'agent écrit sur le disque à mesure qu'ils arrivent. `unarchive` envoie son archive de la même façon.
+
 Rejeté avant que l'hôte soit interrogé, avec les mots d'ansible-core :
 
 - `src (or content) is required`
@@ -28,7 +30,6 @@ Rejeté avant que l'hôte soit interrogé, avec les mots d'ansible-core :
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`. Le plugin Rust ne copie pas de répertoire : la tâche s'exécute donc sur le pont, qui le fait.
 - Un `src` qui ne nomme rien sur le contrôleur, enveloppé en `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`.
-- Une source plus grande qu'une trame est rejetée d'après sa taille, avant d'être lue.
 
 ## `template`
 
@@ -49,7 +50,6 @@ Rejeté avant que l'hôte soit interrogé :
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`, pour une option de délimiteur vide ou nulle
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - Un `src` qui ne nomme rien sur le contrôleur, avec les mots d'ansible-core, sans l'enveloppe `AnsibleActionFail` cette fois.
-- Un rendu plus grand qu'une trame est rejeté, avec les deux tailles en clair, avant que quoi que ce soit soit déposé.
 
 ## `package`
 
@@ -130,7 +130,6 @@ Rejeté avant que l'hôte soit interrogé :
 - `a '~' path is not supported yet on 'unarchive'`, pour `dest` ou `creates`. La tâche s'exécute alors sur le pont.
 - Un `src` qui ne nomme rien sur le contrôleur : `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, pour un `src` trouvé comme répertoire sur le contrôleur.
-- Une source plus grande qu'une trame est rejetée d'après sa taille, avant d'être lue.
 
 ## `reboot`
 

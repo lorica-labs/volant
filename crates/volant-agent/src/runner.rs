@@ -152,6 +152,8 @@ where
                 ToAgent::Cancel { .. } => "cancel",
                 ToAgent::HasBlob { .. } => "has_blob",
                 ToAgent::PutBlob { .. } => "put_blob",
+                ToAgent::PutBlobPart { .. } => "put_blob_part",
+                ToAgent::EndBlob { .. } => "end_blob",
                 ToAgent::PutFile { .. } => "put_file",
                 ToAgent::Warm { .. } => "warm",
             };

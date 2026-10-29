@@ -19,6 +19,8 @@ The plugin runs `stat` on the destination first, asking for a SHA-1 unless `forc
 
 `remote_src: true` skips all of this: `copy` runs alone, with the task's own arguments, and `src` names a file already on the host.
 
+A file past 16 MiB is never read whole: the plugin hashes it on the controller and sends it to the host in pieces of 16 MiB, which the agent writes to disk as they arrive. `unarchive` sends its archive the same way.
+
 Rejected before the host is asked anything, in ansible-core's own words:
 
 - `src (or content) is required`
@@ -27,7 +29,6 @@ Rejected before the host is asked anything, in ansible-core's own words:
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`. The Rust plugin does not copy a directory, so the task runs on the bridge, which does.
 - A `src` that names nothing on the controller, wrapped as `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`.
-- A source larger than one frame is rejected by its size, before it is read.
 
 ## `template`
 
@@ -48,7 +49,6 @@ Rejected before the host is asked anything:
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`, for a delimiter option that is empty or null
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - A `src` that names nothing on the controller, in ansible-core's own words, with no `AnsibleActionFail` wrapper this time.
-- A render bigger than one frame is rejected, naming both sizes, before anything is staged.
 
 ## `package`
 
@@ -129,7 +129,6 @@ Rejected before the host is asked anything:
 - `a '~' path is not supported yet on 'unarchive'`, for `dest` or `creates`. The task then runs on the bridge.
 - A `src` that names nothing on the controller: `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, for a `src` found as a directory on the controller.
-- A source larger than one frame is rejected by its size, before it is read.
 
 ## `reboot`
 

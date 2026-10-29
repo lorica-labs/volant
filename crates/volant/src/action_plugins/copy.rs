@@ -17,7 +17,7 @@ use volant_protocol::TaskResult;
 use volant_protocol::encoding::sha1_hex;
 
 use super::files::{
-    ansible_bool, blob_of, check_host_named, fits, not_found, search_paths, unreadable,
+    Payload, ansible_bool, check_host_named, not_found, search_paths, unreadable,
     unreadable_failure,
 };
 use super::{Context, Plugin, Step, Sub, lost};
@@ -46,7 +46,7 @@ const FILE_ARGS: &[&str] = &[
 /// The copy action from the point where its source bytes are in hand: `template` enters here
 /// with the rendered text, `copy` with the file it found or the `content` it was given.
 pub(crate) struct CopyOf {
-    pub bytes: Vec<u8>,
+    pub payload: Payload,
     /// The source's file name, which the host appends to a destination that is a directory.
     pub basename: String,
     /// The task's arguments. A `content` among them is what makes a directory destination a
@@ -126,7 +126,7 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
             // under it, since a directory destination is refused for a `content`.
             let basename = format!(".{}", &sha1_hex(&bytes)[..8]);
             return Ok(Some(CopyOf {
-                bytes,
+                payload: Payload::Bytes(bytes),
                 basename,
                 args: args.clone(),
             }));
@@ -160,14 +160,13 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
         .unwrap_or_default();
-    // Before the read, so a file no frame can carry is never loaded whole. Refused whatever the
-    // host holds, where the reference would still run `file` on a destination already right.
-    let len = std::fs::metadata(found).map_err(unreadable)?.len();
-    fits(&basename, usize::try_from(len).unwrap_or(usize::MAX))?;
-    let mut bytes = std::fs::read(found).map_err(unreadable)?;
+    let mut payload = Payload::read(found).map_err(unreadable)?;
     // A vaulted source is sent as plain text unless `decrypt: false` asks for it as it is.
-    if flag(args, "decrypt", true) && crate::vault::is_encrypted(&bytes) {
-        bytes = crate::vault::decrypt(&bytes, &crate::vault::run_secrets())
+    if let Payload::Bytes(bytes) = &mut payload
+        && flag(args, "decrypt", true)
+        && crate::vault::is_encrypted(bytes)
+    {
+        *bytes = crate::vault::decrypt(bytes, &crate::vault::run_secrets())
             .map_err(|err| format!("could not read src={}: {err}", found.display()))?;
     }
     let mut args = args.clone();
@@ -178,7 +177,7 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
         args.insert("mode".into(), Value::String(local_mode(found)?));
     }
     Ok(Some(CopyOf {
-        bytes,
+        payload,
         basename,
         args,
     }))
@@ -256,8 +255,12 @@ pub(crate) fn copy_bytes(of: CopyOf) -> Box<dyn Plugin> {
     } else {
         dest.clone()
     };
+    let checksum = match of.payload.sha1() {
+        Ok(sum) => sum,
+        Err(err) => return failing(format!("could not read src={}: {err}", of.basename)),
+    };
     Box::new(Copy {
-        checksum: sha1_hex(&of.bytes),
+        checksum,
         force: flag(&of.args, "force", true),
         follow: flag(&of.args, "follow", false),
         dest,
@@ -413,9 +416,14 @@ impl Copy {
     /// The destination differs: the bytes are staged on the host as `src`, and `copy` moves
     /// them into place.
     fn send(&mut self) -> Step {
-        let blob = match blob_of(&self.of.basename, &self.of.bytes) {
+        let blob = match self.of.payload.blob() {
             Ok(blob) => blob,
-            Err(msg) => return Step::Done(TaskResult::failed_with(msg)),
+            Err(err) => {
+                return Step::Done(TaskResult::failed_with(format!(
+                    "could not read src={}: {err}",
+                    self.of.basename
+                )));
+            }
         };
         let mut args = self.of.args.clone();
         // `src` is the agent's to write, and only the staged path may stand there: a path of

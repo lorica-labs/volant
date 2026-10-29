@@ -1,5 +1,5 @@
 ---
-sourceHash: 0c8e4bf84fac
+sourceHash: 5d6232c333d5
 title: Aufzeichnungen von Läufen
 description: Die Datei, die der Callback volant.compat.record während eines Laufs von ansible-playbook schreibt, Zeile für Zeile.
 ---
@@ -7,6 +7,8 @@ description: Die Datei, die der Callback volant.compat.record während eines Lau
 Bevor ein Team umsteigt, kann es aufzeichnen, was `ansible-playbook` bei seinen echten Läufen tut, und diese Läufe später von Volant wiederholen lassen. Die Aufzeichnung schreibt der Callback `volant.compat.record`. Er wird in der Collection `volant.compat` ausgeliefert, braucht nur die Python-Standardbibliothek und läuft mit ansible-core 2.19 und neuer.
 
 ## Aktivieren
+
+[`volant compat install`](/de/docs/reference/cli/compat/) schreibt die Collection `volant.compat` aus dem Volant-Binary, ohne Download.
 
 Installieren Sie die Collection dort, wo ansible-core seine Collections findet, und fügen Sie `ansible.cfg` zwei Abschnitte hinzu:
 

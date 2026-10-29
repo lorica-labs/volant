@@ -1,0 +1,23 @@
+---
+sourceHash: 62954c0fa838
+title: volant compat
+description: Installe la collection volant.compat que porte le binaire Volant, sans téléchargement.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant compat install` écrit la collection `volant.compat`, qui contient le [callback `record`](/fr/docs/reference/recording/), là où ansible-core trouve les collections. La collection vient du binaire Volant lui-même : la commande marche hors ligne, par exemple sur un runner de CI sans accès à Galaxy.
+
+```sh
+volant compat install [-p PATH] [-f]
+```
+
+<Option name="-p, --collections-path" arg="PATH">
+  Le répertoire des collections. La collection va dans `PATH/ansible_collections/volant/compat`, avec `ansible_collections` ajouté sauf si `PATH` finit par lui. Par défaut : la première entrée du chemin des collections, comme pour [`volant galaxy collection install`](/fr/docs/reference/cli/galaxy/).
+</Option>
+
+<Option name="-f, --force" arg="">
+  Réinstalle la collection quand la même version est installée.
+</Option>
+
+La commande installe la collection comme `volant galaxy collection install` installe un répertoire source, avec les mêmes lignes : `Installing 'volant.compat:<version>' to '<path>'`, puis `volant.compat:<version> was installed successfully`. `MANIFEST.json` et `FILES.json` sont ceux d'une collection construite à partir des mêmes fichiers : `ansible-galaxy collection list` affiche `volant.compat <version>` et `ansible-galaxy collection verify volant.compat --offline` réussit. Relancée, elle affiche `Nothing to do. All requested collections are already installed.` La version est celle du binaire Volant : après une mise à jour de Volant, la commande installe la nouvelle.

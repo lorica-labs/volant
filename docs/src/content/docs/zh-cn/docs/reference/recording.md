@@ -1,5 +1,5 @@
 ---
-sourceHash: 0c8e4bf84fac
+sourceHash: 5d6232c333d5
 title: 运行记录
 description: ansible-playbook 运行时 volant.compat.record 回调写入的文件，逐行说明。
 ---
@@ -7,6 +7,8 @@ description: ansible-playbook 运行时 volant.compat.record 回调写入的文�
 团队在切换之前，可以记录 `ansible-playbook` 在真实运行中做了什么，之后再让 Volant 重放这些运行。记录由 `volant.compat.record` 回调写入。它随 `volant.compat` collection 一起发布，只需要 Python 标准库，可在 ansible-core 2.19 及更高版本上运行。
 
 ## 启用
+
+[`volant compat install`](/zh-cn/docs/reference/cli/compat/) 从 Volant 二进制文件写入 `volant.compat` 集合，无需下载。
 
 把 collection 安装到 ansible-core 查找 collection 的位置，然后在 `ansible.cfg` 中加入两个小节：
 

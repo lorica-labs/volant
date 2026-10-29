@@ -310,10 +310,17 @@ fn python_int(t: &str) -> Option<serde_json::Number> {
     format!("{sign}{clean}").parse().ok()
 }
 
-/// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text.
+/// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text,
+/// with the escapes of its template literals kept as written (see `yaml::escape_strings`).
 /// Integers, floats, `True`/`False`/`None`, quoted strings, and JSON-shaped lists and dicts
 /// are recognised; everything else, `yes` included, stays a string.
 fn literal(text: &str) -> Value {
+    let mut value = python_literal(text);
+    crate::yaml::escape_strings(&mut value);
+    value
+}
+
+fn python_literal(text: &str) -> Value {
     let t = text.trim();
     if let Some(i) = python_int(t) {
         return Value::Number(i);

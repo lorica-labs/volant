@@ -38,7 +38,8 @@ pub struct Play {
     /// play that did.
     pub gather_written: bool,
     pub vars: Map<String, Value>,
-    pub vars_files: Vec<String>,
+    /// Each entry's alternatives: one path, or a list of which the first file that exists is read.
+    pub vars_files: Vec<Vec<String>>,
     /// The `when` of the `import_playbook` entries this play came through, outermost first. Every
     /// task, role and block of the play carries them in front of its own; handlers do not.
     pub import_when: Vec<String>,

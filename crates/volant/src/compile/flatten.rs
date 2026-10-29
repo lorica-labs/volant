@@ -203,6 +203,7 @@ pub(crate) fn compile(
         imported: Vec::new(),
         role_chain: Vec::new(),
         exports: Vec::new(),
+        played: Vec::new(),
     };
     // The play's own tags are the outermost layer of the merge, so every task under it - in a
     // role, in an imported file, at any block depth - carries them for the selection and for

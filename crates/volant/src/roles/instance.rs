@@ -43,6 +43,10 @@ pub struct RoleVars {
     pub inherited_vars: Map<String, Value>,
     /// Whether this instance lends `defaults` and `vars` to the rest of the play.
     pub public: bool,
+    /// The instance's identity when its role does not allow duplicates, and it was not brought in
+    /// by an `include_role` statement of its own: a host that has run it does not run it again
+    /// as a dependency an include brings in. See the coordinator's `roles_run`.
+    pub dedup: Option<String>,
     /// What the role itself says, set aside when the rest of the play's values were first laid
     /// under it, so that a variable another role publishes later can be laid under it again.
     pub own: Option<Box<OwnVars>>,

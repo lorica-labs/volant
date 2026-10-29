@@ -1,5 +1,5 @@
 ---
-sourceHash: c82c9f29b211
+sourceHash: cf4ec0e98731
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -30,7 +30,7 @@ Le répertoire `handlers/` d'un rôle est lu avec ses tâches. Lors d'un flush, 
 
 ## Dépendances
 
-Les `dependencies` de `meta/main.yml` sont des rôles à part entière. Elles s'exécutent avant le rôle qui les a demandées, et une dépendance que deux rôles partagent s'exécute une seule fois. `allow_duplicates: true` désactive cette déduplication pour un rôle.
+Les `dependencies` de `meta/main.yml` sont des rôles à part entière. Elles s'exécutent avant le rôle qui les a demandées, et une dépendance que deux rôles partagent s'exécute une seule fois. `allow_duplicates: true` désactive cette déduplication pour un rôle. Cela vaut aussi d'une instruction à l'autre : un rôle que le `roles:` du play a exécuté, ou qu'un `include_role` précédent a amené pour un hôte, n'est pas exécuté de nouveau comme dépendance d'un rôle qu'un `import_role` ou un `include_role` amène plus tard.
 
 La déduplication regarde plus que le nom. Les paramètres de l'entrée, ses `vars:`, son `when:` et ses sélections `*_from` font tous partie de son identité :
 

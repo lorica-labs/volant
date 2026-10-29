@@ -129,6 +129,7 @@ pub(crate) fn expand_include(
         imported: Vec::new(),
         role_chain: Vec::new(),
         exports: Vec::new(),
+        played: Vec::new(),
     };
     // `block` and `role` are seeded empty and rebased by `graft`: a sub-compilation that mixed
     // the running play's absolute indices with its own relative ones would be a list where the
@@ -235,7 +236,8 @@ pub(crate) fn graft(
             step.block = step.block.map(|b| b + block_offset).or(parent.block);
             step.role = step.role.map(|r| r + role_offset).or(parent.role);
             step.include_params = Some(Arc::clone(&params));
-            step.hosts = Some(Arc::clone(&hosts));
+            // A dependency the coordinator narrowed to the hosts that have not run it keeps that.
+            step.hosts = Some(step.hosts.take().unwrap_or_else(|| Arc::clone(&hosts)));
             steps.push(step);
         }
         for mut span in sub.blocks {

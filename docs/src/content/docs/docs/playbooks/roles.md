@@ -29,7 +29,7 @@ A role's `handlers/` directory is read with its tasks. At a flush, the role's ha
 
 ## Dependencies
 
-The `dependencies` in `meta/main.yml` are roles in their own right. They run in front of the role that asked for them, and a dependency two roles share runs once. `allow_duplicates: true` turns that deduplication off for one role.
+The `dependencies` in `meta/main.yml` are roles in their own right. They run in front of the role that asked for them, and a dependency two roles share runs once. `allow_duplicates: true` turns that deduplication off for one role. This also holds across statements: a role the play's `roles:` ran, or an earlier `include_role` brought in for a host, is not run again as a dependency of a role an `import_role` or an `include_role` brings in later.
 
 Deduplication looks at more than the name. The entry's parameters, its `vars:`, its `when:` and its `*_from` selections are all part of its identity:
 

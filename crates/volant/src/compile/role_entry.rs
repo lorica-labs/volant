@@ -79,9 +79,12 @@ impl Builder<'_> {
         })?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
         let key = identity(entry);
-        if !role.allow_duplicates && seen.contains(&key) {
+        if kind != RoleKind::Import && !role.allow_duplicates && seen.contains(&key) {
             return Ok(());
         }
+        let dedup = (kind != RoleKind::Include && !role.allow_duplicates)
+            .then(|| serde_json::json!([&key.0, &key.1]).to_string());
+        self.played.push(key.clone());
         seen.push(key.clone());
         // Two roles that import each other never repeat an identity - `import_role` starts a
         // `seen` list of its own, as measured - so the dedup above stops nothing and only the
@@ -133,6 +136,7 @@ impl Builder<'_> {
             inherited_defaults,
             inherited_vars,
             public: exporting,
+            dedup,
             own: None,
         });
         // The role's handlers, before its tasks are walked, so a role imported by another one

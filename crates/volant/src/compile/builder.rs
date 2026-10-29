@@ -125,6 +125,10 @@ pub(super) struct Builder<'a> {
     /// is skipped for a host when an identical one ran before, whether that one allowed
     /// duplicates or not, and the `roles:` list is not in the comparison.
     pub(super) imported: Seen,
+    /// Every role instance read so far in the play, whatever brought it in. The dependencies of an
+    /// `import_role` are compared with it: measured on ansible-core 2.19.12, a role the play's
+    /// `roles:` ran is not run again as a dependency of a role imported in `tasks:`.
+    pub(super) played: Seen,
 }
 
 impl Builder<'_> {
@@ -215,7 +219,7 @@ impl Builder<'_> {
                 return self.role(
                     &entry,
                     &merge(inherited, task),
-                    &mut Vec::new(),
+                    &mut self.played.clone(),
                     block,
                     section,
                     RoleKind::Import,

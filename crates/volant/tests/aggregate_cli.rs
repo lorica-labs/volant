@@ -84,12 +84,15 @@ fn masked(text: &str) -> String {
         if line.starts_with("Playbook run took") {
             line = "Playbook run took <time>".to_string();
         }
-        for key in ["delta", "end", "start"] {
-            let needle = format!("\"{key}\": \"");
-            while let Some(at) = line.find(&needle) {
-                let from = at + needle.len();
-                let to = from + line[from..].find('"').unwrap_or(0);
-                line.replace_range(at..=to, &format!("\"{key}\": <time>"));
+        // As JSON, and as a junit report escapes it under a Python older than 3.13.
+        for quote in ["\"", "&quot;"] {
+            for key in ["delta", "end", "start"] {
+                let needle = format!("{quote}{key}{quote}: {quote}");
+                while let Some(at) = line.find(&needle) {
+                    let from = at + needle.len();
+                    let to = from + line[from..].find(quote).unwrap_or(0) + quote.len();
+                    line.replace_range(at..to, &format!("{quote}{key}{quote}: <time>"));
+                }
             }
         }
         out.push(line);

@@ -19,8 +19,42 @@ pub(super) enum Body {
     Failure { message: String, output: String },
 }
 
+/// How minidom escapes, which changed with Python 3.13: before it, text and attribute values
+/// alike lose `&`, `<`, `"` and `>`; from it, text keeps its quotes and an attribute value also
+/// loses its line breaks and tabs.
+#[derive(Clone, Copy)]
+pub(super) struct Escape {
+    /// The controller's Python is older than 3.13.
+    pub(super) legacy: bool,
+}
+
+impl Escape {
+    fn data(self, text: &str) -> String {
+        let text = text
+            .replace('&', "&amp;")
+            .replace('<', "&lt;")
+            .replace('>', "&gt;");
+        if self.legacy {
+            text.replace('"', "&quot;")
+        } else {
+            text
+        }
+    }
+
+    fn attr(self, text: &str) -> String {
+        let text = self.data(text);
+        if self.legacy {
+            return text;
+        }
+        text.replace('"', "&quot;")
+            .replace('\r', "&#13;")
+            .replace('\n', "&#10;")
+            .replace('\t', "&#9;")
+    }
+}
+
 /// `TestSuites(suites=[TestSuite(name, cases)]).to_pretty_xml()`, as minidom writes it.
-pub(super) fn suites(playbook: &str, cases: &[Case]) -> String {
+pub(super) fn suites(playbook: &str, cases: &[Case], escape: Escape) -> String {
     let count = |want: fn(&Body) -> bool| cases.iter().filter(|c| want(&c.body)).count();
     let errors = count(|b| matches!(b, Body::Error { .. }));
     let failures = count(|b| matches!(b, Body::Failure { .. }));
@@ -42,7 +76,7 @@ pub(super) fn suites(playbook: &str, cases: &[Case]) -> String {
     );
     let open = format!(
         "\t<testsuite disabled=\"0\" errors=\"{errors}\" failures=\"{failures}\" name=\"{}\" skipped=\"{skipped}\" tests=\"{}\" time=\"{}\"",
-        attr(playbook),
+        escape.attr(playbook),
         cases.len(),
         total.text()
     );
@@ -51,7 +85,7 @@ pub(super) fn suites(playbook: &str, cases: &[Case]) -> String {
     } else {
         let _ = writeln!(out, "{open}>");
         for case in cases {
-            case_xml(&mut out, case);
+            case_xml(&mut out, case, escape);
         }
         out.push_str("\t</testsuite>\n");
     }
@@ -59,20 +93,20 @@ pub(super) fn suites(playbook: &str, cases: &[Case]) -> String {
     out
 }
 
-fn case_xml(out: &mut String, case: &Case) {
+fn case_xml(out: &mut String, case: &Case, escape: Escape) {
     let open = format!(
         "\t\t<testcase classname=\"{}\" name=\"{}\" time=\"{}\"",
-        attr(&case.classname),
-        attr(&case.name),
+        escape.attr(&case.classname),
+        escape.attr(&case.name),
         case.time.text()
     );
     let child = match &case.body {
         Body::Out(text) if text.is_empty() => None,
-        Body::Out(text) => Some(format!("<system-out>{}</system-out>", data(text))),
+        Body::Out(text) => Some(format!("<system-out>{}</system-out>", escape.data(text))),
         Body::Skipped(text) if text.is_empty() => Some("<skipped/>".to_string()),
-        Body::Skipped(text) => Some(format!("<skipped>{}</skipped>", data(text))),
-        Body::Error { message, output } => Some(element("error", message, output)),
-        Body::Failure { message, output } => Some(element("failure", message, output)),
+        Body::Skipped(text) => Some(format!("<skipped>{}</skipped>", escape.data(text))),
+        Body::Error { message, output } => Some(element("error", message, output, escape)),
+        Body::Failure { message, output } => Some(element("failure", message, output, escape)),
     };
     match child {
         None => {
@@ -84,29 +118,13 @@ fn case_xml(out: &mut String, case: &Case) {
     }
 }
 
-fn element(tag: &str, message: &str, output: &str) -> String {
-    let attrs = format!("message=\"{}\" type=\"{tag}\"", attr(message));
+fn element(tag: &str, message: &str, output: &str, escape: Escape) -> String {
+    let attrs = format!("message=\"{}\" type=\"{tag}\"", escape.attr(message));
     if output.is_empty() {
         format!("<{tag} {attrs}/>")
     } else {
-        format!("<{tag} {attrs}>{}</{tag}>", data(output))
+        format!("<{tag} {attrs}>{}</{tag}>", escape.data(output))
     }
-}
-
-/// minidom's escaping of text.
-fn data(text: &str) -> String {
-    text.replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-}
-
-/// minidom's escaping of an attribute value.
-fn attr(text: &str) -> String {
-    data(text)
-        .replace('"', "&quot;")
-        .replace('\r', "&#13;")
-        .replace('\n', "&#10;")
-        .replace('\t', "&#9;")
 }
 
 #[cfg(test)]
@@ -114,16 +132,19 @@ mod tests {
     use super::super::decimal::exact;
     use super::*;
 
-    #[test]
-    fn the_xml_is_minidom_s() {
-        let cases = vec![Case {
+    fn one() -> Vec<Case> {
+        vec![Case {
             name: "[h1] all: first _raw_params=echo hi".into(),
             classname: "/p/play.yml:4".into(),
             time: exact(0.5),
             body: Body::Out("{\n\"changed\": true\n}".into()),
-        }];
+        }]
+    }
+
+    #[test]
+    fn the_xml_is_minidom_s() {
         assert_eq!(
-            suites("play", &cases),
+            suites("play", &one(), Escape { legacy: false }),
             "<?xml version=\"1.0\" ?>\n\
              <testsuites disabled=\"0\" errors=\"0\" failures=\"0\" tests=\"1\" time=\"0.5\">\n\
              \t<testsuite disabled=\"0\" errors=\"0\" failures=\"0\" name=\"play\" skipped=\"0\" tests=\"1\" time=\"0.5\">\n\
@@ -132,6 +153,16 @@ mod tests {
              \t\t</testcase>\n\
              \t</testsuite>\n\
              </testsuites>\n"
+        );
+    }
+
+    /// Python before 3.13 escapes the quotes of text too.
+    #[test]
+    fn an_older_python_escapes_the_quotes_of_text() {
+        let xml = suites("play", &one(), Escape { legacy: true });
+        assert!(
+            xml.contains("<system-out>{\n&quot;changed&quot;: true\n}</system-out>"),
+            "{xml}"
         );
     }
 }

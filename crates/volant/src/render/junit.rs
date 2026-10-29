@@ -11,7 +11,7 @@ use serde_json::{Map, Value};
 
 use super::recap_json::dumps_indented;
 use decimal::exact;
-use xml::{Body, Case, suites};
+use xml::{Body, Case, Escape, suites};
 
 mod decimal;
 mod xml;
@@ -28,6 +28,7 @@ pub struct Junit {
     include_setup: bool,
     hide_arguments: bool,
     prefix: String,
+    escape: Escape,
     playbook: String,
     play: String,
     /// Each task once, in the order it first started, keyed as `profile_tasks` keys them.
@@ -69,6 +70,18 @@ fn now() -> f64 {
         .map_or(0.0, |since| since.as_secs_f64())
 }
 
+/// Whether the controller's Python is older than 3.13, whose minidom escapes otherwise. With no
+/// controller to ask, the managed runtime's 3.13 is assumed.
+fn older_python() -> bool {
+    crate::runtime::resolve::controller_python().is_some_and(|python| {
+        std::process::Command::new(python)
+            .args(["-c", "import sys; sys.exit(sys.version_info >= (3, 13))"])
+            .stdin(std::process::Stdio::null())
+            .status()
+            .is_ok_and(|status| status.success())
+    })
+}
+
 /// A `JUNIT_*` flag, read as the reference reads it: `true` in any case is on.
 fn flag(name: &str, default: bool) -> bool {
     std::env::var(name).map_or(default, |value| value.eq_ignore_ascii_case("true"))
@@ -104,6 +117,9 @@ impl Junit {
             include_setup: flag("JUNIT_INCLUDE_SETUP_TASKS_IN_REPORT", true),
             hide_arguments: flag("JUNIT_HIDE_TASK_ARGUMENTS", false),
             prefix: std::env::var("JUNIT_TEST_CASE_PREFIX").unwrap_or_default(),
+            escape: Escape {
+                legacy: older_python(),
+            },
             playbook: String::new(),
             play: String::new(),
             tasks: Vec::new(),
@@ -218,7 +234,7 @@ impl Junit {
                 cases.push(self.case(task, host));
             }
         }
-        let xml = suites(&self.playbook, &cases);
+        let xml = suites(&self.playbook, &cases, self.escape);
         let file = self.dir.join(format!("{}-{}.xml", self.playbook, now()));
         std::fs::write(&file, xml).map_err(|e| format!("cannot write {}: {e}", file.display()))
     }

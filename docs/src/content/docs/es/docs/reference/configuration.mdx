@@ -1,5 +1,5 @@
 ---
-sourceHash: 31ea5f7597b9
+sourceHash: 706c674f580f
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -115,7 +115,7 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
-  Más callbacks que se ejecutan junto al de stdout, como lista separada por comas. Volant todavía no ejecuta ninguno: cada nombre imprime `[WARNING]: Skipping callback plugin '<name>', unable to load` y la ejecución sigue. `volant.compat.record`, que [graba las ejecuciones de ansible-playbook](/es/docs/reference/recording/), se omite sin aviso.
+  Más callbacks que se ejecutan junto al de stdout, como lista separada por comas. Volant ejecuta `junit`, que escribe un informe JUnit XML por playbook en `JUNIT_OUTPUT_DIR` (`~/.ansible.log` por defecto) y lee las demás variables `JUNIT_*`, `tree`, que escribe el último resultado de cada host en un archivo de `[callback_tree] directory` (`ANSIBLE_CALLBACK_TREE_DIR`, `~/.ansible/tree` por defecto), y, cuando ansible.posix está instalado en el controlador, `ansible.posix.timer` y `ansible.posix.profile_tasks` con sus opciones (`[callback_profile_tasks]`, `PROFILE_TASKS_*`). Cualquier otro nombre imprime `[WARNING]: Skipping callback plugin '<name>', unable to load` y la ejecución sigue. `volant.compat.record`, que [graba las ejecuciones de ansible-playbook](/es/docs/reference/recording/), se omite sin aviso.
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">

@@ -6,9 +6,11 @@ use std::io::Write;
 use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style};
 
+mod aggregate;
 mod callback;
 mod error;
 mod json_doc;
+mod junit;
 mod oneline;
 mod recap;
 mod recap_json;
@@ -17,12 +19,14 @@ mod shorten;
 mod shown;
 mod tree;
 
+pub use aggregate::{Aggregate, Begun, Profile};
 pub use callback::{LOOP_RESULTS, StdoutCallback};
 pub(crate) use error::source_context;
 pub use error::{
     AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, block_text, cause,
     concat_message, lead, task_failed,
 };
+pub use junit::Junit;
 pub(crate) use recap_json::{ansible_json, ansible_json_indented};
 pub use shorten::shorten;
 pub use shown::Shown;
@@ -75,6 +79,8 @@ pub struct Renderer {
     tree: Option<std::path::PathBuf>,
     /// Writing to stderr, which `set_choice` keeps.
     on_stderr: bool,
+    /// The callbacks `callbacks_enabled` adds beside the stdout one.
+    aggregates: Vec<Aggregate>,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -138,6 +144,7 @@ impl Renderer {
             yaml: false,
             pretty: None,
             json: None,
+            aggregates: Vec::new(),
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -175,6 +182,7 @@ impl Renderer {
             yaml: false,
             pretty: None,
             json: None,
+            aggregates: Vec::new(),
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -198,6 +206,11 @@ impl Renderer {
     pub fn set_oneline(&mut self, oneline: bool, tree: Option<std::path::PathBuf>) {
         self.oneline = oneline;
         self.tree = tree;
+    }
+
+    /// The `tree` callback that `callbacks_enabled` names: one file per host in `dir`.
+    pub fn enable_tree(&mut self, dir: std::path::PathBuf) {
+        self.tree = Some(dir);
     }
 
     /// Whether the `oneline` callback prints the results, which shows neither the result notes
@@ -237,6 +250,7 @@ impl Renderer {
     }
 
     pub fn play(&mut self, name: &str) {
+        self.junit(|junit| junit.play(name));
         self.banner(&format!("PLAY [{name}]"));
     }
 
@@ -306,6 +320,7 @@ impl Renderer {
     /// What the reference prints when a playbook starts at `-vv`: its banner, at `-vvvv` the
     /// options it was run with, and how many plays it holds.
     pub fn playbook(&mut self, file: &std::path::Path, plays: usize, options: &[String]) {
+        self.junit(|junit| junit.playbook(file));
         if self.verbosity < 2 {
             return;
         }

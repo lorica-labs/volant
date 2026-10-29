@@ -203,5 +203,4 @@ Une instruction imbriquée sur 32 niveaux est rejetée. Un seul compteur couvre 
 - Un include en échec dans une boucle affiche la ligne habituelle `failed: [host] (item=...)`. Ansible n'affiche qu'un `[ERROR]` sur la sortie d'erreur standard.
 - `allow_duplicates: false` compte un rôle comme exécuté pour un hôte dès que ses tâches sont apportées. ansible-core le compte quand l'hôte a exécuté au moins une de ses tâches : un rôle dont toutes les tâches sont sautées s'exécute donc de nouveau là-bas.
 - `allow_duplicates: false` sur un `import_role` compare les instructions pendant la compilation du play : un `when` sur l'instruction précédente ne change donc pas le résultat pour un hôte.
-- `include_vars: file=x.yml name=ns` est lu comme un seul argument brut au lieu d'être découpé en paires `key=value`, la même limitation qu'a `import_tasks`.
 - Ce que produit `include_vars` se place un niveau au-dessus de l'endroit où Ansible le met. Vous ne le remarquez qu'avec un nom qu'un `set_fact` a aussi écrit : Ansible laisse gagner le `set_fact` dans les deux ordres, et ici l'écriture la plus tardive gagne.

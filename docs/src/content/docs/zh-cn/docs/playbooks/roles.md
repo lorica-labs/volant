@@ -203,5 +203,4 @@ Volant 会在运行之前检查 include 带来的内容。到那时，主机已�
 - 循环内失败的 include 会打印通常的 `failed: [host] (item=...)` 行。Ansible 只在标准错误上打印一条 `[ERROR]`。
 - `allow_duplicates: false` 在 role 的 task 被引入时，就把该 role 算作该主机已运行。ansible-core 则在主机至少运行过它的一个 task 时才这么算，所以 task 全部被跳过的 role，在那里仍会再次运行。
 - `import_role` 上的 `allow_duplicates: false` 在 play 编译时比较各条语句，所以较早那条语句上的 `when` 不会改变某台主机的结果。
-- `include_vars: file=x.yml name=ns` 被当作一个原始参数读取，而不是拆分成 `key=value` 对，`import_tasks` 也有同样的限制。
 - `include_vars` 产生的内容，比 Ansible 放置它的位置高一级。只有遇到 `set_fact` 也写过的同名变量时你才会注意到：Ansible 里无论顺序如何，都是 `set_fact` 胜出，而在这里是后写入的胜出。

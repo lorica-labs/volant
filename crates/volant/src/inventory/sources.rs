@@ -108,6 +108,9 @@ pub struct PluginConfig {
     pub script_stderr: bool,
     /// `export`: `ansible-inventory` lists as with `--export`.
     pub export: bool,
+    /// Why `-e` cannot be read, as a message and its `Origin:`: the reference's plugins read
+    /// `-e` before their source, so each one that takes a source fails with it.
+    pub extra_vars_error: Option<(String, Option<String>)>,
 }
 
 impl Default for PluginConfig {
@@ -123,6 +126,7 @@ impl Default for PluginConfig {
             unparsed_is_failed: false,
             any_unparsed_is_failed: false,
             script_stderr: true,
+            extra_vars_error: None,
             export: false,
         }
     }
@@ -365,6 +369,27 @@ struct Chain<'a, 'c> {
 }
 
 impl Chain<'_, '_> {
+    /// `plugin` reading `source`, or the `-e` error it fails with first. `auto` finds its own
+    /// error before it hands the source to the plugin its file names.
+    fn parse(
+        &self,
+        plugin: &dyn InventoryPlugin,
+        source: &Source,
+        into: &mut Inventory,
+    ) -> Result<(), PluginError> {
+        let Some((message, origin)) = &self.cx.config.extra_vars_error else {
+            return plugin.parse(source, into, self.cx);
+        };
+        if plugin.name() == "auto" {
+            plugin.parse(source, &mut Inventory::default(), self.cx)?;
+        }
+        Err(PluginError {
+            message: message.clone(),
+            origin: origin.clone(),
+            cause: None,
+        })
+    }
+
     /// `parse_source`: a directory's entries in sorted order, anything else offered to each
     /// plugin until one reads it. Whether something was read.
     fn source(&self, source: &Source, into: &mut Inventory) -> Result<bool, Fatal> {
@@ -397,7 +422,7 @@ impl Chain<'_, '_> {
                     );
                     continue;
                 }
-                match plugin.parse(source, into, self.cx) {
+                match self.parse(*plugin, source, into) {
                     Ok(()) => {
                         parsed = true;
                         self.cx.verbose(

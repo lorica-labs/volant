@@ -19,6 +19,7 @@ use crate::stats::error_code;
 use crate::template::{inventory_yaml, yaml_mapping, yaml_node};
 use crate::vars::{ListedOrigin, VarStore};
 
+mod extra;
 mod graph;
 use graph::graph;
 
@@ -133,11 +134,12 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
         }
     };
     crate::vault::install(secrets);
-    let loaded = match load(&args.inventory, &config, &mut out) {
+    let base = std::env::current_dir()?;
+    let unreadable = extra::unreadable(&args.extra_vars, &base);
+    let loaded = match load(&args.inventory, &config, unreadable.as_ref(), &mut out) {
         Ok(inventory) => inventory,
         Err(code) => return Ok(code),
     };
-    let base = std::env::current_dir()?;
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &base)?;
     // The reference reads `group_vars` and `host_vars` beside each source and in the directory
     // it was started from.
@@ -335,14 +337,17 @@ fn yaml_list(
 /// The inventory every `-i` names, else the configuration's, else the reference's default; what
 /// is said while reading goes to the terminal as `ansible-playbook` says it. `Err` carries the
 /// exit code, with the message already printed.
-pub(super) fn load(
+fn load(
     given: &[String],
     config: &Config,
+    unreadable: Option<&extra::Unreadable>,
     out: &mut Renderer,
 ) -> Result<Inventory, i32> {
     let sources = inventory_sources(given, config);
     let bridge = Bridge::late();
-    let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));
+    let mut plugins = config.inventory_plugins.clone();
+    plugins.extra_vars_error = unreadable.map(|u| (u.message.clone(), u.origin.clone()));
+    let loaded = load_sources_with(&sources, &plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {
         match note {
             Note::Verbose(level, text) => out.verbose(*level, text),
@@ -357,6 +362,11 @@ pub(super) fn load(
     if let Some(fatal) = loaded.error {
         eprintln!("[ERROR]: {}", fatal.message);
         return Err(fatal.code);
+    }
+    // The reference reads `-e` again once the inventory is read, and stops there.
+    if let Some(unreadable) = unreadable {
+        eprintln!("[ERROR]: {}", unreadable.text());
+        return Err(unreadable.code);
     }
     // Said once the inventory is read, whatever is asked of it, as the reference says it.
     for warning in loaded.inventory.resolve("all").warnings {

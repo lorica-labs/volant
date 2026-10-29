@@ -1009,15 +1009,8 @@ pub(super) async fn drive_host(
                             // The host's links go, the shared connection's master with them: the
                             // next task opens both again.
                             "reset_connection" => {
-                                let keys: Vec<LinkKey> =
-                                    links.keys().filter(|k| k.host == name).cloned().collect();
-                                for key in keys {
-                                    checked.remove(&key);
-                                    if let Some(link) = links.remove(&key) {
-                                        link.shutdown().await;
-                                    }
-                                    key.transport.stop_shared().await;
-                                }
+                                super::run::reset_host(&mut links, &mut checked, &name, &templar)
+                                    .await;
                             }
                             "end_role" => jump = true,
                             // `noop` and `flush_handlers`, whose flush point is not this arm's.

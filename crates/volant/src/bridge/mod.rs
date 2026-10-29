@@ -23,6 +23,7 @@ mod actions;
 pub use actions::ActionCall;
 mod connections;
 mod conversation;
+mod persistent;
 mod wire;
 
 use conversation::{answer, defaults_shape};
@@ -69,6 +70,8 @@ pub struct Bridge {
     dirs: Arc<Mutex<Vec<PathBuf>>>,
     /// What each lookup reads of the play's variables, asked of the helper once per name.
     needs: Mutex<HashMap<String, LookupNeeds>>,
+    /// The persistent connection socket of each host, see `persistent`.
+    sockets: Mutex<HashMap<String, String>>,
 }
 
 /// The variables a lookup plugin reads: the names it asks for, or all of them when it
@@ -105,6 +108,7 @@ impl Bridge {
             actions: Mutex::new(Actions::default()),
             dirs,
             needs: Mutex::default(),
+            sockets: Mutex::default(),
         })
     }
 
@@ -150,6 +154,7 @@ impl Bridge {
             actions: Mutex::new(Actions::default()),
             dirs: Arc::default(),
             needs: Mutex::default(),
+            sockets: Mutex::default(),
         })
     }
 

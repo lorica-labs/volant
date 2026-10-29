@@ -203,6 +203,15 @@ Everything else about the run is unchanged: loops, `when`, `register`, `changed_
 
 Each task pays for starting the plugin's connection, as `ansible-playbook` does, so this route is slower per task than the agent's.
 
+### Connections that keep a process
+
+`network_cli`, `netconf` and `httpapi` keep their connection to the device in a process of its own, as they do under `ansible-playbook`. Before the first task that needs the device, the helper runs ansible-core's `ansible-connection` stub with the helper's Python, plugin paths and verbosity. The stub starts the process, which listens on a socket under `~/.ansible/pc`, set by `ANSIBLE_PERSISTENT_CONTROL_PATH_DIR` or `[persistent_connection] control_path_dir`. The socket's name is a hash of the address, the port, the user and the run, so every later task for the same device reuses the process, from any helper.
+
+- A process that cannot start fails the task with its error, not the host. `-vvv` adds its traceback.
+- `meta: reset_connection` ends the host's process, and the end of each play ends every process its tasks started, as `ansible-playbook` does. A process left idle for `persistent_connect_timeout` seconds (30 by default) ends by itself, and one command waits at most `persistent_command_timeout` seconds (30).
+- At `-vvvv` the lines ansible-core prints as it starts the process, such as `<address> attempting to start connection` and `<address> local domain socket path is ...`, are printed under the task.
+- `persistent_log_messages` logs every exchange with the device, passwords included, and ansible-core warns about it with its own text.
+
 ## Host variables
 
 Volant reads these per host, from the inventory or from any other variable source. A test checks this list against the names the connection code reads, so it stays in sync with the engine.

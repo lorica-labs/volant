@@ -1,5 +1,5 @@
 ---
-sourceHash: 55eb7eef1053
+sourceHash: 4f71d0749a1f
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -203,6 +203,15 @@ Volant 用两种方式之一到达主机。对于 `ssh`、`local` 和上面列�
 - `become` 使用 task 的提权方法，`sudo` 或 `su`。
 
 每个 task 都要付出建立插件连接的代价，与 `ansible-playbook` 一样，因此这条路线每个 task 比 agent 的路线慢。
+
+### 保留进程的连接
+
+`network_cli`、`netconf` 和 `httpapi` 像在 `ansible-playbook` 下一样，把与设备的连接保存在单独的进程里。在第一个需要该设备的任务之前，helper 用自己的 Python、插件路径和详细级别运行 ansible-core 的 `ansible-connection` stub。stub 启动该进程，进程在 `~/.ansible/pc` 下的一个 socket 上监听，该目录由 `ANSIBLE_PERSISTENT_CONTROL_PATH_DIR` 或 `[persistent_connection] control_path_dir` 设定。socket 的名字是地址、端口、用户和本次运行的哈希，所以之后同一设备的每个任务都会复用该进程，无论来自哪个 helper。
+
+- 无法启动的进程会让任务带着它的错误失败，而不是让主机失败。`-vvv` 会加上它的 traceback。
+- `meta: reset_connection` 结束该主机的进程，每个 play 结束时也会结束它的任务启动的所有进程，与 `ansible-playbook` 一致。空闲 `persistent_connect_timeout` 秒（默认 30）的进程会自行结束，一条命令最多等待 `persistent_command_timeout` 秒（30）。
+- 在 `-vvvv` 下，ansible-core 启动进程时打印的行，例如 `<address> attempting to start connection` 和 `<address> local domain socket path is ...`，会显示在任务下方。
+- `persistent_log_messages` 会记录与设备的每次交互，包括密码，ansible-core 会用它自己的文字发出警告。
 
 ## 主机变量
 

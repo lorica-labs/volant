@@ -104,12 +104,36 @@ pub struct RunOptions {
 /// out**: the hosts that failed in an earlier play are still in it, because the reference cuts
 /// its batches from that list and only then drops the failures from each batch. Cutting the
 /// filtered list instead merges two batches into one whenever an earlier play lost a host.
+///
+/// The persistent connections the play's tasks started end with it, as the strategy's `cleanup`
+/// ends them in ansible-core.
 #[expect(
     clippy::too_many_arguments,
     reason = "the play's whole context: eight values with no natural grouping until the controller is split"
 )]
-#[expect(clippy::too_many_lines)]
 pub async fn run_play(
+    play: &Play,
+    compiled: &Compiled,
+    hosts: Vec<Host>,
+    agents: &AgentSource,
+    options: &RunOptions,
+    state: &mut RunState,
+    out: &mut Renderer,
+    stats: &mut Stats,
+) -> anyhow::Result<PlayEnd> {
+    let end = play_batches(play, compiled, hosts, agents, options, state, out, stats).await;
+    if let Some(bridge) = state.templar.bridge() {
+        bridge.reset_persistent(None);
+    }
+    end
+}
+
+#[expect(
+    clippy::too_many_arguments,
+    reason = "the play's whole context, as `run_play` takes it"
+)]
+#[expect(clippy::too_many_lines)]
+async fn play_batches(
     play: &Play,
     compiled: &Compiled,
     hosts: Vec<Host>,

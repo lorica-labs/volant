@@ -372,6 +372,10 @@
   vars: {items: [a, b]}
 - when: "items is contains('b')"
   vars: {items: [a, b]}
+- template: "{{ (now() - now()).days }}"
+- template: "{% set d = now().replace(year=2020, month=1, day=1, hour=0, minute=0, second=0, microsecond=0) %}{{ d }} {{ d.replace(day=3, hour=5) - d }} {{ d - d.replace(microsecond=5) }} {{ d + (d.replace(day=2) - d) }} {{ [d.replace(day=2) - d, d] }} {{ (d.replace(day=2) - d).total_seconds() }} {{ (d - d) | type_debug }}"
+- template: "{{ now() - 1 }}"
+- template: "{{ now().replace(day=31, month=2) }}"
 # lookups
 - template: "{{ lookup('env', 'VOLANT_GOLDEN_ENV') }}"
 - template: "{{ lookup('env', 'VOLANT_GOLDEN_UNSET_ENV') }}"

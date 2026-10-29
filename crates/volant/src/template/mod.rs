@@ -134,6 +134,9 @@ const MATTR_KEY: &str = "volant::mattr:";
 /// see [`vm::route_calls`].
 const REM_KEY: &str = "volant::rem";
 const REMT_KEY: &str = "volant::remt";
+/// The names `+` and `-` are routed through in a template that calls `now()`.
+const ADD_KEY: &str = "volant::add";
+const SUB_KEY: &str = "volant::sub";
 /// Prefix of the name a list or mapping literal is routed through in such a template, then the
 /// literal as JSON: minijinja folds a literal of constants into one shared value, and a template
 /// that changes a list needs a new one each time the literal runs.

@@ -261,6 +261,8 @@ pub fn register(
             "UndefinedMarker"
         } else if v.downcast_object_ref::<super::clock::DateTime>().is_some() {
             "datetime"
+        } else if v.downcast_object_ref::<super::clock::TimeDelta>().is_some() {
+            "timedelta"
         } else if v.is_tuple() {
             "tuple"
         } else if super::pymethods::bytes::of(&v).is_some() {

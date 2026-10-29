@@ -9,16 +9,18 @@ use super::super::env::{attr_call, const_call, var_call};
 use super::super::order::OPERATORS;
 use super::super::pymethods::mutable::MUTATORS;
 use super::super::{
-    CONCAT_KEY, CONST_KEY, ITEM_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY,
-    REMT_KEY, VAULT_NAME,
+    ADD_KEY, CONCAT_KEY, CONST_KEY, ITEM_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY,
+    REMT_KEY, SUB_KEY, VAULT_NAME,
 };
 #[cfg(doc)]
 use super::concat;
 
-/// Whether the code holds a capture that prints into the output (see [`route_calls`]), and the
-/// names a macro or a `set` takes: one called `q` or `query` shadows the lookup shorthand.
-fn scan(instructions: &Instructions<'_>) -> (bool, Vec<String>) {
+/// Whether the code holds a capture that prints into the output (see [`route_calls`]), whether
+/// it calls `now()`, and the names a macro or a `set` takes: one called `q` or `query` shadows
+/// the lookup shorthand.
+fn scan(instructions: &Instructions<'_>) -> (bool, bool, Vec<String>) {
     let mut captures = false;
+    let mut clock = false;
     // The captures open at this point, each with whether a `{{ }}` printed inside it.
     let mut open: Vec<bool> = Vec::new();
     let mut shadowed = Vec::new();
@@ -28,6 +30,7 @@ fn scan(instructions: &Instructions<'_>) -> (bool, Vec<String>) {
             shadowed.push(name.to_string());
         }
         match op {
+            Instruction::CallFunction("now", _) => clock = true,
             Instruction::BeginCapture(..) => open.push(false),
             Instruction::Emit => open.iter_mut().for_each(|printed| *printed = true),
             Instruction::EndCapture => {
@@ -38,7 +41,7 @@ fn scan(instructions: &Instructions<'_>) -> (bool, Vec<String>) {
         }
         at += 1;
     }
-    (captures, shadowed)
+    (captures, clock, shadowed)
 }
 
 /// Whether the captured text at `at`, after any filter of a `set` block, goes to a variable
@@ -82,7 +85,7 @@ pub(in crate::template) fn route_calls(
     instructions: &mut Instructions<'_>,
     mutating: bool,
 ) -> bool {
-    let (captures, shadowed) = scan(instructions);
+    let (captures, clock, shadowed) = scan(instructions);
     let mut links = Vec::new();
     let mut idx = 0;
     loop {
@@ -127,6 +130,9 @@ pub(in crate::template) fn route_calls(
                     links.push((idx, keep));
                 }
             }
+            // A `datetime` takes part in `+` and `-` only through the routed operator.
+            Instruction::Add if clock => *op = Instruction::CallFunction(ADD_KEY, Some(2)),
+            Instruction::Sub if clock => *op = Instruction::CallFunction(SUB_KEY, Some(2)),
             Instruction::Rem => {
                 let key = if tuple_before { REMT_KEY } else { REM_KEY };
                 *op = Instruction::CallFunction(key, Some(2));

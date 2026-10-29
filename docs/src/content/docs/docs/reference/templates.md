@@ -226,7 +226,7 @@ Volant refuses a YAML text that it cannot load without risk. The error names the
 - A string that reads two variables, one of them chained through a third that holds a `raw` block, is rendered once more than in ansible-core.
 - A `{% set x %}...{% endset %}` block whose body prints an expression makes the result a string even when the rest is one expression. A block of text alone keeps the type.
 - `dict` alone and `dict.fromkeys` alone are no result, as in ansible-core (`Type 'type' is unsupported for variable storage.`), and print as `<class 'dict'>` and `<built-in method fromkeys of type object>` inside a text.
-- A `datetime` from `now()` does not take part in arithmetic, so `now() - now()` fails, and it lacks the methods `date`, `time`, `replace`, `astimezone`, `utcoffset` and `timetuple`.
+- A `datetime` from `now()` takes part in `+` and `-` with another `datetime` or a `timedelta` and in no other arithmetic, and it lacks the methods `date`, `time`, `astimezone` and `timetuple`.
 
 ### Template file gaps
 

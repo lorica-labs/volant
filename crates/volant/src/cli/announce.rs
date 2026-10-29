@@ -7,7 +7,7 @@ use super::plays::Plays;
 use crate::config::Config;
 use crate::inventory::Source;
 use crate::playbook;
-use crate::render::{Renderer, StdoutCallback};
+use crate::render::{Aggregate, Profile, Renderer, StdoutCallback};
 
 /// What `--version` prints, and what `-vv` opens the run with in place of the reference's block
 /// of machine paths: Volant's own version and the ansible-core release it matches.
@@ -81,6 +81,56 @@ fn result_format(config: &Config, stdout: StdoutCallback, out: &mut Renderer) ->
     Ok(())
 }
 
+/// The callback `name` enables beside the stdout one, when this engine prints it: `tree` writes its
+/// files through the renderer and returns nothing, `timer` and `profile_tasks` load from
+/// ansible.posix when the controller has that collection. `None` for any other name.
+fn aggregate(config: &Config, name: &str, out: &mut Renderer) -> Option<Result<Aggregate, String>> {
+    let posix = |plugin: &str| {
+        let file = format!("ansible/posix/plugins/callback/{plugin}.py");
+        crate::runtime::collections::after(
+            config.collections_path.clone(),
+            crate::runtime::collections::active_dir(),
+        )
+        .iter()
+        .any(|path| {
+            path.join("ansible_collections").join(&file).is_file() || path.join(&file).is_file()
+        })
+    };
+    let option = |env: &str, key: &str| config.callbacks.option(env, "callback_profile_tasks", key);
+    // The short names are ansible-core's redirects to ansible.posix, said at `-vv`.
+    if matches!(name, "timer" | "profile_tasks") && posix(name) {
+        out.verbose(
+            2,
+            &format!("redirecting (type: callback) ansible.builtin.{name} to ansible.posix.{name}"),
+        );
+    }
+    match name {
+        "tree" | "ansible.builtin.tree" => {
+            let dir = config
+                .callbacks
+                .option("ANSIBLE_CALLBACK_TREE_DIR", "callback_tree", "directory")
+                .unwrap_or_else(|| "~/.ansible/tree".to_string());
+            let cwd = std::env::current_dir().unwrap_or_default();
+            out.enable_tree(crate::config::expand_home(&dir, &cwd));
+            None
+        }
+        "timer" | "ansible.posix.timer" if posix("timer") => {
+            Some(Ok(Aggregate::Timer(std::time::Instant::now())))
+        }
+        "profile_tasks" | "ansible.posix.profile_tasks" if posix("profile_tasks") => Some(
+            Profile::new(|key| match key {
+                "output_limit" => option("PROFILE_TASKS_TASK_OUTPUT_LIMIT", "task_output_limit"),
+                "sort_order" => option("PROFILE_TASKS_SORT_ORDER", "sort_order"),
+                "summary_only" => option("PROFILE_TASKS_SUMMARY_ONLY", "summary_only"),
+                "datetime_format" => option("PROFILE_TASKS_DATETIME_FORMAT", "datetime_format"),
+                _ => None,
+            })
+            .map(|profile| Aggregate::Profile(Box::new(profile))),
+        ),
+        _ => None,
+    }
+}
+
 /// Loads the run's callbacks, before the first playbook: the stdout one from `stdout_callback`,
 /// the enabled ones from `callbacks_enabled`, as ansible-core 2.19.12's `load_callbacks` does.
 /// `Err(code)` ends the run: a stdout callback this engine does not have, or a `result_format`
@@ -117,17 +167,29 @@ pub(super) fn load_callbacks(
         return Err(1);
     };
     if loads {
-        // The enabled callbacks run beside the stdout one; this engine has none of its own yet.
-        // `volant.compat.record` records ansible-core's runs for this engine, which has nothing
-        // to record, so an `ansible.cfg` both share enables it without a word here.
+        // The enabled callbacks run beside the stdout one. `volant.compat.record` records
+        // ansible-core's runs for this engine, which has nothing to record, so an `ansible.cfg`
+        // both share enables it without a word here.
+        let mut aggregates = Vec::new();
         for enabled in &config.callbacks.enabled {
-            if StdoutCallback::named(enabled).is_none() && !enabled.starts_with("volant.") {
-                out.warning(
-                    &format!("Skipping callback plugin '{enabled}', unable to load"),
-                    false,
-                );
+            match aggregate(config, enabled, out) {
+                Some(Ok(aggregate)) => aggregates.push(aggregate),
+                Some(Err(why)) => {
+                    eprintln!("[ERROR]: {why}");
+                    return Err(1);
+                }
+                None if StdoutCallback::named(enabled).is_none()
+                    && !enabled.starts_with("volant.") =>
+                {
+                    out.warning(
+                        &format!("Skipping callback plugin '{enabled}', unable to load"),
+                        false,
+                    );
+                }
+                None => {}
             }
         }
+        out.set_aggregates(aggregates);
     }
     if matches!(stdout, StdoutCallback::Default | StdoutCallback::Minimal) {
         result_format(config, stdout, out)?;

@@ -54,6 +54,18 @@ pub(super) fn header(step: &Step, name: &str, out: &mut Renderer) {
     if let Some(origin) = &step.task.origin {
         out.task_path(origin);
     }
+    // `profile_tasks` keys a task by its uuid, which a later `serial` batch runs again: the
+    // step's place in the play stands for it.
+    let path = step.task.origin.as_ref().map(|origin| {
+        let file = std::path::absolute(&*origin.path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
+        format!("{}:{}", file.display(), origin.line)
+    });
+    out.task_timed(
+        &format!("{}#{name}", path.as_deref().unwrap_or("")),
+        name,
+        path,
+    );
 }
 
 /// The banner of step `index`, unless the last line printed already belonged to it: under `free`

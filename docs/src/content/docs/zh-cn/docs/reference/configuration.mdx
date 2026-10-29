@@ -1,5 +1,5 @@
 ---
-sourceHash: 31ea5f7597b9
+sourceHash: f9b4b5cb54e9
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -115,7 +115,7 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
-  在 stdout callback 之外再运行的 callback，以逗号分隔。Volant 目前一个都不运行：每个名字都会打印 `[WARNING]: Skipping callback plugin '<name>', unable to load`，运行继续。`volant.compat.record`（用于[记录 ansible-playbook 的运行](/zh-cn/docs/reference/recording/)）会被跳过，不打印警告。
+  在 stdout callback 之外再运行的 callback，以逗号分隔。Volant 运行 `tree`，它把每台主机的最后一个结果写入 `[callback_tree] directory`（`ANSIBLE_CALLBACK_TREE_DIR`，默认 `~/.ansible/tree`）中的文件；当控制端安装了 ansible.posix 时，还运行 `ansible.posix.timer` 和 `ansible.posix.profile_tasks` 及其选项（`[callback_profile_tasks]`、`PROFILE_TASKS_*`）。其他名字都会打印 `[WARNING]: Skipping callback plugin '<name>', unable to load`，运行继续。`volant.compat.record`（用于[记录 ansible-playbook 的运行](/zh-cn/docs/reference/recording/)）会被跳过，不打印警告。
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">

@@ -6,6 +6,7 @@ use std::io::Write;
 use anstream::{AutoStream, ColorChoice};
 use anstyle::{AnsiColor, Style};
 
+mod aggregate;
 mod callback;
 mod error;
 mod json_doc;
@@ -17,6 +18,7 @@ mod shorten;
 mod shown;
 mod tree;
 
+pub use aggregate::{Aggregate, Profile};
 pub use callback::{LOOP_RESULTS, StdoutCallback};
 pub(crate) use error::source_context;
 pub use error::{
@@ -75,6 +77,8 @@ pub struct Renderer {
     tree: Option<std::path::PathBuf>,
     /// Writing to stderr, which `set_choice` keeps.
     on_stderr: bool,
+    /// The callbacks `callbacks_enabled` adds beside the stdout one.
+    aggregates: Vec<Aggregate>,
 }
 
 /// Set by the executor on a result whose task asked for diffs; the renderer reads it and the
@@ -138,6 +142,7 @@ impl Renderer {
             yaml: false,
             pretty: None,
             json: None,
+            aggregates: Vec::new(),
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -175,6 +180,7 @@ impl Renderer {
             yaml: false,
             pretty: None,
             json: None,
+            aggregates: Vec::new(),
             oneline: false,
             tree: None,
             on_stderr: false,
@@ -198,6 +204,11 @@ impl Renderer {
     pub fn set_oneline(&mut self, oneline: bool, tree: Option<std::path::PathBuf>) {
         self.oneline = oneline;
         self.tree = tree;
+    }
+
+    /// The `tree` callback that `callbacks_enabled` names: one file per host in `dir`.
+    pub fn enable_tree(&mut self, dir: std::path::PathBuf) {
+        self.tree = Some(dir);
     }
 
     /// Whether the `oneline` callback prints the results, which shows neither the result notes

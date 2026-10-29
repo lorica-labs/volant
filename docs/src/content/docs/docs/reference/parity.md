@@ -29,14 +29,14 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | shell | 1 | 0 | 0 | 2 |
 | vars | 1 | 0 | 0 | 0 |
 | cache | 2 | 0 | 0 | 0 |
-| callback | 3 | 0 | 0 | 2 |
+| callback | 4 | 0 | 0 | 1 |
 | connection | 4 | 0 | 0 | 2 |
 | collection module | 5903 | 0 | 0 | 3540 |
 | collection action plugin | 1665 | 0 | 0 | 419 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
 | collection connection | 8 | 0 | 0 | 22 |
-| collection callback | 1 | 0 | 0 | 38 |
+| collection callback | 3 | 0 | 0 | 36 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
 
@@ -694,7 +694,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `junit` | <span class="kw kw-no">later</span> | an aggregate callback |
 | `minimal` | <span class="kw kw-runs">runs</span> |  |
 | `oneline` | <span class="kw kw-runs">runs</span> |  |
-| `tree` | <span class="kw kw-no">later</span> | an aggregate callback |
+| `tree` | <span class="kw kw-runs">runs</span> |  |
 
 ## collection connection
 
@@ -741,8 +741,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `ansible.posix.json` | <span class="kw kw-runs">runs</span> |  |
 | `ansible.posix.jsonl` | <span class="kw kw-no">later</span> | another callback |
 | `ansible.posix.profile_roles` | <span class="kw kw-no">later</span> | another callback |
-| `ansible.posix.profile_tasks` | <span class="kw kw-no">later</span> | another callback |
-| `ansible.posix.timer` | <span class="kw kw-no">later</span> | another callback |
+| `ansible.posix.profile_tasks` | <span class="kw kw-runs">runs</span> |  |
+| `ansible.posix.timer` | <span class="kw kw-runs">runs</span> |  |
 | `community.general.cgroup_memory_recap` | <span class="kw kw-no">later</span> | another callback |
 | `community.general.context_demo` | <span class="kw kw-no">later</span> | another callback |
 | `community.general.counter_enabled` | <span class="kw kw-no">later</span> | another callback |

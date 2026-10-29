@@ -201,7 +201,7 @@ fn with_argument_gap(category: &str, name: &str, status: Status, note: &str) -> 
 }
 
 fn later(category: &str, name: &str) -> Option<&'static str> {
-    if category == "callback" && !matches!(name, "default" | "minimal" | "oneline") {
+    if category == "callback" && !matches!(name, "default" | "minimal" | "oneline" | "tree") {
         return Some("an aggregate callback");
     }
     LATER
@@ -429,7 +429,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         ("vars", |n: &str| n == "host_group_vars"),
         ("cache", |n: &str| n == "memory" || n == "jsonfile"),
         ("callback", |n: &str| {
-            matches!(n, "default" | "minimal" | "oneline")
+            matches!(n, "default" | "minimal" | "oneline" | "tree")
         }),
         ("connection", |n: &str| {
             let vars: serde_json::Map<String, Value> =
@@ -539,7 +539,9 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         // `result_format = yaml` is what its removal notice points to.
         for n in names(c, &["callback"]) {
             match n.as_str() {
-                "ansible.posix.json" => push("callback", &n, Status::Runs, ""),
+                "ansible.posix.json" | "ansible.posix.timer" | "ansible.posix.profile_tasks" => {
+                    push("callback", &n, Status::Runs, "");
+                }
                 "community.general.yaml" => push(
                     "callback",
                     &n,

@@ -290,7 +290,7 @@ pub(super) fn load_play_vars_files(
 /// shared by every host that names it: a 7 MB file copied for each of 50 hosts held 5 GB.
 /// `on_undefined` hears of an entry whose template has no value, which is skipped.
 pub(super) fn read_vars_files<'a>(
-    entries: &'a [String],
+    entries: &'a [Vec<String>],
     templar: &Templar,
     vars: Vars<'_>,
     playbook_dir: &Path,
@@ -298,60 +298,67 @@ pub(super) fn read_vars_files<'a>(
     on_undefined: &mut dyn FnMut(&'a String),
 ) -> anyhow::Result<Vec<Arc<Map<String, Value>>>> {
     let mut files = Vec::new();
-    for raw in entries {
-        let rendered = match templar.render(raw, vars) {
-            Ok(rendered) => rendered,
-            // Only a variable without a value is recoverable. Every other template failure
-            // stops the run there, and swallowing them all as one undefined variable both
-            // named the wrong cause and let a broken playbook exit 0.
-            Err(err) if err.is_undefined() => {
-                on_undefined(raw);
+    // An entry's alternatives are tried in order and the first file that exists is read. Measured
+    // on ansible-core 2.19.12: an undefined variable in one of them skips the whole entry, even
+    // when a later alternative would have been found.
+    'entry: for alternatives in entries {
+        for raw in alternatives {
+            let rendered = match templar.render(raw, vars) {
+                Ok(rendered) => rendered,
+                // Only a variable without a value is recoverable. Every other template failure
+                // stops the run there, and swallowing them all as one undefined variable both
+                // named the wrong cause and let a broken playbook exit 0.
+                Err(err) if err.is_undefined() => {
+                    on_undefined(raw);
+                    continue 'entry;
+                }
+                Err(err) => anyhow::bail!("rendering vars_files entry {raw}: {err}"),
+            };
+            // Exit 4, the reference's own code for a playbook it cannot make sense of, measured
+            // alongside the wording. A template that fails to render stays at 1, also measured:
+            // the reference splits those two the same way.
+            let path = rendered.as_str().ok_or_else(|| {
+                crate::stats::Refusal::at(
+                    4,
+                    format!(
+                        "Invalid `vars_files` value of type '{}'. A `vars_files` value should \
+                         either be a string or list of strings.",
+                        python_type(&rendered)
+                    ),
+                )
+            })?;
+            let path = if Path::new(path).is_absolute() {
+                PathBuf::from(path)
+            } else {
+                playbook_dir.join(path)
+            };
+            // `exists` answers "no" both for a path that is not there and for one it cannot
+            // stat, a parent directory refusing access included. The reference asks the same
+            // question the same way and tries the next alternative, or skips the entry without a
+            // word when none is left, so both stay a skip here.
+            if !path.exists() {
                 continue;
             }
-            Err(err) => anyhow::bail!("rendering vars_files entry {raw}: {err}"),
-        };
-        // Exit 4, the reference's own code for a playbook it cannot make sense of, measured
-        // alongside the wording. A template that fails to render stays at 1, also measured:
-        // the reference splits those two the same way.
-        let path = rendered.as_str().ok_or_else(|| {
-            crate::stats::Refusal::at(
-                4,
-                format!(
-                    "Invalid `vars_files` value of type '{}'. A `vars_files` value should \
-                     either be a string or list of strings.",
-                    python_type(&rendered)
-                ),
-            )
-        })?;
-        let path = if Path::new(path).is_absolute() {
-            PathBuf::from(path)
-        } else {
-            playbook_dir.join(path)
-        };
-        // `exists` answers "no" both for a path that is not there and for one it cannot
-        // stat, a parent directory refusing access included. The reference asks the same
-        // question the same way and skips either without a word, so both stay a skip here.
-        if !path.exists() {
-            continue;
+            files.push(if let Some(file) = loaded.get(&path) {
+                Arc::clone(file)
+            } else {
+                // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
+                // does not parse stops the reference with the same code a broken playbook
+                // gets.
+                // A vaulted file the run cannot read is exit 1 in the reference.
+                let file = load_play_vars_file(&path).map_err(|err| {
+                    if err.is::<crate::vars::VaultFile>() {
+                        crate::stats::Refusal::at(1, err)
+                    } else {
+                        crate::stats::Refusal::or(4, err)
+                    }
+                })?;
+                let file = Arc::new(file);
+                loaded.insert(path, Arc::clone(&file));
+                file
+            });
+            continue 'entry;
         }
-        files.push(if let Some(file) = loaded.get(&path) {
-            Arc::clone(file)
-        } else {
-            // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
-            // does not parse stops the reference with the same code a broken playbook
-            // gets.
-            // A vaulted file the run cannot read is exit 1 in the reference.
-            let file = load_play_vars_file(&path).map_err(|err| {
-                if err.is::<crate::vars::VaultFile>() {
-                    crate::stats::Refusal::at(1, err)
-                } else {
-                    crate::stats::Refusal::or(4, err)
-                }
-            })?;
-            let file = Arc::new(file);
-            loaded.insert(path, Arc::clone(&file));
-            file
-        });
     }
     Ok(files)
 }

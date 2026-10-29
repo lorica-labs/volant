@@ -1326,6 +1326,62 @@ fn a_quoted_scalar_continued_left_of_its_parent_loads() {
     ]);
 }
 
+/// The keys `text` writes twice, in the order ansible-core 2.19.12 warns about them, as `key
+/// line:column`.
+fn duplicates(text: &str) -> Vec<String> {
+    let mut loader = YamlLoader::<MarkedYaml>::default();
+    limits::take_duplicates();
+    limits::feed(text, &mut loader).unwrap();
+    limits::take_duplicates()
+        .into_iter()
+        .map(|(key, line, col)| format!("{key} {line}:{col}"))
+        .collect()
+}
+
+/// A key a merge `<<` brought in counts as written before the mapping's own keys, wherever `<<`
+/// sits, and mappings warn level by level, as ansible-core 2.19.12 does.
+#[test]
+fn a_key_merged_with_a_merge_key_is_a_duplicate() {
+    let cases: &[(&str, &[&str])] = &[
+        (
+            "base: &b {x: 1, y: 2}\nm:\n  <<: *b\n  x: 3\n",
+            &["'x' 4:3"],
+        ),
+        (
+            "base: &b {x: 1, y: 2}\nm:\n  x: 3\n  <<: *b\n",
+            &["'x' 3:3"],
+        ),
+        ("m:\n  <<: {x: 1}\n  x: 2\n", &["'x' 3:3"]),
+        (
+            "a: &a {x: 1}\nb: &b {x: 2, z: 0}\nm:\n  <<: [*a, *b]\n  z: 5\n",
+            &["'x' 1:8", "'z' 5:3"],
+        ),
+        (
+            "a: &a {x: 1}\nb: &b\n  <<: *a\n  y: 2\nm:\n  <<: *b\n  x: 3\n  y: 4\n",
+            &["'x' 7:3", "'y' 8:3"],
+        ),
+        (
+            "base: &b {x: 1}\nm:\n  <<: *b\n  x: 3\n  x: 4\n",
+            &["'x' 4:3", "'x' 5:3"],
+        ),
+        (
+            "a:\n  b:\n    x: 1\n    x: 2\nc: 1\nc: 2\n",
+            &["'c' 6:1", "'x' 4:5"],
+        ),
+        (
+            "- a: {x: 1, x: 2}\n- [{y: 1, y: 2}]\n- z: 1\n  z: 2\n",
+            &["'z' 4:3", "'x' 1:13", "'y' 2:11"],
+        ),
+        (
+            "a: &a {x: 1}\nm:\n  <<: [*a, *a]\nn:\n  <<: [*a, *a]\n",
+            &["'x' 1:8"],
+        ),
+    ];
+    for (text, want) in cases {
+        assert_eq!(&duplicates(text), want, "{text:?}");
+    }
+}
+
 /// Keys equal by value are one key, as in a Python dict: the first spelling stays and the last
 /// value wins, measured on ansible-core 2.19.12.
 #[test]

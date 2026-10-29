@@ -7,7 +7,7 @@ use super::plays::Plays;
 use crate::config::Config;
 use crate::inventory::Source;
 use crate::playbook;
-use crate::render::{Aggregate, Profile, Renderer, StdoutCallback};
+use crate::render::{Aggregate, Junit, Profile, Renderer, StdoutCallback};
 
 /// What `--version` prints, and what `-vv` opens the run with in place of the reference's block
 /// of machine paths: Volant's own version and the ansible-core release it matches.
@@ -113,6 +113,9 @@ fn aggregate(config: &Config, name: &str, out: &mut Renderer) -> Option<Result<A
             let cwd = std::env::current_dir().unwrap_or_default();
             out.enable_tree(crate::config::expand_home(&dir, &cwd));
             None
+        }
+        "junit" | "ansible.builtin.junit" => {
+            Some(Junit::new().map(|junit| Aggregate::Junit(Box::new(junit))))
         }
         "timer" | "ansible.posix.timer" if posix("timer") => {
             Some(Ok(Aggregate::Timer(std::time::Instant::now())))

@@ -29,7 +29,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | shell | 1 | 0 | 0 | 2 |
 | vars | 1 | 0 | 0 | 0 |
 | cache | 2 | 0 | 0 | 0 |
-| callback | 4 | 0 | 0 | 1 |
+| callback | 5 | 0 | 0 | 0 |
 | connection | 4 | 0 | 0 | 2 |
 | collection module | 5903 | 0 | 0 | 3540 |
 | collection action plugin | 1665 | 0 | 0 | 419 |
@@ -691,7 +691,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | Name | Status | Note |
 |---|---|---|
 | `default` | <span class="kw kw-runs">runs</span> |  |
-| `junit` | <span class="kw kw-no">later</span> | an aggregate callback |
+| `junit` | <span class="kw kw-runs">runs</span> |  |
 | `minimal` | <span class="kw kw-runs">runs</span> |  |
 | `oneline` | <span class="kw kw-runs">runs</span> |  |
 | `tree` | <span class="kw kw-runs">runs</span> |  |

@@ -1,7 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The callbacks that print beside the stdout one: `timer` and `profile_tasks` of ansible.posix
-//! 2.2.2. `profile_tasks` puts a line under each task banner and both print a block after the
-//! recap, in the order `callbacks_enabled` names them.
+//! The callbacks that run beside the stdout one: `timer` and `profile_tasks` of ansible.posix
+//! 2.2.2, and ansible-core's `junit`. `profile_tasks` puts a line under each task banner, the two
+//! of ansible.posix print a block after the recap, in the order `callbacks_enabled` names them,
+//! and `junit` writes its file then.
 
 use std::collections::HashMap;
 use std::fmt::Write as _;
@@ -14,6 +15,19 @@ pub enum Aggregate {
     /// `timer`: how long the run took, after the recap.
     Timer(Instant),
     Profile(Box<Profile>),
+    Junit(Box<super::junit::Junit>),
+}
+
+/// A task starting, as the callbacks hear of it.
+pub struct Begun<'a> {
+    /// Names the task across `serial` batches, as the reference's task uuid does.
+    pub key: &'a str,
+    pub name: &'a str,
+    /// `file:line`, absolute.
+    pub path: Option<String>,
+    /// The arguments as `junit` writes them, `None` for a `no_log` task.
+    pub args: Option<&'a str>,
+    pub action: &'a str,
 }
 
 /// `profile_tasks`: the time of each task, under its banner and sorted after the recap.
@@ -143,19 +157,63 @@ fn filled(text: &str, fill: char) -> String {
 }
 
 impl Renderer {
+    /// A task's result as `junit` hears it: the body the stdout callback would dump, a loop's
+    /// items under `results`, and the error block's message of a failure. A loop item is not
+    /// heard, the loop's aggregate is.
+    pub fn result_heard(
+        &mut self,
+        host: &str,
+        outcome: crate::stats::Outcome,
+        result: &volant_protocol::TaskResult,
+        censored: bool,
+        error: Option<&super::ErrorBlock>,
+        item: bool,
+    ) {
+        if item
+            || !self
+                .aggregates
+                .iter()
+                .any(|a| matches!(a, Aggregate::Junit(_)))
+        {
+            return;
+        }
+        let error = error.map(|block| block.message.as_str());
+        let mut body = self.shown_body(result, super::Dump::No, censored);
+        if let Some(items) = result.0.get(super::LOOP_RESULTS).filter(|_| !censored) {
+            body.insert("results".into(), items.clone());
+        }
+        let pretty = super::result::verbose_always(result, censored);
+        self.junit(|junit| junit.result(host, outcome, body.clone(), pretty, error));
+    }
+
+    /// What `junit` hears of a playbook, a play and a host's result.
+    pub(super) fn junit(&mut self, mut hear: impl FnMut(&mut super::junit::Junit)) {
+        for aggregate in &mut self.aggregates {
+            if let Aggregate::Junit(junit) = aggregate {
+                hear(junit);
+            }
+        }
+    }
+
     /// Turns on the callbacks that print beside the stdout one, in `callbacks_enabled` order.
     pub fn set_aggregates(&mut self, aggregates: Vec<Aggregate>) {
         self.aggregates = aggregates;
     }
 
-    /// What `profile_tasks` does as task `name` starts, after its banner: its time line, and the
-    /// task's clock started. `key` names the task across batches.
-    pub fn task_timed(&mut self, key: &str, name: &str, path: Option<String>) {
+    /// What the callbacks do as a task starts, after its banner: `profile_tasks` prints its time
+    /// line and starts the task's clock, `junit` records the task.
+    pub fn task_began(&mut self, begun: &Begun<'_>) {
         let verbose = self.verbosity >= 2;
+        let (key, name, path) = (begun.key, begun.name, &begun.path);
         let mut lines = Vec::new();
         for aggregate in &mut self.aggregates {
-            let Aggregate::Profile(profile) = aggregate else {
-                continue;
+            let profile = match aggregate {
+                Aggregate::Profile(profile) => profile,
+                Aggregate::Junit(junit) => {
+                    junit.task(key, begun);
+                    continue;
+                }
+                Aggregate::Timer(_) => continue,
             };
             if !profile.summary_only {
                 lines.push(profile.line());
@@ -177,7 +235,7 @@ impl Renderer {
             };
             profile.tasks[index].started = Instant::now();
             if verbose {
-                profile.tasks[index].path.clone_from(&path);
+                profile.tasks[index].path.clone_from(path);
             }
             profile.current = Some(index);
         }
@@ -204,6 +262,16 @@ impl Renderer {
                     );
                 }
                 Aggregate::Profile(profile) => self.profile_recap(profile),
+                Aggregate::Junit(junit) => {
+                    if let Err(why) = junit.report() {
+                        self.warning(
+                            &format!(
+                                "Failure using method (v2_playbook_on_stats) in callback plugin (junit): {why}"
+                            ),
+                            false,
+                        );
+                    }
+                }
             }
         }
         self.aggregates = aggregates;

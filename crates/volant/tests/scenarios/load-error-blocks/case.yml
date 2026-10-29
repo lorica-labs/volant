@@ -1,0 +1,12 @@
+# Errors that stop a run before or between tasks print the reference's `[ERROR]` block: a play
+# keyword that is no boolean and a `register` that is no name at the value, a missing import with
+# its three sentences, a handler nothing answers to, and a second YAML document with and without
+# `---`.
+stderr: true
+runs:
+  - args: [-i, inv.ini, keyword.yml]
+  - args: [-i, inv.ini, import.yml]
+  - args: [-i, inv.ini, notify.yml]
+  - args: [-i, inv.ini, register.yml]
+  - args: [-i, inv.ini, second-document.yml]
+  - args: [-i, inv.ini, document-start.yml]

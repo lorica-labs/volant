@@ -306,13 +306,14 @@ impl Builder<'_> {
         // so trying the importer's directory alone refuses a role the reference compiles.
         let path = beside_or_in_role(&self.file_dir, self.role_dir.as_deref(), name);
         if !path.is_file() {
-            // Exit 1, measured, with the reference's own two sentences. The reference adds a
-            // third naming Python's own errno, which this engine has nothing to say about.
-            return Err(Refusal::at(
+            // Exit 1, measured, with the reference's three sentences and the blank line that
+            // ends a block of several lines. The errno tail is Python's, kept as the include
+            // result keeps it.
+            return Err(Refusal::plain(
                 1,
                 format!(
-                    "Unable to retrieve file contents.\nCould not find or access '{}' on the Ansible Controller.",
-                    path.display()
+                    "Unable to retrieve file contents.\nCould not find or access '{p}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '{p}'\n",
+                    p = path.display()
                 ),
             ));
         }

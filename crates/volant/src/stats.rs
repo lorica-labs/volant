@@ -229,8 +229,8 @@ fn aggregated(held: &Value, new: &Value) -> Option<Value> {
 pub struct Refusal {
     pub code: i32,
     pub message: String,
-    /// Printed as `[ERROR]: message`, the reference's line for an error raised while the run
-    /// goes, instead of `ERROR! message`.
+    /// Printed as `[ERROR]: message` alone, without the context chain of files and items in
+    /// front of it.
     pub plain: bool,
     /// Set for a module no installed collection holds: the run prints the reference's warning
     /// and error block for it instead of `message`.
@@ -275,14 +275,21 @@ impl Refusal {
     }
 
     /// Prints a run's error on stderr the way the reference does: a refusal as it words it, a
-    /// load error at its place, and anything else behind `ERROR!`.
+    /// load error at its place, and anything else behind `[ERROR]:` with its context chain.
     pub fn show_error(err: &anyhow::Error) {
         match err.downcast_ref::<Self>() {
             Some(r) if r.plain || r.unresolved.is_some() => r.show(),
-            _ => match err.downcast_ref::<crate::playbook::Located>() {
-                Some(located) => eprintln!("[ERROR]: {}", located.text()),
-                None => eprintln!("ERROR! {err:#}"),
-            },
+            _ => {
+                if let Some(located) = err.downcast_ref::<crate::playbook::Located>() {
+                    eprintln!("[ERROR]: {}", located.text());
+                } else {
+                    // ansible-core 2.19 prints every error that stops a run behind `[ERROR]:`,
+                    // and a message of several lines ends with a blank line.
+                    let text = format!("{err:#}");
+                    let end = if text.contains('\n') { "\n" } else { "" };
+                    eprintln!("[ERROR]: {text}{end}");
+                }
+            }
         }
     }
 

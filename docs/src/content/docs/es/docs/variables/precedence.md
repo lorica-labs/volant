@@ -1,5 +1,5 @@
 ---
-sourceHash: cb0e71e475e6
+sourceHash: 7aabf754eaae
 title: Precedencia y facts
 description: Qué fuente gana cuando dos definen la misma variable, las variables mágicas, y cómo se recopilan, nombran y guardan en caché los facts.
 ---
@@ -27,6 +27,8 @@ Cuando dos fuentes definen la misma variable, gana la que está más abajo en es
 [Roles](/es/docs/playbooks/roles/#variables-de-rol) explica de dónde vienen las tres capas de rol y en qué se diferencian.
 
 Un archivo de variables que solo contiene `---` y comentarios se carga como un mapa vacío, como en ansible-core. Un archivo que contiene un escalar como `42` se sigue rechazando.
+
+Una entrada de `vars_files` puede ser una lista de rutas. Se lee el primer archivo de la lista que existe y los demás se ignoran. Cuando una de sus rutas usa una variable sin valor, se omite toda la entrada con el aviso `skipping vars_files item due to an undefined variable`.
 
 Un mapa puede tomar las claves de otro con una clave de fusión, `<<: *base`, en todos los archivos YAML que lee Volant: archivos de variables, inventarios, playbooks y argumentos de tareas. Las claves fusionadas van primero, y una clave escrita junto a `<<` reemplaza a la fusionada. En `<<: [*a, *b]` gana el primer mapa. Un valor que no es un mapa ni una lista de mapas detiene la carga, con el mensaje de PyYAML.
 

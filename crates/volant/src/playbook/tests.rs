@@ -530,7 +530,10 @@ fn play_and_task_keywords_are_read_raw() {
     let play = &pb.plays[0];
     assert_eq!(play.vars["port"], serde_json::json!(80));
     assert_eq!(play.vars["greeting"], serde_json::json!("hello {{ name }}"));
-    assert_eq!(play.vars_files, ["vars/common.yml", "vars/{{ env }}.yml"]);
+    assert_eq!(
+        play.vars_files,
+        [vec!["vars/common.yml"], vec!["vars/{{ env }}.yml"]]
+    );
     let t = tasks(play);
     assert_eq!(t[0].when, ["port > 1"]);
     assert_eq!(t[0].register.as_deref(), Some("out"));

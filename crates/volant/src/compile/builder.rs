@@ -13,10 +13,11 @@ use crate::roles::{RoleEntry, RoleKind, RoleSearch, RoleVars};
 use crate::stats::Refusal;
 
 use super::compiled::{FLUSH_HANDLERS, beside_or_in_role, meta_action};
-use super::flatten::{import_role_entry, unknown_options, validation};
+use super::flatten::{import_role_entry, unknown_options};
 use super::include::{include_options, include_role_options, include_vars_options};
-use super::inherit::{extend, merge};
+use super::inherit::merge;
 use super::model::{BlockSpan, Handler, IncludeKind, Origin, Section, Step, StepKind};
+use super::role_entry::{ChainLink, Lent};
 use super::tags::TagSelection;
 /// How deep roles and imported files may nest before the run is refused: the same ceiling a
 /// cycle through an inventory's `:children` is given, for the same reason - a cycle here reads
@@ -35,7 +36,7 @@ pub(crate) const DEPTH: usize = 32;
 /// `Unexpected Exception, this is probably a bug`. This engine refuses that shape too, at exit 1
 /// and in its own words - the divergence is deliberate, since 250 is the reference reporting its
 /// own crash and there is no traceback here to go with it.
-const RECURSION: &str = "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded";
+pub(super) const RECURSION: &str = "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded";
 
 /// The role instances a play has already run.
 ///
@@ -47,7 +48,7 @@ const RECURSION: &str = "A recursion loop was detected with the roles specified.
 /// skipped a role the playbook asked for reports success having done less than it says.
 pub(super) type Seen = Vec<(String, Value)>;
 
-fn identity(entry: &RoleEntry) -> (String, Value) {
+pub(super) fn identity(entry: &RoleEntry) -> (String, Value) {
     identity_with(entry, &entry.keywords.vars)
 }
 
@@ -78,17 +79,6 @@ pub(super) fn sorted(map: &Map<String, Value>) -> Vec<(&String, &Value)> {
     pairs.sort_by(|a, b| a.0.cmp(b.0));
     pairs
 }
-
-/// One role of a dependency chain: its own `defaults` and `vars`, and its parameters over those
-/// of the roles above it.
-pub(super) struct ChainLink {
-    defaults: Map<String, Value>,
-    vars: Map<String, Value>,
-    params: Map<String, Value>,
-}
-
-/// A role's `defaults` and `vars` as it lends them to the roles that depend on it.
-type Lent = (Map<String, Value>, Map<String, Value>);
 
 pub(super) struct Builder<'a> {
     pub(super) steps: Vec<Step>,
@@ -140,7 +130,7 @@ pub(super) struct Builder<'a> {
 impl Builder<'_> {
     /// The one place a step is added, so the tag selection cannot be honoured on one path and
     /// forgotten on another.
-    fn push(&mut self, step: Step) {
+    pub(super) fn push(&mut self, step: Step) {
         if self.selection.selects(&step.task.tags) {
             self.steps.push(step);
         }
@@ -353,152 +343,6 @@ impl Builder<'_> {
         );
         let result = self.items(&imported, &merged, block, section, role);
         self.file_dir = previous;
-        self.depth -= 1;
-        result
-    }
-
-    /// What a role whose dependencies were just read inherits, see [`RoleVars::inherited_vars`],
-    /// and what it lends in turn, kept under its identity `key`.
-    fn inherit(&mut self, key: (String, Value), role: &crate::roles::LoadedRole) -> Lent {
-        let (mut lent_defaults, mut lent_vars) = (Map::new(), Map::new());
-        for dependency in &role.dependencies {
-            let key = identity(dependency);
-            if let Some((_, (defaults, vars))) = self.exports.iter().rev().find(|(k, _)| *k == key)
-            {
-                extend(&mut lent_defaults, defaults);
-                extend(&mut lent_vars, vars);
-            }
-        }
-        let mut inherited_defaults = lent_defaults.clone();
-        let mut inherited_vars = Map::new();
-        for link in &self.role_chain {
-            extend(&mut inherited_defaults, &link.defaults);
-            extend(&mut inherited_vars, &link.vars);
-        }
-        extend(&mut inherited_vars, &lent_vars);
-        extend(&mut lent_defaults, &role.defaults);
-        extend(&mut lent_vars, &role.vars);
-        self.exports.push((key, (lent_defaults, lent_vars)));
-        (inherited_defaults, inherited_vars)
-    }
-
-    /// One role entry: its dependencies first, then its argument-spec check, then its tasks.
-    ///
-    /// Measured on ansible-core 2.19.12: a `meta/main.yml` dependency runs before the role that
-    /// depends on it, with its own parameters, and a dependency two roles share runs once.
-    pub(super) fn role(
-        &mut self,
-        entry: &RoleEntry,
-        inherited: &PlayTask,
-        seen: &mut Seen,
-        block: Option<usize>,
-        section: Section,
-        kind: RoleKind,
-    ) -> anyhow::Result<()> {
-        let path = self.search.locate(&entry.name).map_err(|err| {
-            // Measured on ansible-core 2.19.12: `[ERROR]:` and the sentence, at the entry.
-            match &entry.keywords.origin {
-                Some(origin) => Refusal::plain(
-                    1,
-                    crate::playbook::Located {
-                        message: format!("{err:#}"),
-                        origin: origin.clone(),
-                    }
-                    .text(),
-                ),
-                None => err,
-            }
-        })?;
-        let role = crate::roles::load(&path, &entry.name, &entry.from)?;
-        let key = identity(entry);
-        if !role.allow_duplicates && seen.contains(&key) {
-            return Ok(());
-        }
-        seen.push(key.clone());
-        // Two roles that import each other never repeat an identity - `import_role` starts a
-        // `seen` list of its own, as measured - so the dedup above stops nothing and only the
-        // depth does. The reference's own sentence, at the exit 1 measured with it.
-        self.depth += 1;
-        if self.depth > DEPTH {
-            return Err(Refusal::at(1, RECURSION));
-        }
-        let mut kw = merge(inherited, &entry.keywords);
-        // A role does not inherit the play's `collections`: it searches its own `meta/main.yml`
-        // list, which may be empty, and a block or task inside it may still write another.
-        kw.collections = Some(role.collections.clone());
-        // What this role lends is settled for it and for the roles it depends on, and restored
-        // before its tasks are read: an `import_role` written in them is a statement of its own.
-        let outer_exporting = self.exporting;
-        self.exporting = outer_exporting && entry.public;
-        let exporting = self.exporting;
-        let mut params = self
-            .role_chain
-            .last()
-            .map(|link| link.params.clone())
-            .unwrap_or_default();
-        extend(&mut params, &entry.params);
-        self.parent_roles.insert(0, path.clone());
-        self.role_chain.push(ChainLink {
-            defaults: role.defaults.clone(),
-            vars: role.vars.clone(),
-            params: params.clone(),
-        });
-        let dependencies: anyhow::Result<()> =
-            role.dependencies.iter().try_for_each(|dependency| {
-                self.role(dependency, &kw, seen, block, section, RoleKind::Dependency)
-            });
-        self.role_chain.pop();
-        self.parent_roles.remove(0);
-        dependencies?;
-        let index = self.roles.len();
-        let (inherited_defaults, inherited_vars) = self.inherit(key, &role);
-        self.exporting = outer_exporting;
-        let (role_name, collection) = crate::roles::identity(&path, &entry.name);
-        self.roles.push(RoleVars {
-            name: entry.name.clone(),
-            role_name,
-            collection,
-            kind,
-            defaults: role.defaults,
-            vars: role.vars,
-            params,
-            inherited_defaults,
-            inherited_vars,
-            public: exporting,
-            own: None,
-        });
-        // The role's handlers, before its tasks are walked, so a role imported by another one
-        // contributes its handlers in front of the importer's. Their keywords are merged the way
-        // a task's are: a `when` or a `become` written on the role entry reaches them too.
-        for handler in role.handlers {
-            self.handlers.push(Handler {
-                task: merge(&kw, &handler.task),
-                listen: handler.listen,
-                role: Some(index),
-            });
-        }
-        // `rolespec_validate: false` leaves the check out, whatever the role ships.
-        if let Some(spec) = role.argument_spec.filter(|_| entry.validate) {
-            let task = merge(
-                &kw,
-                &validation(entry, &path, spec, role.argument_spec_description),
-            );
-            self.push(Step {
-                kind: StepKind::Task,
-                task,
-                block,
-                section,
-                role: Some(index),
-                origin: self.origin(),
-                include_params: None,
-                hosts: None,
-            });
-        }
-        let previous = std::mem::replace(&mut self.file_dir, path.join("tasks"));
-        let outer_role = self.role_dir.replace(path);
-        let result = self.items(&role.tasks, &kw, block, section, Some(index));
-        self.file_dir = previous;
-        self.role_dir = outer_role;
         self.depth -= 1;
         result
     }

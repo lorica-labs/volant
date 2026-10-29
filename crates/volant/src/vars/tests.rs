@@ -1753,3 +1753,49 @@ fn an_ignore_pattern_that_is_no_regular_expression_fails_at_the_first_file() {
     assert_eq!(text, "Invalid regular expression: (");
     assert!(matches!(chain, Chain::Cause));
 }
+
+/// The store's view of an inventory costs in proportion to its hosts: one walk over the groups
+/// serves every host. Asked host by host, each host walked every group again, and four times the
+/// hosts took sixteen times as long.
+#[test]
+fn the_store_of_an_inventory_grows_linearly_with_its_hosts() {
+    use std::fmt::Write as _;
+    let build = |hosts: usize| {
+        let mut text = String::new();
+        for c in 0..20 {
+            writeln!(text, "[c{c}]").unwrap();
+            for h in (c..hosts).step_by(20) {
+                writeln!(text, "h{h}").unwrap();
+            }
+        }
+        for pair in 0..hosts / 20 {
+            writeln!(text, "[ab{pair}]").unwrap();
+            for h in pair * 20..pair * 20 + 20 {
+                writeln!(text, "h{h}").unwrap();
+            }
+        }
+        for a in 0..hosts / 200 {
+            writeln!(text, "[a{a}:children]").unwrap();
+            for pair in a * 10..a * 10 + 10 {
+                writeln!(text, "ab{pair}").unwrap();
+            }
+        }
+        Inventory::parse_ini(&text).unwrap()
+    };
+    let time = |hosts: usize| {
+        let inventory = build(hosts);
+        (0..3)
+            .map(|_| {
+                let start = std::time::Instant::now();
+                VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
+                start.elapsed()
+            })
+            .min()
+            .unwrap()
+    };
+    let (small, large) = (time(500), time(2000));
+    assert!(
+        large < small * 10,
+        "500 hosts took {small:?} and 2,000 took {large:?}: more than linear"
+    );
+}

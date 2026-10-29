@@ -216,40 +216,15 @@ impl Inventory {
     /// for each name separately walks them all again for each: a pattern over a large inventory
     /// then costs the square of its size.
     pub(super) fn hosts_with_vars(&self, names: &[String]) -> Vec<Host> {
-        let depth = self.group_depths();
-        let mut known: HashMap<&str, &Host> = HashMap::new();
-        for host in &self.hosts {
-            known.entry(host.name.as_str()).or_insert(host);
-        }
-        let mut membership: HashMap<String, Vec<&Group>> = HashMap::new();
-        for group in &self.groups {
-            for host in self.group_hosts(group) {
-                membership.entry(host).or_default().push(group);
-            }
-        }
+        let layering = self.layering();
         names
             .iter()
-            .map(|name| {
-                let Some(host) = known.get(name.as_str()) else {
-                    return implicit_localhost(name);
-                };
-                let mut groups = membership.get(name).cloned().unwrap_or_default();
-                groups.sort_by_key(|g| {
-                    (
-                        depth.get(&g.name).copied().unwrap_or(1),
-                        g.priority.unwrap_or(1),
-                        g.name.clone(),
-                    )
-                });
-                let mut vars = serde_json::Map::new();
-                for group in groups {
-                    vars.extend(group.vars.clone());
-                }
-                vars.extend(host.vars.clone());
-                Host {
+            .map(|name| match layering.host(name) {
+                Some(host) => Host {
                     name: host.name.clone(),
-                    vars,
-                }
+                    vars: layering.vars_of(name),
+                },
+                None => implicit_localhost(name),
             })
             .collect()
     }

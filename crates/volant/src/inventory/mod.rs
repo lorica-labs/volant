@@ -10,6 +10,7 @@ mod generator;
 mod graph;
 mod host_list;
 mod ini;
+mod layering;
 mod listed;
 mod patterns;
 pub mod ranges;
@@ -20,6 +21,7 @@ mod toml_write;
 mod unsafe_text;
 mod yaml;
 
+pub use layering::Layering;
 pub use listed::{GraphItem, VarsOf};
 pub use patterns::Resolution;
 pub use toml_write::dumps as toml_dumps;

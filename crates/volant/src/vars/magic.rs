@@ -72,6 +72,15 @@ impl VarStore {
         );
         vars.insert("ansible_diff_mode".to_string(), Value::Bool(self.diff_mode));
         vars.insert("ansible_forks".to_string(), Value::from(self.forks));
+        vars.insert("ansible_verbosity".to_string(), Value::from(self.verbosity));
+        vars.insert(
+            "ansible_inventory_sources".to_string(),
+            Value::from(self.inventory_sources.clone()),
+        );
+        vars.insert(
+            "ansible_config_file".to_string(),
+            self.config_file.clone().map_or(Value::Null, Value::String),
+        );
         vars.insert(
             "ansible_run_tags".to_string(),
             Value::from(self.run_tags.clone()),

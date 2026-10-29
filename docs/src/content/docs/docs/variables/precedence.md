@@ -51,6 +51,10 @@ A fixed set of magic variables sits on top of every host's view and always wins:
 | `ansible_check_mode`, `ansible_diff_mode` | Whether the run has `--check` and `--diff`. A play's or a task's own `check_mode` or `diff` keyword does not change them. |
 | `ansible_run_tags`, `ansible_skip_tags` | The tags the run selects and skips, see [Check mode, diff and listings](/docs/playbooks/check-and-diff/#ansible_run_tags-and-ansible_skip_tags). |
 | `ansible_forks` | The current `forks` value. |
+| `ansible_verbosity` | How many `-v` the run was given, as a number. |
+| `ansible_inventory_sources` | Every inventory source, in the order given, with paths made absolute. |
+| `ansible_config_file` | The `ansible.cfg` the run read, as an absolute path, or `None` when it read none. |
+| `ansible_host` | In a task, the inventory name of the host when nothing sets it, so `lookup('vars', 'ansible_host')` answers. `hostvars` does not get this default. |
 | `ansible_version` | The ansible-core release Volant reproduces, see [decision record 0003](/docs/decisions/0003-ansible-version-reports-the-reference-release/). |
 | `volant_version` | Volant's own version. Test `volant_version is defined` to tell the two engines apart. |
 
@@ -60,7 +64,7 @@ Every task also gets `ansible_search_path`, and a role's task gets `role_path`. 
 
 ## hostvars
 
-`hostvars` holds what the inventory, `--extra-vars`, `set_fact` and gathered facts produced for each host. It does not include another host's play or task variables. It is rebuilt whenever a fact changes.
+`hostvars` holds what the inventory, `--extra-vars`, `set_fact` and gathered facts produced for each host, with the host's magic variables (`group_names`, `inventory_dir`, `playbook_dir` and the run's options), a host `add_host` made included. It does not include another host's play or task variables. It is rebuilt whenever a fact changes.
 
 Every host reads one shared map rather than its own copy, so a task that names `hostvars` costs a lookup, not a copy of the inventory.
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: cb0e71e475e6
+sourceHash: b81ce1044e5e
 title: 优先级与 facts
 description: 两个来源定义同一个变量时哪个胜出、魔法变量，以及 facts 如何收集、命名和缓存。
 ---
@@ -52,6 +52,10 @@ description: 两个来源定义同一个变量时哪个胜出、魔法变量，�
 | `ansible_check_mode`、`ansible_diff_mode` | 运行是否带有 `--check` 和 `--diff`。play 或 task 自己的 `check_mode` 或 `diff` 关键字不会改变它们。 |
 | `ansible_run_tags`、`ansible_skip_tags` | 运行选择和跳过的 tag，见[检查模式、diff 与列表输出](/zh-cn/docs/playbooks/check-and-diff/#ansible_run_tags-与-ansible_skip_tags)。 |
 | `ansible_forks` | 当前的 `forks` 值。 |
+| `ansible_verbosity` | 运行时给出的 `-v` 个数，是一个数字。 |
+| `ansible_inventory_sources` | 按给出顺序列出的所有 inventory 来源，路径为绝对路径。 |
+| `ansible_config_file` | 本次运行读取的 `ansible.cfg` 的绝对路径；没有读取时为 `None`。 |
+| `ansible_host` | 在 task 中，没有任何地方设置它时为主机的 inventory 名称，所以 `lookup('vars', 'ansible_host')` 有值。`hostvars` 不会得到这个默认值。 |
 | `ansible_version` | Volant 所复现的 ansible-core 版本，见[决策记录 0003](/zh-cn/docs/decisions/0003-ansible-version-reports-the-reference-release/)。 |
 | `volant_version` | Volant 自己的版本。用 `volant_version is defined` 可以区分这两个引擎。 |
 
@@ -61,7 +65,7 @@ description: 两个来源定义同一个变量时哪个胜出、魔法变量，�
 
 ## hostvars
 
-`hostvars` 保存 inventory、`--extra-vars`、`set_fact` 和收集到的 facts 为每台主机产生的内容。它不包含另一台主机的 play 变量或 task 变量。只要有 fact 发生变化，它就会重建。
+`hostvars` 保存 inventory、`--extra-vars`、`set_fact` 和收集到的 facts 为每台主机产生的内容，以及该主机的魔法变量（`group_names`、`inventory_dir`、`playbook_dir` 和本次运行的选项），由 `add_host` 创建的主机也一样。它不包含另一台主机的 play 变量或 task 变量。只要有 fact 发生变化，它就会重建。
 
 每台主机读取的是同一份共享的映射，而不是自己的副本，所以引用 `hostvars` 的 task 付出的是一次查找的代价，而不是复制一遍 inventory。
 

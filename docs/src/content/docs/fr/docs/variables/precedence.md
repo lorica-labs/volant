@@ -1,5 +1,5 @@
 ---
-sourceHash: cb0e71e475e6
+sourceHash: b81ce1044e5e
 title: Priorité et facts
 description: Quelle source l'emporte quand deux définissent la même variable, les variables magiques, et comment les facts sont collectés, nommés et mis en cache.
 ---
@@ -52,6 +52,10 @@ Un ensemble fixe de variables magiques se place au sommet de la vue de chaque h�
 | `ansible_check_mode`, `ansible_diff_mode` | Si l'exécution a `--check` et `--diff`. Le mot-clé `check_mode` ou `diff` propre à un play ou à une tâche ne les change pas. |
 | `ansible_run_tags`, `ansible_skip_tags` | Les tags que l'exécution sélectionne et saute, voir [Mode check, diff et listes](/fr/docs/playbooks/check-and-diff/#ansible_run_tags-et-ansible_skip_tags). |
 | `ansible_forks` | La valeur courante de `forks`. |
+| `ansible_verbosity` | Le nombre de `-v` donnés au run, sous forme de nombre. |
+| `ansible_inventory_sources` | Toutes les sources d'inventaire, dans l'ordre donné, les chemins rendus absolus. |
+| `ansible_config_file` | Le `ansible.cfg` que le run a lu, en chemin absolu, ou `None` s'il n'en a lu aucun. |
+| `ansible_host` | Dans une tâche, le nom d'inventaire de l'hôte quand rien ne le définit, si bien que `lookup('vars', 'ansible_host')` répond. `hostvars` ne reçoit pas cette valeur par défaut. |
 | `ansible_version` | La version d'ansible-core que Volant reproduit, voir la [fiche de décision 0003](/fr/docs/decisions/0003-ansible-version-reports-the-reference-release/). |
 | `volant_version` | La version propre à Volant. Testez `volant_version is defined` pour distinguer les deux moteurs. |
 
@@ -61,7 +65,7 @@ Chaque tâche reçoit aussi `ansible_search_path`, et la tâche d'un rôle reço
 
 ## hostvars
 
-`hostvars` contient ce que l'inventaire, `--extra-vars`, `set_fact` et les facts collectés ont produit pour chaque hôte. Il n'inclut pas les variables de play ou de tâche d'un autre hôte. Il est reconstruit chaque fois qu'un fact change.
+`hostvars` contient ce que l'inventaire, `--extra-vars`, `set_fact` et les facts collectés ont produit pour chaque hôte, avec les variables magiques de l'hôte (`group_names`, `inventory_dir`, `playbook_dir` et les options du run), y compris pour un hôte créé par `add_host`. Il n'inclut pas les variables de play ou de tâche d'un autre hôte. Il est reconstruit chaque fois qu'un fact change.
 
 Chaque hôte lit une seule table partagée plutôt que sa propre copie : une tâche qui nomme `hostvars` coûte donc une consultation, pas une copie de l'inventaire.
 

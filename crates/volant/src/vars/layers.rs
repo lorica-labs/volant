@@ -10,7 +10,6 @@ use serde_json::{Map, Value};
 use super::PENDING_PYTHON;
 use super::facts::no_facts;
 use super::load::{extend, extend_except};
-use super::magic::short_name;
 use super::{Added, HostFacts, Scope, VarStore};
 use crate::inventory::{LOCALHOST_NAMES, is_localhost};
 use crate::template::HOSTVARS_KEYS;
@@ -380,11 +379,12 @@ impl VarStore {
             extend(&mut base, facts);
         }
         extend(&mut base, &self.extra);
-        base.insert("inventory_hostname".into(), Value::String(host.to_string()));
-        base.insert(
-            "inventory_hostname_short".into(),
-            Value::String(short_name(host)),
-        );
+        // The host's magic variables as well, measured on ansible-core 2.19.12: `hostvars[x]`
+        // carries `group_names`, `inventory_dir`, `playbook_dir` and the run's options, an
+        // `add_host` host's too. Not `omit`, which only a task's own variables hold.
+        let mut magic = self.magic(host);
+        magic.remove("omit");
+        base.extend(magic);
         base
     }
 

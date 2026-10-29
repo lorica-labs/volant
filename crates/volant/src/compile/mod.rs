@@ -16,6 +16,7 @@
 mod builder;
 mod compiled;
 mod flatten;
+mod handlers;
 mod include;
 mod inherit;
 mod model;

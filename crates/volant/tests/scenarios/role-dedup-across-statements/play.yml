@@ -1,0 +1,13 @@
+- hosts: h1
+  gather_facts: false
+  tags: [acrossroles]
+  roles: [a, b]
+  tasks:
+    - import_role: {name: c}
+
+- hosts: h1
+  gather_facts: false
+  tags: [intasks]
+  tasks:
+    - include_role: {name: b}
+    - include_role: {name: c}

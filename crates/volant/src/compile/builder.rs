@@ -117,6 +117,10 @@ pub(super) struct Builder<'a> {
     /// is skipped for a host when an identical one ran before, whether that one allowed
     /// duplicates or not, and the `roles:` list is not in the comparison.
     pub(super) imported: Seen,
+    /// Every role instance read so far in the play, whatever brought it in. The dependencies of an
+    /// `import_role` are compared with it: measured on ansible-core 2.19.12, a role the play's
+    /// `roles:` ran is not run again as a dependency of a role imported in `tasks:`.
+    pub(super) played: Seen,
 }
 
 impl Builder<'_> {
@@ -207,7 +211,7 @@ impl Builder<'_> {
                 return self.role(
                     &entry,
                     &merge(inherited, task),
-                    &mut Vec::new(),
+                    &mut self.played.clone(),
                     block,
                     section,
                     RoleKind::Import,
@@ -302,13 +306,14 @@ impl Builder<'_> {
         // so trying the importer's directory alone refuses a role the reference compiles.
         let path = beside_or_in_role(&self.file_dir, self.role_dir.as_deref(), name);
         if !path.is_file() {
-            // Exit 1, measured, with the reference's own two sentences. The reference adds a
-            // third naming Python's own errno, which this engine has nothing to say about.
-            return Err(Refusal::at(
+            // Exit 1, measured, with the reference's three sentences and the blank line that
+            // ends a block of several lines. The errno tail is Python's, kept as the include
+            // result keeps it.
+            return Err(Refusal::plain(
                 1,
                 format!(
-                    "Unable to retrieve file contents.\nCould not find or access '{}' on the Ansible Controller.",
-                    path.display()
+                    "Unable to retrieve file contents.\nCould not find or access '{p}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '{p}'\n",
+                    p = path.display()
                 ),
             ));
         }
@@ -368,9 +373,12 @@ impl Builder<'_> {
         })?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
         let key = identity(entry);
-        if !role.allow_duplicates && seen.contains(&key) {
+        if kind != RoleKind::Import && !role.allow_duplicates && seen.contains(&key) {
             return Ok(());
         }
+        let dedup = (kind != RoleKind::Include && !role.allow_duplicates)
+            .then(|| serde_json::json!([&key.0, &key.1]).to_string());
+        self.played.push(key.clone());
         seen.push(key);
         // Two roles that import each other never repeat an identity - `import_role` starts a
         // `seen` list of its own, as measured - so the dedup above stops nothing and only the
@@ -407,6 +415,7 @@ impl Builder<'_> {
             vars: role.vars,
             params: entry.params.clone(),
             public: exporting,
+            dedup,
             own: None,
         });
         // The role's handlers, before its tasks are walked, so a role imported by another one

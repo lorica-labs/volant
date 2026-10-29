@@ -2443,7 +2443,7 @@ fn a_broken_vars_files_template_fails_the_run() {
         let err = String::from_utf8(out.stderr).unwrap();
         assert_eq!(out.status.code(), Some(1), "{case}: {text}\n{err}");
         assert!(
-            err.contains("ERROR! rendering vars_files entry"),
+            err.contains("[ERROR]: rendering vars_files entry"),
             "{case}: the run says which entry it could not render: {err}"
         );
         assert!(

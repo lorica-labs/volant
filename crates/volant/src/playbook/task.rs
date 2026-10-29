@@ -417,6 +417,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     }
     Ok(PlayTask {
         named: name.is_some(),
+        implicit: false,
         name: name.unwrap_or_else(|| module.clone()),
         module,
         args,

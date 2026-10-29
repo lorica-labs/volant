@@ -260,6 +260,7 @@ pub(crate) fn compile(
     let gather = PlayTask {
         name: "Gathering Facts".to_string(),
         named: true,
+        implicit: true,
         module: module.to_string(),
         // Measured on ansible-core 2.19.12: `always` only when the play has no tags. A tagged
         // play gathers when its own tags are selected, and `--tags always` or `--tags other`
@@ -276,9 +277,7 @@ pub(crate) fn compile(
             ..empty.deferred.clone()
         },
         args: gather_args(play),
-        // The reference's implicit task is built from no source line, so its error block shows
-        // no origin.
-        origin: None,
+        origin: play.origin.clone(),
         ..empty.clone()
     };
     // A play with `gather_facts: false` still has this step in the reference once

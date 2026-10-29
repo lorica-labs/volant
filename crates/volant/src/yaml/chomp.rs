@@ -30,13 +30,16 @@ pub(super) fn unclip_last(docs: &mut [MarkedYaml<'_>], text: &str) {
             },
             YamlData::Tagged(_, inner) => inner,
             YamlData::Representation(value, ScalarStyle::Literal | ScalarStyle::Folded, _) => {
-                // A comment after the scalar ends it on a line break of its own.
-                let end = node.span.end.index();
-                let after = text
-                    .char_indices()
-                    .nth(end)
-                    .map_or("", |(at, _)| &text[at..]);
-                if value.ends_with('\n') && after.trim().is_empty() {
+                // A comment after the scalar ends it on a line break of its own, and an alias
+                // copies a scalar that ended on one.
+                let at = |index: usize| {
+                    text.char_indices()
+                        .nth(index)
+                        .map_or(text.len(), |(at, _)| at)
+                };
+                let alias = text[at(node.span.start.index())..].starts_with('*');
+                let after = &text[at(node.span.end.index())..];
+                if value.ends_with('\n') && after.trim().is_empty() && !alias {
                     value.to_mut().pop();
                 }
                 return;

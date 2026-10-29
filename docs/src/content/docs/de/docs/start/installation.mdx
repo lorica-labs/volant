@@ -54,6 +54,32 @@ curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 
 [Ansible-Befehlsnamen](/de/docs/start/ansible-command-names/) listet auf, was jeder Name startet und was abweicht. Das Skript installiert sie nie von sich aus. Es führt [`volant shims install`](/de/docs/reference/cli/shims/) aus, das eine Datei oder einen Link, die es nicht angelegt hat, in Ruhe lässt und meldet, wenn ein echtes Ansible im `PATH` verdeckt wird oder weiter zuerst läuft. Konnte ein Name nicht verlinkt werden, gibt das Skript `some ansible-* names were not linked, see above` aus und endet trotzdem mit 0, weil Volant installiert ist.
 
+### In GitHub Actions
+
+Die Action `setup-volant` installiert Volant in einem Workflow. Sie führt das Installationsskript von oben aus, prüft also dieselbe SHA-256-Prüfsumme, und fügt das Verzeichnis des `volant`-Links dem `PATH` der folgenden Schritte hinzu. Sie läuft auf Linux- und macOS-Runnern.
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: lorica-labs/volant/setup-volant@main
+    with:
+      version: v0.1.0-alpha.13
+      shims: true
+  - run: ansible-playbook -i inventory.yml site.yml
+```
+
+`uses:` nimmt einen Branch, ein Tag oder einen Commit des volant-Repositorys. Die Action ist in jedem Release nach 0.1.0-alpha.13 enthalten. Legen Sie auch `version` fest, damit ein neues Release nicht ändert, was der Workflow ausführt.
+
+| Eingabe | Standard | Wirkung |
+|---|---|---|
+| `version` | das neueste Release | Das zu installierende Release, etwa `v0.1.0-alpha.13`. |
+| `shims` | `false` | Verlinkt zusätzlich die `ansible-*`-Namen, wie `--shims`. |
+| `runtime` | `false` | Installiert die verwaltete Laufzeit in diesem Schritt statt beim ersten Lauf, der sie braucht. |
+| `collections` | leer | Collections, die in die Laufzeit installiert werden, wie mit `volant runtime install --collections`: Namen mit optionalem `:version` oder eine Requirements-Datei, getrennt durch Leerzeichen oder Zeilenumbrüche. |
+| `python` | leer | Setzt `VOLANT_PYTHON`. Läufe verwenden dann diesen Interpreter und installieren die Laufzeit nie. |
+
+Mit `runtime` oder `collections` legt die Action das Laufzeitverzeichnis mit `actions/cache` im Cache ab. Der Cache-Schlüssel besteht aus System und Architektur des Runners, der Volant-Version, den Collections und dem Inhalt jeder Requirements-Datei darunter. Ein späterer Lauf mit denselben Eingaben stellt die Laufzeit so wieder her, statt sie herunterzuladen.
+
 ## Was Sie erhalten
 
 Das Release enthält zwei ausführbare Dateien. `volant` bringt die Agents mit, die es auf Ihre Hosts hochlädt. Ein Agent ist ein kleines Programm, das Ihre Tasks auf einem Host ausführt. Sonst ist nichts zu installieren, und es muss nichts danebenliegen:

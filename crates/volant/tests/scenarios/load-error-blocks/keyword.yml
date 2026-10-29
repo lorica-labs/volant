@@ -1,0 +1,5 @@
+- hosts: all
+  gather_facts: false
+  force_handlers: maybe
+  tasks:
+    - debug: {msg: x}

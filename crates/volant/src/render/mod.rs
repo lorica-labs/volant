@@ -10,6 +10,7 @@ mod aggregate;
 mod callback;
 mod error;
 mod json_doc;
+mod junit;
 mod oneline;
 mod recap;
 mod recap_json;
@@ -18,13 +19,14 @@ mod shorten;
 mod shown;
 mod tree;
 
-pub use aggregate::{Aggregate, Profile};
+pub use aggregate::{Aggregate, Begun, Profile};
 pub use callback::{LOOP_RESULTS, StdoutCallback};
 pub(crate) use error::source_context;
 pub use error::{
     AT_KEY, CHAIN_KEY, Cause, ERROR_KEY, ErrorBlock, NO_BLOCK_KEY, UNKNOWN_KEY, block_text, cause,
     concat_message, lead, task_failed,
 };
+pub use junit::Junit;
 pub(crate) use recap_json::{ansible_json, ansible_json_indented};
 pub use shorten::shorten;
 pub use shown::Shown;
@@ -248,6 +250,7 @@ impl Renderer {
     }
 
     pub fn play(&mut self, name: &str) {
+        self.junit(|junit| junit.play(name));
         self.banner(&format!("PLAY [{name}]"));
     }
 
@@ -317,6 +320,7 @@ impl Renderer {
     /// What the reference prints when a playbook starts at `-vv`: its banner, at `-vvvv` the
     /// options it was run with, and how many plays it holds.
     pub fn playbook(&mut self, file: &std::path::Path, plays: usize, options: &[String]) {
+        self.junit(|junit| junit.playbook(file));
         if self.verbosity < 2 {
             return;
         }

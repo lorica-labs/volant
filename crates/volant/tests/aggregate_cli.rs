@@ -206,3 +206,91 @@ fn tree_writes_each_host_s_last_result() {
         assert_eq!(read("tree-volant"), read("tree-reference"), "{host}");
     }
 }
+
+const JUNIT_PLAY: &str = r#"- hosts: all
+  gather_facts: false
+  tasks:
+    - name: first
+      command: echo hi
+    - name: second
+      debug:
+        msg: two
+    - name: third
+      command: "false"
+      ignore_errors: true
+    - name: skipped one
+      command: echo no
+      when: false
+    - name: hidden
+      command: echo secret
+      no_log: true
+    - name: looped
+      command: "echo {{ item }}"
+      loop: [a, b]
+    - name: a module fails
+      command: "false"
+      when: inventory_hostname == 'h2'
+    - name: an action fails
+      fail:
+        msg: boom
+"#;
+
+/// The XML file `junit` wrote in `dir`, its times masked.
+fn junit_report(dir: &Path) -> String {
+    let files: Vec<_> = std::fs::read_dir(dir)
+        .unwrap()
+        .filter_map(|entry| entry.ok().map(|e| e.path()))
+        .collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    let name = files[0].file_name().unwrap().to_string_lossy().into_owned();
+    assert!(
+        name.starts_with("play-") && name.ends_with(".xml"),
+        "{name}"
+    );
+    let text = std::fs::read_to_string(&files[0]).unwrap();
+    let mut out = String::new();
+    for line in masked(&text).lines() {
+        let mut line = line.to_string();
+        while let Some(at) = line.find(" time=\"") {
+            let from = at + 7;
+            let to = from + line[from..].find('"').unwrap_or(0);
+            line.replace_range(at..=to, " TIME");
+        }
+        out.push_str(&line);
+        out.push('\n');
+    }
+    out
+}
+
+/// `junit` writes the report `ansible-playbook` writes: a test case per task and host, an ignored
+/// failure passing, a skipped task and a real failure as the reference files them.
+#[test]
+fn junit_writes_the_report_ansible_playbook_writes() {
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path(), &python);
+    std::fs::write(dir.path().join("play.yml"), JUNIT_PLAY).unwrap();
+    let reference = python.parent().unwrap().join("ansible-playbook");
+    let volant = Path::new(env!("CARGO_BIN_EXE_volant"));
+    let python_text = python.to_str().unwrap();
+    for (program, report) in [
+        (vec![reference.as_path()], "junit-reference"),
+        (vec![volant, Path::new("playbook")], "junit-volant"),
+    ] {
+        let report_dir = dir.path().join(report);
+        let env = [
+            ("ANSIBLE_CALLBACKS_ENABLED", "junit"),
+            ("JUNIT_OUTPUT_DIR", report_dir.to_str().unwrap()),
+            ("VOLANT_PYTHON", python_text),
+        ];
+        run(&program, dir.path(), &[], &env);
+    }
+    let want = junit_report(&dir.path().join("junit-reference"));
+    assert_eq!(junit_report(&dir.path().join("junit-volant")), want);
+    assert!(
+        want.contains("<failure message=\"non-zero return code\""),
+        "{want}"
+    );
+}

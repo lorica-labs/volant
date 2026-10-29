@@ -1,0 +1,5 @@
+# A role a play has run is not run again as a dependency of a role an import_role or an
+# include_role brings in later, with or without --tags.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, --tags, acrossroles, play.yml]

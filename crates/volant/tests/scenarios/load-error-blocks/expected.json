@@ -1,0 +1,32 @@
+[
+  {
+    "code": 4,
+    "stderr": "[ERROR]: Error processing keyword 'force_handlers': The value 'maybe' could not be converted to 'bool'.\n\nError processing keyword 'force_handlers'.\nOrigin: <golden-tmp>/keyword.yml:3:19\n\n1 - hosts: all\n2   gather_facts: false\n3   force_handlers: maybe\n                    ^ column 19\n\n<<< caused by >>>\n\nThe value 'maybe' could not be converted to 'bool'.\nOrigin: <golden-tmp>/keyword.yml:3:19\n\n1 - hosts: all\n2   gather_facts: false\n3   force_handlers: maybe\n                    ^ column 19\n\n",
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stderr": "[ERROR]: Unable to retrieve file contents.\nCould not find or access '<golden-tmp>/nope.yml' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '<golden-tmp>/nope.yml'\n\n",
+    "stdout": ""
+  },
+  {
+    "code": 1,
+    "stderr": "[ERROR]: The requested handler 'nosuch' was not found in either the main handlers list nor in the listening handlers list\n",
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [command] *****************************************************************\n"
+  },
+  {
+    "code": 4,
+    "stderr": "[ERROR]: Invalid 'register' specified: Invalid variable name '200' of type 'int'.\n\nInvalid 'register' specified.\nOrigin: <golden-tmp>/register.yml:6:17\n\n4     - name: test registering\n5       debug: {msg: x}\n6       register: 200\n                  ^ column 17\n\n<<< caused by >>>\n\nInvalid variable name '200' of type 'int'.\nOrigin: <golden-tmp>/register.yml:6:17\n\n4     - name: test registering\n5       debug: {msg: x}\n6       register: 200\n                  ^ column 17\n\nVariable names must be strings starting with a letter or underscore character, and contain only letters, numbers and underscores.\n\n",
+    "stdout": ""
+  },
+  {
+    "code": 4,
+    "stderr": "[ERROR]: YAML parsing failed: Expected a single document in the stream but found another document.\nOrigin: <golden-tmp>/second-document.yml:5:1\n\n3   tasks:\n4     - debug: {msg: x}\n5 ---\n  ^ column 1\n\n",
+    "stdout": ""
+  },
+  {
+    "code": 4,
+    "stderr": "[ERROR]: YAML parsing failed: Did not find expected <document start>.\nOrigin: <golden-tmp>/document-start.yml:6:1\n\n4     - debug: {msg: x}\n5 ...\n6 - foo\n  ^ column 1\n\n",
+    "stdout": ""
+  }
+]

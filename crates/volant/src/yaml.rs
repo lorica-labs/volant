@@ -12,6 +12,7 @@ use saphyr_parser::{ScalarStyle, Tag};
 use serde_json::Value;
 
 mod escapes;
+mod flow;
 mod limits;
 mod merge;
 mod quoted;
@@ -61,14 +62,17 @@ fn marked<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<MarkedYaml<'a>>
     limits::take_duplicates();
     let parsed = merge::parse(text, source, &mut loader)
         .and_then(|()| loader.error().cloned().map_or(Ok(()), |e| Err(e.into())));
-    // A quoted scalar PyYAML reads and saphyr refuses for its indentation: see `quoted`. The
-    // reindented text is kept for the run, as the values read from it borrow it.
+    // A quoted scalar or a flow collection PyYAML reads and saphyr refuses for its indentation:
+    // see `quoted` and `flow`. The reindented text is kept for the run, as the values read from
+    // it borrow it.
     if let Err(err) = &parsed
-        && let Some(fixed) = quoted::reindented(text, err)
+        && let Some(fixed) = quoted::reindented(text, err).or_else(|| flow::reindented(text, err))
     {
         return marked(Box::leak(fixed.into_boxed_str()), source);
     }
-    parsed.with_context(|| format!("{source}: invalid YAML"))?;
+    parsed
+        .with_context(|| format!("{source}: invalid YAML"))
+        .map_err(|err| limits::scan_located(err, text, source))?;
     duplicate_keys(source)?;
     Ok(loader.into_documents())
 }

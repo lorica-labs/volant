@@ -1334,9 +1334,40 @@ fn a_quoted_scalar_continued_left_of_its_parent_loads() {
         ("m:\n  k: \"a\n b\"\n", json!({"m": {"k": "a b"}})),
         ("- \"a\nb\"\n", json!(["a b"])),
         ("x: \"é\"\nk: \"a\nb\"\n", json!({"x": "é", "k": "a b"})),
+        ("k: 'a\n\t\tb'\n", json!({"k": "a b"})),
+        (
+            "m:\n  k: \"a\n\t \tb\n\tc\"\n",
+            json!({"m": {"k": "a b c"}}),
+        ),
+        ("k: \"a\\\n\tb\"\n", json!({"k": "ab"})),
         (
             "a: \"x\ny\"\nb: \"p\n\nq\"\n",
             json!({"a": "x y", "b": "p\nq"}),
+        ),
+    ]);
+}
+
+/// A flow collection closed at the column of its key, or left of it, loads as PyYAML loads it:
+/// `ansible.parsing.utils.yaml.from_yaml` on ansible-core 2.19.12.
+#[test]
+fn a_flow_collection_closed_left_of_its_parent_loads() {
+    assert_loads_as(&[
+        (
+            "labels: [\n  \"bug\"\n]\nbody: 1\n",
+            json!({"labels": ["bug"], "body": 1}),
+        ),
+        (
+            "- name: Send\n  svc:\n    command: [\n      \"rmvdisk {{ v }}\"\n    ]\n    clustername: c\n",
+            json!([{"name": "Send", "svc": {"command": ["rmvdisk {{ v }}"], "clustername": "c"}}]),
+        ),
+        (
+            "m: {\n  a: 1,\nb: [2,\n3]\n}\nn: 2\n",
+            json!({"m": {"a": 1, "b": [2, 3]}, "n": 2}),
+        ),
+        ("a: [\n  [1,\n2]\n]\nb: 2\n", json!({"a": [[1, 2]], "b": 2})),
+        (
+            "- k: [ # c [\n  'x]'\n  ]\n- 2\n",
+            json!([{"k": ["x]"]}, 2]),
         ),
     ]);
 }

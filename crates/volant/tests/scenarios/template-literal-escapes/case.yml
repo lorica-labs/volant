@@ -1,4 +1,3 @@
-# The backslashes of a template literal in a variable stay as written whether the variable comes
-# from YAML or INI, and a `{% raw %}` block keeps its text as written.
-stderr: true
-args: [-i, inv.ini, -i, inv.yml, play.yml]
+# Escapes in the string literals of {{ }} in a YAML value stay as written; {% %}, bare
+# expressions and k=v arguments decode them.
+args: [-i, inv.ini, play.yml]

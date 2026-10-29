@@ -1,5 +1,5 @@
 ---
-sourceHash: 39514765b116
+sourceHash: d7ee7e46b08e
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -30,7 +30,7 @@ role 的 `handlers/` 目录与它的 task 一起读取。在刷新时，role 的
 
 ## 依赖
 
-`meta/main.yml` 中的 `dependencies` 本身就是 role。它们先于请求它们的 role 运行，两个 role 共用的依赖只运行一次。`allow_duplicates: true` 可以为某个 role 关闭这种去重。
+`meta/main.yml` 中的 `dependencies` 本身就是 role。它们先于请求它们的 role 运行，两个 role 共用的依赖只运行一次。`allow_duplicates: true` 可以为某个 role 关闭这种去重。跨语句也是如此：play 的 `roles:` 已经运行过的 role，或之前的 `include_role` 已为某台主机引入的 role，不会作为之后 `import_role` 或 `include_role` 引入的 role 的依赖再次运行。
 
 去重看的不只是名字。条目的参数、它的 `vars:`、它的 `when:` 和它的 `*_from` 选择，都是它身份的一部分：
 

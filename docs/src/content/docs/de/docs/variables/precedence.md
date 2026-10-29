@@ -1,5 +1,5 @@
 ---
-sourceHash: b81ce1044e5e
+sourceHash: 614f5b77c2be
 title: Rangfolge und Facts
 description: Welche Quelle gewinnt, wenn zwei dieselbe Variable definieren, die magischen Variablen und wie Facts gesammelt, benannt und zwischengespeichert werden.
 ---
@@ -27,6 +27,8 @@ Definieren zwei Quellen dieselbe Variable, gewinnt die, die in dieser Liste weit
 [Rollen](/de/docs/playbooks/roles/#rollenvariablen) erklärt, woher die drei Rollenschichten kommen und wie sie sich unterscheiden.
 
 Eine Vars-Datei, die nur `---` und Kommentare enthält, wird wie in ansible-core als leeres Mapping geladen. Eine Datei, die einen Skalar wie `42` enthält, wird weiterhin abgelehnt.
+
+Ein Eintrag von `vars_files` darf eine Liste von Pfaden sein. Die erste existierende Datei der Liste wird gelesen, die anderen werden ignoriert. Verwendet einer ihrer Pfade eine Variable ohne Wert, wird der ganze Eintrag mit der Warnung `skipping vars_files item due to an undefined variable` übersprungen.
 
 Ein Mapping kann die Schlüssel eines anderen mit einem Merge-Key übernehmen, `<<: *base`, in jeder YAML-Datei, die Volant liest: Variablendateien, Inventories, Playbooks und Task-Argumente. Die zusammengeführten Schlüssel kommen zuerst, und ein Schlüssel, der neben `<<` steht, ersetzt den zusammengeführten. In `<<: [*a, *b]` gewinnt das erste Mapping. Ein Wert, der weder ein Mapping noch eine Liste von Mappings ist, bricht das Laden ab, mit der Meldung von PyYAML.
 

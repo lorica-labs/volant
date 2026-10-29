@@ -202,4 +202,3 @@ A statement 32 levels deep is rejected. One counter covers role nesting, `import
 - A failing include inside a loop prints the usual `failed: [host] (item=...)` line. Ansible prints only an `[ERROR]` on standard error.
 - `allow_duplicates: false` counts a role as run for a host when its tasks are brought in. ansible-core counts it when the host ran at least one of its tasks, so a role whose tasks all skip still runs again there.
 - `allow_duplicates: false` on an `import_role` compares the statements while the play compiles, and so a `when` on the earlier statement does not change the result for a host.
-- `include_vars: file=x.yml name=ns` is read as one raw argument rather than split into `key=value` pairs, the same limitation `import_tasks` has.

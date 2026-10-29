@@ -1,0 +1,6 @@
+# `{% include %}`, `{% import %}` and `{% from ... import %}` load files from the search path of
+# the render: the playbook directory for a string, the role and playbook `templates` for
+# `template` and `lookup('template')`, and a missing one is worded as ansible-core words it.
+args: [-i, inv.ini, play.yml]
+stderr: true
+needs: [ansible-core]

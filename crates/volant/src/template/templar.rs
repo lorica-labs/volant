@@ -329,6 +329,7 @@ impl Templar {
                         || err.0.starts_with(super::NO_FILTER)
                         || (err.0.starts_with("Error rendering template: ")
                             && err.0.ends_with(" by zero"))
+                        || super::include::is_not_found(&err.0)
                     {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
                     } else if err.0.starts_with(crate::vault::UNDECRYPTABLE) {

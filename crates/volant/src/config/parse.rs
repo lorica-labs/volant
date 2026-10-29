@@ -77,6 +77,13 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             }
             continue;
         }
+        if section == "callback_tree" || section == "callback_profile_tasks" {
+            config.callbacks.sections.insert(
+                (section.clone(), key.trim().to_string()),
+                value.trim().to_string(),
+            );
+            continue;
+        }
         // Volant's own section, which the reference ignores along with every other section it
         // does not know: an `ansible.cfg` shared by the two engines stays valid for both.
         if section == "volant" {

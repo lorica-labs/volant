@@ -1495,6 +1495,21 @@ fn a_very_long_broken_line_is_an_error_not_a_panic() {
     }
 }
 
+/// An expression that closes the block it sits in empties minijinja's lexer stack, which panics.
+/// It is a syntax error, as the same text inside `{{ }}` is.
+#[test]
+fn an_expression_closing_its_own_block_is_a_syntax_error() {
+    let t = templar();
+    for expr in ["}}) else False", "}} x"] {
+        let err = t.evaluate(expr, &Map::new()).unwrap_err();
+        assert!(
+            err.0.contains("unexpected end of variable block"),
+            "{expr:?}: {}",
+            err.0
+        );
+    }
+}
+
 /// Text an expression made, stored as a variable, is read back as it was: a `{#` at its end is
 /// not an open comment to cut once more. A complete comment in a variable is still rendered.
 #[test]

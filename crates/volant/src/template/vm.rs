@@ -309,15 +309,39 @@ fn internal_filter<'a, 's: 'a>(
 pub(super) const LONG_LINE: &str =
     "the template has a syntax error on a line too long to be reported";
 
-/// Runs the lexer and the parser of minijinja, and turns a panic of theirs into an error. Its
-/// lexer counts the columns of a line in sixteen bits, and a syntax error 65,535 characters into
-/// a line overflows that counter, which panics in a debug build. Text from a playbook must not
-/// be able to stop the run.
+thread_local! {
+    /// Set while [`no_panic`] runs the compiler on this thread, whose panics it reports itself.
+    static COMPILING: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs the lexer and the parser of minijinja, and turns a panic of theirs into an error, with
+/// nothing printed on stderr. Text from a playbook must not be able to stop the run. Two inputs
+/// are known to panic there. A syntax error 65,535 characters into a line overflows the
+/// sixteen-bit column counter of a debug build. An expression that closes the block it sits in,
+/// `}}) else False` say, empties the lexer's stack; the reference refuses that one as a syntax
+/// error, and the same text inside `{{ }}` is `unexpected end of variable block` here.
 fn no_panic<T>(
     compile: impl FnOnce() -> Result<T, minijinja::Error>,
 ) -> Result<T, minijinja::Error> {
-    std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile))
-        .unwrap_or_else(|_| Err(minijinja::Error::new(ErrorKind::SyntaxError, LONG_LINE)))
+    static QUIET: std::sync::Once = std::sync::Once::new();
+    QUIET.call_once(|| {
+        let previous = std::panic::take_hook();
+        std::panic::set_hook(Box::new(move |info| {
+            if !COMPILING.get() {
+                previous(info);
+            }
+        }));
+    });
+    let outer = COMPILING.replace(true);
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile));
+    COMPILING.set(outer);
+    outcome.unwrap_or_else(|payload| {
+        let message = match payload.downcast_ref::<&str>() {
+            Some(&"empty lexer stack") => "unexpected end of variable block",
+            _ => LONG_LINE,
+        };
+        Err(minijinja::Error::new(ErrorKind::SyntaxError, message))
+    })
 }
 
 /// `env.compile_expression(expr)?.eval(ctx)`, with `~` routed through [`concat()`].

@@ -1,5 +1,5 @@
 ---
-sourceHash: fa3ecc77e124
+sourceHash: 93a0f9272733
 title: Plugins d'action
 description: Comment Volant exécute les modules qu'ansible-core exécute par un plugin d'action sur le contrôleur, en Rust ou sur le pont Python.
 ---
@@ -20,6 +20,8 @@ Le plugin exécute d'abord `stat` sur la destination, en demandant un SHA-1 sauf
 
 `remote_src: true` saute tout cela : `copy` s'exécute seul, avec les arguments de la tâche, et `src` nomme un fichier déjà présent sur l'hôte.
 
+Un fichier de plus de 16 Mio n'est jamais lu en entier : le plugin le hache sur le contrôleur et l'envoie à l'hôte par morceaux de 16 Mio, que l'agent écrit sur le disque à mesure qu'ils arrivent. `unarchive` envoie son archive de la même façon.
+
 Rejeté avant que l'hôte soit interrogé, avec les mots d'ansible-core :
 
 - `src (or content) is required`
@@ -28,7 +30,6 @@ Rejeté avant que l'hôte soit interrogé, avec les mots d'ansible-core :
 - `can not use content with a dir as dest`
 - `copying a directory is not supported yet: <src>`. Le plugin Rust ne copie pas de répertoire : la tâche s'exécute donc sur le pont, qui le fait.
 - Un `src` qui ne nomme rien sur le contrôleur, enveloppé en `Unexpected AnsibleActionFail error: Could not find or access '<src>' ...`.
-- Une source plus grande qu'une trame est rejetée d'après sa taille, avant d'être lue.
 
 ## `template`
 
@@ -49,7 +50,6 @@ Rejeté avant que l'hôte soit interrogé :
 - `TemplateOverrides.<name> must be <class 'str'> instead of <class 'NoneType'>`, pour une option de délimiteur vide ou nulle
 - `output_encoding '<encoding>' is not supported yet on 'template': only utf-8, ... are`
 - Un `src` qui ne nomme rien sur le contrôleur, avec les mots d'ansible-core, sans l'enveloppe `AnsibleActionFail` cette fois.
-- Un rendu plus grand qu'une trame est rejeté, avec les deux tailles en clair, avant que quoi que ce soit soit déposé.
 
 ## `package`
 
@@ -76,7 +76,7 @@ Le module `yum` n'est pas un module à part entière dans ansible-core 2.19 : `
 
 Un fichier lu depuis un hôte, écrit sur le contrôleur sous `dest` et nulle part ailleurs.
 
-Sans `become`, le plugin exécute d'abord `stat` sur la source et laisse tranquille un fichier local déjà identique ; sous `become`, il passe directement à `slurp`. Les octets reviennent toujours par `slurp`, décodés strictement, jamais rendus et jamais placés dans une variable. La destination est `dest/<inventory_hostname>/<src>`, sauf si `flat: true` nomme directement `dest` lui-même ou, avec une barre oblique finale, `dest/<basename of src>`.
+Sans `become`, le plugin exécute d'abord `stat` sur la source et laisse tranquille un fichier local déjà identique ; sous `become`, il passe directement à `slurp`. Les octets reviennent par `slurp`, décodés strictement, jamais rendus et jamais placés dans une variable. Un fichier de plus de 2 Mio, près du maximum que `slurp` transporte, est relu à la place par morceaux d'au plus 16 Mio, directement dans un fichier à côté de la destination. Sous `become`, cela arrive une fois que `slurp` a dit que le fichier est trop gros, après un `stat` pour sa somme. La destination est `dest/<inventory_hostname>/<src>`, sauf si `flat: true` nomme directement `dest` lui-même ou, avec une barre oblique finale, `dest/<basename of src>`.
 
 Mesuré sur ansible-core 2.19.12, un `src` relatif qui remonte avec `..` fait écrire ansible-core en dehors de `dest` sur le contrôleur : un `src` de `../../../../../../../../tmp/x` sans `flat` écrit `/tmp/x`. Ici, chaque chemin candidat est construit et normalisé sans toucher au système de fichiers, et refusé s'il n'est pas sous `dest`, avant même qu'un répertoire soit créé :
 
@@ -89,7 +89,7 @@ Ceci est vérifié deux fois : sur le `src` que le playbook a écrit, puis sur 
 
 Un lien symbolique n'importe où sous `dest` est refusé plutôt que suivi, sur le chemin construit à partir du playbook comme sur celui que l'hôte renvoie.
 
-`fail_on_missing`, activé par défaut comme dans ansible-core, fait échouer la tâche sur une source absente ou un répertoire ; `fail_on_missing: false` transforme l'un ou l'autre en résultat `ok` portant à la place le message d'ansible-core. Dans les deux cas, toute autre erreur, comme une lecture que l'agent refuse parce que la limite par flux du serveur de modules est atteinte, fait toujours échouer la tâche. Cette limite est de 4 MiB de stdout de `slurp` encodé en base64, soit environ 3 MiB de fichier source avant encodage. `validate_checksum` compare le SHA-1 du fichier écrit à celui de l'hôte avant de le conserver ; une différence fait échouer la tâche et supprime ce qui a été écrit, contrairement à ansible-core, qui laisse le fichier erroné là où il l'a écrit. Un fichier remplacé garde son mode actuel : un fichier `0600` récupéré de nouveau reste `0600`.
+`fail_on_missing`, activé par défaut comme dans ansible-core, fait échouer la tâche sur une source absente ou un répertoire ; `fail_on_missing: false` transforme l'un ou l'autre en résultat `ok` portant à la place le message d'ansible-core. Dans les deux cas, toute autre erreur, comme une lecture que l'hôte refuse, fait toujours échouer la tâche. `validate_checksum` compare le SHA-1 du fichier écrit à celui de l'hôte avant de le conserver ; une différence fait échouer la tâche et supprime ce qui a été écrit, contrairement à ansible-core, qui laisse le fichier erroné là où il l'a écrit. Un fichier remplacé garde son mode actuel : un fichier `0600` récupéré de nouveau reste `0600`.
 
 ### Un dest nommé par un hôte géré
 
@@ -130,7 +130,6 @@ Rejeté avant que l'hôte soit interrogé :
 - `a '~' path is not supported yet on 'unarchive'`, pour `dest` ou `creates`. La tâche s'exécute alors sur le pont.
 - Un `src` qui ne nomme rien sur le contrôleur : `Task failed: Could not find or access '<src>' ...\nIf you are using a module and expect the file to exist on the remote, see the remote_src option`
 - `src is a directory, not an archive: <src>`, pour un `src` trouvé comme répertoire sur le contrôleur.
-- Une source plus grande qu'une trame est rejetée d'après sa taille, avant d'être lue.
 
 ## `reboot`
 

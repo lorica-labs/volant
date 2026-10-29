@@ -13,7 +13,8 @@ use std::collections::BTreeSet;
 
 use serde_json::{Map, Value};
 
-use super::copy::{CopyOf, copy_bytes, failing, failing_with, local_mode};
+use super::copy::{CopyOf, copy_bytes, failing, failing_with};
+use super::files::local_mode;
 use super::files::{check_host_named, not_found, search_paths};
 use super::{Context, Plugin};
 use crate::executor::as_bool_value;
@@ -294,7 +295,7 @@ fn rendered(
         args.insert("mode".into(), Value::String(local_mode(found)?));
     }
     Ok(CopyOf {
-        bytes,
+        payload: crate::action_plugins::files::Payload::Bytes(bytes),
         basename: found
             .file_name()
             .map(|n| n.to_string_lossy().into_owned())

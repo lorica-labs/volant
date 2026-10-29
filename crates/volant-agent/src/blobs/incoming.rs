@@ -30,7 +30,9 @@ pub fn read_incoming<R: Read>(mut input: R) -> io::Result<Option<Result<Incoming
         Err(err) => return unreadable(&mut input, &bytes, &err.to_string()),
     };
     let blob = match &msg {
-        ToAgent::PutBlob { len, .. } => read_blob_frame(&mut input, *len)?,
+        ToAgent::PutBlob { len, .. } | ToAgent::PutBlobPart { len, .. } => {
+            read_blob_frame(&mut input, *len)?
+        }
         _ => Ok(Vec::new()),
     };
     Ok(Some(Ok((msg, blob))))

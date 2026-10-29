@@ -298,7 +298,10 @@ fn assert_sent(sub: &Sub, extra: Value) {
     );
     assert_eq!(
         sub.files,
-        [("src".to_string(), blob_of("hello.txt", b"hello\n").unwrap())]
+        [(
+            "src".to_string(),
+            Payload::Bytes(b"hello\n".to_vec()).blob().unwrap()
+        )]
     );
 }
 
@@ -434,7 +437,10 @@ fn a_content_is_sent_as_the_reference_writes_it() {
     run(plugin.as_mut(), None);
     let sub = run(plugin.as_mut(), Some(json!({"stat": {"exists": false}})));
     let text = r#"{"b": 1, "a": ["\u00e9", true]}"#;
-    assert_eq!(sub.files[0].1, blob_of("x", text.as_bytes()).unwrap());
+    assert_eq!(
+        sub.files[0].1,
+        Payload::Bytes(text.as_bytes().to_vec()).blob().unwrap()
+    );
     assert_eq!(sub.args["checksum"], json!(sha1_hex(text.as_bytes())));
     assert_eq!(
         sub.args["_original_basename"],
@@ -495,26 +501,23 @@ fn what_cannot_be_copied_is_refused_before_the_host_is_asked() {
     }
 }
 
-/// A source too big for one frame is refused by its size, before it is read and before the host
-/// is asked anything.
+/// A source past the disk line is hashed off the disk and staged from it, never read whole.
 #[test]
-fn a_source_bigger_than_a_frame_is_refused_before_it_is_read() {
+fn a_source_past_the_disk_line_is_sent_from_disk() {
     let (tmp, mut args) = hello(json!({}));
     let dir = tmp.path();
-    let big = std::fs::File::create(dir.join("files/big.bin")).unwrap();
-    let len = crate::action_plugins::files::MAX_FILE_LEN + 1;
-    big.set_len(u64::try_from(len).unwrap()).unwrap();
+    let path = dir.join("files/big.bin");
+    let big = std::fs::File::create(&path).unwrap();
+    big.set_len(crate::action_plugins::files::ON_DISK_LEN + 1)
+        .unwrap();
     args.insert("src".into(), json!("big.bin"));
     let mut plugin = start_in(&args, &BTreeSet::new(), dir);
-    let Step::Done(result) = plugin.next(None) else {
-        panic!("a sub-task was sent")
-    };
+    run(plugin.as_mut(), None);
+    let sub = run(plugin.as_mut(), Some(json!({"stat": {"exists": false}})));
+    assert_eq!(sub.module, "copy");
     assert_eq!(
-        result.0["msg"],
-        json!(format!(
-            "big.bin is {len} bytes; one frame carries at most {}",
-            crate::action_plugins::files::MAX_FILE_LEN
-        ))
+        sub.files[0].1.body,
+        crate::action_plugins::BlobBody::Disk(path)
     );
 }
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 636ba87fd21a
+sourceHash: 955b9eb690d2
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -30,7 +30,7 @@ Das Verzeichnis `handlers/` einer Rolle wird zusammen mit ihren Tasks gelesen. B
 
 ## Abhängigkeiten
 
-Die `dependencies` in `meta/main.yml` sind eigenständige Rollen. Sie laufen vor der Rolle, die sie angefordert hat, und eine Abhängigkeit, die sich zwei Rollen teilen, läuft einmal. `allow_duplicates: true` schaltet diese Deduplizierung für eine Rolle ab.
+Die `dependencies` in `meta/main.yml` sind eigenständige Rollen. Sie laufen vor der Rolle, die sie angefordert hat, und eine Abhängigkeit, die sich zwei Rollen teilen, läuft einmal. `allow_duplicates: true` schaltet diese Deduplizierung für eine Rolle ab. Das gilt auch über Anweisungen hinweg: Eine Rolle, die `roles:` des Plays ausgeführt hat oder die ein früheres `include_role` für einen Host geholt hat, läuft nicht erneut als Abhängigkeit einer Rolle, die später ein `import_role` oder ein `include_role` holt.
 
 Die Deduplizierung betrachtet mehr als den Namen. Die Parameter des Eintrags, seine `vars:`, sein `when:` und seine `*_from`-Auswahlen gehören alle zu seiner Identität:
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 636ba87fd21a
+sourceHash: 955b9eb690d2
 title: Roles, includes e imports
 description: Dónde busca Volant los roles, cómo funcionan las dependencias, las especificaciones de argumentos y las variables de un rol, y cómo los imports y los includes traen otros archivos a un play.
 ---
@@ -30,7 +30,7 @@ El directorio `handlers/` de un rol se lee junto con sus tareas. En un flush, lo
 
 ## Dependencias
 
-Las `dependencies` de `meta/main.yml` son roles por derecho propio. Se ejecutan antes del rol que las pidió, y una dependencia compartida por dos roles se ejecuta una sola vez. `allow_duplicates: true` desactiva esa deduplicación para un rol.
+Las `dependencies` de `meta/main.yml` son roles por derecho propio. Se ejecutan antes del rol que las pidió, y una dependencia compartida por dos roles se ejecuta una sola vez. `allow_duplicates: true` desactiva esa deduplicación para un rol. Esto vale también entre sentencias: un rol que ejecutó el `roles:` del play, o que un `include_role` anterior trajo para un host, no se vuelve a ejecutar como dependencia de un rol que un `import_role` o un `include_role` trae después.
 
 La deduplicación mira algo más que el nombre. Los parámetros de la entrada, sus `vars:`, su `when:` y sus selecciones `*_from` forman parte de su identidad:
 

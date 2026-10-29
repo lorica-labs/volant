@@ -190,7 +190,8 @@ pub(crate) fn compile(
     compile_with(play, search, selection, &Map::new())
 }
 
-/// [`compile`], with the run's extra variables for the paths an import renders.
+/// A play's sections flattened into one numbered list, as `compile` does, with the run's extra
+/// variables for the paths an import renders.
 #[expect(clippy::too_many_lines)]
 pub(crate) fn compile_with(
     play: &Play,
@@ -219,6 +220,7 @@ pub(crate) fn compile_with(
         selection,
         exporting: true,
         imported: Vec::new(),
+        played: Vec::new(),
     };
     // The play's own tags are the outermost layer of the merge, so every task under it - in a
     // role, in an imported file, at any block depth - carries them for the selection and for

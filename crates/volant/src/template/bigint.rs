@@ -16,7 +16,6 @@ use std::fmt;
 use std::sync::Arc;
 
 use minijinja::value::{DynObject, Object, ObjectRepr, Value, ValueKind};
-use serde::ser::{Serialize, SerializeMap, SerializeSeq, Serializer};
 
 /// An integer outside `i128` and `u128`: its sign and its decimal digits without leading zeros.
 #[derive(Debug)]
@@ -193,42 +192,74 @@ pub(crate) fn refusal_note(err: &minijinja::Error) -> &'static str {
     }
 }
 
-/// Serializes a template value as `Value` does, except that a [`BigInt`] is a JSON number.
-struct Wire<'a>(&'a Value);
-
-impl Serialize for Wire<'_> {
-    fn serialize<S: Serializer>(&self, serializer: S) -> Result<S::Ok, S::Error> {
-        if let Some(big) = self.0.downcast_object_ref::<BigInt>() {
-            return big.number().serialize(serializer);
-        }
-        match self.0.kind() {
-            ValueKind::Seq | ValueKind::Iterable => {
-                let mut seq = serializer.serialize_seq(None)?;
-                if let Ok(items) = self.0.try_iter() {
-                    for item in items {
-                        seq.serialize_element(&Wire(&item))?;
-                    }
-                }
-                seq.end()
-            }
-            ValueKind::Map => {
-                let mut map = serializer.serialize_map(None)?;
-                if let Ok(keys) = self.0.try_iter() {
-                    for key in keys {
-                        let item = self.0.get_item(&key).unwrap_or(Value::UNDEFINED);
-                        map.serialize_entry(&key, &Wire(&item))?;
-                    }
-                }
-                map.end()
-            }
-            _ => self.0.serialize(serializer),
-        }
+/// A NaN or an infinity, as Python's `json.dumps` writes it. JSON has no such number; the text
+/// travels as a number all the same and [`to_template`] reads it back.
+fn non_finite(value: &Value) -> Option<&'static str> {
+    if value.kind() != ValueKind::Number || value.is_integer() {
+        return None;
+    }
+    let f = f64::try_from(value.clone()).ok()?;
+    if f.is_nan() {
+        Some("NaN")
+    } else if f.is_infinite() {
+        Some(if f > 0.0 { "Infinity" } else { "-Infinity" })
+    } else {
+        None
     }
 }
 
-/// The JSON value of a template value, every integer exact.
+/// A NaN or an infinity as Python's `str` prints it: `nan`, `inf`, `-inf`.
+pub(crate) fn python_non_finite(value: &Value) -> Option<&'static str> {
+    non_finite(value).map(|text| match text {
+        "NaN" => "nan",
+        "Infinity" => "inf",
+        _ => "-inf",
+    })
+}
+
+/// The JSON value of a template value, every integer exact, a NaN or an infinity kept as the
+/// number Python writes. Built by hand: `serde_json::to_value` reads a number's text again and
+/// refuses `NaN`.
 pub(crate) fn to_json(value: &Value) -> Result<serde_json::Value, serde_json::Error> {
-    serde_json::to_value(Wire(value))
+    use serde_json::Value as Json;
+    if let Some(big) = value.downcast_object_ref::<BigInt>() {
+        return Ok(Json::Number(big.number()));
+    }
+    if let Some(text) = non_finite(value) {
+        return Ok(Json::Number(serde_json::Number::from_string_unchecked(
+            text.to_owned(),
+        )));
+    }
+    match value.kind() {
+        ValueKind::Seq | ValueKind::Iterable => {
+            let mut items = Vec::new();
+            if let Ok(iter) = value.try_iter() {
+                for item in iter {
+                    items.push(to_json(&item)?);
+                }
+            }
+            Ok(Json::Array(items))
+        }
+        ValueKind::Map => {
+            let mut map = serde_json::Map::new();
+            if let Ok(keys) = value.try_iter() {
+                for key in keys {
+                    let item = value.get_item(&key).unwrap_or(Value::UNDEFINED);
+                    let name = match serde_json::to_value(&key)? {
+                        Json::String(s) => s,
+                        Json::Number(n) => n.to_string(),
+                        Json::Bool(b) => b.to_string(),
+                        _ => {
+                            return Err(serde::ser::Error::custom("key must be a string"));
+                        }
+                    };
+                    map.insert(name, to_json(&item)?);
+                }
+            }
+            Ok(Json::Object(map))
+        }
+        _ => serde_json::to_value(value),
+    }
 }
 
 #[cfg(test)]

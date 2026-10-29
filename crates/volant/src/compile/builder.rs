@@ -121,6 +121,10 @@ pub(super) struct Builder<'a> {
     /// play's `vars:`, the extra variables and `playbook_dir`. The roles' `defaults` and `vars`
     /// and `role_path` are added when a path is rendered.
     pub(super) static_vars: Map<String, Value>,
+    /// Every role instance read so far in the play, whatever brought it in. The dependencies of an
+    /// `import_role` are compared with it: measured on ansible-core 2.19.12, a role the play's
+    /// `roles:` ran is not run again as a dependency of a role imported in `tasks:`.
+    pub(super) played: Seen,
 }
 
 impl Builder<'_> {
@@ -211,7 +215,7 @@ impl Builder<'_> {
                 return self.role(
                     &entry,
                     &merge(inherited, task),
-                    &mut Vec::new(),
+                    &mut self.played.clone(),
                     block,
                     section,
                     RoleKind::Import,
@@ -373,9 +377,12 @@ impl Builder<'_> {
         })?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
         let key = identity(entry);
-        if !role.allow_duplicates && seen.contains(&key) {
+        if kind != RoleKind::Import && !role.allow_duplicates && seen.contains(&key) {
             return Ok(());
         }
+        let dedup = (kind != RoleKind::Include && !role.allow_duplicates)
+            .then(|| serde_json::json!([&key.0, &key.1]).to_string());
+        self.played.push(key.clone());
         seen.push(key);
         // Two roles that import each other never repeat an identity - `import_role` starts a
         // `seen` list of its own, as measured - so the dedup above stops nothing and only the
@@ -412,6 +419,7 @@ impl Builder<'_> {
             vars: role.vars,
             params: entry.params.clone(),
             public: exporting,
+            dedup,
             own: None,
         });
         // The role's handlers, before its tasks are walked, so a role imported by another one

@@ -49,6 +49,7 @@ impl Default for Config {
             ssh_control_master: true,
             shadow_runs: 5,
             shadow_coverage: 900,
+            locked: false,
             fact_caching: "memory".to_string(),
             fact_caching_connection: None,
             fact_caching_timeout: 86400,

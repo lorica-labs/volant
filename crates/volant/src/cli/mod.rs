@@ -29,6 +29,7 @@ mod vault_edit;
 mod vault_string;
 mod version;
 
+pub use crate::lock::run as lock;
 pub use adhoc::adhoc;
 pub use adhoc_usage::usage_error as adhoc_usage_error;
 pub use args::{AdhocArgs, BecomeArgs, ConnectionArgs, HostsArgs, PlaybookArgs, VaultSecretArgs};

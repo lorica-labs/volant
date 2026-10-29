@@ -222,6 +222,7 @@ export default defineConfig({
                 { label: 'volant galaxy', slug: 'docs/reference/cli/galaxy' },
                 { label: 'volant pull', slug: 'docs/reference/cli/pull' },
                 { label: 'volant inventory', slug: 'docs/reference/cli/inventory' },
+                { label: 'volant lock', slug: 'docs/reference/cli/lock' },
                 { label: 'volant runtime', slug: 'docs/reference/cli/runtime' },
                 { label: 'volant shadow', slug: 'docs/reference/cli/shadow' },
                 { label: 'volant shims', slug: 'docs/reference/cli/shims' },

@@ -20,6 +20,11 @@ pub(super) struct Located {
     /// run did not read `ANSIBLE_CONFIG` instead: the reference prints a warning then.
     pub(super) skipped: bool,
 }
+/// `ANSIBLE_CONFIG`, then `./ansible.cfg` unless the working directory is world-writable,
+/// `~/.ansible.cfg`, `/etc/ansible/ansible.cfg`.
+pub(crate) fn locate() -> Option<PathBuf> {
+    current().path
+}
 
 /// The search for this process: its environment and its working directory.
 pub(super) fn current() -> Located {

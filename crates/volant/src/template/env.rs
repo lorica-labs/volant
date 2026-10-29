@@ -119,17 +119,15 @@ pub(super) fn container_repr(value: &minijinja::Value) -> Option<String> {
     if super::pymethods::bytes::holds(value) {
         return Some(super::pymethods::format::repr(value));
     }
-    if let Some(text) = super::bigint::python_non_finite(value) {
-        return Some(text.to_owned());
+    let special = super::bigint::python_non_finite(value).map(str::to_owned);
+    if let Some(text) = special.or_else(|| super::clock::container_repr(value)) {
+        return Some(text);
     }
     if !matches!(
         value.kind(),
         ValueKind::Seq | ValueKind::Map | ValueKind::Iterable
     ) {
         return None;
-    }
-    if let Some(text) = super::clock::container_repr(value) {
-        return Some(text);
     }
     let json = super::bigint::to_json(value).ok()?;
     Some(crate::playbook::python_repr(&json))

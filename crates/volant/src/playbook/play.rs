@@ -70,15 +70,25 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     };
     let vars_files = match field(yaml, "vars_files") {
         None | Some(Yaml::Value(Scalar::Null)) => Vec::new(),
+        // An entry may be a list of alternatives, of which the first file that exists is read:
+        // the reference's "conditional includes", which mimic `with_first_found`.
         Some(Yaml::Sequence(items)) => items
             .iter()
-            .map(|i| {
-                i.as_str()
-                    .map(str::to_string)
-                    .ok_or_else(|| anyhow!("'vars_files' entries must be strings"))
+            .map(|i| match i {
+                Yaml::Sequence(alternatives) => alternatives
+                    .iter()
+                    .map(|a| {
+                        a.as_str().map(str::to_string).ok_or_else(|| {
+                            anyhow!("'vars_files' entries must be strings or lists of strings")
+                        })
+                    })
+                    .collect(),
+                _ => i.as_str().map(|s| vec![s.to_string()]).ok_or_else(|| {
+                    anyhow!("'vars_files' entries must be strings or lists of strings")
+                }),
             })
             .collect::<anyhow::Result<_>>()?,
-        Some(Yaml::Value(Scalar::String(s))) => vec![s.to_string()],
+        Some(Yaml::Value(Scalar::String(s))) => vec![vec![s.to_string()]],
         _ => bail!("'vars_files' must be a list of paths"),
     };
     let tasks = task_list(field(yaml, "tasks"), "tasks")?;

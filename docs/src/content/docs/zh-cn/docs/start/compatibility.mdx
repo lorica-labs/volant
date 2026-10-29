@@ -1,5 +1,5 @@
 ---
-sourceHash: 9cc672d25d6b
+sourceHash: 000eea7440ab
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -104,7 +104,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 |---|---|
 | `callback_plugins/`、`vars_plugins/` | 被忽略。 |
 | `stdout_callback` 指定 `json` 以外的 collection callback，例如 `community.general.unixy` | 运行在第一个 play 之前以 `Could not load '<name>' callback plugin.` 停止，而 ansible-core 只对未安装的插件打印这句。`default`、`minimal`、`oneline`、`tree` 和 `json` 可以用。 |
-| `callbacks_enabled` | 每个名字都以 `[WARNING]: Skipping callback plugin '<name>', unable to load` 被跳过，而 ansible-core 只对找不到的插件打印这句。`volant.compat.record` 被跳过，不打印警告。 |
+| `callbacks_enabled` | `junit`、`tree`、`ansible.posix.timer` 和 `ansible.posix.profile_tasks` 会运行。其他名字都以 `[WARNING]: Skipping callback plugin '<name>', unable to load` 被跳过，而 ansible-core 只对找不到的插件打印这句。`volant.compat.record` 被跳过，不打印警告。 |
 | `volant check` 和 `volant lint` | 它们不存在。请用 ansible-core 或 ansible-lint 运行。 |
 | 在两个 Python 无法排序的类型的字面量之间写比较，例如 `{{ 'a' < 1 }}` | 它会回答 `false` 或 `true`，而 ansible-core 会失败并报 `'<' not supported between instances of 'str' and 'int'`。模板库在 Volant 看到之前就算出了字面量的比较结果。任意一边是变量时，比较会像 ansible-core 一样失败。 |
 | 失败的带 `no_log: true` 的 task | 这是有意为之。Volant 打印 `[ERROR]: Task failed: Action failed: <error censored due to no log>`，不打印失败原因的其他内容。ansible-core 2.19.12 会打印原因：`[ERROR]: Task failed: Action failed: <the msg of fail or assert>`、模块的错误，以及 `<<< caused by >>>` 块。这些文字可能包含机密，例如点出密码的 `fail` 的 `msg`。[安全策略](https://github.com/lorica-labs/volant/blob/main/SECURITY.md)把在 ansible-core 里被 `no_log` 隐藏、却进入日志或终端的机密算作漏洞，所以 Volant 把它隐藏起来。`fatal:` 行、已注册的结果和汇总在两者中相同。要读到原因，请去掉 `no_log` 再运行这个 task。 |

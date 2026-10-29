@@ -4,7 +4,7 @@
 
 use std::path::PathBuf;
 
-use minijinja::value::{Kwargs, Rest};
+use minijinja::value::{Kwargs, Rest, ValueKind};
 use minijinja::{Environment, Error, ErrorKind, State, Value};
 
 mod collections;
@@ -292,7 +292,14 @@ pub fn register(
             move |v: Value, rest: Rest<Value>, kwargs: Kwargs| regex_test(&v, &rest, &kwargs, name),
         );
     }
+    // `item in seq`: a substring of a string, a key of a mapping, an element of anything else.
     add_test(env, "contains", |seq: Value, item: Value| {
+        if let (Some(text), Some(needle)) = (seq.as_str(), item.as_str()) {
+            return text.contains(needle);
+        }
+        if seq.kind() == ValueKind::Map {
+            return seq.get_item(&item).is_ok_and(|v| !v.is_undefined());
+        }
         seq.try_iter().is_ok_and(|mut it| it.any(|x| x == item))
     });
 
@@ -421,7 +428,7 @@ mod tests;
 /// to MiniJinja.
 fn string(state: &State, value: Value) -> Result<Value, Error> {
     // Python's `str` of a float: `nan`, `inf`, `1e+16`.
-    if value.kind() == minijinja::value::ValueKind::Number && !value.is_integer() {
+    if value.kind() == ValueKind::Number && !value.is_integer() {
         return Ok(Value::from(to_str(&value)));
     }
     if super::pymethods::format::holds_tuple(&value) {

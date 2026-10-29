@@ -1,5 +1,5 @@
 ---
-sourceHash: e3f27c96d5f0
+sourceHash: 39514765b116
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -203,4 +203,3 @@ Eine Anweisung auf Ebene 32 wird abgelehnt. Ein Zähler deckt die Rollenverschac
 - Ein fehlschlagendes Include in einer Schleife gibt die übliche Zeile `failed: [host] (item=...)` aus. Ansible gibt nur ein `[ERROR]` auf der Standardfehlerausgabe aus.
 - `allow_duplicates: false` zählt eine Rolle als für einen Host ausgeführt, wenn ihre Tasks eingebracht werden. ansible-core zählt sie, wenn der Host mindestens einen ihrer Tasks ausgeführt hat, sodass eine Rolle, deren Tasks alle übersprungen werden, dort erneut läuft.
 - `allow_duplicates: false` bei einem `import_role` vergleicht die Anweisungen, während das Play kompiliert wird, ein `when` an der früheren Anweisung ändert das Ergebnis für einen Host daher nicht.
-- `include_vars: file=x.yml name=ns` wird als ein rohes Argument gelesen statt in `key=value`-Paare zerlegt, dieselbe Einschränkung wie bei `import_tasks`.

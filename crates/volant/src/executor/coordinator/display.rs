@@ -54,6 +54,32 @@ pub(super) fn header(step: &Step, name: &str, out: &mut Renderer) {
     if let Some(origin) = &step.task.origin {
         out.task_path(origin);
     }
+    // `profile_tasks` keys a task by its uuid, which a later `serial` batch runs again: the
+    // step's place in the play stands for it.
+    let path = step.task.origin.as_ref().map(|origin| {
+        let file = std::path::absolute(&*origin.path)
+            .unwrap_or_else(|_| std::path::PathBuf::from(&*origin.path));
+        format!("{}:{}", file.display(), origin.line)
+    });
+    // `junit` names a task with its arguments as the task wrote them, `k=v` joined by `, `.
+    let args = (!step.task.censors()).then(|| {
+        step.task
+            .args
+            .iter()
+            .map(|(key, value)| match value {
+                serde_json::Value::String(text) => format!("{key}={text}"),
+                other => format!("{key}={}", crate::playbook::python_repr(other)),
+            })
+            .collect::<Vec<_>>()
+            .join(", ")
+    });
+    out.task_began(&crate::render::Begun {
+        key: &format!("{}#{name}", path.as_deref().unwrap_or("")),
+        name,
+        path,
+        args: args.as_deref(),
+        action: &step.task.module,
+    });
 }
 
 /// The banner of step `index`, unless the last line printed already belonged to it: under `free`
@@ -122,6 +148,10 @@ fn display(line: &str, shade: Shade, banner: bool, out: &mut Renderer) {
 
 /// Puts one result line in the recap and on the terminal. Anything but an `Event::Result` is
 /// ignored, so both event loops can hand it whatever they hold.
+#[expect(
+    clippy::too_many_lines,
+    reason = "one result's whole path to the recap, the callbacks and the terminal, in order"
+)]
 pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer) {
     if let Event::Retrying {
         host,
@@ -198,6 +228,14 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
     if counts {
         stats.tally(&host, outcome, result.changed());
     }
+    out.result_heard(
+        &host,
+        outcome,
+        &result,
+        censored,
+        error.as_ref(),
+        label.is_some(),
+    );
     // `minimal` and `oneline` print every result the task hands over, a loop's aggregate too.
     if show || (label.is_none() && out.shows_every_result()) {
         if let Some(error) = &error {

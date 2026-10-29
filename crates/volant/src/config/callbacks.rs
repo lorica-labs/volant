@@ -26,6 +26,20 @@ pub struct Callbacks {
     pub pretty_results: Option<bool>,
     /// `ANSIBLE_JSON_INDENT`, else `[defaults] json_indent`: the `json` callback's indent.
     pub json_indent: Option<i64>,
+    /// The keys of `[callback_tree]` and `[callback_profile_tasks]`, by section and key.
+    pub sections: std::collections::BTreeMap<(String, String), String>,
+}
+
+impl Callbacks {
+    /// An option of a callback that prints beside the stdout one: `env` when it is set, else
+    /// `key` of `[section]`.
+    pub fn option(&self, env: &str, section: &str, key: &str) -> Option<String> {
+        std::env::var(env).ok().or_else(|| {
+            self.sections
+                .get(&(section.to_string(), key.to_string()))
+                .cloned()
+        })
+    }
 }
 
 /// One key of `[defaults]`; a key that is not one of the four is left alone.

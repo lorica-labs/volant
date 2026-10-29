@@ -366,6 +366,8 @@ fn loop_control_sub_keys_are_read() {
 #[case::free_form_alias("ansible.legacy.shell: echo a=b", "ansible.legacy.shell", &[("_raw_params", "echo a=b")])]
 #[case::unknown_builtin("ansible.builtin.nosuch: echo a", "ansible.builtin.nosuch", &[])]
 #[case::library_stray("my_library_module: a=1 stray", "my_library_module", &[("_raw_params", "stray"), ("a", "1")])]
+#[case::include_vars_pairs("include_vars: file=v.yml name=ns", "include_vars", &[("file", "v.yml"), ("name", "ns")])]
+#[case::include_vars_path("include_vars: vars/v.yml", "include_vars", &[("_raw_params", "vars/v.yml")])]
 #[case::file("file: path=/tmp/x state=touch", "file", &[("path", "/tmp/x"), ("state", "touch")])]
 #[case::collection("community.general.ufw: rule=allow port=22", "community.general.ufw", &[("port", "22"), ("rule", "allow")])]
 #[case::windows_free_text("ansible.windows.win_shell: Get-Service foo", "ansible.windows.win_shell", &[("_raw_params", "Get-Service foo")])]
@@ -528,7 +530,10 @@ fn play_and_task_keywords_are_read_raw() {
     let play = &pb.plays[0];
     assert_eq!(play.vars["port"], serde_json::json!(80));
     assert_eq!(play.vars["greeting"], serde_json::json!("hello {{ name }}"));
-    assert_eq!(play.vars_files, ["vars/common.yml", "vars/{{ env }}.yml"]);
+    assert_eq!(
+        play.vars_files,
+        [vec!["vars/common.yml"], vec!["vars/{{ env }}.yml"]]
+    );
     let t = tasks(play);
     assert_eq!(t[0].when, ["port > 1"]);
     assert_eq!(t[0].register.as_deref(), Some("out"));

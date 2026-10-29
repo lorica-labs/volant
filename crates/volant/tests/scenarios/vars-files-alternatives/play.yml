@@ -1,0 +1,11 @@
+- hosts: g
+  gather_facts: false
+  vars_files:
+    - vars/common.yml
+    - - "vars/{{ foo }}.yml"
+      - vars/defaults.yml
+    - - "vars/{{ nosuch }}.yml"
+      - vars/later.yml
+  tasks:
+    - debug:
+        msg: "{{ common }} {{ is_bar }} {{ skipped | default('skipped') }}"

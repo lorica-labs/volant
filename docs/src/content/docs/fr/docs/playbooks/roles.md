@@ -1,5 +1,5 @@
 ---
-sourceHash: 6b6cfaf519ca
+sourceHash: 636ba87fd21a
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---

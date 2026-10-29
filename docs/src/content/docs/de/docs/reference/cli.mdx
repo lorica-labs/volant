@@ -1,5 +1,5 @@
 ---
-sourceHash: a59959b6fcdc
+sourceHash: 2be6c50ce59b
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -18,12 +18,14 @@ volant pull -U URL [OPTIONS] [PLAYBOOK...]
 volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shadow replay RECORDING [--json]
+volant compat install [-p PATH] [-f]
+volant lock [--check]
 volant shims <install|remove>
 volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-Jeder andere Befehl hat eine eigene Seite: [`volant adhoc`](/de/docs/reference/cli/adhoc/), [`volant config`](/de/docs/reference/cli/config/), [`volant console`](/de/docs/reference/cli/console/), [`volant doc`](/de/docs/reference/cli/doc/), [`volant galaxy`](/de/docs/reference/cli/galaxy/), [`volant pull`](/de/docs/reference/cli/pull/), [`volant inventory`](/de/docs/reference/cli/inventory/), [`volant runtime`](/de/docs/reference/cli/runtime/), [`volant shadow`](/de/docs/reference/cli/shadow/), [`volant shims`](/de/docs/reference/cli/shims/), [`volant vault`](/de/docs/reference/cli/vault/). [Ansible-Befehlsnamen](/de/docs/start/ansible-command-names/) verbindet sie. Diese Seite behandelt `volant playbook`.
+Jeder andere Befehl hat eine eigene Seite: [`volant adhoc`](/de/docs/reference/cli/adhoc/), [`volant config`](/de/docs/reference/cli/config/), [`volant compat`](/de/docs/reference/cli/compat/), [`volant console`](/de/docs/reference/cli/console/), [`volant doc`](/de/docs/reference/cli/doc/), [`volant galaxy`](/de/docs/reference/cli/galaxy/), [`volant pull`](/de/docs/reference/cli/pull/), [`volant inventory`](/de/docs/reference/cli/inventory/), [`volant lock`](/de/docs/reference/cli/lock/), [`volant runtime`](/de/docs/reference/cli/runtime/), [`volant shadow`](/de/docs/reference/cli/shadow/), [`volant shims`](/de/docs/reference/cli/shims/), [`volant vault`](/de/docs/reference/cli/vault/). [Ansible-Befehlsnamen](/de/docs/start/ansible-command-names/) verbindet sie. Diese Seite behandelt `volant playbook`.
 
 `volant playbook` nimmt dieselben Optionen wie `ansible-playbook`, soweit sie dort existieren. `volant-playbook` ist dasselbe Programm unter einem Namen, der dem vertrauten ähnelt. Playbooks, die zusammen angegeben werden, laufen der Reihe nach, und jedes gibt seinen eigenen Recap aus.
 
@@ -193,6 +195,10 @@ Diese Optionen lesen die Playbooks und halten an. Sie verbinden sich nie mit ein
   Woher gesammelte Facts kommen. `auto` verwendet das native `setup` des Agents, wenn jeder Fact, den die Plays lesen können, einer ist, den er liefert, und sonst das Modul `setup` von ansible-core. `python` führt immer das Python-Modul aus, zum Vergleich. `native` fragt immer den Collector des Agents, und Facts, die er nicht liefert, sind dann nicht definiert. Auf einem anderen Host als Debian oder Ubuntu gibt der native Collector den Task an das Python-Modul zurück, was auch diese Option sagt. Siehe [Facts](/de/docs/variables/precedence/#native-facts).
 </Option>
 
+<Option name="--locked" id="locked">
+  Lehnt den Lauf vor jeder Verbindung mit Exit 4 ab, wenn installierte Collections, Rollen, Runtime oder Volant von [`volant.lock`](/de/docs/reference/cli/lock/) abweichen. Ohne die Option ergibt jeder Unterschied eine Warnung.
+</Option>
+
 <Option name="--profile">
   Gibt nach dem Recap auf der Standardfehlerausgabe aus, wohin die Zeit des Laufs ging: die Phasen des Controllers pro Host, dann für jedes Modul den Pfad, den seine Tasks genommen haben (`native`, `python` oder `fallback`), ihre Zeiten und warum ein natives Modul einen Task zurückgegeben hat. Die erste Zeile sagt, woher die Facts kamen und warum.
 </Option>
@@ -241,4 +247,4 @@ Volant liest die oben genannten `ANSIBLE_*`-Variablen sowie einige eigene.
 
 Jede `ansible-playbook`-Option wird akzeptiert. `--scp-extra-args` und `--sftp-extra-args` haben keine Wirkung, weil Dateien über die Agent-Verbindung übertragen werden. Die [Paritätsseite](/de/docs/reference/parity/#ansible-playbook-option) führt jede Option mit ihrem Status auf.
 
-`volant` hat die Unterbefehle `playbook`, `adhoc`, `inventory`, `runtime`, `shadow`, `shims`, `vault`, `doc`, `config`, `galaxy`, `console` und `pull`. Es gibt kein `volant check` und kein `volant lint`. Führen Sie diese Werkzeuge aus ansible-core aus oder nutzen Sie die Auflistungsoptionen von `volant playbook`.
+`volant` hat die Unterbefehle `playbook`, `adhoc`, `inventory`, `runtime`, `lock`, `shadow`, `shims`, `compat`, `vault`, `doc`, `config`, `galaxy`, `console` und `pull`. Es gibt kein `volant check` und kein `volant lint`. Führen Sie diese Werkzeuge aus ansible-core aus oder nutzen Sie die Auflistungsoptionen von `volant playbook`.

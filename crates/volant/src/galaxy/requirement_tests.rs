@@ -89,7 +89,7 @@ fn a_requirements_file_is_refused(
     let want = want
         .replace("{path}", &path.display().to_string())
         .replace("{not_fqcn}", NOT_FQCN);
-    assert_eq!(read(&path, old_format), Err(Failure::error(want)));
+    assert_eq!(read(&path, old_format, 0), Err(Failure::error(want)));
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn both_kinds_come_from_one_file() {
     app.source = Some("https://galaxy.example/".into());
     app.signatures = vec!["file:///s.asc".into()];
     assert_eq!(
-        read(&path, true),
+        read(&path, true, 0),
         Ok(Requirements {
             collections: vec![galaxy("demo.base", "*"), app],
             roles: vec![
@@ -125,9 +125,14 @@ fn both_kinds_come_from_one_file() {
 #[test]
 fn a_file_without_entries_for_the_command_is_empty() {
     let (_dir, path) = written("roles:\n  - name: demo.web\n");
-    assert!(read(&path, false).expect("parses").collections.is_empty());
+    assert!(
+        read(&path, false, 0)
+            .expect("parses")
+            .collections
+            .is_empty()
+    );
     let (_dir, path) = written("collections:\n  - demo.base\n");
-    assert!(read(&path, true).expect("parses").roles.is_empty());
+    assert!(read(&path, true, 0).expect("parses").roles.is_empty());
 }
 
 /// An `include` brings the roles of its file in place of the entry.
@@ -146,7 +151,7 @@ fn an_include_brings_its_roles_in_place() {
     )
     .expect("written");
     assert_eq!(
-        read(&path, true).expect("parses").roles,
+        read(&path, true, 0).expect("parses").roles,
         [
             galaxy_role("demo.web", "1.0.0"),
             galaxy_role("demo.other", "")
@@ -245,10 +250,10 @@ fn a_number_entry_is_an_unexpected_exception() {
 #[test]
 fn the_fixture_files_parse() {
     let fixtures = Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/fixtures");
-    let roles = read(&fixtures.join("proof-roles/requirements.yml"), true).expect("parses");
+    let roles = read(&fixtures.join("proof-roles/requirements.yml"), true, 0).expect("parses");
     assert_eq!(roles.roles.len(), 4);
     assert_eq!(roles.roles[0], galaxy_role("geerlingguy.security", "3.0.2"));
-    let k3s = read(&fixtures.join("proof-k3s/requirements.yml"), false).expect("parses");
+    let k3s = read(&fixtures.join("proof-k3s/requirements.yml"), false, 0).expect("parses");
     assert_eq!(k3s.collections.len(), 4);
     assert_eq!(k3s.collections[0], galaxy("ansible.posix", "2.2.2"));
 }

@@ -484,3 +484,36 @@ fn shuffle_keeps_every_host() {
     hosts.sort_unstable();
     assert_eq!(hosts, (0..50).collect::<Vec<_>>());
 }
+
+/// The collection `volant compat install` carries is the repository's, file for file, the
+/// `version:` line aside, which the install writes from the binary.
+#[test]
+fn the_carried_compat_collection_is_the_repository_s() {
+    fn walk(dir: &std::path::Path, top: &std::path::Path, out: &mut Vec<String>) {
+        for entry in std::fs::read_dir(dir).expect("the collection") {
+            let path = entry.expect("an entry").path();
+            if path.is_dir() {
+                walk(&path, top, out);
+            } else {
+                let rel = path.strip_prefix(top).expect("under the collection");
+                out.push(rel.to_string_lossy().replace('\\', "/"));
+            }
+        }
+    }
+    let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .join("../../collections/ansible_collections/volant/compat");
+    let mut names = Vec::new();
+    walk(&root, &root, &mut names);
+    names.sort();
+    let mut carried: Vec<&str> = super::compat::FILES.iter().map(|(n, _)| *n).collect();
+    carried.sort_unstable();
+    assert_eq!(names, carried);
+    for (name, text) in super::compat::FILES {
+        let repository = std::fs::read_to_string(root.join(name)).expect("the file");
+        assert_eq!(
+            super::compat::with_version(text, "v"),
+            super::compat::with_version(&repository, "v"),
+            "{name}"
+        );
+    }
+}

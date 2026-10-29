@@ -1,0 +1,1 @@
+args: [role, install, "<golden-tmp>/local.tar.gz,,local", -s, "<golden-server>", -p, "<golden-tmp>/roles"]

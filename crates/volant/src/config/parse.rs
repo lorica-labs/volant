@@ -101,6 +101,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 }
                 "shadow_runs" => config.shadow_runs = shadow_runs(value, origin)?,
                 "shadow_coverage" => config.shadow_coverage = shadow_coverage(value, origin)?,
+                "locked" => config.locked = boolean("locked", origin, value)?,
                 _ => {}
             }
             continue;

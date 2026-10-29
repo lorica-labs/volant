@@ -1,5 +1,5 @@
 ---
-sourceHash: 0c8e4bf84fac
+sourceHash: 5d6232c333d5
 title: Grabaciones de ejecuciones
 description: El archivo que escribe el callback volant.compat.record mientras se ejecuta ansible-playbook, línea por línea.
 ---
@@ -7,6 +7,8 @@ description: El archivo que escribe el callback volant.compat.record mientras se
 Antes de cambiar de herramienta, un equipo puede grabar lo que hace `ansible-playbook` en sus ejecuciones reales y hacer que Volant las reproduzca más tarde. La grabación la escribe el callback `volant.compat.record`. Se distribuye en la colección `volant.compat`, solo necesita la biblioteca estándar de Python y funciona con ansible-core 2.19 y versiones posteriores.
 
 ## Activarlo
+
+[`volant compat install`](/es/docs/reference/cli/compat/) escribe la colección `volant.compat` desde el binario de Volant, sin descargas.
 
 Instala la colección donde ansible-core encuentra sus colecciones y añade dos secciones a `ansible.cfg`:
 

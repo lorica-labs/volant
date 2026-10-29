@@ -32,17 +32,11 @@ fn the_fake_server_answers_every_recorded_request() {
     }
 }
 
-/// The cases whose subcommand `volant galaxy` still refuses.
-const NOT_NATIVE: [&str; 1] = ["role-install"];
-
 /// `volant galaxy` against each case: the same exit code, output, requests and installed files.
 #[test]
 fn a_galaxy_case_matches_the_reference() {
     let mut differences = Vec::new();
     for (name, case) in galaxy::cases() {
-        if NOT_NATIVE.contains(&name.as_str()) {
-            continue;
-        }
         let Some(server) = GalaxyServer::start() else {
             return;
         };
@@ -66,6 +60,8 @@ fn a_galaxy_case_matches_the_reference() {
                     command.env_remove(key);
                 }
             }
+            // The empty configuration the reference reads, which `-v` names.
+            command.env("ANSIBLE_CONFIG", galaxy::REFERENCE_CONFIG);
             process::run_within(&mut command, Duration::from_secs(120), None)
         };
         for args in &case.setup {

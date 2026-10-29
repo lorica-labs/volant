@@ -1,0 +1,3 @@
+setup:
+  - [role, install, "demo.web", -s, "<golden-server>", -p, "<golden-tmp>/roles"]
+args: [role, remove, demo.web, -p, "<golden-tmp>/roles"]

@@ -17,6 +17,7 @@ use super::settings::ServerSettings;
 mod cache;
 pub mod download;
 mod http;
+mod roles;
 pub mod servers;
 
 use cache::{Cache, now, write_private};
@@ -117,8 +118,7 @@ impl Server {
                 if self.verbose >= 3 {
                     println!("Created {}", path.display());
                 }
-            }
-            if self.verbose >= 3 {
+            } else if self.verbose >= 3 {
                 println!("Opened {}", path.display());
             }
             let text = std::fs::read_to_string(&path).unwrap_or_default();
@@ -133,7 +133,7 @@ impl Server {
 
     /// The discovery call, made once: the URL as given, then with `/api` added when that one
     /// fails (`g_connect`).
-    fn connect(&mut self, action: &str) -> Result<(), Failure> {
+    fn connect(&mut self, action: &str, want: &str) -> Result<(), Failure> {
         if self.versions.is_empty() {
             if self.verbose >= 4 {
                 println!("Initial connection to galaxy_server: {}", self.api_server);
@@ -184,10 +184,10 @@ impl Server {
                 );
             }
         }
-        if self.v3().is_none() {
+        if !self.versions.iter().any(|(k, _)| k == want) {
             let keys: Vec<&str> = self.versions.iter().map(|(k, _)| k.as_str()).collect();
             return Err(Failure::error(format!(
-                "Galaxy action {action} requires API versions 'v3' but only '{}' are available on {} {}",
+                "Galaxy action {action} requires API versions '{want}' but only '{}' are available on {} {}",
                 keys.join(", "),
                 self.name,
                 self.api_server
@@ -308,7 +308,7 @@ impl Server {
     /// Every version of a collection the server has, following the pages' `links.next`. A
     /// collection the server does not know has none.
     fn versions_of(&mut self, namespace: &str, name: &str) -> Result<Vec<String>, CallError> {
-        self.connect("get_collection_versions")
+        self.connect("get_collection_versions", "v3")
             .map_err(CallError::other)?;
         let v3 = self.v3().unwrap_or("v3/").to_string();
         let first = join(&[
@@ -397,7 +397,7 @@ impl Server {
         name: &str,
         version: &str,
     ) -> Result<VersionInfo, Failure> {
-        self.connect("get_collection_version_metadata")?;
+        self.connect("get_collection_version_metadata", "v3")?;
         let v3 = self.v3().unwrap_or("v3/").to_string();
         let url = join(&[
             &self.api_server,

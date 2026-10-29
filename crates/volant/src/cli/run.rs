@@ -153,9 +153,8 @@ async fn run_all(
     // role nobody can find, is still refused here with the reference's own code.
     let checking = std::time::Instant::now();
     if !mode.wanted() {
-        for pb in &playbooks {
-            preflight::check(pb)?;
-        }
+        crate::lock::before_run(&config, args.locked, out)?;
+        playbooks.iter().try_for_each(preflight::check)?;
     }
     let mut preflight_micros = micros(checking);
     // Roles are read and spliced here, before the first `PLAY` banner: a role nobody can find

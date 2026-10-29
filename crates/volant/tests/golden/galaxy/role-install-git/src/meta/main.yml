@@ -1,0 +1,6 @@
+galaxy_info:
+  author: git
+  description: A git role.
+  license: GPL-3.0-or-later
+  min_ansible_version: '2.19'
+dependencies: []

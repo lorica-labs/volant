@@ -1,0 +1,4 @@
+collections:
+  - name: demo.base
+    version: 1.0.0
+  - name: demo.app

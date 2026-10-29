@@ -1,0 +1,18 @@
+{
+  "args": [
+    "role",
+    "install",
+    "<golden-tmp>/local.tar.gz",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 1,
+  "repos": [],
+  "requests": [],
+  "setup": [],
+  "stderr": "[WARNING]: - <golden-tmp>/local.tar.gz was NOT installed successfully: the specified roles path exists and is not a directory.\n[ERROR]: - you can use --ignore-errors to skip failed roles and finish processing the list.\n",
+  "stdout": "Starting galaxy role install process\n- extracting <golden-tmp>/local.tar.gz to <golden-tmp>/local.tar.gz\n",
+  "tree": {}
+}

@@ -1,5 +1,5 @@
 ---
-sourceHash: 0c8e4bf84fac
+sourceHash: 5d6232c333d5
 title: Enregistrements de runs
 description: Le fichier qu'écrit le callback volant.compat.record pendant un run d'ansible-playbook, ligne par ligne.
 ---
@@ -7,6 +7,8 @@ description: Le fichier qu'écrit le callback volant.compat.record pendant un ru
 Avant de changer d'outil, une équipe peut enregistrer ce que fait `ansible-playbook` sur ses vrais runs, puis faire rejouer ces runs par Volant. C'est le callback `volant.compat.record` qui écrit l'enregistrement. Il est livré dans la collection `volant.compat`, n'a besoin que de la bibliothèque standard de Python et fonctionne avec ansible-core 2.19 et les versions suivantes.
 
 ## L'activer
+
+[`volant compat install`](/fr/docs/reference/cli/compat/) écrit la collection `volant.compat` depuis le binaire Volant, sans téléchargement.
 
 Installez la collection là où ansible-core trouve ses collections, puis ajoutez deux sections à `ansible.cfg` :
 

@@ -1,0 +1,1 @@
+args: [role, install, -r, requirements.yml, -s, "<golden-server>", -p, "<golden-tmp>/roles"]

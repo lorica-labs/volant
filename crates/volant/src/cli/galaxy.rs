@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The `galaxy` command: the options of `ansible-galaxy` 2.19.12, its install directories and the
-//! checks it makes before any work. The subcommands themselves are refused until they are native.
+//! The `galaxy` command: the options of `ansible-galaxy` 2.19.12, its install directories, the
+//! checks it makes before any work, then the subcommand. `init` is refused until it is native, and
+//! the commands that need a Galaxy account are always refused.
 
 mod args;
 
@@ -14,7 +15,7 @@ use crate::galaxy::build::Source;
 use crate::galaxy::requirements::{self, Requirements};
 use crate::galaxy::settings::{self, Settings};
 use crate::galaxy::{self, Failure};
-use crate::galaxy::{download, install, inventory};
+use crate::galaxy::{download, install, inventory, role};
 
 /// Runs `args` and returns the exit code.
 #[must_use]
@@ -26,6 +27,12 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
     let Some(kind) = args.kind else {
         return 2;
     };
+    if args.verbose >= 2 {
+        println!("{}", super::version::block("ansible-galaxy", &[]));
+    }
+    if args.verbose >= 1 {
+        println!("{}", super::announce::config_line());
+    }
     match run(&kind, args.verbose) {
         Ok(code) => code,
         Err(failure) => {
@@ -35,7 +42,7 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
     }
 }
 
-/// The checks the reference makes before the subcommand's work, then the refusal of that work.
+/// The checks the reference makes before the subcommand's work, then that work.
 #[expect(clippy::too_many_lines)]
 fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     let config = Config::load().map_err(|e| Failure::error(e.to_string()))?;
@@ -109,35 +116,49 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
                 &configured_collections(&config),
                 collection.as_deref(),
                 format.as_deref().unwrap_or("human"),
+                verbose,
             );
         }
         Kind::Role(Role::Install {
-            role_name,
+            common,
+            force,
+            roles_path,
+            ignore_errors,
+            no_deps,
+            force_with_deps,
             requirements,
-            ..
+            keep_scm_meta,
+            role_name,
         }) => {
-            if let Some(file) =
-                galaxy::one_of_roles_requirements(role_name, requirements.as_deref())?
-                && requirements_of(&file, true, verbose)?.roles.is_empty()
-            {
-                println!("Skipping install, no requirements found");
-                return Ok(0);
-            }
-            "role install"
+            let options = role::Options {
+                force: *force,
+                force_with_deps: *force_with_deps,
+                no_deps: *no_deps,
+                ignore_errors: *ignore_errors,
+                keep_scm_meta: *keep_scm_meta,
+                verbose,
+            };
+            return role_install(
+                common,
+                (role_name, requirements.as_deref()),
+                roles_path.as_deref(),
+                options,
+                &config,
+            );
         }
-        Kind::Role(Role::List { roles_path, .. }) => {
+        Kind::Role(Role::List {
+            roles_path, role, ..
+        }) => {
             let paths = galaxy::roles_paths(roles_path.as_deref(), &config.roles_path);
-            let (warnings, failure) = galaxy::missing_roles_paths(&paths);
-            for warning in warnings {
-                eprintln!("[WARNING]: {warning}");
-            }
-            if let Some(failure) = failure {
-                return Err(failure);
-            }
-            "role list"
+            return role::list(&paths, role.as_deref());
         }
         Kind::Role(Role::Init { .. }) => "role init",
-        Kind::Role(Role::Remove { .. }) => "role remove",
+        Kind::Role(Role::Remove {
+            roles_path, role, ..
+        }) => {
+            let paths = galaxy::roles_paths(roles_path.as_deref(), &config.roles_path);
+            return role::remove(role, &paths.first().cloned().unwrap_or_default());
+        }
         Kind::Collection(Collection::Publish { .. }) => return Err(refused("collection publish")),
         Kind::Role(Role::Delete { .. }) => return Err(refused("role delete")),
         Kind::Role(Role::Search { .. }) => return Err(refused("role search")),
@@ -148,6 +169,40 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     Err(Failure::error(format!(
         "volant galaxy {name} is not supported yet"
     )))
+}
+
+/// `role install`: the roles named or listed, into the first roles path
+/// (`_execute_install_role`).
+fn role_install(
+    common: &args::Common,
+    (names, requirements): (&[String], Option<&str>),
+    roles_path: Option<&str>,
+    options: role::Options,
+    config: &Config,
+) -> Result<i32, Failure> {
+    let (wanted, only) = match galaxy::one_of_roles_requirements(names, requirements)? {
+        Some(file) => (requirements_of(&file, true, options.verbose)?.roles, names),
+        None => (
+            names
+                .iter()
+                .map(|name| requirements::role(&serde_json::Value::String(name.trim().into())))
+                .collect::<Result<_, _>>()?,
+            &[][..],
+        ),
+    };
+    if wanted.is_empty() {
+        println!("Skipping install, no requirements found");
+        return Ok(0);
+    }
+    let paths = galaxy::roles_paths(roles_path, &config.roles_path);
+    let mut servers = servers(common, (false, false), config, options.verbose, false);
+    role::install(
+        &wanted,
+        only,
+        &paths.first().cloned().unwrap_or_default(),
+        &mut servers,
+        options,
+    )
 }
 
 /// `collection build`: each source tree, `.` by default, built into `--output-path`, `./` by
@@ -211,6 +266,7 @@ fn collection_verify(
         paths: &paths,
         offline,
         ignore_errors,
+        verbose,
     };
     inventory::verify(&wanted, &mut servers, &options)
 }
@@ -282,7 +338,10 @@ fn collection_install(
     let path = match &install.collections_path {
         Some(path) => {
             let path = galaxy::resolve(path);
-            if let Some(warning) = galaxy::collections_path_warning(&path, &configured) {
+            // Volant searches the runtime's directory, so an install there is picked up.
+            if Some(&path) != runtime.as_ref()
+                && let Some(warning) = galaxy::collections_path_warning(&path, &configured)
+            {
                 eprintln!("[WARNING]: {warning}");
             }
             path
@@ -370,7 +429,7 @@ fn requirements_of(
     if verbose >= 3 {
         println!("Reading requirement file at '{}'", file.display());
     }
-    requirements::read(file, old_format)
+    requirements::read(file, old_format, verbose)
 }
 
 /// A subcommand that needs a Galaxy account or server-side data, which stays out of Volant.

@@ -1,5 +1,5 @@
 ---
-sourceHash: ab31fe4cc00b
+sourceHash: af5451743cb8
 title: volant galaxy
 description: Les options d'ansible-galaxy, vérifiées par Volant lui-même, pendant que ses sous-commandes deviennent natives une par une.
 ---
@@ -58,6 +58,12 @@ Les URL d'archives, les répertoires d'espace de noms et les signatures sont ref
 
 `collection verify NAME... [-p PATH] [--offline]` vérifie chaque collection installée : `MANIFEST.json`, puis `FILES.json` contre l'empreinte que donne le manifeste, puis chaque fichier contre la sienne, puis l'arborescence à la recherche de fichiers et de répertoires que `FILES.json` ne liste pas, `*.pyc` exceptés. Chaque différence est listée sous `Collection <name> contains modified content in the following files:`, et la commande sort avec 1. Sans `--offline`, l'archive du serveur pour la même version est téléchargée et son `MANIFEST.json` fait référence ; avec, c'est celui qui est installé. Une collection non installée, ou sans `MANIFEST.json`, est une erreur ; `-i` change les erreurs en avertissements.
 
+## Installer et gérer les rôles
+
+`role install NAME... [-p PATH] [-r FILE]` installe chaque rôle dans le premier chemin de rôles : `-p`, ou le premier configuré. Un nom s'écrit `owner.role[,version[,name]]` et se cherche par l'API v1 du premier serveur ; sans version, c'est la plus haute que liste le serveur, puis la branche du dépôt, puis `master`. Un chemin vers une archive, une URL et une source `git+` s'installent aussi ; une archive ou une source git prend son nom de rôle dans le troisième champ de la ligne, ou dans le chemin quand ce champ est vide. Le répertoire de tête de l'archive est retiré, et `meta/.galaxy_install_info` garde la version et la date d'installation. Un rôle déjà installé dans la même version est sauté ; dans une autre version, il donne un avertissement et reste en place, sauf si `--force` le remplace. Les dépendances de `meta/main.yml` et de `meta/requirements.yml` suivent, sauf avec `-n` ; `--force-with-deps` remplace celles déjà installées. Un rôle qui échoue donne un avertissement, et la commande sort avec 1 sauf si `-i` la laisse continuer. `-g` garde le répertoire `.git` d'un rôle git.
+
+`role list [NAME] [-p PATH]` affiche chaque chemin de rôles sous la forme `# <path>`, puis `- <role>, <version>` pour chaque rôle qu'il contient, `(unknown version)` quand le rôle n'a pas d'informations d'installation. `role remove NAME... [-p PATH]` supprime chaque rôle du premier chemin de rôles, avec `- <role> is not installed, skipping.` pour un répertoire qui ne contient pas de rôle.
+
 ## Les serveurs Galaxy
 
 Les serveurs viennent de `-s`, sinon de `[galaxy] server_list` et des sections `[galaxy_server.<name>]` d'`ansible.cfg`, sinon de `GALAXY_SERVER`, `https://galaxy.ansible.com` par défaut. Chaque variable `ANSIBLE_GALAXY_*` passe avant le fichier. Chaque serveur accepte `url`, `token`, `validate_certs` et `timeout`. `--token` l'emporte sur le jeton du fichier, `-c` coupe la vérification des certificats, et `--timeout` fixe l'attente, 60 secondes par défaut. Un serveur injoignable est sauté avec l'avertissement d'`ansible-galaxy`, et le suivant est interrogé.
@@ -67,6 +73,19 @@ Le jeton part dans `Authorization: Token <token>` et n'est jamais affiché. Sans
 ## Les fichiers de prérequis
 
 `-r` lit le fichier de prérequis comme `ansible-galaxy` : `collections:` et `roles:` dans un même fichier, ou l'ancienne liste simple de rôles, que seul `role install` accepte. Une entrée `include:` apporte les rôles d'un autre fichier, dont le chemin part du répertoire de travail. Quand `-r` est donné deux fois, c'est le dernier qui compte. Quand le fichier n'a aucune entrée pour la commande, `collection install` et `role install` affichent `Skipping install, no requirements found` et sortent avec 0. `-vvv` affiche d'abord `Reading requirement file at '<path>'`. Un fichier mal formé échoue avec le message d'`ansible-galaxy`, code 1 : aucune entrée, des clés autres que `collections` et `roles`, une entrée de rôle sans `name` ni `src`, un nom de collection qui n'est pas `namespace.name` et ne désigne rien, ou un `type` inconnu.
+
+## La sortie détaillée
+
+`-v` compte après la sous-commande, comme pour `ansible-galaxy` ; `ansible-galaxy` ignore un `-v` écrit avant la sous-commande, et Volant le compte.
+
+| Niveau | Ce qui s'ajoute |
+|---|---|
+| `-v` | `Using <path> as config file`, ou `No config file found; using defaults`. |
+| `-vv` | Avant cette ligne, le bloc qu'affiche `--version` : `ansible-galaxy [core <version>]`, `config file`, `configured module search path`, `ansible collection location`, `executable location`. Les lignes Python, Jinja et PyYAML ne viennent que si l'interpréteur du contrôleur répond, comme pour `volant adhoc`. |
+| `-vvv` | `Reading requirement file at '<file>'`, `found role <dict> in yaml file`, `Processing role <name> `, `Found installed collection <name>:<version> at '<path>'`, `Created <token file>` ou `Opened <token file>`, `Collection '<name>:<version>' obtained from server <server> <url>`, `Remote collection cached as '<path>'`, `Skipping '<path>' for collection build`, et la sortie de `git`. |
+| `-vvvv` | `Validating downloaded file hash`. Les autres lignes HTTP d'`ansible-galaxy` (`Calling Galaxy at`, `Found API version`, le cache des réponses) ne sont pas affichées. |
+
+`ansible-galaxy` signale aussi `ansible._protomatter`, la collection qu'ansible-core garde dans son propre paquet Python ; Volant n'a pas ce paquet et ne la signale jamais. `role remove` interroge le serveur Galaxy par défaut sur son API avant de supprimer quoi que ce soit, ce qui affiche `Opened <token file>` à `-vvv` ; Volant retire le rôle sans contacter de serveur.
 
 ## Les sous-commandes refusées
 

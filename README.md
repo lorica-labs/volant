@@ -99,8 +99,9 @@ localhost                  : ok=1    changed=1    unreachable=0    failed=0    s
 | **Hosts** | INI, YAML, TOML, script and plugin inventories, `group_vars` and `host_vars`, the full host-pattern grammar, SSH with keys, `become` through `sudo`, fact gathering with a `jsonfile` cache |
 | **Run modes** | `--check` and `--diff`, vault (`!vault`, vaulted files, `--ask-vault-pass`, `--vault-id`), SSH passwords with `-k` or `ansible_password` |
 | **Listings** | `--list-tasks`, `--list-tags`, `--list-hosts` and `--syntax-check`, byte for byte like Ansible |
+| **Galaxy** | `volant galaxy` installs, builds, downloads, lists and verifies collections, and installs, lists and removes roles, with no Python |
 
-Not there yet: custom action, callback and vars plugins, the `stdout_callback` setting, a few templating features, and every `volant` subcommand except `playbook` and `runtime`. See [Will my playbook run?](https://volant.sh/docs/start/compatibility/) and the [roadmap](https://volant.sh/docs/project/roadmap/).
+Not there yet: custom action, callback and vars plugins, the `stdout_callback` setting, and a few templating features. See [Will my playbook run?](https://volant.sh/docs/start/compatibility/) and the [roadmap](https://volant.sh/docs/project/roadmap/).
 
 ## Promises
 

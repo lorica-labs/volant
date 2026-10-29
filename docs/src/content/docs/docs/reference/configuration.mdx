@@ -275,6 +275,10 @@ Ansible ignores this section, so one `ansible.cfg` can carry it and still drive 
   The share of a playbook's tasks those replays must have compared, from 0 to 1, before `volant shadow status` calls it `ready`. Anything else stops the run with exit code 5.
 </Option>
 
+<Option name="locked" id="volant-locked" default="false">
+  Refuse a run that differs from [`volant.lock`](/docs/reference/cli/lock/) with exit code 4, as `--locked` does. Off, a difference is a warning and the run goes on. Ansible ignores the setting with the rest of `[volant]`.
+</Option>
+
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">
   Sets what `template`, `copy`, `script`, `unarchive` and `assemble` do with a controller `src` that a managed host named, and where a `fetch` may write a `dest` that a host named: `allow`, `contained` or `refuse`. The default is `allow`, which behaves as ansible-core does, and any other word stops the run with exit code 5. See [A source file a managed host named](/docs/internals/action-plugins/#a-source-file-a-managed-host-named) for what each word does.
 </Option>

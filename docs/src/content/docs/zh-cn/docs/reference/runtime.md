@@ -1,5 +1,5 @@
 ---
-sourceHash: 13effd397cb2
+sourceHash: 118d6f078919
 title: 托管运行时
 description: Volant 为自己安装的 Python 和 ansible-core，它们位于哪里、下载什么，以及如何管理。
 ---
@@ -63,6 +63,8 @@ volant runtime install --collections requirements.yml
 ```
 
 `--collections` 接受名字（每个可以带可选的 `:version`），或以 `.yml` 或 `.yaml` 结尾的 requirements 文件。这些 collection 会放到运行时内部的 `collections/` 中。Volant 在 `ANSIBLE_COLLECTIONS_PATH` 和 `[defaults] collections_path` 的路径之后才查找那里，所以你自己安装的 collection 优先。[`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/) 安装到该路径的第一项，默认是 `~/.ansible/collections`，并把运行时的目录列在最后。
+
+安装由 Volant 自己完成：`volant runtime install --collections` 运行 `volant galaxy collection install -p <runtime>/collections`，打印相同的行，这一步不需要 Python。
 
 运行时只包含 ansible-core 及其依赖，没有别的东西。插件需要其他 Python 包的 collection（例如 `json_query` 需要的 `jmespath`）在其中无法工作。这类情况请通过 `VOLANT_PYTHON` 使用你自己的环境。
 

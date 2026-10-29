@@ -1,0 +1,48 @@
+---
+sourceHash: b83b8afbc01b
+title: volant lock
+description: Hält die Volant-Version, die verwaltete Runtime und die installierten Collections und Rollen in volant.lock fest und prüft eine Maschine dagegen.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant lock` schreibt `volant.lock`: die Volant-Version, die verwaltete Runtime und einen Hash jeder installierten Collection und Rolle. Zwei Maschinen mit demselben Checkout, oder ein CI-Job und ein Kollege, erfahren vor einem Lauf, dass sie sich unterscheiden, statt währenddessen.
+
+```sh
+volant lock [--check]
+```
+
+Die Datei liegt neben der geltenden `ansible.cfg`, sonst im Arbeitsverzeichnis. Sie ist TOML, sortiert, und derselbe Baum ergibt dieselben Bytes:
+
+```toml
+format = 1
+volant = "0.4.2"
+core_version = "2.19"
+runtime = { python = "3.13.16", ansible_core = "2.19.12", sha256 = "..." }
+
+[[collection]]
+name = "community.general"
+version = "11.2.0"
+sha256 = "..."
+
+[[role]]
+name = "geerlingguy.nginx"
+version = "3.2.0"
+sha256 = "..."
+```
+
+- `core_version` ist `2.19`, das einzige Profil, das es gibt.
+- `runtime` erscheint nur, wenn die verwaltete Runtime installiert ist. Ihr `sha256` ist der des Manifests, aus dem die Runtime installiert wurde.
+- Die Collections sind die des Collections-Pfads, die Rollen die des Rollenpfads. Steht ein Name in zwei Pfaden, gewinnt der erste, wie der Loader ihn wählt.
+- Ein `sha256` erfasst die sortierten relativen Pfade des Baums und den Inhalt jeder Datei, ohne `__pycache__`-Verzeichnisse und `*.pyc`-Dateien. Die Datei `meta/.galaxy_install_info` einer Rolle, die ihr Installationsdatum enthält, bleibt außen vor.
+- Nicht erfasst: welche Module nativ laufen (das folgt aus der Volant-Version) und Einstellungen in `ansible.cfg` oder `ANSIBLE_*`, die Entscheidungen sind und keine Abweichung.
+
+`volant lock` installiert nichts. Es schreibt die Datei aus dem, was installiert ist, und gibt `wrote <path>` aus.
+
+<Option name="--check">
+  Schreibt nichts; gibt jeden Unterschied zur Datei aus, einen pro Zeile, und endet mit 1, wenn es einen gibt. Eine unlesbare Datei ist ein Fehler, Exit 1.
+</Option>
+
+## Während eines Laufs
+
+Wenn `volant.lock` existiert, vergleicht `volant playbook` den installierten Baum damit vor der ersten Verbindung, dort, wo die Vorabprüfungen laufen. Jeder Unterschied ergibt eine Warnung, `[WARNING]: volant.lock: <difference>`, und der Lauf geht weiter. Mit [`--locked`](/de/docs/reference/cli/#locked) oder [`[volant] locked = true`](/de/docs/reference/configuration/#volant-locked) stoppt ein Unterschied den Lauf mit Exit 4 und der Liste der Unterschiede, bevor ein Host kontaktiert wird. Eine unlesbare Datei ergibt eine Warnung, oder unter `--locked` dieselbe Ablehnung. Eine Auflistung (`--list-tasks` und die anderen) überspringt die Prüfung.

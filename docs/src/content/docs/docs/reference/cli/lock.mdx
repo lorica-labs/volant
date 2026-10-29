@@ -1,0 +1,47 @@
+---
+title: volant lock
+description: Record the Volant version, the managed runtime and the installed collections and roles in volant.lock, and check a machine against it.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+`volant lock` writes `volant.lock`: the Volant version, the managed runtime and a hash of every installed collection and role. Two machines with the same checkout, or a CI job and a colleague, learn they differ before a run instead of during it.
+
+```sh
+volant lock [--check]
+```
+
+The file sits next to the `ansible.cfg` in effect, else in the working directory. It is TOML, sorted, and the same tree gives the same bytes:
+
+```toml
+format = 1
+volant = "0.4.2"
+core_version = "2.19"
+runtime = { python = "3.13.16", ansible_core = "2.19.12", sha256 = "..." }
+
+[[collection]]
+name = "community.general"
+version = "11.2.0"
+sha256 = "..."
+
+[[role]]
+name = "geerlingguy.nginx"
+version = "3.2.0"
+sha256 = "..."
+```
+
+- `core_version` is `2.19`, the only profile there is.
+- `runtime` appears only when the managed runtime is installed. Its `sha256` is that of the manifest the runtime was installed from.
+- The collections are those of the collections path, and the roles those of the roles path. When a name is in two paths, the first path wins, as the loader picks it.
+- A `sha256` hashes the sorted relative paths of the tree and the content of each file, without `__pycache__` directories and `*.pyc` files. A role's `meta/.galaxy_install_info`, which holds its install date, is left out.
+- Not recorded: which modules run natively (it follows from the Volant version) and `ansible.cfg` or `ANSIBLE_*` settings, which are choices rather than drift.
+
+`volant lock` installs nothing. It writes the file from what is installed and prints `wrote <path>`.
+
+<Option name="--check">
+  Write nothing; print each difference from the file, one per line, and exit 1 when there is one. A file that cannot be read is an error, exit 1.
+</Option>
+
+## During a run
+
+When `volant.lock` exists, `volant playbook` compares the installed tree with it before the first connection, where the pre-flight checks run. Each difference is a warning, `[WARNING]: volant.lock: <difference>`, and the run goes on. With [`--locked`](/docs/reference/cli/#locked), or [`[volant] locked = true`](/docs/reference/configuration/#volant-locked), a difference stops the run with exit code 4 and the list of differences, before any host is contacted. A lock that cannot be read is a warning, or the same refusal under `--locked`. A listing (`--list-tasks` and the others) skips the check.

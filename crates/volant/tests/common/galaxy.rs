@@ -14,6 +14,11 @@ const SCRIPT: &str = concat!(
     env!("CARGO_MANIFEST_DIR"),
     "/tests/golden/reference/galaxy_server.py"
 );
+/// The empty configuration every reference run reads.
+pub const REFERENCE_CONFIG: &str = concat!(
+    env!("CARGO_MANIFEST_DIR"),
+    "/tests/golden/reference/ansible.cfg"
+);
 const TMP: &str = "<golden-tmp>";
 const SERVER: &str = "<golden-server>";
 const PORT: &str = "<golden-port>";
@@ -227,6 +232,16 @@ pub fn normalise(text: &str, tmp: &Path, port: u16) -> String {
         .replace(&format!("127.0.0.1:{port}"), &format!("127.0.0.1:{PORT}"));
     let text = galaxy_tmp.replace_all(&text, "<golden-galaxy-tmp>/$1-<golden-random>$2");
     let text = install_date.replace_all(&text, "install_date: '<golden-date>'");
+    // The `-vv` block names the machine's interpreter and paths, the configuration file the
+    // empty one both sides read, and `-vvv` the directory `collection verify` downloads into.
+    let banner =
+        regex::Regex::new(r"(?m)^ansible-galaxy \[core [^\]]*\]\n(?:  .*\n)*").expect("valid");
+    let text = banner.replace_all(&text, "<golden-banner>\n");
+    let config = regex::Regex::new(r"(?m)^Using \S+ as config file$").expect("valid");
+    let text = config.replace_all(&text, "Using <golden-config> as config file");
+    let cache =
+        regex::Regex::new(r"(?m)^(Remote collection cached as ')[^']*/([^/']+')$").expect("valid");
+    let text = cache.replace_all(&text, "${1}<golden-galaxy-tmp>/${2}");
     let git = regex::Regex::new(r"Command '([\[(])'[^']*/git', ").expect("valid");
     git.replace_all(&text, "Command '${1}'git', ").into_owned()
 }

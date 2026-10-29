@@ -102,6 +102,11 @@ impl Manifest {
         )
     }
 
+    /// The SHA-256 of the manifest's text.
+    pub(crate) fn digest(&self) -> &str {
+        &self.digest
+    }
+
     /// What `triple` downloads, or a refusal naming it when nothing is pinned for it.
     pub(crate) fn platform(&self, triple: &str) -> Result<&Platform, String> {
         self.platforms

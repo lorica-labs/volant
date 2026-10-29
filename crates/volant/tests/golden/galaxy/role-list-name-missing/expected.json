@@ -1,0 +1,30 @@
+{
+  "args": [
+    "role",
+    "list",
+    "demo.nope",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [],
+  "setup": [
+    [
+      "role",
+      "install",
+      "demo.web",
+      "-s",
+      "<golden-server>",
+      "-p",
+      "<golden-tmp>/roles"
+    ]
+  ],
+  "stderr": "[WARNING]: - the role demo.nope was not found\n[WARNING]: - the configured path <golden-tmp>/home/.ansible/roles does not exist.\n[WARNING]: - the configured path /usr/share/ansible/roles does not exist.\n[WARNING]: - the configured path /etc/ansible/roles does not exist.\n",
+  "stdout": "",
+  "tree": {
+    "roles/demo.web/meta/.galaxy_install_info": "0b22cfa852e38fab6e2b225351c6ba0bd2d3d36f81f94ccdd9fb9a506b7dbf4b",
+    "roles/demo.web/meta/main.yml": "d65f4e3c3025e3647e25c952df0f701d2c02ade3cce0ad93bc18b045fad02a2b",
+    "roles/demo.web/tasks/main.yml": "dbf593e0f246a42be7f49e6deed618075cd0b1bd4f3b7698ea5154d5d519702a"
+  }
+}

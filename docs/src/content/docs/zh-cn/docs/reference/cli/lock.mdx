@@ -1,0 +1,48 @@
+---
+sourceHash: b83b8afbc01b
+title: volant lock
+description: 在 volant.lock 中记录 Volant 版本、托管运行时以及已安装的集合和角色，并据此检查一台机器。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant lock` 写出 `volant.lock`：Volant 版本、托管运行时，以及每个已安装集合和角色的哈希。两台检出同一仓库的机器，或者一个 CI 任务和一位同事，会在运行之前而不是运行之中发现彼此的差异。
+
+```sh
+volant lock [--check]
+```
+
+该文件位于当前生效的 `ansible.cfg` 旁边，否则位于工作目录。它是排好序的 TOML，同一棵目录树总是得到相同的字节：
+
+```toml
+format = 1
+volant = "0.4.2"
+core_version = "2.19"
+runtime = { python = "3.13.16", ansible_core = "2.19.12", sha256 = "..." }
+
+[[collection]]
+name = "community.general"
+version = "11.2.0"
+sha256 = "..."
+
+[[role]]
+name = "geerlingguy.nginx"
+version = "3.2.0"
+sha256 = "..."
+```
+
+- `core_version` 为 `2.19`，这是目前唯一的配置档。
+- 只有安装了托管运行时才会出现 `runtime`。其 `sha256` 是安装该运行时所用清单的哈希。
+- 集合取自集合路径，角色取自角色路径。同一名称出现在两个路径中时，以第一个路径为准，与加载器的选择一致。
+- `sha256` 涵盖目录树中排序后的相对路径以及每个文件的内容，不包括 `__pycache__` 目录和 `*.pyc` 文件。角色的 `meta/.galaxy_install_info`（其中记有安装日期）不计入。
+- 不记录：哪些模块以原生方式运行（这由 Volant 版本决定），以及 `ansible.cfg` 或 `ANSIBLE_*` 设置，它们是用户的选择而不是漂移。
+
+`volant lock` 不安装任何东西。它根据已安装的内容写出文件，并打印 `wrote <path>`。
+
+<Option name="--check">
+  不写任何文件；逐行打印与文件的每处差异，有差异时以 1 退出。无法读取的文件是错误，退出码 1。
+</Option>
+
+## 运行时
+
+存在 `volant.lock` 时，`volant playbook` 会在第一次连接之前（即预检所在的位置）把已安装的目录树与它比较。每处差异给出一条警告 `[WARNING]: volant.lock: <difference>`，运行继续。使用 [`--locked`](/zh-cn/docs/reference/cli/#locked) 或 [`[volant] locked = true`](/zh-cn/docs/reference/configuration/#volant-locked) 时，任何差异都会在联系任何主机之前以退出码 4 和差异列表终止运行。无法读取的文件给出警告，在 `--locked` 下则同样拒绝运行。列表操作（`--list-tasks` 等）跳过此检查。

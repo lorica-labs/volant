@@ -1,0 +1,32 @@
+{
+  "args": [
+    "role",
+    "install",
+    "demo.web,1.1.0",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [],
+  "setup": [
+    [
+      "role",
+      "install",
+      "demo.web,1.0.0",
+      "-s",
+      "<golden-server>",
+      "-p",
+      "<golden-tmp>/roles"
+    ]
+  ],
+  "stderr": "[WARNING]: - demo.web (1.0.0) is already installed - use --force to change version to 1.1.0\n",
+  "stdout": "Starting galaxy role install process\n",
+  "tree": {
+    "roles/demo.web/meta/.galaxy_install_info": "6c67136ce7443be3eb25e166241d64cabbde845bc6a1f396adfd2162445cd7a8",
+    "roles/demo.web/meta/main.yml": "d65f4e3c3025e3647e25c952df0f701d2c02ade3cce0ad93bc18b045fad02a2b",
+    "roles/demo.web/tasks/main.yml": "fed7d3fe2562d8c7cf3b85f6836d568b2ac37a3415043dde207cde90f48e40e9"
+  }
+}

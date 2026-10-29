@@ -409,7 +409,7 @@ fn a_file_in_the_working_directory_is_not_imported_by_the_probe() {
     assert!(resolve::imports("python3", "json", Some(tmp.path())).is_some());
 }
 
-/// The runtime's commands, `python -m ansible.cli.galaxy` among them, do not import a module from
+/// The runtime's Python commands do not import a module from
 /// the working directory in place of the real one.
 #[test]
 fn the_runtimes_commands_do_not_import_from_the_working_directory() {

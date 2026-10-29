@@ -1,0 +1,48 @@
+---
+sourceHash: b83b8afbc01b
+title: volant lock
+description: Registra la versión de Volant, el runtime gestionado y las colecciones y roles instalados en volant.lock, y compara una máquina con él.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant lock` escribe `volant.lock`: la versión de Volant, el runtime gestionado y un hash de cada colección y cada rol instalados. Dos máquinas con el mismo checkout, o un job de CI y un compañero, saben que difieren antes de una ejecución en lugar de durante ella.
+
+```sh
+volant lock [--check]
+```
+
+El archivo está junto al `ansible.cfg` en vigor, o si no en el directorio de trabajo. Es TOML, ordenado, y el mismo árbol da los mismos bytes:
+
+```toml
+format = 1
+volant = "0.4.2"
+core_version = "2.19"
+runtime = { python = "3.13.16", ansible_core = "2.19.12", sha256 = "..." }
+
+[[collection]]
+name = "community.general"
+version = "11.2.0"
+sha256 = "..."
+
+[[role]]
+name = "geerlingguy.nginx"
+version = "3.2.0"
+sha256 = "..."
+```
+
+- `core_version` es `2.19`, el único perfil que existe.
+- `runtime` solo aparece cuando el runtime gestionado está instalado. Su `sha256` es el del manifiesto desde el que se instaló el runtime.
+- Las colecciones son las de la ruta de colecciones, y los roles los de la ruta de roles. Cuando un nombre está en dos rutas, gana la primera, como lo elige el cargador.
+- Un `sha256` cubre las rutas relativas ordenadas del árbol y el contenido de cada archivo, sin directorios `__pycache__` ni archivos `*.pyc`. El `meta/.galaxy_install_info` de un rol, que guarda su fecha de instalación, queda fuera.
+- No se registra: qué módulos se ejecutan de forma nativa (se deduce de la versión de Volant) ni los ajustes de `ansible.cfg` o `ANSIBLE_*`, que son elecciones y no deriva.
+
+`volant lock` no instala nada. Escribe el archivo a partir de lo instalado e imprime `wrote <path>`.
+
+<Option name="--check">
+  No escribe nada; imprime cada diferencia con el archivo, una por línea, y sale con 1 cuando hay alguna. Un archivo ilegible es un error, salida 1.
+</Option>
+
+## Durante una ejecución
+
+Cuando existe `volant.lock`, `volant playbook` compara con él el árbol instalado antes de la primera conexión, donde se ejecutan las comprobaciones previas. Cada diferencia es un aviso, `[WARNING]: volant.lock: <difference>`, y la ejecución sigue. Con [`--locked`](/es/docs/reference/cli/#locked), o [`[volant] locked = true`](/es/docs/reference/configuration/#volant-locked), una diferencia detiene la ejecución con la salida 4 y la lista de diferencias, antes de contactar con ningún host. Un archivo ilegible es un aviso, o el mismo rechazo con `--locked`. Un listado (`--list-tasks` y los demás) se salta la comprobación.

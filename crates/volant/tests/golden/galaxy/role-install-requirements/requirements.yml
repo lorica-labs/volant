@@ -1,0 +1,4 @@
+- src: demo.web
+  version: 1.0.0
+- name: web2
+  src: demo.web

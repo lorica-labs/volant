@@ -1,5 +1,5 @@
 ---
-sourceHash: fd7538abfe30
+sourceHash: 91d0bc493f4f
 title: Roles, includes e imports
 description: Dónde busca Volant los roles, cómo funcionan las dependencias, las especificaciones de argumentos y las variables de un rol, y cómo los imports y los includes traen otros archivos a un play.
 ---
@@ -63,7 +63,9 @@ Un rol aporta tres capas de variables, y cada una está a una altura distinta de
 Las `vars:` escritas en la entrada de un rol no son un parámetro de rol. Viajan como una palabra clave de tarea normal. Las dos formas se parecen, así que comprueba cuál usaste cuando un rol lea un valor que no esperabas.
 :::
 
-Los `defaults` y `vars` de un rol son visibles para todo el play, así que `pre_tasks` y los roles posteriores pueden leerlos. Para los pasos del propio rol, sus valores se vuelven a poner por encima. Los parámetros del rol se quedan dentro del rol.
+Los `defaults` y `vars` de un rol son visibles para todo el play, así que `pre_tasks` y los roles posteriores pueden leerlos. Para los pasos del propio rol, sus valores se vuelven a poner por encima. Los parámetros del rol se quedan dentro del rol y de los roles de los que depende.
+
+Una dependencia también lee lo que tienen los roles por encima de ella. Sus `vars` quedan por encima del `vars/main.yml` de sus padres y del `vars/main.yml` de sus propias dependencias, que gana al de los padres. Sus `defaults` van al revés: los de sus dependencias, luego los de sus padres y luego los suyos. Sus parámetros quedan por encima de los de sus padres, así que una dependencia sin un parámetro con ese nombre lee el del padre más cercano.
 
 Un `import_role` con `public: false` los mantiene para sí, y un `include_role` hace lo mismo salvo que indique `public: true`. Consulta [Opciones de rol](#opciones-de-rol).
 

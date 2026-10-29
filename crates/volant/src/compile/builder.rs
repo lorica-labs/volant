@@ -15,7 +15,7 @@ use crate::stats::Refusal;
 use super::compiled::{FLUSH_HANDLERS, beside_or_in_role, meta_action};
 use super::flatten::{import_role_entry, unknown_options, validation};
 use super::include::{include_options, include_role_options, include_vars_options};
-use super::inherit::merge;
+use super::inherit::{extend, merge};
 use super::model::{BlockSpan, Handler, IncludeKind, Origin, Section, Step, StepKind};
 use super::tags::TagSelection;
 /// How deep roles and imported files may nest before the run is refused: the same ceiling a
@@ -79,6 +79,17 @@ pub(super) fn sorted(map: &Map<String, Value>) -> Vec<(&String, &Value)> {
     pairs
 }
 
+/// One role of a dependency chain: its own `defaults` and `vars`, and its parameters over those
+/// of the roles above it.
+pub(super) struct ChainLink {
+    defaults: Map<String, Value>,
+    vars: Map<String, Value>,
+    params: Map<String, Value>,
+}
+
+/// A role's `defaults` and `vars` as it lends them to the roles that depend on it.
+type Lent = (Map<String, Value>, Map<String, Value>);
+
 pub(super) struct Builder<'a> {
     pub(super) steps: Vec<Step>,
     pub(super) blocks: Vec<BlockSpan>,
@@ -99,6 +110,13 @@ pub(super) struct Builder<'a> {
     pub(super) role_dir: Option<PathBuf>,
     /// The roles whose `meta/main.yml` pulled in the role being compiled, nearest first.
     pub(super) parent_roles: Vec<PathBuf>,
+    /// The same roles' own values, outermost first, for what a dependency inherits: see
+    /// [`RoleVars::inherited_vars`].
+    pub(super) role_chain: Vec<ChainLink>,
+    /// What each role read so far lends the roles that depend on it, by identity: its
+    /// dependencies' `defaults` and `vars` under its own. Kept for a dependency the dedup skips,
+    /// which still lends them, as `Role.get_all_dependencies` lists it.
+    pub(super) exports: Vec<((String, Value), Lent)>,
     /// How many roles and imported files are open above whatever is being compiled now.
     pub(super) depth: usize,
     /// How many includes deep the statement that started this compilation was. Zero for a play;
@@ -339,6 +357,31 @@ impl Builder<'_> {
         result
     }
 
+    /// What a role whose dependencies were just read inherits, see [`RoleVars::inherited_vars`],
+    /// and what it lends in turn, kept under its identity `key`.
+    fn inherit(&mut self, key: (String, Value), role: &crate::roles::LoadedRole) -> Lent {
+        let (mut lent_defaults, mut lent_vars) = (Map::new(), Map::new());
+        for dependency in &role.dependencies {
+            let key = identity(dependency);
+            if let Some((_, (defaults, vars))) = self.exports.iter().rev().find(|(k, _)| *k == key)
+            {
+                extend(&mut lent_defaults, defaults);
+                extend(&mut lent_vars, vars);
+            }
+        }
+        let mut inherited_defaults = lent_defaults.clone();
+        let mut inherited_vars = Map::new();
+        for link in &self.role_chain {
+            extend(&mut inherited_defaults, &link.defaults);
+            extend(&mut inherited_vars, &link.vars);
+        }
+        extend(&mut inherited_vars, &lent_vars);
+        extend(&mut lent_defaults, &role.defaults);
+        extend(&mut lent_vars, &role.vars);
+        self.exports.push((key, (lent_defaults, lent_vars)));
+        (inherited_defaults, inherited_vars)
+    }
+
     /// One role entry: its dependencies first, then its argument-spec check, then its tasks.
     ///
     /// Measured on ansible-core 2.19.12: a `meta/main.yml` dependency runs before the role that
@@ -371,7 +414,7 @@ impl Builder<'_> {
         if !role.allow_duplicates && seen.contains(&key) {
             return Ok(());
         }
-        seen.push(key);
+        seen.push(key.clone());
         // Two roles that import each other never repeat an identity - `import_role` starts a
         // `seen` list of its own, as measured - so the dedup above stops nothing and only the
         // depth does. The reference's own sentence, at the exit 1 measured with it.
@@ -388,14 +431,27 @@ impl Builder<'_> {
         let outer_exporting = self.exporting;
         self.exporting = outer_exporting && entry.public;
         let exporting = self.exporting;
+        let mut params = self
+            .role_chain
+            .last()
+            .map(|link| link.params.clone())
+            .unwrap_or_default();
+        extend(&mut params, &entry.params);
         self.parent_roles.insert(0, path.clone());
+        self.role_chain.push(ChainLink {
+            defaults: role.defaults.clone(),
+            vars: role.vars.clone(),
+            params: params.clone(),
+        });
         let dependencies: anyhow::Result<()> =
             role.dependencies.iter().try_for_each(|dependency| {
                 self.role(dependency, &kw, seen, block, section, RoleKind::Dependency)
             });
+        self.role_chain.pop();
         self.parent_roles.remove(0);
         dependencies?;
         let index = self.roles.len();
+        let (inherited_defaults, inherited_vars) = self.inherit(key, &role);
         self.exporting = outer_exporting;
         let (role_name, collection) = crate::roles::identity(&path, &entry.name);
         self.roles.push(RoleVars {
@@ -405,7 +461,9 @@ impl Builder<'_> {
             kind,
             defaults: role.defaults,
             vars: role.vars,
-            params: entry.params.clone(),
+            params,
+            inherited_defaults,
+            inherited_vars,
             public: exporting,
             own: None,
         });

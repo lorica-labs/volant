@@ -1,5 +1,5 @@
 ---
-sourceHash: fd7538abfe30
+sourceHash: 91d0bc493f4f
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -63,7 +63,9 @@ Un rôle apporte trois couches de variables, qui se placent à des hauteurs diff
 Les `vars:` écrites sur une entrée de rôle ne sont pas un paramètre de rôle. Elles voyagent comme un mot-clé de tâche ordinaire. Les deux écritures se ressemblent : vérifiez laquelle vous avez utilisée quand un rôle lit une valeur que vous n'attendiez pas.
 :::
 
-Les `defaults` et `vars` d'un rôle sont visibles de tout le play : `pre_tasks` et les rôles suivants peuvent donc les lire. Pour les étapes propres au rôle, ses valeurs sont remises par-dessus. Les paramètres de rôle restent dans le rôle.
+Les `defaults` et `vars` d'un rôle sont visibles de tout le play : `pre_tasks` et les rôles suivants peuvent donc les lire. Pour les étapes propres au rôle, ses valeurs sont remises par-dessus. Les paramètres de rôle restent dans le rôle et dans les rôles dont il dépend.
+
+Une dépendance lit aussi ce que portent les rôles au-dessus d'elle. Ses `vars` se placent au-dessus du `vars/main.yml` de ses parents et de celui de ses propres dépendances, qui l'emporte sur celui des parents. Ses `defaults` vont dans l'autre sens : ceux de ses dépendances, puis ceux de ses parents, puis les siens. Ses paramètres se placent au-dessus de ceux de ses parents : une dépendance sans paramètre de ce nom lit celui du parent le plus proche.
 
 Un `import_role` avec `public: false` les garde pour lui, et un `include_role` fait de même sauf s'il dit `public: true`. Voir [Options de rôle](#options-de-rôle).
 

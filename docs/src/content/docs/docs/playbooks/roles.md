@@ -62,7 +62,9 @@ A role contributes three layers of variables, and they sit at different heights 
 `vars:` written on a role entry is not a role parameter. It travels as an ordinary task keyword. The two spellings look alike, so check which one you used when a role reads a value you did not expect.
 :::
 
-A role's `defaults` and `vars` are visible to the whole play, so `pre_tasks` and later roles can read them. For the role's own steps, its values are laid back on top. Role parameters stay inside the role.
+A role's `defaults` and `vars` are visible to the whole play, so `pre_tasks` and later roles can read them. For the role's own steps, its values are laid back on top. Role parameters stay inside the role and the roles it depends on.
+
+A dependency also reads what the roles above it hold. Its `vars` sit over its parents' `vars/main.yml` and over the `vars/main.yml` of its own dependencies, which win over the parents'. Its `defaults` go the other way: its dependencies', then its parents', then its own. Its parameters sit over its parents' parameters, so a dependency without a parameter of that name reads the nearest parent's.
 
 An `import_role` with `public: false` keeps them to itself, and an `include_role` does that unless it says `public: true`. See [Role options](#role-options).
 

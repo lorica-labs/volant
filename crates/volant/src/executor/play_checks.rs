@@ -13,7 +13,7 @@ use crate::inventory::Host;
 use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::template::{Templar, Vars};
-use crate::vars::{Scope, VarsFiles, load_vars_file};
+use crate::vars::{Scope, VarsFiles, load_play_vars_file};
 
 /// The play's `max_fail_percentage`, rendered once when the play starts: a batch that loses a
 /// larger share of its hosts than this ends the run. A value that is no number is refused here,
@@ -341,7 +341,7 @@ pub(super) fn read_vars_files<'a>(
             // does not parse stops the reference with the same code a broken playbook
             // gets.
             // A vaulted file the run cannot read is exit 1 in the reference.
-            let file = load_vars_file(&path).map_err(|err| {
+            let file = load_play_vars_file(&path).map_err(|err| {
                 if err.is::<crate::vars::VaultFile>() {
                     crate::stats::Refusal::at(1, err)
                 } else {

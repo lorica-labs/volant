@@ -40,31 +40,31 @@ unnested_or_patterns = "warn"
 mimalloc = { version = "0.1", default-features = false }
 anstream = "1"
 anstyle = "1"
-aes = "0.8"
+aes = "0.9"
 anyhow = "1"
 blake3 = "1.8"
 clap = { version = "4", features = ["derive"] }
-ctr = "0.9"
+ctr = "0.10"
 # Decision record 0012: gzip over the miniz_oxide already in the tree.
 flate2 = { version = "1.1", default-features = false, features = [
   "rust_backend",
 ] }
-hmac = "0.12"
+hmac = "0.13"
 indexmap = "2"
 insta = { version = "1", features = ["filters"] }
 libc = "0.2"
 miniz_oxide = "0.9.1"
-minijinja = { version = "=3.0.1", features = [
+minijinja = { version = "=3.0.4", features = [
   "preserve_order",
   "serde",
   "unstable_machinery",
 ] }
-minijinja-contrib = { version = "=3.0.1", default-features = false, features = [
+minijinja-contrib = { version = "=3.0.4", default-features = false, features = [
   "pycompat",
 ] }
-pbkdf2 = { version = "0.12", default-features = false, features = ["hmac"] }
+pbkdf2 = { version = "0.13", default-features = false, features = ["hmac"] }
 regex = "1"
-rstest = "0.27"
+rstest = "0.28"
 # The console's line editor: history and completion on a terminal, nothing else.
 rustyline = { version = "19", default-features = false }
 # Decision record 0012: TLS for galaxy, with ring and the system roots.
@@ -75,8 +75,8 @@ rustls = { version = "0.23", default-features = false, features = [
   "logging",
 ] }
 rustls-native-certs = "0.8"
-saphyr = "0.2.0"
-saphyr-parser = "0.2.1"
+saphyr = "0.3.0"
+saphyr-parser = "0.3.0"
 serde = { version = "1", features = ["derive"] }
 serde_json = { version = "1", features = [
   "arbitrary_precision",
@@ -84,7 +84,7 @@ serde_json = { version = "1", features = [
   "unbounded_depth",
 ] }
 sha1_smol = "1.0"
-sha2 = "0.10"
+sha2 = "0.11"
 shlex = "2"
 # Decision record 0012: collection and role archives, read entry by entry.
 tar = { version = "0.4", default-features = false }

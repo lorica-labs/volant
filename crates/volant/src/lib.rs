@@ -22,6 +22,7 @@ pub(crate) mod galaxy;
 pub mod inventory;
 pub mod keywords;
 pub(crate) mod listing;
+pub(crate) mod lock;
 pub mod playbook;
 pub mod preflight;
 pub(crate) mod profile;

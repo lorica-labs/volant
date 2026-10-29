@@ -13,6 +13,7 @@ mod color;
 mod defaults;
 mod docker;
 mod locate;
+pub(crate) use locate::locate;
 mod paramiko;
 mod parse;
 mod paths;
@@ -176,6 +177,8 @@ pub struct Config {
     /// `[volant] shadow_coverage`: the share of a playbook's tasks those replays must have
     /// compared, written from 0 to 1 and kept in thousandths. 0.9 by default.
     pub shadow_coverage: u32,
+    /// `[volant] locked`: a run that differs from `volant.lock` is refused with exit 4.
+    pub locked: bool,
     /// `fact_caching` (`ANSIBLE_CACHE_PLUGIN`): `memory`, the default, or `jsonfile`.
     pub fact_caching: String,
     /// `fact_caching_connection`: the directory `jsonfile` keeps its files in.
@@ -487,12 +490,6 @@ static TASK_DEBUGGER: AtomicBool = AtomicBool::new(false);
 /// Whether `enable_task_debugger` is on; off when no configuration was loaded.
 pub(crate) fn task_debugger() -> bool {
     TASK_DEBUGGER.load(Ordering::Relaxed)
-}
-
-/// `ANSIBLE_CONFIG`, then `./ansible.cfg` unless the working directory is world-writable,
-/// `~/.ansible.cfg`, `/etc/ansible/ansible.cfg`.
-pub(crate) fn locate() -> Option<PathBuf> {
-    locate::current().path
 }
 
 #[cfg(test)]

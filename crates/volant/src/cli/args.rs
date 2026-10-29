@@ -70,6 +70,10 @@ pub struct PlaybookArgs {
     /// Print where the run's time went on stderr, after the recap.
     #[arg(long = "profile")]
     pub profile: bool,
+    /// Refuse the run, with exit 4, when the installed collections, roles, runtime or Volant
+    /// differ from `volant.lock`.
+    #[arg(long = "locked")]
+    pub locked: bool,
     /// Where `setup` gets its facts: `python` forces the Python module, `native` the agent's own
     /// collector, `auto` picks the native one only when the plays provably read nothing else.
     #[arg(long = "facts", value_enum, default_value_t = Facts::Auto)]

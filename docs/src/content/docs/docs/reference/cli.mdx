@@ -18,12 +18,13 @@ volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shadow replay RECORDING [--json]
 volant compat install [-p PATH] [-f]
+volant lock [--check]
 volant shims <install|remove>
 volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-Each other command has its own page: [`volant adhoc`](/docs/reference/cli/adhoc/), [`volant config`](/docs/reference/cli/config/), [`volant compat`](/docs/reference/cli/compat/), [`volant console`](/docs/reference/cli/console/), [`volant doc`](/docs/reference/cli/doc/), [`volant galaxy`](/docs/reference/cli/galaxy/), [`volant pull`](/docs/reference/cli/pull/), [`volant inventory`](/docs/reference/cli/inventory/), [`volant runtime`](/docs/reference/cli/runtime/), [`volant shadow`](/docs/reference/cli/shadow/), [`volant shims`](/docs/reference/cli/shims/), [`volant vault`](/docs/reference/cli/vault/). [Ansible command names](/docs/start/ansible-command-names/) ties them together. This page covers `volant playbook`.
+Each other command has its own page: [`volant adhoc`](/docs/reference/cli/adhoc/), [`volant config`](/docs/reference/cli/config/), [`volant compat`](/docs/reference/cli/compat/), [`volant console`](/docs/reference/cli/console/), [`volant doc`](/docs/reference/cli/doc/), [`volant galaxy`](/docs/reference/cli/galaxy/), [`volant pull`](/docs/reference/cli/pull/), [`volant inventory`](/docs/reference/cli/inventory/), [`volant lock`](/docs/reference/cli/lock/), [`volant runtime`](/docs/reference/cli/runtime/), [`volant shadow`](/docs/reference/cli/shadow/), [`volant shims`](/docs/reference/cli/shims/), [`volant vault`](/docs/reference/cli/vault/). [Ansible command names](/docs/start/ansible-command-names/) ties them together. This page covers `volant playbook`.
 
 `volant playbook` takes the same options as `ansible-playbook`, for the ones that exist. `volant-playbook` is the same program under a name that reads like the one you know. Playbooks given together run in order, and each one prints its own recap.
 
@@ -193,6 +194,10 @@ These options read the playbooks and stop. They never connect to a host and neve
   Where gathered facts come from. `auto` uses the agent's native `setup` when every fact the plays can read is one it produces, and ansible-core's `setup` module otherwise. `python` always runs the Python module, to compare against. `native` always asks the agent's collector, and facts it does not produce are then undefined. On a host other than Debian or Ubuntu the native collector hands the task back to the Python module whatever this option says. See [Facts](/docs/variables/precedence/#native-facts).
 </Option>
 
+<Option name="--locked" id="locked">
+  Refuse the run with exit code 4, before any connection, when the installed collections, roles, runtime or Volant differ from [`volant.lock`](/docs/reference/cli/lock/). Without it, each difference is a warning.
+</Option>
+
 <Option name="--profile">
   After the recap, print on standard error where the run's time went: the controller's phases per host, then for each module the path its tasks took (`native`, `python` or `fallback`), their times, and why a native module handed a task back. The first line says where facts came from and why.
 </Option>
@@ -241,4 +246,4 @@ Volant reads the `ANSIBLE_*` variables named above, plus a few of its own.
 
 Every `ansible-playbook` option is accepted. `--scp-extra-args` and `--sftp-extra-args` have no effect, because files move over the agent link. The [parity page](/docs/reference/parity/#ansible-playbook-option) lists each option with its status.
 
-`volant` has the subcommands `playbook`, `adhoc`, `inventory`, `runtime`, `shadow`, `shims`, `compat`, `vault`, `doc`, `config`, `galaxy`, `console` and `pull`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.
+`volant` has the subcommands `playbook`, `adhoc`, `inventory`, `runtime`, `lock`, `shadow`, `shims`, `compat`, `vault`, `doc`, `config`, `galaxy`, `console` and `pull`. There is no `volant check` and no `volant lint`. Run those tools from ansible-core, or use the listing options of `volant playbook`.

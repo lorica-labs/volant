@@ -46,6 +46,12 @@ enum Command {
     /// Install the volant.compat collection this binary carries, with no download.
     #[command(subcommand)]
     Compat(CompatCommand),
+    /// Write volant.lock from what is installed, or with --check list how it differs.
+    Lock {
+        /// List each difference from volant.lock and exit 1 when there is one; write nothing.
+        #[arg(long)]
+        check: bool,
+    },
 }
 
 /// Parses the command line. Started under an ansible-core program name, the process behaves as
@@ -116,6 +122,7 @@ fn main() {
         Command::Vault(args) => volant::cli::vault(args),
         Command::Shadow(command) => volant::shadow::shadow(command),
         Command::Compat(command) => volant::cli::compat(command),
+        Command::Lock { check } => volant::cli::lock(check),
     };
     std::process::exit(code);
 }

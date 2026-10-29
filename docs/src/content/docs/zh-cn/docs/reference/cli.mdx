@@ -1,5 +1,5 @@
 ---
-sourceHash: cba80d6a5c7d
+sourceHash: 2be6c50ce59b
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -19,12 +19,13 @@ volant inventory (--list | --host HOST) [OPTIONS]
 volant runtime <install|pack|status|path|remove>
 volant shadow replay RECORDING [--json]
 volant compat install [-p PATH] [-f]
+volant lock [--check]
 volant shims <install|remove>
 volant vault <encrypt|decrypt|view|create|edit|rekey|encrypt_string>
 volant --version
 ```
 
-其他每个命令都有自己的页面：[`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)、[`volant config`](/zh-cn/docs/reference/cli/config/)、[`volant compat`](/zh-cn/docs/reference/cli/compat/)、[`volant console`](/zh-cn/docs/reference/cli/console/)、[`volant doc`](/zh-cn/docs/reference/cli/doc/)、[`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/)、[`volant pull`](/zh-cn/docs/reference/cli/pull/)、[`volant inventory`](/zh-cn/docs/reference/cli/inventory/)、[`volant runtime`](/zh-cn/docs/reference/cli/runtime/)、[`volant shadow`](/zh-cn/docs/reference/cli/shadow/)、[`volant shims`](/zh-cn/docs/reference/cli/shims/)、[`volant vault`](/zh-cn/docs/reference/cli/vault/)。[ansible 命令名](/zh-cn/docs/start/ansible-command-names/)把它们联系在一起。本页介绍 `volant playbook`。
+其他每个命令都有自己的页面：[`volant adhoc`](/zh-cn/docs/reference/cli/adhoc/)、[`volant config`](/zh-cn/docs/reference/cli/config/)、[`volant compat`](/zh-cn/docs/reference/cli/compat/)、[`volant console`](/zh-cn/docs/reference/cli/console/)、[`volant doc`](/zh-cn/docs/reference/cli/doc/)、[`volant galaxy`](/zh-cn/docs/reference/cli/galaxy/)、[`volant pull`](/zh-cn/docs/reference/cli/pull/)、[`volant inventory`](/zh-cn/docs/reference/cli/inventory/)、[`volant lock`](/zh-cn/docs/reference/cli/lock/)、[`volant runtime`](/zh-cn/docs/reference/cli/runtime/)、[`volant shadow`](/zh-cn/docs/reference/cli/shadow/)、[`volant shims`](/zh-cn/docs/reference/cli/shims/)、[`volant vault`](/zh-cn/docs/reference/cli/vault/)。[ansible 命令名](/zh-cn/docs/start/ansible-command-names/)把它们联系在一起。本页介绍 `volant playbook`。
 
 `volant playbook` 接受与 `ansible-playbook` 相同的选项（对于存在的那些）。`volant-playbook` 是同一个程序，名字读起来就像你熟悉的那个。一起给出的多个 playbook 按顺序运行，每个都会打印自己的汇总。
 
@@ -194,6 +195,10 @@ volant --version
   收集到的 facts 来自哪里。`auto` 在 play 能读取的每个 fact 都由 agent 的原生 `setup` 产生时使用它，否则使用 ansible-core 的 `setup` 模块。`python` 始终运行 Python 模块，用于对比。`native` 始终询问 agent 的收集器，它不产生的 facts 则是未定义的。在 Debian 或 Ubuntu 以外的主机上，无论这个选项怎么设置，原生收集器都会把 task 交还给 Python 模块。见 [Facts](/zh-cn/docs/variables/precedence/#原生-facts)。
 </Option>
 
+<Option name="--locked" id="locked">
+  已安装的集合、角色、运行时或 Volant 与 [`volant.lock`](/zh-cn/docs/reference/cli/lock/) 不一致时，在任何连接之前以退出码 4 拒绝运行。不加此选项时，每处差异只是一条警告。
+</Option>
+
 <Option name="--profile">
   在汇总之后，向标准错误输出这次运行的时间花在了哪里：先是控制节点在每台主机上的各个阶段，然后是每个模块的 task 走过的路径（`native`、`python` 或 `fallback`）、它们的耗时，以及原生模块为什么把 task 交还。第一行说明 facts 来自哪里以及原因。
 </Option>
@@ -242,4 +247,4 @@ Volant 读取上面提到的 `ANSIBLE_*` 变量，以及它自己的几个变量
 
 每个 `ansible-playbook` 选项都能接受。`--scp-extra-args` 和 `--sftp-extra-args` 没有效果，因为文件是通过 agent 链路传输的。[对等性页面](/zh-cn/docs/reference/parity/#ansible-playbook-option)列出了每个选项及其状态。
 
-`volant` 的子命令有 `playbook`、`adhoc`、`inventory`、`runtime`、`shadow`、`shims`、`compat`、`vault`、`doc`、`config`、`galaxy`、`console` 和 `pull`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。
+`volant` 的子命令有 `playbook`、`adhoc`、`inventory`、`runtime`、`lock`、`shadow`、`shims`、`compat`、`vault`、`doc`、`config`、`galaxy`、`console` 和 `pull`。没有 `volant check`，也没有 `volant lint`。请从 ansible-core 运行这些工具，或使用 `volant playbook` 的列表选项。

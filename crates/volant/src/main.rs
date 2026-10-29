@@ -1,8 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use clap::{Parser, Subcommand};
 use volant::cli::{
-    AdhocArgs, ConsoleArgs, GalaxyArgs, InventoryArgs, PlaybookArgs, PullArgs, RuntimeCommand,
-    ShimsCommand, ToolArgs, VaultArgs,
+    AdhocArgs, CompatCommand, ConsoleArgs, GalaxyArgs, InventoryArgs, PlaybookArgs, PullArgs,
+    RuntimeCommand, ShimsCommand, ToolArgs, VaultArgs,
 };
 
 /// Fast engine for Ansible playbooks.
@@ -43,6 +43,9 @@ enum Command {
     /// differently.
     #[command(subcommand)]
     Shadow(volant::shadow::ShadowCommand),
+    /// Install the volant.compat collection this binary carries, with no download.
+    #[command(subcommand)]
+    Compat(CompatCommand),
 }
 
 /// Parses the command line. Started under an ansible-core program name, the process behaves as
@@ -112,6 +115,7 @@ fn main() {
         Command::Shims(command) => volant::cli::shims(command),
         Command::Vault(args) => volant::cli::vault(args),
         Command::Shadow(command) => volant::shadow::shadow(command),
+        Command::Compat(command) => volant::cli::compat(command),
     };
     std::process::exit(code);
 }

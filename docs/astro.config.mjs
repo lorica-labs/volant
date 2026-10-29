@@ -215,6 +215,7 @@ export default defineConfig({
               items: [
                 { label: 'volant playbook', slug: 'docs/reference/cli' },
                 { label: 'volant adhoc', slug: 'docs/reference/cli/adhoc' },
+                { label: 'volant compat', slug: 'docs/reference/cli/compat' },
                 { label: 'volant config', slug: 'docs/reference/cli/config' },
                 { label: 'volant console', slug: 'docs/reference/cli/console' },
                 { label: 'volant doc', slug: 'docs/reference/cli/doc' },

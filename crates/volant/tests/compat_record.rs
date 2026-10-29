@@ -67,13 +67,18 @@ fn copy(from: &Path, to: &Path) {
 /// The sample play in `dir`, with the collection of the repository, recorded to `record` or run
 /// without the callback.
 fn play(python: &Path, dir: &Path, record: Option<&Path>) -> Output {
+    play_with(python, dir, record, &repository().join("collections"))
+}
+
+/// The sample play in `dir` with the collections under `collections`.
+fn play_with(python: &Path, dir: &Path, record: Option<&Path>, collections: &Path) -> Output {
     let mut command = ansible(
         python,
         "playbook",
         dir,
         &["-i", "hosts.ini", "-f", "1", "site.yml"],
     );
-    command.env("ANSIBLE_COLLECTIONS_PATH", repository().join("collections"));
+    command.env("ANSIBLE_COLLECTIONS_PATH", collections);
     if let Some(path) = record {
         command
             .env("ANSIBLE_CALLBACKS_ENABLED", "volant.compat.record")
@@ -152,6 +157,76 @@ fn the_collection_builds_and_installs() {
             .join("installed/ansible_collections/volant/compat/plugins/callback/record.py")
             .is_file()
     );
+}
+
+/// `volant compat install` writes a tree that ansible-galaxy lists and verifies, and under which
+/// ansible-playbook records a run.
+#[test]
+fn the_carried_collection_installs_where_ansible_finds_it() {
+    let Some(python) = python::reference_python() else {
+        return;
+    };
+    let dir = sample();
+    let cols = dir.path().join("cols");
+    let out = run(Command::new(env!("CARGO_BIN_EXE_volant"))
+        .args(["compat", "install", "-p"])
+        .arg(&cols)
+        .env("HOME", dir.path()));
+    let stdout = String::from_utf8_lossy(&out.stdout);
+    assert!(
+        out.status.success(),
+        "{stdout}{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
+    let version = env!("CARGO_PKG_VERSION");
+    assert!(
+        stdout.contains(&format!(
+            "volant.compat:{version} was installed successfully"
+        )),
+        "{stdout}"
+    );
+    let cols_arg = cols.to_str().unwrap();
+    let list = run(&mut ansible(
+        &python,
+        "galaxy",
+        dir.path(),
+        &["collection", "list", "volant.compat", "-p", cols_arg],
+    ));
+    let listed = String::from_utf8_lossy(&list.stdout);
+    assert!(
+        listed
+            .lines()
+            .any(|l| l.split_whitespace().collect::<Vec<_>>() == ["volant.compat", version]),
+        "{listed}"
+    );
+    let verify = run(&mut ansible(
+        &python,
+        "galaxy",
+        dir.path(),
+        &[
+            "collection",
+            "verify",
+            "volant.compat",
+            "--offline",
+            "-p",
+            cols_arg,
+        ],
+    ));
+    assert!(
+        verify.status.success(),
+        "{}{}",
+        String::from_utf8_lossy(&verify.stdout),
+        String::from_utf8_lossy(&verify.stderr)
+    );
+    let path = dir.path().join("run.jsonl");
+    let recorded = play_with(&python, dir.path(), Some(&path), &cols);
+    assert_eq!(
+        recorded.status.code(),
+        Some(0),
+        "{}",
+        String::from_utf8_lossy(&recorded.stderr)
+    );
+    assert_eq!(events(&python, &path)[0]["event"], "header");
 }
 
 /// A recorded run: every line is JSON, from the header to the recap; a `no_log` result is

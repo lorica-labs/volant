@@ -28,7 +28,7 @@ mod meta;
 mod publish;
 mod types;
 
-use arrivals::{Arrivals, arrivals};
+use arrivals::{Arrivals, arrivals, played};
 use display::{arrived, header, header_for, report_result, switch_header};
 use events::{
     Held, answer, book, debug_ask, debugging, show_now, shows_a_line, step_of, streams,
@@ -250,16 +250,7 @@ pub(super) async fn run_batch(
     let mut includes: HashMap<usize, Vec<(String, Vec<IncludeGroup>)>> = HashMap::new();
     // The role instances each host has had brought in, which is what `allow_duplicates: false`
     // is checked against.
-    let mut roles_run: HashMap<String, HashSet<String>> = HashMap::new();
-    // The play's own role instances run for every host of it.
-    for id in plan.steps().roles.iter().filter_map(|r| r.dedup.as_ref()) {
-        for host in &play_hosts {
-            roles_run
-                .entry(host.clone())
-                .or_default()
-                .insert(id.clone());
-        }
-    }
+    let mut roles_run = played(&plan.steps().roles, &play_hosts);
     // What a host that could not be reached owes the terminal, by host and the step its batch
     // began at. The host leaves the play on arrival; its block and line print where the host
     // stands in the step's order, like a result, instead of in front of the hosts before it.

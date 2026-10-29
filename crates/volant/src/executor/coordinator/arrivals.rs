@@ -122,3 +122,15 @@ fn narrow_dependencies(
         }
     }
 }
+
+/// What `roles_run` starts from: the play's own role instances, which run for every host of it.
+pub(super) fn played(
+    roles: &[crate::roles::RoleVars],
+    hosts: &[String],
+) -> HashMap<String, HashSet<String>> {
+    let ids: HashSet<String> = roles.iter().filter_map(|r| r.dedup.clone()).collect();
+    hosts
+        .iter()
+        .map(|host| (host.clone(), ids.clone()))
+        .collect()
+}

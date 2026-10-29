@@ -1,5 +1,5 @@
 ---
-sourceHash: 71cedc265be6
+sourceHash: 31ea5f7597b9
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -274,6 +274,10 @@ Ansible ignora esta sección, así que un mismo `ansible.cfg` puede llevarla y s
 
 <Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">
   La parte de las tareas de un playbook que esas reproducciones deben haber comparado, de 0 a 1, antes de que `volant shadow status` lo declare `ready`. Cualquier otro valor detiene la ejecución con el código de salida 5.
+</Option>
+
+<Option name="locked" id="volant-locked" default="false">
+  Rechaza con la salida 4 una ejecución que difiere de [`volant.lock`](/es/docs/reference/cli/lock/), como `--locked`. Desactivado, una diferencia es un aviso y la ejecución sigue. Ansible ignora el ajuste junto con el resto de `[volant]`.
 </Option>
 
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">

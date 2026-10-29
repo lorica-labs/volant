@@ -1,0 +1,48 @@
+---
+sourceHash: b83b8afbc01b
+title: volant lock
+description: Enregistre la version de Volant, le runtime géré et les collections et rôles installés dans volant.lock, et compare une machine à ce fichier.
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant lock` écrit `volant.lock` : la version de Volant, le runtime géré et une empreinte de chaque collection et de chaque rôle installés. Deux machines avec le même dépôt, ou un job de CI et un collègue, apprennent qu'elles diffèrent avant une exécution plutôt que pendant.
+
+```sh
+volant lock [--check]
+```
+
+Le fichier se trouve à côté de l'`ansible.cfg` en vigueur, sinon dans le répertoire de travail. C'est du TOML, trié, et le même arbre donne les mêmes octets :
+
+```toml
+format = 1
+volant = "0.4.2"
+core_version = "2.19"
+runtime = { python = "3.13.16", ansible_core = "2.19.12", sha256 = "..." }
+
+[[collection]]
+name = "community.general"
+version = "11.2.0"
+sha256 = "..."
+
+[[role]]
+name = "geerlingguy.nginx"
+version = "3.2.0"
+sha256 = "..."
+```
+
+- `core_version` vaut `2.19`, le seul profil qui existe.
+- `runtime` n'apparaît que si le runtime géré est installé. Son `sha256` est celui du manifeste depuis lequel le runtime a été installé.
+- Les collections sont celles du chemin des collections, et les rôles ceux du chemin des rôles. Quand un nom figure dans deux chemins, le premier l'emporte, comme le chargeur le choisit.
+- Un `sha256` couvre les chemins relatifs triés de l'arbre et le contenu de chaque fichier, sans les répertoires `__pycache__` ni les fichiers `*.pyc`. Le `meta/.galaxy_install_info` d'un rôle, qui contient sa date d'installation, est laissé de côté.
+- Non enregistrés : quels modules tournent en natif (cela découle de la version de Volant), et les réglages d'`ansible.cfg` ou `ANSIBLE_*`, qui sont des choix et non une dérive.
+
+`volant lock` n'installe rien. Il écrit le fichier à partir de ce qui est installé et affiche `wrote <path>`.
+
+<Option name="--check">
+  N'écrit rien ; affiche chaque différence avec le fichier, une par ligne, et sort avec 1 quand il y en a une. Un fichier illisible est une erreur, code 1.
+</Option>
+
+## Pendant une exécution
+
+Quand `volant.lock` existe, `volant playbook` compare l'arbre installé au fichier avant la première connexion, là où tournent les vérifications préalables. Chaque différence donne un avertissement, `[WARNING]: volant.lock: <difference>`, et l'exécution continue. Avec [`--locked`](/fr/docs/reference/cli/#locked), ou [`[volant] locked = true`](/fr/docs/reference/configuration/#volant-locked), une différence arrête l'exécution avec le code 4 et la liste des différences, avant qu'un hôte soit contacté. Un fichier illisible donne un avertissement, ou le même refus sous `--locked`. Un listage (`--list-tasks` et les autres) saute la vérification.

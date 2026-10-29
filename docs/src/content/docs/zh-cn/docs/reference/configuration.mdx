@@ -1,5 +1,5 @@
 ---
-sourceHash: 71cedc265be6
+sourceHash: 31ea5f7597b9
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -274,6 +274,10 @@ Ansible 会忽略这个段，所以同一个 `ansible.cfg` 可以包含它，并
 
 <Option name="shadow_coverage" id="volant-shadow-coverage" default="0.9">
   这些重放必须比较过的 playbook 任务所占比例，取值 0 到 1，达到后 `volant shadow status` 才判定为 `ready`。其他任何值都会以退出码 5 终止运行。
+</Option>
+
+<Option name="locked" id="volant-locked" default="false">
+  与 [`volant.lock`](/zh-cn/docs/reference/cli/lock/) 不一致的运行以退出码 4 拒绝，效果同 `--locked`。关闭时，差异只是一条警告，运行继续。Ansible 会连同 `[volant]` 的其他设置一起忽略它。
 </Option>
 
 <Option name="host_named_paths" id="volant-host-named-paths" default="allow" env="VOLANT_HOST_NAMED_PATHS">

@@ -379,6 +379,8 @@
 - template: "{{ conf is contains 'port' }} {{ conf is contains 8080 }}"
   vars: {conf: {port: 8080}}
 # lookups
+- template: "{{ lookup('vars', name='inventory_hostname') }} {{ lookup('vars', 'x', name='y') }} {{ lookup('dict', {'a': 1}, bogus=1) }} {{ lookup('nested', [1], [2], bogus=1) }}"
+  vars: {x: 1}
 - template: "{{ lookup('env', 'VOLANT_GOLDEN_ENV') }}"
 - template: "{{ lookup('env', 'VOLANT_GOLDEN_UNSET_ENV') }}"
 - template: "{{ lookup('vars', 'name') }}"

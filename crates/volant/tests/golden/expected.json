@@ -2269,6 +2269,15 @@
   },
   {
     "case": {
+      "template": "{{ lookup('vars', name='inventory_hostname') }} {{ lookup('vars', 'x', name='y') }} {{ lookup('dict', {'a': 1}, bogus=1) }} {{ lookup('nested', [1], [2], bogus=1) }}",
+      "vars": {
+        "x": 1
+      }
+    },
+    "result": "[] 1 {'key': 'a', 'value': 1} [1, 2]"
+  },
+  {
+    "case": {
       "template": "{{ lookup('env', 'VOLANT_GOLDEN_ENV') }}"
     },
     "result": "golden-env-value"

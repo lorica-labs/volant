@@ -1,5 +1,5 @@
 ---
-sourceHash: 4f71d0749a1f
+sourceHash: 3798b346c136
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -213,6 +213,16 @@ Cada tarea paga el arranque de la conexión del plugin, como en `ansible-playboo
 - Con `-vvvv`, las líneas que ansible-core imprime al arrancar el proceso, como `<address> attempting to start connection` y `<address> local domain socket path is ...`, aparecen bajo la tarea.
 - `persistent_log_messages` registra cada intercambio con el dispositivo, contraseñas incluidas, y ansible-core lo advierte con su propio texto.
 
+## Dispositivos de red
+
+`ansible_connection: network_cli`, `netconf` o `httpapi`, o sus nombres completos bajo `ansible.netcommon`, llegan a un switch, un router o un cortafuegos con los propios plugins de ansible.netcommon, que ansible-core carga en el helper de Python de Volant. El controlador necesita ansible.netcommon y ansible.utils instalados, y la colección de la plataforma del dispositivo, como `cisco.ios`. `ansible_network_os` nombra esa plataforma (`cisco.ios.ios`). Un host `network_cli` sin ella queda inalcanzable con `Unable to automatically determine host network os`.
+
+Los módulos de las colecciones de red, como `ansible.netcommon.cli_command` o `cisco.ios.ios_config`, corren en el controlador como bajo `ansible-playbook` y llegan al dispositivo por el proceso persistente de la conexión. Un módulo que necesita otra conexión distinta de la del host falla con el mensaje de su colección, como `Connection type local is not valid for this module`.
+
+Cada conexión necesita paquetes de Python que ansible-core no trae: paramiko o ansible-pylibssh para `network_cli`, ncclient para `netconf`. Con el runtime gestionado de Volant, `volant runtime install --extras network` los instala, y una ejecución que los necesita se detiene antes de la primera conexión mientras falten. Con `VOLANT_PYTHON`, instálalos en ese entorno.
+
+Los plugins leen sus propias opciones de las variables del host, `ansible.cfg` y el entorno, como las lista `ansible-doc -t connection ansible.netcommon.network_cli`.
+
 ## Variables de host
 
 Volant lee estas variables por host, desde el inventario o desde cualquier otra fuente de variables. Una prueba compara esta lista con los nombres que lee el código de conexión, así que se mantiene sincronizada con el motor.
@@ -366,7 +376,7 @@ En una conexión `local`, `su` se ejecuta en un terminal propio. Una contraseña
 
 ## Todavía no disponible
 
-- Hosts Windows y dispositivos de red.
+- Hosts Windows.
 - Los plugins de conexión distintos de `ssh` y `local`, enumerados en la [matriz de compatibilidad](/es/docs/reference/parity/#collection-connection).
 - `doas`, `pbrun` y los demás métodos de become. Se pueden añadir como otras formas de iniciar el agente, sin cambiar el protocolo.
 

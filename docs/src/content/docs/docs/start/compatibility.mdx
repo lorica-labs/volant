@@ -57,9 +57,9 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | Blocks | `block`, `rescue`, `always` | |
 | Reuse | roles and dependencies, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
 | Delegation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
-| Modules | the modules of ansible-core for Linux hosts, including `copy`, `template`, `dnf`, `service`, `uri` and `reboot`, and the modules of installed collections with their action plugins | a collection's action plugin that needs Windows or a network device, action plugins of your own |
+| Modules | the modules of ansible-core for Linux hosts, including `copy`, `template`, `dnf`, `service`, `uri` and `reboot`, and the modules of installed collections with their action plugins | a collection's action plugin that needs Windows, action plugins of your own |
 | Inventories | INI, YAML and TOML files, directories, scripts, `constructed`, `generator` and collection plugins, several `-i`, `group_vars`, `host_vars`, the `jsonfile` fact cache | none left |
-| Connections | `ssh` with keys, an ssh-agent or a password (`-k` or `ansible_password`, needs OpenSSH 8.4 or later), `local` | other connection plugins, Windows, network devices |
+| Connections | `ssh` with keys, an ssh-agent or a password (`-k` or `ansible_password`, needs OpenSSH 8.4 or later), `local`, and `network_cli`, `netconf` and `httpapi` for network devices | other connection plugins, Windows |
 | Escalation | `become` through `sudo` or `su`, with or without a password | `doas` and other methods |
 | Templating | Jinja2 with the Ansible filters, tests and lookups, `!unsafe`, filters and lookups from collections | some filter arguments, listed in [Templating](/docs/variables/templating/) |
 | Run modes | normal runs, [`--check` and `--diff`](/docs/playbooks/check-and-diff/), [vault](/docs/variables/vault/), `--start-at-task`, `--step`, the four listing commands | none left |
@@ -89,7 +89,7 @@ The pre-flight check stops the run before the first connection, before any banne
 | A built-in module this release does not carry | `module 'x' is not available in this release` | 4 |
 | A string argument that is one template | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | A module or collection that does not resolve | `couldn't resolve module/action 'x' ...`, with the install command for a missing collection | 4 |
-| A collection module that needs an action plugin for Windows or a network device | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| A collection module that needs an action plugin for Windows | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | A `become_method` other than `sudo` and `su` | `become_method 'x' is not supported yet` | 2 |
 | A role in `roles:` or `import_role` that nobody can find | `the role 'x' was not found in ...` | 1 |
 

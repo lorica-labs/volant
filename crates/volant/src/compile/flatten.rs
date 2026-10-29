@@ -276,7 +276,9 @@ pub(crate) fn compile(
             ..empty.deferred.clone()
         },
         args: gather_args(play),
-        origin: play.origin.clone(),
+        // The reference's implicit task is built from no source line, so its error block shows
+        // no origin.
+        origin: None,
         ..empty.clone()
     };
     // A play with `gather_facts: false` still has this step in the reference once

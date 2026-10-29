@@ -31,11 +31,11 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | cache | 2 | 0 | 0 | 0 |
 | callback | 3 | 0 | 0 | 2 |
 | connection | 4 | 0 | 0 | 2 |
-| collection module | 5903 | 0 | 0 | 3540 |
-| collection action plugin | 1665 | 0 | 0 | 419 |
+| collection module | 9266 | 0 | 0 | 177 |
+| collection action plugin | 2073 | 0 | 0 | 11 |
 | collection inventory | 50 | 0 | 0 | 0 |
 | collection lookup | 95 | 0 | 0 | 0 |
-| collection connection | 8 | 0 | 0 | 22 |
+| collection connection | 11 | 0 | 0 | 19 |
 | collection callback | 1 | 0 | 0 | 38 |
 | collection filter | 136 | 0 | 0 | 0 |
 | collection test | 29 | 0 | 0 | 0 |
@@ -702,10 +702,10 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 |---|---|---|
 | `amazon.aws.aws_ssm` | <span class="kw kw-runs">runs</span> |  |
 | `ansible.netcommon.grpc` | <span class="kw kw-no">later</span> | another connection |
-| `ansible.netcommon.httpapi` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.httpapi` | <span class="kw kw-runs">runs</span> | through ansible-core's persistent connection |
 | `ansible.netcommon.libssh` | <span class="kw kw-no">later</span> | another connection |
-| `ansible.netcommon.netconf` | <span class="kw kw-no">later</span> | another connection |
-| `ansible.netcommon.network_cli` | <span class="kw kw-no">later</span> | another connection |
+| `ansible.netcommon.netconf` | <span class="kw kw-runs">runs</span> | through ansible-core's persistent connection |
+| `ansible.netcommon.network_cli` | <span class="kw kw-runs">runs</span> | through ansible-core's persistent connection |
 | `ansible.netcommon.persistent` | <span class="kw kw-no">later</span> | another connection |
 | `community.docker.docker` | <span class="kw kw-runs">runs</span> |  |
 | `community.docker.docker_api` | <span class="kw kw-no">later</span> | another connection |
@@ -782,27 +782,27 @@ For each collection, how many of its rows run, out of the total, for its modules
 | Collection | Version | modules | filters | tests | lookups | action plugins | inventory plugins |
 |---|---|---|---|---|---|---|---|
 | `amazon.aws` | 10.1.2 | 140/140 | 0/0 | 0/0 | 5/5 | 1/1 | 2/2 |
-| `ansible.netcommon` | 8.2.0 | 2/16 | 9/9 | 0/0 | 0/0 | 3/11 | 0/0 |
+| `ansible.netcommon` | 8.2.0 | 16/16 | 9/9 | 0/0 | 0/0 | 11/11 | 0/0 |
 | `ansible.posix` | 2.1.0 | 14/14 | 0/0 | 0/0 | 0/0 | 2/2 | 0/0 |
-| `ansible.utils` | 6.0.0 | 3/4 | 32/32 | 25/25 | 4/4 | 3/4 | 0/0 |
+| `ansible.utils` | 6.0.0 | 4/4 | 32/32 | 25/25 | 4/4 | 4/4 | 0/0 |
 | `ansible.windows` | 3.3.0 | later | 1/1 | 0/0 | 0/0 | later | 0/0 |
-| `arista.eos` | 12.0.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `arista.eos` | 12.0.0 | 33/33 | 0/0 | 0/0 | 0/0 | 42/42 | 0/0 |
 | `awx.awx` | 24.6.1 | 47/47 | 0/0 | 0/0 | 3/3 | 0/0 | 1/1 |
 | `azure.azcollection` | 3.12.0 | 391/391 | 0/0 | 0/0 | 2/2 | 1/1 | 2/2 |
-| `check_point.mgmt` | 6.7.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `check_point.mgmt` | 6.7.0 | 403/403 | 0/0 | 0/0 | 0/0 | 4/4 | 0/0 |
 | `chocolatey.chocolatey` | 1.5.3 | later | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `cisco.aci` | 2.13.0 | later | 1/1 | 0/0 | 1/1 | 0/0 | 1/1 |
+| `cisco.aci` | 2.13.0 | 287/287 | 1/1 | 0/0 | 1/1 | 0/0 | 1/1 |
 | `cisco.dnac` | 6.43.0 | 1141/1141 | 0/0 | 0/0 | 0/0 | 1057/1057 | 0/0 |
 | `cisco.intersight` | 2.12.0 | 110/110 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `cisco.ios` | 11.1.1 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
-| `cisco.iosxr` | 12.1.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `cisco.ios` | 11.1.1 | 40/40 | 0/0 | 0/0 | 0/0 | 40/40 | 0/0 |
+| `cisco.iosxr` | 12.1.0 | 35/35 | 0/0 | 0/0 | 0/0 | 36/36 | 0/0 |
 | `cisco.meraki` | 2.21.9 | 620/620 | 0/0 | 0/0 | 0/0 | 577/577 | 1/1 |
-| `cisco.mso` | 2.12.0 | later | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `cisco.nxos` | 11.1.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `cisco.mso` | 2.12.0 | 132/132 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `cisco.nxos` | 11.1.0 | 78/78 | 0/0 | 0/0 | 0/0 | 104/104 | 0/0 |
 | `cisco.ucs` | 1.16.0 | 29/29 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `cloudscale_ch.cloud` | 2.5.2 | 14/14 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `community.aws` | 10.0.0 | 141/141 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
-| `community.ciscosmb` | 1.0.11 | later | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `community.ciscosmb` | 1.0.11 | 2/2 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.crypto` | 3.0.5 | 38/38 | 9/9 | 0/0 | 1/1 | 1/1 | 0/0 |
 | `community.digitalocean` | 1.27.0 | 56/56 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `community.dns` | 3.4.1 | 17/17 | 7/7 | 0/0 | 4/4 | 0/0 | 2/2 |
@@ -820,34 +820,34 @@ For each collection, how many of its rows run, out of the total, for its modules
 | `community.proxmox` | 1.4.0 | 37/37 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `community.proxysql` | 1.7.0 | 11/11 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.rabbitmq` | 1.6.0 | 14/14 | 0/0 | 0/0 | 1/1 | 0/0 | 0/0 |
-| `community.routeros` | 3.14.0 | 5/7 | 5/5 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `community.routeros` | 3.14.0 | 7/7 | 5/5 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.sap_libs` | 1.5.0 | 9/9 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `community.sops` | 2.2.7 | 2/2 | 2/2 | 0/0 | 1/1 | 1/1 | 0/0 |
 | `community.vmware` | 5.10.0 | 176/176 | 0/0 | 0/0 | 0/0 | 0/0 | 2/2 |
 | `community.windows` | 3.1.0 | later | 0/0 | 0/0 | 1/1 | later | 0/0 |
-| `community.zabbix` | 4.1.1 | later | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
+| `community.zabbix` | 4.1.1 | 46/46 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `containers.podman` | 1.18.0 | 31/31 | 0/0 | 0/0 | 0/0 | 0/0 | 2/2 |
 | `cyberark.conjur` | 1.3.9 | 0/0 | 0/0 | 0/0 | 1/1 | 0/0 | 0/0 |
 | `cyberark.pas` | 1.0.36 | 4/4 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `dellemc.enterprise_sonic` | 3.2.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `dellemc.enterprise_sonic` | 3.2.0 | 87/87 | 0/0 | 0/0 | 0/0 | 88/88 | 0/0 |
 | `dellemc.openmanage` | 9.12.3 | 105/105 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `dellemc.powerflex` | 2.6.1 | 16/16 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `dellemc.unity` | 2.1.0 | 18/18 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `f5networks.f5_modules` | 1.39.0 | later | 2/2 | 0/0 | 2/2 | later | 0/0 |
-| `fortinet.fortimanager` | 2.11.0 | later | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `fortinet.fortios` | 2.4.2 | later | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `f5networks.f5_modules` | 1.39.0 | 179/179 | 2/2 | 0/0 | 2/2 | 3/3 | 0/0 |
+| `fortinet.fortimanager` | 2.11.0 | 1221/1221 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
+| `fortinet.fortios` | 2.4.2 | 707/707 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `google.cloud` | 1.10.2 | 176/176 | 2/2 | 0/0 | 2/2 | 0/0 | 1/1 |
 | `grafana.grafana` | 6.0.6 | 9/9 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `hetzner.hcloud` | 5.4.0 | 38/38 | 1/1 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `hitachivantara.vspone_block` | 4.5.0 | 148/148 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `hitachivantara.vspone_object` | 1.1.1 | 28/28 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `ibm.qradar` | 4.0.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `ibm.qradar` | 4.0.0 | 16/16 | 0/0 | 0/0 | 0/0 | 2/2 | 0/0 |
 | `ibm.storage_virtualize` | 2.7.4 | 48/48 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `ieisystem.inmanage` | 3.0.0 | 130/130 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `infinidat.infinibox` | 1.6.3 | 21/21 | 1/1 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `infoblox.nios_modules` | 1.8.0 | 35/35 | 0/0 | 0/0 | 4/4 | 0/0 | 1/1 |
 | `inspur.ispim` | 2.2.4 | 128/128 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `junipernetworks.junos` | 11.0.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `junipernetworks.junos` | 11.0.0 | 38/38 | 0/0 | 0/0 | 0/0 | 41/41 | 0/0 |
 | `kaytus.ksmanage` | 2.0.0 | 130/130 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `kubernetes.core` | 6.2.0 | 20/20 | 1/1 | 0/0 | 2/2 | 16/16 | 0/0 |
 | `kubevirt.core` | 2.2.3 | 3/3 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
@@ -865,11 +865,11 @@ For each collection, how many of its rows run, out of the total, for its modules
 | `purestorage.flasharray` | 1.40.0 | 67/67 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `purestorage.flashblade` | 1.22.0 | 53/53 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
 | `ravendb.ravendb` | 1.0.4 | 5/5 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |
-| `splunk.es` | 4.0.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `splunk.es` | 4.0.0 | 14/14 | 0/0 | 0/0 | 0/0 | 4/4 | 0/0 |
 | `telekom_mms.icinga_director` | 2.5.0 | 42/42 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `theforeman.foreman` | 5.7.0 | 91/91 | 1/1 | 0/0 | 0/0 | 0/0 | 1/1 |
 | `vmware.vmware` | 2.6.0 | 38/38 | 0/0 | 0/0 | 1/1 | 0/0 | 2/2 |
 | `vmware.vmware_rest` | 4.9.0 | 134/134 | 0/0 | 0/0 | 8/8 | 0/0 | 0/0 |
 | `vultr.cloud` | 1.13.0 | 31/31 | 0/0 | 0/0 | 0/0 | 0/0 | 1/1 |
-| `vyos.vyos` | 6.0.0 | later | 0/0 | 0/0 | 0/0 | later | 0/0 |
+| `vyos.vyos` | 6.0.0 | 28/28 | 0/0 | 0/0 | 0/0 | 35/35 | 0/0 |
 | `wti.remote` | 1.0.10 | 34/34 | 0/0 | 0/0 | 0/0 | 0/0 | 0/0 |

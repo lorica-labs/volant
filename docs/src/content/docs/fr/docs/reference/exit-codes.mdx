@@ -23,15 +23,11 @@ Volant sort avec les codes qu'utilise `ansible-playbook` : les scripts et les t
 </Option>
 
 <Option name="4" id="code-4">
-  Au moins un hôte était injoignable, ou le playbook s'est arrêté avant l'exécution : il ne s'analyse pas, ou il utilise quelque chose que cette version ne prend pas encore en charge.
+  Au moins un hôte était injoignable, que d'autres aient échoué ou non, comme `ansible-playbook` le signale, ou le playbook s'est arrêté avant l'exécution : il ne s'analyse pas, ou il utilise quelque chose que cette version ne prend pas encore en charge.
 </Option>
 
 <Option name="5" id="code-5">
   Un paramètre a une valeur qu'il ne peut pas prendre, comme `forks = many`, un mot inconnu pour `gathering`, `runtime` ou `host_named_paths`, ou un mot-clé `order` que le play ne connaît pas. Le message nomme la clé et la valeur.
-</Option>
-
-<Option name="6" id="code-6">
-  Certains hôtes ont échoué et d'autres étaient injoignables : 2 et 4 combinés.
 </Option>
 
 <Option name="99" id="code-99">

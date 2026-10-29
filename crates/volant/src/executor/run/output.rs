@@ -29,6 +29,10 @@ pub(super) fn give_terminals(tasks: &mut [Task], close: Option<String>) {
 /// The key the Python helper sets on a result it built from `AnsibleActionSkip`.
 pub(crate) const RAISED_SKIP: &str = "_volant_raised_skip";
 
+/// The key the Python helper sets on a result it built from a raised `AnsibleActionFail`, whose
+/// error block is `Task failed: <msg>`: only a failure the plugin returned is `Action failed`.
+pub(crate) const RAISED_FAIL: &str = "_volant_raised_fail";
+
 /// Where the helper leaves the text of a deprecation a plugin raised, for the driver to show.
 pub(crate) const DEPRECATION_TEXT: &str = "_volant_deprecation_text";
 

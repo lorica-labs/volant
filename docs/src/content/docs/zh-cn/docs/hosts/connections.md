@@ -1,5 +1,5 @@
 ---
-sourceHash: 4f71d0749a1f
+sourceHash: 3798b346c136
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -213,6 +213,16 @@ Volant 用两种方式之一到达主机。对于 `ssh`、`local` 和上面列�
 - 在 `-vvvv` 下，ansible-core 启动进程时打印的行，例如 `<address> attempting to start connection` 和 `<address> local domain socket path is ...`，会显示在任务下方。
 - `persistent_log_messages` 会记录与设备的每次交互，包括密码，ansible-core 会用它自己的文字发出警告。
 
+## 网络设备
+
+`ansible_connection: network_cli`、`netconf` 或 `httpapi`，或它们在 `ansible.netcommon` 下的完整名称，通过 ansible.netcommon 自己的插件连接交换机、路由器或防火墙，这些插件由 ansible-core 在 Volant 的 Python helper 中加载。控制端需要安装 ansible.netcommon 和 ansible.utils，以及设备平台的 collection，例如 `cisco.ios`。`ansible_network_os` 指明该平台（`cisco.ios.ios`）。没有它的 `network_cli` 主机会以 `Unable to automatically determine host network os` 变为不可达。
+
+网络 collection 的模块，例如 `ansible.netcommon.cli_command` 或 `cisco.ios.ios_config`，像在 `ansible-playbook` 下一样在控制端运行，并通过连接的持久进程访问设备。需要与主机不同连接的模块会以其 collection 自己的消息失败，例如 `Connection type local is not valid for this module`。
+
+每种连接都需要 ansible-core 不自带的 Python 包：`network_cli` 需要 paramiko 或 ansible-pylibssh，`netconf` 需要 ncclient。使用 Volant 的托管运行时时，`volant runtime install --extras network` 会安装它们；缺少它们时，需要它们的运行会在第一次连接之前停止。使用 `VOLANT_PYTHON` 时，请在该环境中安装它们。
+
+插件自己从主机变量、`ansible.cfg` 和环境中读取选项，就像 `ansible-doc -t connection ansible.netcommon.network_cli` 所列出的那样。
+
 ## 主机变量
 
 Volant 为每台主机从 inventory 或任何其他变量来源读取这些变量。有一个测试会把这份列表与连接代码读取的名字对照检查，所以它与引擎保持同步。
@@ -366,7 +376,7 @@ Volant 会询问 `sudo` 该用哪种形式，而不是假设其中一种。它�
 
 ## 尚未支持
 
-- Windows 主机和网络设备。
+- Windows 主机。
 - `ssh` 和 `local` 之外的连接插件，列在[支持矩阵](/zh-cn/docs/reference/parity/#collection-connection)中。
 - `doas`、`pbrun` 以及其他 become 方法。它们可以作为启动 agent 的其他方式添加，无需更改协议。
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: f6341a3afda1
+sourceHash: 6750333cfcf6
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
@@ -58,9 +58,9 @@ Eine Datei, die nur ein dynamisches `include_tasks` oder `include_role` nennt, w
 | Blöcke | `block`, `rescue`, `always` | |
 | Wiederverwendung | Rollen und Abhängigkeiten, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
 | Delegation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
-| Module | die Module von ansible-core für Linux-Hosts, darunter `copy`, `template`, `dnf`, `service`, `uri` und `reboot`, sowie die Module installierter Collections mit ihren Action-Plugins | das Action-Plugin einer Collection, das Windows oder ein Netzwerkgerät braucht, eigene Action-Plugins |
+| Module | die Module von ansible-core für Linux-Hosts, darunter `copy`, `template`, `dnf`, `service`, `uri` und `reboot`, sowie die Module installierter Collections mit ihren Action-Plugins | das Action-Plugin einer Collection, das Windows braucht, eigene Action-Plugins |
 | Inventories | INI-, YAML- und TOML-Dateien, Verzeichnisse, Skripte, `constructed`, `generator` und Collection-Plugins, mehrere `-i`, `group_vars`, `host_vars`, der Fact-Cache `jsonfile` | nichts mehr offen |
-| Verbindungen | `ssh` mit Schlüsseln, einem ssh-agent oder einem Passwort (`-k` oder `ansible_password`, braucht OpenSSH 8.4 oder neuer), `local` | andere Connection-Plugins, Windows, Netzwerkgeräte |
+| Verbindungen | `ssh` mit Schlüsseln, einem ssh-agent oder einem Passwort (`-k` oder `ansible_password`, braucht OpenSSH 8.4 oder neuer), `local`, sowie `network_cli`, `netconf` und `httpapi` für Netzwerkgeräte | andere Connection-Plugins, Windows |
 | Rechteausweitung | `become` über `sudo` oder `su`, mit oder ohne Passwort | `doas` und andere Methoden |
 | Templating | Jinja2 mit den Filtern, Tests und Lookups von Ansible, `!unsafe`, Filter und Lookups aus Collections | einige Filterargumente, aufgeführt unter [Templating](/de/docs/variables/templating/) |
 | Laufmodi | normale Läufe, [`--check` und `--diff`](/de/docs/playbooks/check-and-diff/), [Vault](/de/docs/variables/vault/), `--start-at-task`, `--step`, die vier Auflistungsbefehle | nichts mehr offen |
@@ -90,7 +90,7 @@ Die Vorabprüfung bricht den Lauf vor der ersten Verbindung ab, vor jedem Banner
 | Ein eingebautes Modul, das dieses Release nicht mitbringt | `module 'x' is not available in this release` | 4 |
 | Ein String-Argument, das ein einziges Template ist | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | Ein Modul oder eine Collection, die sich nicht auflösen lässt | `couldn't resolve module/action 'x' ...`, mit dem Installationsbefehl für eine fehlende Collection | 4 |
-| Ein Collection-Modul, das ein Action-Plugin für Windows oder ein Netzwerkgerät braucht | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| Ein Collection-Modul, das ein Action-Plugin für Windows braucht | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | Eine `become_method` außer `sudo` und `su` | `become_method 'x' is not supported yet` | 2 |
 | Eine Rolle in `roles:` oder `import_role`, die niemand findet | `the role 'x' was not found in ...` | 1 |
 

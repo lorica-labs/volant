@@ -34,13 +34,13 @@ impl Renderer {
     /// The recap, then what `set_stats` collected when `custom` hands it over. The `minimal`
     /// callback prints no recap; the `json` one prints its document here.
     pub fn recap(&mut self, stats: &Stats, custom: Option<&CustomStats>) {
-        if self.json_finish(stats, custom) {
-            return;
+        if !self.json_finish(stats, custom) {
+            self.recap_lines(stats);
+            if let Some(custom) = custom {
+                self.custom_stats(custom);
+            }
         }
-        self.recap_lines(stats);
-        if let Some(custom) = custom {
-            self.custom_stats(custom);
-        }
+        self.aggregates_recap();
     }
 
     fn recap_lines(&mut self, stats: &Stats) {

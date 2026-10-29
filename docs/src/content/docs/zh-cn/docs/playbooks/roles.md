@@ -1,5 +1,5 @@
 ---
-sourceHash: d7ee7e46b08e
+sourceHash: cf4ec0e98731
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -63,7 +63,9 @@ roles:
 写在 role 条目上的 `vars:` 不是 role 参数。它作为普通的 task 关键字传递。两种写法看起来很像，所以当 role 读到你没有预料到的值时，请检查你用的是哪一种。
 :::
 
-role 的 `defaults` 和 `vars` 对整个 play 可见，所以 `pre_tasks` 和之后的 role 可以读取它们。对于 role 自己的步骤，它的值会重新叠放在最上面。role 参数只留在 role 内部。
+role 的 `defaults` 和 `vars` 对整个 play 可见，所以 `pre_tasks` 和之后的 role 可以读取它们。对于 role 自己的步骤，它的值会重新叠放在最上面。role 参数只留在 role 及其依赖的 role 内部。
+
+依赖还会读取它上层各个 role 的值。它的 `vars` 位于父 role 的 `vars/main.yml` 和它自己的依赖的 `vars/main.yml` 之上，而它自己的依赖又胜过父 role。它的 `defaults` 方向相反：先是它的依赖的，然后是父 role 的，最后是它自己的。它的参数位于父 role 的参数之上，所以没有同名参数的依赖会读取最近的父 role 的参数。
 
 `public: false` 的 `import_role` 会把它们保留在自己内部，而 `include_role` 除非写了 `public: true`，否则也这样处理。见 [Role 选项](#role-选项)。
 

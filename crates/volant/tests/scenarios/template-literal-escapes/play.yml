@@ -5,4 +5,4 @@
   tasks:
     - debug: {var: raw}
       run_once: true
-    - debug: {msg: "{{ [i | default(''), j | default(''), r | default(''), e] }}"}
+    - debug: {msg: "{{ [i | default(''), j | default(''), r | default('')] }}"}

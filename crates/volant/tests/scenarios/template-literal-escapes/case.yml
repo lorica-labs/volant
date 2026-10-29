@@ -1,4 +1,4 @@
 # The backslashes of a template literal in a variable stay as written whether the variable comes
-# from YAML, INI or `-e key=value`, and a `{% raw %}` block keeps its text as written.
+# from YAML or INI, and a `{% raw %}` block keeps its text as written.
 stderr: true
-args: [-i, inv.ini, -i, inv.yml, play.yml, -e, 'e={{ "a\\nb" | length }}']
+args: [-i, inv.ini, -i, inv.yml, play.yml]

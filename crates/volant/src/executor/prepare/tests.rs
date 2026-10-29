@@ -990,7 +990,7 @@ fn a_delegate_is_the_inventory_s_host_or_an_implicit_one() {
     assert_eq!(stranger.get("ansible_connection"), None);
     assert_eq!(
         stranger.get("ansible_host"),
-        None,
+        Some(&json!("nosuch")),
         "an unknown name is an ssh target of that name, not a refusal"
     );
 }

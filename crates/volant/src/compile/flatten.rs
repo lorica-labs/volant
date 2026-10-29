@@ -220,6 +220,8 @@ pub(crate) fn compile_with(
         selection,
         exporting: true,
         imported: Vec::new(),
+        role_chain: Vec::new(),
+        exports: Vec::new(),
         played: Vec::new(),
     };
     // The play's own tags are the outermost layer of the merge, so every task under it - in a

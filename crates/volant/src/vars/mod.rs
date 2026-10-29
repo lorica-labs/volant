@@ -32,7 +32,8 @@ pub use host_vars::{HostSettings, HostVars, host_setting, omit_token, settled, s
 pub use include_dir::{Chain, Failure, Scan, include_dir, join_path, read_failure};
 pub use listed::ListedOrigin;
 pub use load::{
-    VaultFile, include_vars_paths, load_vars_file, parse_extra_vars, read_vars_document,
+    VaultFile, include_vars_paths, load_play_vars_file, load_vars_file, parse_extra_vars,
+    read_vars_document,
 };
 pub use magic::ansible_version;
 pub(crate) use play_view::PlayView;
@@ -216,6 +217,12 @@ pub struct VarStore {
     shared: Option<(SharedKey, Arc<Map<String, Value>>)>,
     /// See [`VarStore::templated_facts`]. Never goes back to `false`: the fact outlives the play.
     templated_facts: bool,
+    /// `ansible_verbosity`: how many `-v` the run was given.
+    verbosity: u8,
+    /// `ansible_inventory_sources`: every inventory source in the order given, made absolute.
+    inventory_sources: Vec<String>,
+    /// `ansible_config_file`: the `ansible.cfg` the run read, absolute, or none.
+    config_file: Option<String>,
     /// The inventory as `add_host`, `group_by` and a refresh left it: the one the plays behind
     /// the current one resolve their hosts against.
     dynamic: Inventory,

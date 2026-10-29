@@ -128,6 +128,8 @@ pub(crate) fn expand_include(
         exporting: true,
         imported: Vec::new(),
         static_vars: Map::new(),
+        role_chain: Vec::new(),
+        exports: Vec::new(),
         played: Vec::new(),
     };
     // `block` and `role` are seeded empty and rebased by `graft`: a sub-compilation that mixed

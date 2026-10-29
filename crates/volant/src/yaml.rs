@@ -68,7 +68,9 @@ fn marked<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<MarkedYaml<'a>>
     {
         return marked(Box::leak(fixed.into_boxed_str()), source);
     }
-    parsed.with_context(|| format!("{source}: invalid YAML"))?;
+    parsed
+        .with_context(|| format!("{source}: invalid YAML"))
+        .map_err(|err| limits::scan_located(err, text, source))?;
     duplicate_keys(source)?;
     Ok(loader.into_documents())
 }

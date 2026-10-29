@@ -493,6 +493,7 @@ async fn run_all(
     let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra.clone())
         .inspect_err(|err| banner_before_vars_refusal(out, err, &playbooks))?;
     store.set_forks(forks);
+    store.set_verbosity(args.verbose);
     store.set_reload(
         sources.clone(),
         config.inventory_plugins.clone(),

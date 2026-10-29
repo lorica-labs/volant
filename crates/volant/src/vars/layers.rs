@@ -24,6 +24,8 @@ pub struct Layers {
     pub shared: Arc<Map<String, Value>>,
     /// The gathered facts that answer.
     pub facts: Arc<Map<String, Value>>,
+    /// The `vars_files` values no render changes, read after `map`: `VarsFiles::plain`.
+    pub files: Arc<Map<String, Value>>,
 }
 
 impl VarStore {
@@ -47,7 +49,7 @@ impl VarStore {
         ];
         for name in gathered.keys() {
             let shadowed = above.iter().flatten().any(|m| m.contains_key(name))
-                || scope.vars_files.iter().any(|m| m.contains_key(name));
+                || scope.vars_files.contains_key(name);
             if !shadowed {
                 names.insert(name.clone());
             }
@@ -163,7 +165,7 @@ impl VarStore {
             None => extend(&mut vars, no_facts()),
         }
         extend(&mut vars, &scope.play_vars);
-        for file in &scope.vars_files {
+        for file in scope.vars_files.maps() {
             extend(&mut vars, file);
         }
         extend(&mut vars, &scope.role_vars);
@@ -208,16 +210,20 @@ impl VarStore {
             ];
             gathered.keys().cloned().partition(|name| {
                 above.iter().flatten().any(|m| m.contains_key(name))
-                    || scope.vars_files.iter().any(|m| m.contains_key(name))
+                    || scope.vars_files.contains_key(name)
             })
         };
         let mut map = Map::new();
         extend_except(&mut map, &scope.role_defaults, &answering);
         extend_except(&mut map, &self.host_base(host), &answering);
         extend(&mut map, &scope.play_vars);
-        for file in &scope.vars_files {
-            extend(&mut map, file);
+        // The plain half of the `vars_files` is read after this map, so a name it holds leaves
+        // the layers below it here, and every layer above it lands in the map.
+        let files = Arc::clone(&scope.vars_files.plain);
+        if !files.is_empty() {
+            map.retain(|name, _| !files.contains_key(name));
         }
+        extend(&mut map, &scope.vars_files.templated);
         extend(&mut map, &scope.role_vars);
         extend(&mut map, &scope.task_vars);
         if let Some(facts) = self.facts.get(host) {
@@ -232,7 +238,12 @@ impl VarStore {
             crate::profile::Counter::LayersEntries,
             u64::try_from(map.len()).unwrap_or(u64::MAX),
         );
-        Layers { map, shared, facts }
+        Layers {
+            map,
+            shared,
+            facts,
+            files,
+        }
     }
 
     /// The facts of `host` that answer: the gathered map itself when no name of it is in

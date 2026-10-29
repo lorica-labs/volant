@@ -3,6 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 
 use serde_json::{Map, Value};
 
@@ -12,7 +13,7 @@ use crate::inventory::Host;
 use crate::playbook::Play;
 use crate::render::Renderer;
 use crate::template::{Templar, Vars};
-use crate::vars::{Scope, load_vars_file};
+use crate::vars::{Scope, VarsFiles, load_vars_file};
 
 /// The play's `max_fail_percentage`, rendered once when the play starts: a batch that loses a
 /// larger share of its hosts than this ends the run. A value that is no number is refused here,
@@ -101,16 +102,12 @@ pub(super) fn check_gather_keywords(
 
 /// The same check, strict: the play's vars and the first host's `vars_files` are everything the
 /// reference's keyword sees, so a variable still undefined is refused, as there.
-fn recheck_gather_keywords(
-    play: &Play,
-    state: &RunState,
-    files: &[Map<String, Value>],
-) -> anyhow::Result<()> {
+fn recheck_gather_keywords(play: &Play, state: &RunState, files: &VarsFiles) -> anyhow::Result<()> {
     if play.gather_subset.is_none() && play.gather_timeout.is_none() {
         return Ok(());
     }
     let mut vars = state.vars.lock().expect("vars lock").play_scope(&play.vars);
-    for file in files {
+    for file in files.maps() {
         vars.extend(file.clone());
     }
     check_gather(play, &state.templar, &vars, false)
@@ -219,12 +216,14 @@ pub(super) fn load_play_vars_files(
     playbook_dir: &Path,
     state: &RunState,
     out: &mut Renderer,
-) -> anyhow::Result<HashMap<String, Vec<Map<String, Value>>>> {
+) -> anyhow::Result<HashMap<String, Arc<VarsFiles>>> {
     let mut per_host = HashMap::new();
     if play.vars_files.is_empty() {
         return Ok(per_host);
     }
-    let mut loaded: HashMap<PathBuf, Map<String, Value>> = HashMap::new();
+    let mut loaded: HashMap<PathBuf, Arc<Map<String, Value>>> = HashMap::new();
+    // Hosts that read the same files share one merge of them.
+    let mut merged: HashMap<Vec<*const Map<String, Value>>, Arc<VarsFiles>> = HashMap::new();
     // One warning per entry, not one per host: two hosts reading the same unresolvable entry
     // are one complaint.
     let mut warned: HashSet<&String> = HashSet::new();
@@ -250,7 +249,7 @@ pub(super) fn load_play_vars_files(
             facts: Some(&layers.facts),
             untrusted: Some(&untrusted),
             untrusted_hosts: Some(&untrusted_hosts),
-            base: None,
+            base: Some(&layers.files),
         });
         let vars = Vars {
             map: &resolved,
@@ -259,7 +258,7 @@ pub(super) fn load_play_vars_files(
             facts: Some(&layers.facts),
             untrusted: Some(&untrusted),
             untrusted_hosts: Some(&untrusted_hosts),
-            base: None,
+            base: Some(&layers.files),
         };
         let files = read_vars_files(
             &play.vars_files,
@@ -276,24 +275,28 @@ pub(super) fn load_play_vars_files(
                 }
             },
         )?;
+        let files = merged
+            .entry(files.iter().map(Arc::as_ptr).collect())
+            .or_insert_with(|| Arc::new(VarsFiles::new(&files)));
         if per_host.is_empty() {
-            recheck_gather_keywords(play, state, &files)?;
+            recheck_gather_keywords(play, state, files)?;
         }
-        per_host.insert(host.name.clone(), files);
+        per_host.insert(host.name.clone(), Arc::clone(files));
     }
     Ok(per_host)
 }
 
-/// The `vars_files` entries read under `vars`, each rendered path read once into `loaded`.
+/// The `vars_files` entries read under `vars`, each rendered path read once into `loaded`, and
+/// shared by every host that names it: a 7 MB file copied for each of 50 hosts held 5 GB.
 /// `on_undefined` hears of an entry whose template has no value, which is skipped.
 pub(super) fn read_vars_files<'a>(
     entries: &'a [String],
     templar: &Templar,
     vars: Vars<'_>,
     playbook_dir: &Path,
-    loaded: &mut HashMap<PathBuf, Map<String, Value>>,
+    loaded: &mut HashMap<PathBuf, Arc<Map<String, Value>>>,
     on_undefined: &mut dyn FnMut(&'a String),
-) -> anyhow::Result<Vec<Map<String, Value>>> {
+) -> anyhow::Result<Vec<Arc<Map<String, Value>>>> {
     let mut files = Vec::new();
     for raw in entries {
         let rendered = match templar.render(raw, vars) {
@@ -332,7 +335,7 @@ pub(super) fn read_vars_files<'a>(
             continue;
         }
         files.push(if let Some(file) = loaded.get(&path) {
-            file.clone()
+            Arc::clone(file)
         } else {
             // Exit 4 as well: measured, a `vars_files` entry naming a file whose YAML
             // does not parse stops the reference with the same code a broken playbook
@@ -345,7 +348,8 @@ pub(super) fn read_vars_files<'a>(
                     crate::stats::Refusal::or(4, err)
                 }
             })?;
-            loaded.insert(path, file.clone());
+            let file = Arc::new(file);
+            loaded.insert(path, Arc::clone(&file));
             file
         });
     }

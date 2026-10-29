@@ -1,19 +1,21 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The memory of a loop grows with the data of its items, not with the host's variables.
+//! The memory of a loop grows with the data of its items, not with the host's variables, and the
+//! memory of a play with the data its hosts add, not with its own variables times its hosts.
 
 #![cfg(target_os = "linux")]
 
 use std::process::{Command, Stdio};
 use std::time::{Duration, Instant};
 
-/// The peak resident memory, in MB, of a run of the playbook, read from `/proc` while it runs.
-fn peak_megabytes(dir: &std::path::Path, playbook: &str) -> u64 {
+/// The peak resident memory, in MB, of a run of the playbook on `hosts` local hosts, read from
+/// `/proc` while it runs.
+fn peak_megabytes(dir: &std::path::Path, playbook: &str, hosts: usize) -> u64 {
     std::fs::write(dir.join("p.yml"), playbook).expect("the playbook is written");
-    std::fs::write(
-        dir.join("hosts.ini"),
-        "[all]\nh1 ansible_connection=local\n",
-    )
-    .expect("the inventory is written");
+    let inventory: String = (1..=hosts)
+        .map(|n| format!("h{n} ansible_connection=local\n"))
+        .collect();
+    std::fs::write(dir.join("hosts.ini"), format!("[all]\n{inventory}"))
+        .expect("the inventory is written");
     let mut child = Command::new(env!("CARGO_BIN_EXE_volant"))
         .args(["playbook", "-i", "hosts.ini", "p.yml"])
         .current_dir(dir)
@@ -69,7 +71,7 @@ fn a_loop_over_a_long_result_does_not_copy_it_for_every_item() {
     let playbook = format!(
         "- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: seq 1 {LINES}\n      register: r\n    - debug: {{msg: \"{{{{ item }}}}\"}}\n      loop: \"{{{{ r.stdout_lines }}}}\"\n      loop_control: {{label: x}}\n"
     );
-    let peak = peak_megabytes(&dir, &playbook);
+    let peak = peak_megabytes(&dir, &playbook, 1);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(
         peak < BOUND_MB,
@@ -87,10 +89,42 @@ fn an_extended_loop_over_a_long_result_shares_the_list_of_all_items() {
     let playbook = format!(
         "- hosts: h1\n  gather_facts: false\n  tasks:\n    - command: seq 1 {LINES}\n      register: r\n    - debug: {{msg: \"{{{{ item }}}}\"}}\n      loop: \"{{{{ r.stdout_lines }}}}\"\n      loop_control: {{label: x, extended: true}}\n      failed_when: (ansible_loop.allitems | length) != {LINES} or ansible_loop.allitems[ansible_loop.index0] != item\n"
     );
-    let peak = peak_megabytes(&dir, &playbook);
+    let peak = peak_megabytes(&dir, &playbook, 1);
     let _ = std::fs::remove_dir_all(&dir);
     assert!(
         peak < DEBUG_BUILD_BOUND_MB,
         "an extended loop of {LINES} items peaked at {peak} MB, the bound is {DEBUG_BUILD_BOUND_MB} MB"
+    );
+}
+
+/// Every host of a play reads its `vars_files` through one copy of them. Each host used to hold
+/// its own, twice, and its tasks one more each: 50 hosts reading a 7 MB file peaked at 5 GB.
+#[test]
+fn the_hosts_of_a_play_share_its_vars_files() {
+    const ROWS: usize = 20_000;
+    const HOSTS: usize = 40;
+    let dir = std::env::temp_dir().join(format!("volant-vars-files-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).expect("the directory is made");
+    let rows: Vec<String> = (0..ROWS)
+        .map(|n| {
+            format!(r#"{{"id": {n}, "name": "name-{n}", "text": "lorem ipsum dolor sit amet"}}"#)
+        })
+        .collect();
+    std::fs::write(
+        dir.join("big.json"),
+        format!(r#"{{"rows": [{}]}}"#, rows.join(", ")),
+    )
+    .expect("the vars file is written");
+    let playbook = format!(
+        "- hosts: all\n  gather_facts: false\n  vars_files: [big.json]\n  tasks:\n    - debug: {{msg: \"{{{{ rows | length }}}}\"}}\n      failed_when: (rows | length) != {ROWS}\n    - debug: {{msg: \"{{{{ rows | length }}}}\"}}\n"
+    );
+    let one = peak_megabytes(&dir, &playbook, 1);
+    let many = peak_megabytes(&dir, &playbook, HOSTS);
+    let _ = std::fs::remove_dir_all(&dir);
+    // Measured on a debug build: about 130 MB for one host, 310 MB for 40 hosts with the copy
+    // shared, and 845 MB for only 20 without.
+    assert!(
+        many < 3 * one,
+        "{HOSTS} hosts reading the same vars_files peaked at {many} MB, one host at {one} MB"
     );
 }

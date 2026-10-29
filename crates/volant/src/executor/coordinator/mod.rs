@@ -5,7 +5,7 @@
 use std::collections::{BTreeMap, BTreeSet, HashMap, HashSet};
 use std::sync::{Arc, Mutex};
 
-use serde_json::{Map, Value};
+use serde_json::Map;
 use tokio::sync::{Semaphore, mpsc, watch};
 
 use crate::agent::AgentSource;
@@ -61,7 +61,7 @@ pub(super) async fn run_batch(
     whole: &[String],
     dormant: &[String],
     all: &[String],
-    vars_files: &HashMap<String, Vec<Map<String, Value>>>,
+    vars_files: &HashMap<String, Arc<crate::vars::VarsFiles>>,
     max_fail: Option<(f64, usize)>,
     resumed: Option<&HashMap<String, usize>>,
     agents: &AgentSource,
@@ -86,9 +86,12 @@ pub(super) async fn run_batch(
         store.playbook_dir().to_path_buf()
     };
     definitions.add(&play.vars);
+    // Once per file, not once per host naming it: the hosts share what they loaded.
+    let mut seen = HashSet::new();
     vars_files
         .values()
-        .flatten()
+        .filter(|files| seen.insert(Arc::as_ptr(files)))
+        .flat_map(|files| files.maps())
         .for_each(|m| definitions.add(m));
     let mut first = compiled.clone();
     mark_boundaries(&mut first, &definitions, &playbook_dir);

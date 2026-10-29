@@ -14,7 +14,7 @@
 
 use std::borrow::Cow;
 use std::collections::HashMap;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::Value;
 
@@ -25,7 +25,7 @@ use crate::compile::Compiled;
 use crate::playbook::Play;
 use crate::stats::Refusal;
 use crate::template::Templar;
-use crate::vars::{Scope, VarStore};
+use crate::vars::{Scope, VarStore, VarsFiles};
 
 /// What the render reads besides the play.
 pub(crate) struct Context<'a> {
@@ -87,14 +87,14 @@ pub(crate) fn render_hosts<'a>(
             .expect("vars lock")
             .playbook_dir()
             .to_path_buf();
-        scope.vars_files = read_vars_files(
+        scope.vars_files = Arc::new(VarsFiles::new(&read_vars_files(
             &play.vars_files,
             context.templar,
             view.vars(),
             &dir,
             &mut HashMap::new(),
             &mut |_| {},
-        )?;
+        )?));
         view = context
             .vars
             .lock()

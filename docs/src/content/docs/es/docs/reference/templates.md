@@ -1,5 +1,5 @@
 ---
-sourceHash: fa2d4c2d8c2c
+sourceHash: dd90c57c02b2
 title: Referencia del lenguaje de plantillas
 description: Los métodos de Python, las reglas de cadenas, las expresiones regulares y los límites del Jinja2 de Volant, con todas las diferencias con ansible-core.
 ---
@@ -226,7 +226,6 @@ Volant rechaza un texto YAML que no puede cargar sin riesgo. El error nombra el 
 ### Carencias de renderizado
 
 - Una cadena que lee dos variables, una de ellas encadenada mediante una tercera que contiene un bloque `raw`, se renderiza una vez más que en ansible-core.
-- `{% include %}` y `{% import %}` fallan, en un archivo de plantilla y en una cadena: nada carga un segundo archivo durante un renderizado. ansible-core carga el archivo del directorio del playbook.
 - Un bloque `{% set x %}...{% endset %}` en una cadena hace que el resultado sea una cadena aunque el resto sea una sola expresión.
 - `dict` solo y `dict.fromkeys` solo no son un resultado, como en ansible-core (`Type 'type' is unsupported for variable storage.`), y se imprimen como `<class 'dict'>` y `<built-in method fromkeys of type object>` dentro de un texto.
 - Un `datetime` de `now()` no participa en aritmética, así que `now() - now()` falla, y le faltan los métodos `date`, `time`, `replace`, `astimezone`, `utcoffset` y `timetuple`.

@@ -38,7 +38,7 @@ plugin 在 `templates/` 下找到模板，用 task 的变量和它自己的分�
 
 渲染时会在 task 自己的变量之上设置四个变量：`ansible_managed`（除非 task 已经设置了它）、`template_path`（task 所写的 `src`）、`template_fullpath`（在控制节点上找到的路径）和 `template_destpath`（渲染后的 `dest`，见下文）。ansible-core 还会设置的 `template_host`、`template_uid`、`template_run_date` 和 `template_mtime`，这里没有设置。
 
-`trim_blocks` 默认开启，`lstrip_blocks` 默认关闭，与 ansible-core 一致，文件末尾的换行会保留。`newline_sequence` 接受 `\n`、`\r` 或 `\r\n`，转义写法的四个字符与字面写法的读法相同。六个分隔符选项（`variable_start_string` 及其他五个）和模板文件中的 `#jinja2:` 首行，都按 ansible-core 的读法读取，见[渲染模板文件](/zh-cn/docs/variables/templating/#渲染模板文件)。`output_encoding` 可以写出 UTF-8、带签名的 UTF-8、Latin-1、ASCII、cp1252、ISO 8859-15、UTF-16 和 UTF-32，其他任何编码会被指出为尚不支持。使用 `{% include %}` 或 `{% import %}` 的模板会失败：这里没有任何东西会在渲染中途加载第二个文件。
+`trim_blocks` 默认开启，`lstrip_blocks` 默认关闭，与 ansible-core 一致，文件末尾的换行会保留。`newline_sequence` 接受 `\n`、`\r` 或 `\r\n`，转义写法的四个字符与字面写法的读法相同。六个分隔符选项（`variable_start_string` 及其他五个）和模板文件中的 `#jinja2:` 首行，都按 ansible-core 的读法读取，见[渲染模板文件](/zh-cn/docs/variables/templating/#渲染模板文件)。`output_encoding` 可以写出 UTF-8、带签名的 UTF-8、Latin-1、ASCII、cp1252、ISO 8859-15、UTF-16 和 UTF-32，其他任何编码会被指出为尚不支持。`{% include %}` 和 `{% import %}` 会依次在 `ansible_search_path` 的每一项、playbook 目录和模板文件自身所在目录中查找，先找其中的 `templates/`，再找该目录本身，与 ansible-core 相同。
 
 在向主机询问任何事之前就会被拒绝的情况：
 

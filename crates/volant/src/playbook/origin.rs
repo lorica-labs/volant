@@ -131,6 +131,50 @@ impl std::fmt::Display for Located {
 
 impl std::error::Error for Located {}
 
+/// A play keyword whose value the reference cannot convert, as it refuses it when the play
+/// starts: exit 4, `[ERROR]:`, then the keyword and the value's own sentence, each at the place
+/// the value was written. Any other error, or one about a value no file holds, is kept as it is.
+pub(super) fn keyword_refusal(yaml: &Yaml<'_>, err: anyhow::Error) -> anyhow::Error {
+    let message = err.to_string();
+    let Some((key, why)) = message
+        .strip_prefix("Error processing keyword '")
+        .and_then(|rest| rest.split_once("': "))
+    else {
+        return err;
+    };
+    let Some(origin) = crate::yaml::field(yaml, key).and_then(value_origin) else {
+        return err;
+    };
+    let lead = format!("Error processing keyword '{key}'.");
+    chained_refusal(&message, &lead, why, None, origin)
+}
+
+/// A load error the reference raises from another one, both about the value written at
+/// `origin`: exit 4, `[ERROR]: message`, then `lead` and `cause` each at that place, `help`
+/// under the cause.
+pub(super) fn chained_refusal(
+    message: &str,
+    lead: &str,
+    cause: &str,
+    help: Option<&str>,
+    origin: Origin,
+) -> anyhow::Error {
+    let block = crate::render::ErrorBlock {
+        message: message.to_string(),
+        origin: Some(origin.clone()),
+        unknown: None,
+        causes: vec![crate::render::Cause {
+            msg: cause.to_string(),
+            origin: Some(origin),
+            help: help.map(str::to_string),
+        }],
+        lead: Some(lead.to_string()),
+        on_stderr: true,
+    };
+    let text = crate::render::block_text(&block);
+    crate::stats::Refusal::plain(4, format!("{}\n", text.trim_start_matches("[ERROR]: ")))
+}
+
 /// `message` at where `map` was written, or with no place when the file has none.
 pub(super) fn located(message: String, map: &saphyr::Mapping<'_>) -> anyhow::Error {
     match task_origin(map) {

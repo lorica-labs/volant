@@ -174,6 +174,50 @@ impl Guard {
     }
 }
 
+/// Whether `info` is one of this engine's own limits rather than a syntax error: the reference
+/// stops those elsewhere and in other words, so they are not worded as its YAML errors.
+fn own_limit(info: &str) -> bool {
+    info.starts_with("maximum recursion depth exceeded")
+        || info.starts_with("the anchors and aliases of the text copy")
+}
+
+/// A file's syntax error, carrying the reference's `[ERROR]` block for it on top of the parser's
+/// own: `YAML parsing failed:`, the sentence, and the place. The parser's error stays the root,
+/// for [`super::is_second_document`]. Text that is no file keeps the parser's error alone.
+pub(super) fn scan_located(err: anyhow::Error, text: &str, source: &str) -> anyhow::Error {
+    let Some(scan) = err
+        .root_cause()
+        .downcast_ref::<ScanError>()
+        .filter(|scan| !own_limit(scan.info()))
+    else {
+        return err;
+    };
+    let Ok(path) = std::fs::canonicalize(source) else {
+        return err;
+    };
+    let mut info = scan.info().to_string();
+    // libyaml's word for a second document that does not open with `---`, which only an
+    // explicit `...` end lets through.
+    let opened = text
+        .get(scan.marker().index()..)
+        .is_some_and(|rest| rest.starts_with("---") || rest.starts_with('%'));
+    if info == SECOND_DOCUMENT && !opened {
+        info = "did not find expected <document start>".to_string();
+    }
+    if let Some(first) = info.get(..1) {
+        info.replace_range(..1, &first.to_uppercase());
+    }
+    let located = crate::playbook::Located {
+        message: format!("YAML parsing failed: {info}."),
+        origin: crate::playbook::Origin {
+            path: path.display().to_string().into(),
+            line: scan.marker().line(),
+            col: scan.marker().col() + 1,
+        },
+    };
+    err.context(located)
+}
+
 fn too_deep(at: Marker) -> ScanError {
     ScanError::new(
         at,

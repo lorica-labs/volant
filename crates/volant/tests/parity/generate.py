@@ -142,7 +142,8 @@ def imports_persistent(path, fqcn, module_utils, seen=None):
 def platform(fqcn, path, modules, actions):
     """What each module and action plugin of one collection needs, beyond ssh or local.
 
-    Returns (module -> action plugin it runs through, name -> reason it waits for later).
+    Returns (module -> action plugin it runs through, name -> reason it waits for later, the
+    names that need a network device, which run over ansible-core's persistent connection).
     """
     module_dir = os.path.join(path, "plugins", "modules")
     windows = os.path.isdir(module_dir) and any(
@@ -154,11 +155,12 @@ def platform(fqcn, path, modules, actions):
     routes = routing(path, fqcn)
     module_action = {}
     later = {}
+    device = set()
     for a in actions:
         if windows:
             later[a] = "Windows"
         elif persistent(action_src.get(a)):
-            later[a] = "network connection"
+            device.add(a)
     for m in modules:
         short_name = m.rsplit(".", 1)[1]
         # The reference's order: the module's own routing, an action plugin of its name, then
@@ -172,8 +174,8 @@ def platform(fqcn, path, modules, actions):
         if windows:
             later[m] = "Windows"
         elif persistent(action_src.get(action)) or                 imports_persistent(module_src.get(short_name), fqcn, module_utils):
-            later[m] = "network connection"
-    return module_action, later
+            device.add(m)
+    return module_action, later, sorted(device)
 
 
 def short(names, prefix="ansible.builtin."):
@@ -213,7 +215,7 @@ def main():
             entry[t] = doc_list(t, fqcn)
         entry["action"] = sorted(f"{fqcn}.{n}" for n in
                                  action_files(os.path.join(path, "plugins", "action")))
-        entry["module_action"], entry["later"] = platform(
+        entry["module_action"], entry["later"], entry["device"] = platform(
             fqcn, path, entry["module"], entry["action"])
         corpus[fqcn] = entry
     if not corpus:

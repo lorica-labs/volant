@@ -278,7 +278,7 @@ fn collection_modules_are_set_aside_and_the_controllers_answers_refused() {
         })
         .is_ok()
     );
-    // A plugin that needs Windows or a network device's connection is refused by name.
+    // A plugin that needs Windows is refused by name.
     let waiting = include_str!("../later_actions.txt").lines().next().unwrap();
     assert_eq!(
         verdict(Resolved::ActionPlugin {

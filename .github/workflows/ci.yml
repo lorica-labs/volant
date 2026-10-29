@@ -574,12 +574,13 @@ jobs:
           # Galaxy first. When its downloads fail, the same versions are built from their release tags.
           if [ "$CACHED" != true ] && ! .venv/bin/ansible-galaxy collection install -p "$PWD/.collections" \
             ansible.posix==2.2.2 community.general==13.4.0 ansible.utils==6.1.1 \
-            community.library_inventory_filtering_v1==1.1.5; then
+            ansible.netcommon==8.2.0 community.library_inventory_filtering_v1==1.1.5; then
             echo "::warning::Galaxy failed; installing the pinned collections from their release tags"
             .venv/bin/ansible-galaxy collection install --force --no-deps -p "$PWD/.collections" \
               git+https://github.com/ansible-collections/ansible.posix.git,2.2.2 \
               git+https://github.com/ansible-collections/community.general.git,13.4.0 \
               git+https://github.com/ansible-collections/ansible.utils.git,v6.1.1 \
+              git+https://github.com/ansible-collections/ansible.netcommon.git,v8.2.0 \
               git+https://github.com/ansible-collections/community.library_inventory_filtering.git,1.1.5
           fi
           echo "ANSIBLE_COLLECTIONS_PATH=$PWD/.collections" >> "$GITHUB_ENV"

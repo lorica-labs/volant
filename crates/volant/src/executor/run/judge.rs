@@ -277,6 +277,7 @@ fn lay_returned_facts(
 /// (`fail`, `assert`) is the action's own error whatever it carries, measured too.
 pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
     let cause = result.0.remove(CAUSE_KEY);
+    let raised_fail = result.0.remove(super::RAISED_FAIL).is_some();
     if result.failed() {
         // `raw` is the reference's action plugin, whose failure is the action's own.
         let local = volant_protocol::modules::local(&task.module).is_some()
@@ -311,10 +312,13 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
         // `AnsibleError`: an empty message is the default one alone, `Action failed.`.
         // `Unexpected AnsibleActionFail error: ...` is the sentence the reference's own `copy`
         // fails with for a source that is not there, and its block carries it as it is. Any
-        // other result starting with it only loses the `Action failed: ` in its error block.
+        // other result starting with it only loses the `Action failed: ` in its error block, as
+        // does an `AnsibleActionFail` the plugin raised: only a failure it returned is `Action`.
         let message = if msg.starts_with("Task failed: ") {
             msg
-        } else if msg.starts_with("Unexpected AnsibleActionFail error: ") {
+        } else if (raised_fail && grouped.is_none())
+            || msg.starts_with("Unexpected AnsibleActionFail error: ")
+        {
             crate::render::task_failed(&msg)
         } else if detail.is_empty() {
             crate::render::task_failed(&by_failed)

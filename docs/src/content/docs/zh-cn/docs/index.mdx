@@ -1,5 +1,5 @@
 ---
-sourceHash: 55087c289ed8
+sourceHash: b8388572bcb6
 title: 为什么选择 Volant
 description: Volant 是什么，速度从哪里来，以及它做出了哪些承诺。
 ---
@@ -87,7 +87,7 @@ Volant 把这些开销在一次运行中只付一次：
 
 它宁可停下，也不去猜。这个版本尚不支持的内容，大部分会在第一次连接之前就被指出来，所以运行很少会在悄悄跳过你要求的事情之后还报告成功。[已知缺口](/zh-cn/docs/start/compatibility/#已知缺口)是例外。这个检查叫作[预检](/zh-cn/docs/internals/preflight/)。
 
-它首先面向通过 SSH 管理的 Linux。控制节点可以运行在 Linux 或 macOS 上，驱动的是 Linux 主机。Windows 和网络设备会在以后支持。
+它首先面向通过 SSH 管理的 Linux。控制节点可以运行在 Linux 或 macOS 上，驱动的是 Linux 主机。网络设备通过 ansible.netcommon 的连接运行。Windows 会在以后支持。
 
 ## Volant 会在你的机器上留下什么
 

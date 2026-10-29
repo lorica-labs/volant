@@ -153,7 +153,8 @@ pub(super) async fn report_task(
         }
         let label = labels.get(i).cloned().flatten();
         let error = (r.failed() && !r.0.contains_key(crate::render::NO_BLOCK_KEY)).then(|| {
-            let mut block = ErrorBlock::of(r, task.origin.as_ref(), censored);
+            let origin = task.origin.as_ref().filter(|_| !task.implicit);
+            let mut block = ErrorBlock::of(r, origin, censored);
             if task.origin.is_none() && !censored {
                 block.unknown = generated_source(task);
             }
@@ -211,7 +212,11 @@ pub(super) async fn report_task(
                 index,
                 label: None,
                 outcome,
-                error: Some(ErrorBlock::of(&r, task.origin.as_ref(), censored)),
+                error: Some(ErrorBlock::of(
+                    &r,
+                    task.origin.as_ref().filter(|_| !task.implicit),
+                    censored,
+                )),
                 result: r,
                 dump,
                 show: true,

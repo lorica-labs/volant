@@ -61,7 +61,7 @@ impl VarStore {
         let mut vars = Map::new();
         extend(&mut vars, &scope.role_defaults);
         extend(&mut vars, &scope.play_vars);
-        for file in &scope.vars_files {
+        for file in scope.vars_files.maps() {
             extend(&mut vars, file);
         }
         extend(&mut vars, &scope.role_vars);

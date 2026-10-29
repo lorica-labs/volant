@@ -51,7 +51,7 @@ pub(in crate::executor) struct PlayPlan {
     pub(in crate::executor) turn: watch::Sender<usize>,
     pub(in crate::executor) play_vars: Map<String, Value>,
     /// The `vars_files` maps of each host, in the order the play lists the files.
-    pub(in crate::executor) vars_files: HashMap<String, Vec<Map<String, Value>>>,
+    pub(in crate::executor) vars_files: HashMap<String, Arc<crate::vars::VarsFiles>>,
     /// Every host the play resolved, whatever batch it belongs to and whether it has failed or
     /// not: `ansible_play_hosts_all`. Fixed for the whole play, batches included.
     pub(in crate::executor) all_play_hosts: Arc<[String]>,

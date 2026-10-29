@@ -20,7 +20,7 @@ mod run;
 mod state;
 
 pub(crate) use run::{
-    DEPRECATION_TEXT, RAISED_KEY, RAISED_SKIP, drop_internal_keys, utc_timestamp,
+    DEPRECATION_TEXT, RAISED_FAIL, RAISED_KEY, RAISED_SKIP, drop_internal_keys, utc_timestamp,
 };
 
 use std::collections::HashMap;

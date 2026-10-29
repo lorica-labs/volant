@@ -1,5 +1,5 @@
 ---
-sourceHash: 46781db2c359
+sourceHash: 8d68aff529a7
 title: Códigos de salida
 description: Qué significa cada código de salida y dónde coincide Volant con ansible-playbook.
 ---
@@ -23,15 +23,11 @@ Volant sale con los códigos que usa `ansible-playbook`, así que los scripts y 
 </Option>
 
 <Option name="4" id="code-4">
-  Al menos un host fue inalcanzable, o el playbook se detuvo antes de la ejecución: no se interpreta, o usa algo que esta versión todavía no admite.
+  Al menos un host fue inalcanzable, hayan fallado otros o no, como lo informa `ansible-playbook`, o el playbook se detuvo antes de la ejecución: no se interpreta, o usa algo que esta versión todavía no admite.
 </Option>
 
 <Option name="5" id="code-5">
   Un ajuste tiene un valor que no puede tomar, como `forks = many`, una palabra desconocida para `gathering`, `runtime` o `host_named_paths`, o una palabra clave `order` que el play no conoce. El mensaje nombra la clave y el valor.
-</Option>
-
-<Option name="6" id="code-6">
-  Algunos hosts fallaron y otros fueron inalcanzables: 2 y 4 combinados.
 </Option>
 
 <Option name="99" id="code-99">

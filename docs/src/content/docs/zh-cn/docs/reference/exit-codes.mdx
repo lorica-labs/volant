@@ -1,5 +1,5 @@
 ---
-sourceHash: 46781db2c359
+sourceHash: 8d68aff529a7
 title: 退出码
 description: 每个退出码的含义，以及 Volant 在哪些地方与 ansible-playbook 一致。
 ---
@@ -23,15 +23,11 @@ Volant 使用 `ansible-playbook` 使用的退出码，所以为 Ansible 编写�
 </Option>
 
 <Option name="4" id="code-4">
-  至少有一台主机不可达，或者 playbook 在运行前就停止了：它无法解析，或者用到了本版本尚不支持的内容。
+  至少有一台主机不可达（无论其他主机是否失败，与 `ansible-playbook` 的报告一致），或者 playbook 在运行前就停止了：它无法解析，或者用到了本版本尚不支持的内容。
 </Option>
 
 <Option name="5" id="code-5">
   某个设置的值不被允许，例如 `forks = many`、`gathering`、`runtime` 或 `host_named_paths` 的未知取值，或者 play 不认识的 `order` 关键字。消息中会写明键和值。
-</Option>
-
-<Option name="6" id="code-6">
-  一些主机失败，一些主机不可达：2 与 4 的组合。
 </Option>
 
 <Option name="99" id="code-99">

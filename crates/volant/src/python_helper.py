@@ -1466,7 +1466,13 @@ def owned_connection(link, context, task, task_vars, templar):
     from ansible.plugins import loader as plugin_loader
 
     name = link.get("connection")
-    context.connection = name
+    # The play context holds the connection as it was written (`netconf`, not its full name), and
+    # the network OS, before the plugin loads: `NetworkConnectionBase` reads both as it starts,
+    # and the network action plugins quote the first.
+    written = task_vars.get("ansible_connection") or task.connection or name
+    context.connection = templar.template(written) if isinstance(written, str) else name
+    if task_vars.get("ansible_network_os"):
+        context.network_os = templar.template(task_vars["ansible_network_os"])
     connection = plugin_loader.connection_loader.get(
         name, context, new_stdin=None, task_uuid=task._uuid, ansible_playbook_pid=str(os.getppid())
     )
@@ -1476,6 +1482,8 @@ def owned_connection(link, context, task, task_vars, templar):
         becomes = boolean(templar.template(task_vars["ansible_become"]))
     else:
         becomes = task.become
+    # A boolean, as `set_task_and_variable_override` leaves it: `network_cli` compares it with `^`.
+    context.become = bool(becomes)
     become = None
     if becomes:
         if task_vars.get("ansible_become_method"):
@@ -1680,6 +1688,11 @@ def run_action(ident, request):
         if keyword in fields:
             message = "the task keyword %s is not supported for an action plugin yet" % keyword
             return {"error": {"kind": "plugin", "message": message}}
+    if owned and written == "ansible.legacy.setup":
+        # The play's own `Gathering Facts`, named so by the controller, which ansible-core runs as
+        # its `gather_facts` plugin: that plugin picks a network host's facts module from its
+        # `ansible_network_os`, and `setup` for any other host.
+        written = name = "ansible.legacy.gather_facts"
     if owned and name in ("normal", "ansible.builtin.normal", "ansible.legacy.normal"):
         name = handler_for(written)
     if not CALL_NAME.match(name) or not plugin_loader.action_loader.has_plugin(name):
@@ -1785,10 +1798,12 @@ def run_action(ident, request):
                 result = _error_utils.result_dict_from_exception(wrapped, accept_result_contribution=True)
                 result.setdefault("changed", False)
                 # Raised, so the result never goes through the part of `_execute` that adds `failed`.
-                from ansible.errors import AnsibleActionSkip
+                from ansible.errors import AnsibleActionFail, AnsibleActionSkip
 
                 if isinstance(failure, AnsibleActionSkip):
                     result["_volant_raised_skip"] = True
+                elif isinstance(failure, AnsibleActionFail):
+                    result["_volant_raised_fail"] = True
             # The summary object carries the traceback text only when ansible-core is set to keep it.
             summary = result.pop("exception", None)
             traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)

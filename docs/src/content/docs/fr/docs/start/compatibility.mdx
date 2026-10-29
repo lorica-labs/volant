@@ -1,5 +1,5 @@
 ---
-sourceHash: bf3f17741eec
+sourceHash: 000eea7440ab
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -58,9 +58,9 @@ Un fichier que seul un `include_tasks` ou un `include_role` dynamique nomme est 
 | Blocs | `block`, `rescue`, `always` | |
 | Réutilisation | rôles et dépendances, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
 | Délégation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
-| Modules | les modules d'ansible-core pour les hôtes Linux, dont `copy`, `template`, `dnf`, `service`, `uri` et `reboot`, et les modules des collections installées avec leurs plugins d'action | un plugin d'action de collection qui demande Windows ou un équipement réseau, vos propres plugins d'action |
+| Modules | les modules d'ansible-core pour les hôtes Linux, dont `copy`, `template`, `dnf`, `service`, `uri` et `reboot`, et les modules des collections installées avec leurs plugins d'action | un plugin d'action de collection qui demande Windows, vos propres plugins d'action |
 | Inventaires | fichiers INI, YAML et TOML, répertoires, scripts, plugins `constructed`, `generator` et de collection, plusieurs `-i`, `group_vars`, `host_vars`, le cache de facts `jsonfile` | plus rien |
-| Connexions | `ssh` avec clés, un ssh-agent ou un mot de passe (`-k` ou `ansible_password`, demande OpenSSH 8.4 ou plus récent), `local` | autres plugins de connexion, Windows, équipements réseau |
+| Connexions | `ssh` avec clés, un ssh-agent ou un mot de passe (`-k` ou `ansible_password`, demande OpenSSH 8.4 ou plus récent), `local`, et `network_cli`, `netconf` et `httpapi` pour les équipements réseau | autres plugins de connexion, Windows |
 | Élévation de privilèges | `become` par `sudo` ou `su`, avec ou sans mot de passe | `doas` et les autres méthodes |
 | Templating | Jinja2 avec les filtres, tests et lookups d'Ansible, `!unsafe`, filtres et lookups de collections | certains arguments de filtres, listés dans [Templating](/fr/docs/variables/templating/) |
 | Modes d'exécution | exécutions normales, [`--check` et `--diff`](/fr/docs/playbooks/check-and-diff/), [vault](/fr/docs/variables/vault/), `--start-at-task`, `--step`, les quatre commandes de liste | plus rien |
@@ -90,7 +90,7 @@ La vérification préalable arrête l'exécution avant la première connexion, a
 | Un module intégré que cette version n'embarque pas | `module 'x' is not available in this release` | 4 |
 | Un argument de type chaîne qui est un seul modèle | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | Un module ou une collection qui ne se résout pas | `couldn't resolve module/action 'x' ...`, avec la commande d'installation pour une collection manquante | 4 |
-| Un module de collection qui demande un plugin d'action pour Windows ou un équipement réseau | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
+| Un module de collection qui demande un plugin d'action pour Windows | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | Un `become_method` autre que `sudo` et `su` | `become_method 'x' is not supported yet` | 2 |
 | Un rôle dans `roles:` ou `import_role` que personne ne trouve | `the role 'x' was not found in ...` | 1 |
 

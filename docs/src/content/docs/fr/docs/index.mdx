@@ -1,5 +1,5 @@
 ---
-sourceHash: 55087c289ed8
+sourceHash: b8388572bcb6
 title: Pourquoi Volant
 description: Ce qu'est Volant, d'où vient sa vitesse et ce qu'il garantit.
 ---
@@ -87,7 +87,7 @@ Vos fichiers restent les vôtres. Volant lit le YAML d'Ansible et suit sa priori
 
 Il s'arrête plutôt que de deviner. La plupart de ce que cette version ne prend pas encore en charge est signalé avant la première connexion, si bien qu'une exécution annonce rarement un succès après avoir sauté en silence ce que vous aviez demandé. Les [limites connues](/fr/docs/start/compatibility/#limites-connues) sont les exceptions. Cette vérification s'appelle la [vérification préalable](/fr/docs/internals/preflight/).
 
-Il vise d'abord Linux par SSH. Le contrôleur tourne sous Linux ou macOS et pilote des hôtes Linux. Windows et les équipements réseau viendront plus tard.
+Il vise d'abord Linux par SSH. Le contrôleur tourne sous Linux ou macOS et pilote des hôtes Linux. Les équipements réseau passent par les connexions d'ansible.netcommon. Windows viendra plus tard.
 
 ## Ce que Volant laisse sur vos machines
 

@@ -54,13 +54,13 @@ fn a_hard_failure_never_counts_as_changed() {
 }
 
 #[test]
-fn exit_codes_are_a_bitmask() {
+fn an_unreachable_host_wins_the_exit_code() {
     let mut s = Stats::default();
     assert_eq!(exit_code(&s), 0);
     s.record("a", Outcome::Failed, false);
     assert_eq!(exit_code(&s), 2);
     s.unreachable("b");
-    assert_eq!(exit_code(&s), 6);
+    assert_eq!(exit_code(&s), 4);
 }
 
 /// A cleared host keeps its recap counts and stops counting for the exit code, but for the
@@ -72,7 +72,7 @@ fn cleared_errors_leave_the_recap_and_the_exit_code() {
     s.unreachable("b");
     s.unreachable("c");
     s.failed_unreported("d");
-    assert_eq!(exit_code(&s), 6);
+    assert_eq!(exit_code(&s), 4);
     for host in ["a", "b", "d"] {
         s.clear_errors(host, false);
     }

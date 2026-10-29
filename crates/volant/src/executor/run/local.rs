@@ -104,6 +104,7 @@ async fn controller_side(
             timeout: task.timeout,
             check_mode: item.check_mode == Some(true),
             diff: item.diff == Some(true),
+            no_log: task.censors(),
             async_val: task.async_val,
             action: &task.module,
         },

@@ -1,5 +1,5 @@
 ---
-sourceHash: 72a9c6ae320c
+sourceHash: 305fc6750726
 title: 运行 play
 description: 主机和 task 按什么顺序运行，策略、serial 批次、调试器、异步 task 和提示如何改变这个顺序，以及运行何时停止。
 ---
@@ -120,7 +120,6 @@ ansible-core 能在 `async` 下运行的 action，在这里也能运行。其他
 
 - 不是数字的 `serial`，例如 `serial: abc`，或带结尾空格的 `"50% "`，会被拒绝，退出码为 4，消息与 ansible-core 一致。Ansible 则会崩溃，退出码为 250，这是 Ansible 在报告自己的 bug，而不是在拒绝一个 playbook。
 - `serial` 中未定义的变量，会带着 ansible-core 的前缀和 Volant 自己的消息报告，退出码同样是 4。
-- `play_hosts` 的内容与 Ansible 放进去的相同，但 Volant 不为它打印弃用警告。
 
 <Aside type="tip">
 想了解引擎如何构建并运行这个顺序，见 [play 是如何编译的](/zh-cn/docs/internals/architecture/#play-是如何编译的)和 [一次运行的端到端过程](/zh-cn/docs/internals/architecture/#一次运行的端到端过程)。

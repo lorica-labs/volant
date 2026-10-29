@@ -61,6 +61,14 @@ impl InventoryPlugin for YamlInventory {
         let null = Yaml::Value(Scalar::Null);
         // `load` refuses a second document, so there is at most one.
         let root = docs.first().unwrap_or(&null);
+        // Where a deprecated variable name is written is read only for a file that has one.
+        if super::names::any_invalid(root) {
+            let (docs, origins) = yaml::load_with_origins(&text, source.text())
+                .map_err(|e| failed(load_failure(&e)))?;
+            if let Some(root) = docs.first() {
+                super::names::note_yaml(cx, root, &origins, source.path());
+            }
+        }
         let groups = lower(root).map_err(failed)?;
         read_groups(&groups, Dialect::Yaml, into, Some(source.path()), cx).map_err(failed)
     }

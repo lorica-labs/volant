@@ -16,6 +16,7 @@
 mod builder;
 mod compiled;
 mod flatten;
+mod import_path;
 mod include;
 mod inherit;
 mod model;

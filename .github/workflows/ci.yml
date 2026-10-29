@@ -469,7 +469,11 @@ jobs:
     runs-on: ${{ matrix.os }}
     timeout-minutes: 15
     steps:
-      - uses: $/setup-volant
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      # actionlint does not parse the `$/` form zizmor asks for.
+      - uses: ./setup-volant # zizmor: ignore[self-repository]
         with:
           shims: true
           runtime: true

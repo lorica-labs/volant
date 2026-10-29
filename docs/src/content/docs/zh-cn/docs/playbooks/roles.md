@@ -1,5 +1,5 @@
 ---
-sourceHash: e3f27c96d5f0
+sourceHash: 6b6cfaf519ca
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -84,6 +84,8 @@ role 的 `defaults` 和 `vars` 对整个 play 可见，所以 `pre_tasks` 和之
 ### 静态 import
 
 `import_tasks` 的路径先在导入它的文件旁边查找，再在 role 自己的 `tasks/` 目录里查找。
+
+`import_tasks` 的路径可以包含模板。它在编译 play 时渲染，可用 `role_path`、`playbook_dir`、play 的 `vars:`、`-e` 变量以及各 role 的 `defaults` 和 `vars`，所以 `{{ role_path }}/tests/main.yml` 可以工作。此时还没有主机，所以 inventory 变量在这里未定义，会以退出码 4 停止加载。
 
 `import_playbook` 把另一个文件里的 play 插入到这条语句所在的位置，每个被导入的 play 保留它来源文件所在的目录。它的文件名用 `-e` 变量渲染，并通过[过滤器和 lookup 使用的 Python 路径](/zh-cn/docs/variables/templating/#需要-python-的过滤器测试器和-lookup)渲染，所以 `{{ which }}.yml` 可以搭配 `-e which=sub.yml` 使用，用 `lookup('env', ...)` 或 collection 过滤器构造的名字也可以。此时还没有 inventory，所以名字不能取决于某台主机。读取未定义变量的名字会让加载以退出码 4 停止：`Error processing keyword 'import_playbook': 'nosuchvar' is undefined`。
 

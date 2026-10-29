@@ -1,5 +1,5 @@
 ---
-sourceHash: e3f27c96d5f0
+sourceHash: 6b6cfaf519ca
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -84,6 +84,8 @@ Un include dynamique est résolu hôte par hôte, parce que le nom de son fichie
 ### Imports statiques
 
 Un chemin d'`import_tasks` est cherché d'abord à côté du fichier qui importe, puis dans le répertoire `tasks/` du rôle lui-même.
+
+Un chemin d'`import_tasks` peut contenir un template. Il est rendu pendant la compilation du play, avec `role_path`, `playbook_dir`, les `vars:` du play, les variables `-e` et les `defaults` et `vars` des rôles : `{{ role_path }}/tests/main.yml` fonctionne donc. Il n'y a pas encore d'hôte, si bien qu'une variable d'inventaire y est indéfinie et arrête le chargement avec le code 4.
 
 `import_playbook` insère les plays de l'autre fichier à l'endroit de l'instruction, et chaque play importé garde le répertoire du fichier d'où il vient. Le nom du fichier est rendu avec les variables `-e` et par le [chemin Python des filtres et lookups](/fr/docs/variables/templating/#filtres-tests-et-lookups-qui-nécessitent-python) : `{{ which }}.yml` fonctionne donc avec `-e which=sub.yml`, de même qu'un nom construit avec `lookup('env', ...)` ou un filtre de collection. Rien n'a encore d'inventaire, donc un nom ne peut pas dépendre d'un hôte. Un nom qui lit une variable non définie arrête le chargement avec le code 4 : `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`.
 

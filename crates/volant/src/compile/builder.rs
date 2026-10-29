@@ -11,11 +11,12 @@ use volant_protocol::modules::short_name;
 use crate::playbook::{Block, PlayTask, TaskOrBlock};
 use crate::roles::{RoleEntry, RoleKind, RoleSearch, RoleVars};
 use crate::stats::Refusal;
+use crate::template::Templar;
 
 use super::compiled::{FLUSH_HANDLERS, beside_or_in_role, meta_action};
 use super::flatten::{import_role_entry, unknown_options, validation};
 use super::include::{include_options, include_role_options, include_vars_options};
-use super::inherit::merge;
+use super::inherit::{extend, merge};
 use super::model::{BlockSpan, Handler, IncludeKind, Origin, Section, Step, StepKind};
 use super::tags::TagSelection;
 /// How deep roles and imported files may nest before the run is refused: the same ceiling a
@@ -117,6 +118,10 @@ pub(super) struct Builder<'a> {
     /// is skipped for a host when an identical one ran before, whether that one allowed
     /// duplicates or not, and the `roles:` list is not in the comparison.
     pub(super) imported: Seen,
+    /// What an import's path renders against while the play compiles, before any host: the
+    /// play's `vars:`, the extra variables and `playbook_dir`. The roles' `defaults` and `vars`
+    /// and `role_path` are added when a path is rendered.
+    pub(super) static_vars: Map<String, Value>,
 }
 
 impl Builder<'_> {
@@ -292,6 +297,7 @@ impl Builder<'_> {
             .or_else(|| task.args.get("_raw_params"))
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
+        let name = &self.import_path(name)?;
         // Inside a role a bare name has two homes and the reference takes the first that exists:
         // the directory of the file that wrote the statement, then the role's own `tasks/`.
         // Measured on ansible-core 2.19.12 with a role whose `tasks/sub/deep.yml` imports
@@ -337,6 +343,35 @@ impl Builder<'_> {
         self.file_dir = previous;
         self.depth -= 1;
         result
+    }
+
+    /// An import's path, rendered when it holds a template. Measured on ansible-core 2.19.12: it
+    /// reads `role_path`, `playbook_dir`, the play's `vars:`, `-e` and the roles' `defaults` and
+    /// `vars`, and an inventory variable is undefined there, which stops the run at exit 4.
+    fn import_path(&self, name: &str) -> anyhow::Result<String> {
+        if !Templar::is_template(name) {
+            return Ok(name.to_string());
+        }
+        let mut vars = Map::new();
+        for role in &self.roles {
+            extend(&mut vars, &role.defaults);
+        }
+        extend(&mut vars, &self.static_vars);
+        for role in &self.roles {
+            extend(&mut vars, &role.vars);
+        }
+        if let Some(dir) = &self.role_dir {
+            vars.insert("role_path".into(), Value::String(dir.display().to_string()));
+        }
+        let templar = Templar::new(self.file_dir.clone());
+        match templar.render(name, &vars) {
+            Ok(Value::String(path)) => Ok(path),
+            Ok(other) => Ok(other.to_string()),
+            Err(err) => bail!(
+                "Error when evaluating variable in import path '{name}': {}",
+                err.0
+            ),
+        }
     }
 
     /// One role entry: its dependencies first, then its argument-spec check, then its tasks.

@@ -84,6 +84,8 @@ A dynamic include is resolved per host, because its file name can depend on that
 
 An `import_tasks` path is looked for next to the importing file first, then in the role's own `tasks/` directory.
 
+An `import_tasks` path may hold a template. It renders while the play compiles, against `role_path`, `playbook_dir`, the play's `vars:`, the `-e` variables and the roles' `defaults` and `vars`, so `{{ role_path }}/tests/main.yml` works. There is no host yet, so an inventory variable is undefined there and stops the load with exit 4.
+
 `import_playbook` inserts the other file's plays where the statement stands, and each imported play keeps the directory of the file it came from. Its file name renders with the `-e` variables and through the [Python path for filters and lookups](/docs/variables/templating/#filters-tests-and-lookups-that-need-python), so `{{ which }}.yml` works with `-e which=sub.yml`, and so does a name built with `lookup('env', ...)` or a collection filter. Nothing has an inventory yet, so a name cannot depend on a host. A name that reads an undefined variable stops the load with exit 4: `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`.
 
 Three keywords of the `import_playbook` entry reach every play of the file:

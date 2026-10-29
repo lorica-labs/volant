@@ -1,5 +1,5 @@
 ---
-sourceHash: e3f27c96d5f0
+sourceHash: 6b6cfaf519ca
 title: Roles, includes e imports
 description: Dónde busca Volant los roles, cómo funcionan las dependencias, las especificaciones de argumentos y las variables de un rol, y cómo los imports y los includes traen otros archivos a un play.
 ---
@@ -84,6 +84,8 @@ Un include dinámico se resuelve para cada host, porque el nombre de su archivo 
 ### Imports estáticos
 
 La ruta de un `import_tasks` se busca primero junto al archivo que importa y después en el directorio `tasks/` del propio rol.
+
+Una ruta de `import_tasks` puede contener una plantilla. Se renderiza mientras se compila el play, con `role_path`, `playbook_dir`, las `vars:` del play, las variables de `-e` y los `defaults` y `vars` de los roles, así que `{{ role_path }}/tests/main.yml` funciona. Todavía no hay host, así que una variable de inventario no está definida ahí y detiene la carga con código 4.
 
 `import_playbook` inserta los plays del otro archivo donde está la sentencia, y cada play importado conserva el directorio del archivo del que viene. El nombre del archivo se renderiza con las variables de `-e` y mediante la [ruta de Python para filtros y lookups](/es/docs/variables/templating/#filtros-tests-y-lookups-que-necesitan-python), así que `{{ which }}.yml` funciona con `-e which=sub.yml`, y también un nombre construido con `lookup('env', ...)` o con un filtro de una colección. Todavía no hay inventario, así que un nombre no puede depender de un host. Un nombre que lee una variable sin definir detiene la carga con el código 4: `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`.
 

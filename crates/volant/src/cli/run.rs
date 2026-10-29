@@ -162,11 +162,20 @@ async fn run_all(
     // compilation is wrapped in the code the reference gives a playbook it cannot make sense of,
     // and the refusals that measured a code of their own carry it through untouched.
     let mut compiled: Vec<Vec<Compiled>> = Vec::new();
+    // For the paths an import renders. A list that does not parse is refused further down, where
+    // it always was.
+    let extra = std::env::current_dir()
+        .ok()
+        .and_then(|cwd| crate::vars::parse_extra_vars(&args.extra_vars, &cwd).ok())
+        .unwrap_or_default();
     for pb in &playbooks {
         let mut plays = Vec::new();
         for play in &pb.plays {
             let search = RoleSearch::new(&play.dir, &config);
-            plays.push(compile::compile(play, &search, &selection).map_err(|e| Refusal::or(4, e))?);
+            plays.push(
+                compile::compile_with(play, &search, &selection, &extra)
+                    .map_err(|e| Refusal::or(4, e))?,
+            );
         }
         compiled.push(plays);
     }

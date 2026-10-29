@@ -127,6 +127,7 @@ pub(crate) fn expand_include(
         selection: &base.selection,
         exporting: true,
         imported: Vec::new(),
+        static_vars: Map::new(),
     };
     // `block` and `role` are seeded empty and rebased by `graft`: a sub-compilation that mixed
     // the running play's absolute indices with its own relative ones would be a list where the

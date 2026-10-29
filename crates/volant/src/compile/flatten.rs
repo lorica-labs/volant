@@ -181,13 +181,31 @@ fn gather_args(play: &Play) -> Map<String, Value> {
 /// precedence against a host variable was measured in an earlier release and lives in the
 /// executor, which reads them from the play. A block is a task keyword, so its `become` does
 /// come down here.
-#[expect(clippy::too_many_lines)]
+#[cfg(test)]
 pub(crate) fn compile(
     play: &Play,
     search: &RoleSearch,
     selection: &TagSelection,
 ) -> anyhow::Result<Compiled> {
+    compile_with(play, search, selection, &Map::new())
+}
+
+/// [`compile`], with the run's extra variables for the paths an import renders.
+#[expect(clippy::too_many_lines)]
+pub(crate) fn compile_with(
+    play: &Play,
+    search: &RoleSearch,
+    selection: &TagSelection,
+    extra: &Map<String, Value>,
+) -> anyhow::Result<Compiled> {
+    let mut static_vars = play.vars.clone();
+    static_vars.extend(extra.iter().map(|(k, v)| (k.clone(), v.clone())));
+    static_vars.insert(
+        "playbook_dir".into(),
+        Value::String(play.dir.display().to_string()),
+    );
     let mut builder = Builder {
+        static_vars,
         steps: Vec::new(),
         blocks: Vec::new(),
         roles: Vec::new(),

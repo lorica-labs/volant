@@ -1,5 +1,5 @@
 ---
-sourceHash: e3f27c96d5f0
+sourceHash: 6b6cfaf519ca
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -84,6 +84,8 @@ Ein dynamisches Include wird pro Host aufgelöst, weil sein Dateiname von den Va
 ### Statische Imports
 
 Ein Pfad bei `import_tasks` wird zuerst neben der importierenden Datei gesucht, dann im eigenen Verzeichnis `tasks/` der Rolle.
+
+Ein `import_tasks`-Pfad darf ein Template enthalten. Es wird beim Kompilieren des Plays gerendert, mit `role_path`, `playbook_dir`, den `vars:` des Plays, den `-e`-Variablen und den `defaults` und `vars` der Rollen, sodass `{{ role_path }}/tests/main.yml` funktioniert. Einen Host gibt es noch nicht, daher ist eine Inventory-Variable dort undefiniert und beendet das Laden mit Exit-Code 4.
 
 `import_playbook` fügt die Plays der anderen Datei dort ein, wo die Anweisung steht, und jedes importierte Play behält das Verzeichnis der Datei, aus der es stammt. Ihr Dateiname wird mit den `-e`-Variablen und über den [Python-Pfad für Filter und Lookups](/de/docs/variables/templating/#filter-tests-und-lookups-die-python-brauchen) gerendert, sodass `{{ which }}.yml` mit `-e which=sub.yml` funktioniert, ebenso ein Name, der mit `lookup('env', ...)` oder einem Collection-Filter gebildet wird. Noch gibt es kein Inventory, ein Name kann also nicht von einem Host abhängen. Ein Name, der eine undefinierte Variable liest, bricht das Laden mit Exit 4 ab: `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`.
 

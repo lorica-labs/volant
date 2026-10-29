@@ -1,5 +1,5 @@
 ---
-sourceHash: 75fc765d3e37
+sourceHash: 118d6f078919
 title: Le runtime géré
 description: Le Python et l'ansible-core que Volant installe pour lui-même, où ils se trouvent, ce qu'ils téléchargent, et comment les gérer.
 ---
@@ -68,15 +68,43 @@ L'installation est celle de Volant : `volant runtime install --collections` lanc
 
 Le runtime contient ansible-core et ses dépendances, rien d'autre. Une collection dont les plugins ont besoin d'un autre paquet Python, comme `jmespath` pour `json_query`, n'y fonctionne pas. Pour celles-là, utilisez votre propre environnement avec `VOLANT_PYTHON`.
 
+## Jeux de wheels optionnels
+
+Certains plugins de connexion ont besoin de paquets Python qu'ansible-core n'apporte pas. Deux jeux de ces paquets sont épinglés pour chaque plateforme, comme les wheels de base, et ne sont installés que sur demande :
+
+| Jeu | Paquets | Taille sur disque (Linux x86_64) |
+|---|---|---|
+| `windows` | pywinrm, pypsrp et leurs dépendances | environ 7 Mo |
+| `network` | paramiko, ansible-pylibssh, ncclient et leurs dépendances | environ 31 Mo |
+
+```sh
+volant runtime install --extras windows
+volant runtime install --extras windows,network
+```
+
+`--extras` installe d'abord le runtime s'il manque, ou ajoute les jeux au runtime déjà en place sans toucher à ses wheels de base. Les wheels sont vérifiés contre leurs empreintes épinglées et installés avec `--require-hashes`, sans index et sans résolution des dépendances. `volant runtime status` liste les jeux installés. ansible-pylibssh n'a pas de build musl : sur Alpine et les autres machines musl, le jeu `network` ne contient que paramiko et ncclient.
+
+Une exécution n'installe aucun jeu. Quand un hôte d'un play se connecte avec `winrm` ou `psrp` et que le Python du contrôleur est le runtime géré sans le jeu `windows`, l'exécution s'arrête avant toute connexion, avec le code de sortie 4 :
+
+```text
+host 'win1': the winrm connection needs the "windows" runtime extras: run volant runtime install --extras windows
+```
+
+`network_cli` et `netconf` demandent le jeu `network` de la même façon. Avec `VOLANT_PYTHON`, Volant laisse l'interpréteur tel quel, et l'erreur du plugin nomme le paquet qui lui manque.
+
+Avec le jeu `windows`, `winrm` fonctionne avec les transports `basic`, `plaintext`, `ssl`, `certificate` et `ntlm`, et `psrp` avec les authentifications `basic`, `certificate`, `ntlm` et `negotiate`, où `negotiate` se replie sur NTLM. Kerberos et CredSSP demandent des bibliothèques système et des paquets que le jeu ne contient pas : pour eux, utilisez votre propre environnement avec `VOLANT_PYTHON`.
+
 ## Commandes
 
 | Commande | Ce qu'elle fait |
 |---|---|
 | `volant runtime install` | Installe le runtime s'il manque. |
 | `volant runtime install --collections NAME_OR_FILE...` | Installe aussi des collections. |
+| `volant runtime install --extras SET,...` | Installe aussi des jeux de wheels optionnels : `windows`, `network`. |
 | `volant runtime install --from FILE` | Installe depuis un fichier fait par `pack`, sans téléchargement. |
 | `volant runtime install --from FILE --sha256 HASH` | Installe depuis le fichier seulement si son SHA-256 est `HASH`. |
 | `volant runtime pack FILE` | Écrit le runtime installé dans un fichier et affiche son SHA-256. |
+| `volant runtime pack FILE --extras SET,...` | Ajoute d'abord les jeux au runtime, pour que le fichier les contienne. |
 | `volant runtime status` | Montre le mode, l'interpréteur que la prochaine exécution utilise, et le runtime géré. |
 | `volant runtime path` | Affiche le Python du runtime géré. Sort avec le code 1 quand il n'est pas installé. |
 | `volant runtime remove [ID]` | Supprime le runtime actuel, ou celui qui est nommé. |
@@ -94,6 +122,13 @@ volant runtime install --from runtime.tar.gz --sha256 3f1c...e9
 ```
 
 `install --from` refuse un fichier fait pour une autre plateforme ou un autre runtime, et nomme les deux. `pack` affiche le SHA-256 du fichier sur une ligne `sha256`. Avec `--sha256 HASH`, `install --from` refuse un fichier dont l'empreinte diffère, avant de le décompresser, et montre les deux empreintes. Sans lui, l'installation affiche l'empreinte du fichier qu'elle a utilisé, pour que vous puissiez la comparer vous-même. Installer un paquet exécute le Python qu'il contient : passez donc l'empreinte que vous avez obtenue de la machine qui l'a fait.
+
+Le fichier contient les jeux que le runtime avait. Empaquetez avec `--extras` pour les ajouter, et nommez-les de nouveau sur l'autre machine, où `install --from` vérifie que le fichier les contient :
+
+```sh
+volant runtime pack runtime.tar.gz --extras windows
+volant runtime install --from runtime.tar.gz --sha256 3f1c...e9 --extras windows
+```
 
 ## Le désactiver
 

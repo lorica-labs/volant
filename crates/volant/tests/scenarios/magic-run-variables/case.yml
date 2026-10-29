@@ -1,4 +1,4 @@
 # The run's verbosity and inventory sources, the default ansible_host, and the magic variables
 # hostvars carries, an add_host host's included.
-args: [-v, -i, inv.ini, play.yml]
+args: [-i, inv.ini, play.yml]
 needs: [ansible-core]

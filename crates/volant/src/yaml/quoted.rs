@@ -51,7 +51,7 @@ pub(super) fn reindented(text: &str, err: &Error) -> Option<String> {
 
 /// The offset in `rest` of the quote that closes a scalar opened by `quote`: a double-quoted one
 /// escapes with a backslash, a single-quoted one writes its quote twice.
-fn closing(rest: &str, quote: u8) -> Option<usize> {
+pub(super) fn closing(rest: &str, quote: u8) -> Option<usize> {
     let bytes = rest.as_bytes();
     let mut at = 0;
     while at < bytes.len() {

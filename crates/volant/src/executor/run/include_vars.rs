@@ -7,11 +7,8 @@
 //! with the paths it looked in spelled out one per line. `dir:` reads every file of a tree, see
 //! [`crate::vars::include_dir`].
 //!
-//! A deliberate divergence, recorded rather than hidden: these land as facts, which is precedence
-//! 20 here against the reference's own rank 19 for `include_vars`. The two differ only for a name
-//! a `set_fact` also wrote: the reference lets the `set_fact` win in either order, here the
-//! later write wins. They land once the task is judged, through
-//! [`super::record::record_local_facts`].
+//! The variables land in their own layer, under `set_fact` and registered values as in the
+//! reference, once the task is judged, through [`super::record::record_local_facts`].
 
 use std::path::Path;
 use std::sync::Mutex;

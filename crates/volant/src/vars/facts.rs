@@ -208,6 +208,27 @@ impl VarStore {
         self.write_fact(host, key, value);
     }
 
+    /// Writes a variable `include_vars` read, `data` when the file held what a managed host
+    /// returned. It lands under the `set_fact` layer, see `VarStore::included`, and a name that
+    /// layer holds keeps the trust it has there, since that layer is the one that answers.
+    pub fn set_included(&mut self, host: &str, key: &str, value: Value, data: bool) {
+        self.templated_facts |= !data && holds_template(&value);
+        let shadowed = self.facts.get(host).is_some_and(|f| f.contains_key(key));
+        if !shadowed {
+            let names = self.untrusted.entry(host.to_string()).or_default();
+            if data {
+                names.insert(key.to_string());
+            } else {
+                names.remove(key);
+            }
+        }
+        self.included
+            .entry(host.to_string())
+            .or_default()
+            .insert(key.to_string(), value);
+        self.forget_host(host);
+    }
+
     /// Whether the playbook has written, while the run went, a fact that is still a template: an
     /// `include_vars` file whose values render, most often. Nothing before the run could read
     /// what such a value names, so from then on the executor makes every step a boundary.

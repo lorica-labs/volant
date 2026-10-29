@@ -1,0 +1,12 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - set_fact: {before: from_set_fact}
+    - include_vars: v.yml
+    - set_fact: {after: from_set_fact}
+    - debug:
+        msg: "{{ before }} {{ after }} {{ task_v }}"
+      vars:
+        task_v: from_task
+    - debug:
+        msg: "{{ hostvars['h1'].before }}"

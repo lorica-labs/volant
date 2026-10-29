@@ -284,7 +284,9 @@ pub(in crate::executor) fn record_local_facts(
                     vars.cache_fact(host, key, value);
                     written.insert(host.clone());
                 }
-                if data.contains(key) {
+                if !set_fact {
+                    vars.set_included(host, key, value.clone(), data.contains(key));
+                } else if data.contains(key) {
                     vars.set_untrusted_fact(host, key, value.clone());
                 } else {
                     vars.set_fact(host, key, value.clone());

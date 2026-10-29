@@ -18,7 +18,7 @@ use super::fields::{
 use super::keywords::{connect_keywords, delegation, escalation, flag, shown};
 use super::load::task_list;
 use super::model::{Play, PlayTask};
-use super::origin::{Origin, task_origin, value_origin};
+use super::origin::{Origin, keyword_refusal, task_origin, value_origin};
 #[expect(clippy::too_many_lines)]
 pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let map = yaml
@@ -58,7 +58,9 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let mut deferred = Deferred::default();
     // A template is rendered when the play starts. Until then the play gathers, so the step that
     // does it is in the list for the start to leave out.
-    let gather_written = boolean_or_template(yaml, "gather_facts", &mut deferred.gather_facts)?;
+    let refused = |err| keyword_refusal(yaml, err);
+    let gather_written =
+        boolean_or_template(yaml, "gather_facts", &mut deferred.gather_facts).map_err(refused)?;
     let gather_facts = gather_written.unwrap_or(true);
     let gather_written = gather_written.is_some() || deferred.gather_facts.is_some();
     let vars = match field(yaml, "vars") {
@@ -115,15 +117,19 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         None | Some(Yaml::Value(Scalar::Null)) => None,
         Some(v) => Some(to_json(v).context("'serial'")?),
     };
-    let (r#become, become_user) = escalation(yaml, "", &mut deferred)?;
-    let force_handlers = boolean_or_template(yaml, "force_handlers", &mut deferred.force_handlers)?;
+    let (r#become, become_user) = escalation(yaml, "", &mut deferred).map_err(refused)?;
+    let force_handlers = boolean_or_template(yaml, "force_handlers", &mut deferred.force_handlers)
+        .map_err(refused)?;
     let timeout = timeout(yaml, "", &mut deferred)?;
-    let no_log = boolean_or_template(yaml, "no_log", &mut deferred.no_log)?;
-    let run_once = boolean_or_template(yaml, "run_once", &mut deferred.run_once)?;
+    let no_log = boolean_or_template(yaml, "no_log", &mut deferred.no_log).map_err(refused)?;
+    let run_once =
+        boolean_or_template(yaml, "run_once", &mut deferred.run_once).map_err(refused)?;
     let any_errors_fatal =
-        boolean_or_template(yaml, "any_errors_fatal", &mut deferred.any_errors_fatal)?;
+        boolean_or_template(yaml, "any_errors_fatal", &mut deferred.any_errors_fatal)
+            .map_err(refused)?;
     let ignore_unreachable =
-        boolean_or_template(yaml, "ignore_unreachable", &mut deferred.ignore_unreachable)?;
+        boolean_or_template(yaml, "ignore_unreachable", &mut deferred.ignore_unreachable)
+            .map_err(refused)?;
     Ok(Play {
         origin: task_origin(map),
         name,
@@ -158,11 +164,11 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         environment: environment(yaml, "")?,
         module_defaults: module_defaults(yaml, "")?,
         collections: collections(yaml, "")?,
-        check_mode: flag(yaml, "check_mode")?,
-        diff: flag(yaml, "diff")?,
+        check_mode: flag(yaml, "check_mode").map_err(refused)?,
+        diff: flag(yaml, "diff").map_err(refused)?,
         run_once,
         any_errors_fatal,
-        ignore_errors: flag(yaml, "ignore_errors")?,
+        ignore_errors: flag(yaml, "ignore_errors").map_err(refused)?,
         ignore_unreachable,
         deferred,
         max_fail_percentage: match field(yaml, "max_fail_percentage") {

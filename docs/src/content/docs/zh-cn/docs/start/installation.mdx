@@ -54,6 +54,32 @@ curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 
 [ansible 命令名](/zh-cn/docs/start/ansible-command-names/)列出了每个名字运行什么以及有哪些不同。脚本默认从不安装它们。它运行 [`volant shims install`](/zh-cn/docs/reference/cli/shims/)，对不是它创建的文件或链接不做改动，并在 `PATH` 中真正的 Ansible 被遮蔽或仍然排在前面时给出提示。如果某个名字无法链接，脚本会打印 `some ansible-* names were not linked, see above`，仍以 0 退出，因为 Volant 已经安装好了。
 
+### 在 GitHub Actions 中
+
+`setup-volant` action 在 workflow 中安装 Volant。它运行上面的安装脚本，因此校验同样的 SHA-256 校验和，并把 `volant` 链接所在的目录加入后续步骤的 `PATH`。它适用于 Linux 和 macOS runner。
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: lorica-labs/volant/setup-volant@main
+    with:
+      version: v0.1.0-alpha.13
+      shims: true
+  - run: ansible-playbook -i inventory.yml site.yml
+```
+
+`uses:` 接受 volant 仓库的分支、标签或提交。0.1.0-alpha.13 之后的每个版本都包含这个 action。也请固定 `version`，这样新版本发布不会改变 workflow 运行的内容。
+
+| 输入 | 默认值 | 作用 |
+|---|---|---|
+| `version` | 最新版本 | 要安装的版本，例如 `v0.1.0-alpha.13`。 |
+| `shims` | `false` | 同时链接 `ansible-*` 名字，效果同 `--shims`。 |
+| `runtime` | `false` | 在这一步安装托管运行时，而不是等到第一次需要它的运行时再安装。 |
+| `collections` | 空 | 要安装到运行时中的 collection，与 `volant runtime install --collections` 相同：名字可带可选的 `:version`，也可以是 requirements 文件，用空格或换行分隔。 |
+| `python` | 空 | 设置 `VOLANT_PYTHON`。之后的运行使用这个解释器，从不安装运行时。 |
+
+使用 `runtime` 或 `collections` 时，action 用 `actions/cache` 缓存运行时目录。缓存键由 runner 的系统和架构、Volant 版本、collection 列表以及其中任何 requirements 文件的内容组成，因此之后输入相同的运行会恢复运行时，而不是重新下载。
+
 ## 你会得到什么
 
 发布包里有两个可执行文件。`volant` 内置了它要上传到主机的 agent。agent 是在主机上运行你的 task 的小程序。除此之外没有别的需要安装，也没有别的需要放在它旁边：

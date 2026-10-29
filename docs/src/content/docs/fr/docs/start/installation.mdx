@@ -54,6 +54,32 @@ curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 
 [Les noms des commandes ansible](/fr/docs/start/ansible-command-names/) liste ce que chaque nom lance et ce qui diffère. Le script ne les installe jamais par défaut. Il lance [`volant shims install`](/fr/docs/reference/cli/shims/), qui laisse intact un fichier ou un lien qu'il n'a pas créé et signale quand un vrai Ansible du `PATH` est masqué ou passe encore en premier. Si un nom n'a pas pu être lié, le script affiche `some ansible-* names were not linked, see above` et sort quand même avec 0, parce que Volant est installé.
 
+### Dans GitHub Actions
+
+L'action `setup-volant` installe Volant dans un workflow. Elle lance le script d'installation ci-dessus, donc vérifie la même somme SHA-256, et ajoute le répertoire du lien `volant` au `PATH` des étapes suivantes. Elle fonctionne sur les runners Linux et macOS.
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: lorica-labs/volant/setup-volant@main
+    with:
+      version: v0.1.0-alpha.13
+      shims: true
+  - run: ansible-playbook -i inventory.yml site.yml
+```
+
+`uses:` prend une branche, une étiquette ou un commit du dépôt volant. L'action est présente dans chaque version publiée après 0.1.0-alpha.13. Épinglez aussi `version`, pour qu'une nouvelle version ne change pas ce que lance le workflow.
+
+| Entrée | Par défaut | Effet |
+|---|---|---|
+| `version` | la version la plus récente | La version à installer, par exemple `v0.1.0-alpha.13`. |
+| `shims` | `false` | Lie aussi les noms `ansible-*`, comme `--shims`. |
+| `runtime` | `false` | Installe le runtime géré dans cette étape plutôt qu'à la première exécution qui en a besoin. |
+| `collections` | vide | Collections à installer dans le runtime, comme avec `volant runtime install --collections` : des noms avec un `:version` facultatif, ou un fichier requirements, séparés par des espaces ou des retours à la ligne. |
+| `python` | vide | Définit `VOLANT_PYTHON`. Les exécutions utilisent alors cet interpréteur et n'installent jamais le runtime. |
+
+Avec `runtime` ou `collections`, l'action met en cache le répertoire du runtime avec `actions/cache`. La clé du cache se compose du système et de l'architecture du runner, de la version de Volant, des collections et du contenu de tout fichier requirements parmi elles : une exécution suivante avec les mêmes entrées restaure le runtime au lieu de le télécharger.
+
 ## Ce que vous obtenez
 
 Une version contient deux exécutables. `volant` embarque les agents qu'il envoie à vos hôtes. Un agent est un petit programme qui exécute vos tâches sur un hôte. Il n'y a rien d'autre à installer et rien à garder à côté :

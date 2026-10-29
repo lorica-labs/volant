@@ -53,6 +53,32 @@ curl -fsSL https://volant.sh/install.sh | VOLANT_SHIMS=1 sh
 
 [Ansible command names](/docs/start/ansible-command-names/) lists what each name runs and what differs. The script never installs them by default. It runs [`volant shims install`](/docs/reference/cli/shims/), which leaves a file or link it did not make alone and says when a real Ansible on your `PATH` is hidden or still runs first. If a name could not be linked, the script prints `some ansible-* names were not linked, see above` and still exits 0, because Volant is installed.
 
+### In GitHub Actions
+
+The `setup-volant` action installs Volant in a workflow. It runs the install script above, so it checks the same SHA-256 checksum, and it adds the directory of the `volant` link to the `PATH` of the steps that follow. It works on Linux and macOS runners.
+
+```yaml
+steps:
+  - uses: actions/checkout@v7
+  - uses: lorica-labs/volant/setup-volant@main
+    with:
+      version: v0.1.0-alpha.13
+      shims: true
+  - run: ansible-playbook -i inventory.yml site.yml
+```
+
+`uses:` takes a branch, a tag or a commit of the volant repository. The action is in every release after 0.1.0-alpha.13. Pin `version` as well, so a new release does not change what the workflow runs.
+
+| Input | Default | What it does |
+|---|---|---|
+| `version` | the newest release | The release to install, such as `v0.1.0-alpha.13`. |
+| `shims` | `false` | Also link the `ansible-*` names, as `--shims` does. |
+| `runtime` | `false` | Install the managed runtime in this step instead of on the first run that needs it. |
+| `collections` | empty | Collections to install into the runtime, as with `volant runtime install --collections`: names with an optional `:version`, or a requirements file, separated by spaces or new lines. |
+| `python` | empty | Sets `VOLANT_PYTHON`. Runs then use that interpreter and never install the runtime. |
+
+With `runtime` or `collections`, the action caches the runtime directory with `actions/cache`. The cache key is made of the runner's system and architecture, the Volant version, the collections and the content of any requirements file among them, so a later run with the same inputs restores the runtime instead of downloading it.
+
 ## What you get
 
 The release has two executables. `volant` carries the agents it uploads to your hosts. An agent is a small program that runs your tasks on a host. There is nothing else to install and nothing to keep next to it:

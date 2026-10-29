@@ -277,7 +277,13 @@ pub(crate) fn python_repr(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
         Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
-        Value::Number(n) => n.to_string(),
+        // The text JSON carries for a NaN or an infinity, as Python's `repr` prints it.
+        Value::Number(n) => match n.as_str() {
+            "NaN" => "nan".into(),
+            "Infinity" => "inf".into(),
+            "-Infinity" => "-inf".into(),
+            _ => n.to_string(),
+        },
         Value::String(s) => python_str_repr(s),
         Value::Array(items) => format!(
             "[{}]",

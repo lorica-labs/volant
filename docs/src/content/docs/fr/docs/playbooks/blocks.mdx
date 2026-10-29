@@ -1,5 +1,5 @@
 ---
-sourceHash: dd334ed7fa20
+sourceHash: 61e526570a4b
 title: Blocs et handlers
 description: Comment un échec se propage à travers les blocs, ce que font rescue et always, et quand les handlers s'exécutent.
 ---
@@ -86,6 +86,8 @@ Un point de flush dans un fichier `include_tasks` ne s'exécute que pour les hô
 Les handlers s'exécutent dans l'ordre où ils sont définis, pas dans l'ordre où ils ont été notifiés. Un rôle nommé dans `roles:` ou par `import_role` place ses handlers devant ceux du play. Un rôle amené par `include_role` les place derrière, comme dans Ansible.
 
 Une tâche ne notifie que lorsqu'elle signale `changed`. Pour une boucle, c'est le résultat global qui décide : un seul élément modifié suffit. Une fois un flush exécuté, les notifications sont effacées : un handler ne s'exécute donc pas de nouveau au flush suivant, sauf si quelque chose le notifie encore.
+
+Une liste `handlers:` peut contenir un `import_tasks`, dans un play ou dans un rôle. Les handlers du fichier qu'il nomme prennent sa place, avec ses mots-clés, et sont notifiés par leur nom et par `listen`. Le fichier est cherché à côté du fichier qui contient l'instruction, puis dans le répertoire du playbook.
 
 ### Mots-clés hérités du play
 

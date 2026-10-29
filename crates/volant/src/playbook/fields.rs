@@ -241,7 +241,11 @@ pub(super) fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<Stri
                 args.insert("_raw_params".into(), Value::String(raw));
             }
         }
-        Yaml::Value(Scalar::String(s)) if is_free_form(module) => {
+        // Every free-form module keeps its line whole but `include_vars`, whose line is `key=value`
+        // pairs like a module's, the words without `=` being the file: the reference's `parse_kv`.
+        Yaml::Value(Scalar::String(s))
+            if is_free_form(module) && short_name(module) != "include_vars" =>
+        {
             args.insert("_raw_params".into(), Value::String(s.to_string()));
         }
         // A collection's module, or a name a `library/` may hold, read as the reference's

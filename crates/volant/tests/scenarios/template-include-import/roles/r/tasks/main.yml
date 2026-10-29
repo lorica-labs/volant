@@ -1,0 +1,4 @@
+- template: {src: main.j2, dest: "{{ playbook_dir }}/role.txt"}
+- debug: {msg: "{{ lookup('file', playbook_dir ~ '/role.txt') }}"}
+- debug: {msg: "{% include 'rinc.j2' %}"}
+  ignore_errors: true

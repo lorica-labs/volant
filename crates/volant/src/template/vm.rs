@@ -388,6 +388,11 @@ pub(super) fn convert_error(err: minijinja::Error) -> TemplateError {
     if let Some(python) = zero_division(&err) {
         return TemplateError(format!("Error rendering template: {python}"));
     }
+    if err.kind() == ErrorKind::TemplateNotFound
+        && let Some(said) = super::include::take_missed()
+    {
+        return TemplateError(format!("Error rendering template: {said}"));
+    }
     // A bridged call's failure is worded in full where it is raised, as the reference words it.
     if let Some(said) = bridged::said(&err) {
         return TemplateError(said.to_string());

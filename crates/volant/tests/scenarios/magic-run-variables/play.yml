@@ -1,0 +1,12 @@
+- hosts: h1,h2
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "{{ ansible_verbosity }} {{ ansible_inventory_sources | map('basename') | list }} {{ lookup('vars', 'ansible_host') }} {{ ansible_config_file is defined }}"
+    - debug:
+        msg: "{{ hostvars[inventory_hostname].ansible_verbosity }} {{ hostvars[inventory_hostname].group_names }} {{ hostvars[inventory_hostname].ansible_check_mode }} {{ hostvars[inventory_hostname].ansible_host | default('none') }}"
+    - add_host: {name: plainhost, groups: [g1]}
+      run_once: true
+    - debug:
+        msg: "{{ hostvars['plainhost'].group_names }} {{ hostvars['plainhost'].inventory_hostname }} {{ hostvars['plainhost'].groups['g1'] }}"
+      run_once: true

@@ -1,5 +1,5 @@
 ---
-sourceHash: 7aabf754eaae
+sourceHash: 614f5b77c2be
 title: Rangfolge und Facts
 description: Welche Quelle gewinnt, wenn zwei dieselbe Variable definieren, die magischen Variablen und wie Facts gesammelt, benannt und zwischengespeichert werden.
 ---
@@ -54,6 +54,10 @@ Eine feste Menge magischer Variablen liegt über der Sicht jedes Hosts und gewin
 | `ansible_check_mode`, `ansible_diff_mode` | Ob der Lauf `--check` und `--diff` hat. Ein eigenes Keyword `check_mode` oder `diff` an einem Play oder Task ändert sie nicht. |
 | `ansible_run_tags`, `ansible_skip_tags` | Die Tags, die der Lauf auswählt und überspringt, siehe [Check-Modus, Diff und Auflistungen](/de/docs/playbooks/check-and-diff/#ansible_run_tags-und-ansible_skip_tags). |
 | `ansible_forks` | Der aktuelle Wert von `forks`. |
+| `ansible_verbosity` | Wie viele `-v` der Lauf bekommen hat, als Zahl. |
+| `ansible_inventory_sources` | Jede Inventory-Quelle in der angegebenen Reihenfolge, Pfade absolut gemacht. |
+| `ansible_config_file` | Die `ansible.cfg`, die der Lauf gelesen hat, als absoluter Pfad, oder `None`, wenn er keine gelesen hat. |
+| `ansible_host` | In einem Task der Inventory-Name des Hosts, wenn nichts ihn setzt, sodass `lookup('vars', 'ansible_host')` antwortet. `hostvars` bekommt diesen Standardwert nicht. |
 | `ansible_version` | Das Release von ansible-core, das Volant nachbildet, siehe [Entscheidungsdokument 0003](/de/docs/decisions/0003-ansible-version-reports-the-reference-release/). |
 | `volant_version` | Die eigene Version von Volant. Prüfen Sie `volant_version is defined`, um die beiden Engines zu unterscheiden. |
 
@@ -63,7 +67,7 @@ Jeder Task erhält außerdem `ansible_search_path`, und der Task einer Rolle erh
 
 ## hostvars
 
-`hostvars` enthält, was Inventory, `--extra-vars`, `set_fact` und gesammelte Facts für jeden Host erzeugt haben. Es enthält nicht die Play- oder Task-Variablen eines anderen Hosts. Es wird neu aufgebaut, sobald sich ein Fact ändert.
+`hostvars` enthält, was Inventory, `--extra-vars`, `set_fact` und gesammelte Facts für jeden Host erzeugt haben, dazu die magischen Variablen des Hosts (`group_names`, `inventory_dir`, `playbook_dir` und die Optionen des Laufs), auch für einen Host, den `add_host` angelegt hat. Es enthält nicht die Play- oder Task-Variablen eines anderen Hosts. Es wird neu aufgebaut, sobald sich ein Fact ändert.
 
 Jeder Host liest eine gemeinsame Map statt einer eigenen Kopie, sodass ein Task, der `hostvars` nennt, einen Zugriff kostet und keine Kopie des Inventorys.
 

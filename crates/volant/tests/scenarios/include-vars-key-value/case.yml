@@ -1,0 +1,2 @@
+# A free-form include_vars line is key=value options, and a bare path still names the file.
+args: [-i, inv.ini, play.yml]

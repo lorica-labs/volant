@@ -1,0 +1,17 @@
+namespace: volant
+name: compat
+version: 0.1.0-alpha.13
+readme: README.md
+authors:
+  - Hugo Planque
+description: Plugins that let ansible-core record runs for Volant to replay.
+license:
+  - GPL-3.0-or-later
+tags:
+  - volant
+  - callback
+repository: https://github.com/lorica-labs/volant
+documentation: https://volant.sh/docs/reference/recording/
+issues: https://github.com/lorica-labs/volant/issues
+build_ignore:
+  - '*.tar.gz'

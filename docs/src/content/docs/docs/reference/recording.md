@@ -7,6 +7,8 @@ Before a team switches, it can record what `ansible-playbook` does on its real r
 
 ## Enable it
 
+[`volant compat install`](/docs/reference/cli/compat/) writes the `volant.compat` collection from the Volant binary, with no download.
+
 Install the collection where ansible-core finds its collections, then add two sections to `ansible.cfg`:
 
 ```ini

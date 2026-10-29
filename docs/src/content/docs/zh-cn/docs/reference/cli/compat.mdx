@@ -1,0 +1,23 @@
+---
+sourceHash: 62954c0fa838
+title: volant compat
+description: 安装 Volant 二进制文件自带的 volant.compat 集合，无需下载。
+---
+
+import Option from '../../../../../../components/Option.astro';
+
+`volant compat install` 把 `volant.compat` 集合（其中包含 [`record` 回调](/zh-cn/docs/reference/recording/)）写到 ansible-core 查找集合的位置。该集合来自 Volant 二进制文件本身，因此命令可以离线运行，例如在无法访问 Galaxy 的 CI runner 上。
+
+```sh
+volant compat install [-p PATH] [-f]
+```
+
+<Option name="-p, --collections-path" arg="PATH">
+  集合目录。集合放到 `PATH/ansible_collections/volant/compat`，`PATH` 不以 `ansible_collections` 结尾时会自动补上。默认：集合路径的第一项，与 [`volant galaxy collection install`](/zh-cn/docs/reference/cli/galaxy/) 相同。
+</Option>
+
+<Option name="-f, --force" arg="">
+  已安装相同版本时重新安装。
+</Option>
+
+该命令按 `volant galaxy collection install` 安装源码目录的方式安装集合，打印相同的行：`Installing 'volant.compat:<version>' to '<path>'`，然后是 `volant.compat:<version> was installed successfully`。`MANIFEST.json` 和 `FILES.json` 与用相同文件构建的集合一致，因此 `ansible-galaxy collection list` 会列出 `volant.compat <version>`，`ansible-galaxy collection verify volant.compat --offline` 也会成功。再次运行时打印 `Nothing to do. All requested collections are already installed.`。版本即 Volant 二进制文件的版本：升级 Volant 后，该命令会安装新版本。

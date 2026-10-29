@@ -1,0 +1,22 @@
+---
+title: volant compat
+description: Install the volant.compat collection the Volant binary carries, with no download.
+---
+
+import Option from '../../../../../components/Option.astro';
+
+`volant compat install` writes the `volant.compat` collection, which holds the [`record` callback](/docs/reference/recording/), where ansible-core finds collections. The collection comes from the Volant binary itself, so the command works offline, on a CI runner with no access to Galaxy for example.
+
+```sh
+volant compat install [-p PATH] [-f]
+```
+
+<Option name="-p, --collections-path" arg="PATH">
+  The collections directory. The collection goes to `PATH/ansible_collections/volant/compat`, `ansible_collections` added unless `PATH` ends with it. Default: the first entry of the collections path, as for [`volant galaxy collection install`](/docs/reference/cli/galaxy/).
+</Option>
+
+<Option name="-f, --force" arg="">
+  Reinstall the collection when the same version is installed.
+</Option>
+
+The command installs the collection as `volant galaxy collection install` installs a source directory, with the same lines: `Installing 'volant.compat:<version>' to '<path>'`, then `volant.compat:<version> was installed successfully`. `MANIFEST.json` and `FILES.json` are those of a collection built from the same files, so `ansible-galaxy collection list` reports `volant.compat <version>` and `ansible-galaxy collection verify volant.compat --offline` succeeds. Run again, it prints `Nothing to do. All requested collections are already installed.` The version is that of the Volant binary: after an upgrade of Volant, the command installs the new one.

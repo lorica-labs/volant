@@ -153,6 +153,9 @@ pub struct FileRender {
     /// The name a render error gives the template: its `src` as the task wrote it. `None` is
     /// minijinja's own `<string>`.
     pub name: Option<String>,
+    /// Where the file's `{% include %}` and `{% import %}` look. Empty is the playbook
+    /// directory, as for any render.
+    pub include_path: Vec<std::path::PathBuf>,
 }
 
 impl Default for FileRender {
@@ -164,6 +167,7 @@ impl Default for FileRender {
             newline_sequence: "\n".to_string(),
             syntax: Syntax::default(),
             name: None,
+            include_path: Vec::new(),
         }
     }
 }
@@ -225,7 +229,13 @@ impl Templar {
         let normalized = body.replace("\r\n", "\n").replace('\r', "\n");
         let (ctx, _tainted) = context_of(self, vars.into());
         let name = options.name.as_deref().unwrap_or("<string>");
-        let rendered = render_str(self, name, &normalized, &ctx, syntax).map_err(convert_error);
+        let render = || render_str(self, name, &normalized, &ctx, syntax);
+        let rendered = if options.include_path.is_empty() {
+            render()
+        } else {
+            super::include::with_search_path(options.include_path.clone(), render)
+        }
+        .map_err(convert_error);
         let mut rendered = match take_failure(&ctx) {
             Some(error) => return Err(error),
             None => rendered?,

@@ -62,6 +62,7 @@ pub(super) fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> En
             None => minijinja::escape_formatter(out, state, value),
         }
     });
+    super::include::install(&mut env, base_dir.clone());
     filters::register(&mut env, base_dir, bridge);
     // A filter that draws at random answers otherwise on every run: unknown in a replay, and
     // never sent to ansible-core.

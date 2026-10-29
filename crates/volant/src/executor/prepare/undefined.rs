@@ -129,6 +129,23 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
                 None,
             )),
         ),
+        // An include a file of `lookup('template')` asked for: the argument's link ends at its
+        // key, and the refusal is a link at that file.
+        Some((before, reason))
+            if crate::template::asked_in(&format!("Error rendering template: {reason}"))
+                .is_some() =>
+        {
+            let said = format!("Error rendering template: {reason}");
+            let file = crate::template::asked_in(&said).map(|f| crate::playbook::Origin {
+                path: f.display().to_string().into(),
+                line: 0,
+                col: 0,
+            });
+            (
+                format!("{before}."),
+                Some(crate::render::cause(&said, file.as_ref(), None)),
+            )
+        }
         _ => (resolving.to_string(), None),
     };
     // A plugin that failed on an exception of its own is a block of its sentence, then one bare

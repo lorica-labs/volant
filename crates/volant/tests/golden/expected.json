@@ -2261,6 +2261,24 @@
   },
   {
     "case": {
+      "template": "{{ 'nan' | float }} {{ 'nan' | float is isnan }} {{ ('nan' | float) | type_debug }}"
+    },
+    "result": "nan True float"
+  },
+  {
+    "case": {
+      "template": "{{ 'inf' | float }} {{ '-inf' | float }} {{ 'Infinity' | float }} {{ 'NaN' | float | type_debug }}"
+    },
+    "result": "inf -inf inf float"
+  },
+  {
+    "case": {
+      "template": "{{ ['nan' | float, 'inf' | float, '-inf' | float] }} {{ 1.5 is isnan }} {{ 'x' is isnan }}"
+    },
+    "result": "[nan, inf, -inf] False False"
+  },
+  {
+    "case": {
       "template": "{{ b is contains 'y' }} {{ b is contains 'x y' }} {{ 'x y z' is contains 'y z' }} {{ b is contains 'z' }}",
       "vars": {
         "b": "x y"

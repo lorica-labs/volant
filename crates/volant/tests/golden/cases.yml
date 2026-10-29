@@ -376,6 +376,9 @@
 - template: "{% set d = now().replace(year=2020, month=1, day=1, hour=0, minute=0, second=0, microsecond=0) %}{{ d }} {{ d.replace(day=3, hour=5) - d }} {{ d - d.replace(microsecond=5) }} {{ d + (d.replace(day=2) - d) }} {{ [d.replace(day=2) - d, d] }} {{ (d.replace(day=2) - d).total_seconds() }} {{ (d - d) | type_debug }}"
 - template: "{{ now() - 1 }}"
 - template: "{{ now().replace(day=31, month=2) }}"
+- template: "{{ 'nan' | float }} {{ 'nan' | float is isnan }} {{ ('nan' | float) | type_debug }}"
+- template: "{{ 'inf' | float }} {{ '-inf' | float }} {{ 'Infinity' | float }} {{ 'NaN' | float | type_debug }}"
+- template: "{{ ['nan' | float, 'inf' | float, '-inf' | float] }} {{ 1.5 is isnan }} {{ 'x' is isnan }}"
 - template: "{{ b is contains 'y' }} {{ b is contains 'x y' }} {{ 'x y z' is contains 'y z' }} {{ b is contains 'z' }}"
   vars: {b: "x y"}
 - template: "{{ items is contains 'a' }} {{ items is contains 'ab' }}"

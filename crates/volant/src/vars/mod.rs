@@ -52,7 +52,7 @@ use crate::template::Templar;
 #[derive(Debug, Default, Clone)]
 pub struct Scope {
     pub play_vars: Map<String, Value>,
-    pub vars_files: Vec<Map<String, Value>>,
+    pub vars_files: Arc<VarsFiles>,
     pub task_vars: Map<String, Value>,
     /// A role's `defaults/main.yml`, the lowest layer of all: measured, it loses even to an
     /// inventory variable of the same name.
@@ -72,6 +72,56 @@ pub struct Scope {
     pub batch_hosts: Arc<[String]>,
     /// Every host the play resolved, whether it is still in it or not.
     pub all_play_hosts: Arc<[String]>,
+}
+
+/// A play's `vars_files` as one host reads them: merged in the order the play lists them, a
+/// later file winning, and split once so that a host's tasks share them rather than copy them.
+/// Copied into every host's map for every task, a 7 MB file held 5 GB on 50 hosts.
+#[derive(Debug, Default)]
+pub struct VarsFiles {
+    /// The names whose value holds no template, `!unsafe` or `!vault` text, which no render
+    /// changes: the [`HostVars::base`] of every task of the hosts that read these files.
+    pub plain: Arc<Map<String, Value>>,
+    /// The names whose value does, copied into the host's map where they are rendered.
+    pub templated: Map<String, Value>,
+}
+
+impl VarsFiles {
+    pub fn new(files: &[Arc<Map<String, Value>>]) -> Self {
+        if let [file] = files
+            && !file.values().any(crate::template::holds_template)
+        {
+            return Self {
+                plain: Arc::clone(file),
+                templated: Map::new(),
+            };
+        }
+        let (mut plain, mut templated) = (Map::new(), Map::new());
+        for file in files {
+            for (name, value) in file.iter() {
+                let (into, other) = if crate::template::holds_template(value) {
+                    (&mut templated, &mut plain)
+                } else {
+                    (&mut plain, &mut templated)
+                };
+                other.shift_remove(name);
+                into.insert(name.clone(), value.clone());
+            }
+        }
+        Self {
+            plain: Arc::new(plain),
+            templated,
+        }
+    }
+
+    pub fn contains_key(&self, name: &str) -> bool {
+        self.plain.contains_key(name) || self.templated.contains_key(name)
+    }
+
+    /// Both halves, which hold no name in common.
+    pub fn maps(&self) -> [&Map<String, Value>; 2] {
+        [&self.plain, &self.templated]
+    }
 }
 
 /// Every variable source that does not depend on the play, resolved once per run, plus the

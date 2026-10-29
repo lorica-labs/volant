@@ -104,7 +104,9 @@ fn directory_and_run_layers_stack_in_the_reference_order() {
             .as_object()
             .unwrap()
             .clone();
-        sc.vars_files = vec![json!({"p": 2, "f": 1}).as_object().unwrap().clone()];
+        sc.vars_files = Arc::new(VarsFiles::new(&[Arc::new(
+            json!({"p": 2, "f": 1}).as_object().unwrap().clone(),
+        )]));
         sc.task_vars = json!({"f": 2, "t": 1}).as_object().unwrap().clone();
         store.set_fact("web1", "t", json!(2));
         store.set_fact("web1", "fact", json!("set"));
@@ -651,7 +653,11 @@ impl Rng {
     fn scope(&mut self) -> Scope {
         Scope {
             play_vars: self.map(2),
-            vars_files: (0..self.below(3)).map(|_| self.map(2)).collect(),
+            vars_files: Arc::new(VarsFiles::new(
+                &(0..self.below(3))
+                    .map(|_| Arc::new(self.map(2)))
+                    .collect::<Vec<_>>(),
+            )),
             task_vars: self.map(2),
             role_defaults: self.map(2),
             role_vars: self.map(2),
@@ -699,7 +705,7 @@ fn the_layered_view_reads_like_the_merged_one() {
                     effective(&[&store.for_host(host, &scope), &store.shared_values(&scope)]);
                 let got = store.layered_for_host(host, &scope);
                 assert_eq!(
-                    effective(&[&got.map, &got.facts, &got.shared]),
+                    effective(&[&got.files, &got.map, &got.facts, &got.shared]),
                     want,
                     "seed {seed:#x}, case {case}, round {round}, host {host}"
                 );
@@ -850,7 +856,7 @@ fn every_layer_keeps_its_trust_through_the_layered_view() {
     play_vars.insert("built".into(), json!("{{ g }}"));
     let scope = Scope {
         play_vars,
-        vars_files: vec![one("f")],
+        vars_files: Arc::new(VarsFiles::new(&[Arc::new(one("f"))])),
         task_vars: one("t"),
         role_defaults: one("d"),
         role_vars: one("rv"),

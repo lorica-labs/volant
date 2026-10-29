@@ -1,5 +1,5 @@
 ---
-sourceHash: 8577d9c13ab0
+sourceHash: cb0e71e475e6
 title: Precedencia y facts
 description: Qué fuente gana cuando dos definen la misma variable, las variables mágicas, y cómo se recopilan, nombran y guardan en caché los facts.
 ---

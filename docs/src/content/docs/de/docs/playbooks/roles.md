@@ -1,5 +1,5 @@
 ---
-sourceHash: fd7538abfe30
+sourceHash: e3f27c96d5f0
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---

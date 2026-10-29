@@ -1,5 +1,5 @@
 ---
-sourceHash: 8577d9c13ab0
+sourceHash: cb0e71e475e6
 title: Rangfolge und Facts
 description: Welche Quelle gewinnt, wenn zwei dieselbe Variable definieren, die magischen Variablen und wie Facts gesammelt, benannt und zwischengespeichert werden.
 ---

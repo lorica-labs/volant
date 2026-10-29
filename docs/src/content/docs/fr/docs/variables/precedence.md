@@ -1,5 +1,5 @@
 ---
-sourceHash: 8577d9c13ab0
+sourceHash: cb0e71e475e6
 title: Priorité et facts
 description: Quelle source l'emporte quand deux définissent la même variable, les variables magiques, et comment les facts sont collectés, nommés et mis en cache.
 ---

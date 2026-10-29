@@ -1,5 +1,5 @@
 ---
-sourceHash: e421c9aa034e
+sourceHash: c82c9f29b211
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---

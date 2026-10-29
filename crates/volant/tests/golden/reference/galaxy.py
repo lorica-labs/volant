@@ -18,8 +18,10 @@ caller is kept.
 order, and every file left under the scratch directory outside the home, with the SHA-256 of its
 normalised text, or of its members for a `.tar.gz` (see `members`). Normalised means: the scratch directory reads `<golden-tmp>`, the server's port
 `<golden-port>`, ansible-galaxy's own download directory `<golden-galaxy-tmp>` with the random
-suffix of the file it downloads to `<golden-random>`, a role's `install_date` `<golden-date>`, and the Python objects after the resolver's `use --pre` hint
-are cut, ending it with a full stop.
+suffix of the file it downloads to `<golden-random>`, a role's `install_date` `<golden-date>`, the
+`-vv` block `<golden-banner>`, the configuration file `<golden-config>`, the directory `collection
+verify` downloads into `<golden-galaxy-tmp>`; the Python objects after the resolver's `use --pre` hint
+are cut, ending it with a full stop, and the line about `ansible._protomatter` is dropped.
 """
 import hashlib
 import io
@@ -48,6 +50,14 @@ INSTALL_DATE = re.compile(r"^install_date: '[^'\n]*'$", re.M)
 PRE_HINT = re.compile(r"(use --pre): .*$", re.M)
 # The path of the `git` a failed command ran, which differs between machines.
 GIT_COMMAND = re.compile(r"Command '([\[(])'[^']*/git', ")
+# The `-vv` block names the machine's interpreter and paths, and the configuration file is the
+# empty one every run reads: both are cut, the line after the block kept.
+BANNER = re.compile(r"^ansible-galaxy \[core [^\]]*\]\n(?:  .*\n)*", re.M)
+CONFIG = re.compile(r"^Using \S+ as config file$", re.M)
+# `-vvv` names the temporary directory `collection verify` downloads into.
+REMOTE_CACHE = re.compile(r"^(Remote collection cached as ')[^']*/([^/']+')$", re.M)
+# The collection ansible-core ships inside its own Python package, which Volant has not.
+PROTOMATTER = re.compile(r"^Found installed collection ansible\._protomatter:.*\n", re.M)
 
 
 def normalise(text, tmp, port):
@@ -55,6 +65,10 @@ def normalise(text, tmp, port):
     text = GALAXY_TMP.sub(r"<golden-galaxy-tmp>/\1-<golden-random>", text)
     text = PRE_HINT.sub(r"\1.", text)
     text = GIT_COMMAND.sub(r"Command '\1'git', ", text)
+    text = BANNER.sub("<golden-banner>\n", text)
+    text = CONFIG.sub("Using <golden-config> as config file", text)
+    text = REMOTE_CACHE.sub(r"\1<golden-galaxy-tmp>/\2", text)
+    text = PROTOMATTER.sub("", text)
     return INSTALL_DATE.sub("install_date: '<golden-date>'", text)
 
 

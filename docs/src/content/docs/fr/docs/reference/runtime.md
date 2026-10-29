@@ -1,5 +1,5 @@
 ---
-sourceHash: 13effd397cb2
+sourceHash: 118d6f078919
 title: Le runtime géré
 description: Le Python et l'ansible-core que Volant installe pour lui-même, où ils se trouvent, ce qu'ils téléchargent, et comment les gérer.
 ---
@@ -63,6 +63,8 @@ volant runtime install --collections requirements.yml
 ```
 
 `--collections` prend des noms, chacun avec un `:version` facultatif, ou un fichier de dépendances qui se termine par `.yml` ou `.yaml`. Les collections vont dans `collections/` à l'intérieur du runtime. Volant y cherche après les chemins de `ANSIBLE_COLLECTIONS_PATH` et de `[defaults] collections_path` : les collections que vous avez installées vous-même l'emportent donc. [`volant galaxy`](/fr/docs/reference/cli/galaxy/) installe dans la première entrée de ce chemin, `~/.ansible/collections` par défaut, et liste le répertoire du runtime en dernier.
+
+L'installation est celle de Volant : `volant runtime install --collections` lance `volant galaxy collection install -p <runtime>/collections`, affiche les mêmes lignes et n'a pas besoin de Python pour cette étape.
 
 Le runtime contient ansible-core et ses dépendances, rien d'autre. Une collection dont les plugins ont besoin d'un autre paquet Python, comme `jmespath` pour `json_query`, n'y fonctionne pas. Pour celles-là, utilisez votre propre environnement avec `VOLANT_PYTHON`.
 

@@ -2,9 +2,6 @@
 //! Collections installed into the managed runtime, and where the search finds them.
 
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
-
-use super::install::{Installed, python_command};
 
 /// Where the runtime keeps the collections `volant runtime install --collections` fetched.
 pub(crate) fn dir(runtime: &Path) -> PathBuf {
@@ -56,49 +53,4 @@ pub(crate) fn split(
         }
     }
     (names, files)
-}
-
-/// What to give galaxy: collection names, or a requirements file.
-pub(crate) enum Source<'a> {
-    Names(&'a [String]),
-    File(&'a Path),
-}
-
-/// Installs collections into the runtime with `python -m ansible.cli.galaxy`, never the
-/// `ansible-galaxy` script, whose first line names the directory the runtime was built in.
-pub(crate) fn install(runtime: &Installed, source: &Source) -> Result<(), String> {
-    let mut command = python_command(&runtime.python);
-    command
-        .args(["-m", "ansible.cli.galaxy", "collection", "install", "-p"])
-        .arg(dir(&runtime.dir))
-        .env("ANSIBLE_HOME", runtime.dir.join("ansible-home"));
-    match source {
-        Source::Names(names) => {
-            if names.is_empty() {
-                return Err("no collection named".to_owned());
-            }
-            if let Some(bad) = names.iter().find(|name| name.starts_with('-')) {
-                return Err(format!(
-                    "'{bad}' is not a collection name: write namespace.name, optionally with a version"
-                ));
-            }
-            command.args(*names);
-        }
-        Source::File(file) => {
-            command.arg("-r").arg(file);
-        }
-    }
-    let status = command
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit())
-        .status()
-        .map_err(|e| format!("cannot run {}: {e}", runtime.python.display()))?;
-    if status.success() {
-        Ok(())
-    } else {
-        Err(format!(
-            "ansible-galaxy could not install the collections ({status}): check the names and the \
-             network, then run the command again"
-        ))
-    }
 }

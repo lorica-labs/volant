@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! The `galaxy` command: the options of `ansible-galaxy` 2.19.12, its install directories and the
-//! checks it makes before any work. The subcommands themselves are refused until they are native.
+//! The `galaxy` command: the options of `ansible-galaxy` 2.19.12, its install directories, the
+//! checks it makes before any work, then the subcommand. `init` is refused until it is native, and
+//! the commands that need a Galaxy account are always refused.
 
 mod args;
 
@@ -26,6 +27,12 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
     let Some(kind) = args.kind else {
         return 2;
     };
+    if args.verbose >= 2 {
+        println!("{}", super::version::block("ansible-galaxy", &[]));
+    }
+    if args.verbose >= 1 {
+        println!("{}", super::announce::config_line());
+    }
     match run(&kind, args.verbose) {
         Ok(code) => code,
         Err(failure) => {
@@ -35,7 +42,7 @@ pub fn galaxy(args: GalaxyArgs) -> i32 {
     }
 }
 
-/// The checks the reference makes before the subcommand's work, then the refusal of that work.
+/// The checks the reference makes before the subcommand's work, then that work.
 #[expect(clippy::too_many_lines)]
 fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     let config = Config::load().map_err(|e| Failure::error(e.to_string()))?;
@@ -109,6 +116,7 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
                 &configured_collections(&config),
                 collection.as_deref(),
                 format.as_deref().unwrap_or("human"),
+                verbose,
             );
         }
         Kind::Role(Role::Install {
@@ -258,6 +266,7 @@ fn collection_verify(
         paths: &paths,
         offline,
         ignore_errors,
+        verbose,
     };
     inventory::verify(&wanted, &mut servers, &options)
 }
@@ -329,7 +338,10 @@ fn collection_install(
     let path = match &install.collections_path {
         Some(path) => {
             let path = galaxy::resolve(path);
-            if let Some(warning) = galaxy::collections_path_warning(&path, &configured) {
+            // Volant searches the runtime's directory, so an install there is picked up.
+            if Some(&path) != runtime.as_ref()
+                && let Some(warning) = galaxy::collections_path_warning(&path, &configured)
+            {
                 eprintln!("[WARNING]: {warning}");
             }
             path
@@ -417,7 +429,7 @@ fn requirements_of(
     if verbose >= 3 {
         println!("Reading requirement file at '{}'", file.display());
     }
-    requirements::read(file, old_format)
+    requirements::read(file, old_format, verbose)
 }
 
 /// A subcommand that needs a Galaxy account or server-side data, which stays out of Volant.

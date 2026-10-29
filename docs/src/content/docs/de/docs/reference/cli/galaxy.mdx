@@ -1,5 +1,5 @@
 ---
-sourceHash: ab31fe4cc00b
+sourceHash: af5451743cb8
 title: volant galaxy
 description: Die Optionen von ansible-galaxy, von Volant selbst geprüft, während seine Unterbefehle einer nach dem anderen nativ werden.
 ---
@@ -73,6 +73,19 @@ Das Token geht als `Authorization: Token <token>` mit und wird nie ausgegeben. O
 ## Anforderungsdateien
 
 `-r` liest die Anforderungsdatei wie `ansible-galaxy`: `collections:` und `roles:` in einer Datei, oder die alte einfache Liste von Rollen, die nur `role install` annimmt. Ein Eintrag `include:` holt die Rollen einer anderen Datei, deren Pfad vom Arbeitsverzeichnis aus gilt. Wird `-r` zweimal angegeben, zählt das letzte. Hat die Datei keinen Eintrag für den Befehl, geben `collection install` und `role install` `Skipping install, no requirements found` aus und enden mit 0. `-vvv` gibt zuerst `Reading requirement file at '<path>'` aus. Eine fehlerhafte Datei scheitert mit der Meldung von `ansible-galaxy`, Exit 1: keine Einträge, andere Schlüssel als `collections` und `roles`, ein Rolleneintrag ohne `name` und ohne `src`, ein Collection-Name, der nicht `namespace.name` ist und auf nichts zeigt, oder ein unbekannter `type`.
+
+## Ausführliche Ausgabe
+
+`-v` zählt nach dem Unterbefehl, wie bei `ansible-galaxy`; `ansible-galaxy` ignoriert ein `-v` vor dem Unterbefehl, Volant zählt es.
+
+| Stufe | Was hinzukommt |
+|---|---|
+| `-v` | `Using <path> as config file` oder `No config file found; using defaults`. |
+| `-vv` | Vor dieser Zeile der Block, den `--version` ausgibt: `ansible-galaxy [core <version>]`, `config file`, `configured module search path`, `ansible collection location`, `executable location`. Die Zeilen zu Python, Jinja und PyYAML erscheinen nur, wenn der Interpreter des Controllers antwortet, wie bei `volant adhoc`. |
+| `-vvv` | `Reading requirement file at '<file>'`, `found role <dict> in yaml file`, `Processing role <name> `, `Found installed collection <name>:<version> at '<path>'`, `Created <token file>` oder `Opened <token file>`, `Collection '<name>:<version>' obtained from server <server> <url>`, `Remote collection cached as '<path>'`, `Skipping '<path>' for collection build` und die Ausgabe von `git`. |
+| `-vvvv` | `Validating downloaded file hash`. Die übrigen HTTP-Zeilen von `ansible-galaxy` (`Calling Galaxy at`, `Found API version`, der Antwort-Cache) werden nicht ausgegeben. |
+
+`ansible-galaxy` meldet auch `ansible._protomatter`, die Collection, die ansible-core in seinem eigenen Python-Paket hält; Volant hat kein solches Paket und meldet sie nie. `role remove` fragt vor dem Löschen den Standard-Galaxy-Server nach seiner API, was bei `-vvv` `Opened <token file>` ausgibt; Volant entfernt die Rolle, ohne einen Server zu kontaktieren.
 
 ## Abgelehnte Unterbefehle
 

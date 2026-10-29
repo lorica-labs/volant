@@ -1,0 +1,44 @@
+{
+  "args": [
+    "collection",
+    "install",
+    "-r",
+    "requirements.yml",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/cols",
+    "-vvv"
+  ],
+  "rc": 0,
+  "repos": [],
+  "requests": [
+    "GET /",
+    "GET /api",
+    "GET /api/v3/collections/demo/base/",
+    "GET /api/v3/collections/demo/base/versions/?limit=100",
+    "GET /api/v3/collections/demo/base/versions/?limit=2&offset=2",
+    "GET /api/v3/collections/demo/app/",
+    "GET /api/v3/collections/demo/app/versions/?limit=100",
+    "GET /api/v3/collections/demo/base/versions/1.0.0/",
+    "GET /api/v3/collections/demo/app/versions/1.0.0/",
+    "GET /api/v3/collections/demo/base/",
+    "GET /api/v3/collections/demo/base/artifacts/demo-base-1.0.0.tar.gz",
+    "GET /api/v3/collections/demo/app/artifacts/demo-app-1.0.0.tar.gz"
+  ],
+  "setup": [],
+  "stderr": "[WARNING]: The specified collections path '<golden-tmp>/cols' is not part of the configured Ansible collections paths '<golden-tmp>/home/.ansible/collections:/usr/share/ansible/collections'. The installed collection will not be picked up in an Ansible run, unless within a playbook-adjacent collections directory.\n",
+  "stdout": "<golden-banner>\nUsing <golden-config> as config file\nReading requirement file at '<golden-tmp>/requirements.yml'\nStarting galaxy collection install process\nProcess install dependency map\nCreated <golden-tmp>/home/.ansible/galaxy_token\nStarting collection install process\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/base/artifacts/demo-base-1.0.0.tar.gz to <golden-galaxy-tmp>/demo-base-1.0.0-<golden-random>\nCollection 'demo.base:1.0.0' obtained from server cmd_arg http://127.0.0.1:<golden-port>/api\nInstalling 'demo.base:1.0.0' to '<golden-tmp>/cols/ansible_collections/demo/base'\ndemo.base:1.0.0 was installed successfully\nDownloading http://127.0.0.1:<golden-port>/api/v3/collections/demo/app/artifacts/demo-app-1.0.0.tar.gz to <golden-galaxy-tmp>/demo-app-1.0.0-<golden-random>\nCollection 'demo.app:1.0.0' obtained from server cmd_arg http://127.0.0.1:<golden-port>/api\nInstalling 'demo.app:1.0.0' to '<golden-tmp>/cols/ansible_collections/demo/app'\ndemo.app:1.0.0 was installed successfully\n",
+  "tree": {
+    "cols/ansible_collections/demo.app-1.0.0.info/GALAXY.yml": "1add20572dae78958d0b32a6885ce8af2c8b4833c7b2f25a3994c919949a1492",
+    "cols/ansible_collections/demo.base-1.0.0.info/GALAXY.yml": "1773a47df41c38fff4c7041450ee0fb765e429cb937750dc743923a5c362d32a",
+    "cols/ansible_collections/demo/app/FILES.json": "0d69c3e6acb416e25920b0df544add11727b47898c6227ed9f67edac2d49e8e5",
+    "cols/ansible_collections/demo/app/MANIFEST.json": "ef4f9c654dab86a8c36696ceda0e12c2571e12f989846f47bdfd19f55c5ed04b",
+    "cols/ansible_collections/demo/app/README.md": "854c11ea698e41d90c42f7b4b19fb6e31f00ec85f6595adeecf77f0e417a9283",
+    "cols/ansible_collections/demo/app/plugins/README.md": "45aa560f02db9804fea8a739581472d31ef6e35ad85fe6842e44fd4590ffb2e6",
+    "cols/ansible_collections/demo/base/FILES.json": "8e6ea5503d234c6f9e4a4258839316ba7f7d8c95a672a3719af322c80aa1c925",
+    "cols/ansible_collections/demo/base/MANIFEST.json": "e7be05dbb818de5279f8ad49c8abe98ca2c3a6a68a00b2472a4db32b4973bc2d",
+    "cols/ansible_collections/demo/base/README.md": "3296a0e7b923fe40c55cefd9654c660dd85b21e043332d264b444efcea030a05",
+    "cols/ansible_collections/demo/base/plugins/README.md": "45aa560f02db9804fea8a739581472d31ef6e35ad85fe6842e44fd4590ffb2e6"
+  }
+}

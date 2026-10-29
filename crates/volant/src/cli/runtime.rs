@@ -3,7 +3,7 @@
 
 use std::path::Path;
 
-use clap::Subcommand;
+use clap::{Parser as _, Subcommand};
 
 use crate::runtime::install::{self, installed};
 use crate::runtime::manifest::Manifest;
@@ -64,6 +64,24 @@ pub fn runtime(command: RuntimeCommand) -> i32 {
     }
 }
 
+/// `volant galaxy collection install -p <target>` with `args`, the native install.
+fn install_collections<'a>(
+    target: &Path,
+    args: impl IntoIterator<Item = &'a str>,
+) -> Result<(), String> {
+    let target = target.to_string_lossy().into_owned();
+    let argv = ["galaxy", "collection", "install", "-p"]
+        .into_iter()
+        .map(str::to_owned)
+        .chain([target])
+        .chain(args.into_iter().map(str::to_owned));
+    let parsed = super::GalaxyArgs::try_parse_from(argv).map_err(|e| e.to_string())?;
+    match super::galaxy(parsed) {
+        0 => Ok(()),
+        _ => Err("the collections could not be installed: check the names and the network, then run the command again".to_owned()),
+    }
+}
+
 fn execute(command: RuntimeCommand) -> Result<(), String> {
     let runtimes = runtimes_dir()?;
     let manifest = Manifest::pinned()?;
@@ -98,11 +116,18 @@ fn execute(command: RuntimeCommand) -> Result<(), String> {
                 println!("extras: {}", extras::installed_sets(&done.dir).join(", "));
             }
             let (names, files) = collections::split(&collections, Path::is_file);
+            let target = collections::dir(&done.dir);
             if !names.is_empty() {
-                collections::install(&done, &collections::Source::Names(&names))?;
+                if let Some(bad) = names.iter().find(|name| name.starts_with('-')) {
+                    return Err(format!(
+                        "'{bad}' is not a collection name: write namespace.name, optionally with a version"
+                    ));
+                }
+                install_collections(&target, names.iter().map(String::as_str))?;
             }
             for file in &files {
-                collections::install(&done, &collections::Source::File(file))?;
+                let file = file.to_string_lossy();
+                install_collections(&target, ["-r", file.as_ref()])?;
             }
         }
         RuntimeCommand::Pack { file, extras } => {

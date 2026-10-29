@@ -118,8 +118,7 @@ impl Server {
                 if self.verbose >= 3 {
                     println!("Created {}", path.display());
                 }
-            }
-            if self.verbose >= 3 {
+            } else if self.verbose >= 3 {
                 println!("Opened {}", path.display());
             }
             let text = std::fs::read_to_string(&path).unwrap_or_default();

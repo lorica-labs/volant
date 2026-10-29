@@ -73,6 +73,19 @@ The token is sent as `Authorization: Token <token>` and never printed. Without o
 
 `-r` reads the requirements file as `ansible-galaxy` does: `collections:` and `roles:` in one file, or the old bare list of roles, which only `role install` accepts. An `include:` entry brings the roles of another file, named from the working directory. When `-r` is given twice, the last one counts. When the file has no entry for the command, `collection install` and `role install` print `Skipping install, no requirements found` and exit 0. `-vvv` prints `Reading requirement file at '<path>'` first. A malformed file fails with the message of `ansible-galaxy`, exit 1: no entries, keys other than `collections` and `roles`, a role entry with neither `name` nor `src`, a collection name that is not `namespace.name` and points at nothing, or an unknown `type`.
 
+## Verbose output
+
+`-v` is counted after the subcommand, as `ansible-galaxy` counts it; `ansible-galaxy` ignores a `-v` written before the subcommand, and Volant counts it.
+
+| Level | What is added |
+|---|---|
+| `-v` | `Using <path> as config file`, or `No config file found; using defaults`. |
+| `-vv` | Before that line, the block `--version` prints: `ansible-galaxy [core <version>]`, `config file`, `configured module search path`, `ansible collection location`, `executable location`. The Python, Jinja and PyYAML lines come only when the controller's interpreter answers, as for `volant adhoc`. |
+| `-vvv` | `Reading requirement file at '<file>'`, `found role <dict> in yaml file`, `Processing role <name> `, `Found installed collection <name>:<version> at '<path>'`, `Created <token file>` or `Opened <token file>`, `Collection '<name>:<version>' obtained from server <server> <url>`, `Remote collection cached as '<path>'`, `Skipping '<path>' for collection build`, and `git`'s own output. |
+| `-vvvv` | `Validating downloaded file hash`. The other HTTP lines of `ansible-galaxy` (`Calling Galaxy at`, `Found API version`, the response cache) are not printed. |
+
+`ansible-galaxy` also reports `ansible._protomatter`, the collection ansible-core keeps inside its own Python package; Volant has no such package and never reports it. `role remove` asks the default Galaxy server for its API before it deletes anything, which prints `Opened <token file>` at `-vvv`; Volant removes the role without contacting a server.
+
 ## Refused subcommands
 
 A subcommand that is not native yet fails with `[ERROR]: volant galaxy <subcommand> is not supported yet`, exit 1. `collection publish` and `role delete`, `search`, `import`, `setup` and `info` need a Galaxy account or the server's role database, and stay refused: `[ERROR]: volant galaxy <subcommand> is not supported`, exit 1.

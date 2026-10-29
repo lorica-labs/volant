@@ -1,0 +1,104 @@
+name: Set up Volant
+description: Install the Volant controller, and optionally the ansible-* names and the managed Python runtime.
+author: lorica-labs
+
+inputs:
+  version:
+    description: Release tag to install, such as v0.1.0-alpha.13. Empty takes the newest release; pin one for repeatable runs.
+    default: ''
+  shims:
+    description: Also link the ansible-* program names to volant, so ansible-playbook and the others run Volant.
+    default: 'false'
+  collections:
+    description: Collections to install into the managed runtime, as for `volant runtime install --collections`. Names with an optional :version, or a requirements file, separated by spaces or new lines.
+    default: ''
+  runtime:
+    description: Install the managed Python runtime now instead of on the first run that needs it.
+    default: 'false'
+  python:
+    description: Python interpreter that has ansible-core, exported as VOLANT_PYTHON. Volant then uses it instead of the managed runtime.
+    default: ''
+
+runs:
+  using: composite
+  steps:
+    - id: version
+      shell: sh
+      env:
+        VERSION: ${{ inputs.version }}
+        # Authenticated requests are not held to the per-address limit that runners share.
+        TOKEN: ${{ github.server_url == 'https://github.com' && github.token || '' }}
+      run: |
+        set -eu
+        tag=$VERSION
+        if [ -z "$tag" ]; then
+          # Every release so far is a pre-release, which GitHub's "latest" skips: take the newest one.
+          tag=$(curl -fsSL ${TOKEN:+-H "Authorization: Bearer $TOKEN"} \
+            "https://api.github.com/repos/lorica-labs/volant/releases?per_page=1" |
+            sed -n 's/.*"tag_name": *"\([^"]*\)".*/\1/p' | head -n 1)
+          [ -n "$tag" ] || { echo "::error::could not find the newest Volant release"; exit 1; }
+        fi
+        case "$tag" in v*) ;; *) tag="v$tag" ;; esac
+        echo "tag=$tag" >> "$GITHUB_OUTPUT"
+
+    - shell: sh
+      env:
+        VOLANT_VERSION: ${{ steps.version.outputs.tag }}
+        VOLANT_BIN_DIR: ${{ runner.temp }}/volant-bin
+        SHIMS: ${{ inputs.shims }}
+      run: |
+        set -eu
+        export PATH="$VOLANT_BIN_DIR:$PATH"
+        if [ "$SHIMS" = true ]; then
+          sh "$GITHUB_ACTION_PATH/../docs/public/install.sh" --shims
+        else
+          sh "$GITHUB_ACTION_PATH/../docs/public/install.sh"
+        fi
+        echo "$VOLANT_BIN_DIR" >> "$GITHUB_PATH"
+
+    - if: inputs.python != ''
+      shell: sh
+      env:
+        PYTHON: ${{ inputs.python }}
+      run: echo "VOLANT_PYTHON=$PYTHON" >> "$GITHUB_ENV"
+
+    - id: runtime
+      if: inputs.runtime == 'true' || inputs.collections != ''
+      shell: sh
+      env:
+        COLLECTIONS: ${{ inputs.collections }}
+      run: |
+        set -euf
+        if [ "$(uname -s)" = Darwin ]; then
+          dir="$HOME/Library/Application Support/volant/runtime"
+        else
+          dir="${XDG_DATA_HOME:-$HOME/.local/share}/volant/runtime"
+        fi
+        # A requirements file is keyed on what it holds, not on its name.
+        key=$COLLECTIONS
+        for item in $COLLECTIONS; do
+          if [ -f "$item" ]; then key="$key $(cat "$item")"; fi
+        done
+        hash=$(printf '%s' "$key" | { sha256sum 2>/dev/null || shasum -a 256; } | cut -c 1-16)
+        {
+          echo "dir=$dir"
+          echo "hash=$hash"
+        } >> "$GITHUB_OUTPUT"
+
+    - if: steps.runtime.outcome == 'success'
+      uses: actions/cache@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
+      with:
+        path: ${{ steps.runtime.outputs.dir }}
+        key: volant-runtime-${{ runner.os }}-${{ runner.arch }}-${{ steps.version.outputs.tag }}-${{ steps.runtime.outputs.hash }}
+
+    - if: steps.runtime.outcome == 'success'
+      shell: sh
+      env:
+        COLLECTIONS: ${{ inputs.collections }}
+      run: |
+        set -euf
+        if [ -n "$COLLECTIONS" ]; then
+          volant runtime install --collections $COLLECTIONS
+        else
+          volant runtime install
+        fi

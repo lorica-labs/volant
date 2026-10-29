@@ -114,7 +114,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
-  More callbacks to run beside the stdout one, as a comma-separated list. Volant runs none of them yet: each name prints `[WARNING]: Skipping callback plugin '<name>', unable to load` and the run goes on. `volant.compat.record`, which [records ansible-playbook's runs](/docs/reference/recording/), is skipped without a warning.
+  More callbacks to run beside the stdout one, as a comma-separated list. Volant runs `junit`, which writes a JUnit XML report per playbook to `JUNIT_OUTPUT_DIR` (`~/.ansible.log` by default) and reads the other `JUNIT_*` variables, `tree`, which writes each host's last result to a file in `[callback_tree] directory` (`ANSIBLE_CALLBACK_TREE_DIR`, `~/.ansible/tree` by default), and, when ansible.posix is installed on the controller, `ansible.posix.timer` and `ansible.posix.profile_tasks` with their options (`[callback_profile_tasks]`, `PROFILE_TASKS_*`). Any other name prints `[WARNING]: Skipping callback plugin '<name>', unable to load` and the run goes on. `volant.compat.record`, which [records ansible-playbook's runs](/docs/reference/recording/), is skipped without a warning.
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">

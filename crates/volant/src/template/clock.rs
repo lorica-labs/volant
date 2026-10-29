@@ -183,6 +183,40 @@ pub(super) fn now_python_str() -> String {
     DateTime::now(false).python_str()
 }
 
+/// The controller's local time as an aware value prints it, `datetime.now().astimezone()`:
+/// `%z` is the zone's offset from UTC, such as `+0100`.
+pub(crate) fn local_now_zoned(format: &str) -> String {
+    let since = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap_or_default();
+    let secs = i64::try_from(since.as_secs()).unwrap_or(0);
+    let local = DateTime::from_local(secs, since.subsec_micros());
+    let offset = local.utc_seconds() - secs;
+    let zone = format!(
+        "{}{:02}{:02}",
+        if offset < 0 { '-' } else { '+' },
+        offset.abs() / 3600,
+        offset.abs() % 3600 / 60
+    );
+    let mut zoned = String::with_capacity(format.len());
+    let mut chars = format.chars();
+    while let Some(c) = chars.next() {
+        if c != '%' {
+            zoned.push(c);
+            continue;
+        }
+        match chars.next() {
+            Some('z') => zoned.push_str(&zone),
+            Some(next) => {
+                zoned.push('%');
+                zoned.push(next);
+            }
+            None => zoned.push('%'),
+        }
+    }
+    strftime::format(&local, &zoned)
+}
+
 /// The current UTC time, `datetime.now(timezone.utc).strftime(format)`.
 pub(crate) fn utc_now(format: &str) -> String {
     strftime::format(&DateTime::now(true), format)

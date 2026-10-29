@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-//! Python's `timedelta`, and `+` and `-` between `datetime` and `timedelta` values.
+//! Python's `timedelta`, `+` and `-` between `datetime` and `timedelta` values, and `replace`.
 //!
 //! minijinja has no operator a value of its own can take part in, so a template that calls
 //! `now()` has its `+` and `-` routed here (see `route_calls`). Anything that is neither a
@@ -11,7 +11,8 @@ use std::sync::Arc;
 use minijinja::value::{Object, ObjectRepr, ValueKind};
 use minijinja::{Error, State, Value, context};
 
-use super::{DateTime, no_arguments, python_raise};
+use super::{DateTime, days_from_civil, no_arguments, python_raise, raise};
+use crate::template::globals::{Callee, bind, python_type};
 
 const MICROS_PER_DAY: i64 = 86_400_000_000;
 
@@ -254,4 +255,78 @@ pub(in crate::template) fn add(state: &State, left: Value, right: Value) -> Resu
 /// The routed `-`.
 pub(in crate::template) fn sub(state: &State, left: Value, right: Value) -> Result<Value, Error> {
     arith(state, &left, &right, false)
+}
+
+impl DateTime {
+    /// `replace(year=, month=, day=, hour=, minute=, second=, microsecond=)`, checked as Python
+    /// checks a new `datetime`.
+    pub(super) fn replace_method(&self, args: &[Value]) -> Result<Value, Error> {
+        const NAMES: [&str; 7] = [
+            "year",
+            "month",
+            "day",
+            "hour",
+            "minute",
+            "second",
+            "microsecond",
+        ];
+        let given = bind(Callee::Native, "replace", &NAMES, args)?;
+        let mut fields = [
+            self.year,
+            i64::from(self.month),
+            i64::from(self.day),
+            i64::from(self.hour),
+            i64::from(self.minute),
+            i64::from(self.second),
+            i64::from(self.microsecond),
+        ];
+        for (field, value) in fields.iter_mut().zip(given) {
+            if let Some(value) = value {
+                *field = i64::try_from(value.clone()).map_err(|_| {
+                    raise(format!(
+                        "'{}' object cannot be interpreted as an integer",
+                        python_type(&value)
+                    ))
+                })?;
+            }
+        }
+        let [year, month, day, hour, minute, second, microsecond] = fields;
+        let check = |ok: bool, what: &str| {
+            if ok {
+                Ok(())
+            } else {
+                Err(python_raise(what.into()))
+            }
+        };
+        check((1..=9999).contains(&year), "year must be in 1..9999")?;
+        check((1..=12).contains(&month), "month must be in 1..12")?;
+        let next = if month == 12 {
+            (year + 1, 1)
+        } else {
+            (year, month + 1)
+        };
+        let in_month = days_from_civil(next.0, u32::try_from(next.1).unwrap_or(1), 1)
+            - days_from_civil(year, u32::try_from(month).unwrap_or(1), 1);
+        check(
+            (1..=in_month).contains(&day),
+            "day is out of range for month",
+        )?;
+        check((0..24).contains(&hour), "hour must be in 0..23")?;
+        check((0..60).contains(&minute), "minute must be in 0..59")?;
+        check((0..60).contains(&second), "second must be in 0..59")?;
+        check(
+            (0..1_000_000).contains(&microsecond),
+            "microsecond must be in 0..999999",
+        )?;
+        let field = |n: i64| u32::try_from(n).unwrap_or(0);
+        Ok(Value::from_object(Self {
+            year,
+            month: field(month),
+            day: field(day),
+            hour: field(hour),
+            minute: field(minute),
+            second: field(second),
+            microsecond: field(microsecond),
+        }))
+    }
 }

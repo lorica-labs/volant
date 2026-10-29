@@ -205,4 +205,3 @@ Una sentencia a 32 niveles de profundidad se rechaza. Un solo contador cubre el 
 - Un include que falla dentro de un bucle imprime la línea habitual `failed: [host] (item=...)`. Ansible imprime solo un `[ERROR]` en la salida de error estándar.
 - `allow_duplicates: false` cuenta un rol como ejecutado para un host cuando se traen sus tareas. ansible-core lo cuenta cuando el host ejecutó al menos una de sus tareas, así que un rol cuyas tareas se omiten todas se ejecuta de nuevo allí.
 - `allow_duplicates: false` en un `import_role` compara las sentencias mientras se compila el play, y por eso un `when` en la sentencia anterior no cambia el resultado para un host.
-- `include_vars: file=x.yml name=ns` se lee como un único argumento en bruto en lugar de dividirse en pares `key=value`, la misma limitación que tiene `import_tasks`.

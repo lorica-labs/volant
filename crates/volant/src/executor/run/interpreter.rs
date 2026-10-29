@@ -295,7 +295,7 @@ pub(super) fn sub_task(
                 if sub.module == "raw" {
                     args
                 } else {
-                    with_modes(item, args)
+                    with_modes(task, item, args)
                 }
             },
             job: sub_job(task, item, sub),
@@ -309,7 +309,7 @@ pub(super) fn sub_task(
     Ok(Task {
         only_if: None,
         module: sub.module.to_string(),
-        args: with_modes(item, sub.args.clone()),
+        args: with_modes(task, item, sub.args.clone()),
         ignore_errors: item.ignore_errors.unwrap_or_else(|| task.ignores_errors())
             || task.loop_items.is_some(),
         timeout: task.timeout,

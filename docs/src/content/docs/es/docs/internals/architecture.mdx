@@ -1,5 +1,5 @@
 ---
-sourceHash: 0574d9982ed2
+sourceHash: ab275ab138bf
 title: Arquitectura
 description: El controlador, el agente y el protocolo entre ambos, y cómo fluye una ejecución a través de los tres.
 ---
@@ -52,7 +52,7 @@ El agente, `crates/volant-agent`, es un binario estático que se sube una vez po
 
 `crates/volant-protocol` define los frames y los mensajes que comparten ambos programas. El controlador inicia el agente por `ssh` y habla el protocolo por la entrada y la salida estándar de ese proceso durante el resto de la ejecución. Los frames son JSON, salvo que un blob de módulos o un archivo preparado sigue a su anuncio como bytes sin procesar, comprimidos con deflate cuando así ocupan menos, desde la versión 6 del protocolo. La versión actual es la 8. Cambiar un mensaje implica subir `PROTOCOL_VERSION`, y la versión del agente forma parte de su ruta de caché, así que un controlador nunca habla con un agente de otra versión.
 
-Un frame mide como máximo 64 MiB, porque `slurp` y `fetch` envían un archivo como una sola cadena dentro de un resultado. Un resultado también está acotado por lo que contiene: como máximo 500,000 valores, 64 niveles de anidamiento y 500,000 líneas de `stdout` y `stderr` juntas (o una línea por cada 32 bytes de salida cuando eso es más). Un resultado que supera un límite hace fallar esa tarea solo para ese host, con un mensaje que indica el límite y el recuento. Cualquier otro mensaje mide como máximo 1 MiB.
+Un frame mide como máximo 64 MiB, porque `slurp` envía un archivo como una sola cadena dentro de un resultado. Un resultado también está acotado por lo que contiene: como máximo 500,000 valores, 64 niveles de anidamiento y 500,000 líneas de `stdout` y `stderr` juntas (o una línea por cada 32 bytes de salida cuando eso es más). Un resultado que supera un límite hace fallar esa tarea solo para ese host, con un mensaje que indica el límite y el recuento. Cualquier otro mensaje mide como máximo 1 MiB.
 
 ## Una ejecución, de principio a fin
 

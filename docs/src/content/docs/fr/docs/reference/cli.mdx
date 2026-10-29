@@ -1,5 +1,5 @@
 ---
-sourceHash: 2d0d91de3046
+sourceHash: 2be6c50ce59b
 title: Ligne de commande
 description: Chaque commande et option que Volant accepte, regroupées selon ce qu'elles changent, et les options d'ansible-playbook qu'il n'a pas encore.
 ---
@@ -195,7 +195,7 @@ Ces options lisent les playbooks puis s'arrêtent. Elles ne se connectent jamais
   D'où viennent les facts collectés. `auto` utilise le `setup` natif de l'agent quand chaque fact que les plays peuvent lire est un fact qu'il produit, et le module `setup` d'ansible-core sinon. `python` exécute toujours le module Python, pour comparer. `native` interroge toujours le collecteur de l'agent, et les facts qu'il ne produit pas sont alors indéfinis. Sur un hôte autre que Debian ou Ubuntu, le collecteur natif rend la tâche au module Python quelle que soit cette option. Voir [Facts](/fr/docs/variables/precedence/#facts-natifs).
 </Option>
 
-<Option name="--locked">
+<Option name="--locked" id="locked">
   Refuse l'exécution avec le code 4, avant toute connexion, quand les collections, rôles, runtime ou Volant installés diffèrent de [`volant.lock`](/fr/docs/reference/cli/lock/). Sans lui, chaque différence donne un avertissement.
 </Option>
 

@@ -194,7 +194,7 @@ These options read the playbooks and stop. They never connect to a host and neve
   Where gathered facts come from. `auto` uses the agent's native `setup` when every fact the plays can read is one it produces, and ansible-core's `setup` module otherwise. `python` always runs the Python module, to compare against. `native` always asks the agent's collector, and facts it does not produce are then undefined. On a host other than Debian or Ubuntu the native collector hands the task back to the Python module whatever this option says. See [Facts](/docs/variables/precedence/#native-facts).
 </Option>
 
-<Option name="--locked">
+<Option name="--locked" id="locked">
   Refuse the run with exit code 4, before any connection, when the installed collections, roles, runtime or Volant differ from [`volant.lock`](/docs/reference/cli/lock/). Without it, each difference is a warning.
 </Option>
 

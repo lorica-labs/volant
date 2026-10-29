@@ -1,5 +1,5 @@
 ---
-sourceHash: 2d0d91de3046
+sourceHash: 2be6c50ce59b
 title: 命令行
 description: Volant 接受的每个命令和选项，按作用分组，以及它暂时还没有的 ansible-playbook 选项。
 ---
@@ -195,7 +195,7 @@ volant --version
   收集到的 facts 来自哪里。`auto` 在 play 能读取的每个 fact 都由 agent 的原生 `setup` 产生时使用它，否则使用 ansible-core 的 `setup` 模块。`python` 始终运行 Python 模块，用于对比。`native` 始终询问 agent 的收集器，它不产生的 facts 则是未定义的。在 Debian 或 Ubuntu 以外的主机上，无论这个选项怎么设置，原生收集器都会把 task 交还给 Python 模块。见 [Facts](/zh-cn/docs/variables/precedence/#原生-facts)。
 </Option>
 
-<Option name="--locked">
+<Option name="--locked" id="locked">
   已安装的集合、角色、运行时或 Volant 与 [`volant.lock`](/zh-cn/docs/reference/cli/lock/) 不一致时，在任何连接之前以退出码 4 拒绝运行。不加此选项时，每处差异只是一条警告。
 </Option>
 

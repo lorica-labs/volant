@@ -1,5 +1,5 @@
 ---
-sourceHash: 2d0d91de3046
+sourceHash: 2be6c50ce59b
 title: Línea de comandos
 description: Todos los comandos y opciones que acepta Volant, agrupados por lo que cambian, y las opciones de ansible-playbook que todavía no tiene.
 ---
@@ -195,7 +195,7 @@ Estas opciones leen los playbooks y terminan. Nunca se conectan a un host y nunc
   De dónde salen los facts recopilados. `auto` usa el `setup` nativo del agente cuando todos los facts que pueden leer los plays son de los que produce, y el módulo `setup` de ansible-core en caso contrario. `python` ejecuta siempre el módulo de Python, para comparar. `native` pregunta siempre al recopilador del agente, y los facts que no produce quedan entonces sin definir. En un host que no sea Debian ni Ubuntu, el recopilador nativo devuelve la tarea al módulo de Python diga lo que diga esta opción. Consulta [Facts](/es/docs/variables/precedence/#facts-nativos).
 </Option>
 
-<Option name="--locked">
+<Option name="--locked" id="locked">
   Rechaza la ejecución con la salida 4, antes de cualquier conexión, cuando las colecciones, roles, runtime o Volant instalados difieren de [`volant.lock`](/es/docs/reference/cli/lock/). Sin ella, cada diferencia es un aviso.
 </Option>
 

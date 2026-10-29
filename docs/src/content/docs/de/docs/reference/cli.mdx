@@ -1,5 +1,5 @@
 ---
-sourceHash: 2d0d91de3046
+sourceHash: 2be6c50ce59b
 title: Kommandozeile
 description: Jeder Befehl und jede Option, die Volant akzeptiert, nach ihrer Wirkung gruppiert, sowie die ansible-playbook-Optionen, die es noch nicht gibt.
 ---
@@ -195,7 +195,7 @@ Diese Optionen lesen die Playbooks und halten an. Sie verbinden sich nie mit ein
   Woher gesammelte Facts kommen. `auto` verwendet das native `setup` des Agents, wenn jeder Fact, den die Plays lesen können, einer ist, den er liefert, und sonst das Modul `setup` von ansible-core. `python` führt immer das Python-Modul aus, zum Vergleich. `native` fragt immer den Collector des Agents, und Facts, die er nicht liefert, sind dann nicht definiert. Auf einem anderen Host als Debian oder Ubuntu gibt der native Collector den Task an das Python-Modul zurück, was auch diese Option sagt. Siehe [Facts](/de/docs/variables/precedence/#native-facts).
 </Option>
 
-<Option name="--locked">
+<Option name="--locked" id="locked">
   Lehnt den Lauf vor jeder Verbindung mit Exit 4 ab, wenn installierte Collections, Rollen, Runtime oder Volant von [`volant.lock`](/de/docs/reference/cli/lock/) abweichen. Ohne die Option ergibt jeder Unterschied eine Warnung.
 </Option>
 

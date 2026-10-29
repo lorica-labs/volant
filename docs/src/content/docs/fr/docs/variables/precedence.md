@@ -19,9 +19,10 @@ Quand deux sources définissent la même variable, celle qui est plus bas dans c
 9. Les `vars_files` du play
 10. Le `vars/main.yml` d'un rôle
 11. Les `vars` d'une tâche
-12. `set_fact`, les résultats enregistrés et `include_vars`
-13. Les paramètres de rôle, et les `vars:` d'une instruction d'include dynamique
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` et les résultats enregistrés
+14. Les paramètres de rôle, et les `vars:` d'une instruction d'include dynamique
+15. `--extra-vars`
 
 [Rôles](/fr/docs/playbooks/roles/#variables-de-rôle) explique d'où viennent les trois couches de rôle et en quoi elles diffèrent.
 

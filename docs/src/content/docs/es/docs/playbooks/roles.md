@@ -156,7 +156,7 @@ Un valor que no es booleano en `public`, `allow_duplicates` o `rolespec_validate
 
 ### include_vars
 
-`include_vars` produce variables en lugar de pasos, así que no es ni estático ni dinámico. Es un módulo normal que se ejecuta en el controlador, y lo que lee queda con la precedencia de los facts.
+`include_vars` produce variables en lugar de pasos, así que no es ni estático ni dinámico. Es un módulo normal que se ejecuta en el controlador, y lo que lee queda por debajo de `set_fact` y de los resultados registrados, como en Ansible.
 
 | Pregunta | Respuesta |
 |---|---|
@@ -204,4 +204,3 @@ Una sentencia a 32 niveles de profundidad se rechaza. Un solo contador cubre el 
 - `allow_duplicates: false` cuenta un rol como ejecutado para un host cuando se traen sus tareas. ansible-core lo cuenta cuando el host ejecutó al menos una de sus tareas, así que un rol cuyas tareas se omiten todas se ejecuta de nuevo allí.
 - `allow_duplicates: false` en un `import_role` compara las sentencias mientras se compila el play, y por eso un `when` en la sentencia anterior no cambia el resultado para un host.
 - `include_vars: file=x.yml name=ns` se lee como un único argumento en bruto en lugar de dividirse en pares `key=value`, la misma limitación que tiene `import_tasks`.
-- Lo que produce `include_vars` queda un nivel por encima de donde lo pone Ansible. Solo lo notas con un nombre que también escribió un `set_fact`: Ansible deja que gane el `set_fact` en cualquier orden, y aquí gana la última escritura.

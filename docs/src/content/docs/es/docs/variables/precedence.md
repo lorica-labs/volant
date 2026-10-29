@@ -19,9 +19,10 @@ Cuando dos fuentes definen la misma variable, gana la que está más abajo en es
 9. `vars_files` del play
 10. El `vars/main.yml` de un rol
 11. `vars` de la tarea
-12. `set_fact`, resultados registrados e `include_vars`
-13. Parámetros de rol, y las `vars:` de una sentencia de include dinámico
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` y resultados registrados
+14. Parámetros de rol, y las `vars:` de una sentencia de include dinámico
+15. `--extra-vars`
 
 [Roles](/es/docs/playbooks/roles/#variables-de-rol) explica de dónde vienen las tres capas de rol y en qué se diferencian.
 

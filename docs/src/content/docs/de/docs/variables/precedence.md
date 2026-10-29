@@ -19,9 +19,10 @@ Definieren zwei Quellen dieselbe Variable, gewinnt die, die in dieser Liste weit
 9. `vars_files` des Plays
 10. Das `vars/main.yml` einer Rolle
 11. `vars` eines Tasks
-12. `set_fact`, registrierte Ergebnisse und `include_vars`
-13. Rollenparameter und die `vars:` einer dynamischen Include-Anweisung
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` und registrierte Ergebnisse
+14. Rollenparameter und die `vars:` einer dynamischen Include-Anweisung
+15. `--extra-vars`
 
 [Rollen](/de/docs/playbooks/roles/#rollenvariablen) erklärt, woher die drei Rollenschichten kommen und wie sie sich unterscheiden.
 

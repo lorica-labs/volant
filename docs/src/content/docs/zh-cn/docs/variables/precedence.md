@@ -19,9 +19,10 @@ description: 两个来源定义同一个变量时哪个胜出、魔法变量，�
 9. play 的 `vars_files`
 10. role 的 `vars/main.yml`
 11. task 的 `vars`
-12. `set_fact`、已注册的结果和 `include_vars`
-13. role 参数，以及动态 include 语句的 `vars:`
-14. `--extra-vars`
+12. `include_vars`
+13. `set_fact` 和已注册的结果
+14. role 参数，以及动态 include 语句的 `vars:`
+15. `--extra-vars`
 
 [Role、include 与 import](/zh-cn/docs/playbooks/roles/#role-变量)说明了三个 role 层从哪里来，以及它们有何不同。
 

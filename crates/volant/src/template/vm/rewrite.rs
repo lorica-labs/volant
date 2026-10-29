@@ -15,6 +15,48 @@ use super::super::{
 #[cfg(doc)]
 use super::concat;
 
+/// Whether the code holds a capture that prints into the output (see [`route_calls`]), and the
+/// names a macro or a `set` takes: one called `q` or `query` shadows the lookup shorthand.
+fn scan(instructions: &Instructions<'_>) -> (bool, Vec<String>) {
+    let mut captures = false;
+    // The captures open at this point, each with whether a `{{ }}` printed inside it.
+    let mut open: Vec<bool> = Vec::new();
+    let mut shadowed = Vec::new();
+    let mut at = 0;
+    while let Some(op) = instructions.get(at) {
+        if let Instruction::BuildMacro(name, ..) | Instruction::StoreLocal(name) = op {
+            shadowed.push(name.to_string());
+        }
+        match op {
+            Instruction::BeginCapture(..) => open.push(false),
+            Instruction::Emit => open.iter_mut().for_each(|printed| *printed = true),
+            Instruction::EndCapture => {
+                let printed = open.pop().unwrap_or(true);
+                captures |= printed || !stored_after(instructions, at + 1);
+            }
+            _ => {}
+        }
+        at += 1;
+    }
+    (captures, shadowed)
+}
+
+/// Whether the captured text at `at`, after any filter of a `set` block, goes to a variable
+/// rather than to the output.
+fn stored_after(instructions: &Instructions<'_>, mut at: u32) -> bool {
+    while let Some(op) = instructions.get(at) {
+        match op {
+            Instruction::StoreLocal(_) | Instruction::SetAttr(_) => return true,
+            Instruction::LoadConst(_)
+            | Instruction::Lookup(_)
+            | Instruction::GetAttr(_)
+            | Instruction::ApplyFilter(..) => at += 1,
+            _ => return false,
+        }
+    }
+    false
+}
+
 /// Replaces each `~` in compiled code by a call to [`concat()`], and each call to `query` or `q`
 /// by a call to [`QUERY_KEY`]. minijinja evaluates `~` in its VM with no hook, and its syntax tree
 /// cannot be rewritten in place, so the swap happens on the bytecode: the concatenation
@@ -32,23 +74,15 @@ use super::concat;
 /// (see [`mutates`]). Each variable, attribute and item it reads then goes through a function that
 /// hands back the mutable form of a plain list or mapping.
 ///
-/// Says whether the code opens a capture (`{% set x %}...{% endset %}`, `{% filter %}`), whose
-/// `{{ }}` print into a buffer, not into the output.
+/// Says whether the code opens a capture (`{% filter %}`, a `{% set x %}` block that prints an
+/// expression), whose `{{ }}` print into a buffer, not into the output. A `set` block whose body
+/// is only text is no such capture: its text goes to the variable, and nothing it does counts
+/// as a node of the output.
 pub(in crate::template) fn route_calls(
     instructions: &mut Instructions<'_>,
     mutating: bool,
 ) -> bool {
-    let mut captures = false;
-    // A macro or a `set` that takes the name `q` or `query` shadows the lookup shorthand.
-    let mut shadowed = Vec::new();
-    let mut at = 0;
-    while let Some(op) = instructions.get(at) {
-        if let Instruction::BuildMacro(name, ..) | Instruction::StoreLocal(name) = op {
-            shadowed.push(name.to_string());
-        }
-        captures |= matches!(op, Instruction::BeginCapture(..));
-        at += 1;
-    }
+    let (captures, shadowed) = scan(instructions);
     let mut links = Vec::new();
     let mut idx = 0;
     loop {

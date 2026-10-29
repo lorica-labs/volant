@@ -100,6 +100,19 @@ fn values_keep_their_type_and_text_renders_to_a_string() {
 
 /// An undefined variable is an error in Ansible's words and stays undefined through every filter
 /// and test, except the ones made to see it; every minijinja builtin goes through the wrapper.
+/// Measured on ansible-core 2.19.12: a `set` block prints nothing, so the expression after it
+/// keeps its type; text beside the expression makes a string. A block that prints an expression
+/// gives a string here, a case left to text (see `route_calls`).
+#[rstest::rstest]
+#[case::text_block("{% set x %}a{% endset %}{{ [1, 2] }}", json!([1, 2]))]
+#[case::filtered_block("{% set x | upper %}a{% endset %}{{ 3 }}", json!(3))]
+#[case::printing_block("{% set x %}{{ 1 }}{% endset %}{{ [1, 2] }}", json!("[1, 2]"))]
+#[case::block_then_text("{% set x %}a{% endset %}{{ [1, 2] }}!", json!("[1, 2]!"))]
+#[case::block_reads_back("{% set x %}a{% endset %}{{ x }}", json!("a"))]
+fn a_set_block_leaves_the_type_of_the_expression_after_it(#[case] text: &str, #[case] want: Value) {
+    assert_eq!(templar().render(text, &Map::new()).unwrap(), want);
+}
+
 #[test]
 fn an_undefined_input_stays_undefined_through_every_filter_and_test() {
     {

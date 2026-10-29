@@ -1,0 +1,2 @@
+# include_vars ranks above a task's vars: and under set_fact, whichever of the two ran last.
+args: [-i, inv.ini, play.yml]

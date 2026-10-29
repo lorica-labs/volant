@@ -122,5 +122,19 @@ pub fn sha1_hex(bytes: &[u8]) -> String {
     sha1_smol::Sha1::from(bytes).digest().to_string()
 }
 
+/// [`sha1_hex`] of everything `reader` yields, read a block at a time.
+pub fn sha1_hex_of(mut reader: impl std::io::Read) -> std::io::Result<String> {
+    let mut sha1 = sha1_smol::Sha1::new();
+    let mut block = vec![0u8; 1 << 20];
+    loop {
+        match reader.read(&mut block) {
+            Ok(0) => return Ok(sha1.digest().to_string()),
+            Ok(n) => sha1.update(&block[..n]),
+            Err(err) if err.kind() == std::io::ErrorKind::Interrupted => {}
+            Err(err) => return Err(err),
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests;

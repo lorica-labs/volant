@@ -99,7 +99,7 @@ pub fn take(remote_tmp: &str, hash: &str) -> io::Result<PathBuf> {
     path(remote_tmp, hash)?;
     let dir = stage_dir(remote_tmp)?;
     let at = dir.join(hash);
-    let actual = blake3::hash(&fs::read(&at)?).to_hex().to_string();
+    let actual = super::fs_guard::hash_file(&at)?;
     if actual != hash {
         return Err(io::Error::new(
             io::ErrorKind::InvalidData,

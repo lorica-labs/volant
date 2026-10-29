@@ -157,7 +157,7 @@ A value that is not a boolean in `public`, `allow_duplicates` or `rolespec_valid
 
 ### include_vars
 
-`include_vars` produces variables rather than steps, so it is neither static nor dynamic. It is an ordinary controller-side module, and what it reads lands at facts precedence.
+`include_vars` produces variables rather than steps, so it is neither static nor dynamic. It is an ordinary controller-side module, and what it reads lands under `set_fact` and registered results, as in Ansible.
 
 | Question | Answer |
 |---|---|
@@ -205,4 +205,3 @@ A statement 32 levels deep is rejected. One counter covers role nesting, `import
 - `allow_duplicates: false` counts a role as run for a host when its tasks are brought in. ansible-core counts it when the host ran at least one of its tasks, so a role whose tasks all skip still runs again there.
 - `allow_duplicates: false` on an `import_role` compares the statements while the play compiles, and so a `when` on the earlier statement does not change the result for a host.
 - `include_vars: file=x.yml name=ns` is read as one raw argument rather than split into `key=value` pairs, the same limitation `import_tasks` has.
-- What `include_vars` produces sits one level above where Ansible puts it. You only notice with a name that a `set_fact` also wrote: Ansible lets the `set_fact` win in either order, and here the later write wins.

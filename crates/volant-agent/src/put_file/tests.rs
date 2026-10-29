@@ -121,3 +121,27 @@ fn a_file_the_agent_may_not_write_is_refused() {
     );
     assert_eq!(fs::read(&at).unwrap(), b"old");
 }
+
+/// A `read_file` hands back the bytes from its offset, fewer at the end of the file and none past
+/// it, and an error for a path that is not absolute or not there.
+#[test]
+fn a_file_is_read_back_from_its_offset() {
+    let dir = tempfile::tempdir().unwrap();
+    let at = dir.path().join("f");
+    fs::write(&at, b"0123456789").unwrap();
+    let path = at.to_str().unwrap();
+    let bytes = |answer: FromAgent| match answer {
+        FromAgent::FileBytes {
+            len, error, data, ..
+        } => {
+            assert_eq!(len, data.len() as u64);
+            (data, error)
+        }
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(bytes(read(path, 0, 4)), (b"0123".to_vec(), None));
+    assert_eq!(bytes(read(path, 8, 4)), (b"89".to_vec(), None));
+    assert_eq!(bytes(read(path, 10, 4)), (Vec::new(), None));
+    assert!(bytes(read("f", 0, 4)).1.is_some());
+    assert!(bytes(read(&format!("{path}.gone"), 0, 4)).1.is_some());
+}

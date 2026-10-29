@@ -347,3 +347,66 @@ fn a_host_name_becomes_one_safe_component() {
 fn hash_of(bytes: &[u8]) -> String {
     blake3::hash(bytes).to_hex().to_string()
 }
+
+/// A staged file sent in pieces is put together in order, checked against its hash at the end
+/// and staged under it. A piece out of order takes the file with it, and the end then refuses.
+#[cfg(unix)]
+#[test]
+fn a_file_sent_in_pieces_is_staged_whole_or_refused() {
+    let dir = scratch();
+    let tmp = dir.path().to_str().unwrap();
+    let file = b"first piece, second piece".to_vec();
+    let hash = hash_of(&file);
+    let part = |offset: usize, bytes: &[u8]| {
+        (
+            ToAgent::PutBlobPart {
+                hash: hash.clone(),
+                offset: offset as u64,
+                len: bytes.len() as u64,
+                total: file.len() as u64,
+            },
+            Ok(bytes.to_vec()),
+        )
+    };
+    let end = (ToAgent::EndBlob { hash: hash.clone() }, Ok(Vec::new()));
+    let answers = |messages: Vec<(ToAgent, Result<Vec<u8>, String>)>| {
+        let mut said = Vec::new();
+        for (msg, frame) in &messages {
+            assert!(
+                answer(tmp, msg, frame, &mut |m| {
+                    said.push(m.clone());
+                    Ok(())
+                })
+                .unwrap()
+            );
+        }
+        said
+    };
+
+    let said = answers(vec![
+        part(0, &file[..13]),
+        part(13, &file[13..]),
+        end.clone(),
+    ]);
+    assert_eq!(
+        said,
+        [FromAgent::BlobState {
+            hash: hash.clone(),
+            present: true
+        }]
+    );
+    assert_eq!(fs::read(take(tmp, &hash).unwrap()).unwrap(), file);
+
+    let said = answers(vec![part(0, &file[..13]), part(20, &file[20..]), end]);
+    assert!(
+        matches!(&said[0], FromAgent::Log { message, .. } if message.contains("offset 20")),
+        "{said:?}"
+    );
+    assert_eq!(
+        said.last(),
+        Some(&FromAgent::BlobState {
+            hash,
+            present: false
+        })
+    );
+}

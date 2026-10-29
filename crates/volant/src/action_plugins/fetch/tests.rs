@@ -663,10 +663,10 @@ fn a_missing_source_follows_fail_on_missing_and_a_directory_fails() {
         assert_eq!(Value::Object(done.0), want);
     }
 
-    // Under `become` it is `slurp` that says so, and an answer the agent refused as too big
-    // fails in its own words whatever `fail_on_missing` says: the file is there, and nothing
-    // was written.
-    let too_big = "the module wrote more than 4194304 bytes, which is more than a result can carry (exit status 0)";
+    // Under `become` it is `slurp` that says so, and any other failure of it fails in its own
+    // words whatever `fail_on_missing` says: the file is there, and nothing was written. A file
+    // too big for `slurp` is read in pieces instead: see `a_large_file_is_read_in_pieces_and_checked`.
+    let denied = "Permission denied";
     for fail_on_missing in [true, false] {
         for (msg, want, failed) in [
             (
@@ -674,7 +674,7 @@ fn a_missing_source_follows_fail_on_missing_and_a_directory_fails() {
                 IS_A_DIRECTORY,
                 fail_on_missing,
             ),
-            (too_big, too_big, true),
+            (denied, denied, true),
         ] {
             let mut plugin = start_with(
                 json!({"src": "/etc", "dest": dest, "fail_on_missing": fail_on_missing}),
@@ -897,4 +897,64 @@ fn a_path_is_normalised_without_the_file_system() {
     let home = PathBuf::from(std::env::var_os("HOME").expect("HOME is set"));
     assert_eq!(absolute("~/.kube/config", pb), home.join(".kube/config"));
     assert_eq!(absolute("~", pb), home);
+}
+
+/// The plugin run to its end against a host whose `stat` reports a file past the disk line:
+/// the file comes in pieces into the file the plugin names, which the step answers with the sum
+/// of. Under `become`, `slurp` says first that the file is too big to carry.
+fn drive_large(plugin: &mut dyn Plugin, data: &[u8], sum: &str) -> (Vec<&'static str>, Value) {
+    let mut steps = Vec::new();
+    let mut last = None;
+    loop {
+        match plugin.next(last.take()) {
+            Step::Done(result) => return (steps, Value::Object(result.0)),
+            Step::Run(sub) => {
+                steps.push(sub.module);
+                last = Some(result(match sub.module {
+                    "stat" => json!({"changed": false, "stat": {"exists": true, "isdir": false,
+                        "path": "/var/big.img", "checksum": sum, "size": SLURP_LEN + 1}}),
+                    "slurp" => json!({"failed": true, "msg": "the module wrote more than \
+                        67108864 bytes, which is more than a result can carry (exit status 0)"}),
+                    other => panic!("unexpected sub-task {other}"),
+                }));
+            }
+            Step::GetFile { remote, local } => {
+                steps.push("get_file");
+                assert_eq!(remote, "/var/big.img");
+                std::fs::write(&local, data).unwrap();
+                last = Some(result(json!({"checksum": sha1_hex(data)})));
+            }
+            other => panic!("a step this plugin never takes: {other:?}"),
+        }
+    }
+}
+
+/// A file past the disk line is read in pieces, never slurped, and lands only when its sum is
+/// the one `stat` gave. Under `become` the too-big `slurp` is followed by a `stat`.
+#[test]
+fn a_large_file_is_read_in_pieces_and_checked() {
+    let dir_guard = scratch();
+    let dest = dir_guard.path().join("fetched");
+    let args = json!({"src": "/var/big.img", "dest": dest.display().to_string(), "flat": true});
+    let file = dest.clone();
+    let data = b"pretend this is large";
+
+    let mut plugin = start_plain(args.clone());
+    let (steps, result) = drive_large(plugin.as_mut(), data, &sha1_hex(data));
+    assert_eq!(steps, ["stat", "get_file"]);
+    assert_eq!(result["changed"], json!(true), "{result}");
+    assert_eq!(std::fs::read(&file).unwrap(), data);
+
+    std::fs::remove_file(&file).unwrap();
+    let mut plugin = start_with(args.clone(), &BTreeSet::new(), "probe-hostname", true);
+    let (steps, result) = drive_large(plugin.as_mut(), data, &sha1_hex(data));
+    assert_eq!(steps, ["slurp", "stat", "get_file"]);
+    assert_eq!(result["changed"], json!(true), "{result}");
+
+    std::fs::remove_file(&file).unwrap();
+    let mut plugin = start_plain(args);
+    let (_, result) = drive_large(plugin.as_mut(), data, &sha1_hex(b"something else"));
+    assert_eq!(result["msg"], json!("checksum mismatch"), "{result}");
+    assert!(!file.exists());
+    assert_eq!(temps(dir_guard.path()), Vec::<PathBuf>::new());
 }

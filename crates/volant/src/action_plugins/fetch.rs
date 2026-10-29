@@ -3,10 +3,12 @@
 //!
 //! Read off `plugins/action/fetch.py` of ansible-core 2.19.12 and measured against it. Without
 //! `become` the plugin runs `stat` on the source and leaves a local file with the same SHA-1
-//! alone; under `become` it runs `slurp` alone. The bytes always come from `slurp` here, where the
-//! reference copies them over its connection instead: this engine's link carries module results
-//! and nothing else. They are a file and never a value: nothing renders them, and they reach no
-//! variable.
+//! alone; under `become` it runs `slurp` alone. The bytes come from `slurp` here, where the
+//! reference copies them over its connection instead, unless the file is past [`SLURP_LEN`]:
+//! the agent then reads it back a piece at a time, straight into a file beside the
+//! destination. Under `become` that is known only once `slurp` says the file is too big to
+//! carry, and a `stat` then gives its sum. They are a file and never a value: nothing renders
+//! them, and they reach no variable.
 //!
 //! The path written is built, normalised without following anything, and refused unless it sits
 //! under `dest` (and under `dest/<inventory_hostname>/` without `flat`). This is stricter than
@@ -20,9 +22,7 @@
 //! `contained` or `refuse`. The `dest` must then resolve strictly inside one of those
 //! directories (see `dest`).
 
-use std::io::Write;
 use std::path::{Component, Path, PathBuf};
-use std::sync::atomic::{AtomicU64, Ordering};
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
@@ -34,8 +34,13 @@ use crate::executor::as_bool_value;
 
 mod dest;
 mod paths;
+mod write;
 
 use paths::{absolute, normalise, walk};
+
+/// Past this many bytes a file is read back in pieces rather than slurped: the module server
+/// carries 4 MiB of `slurp`'s base64, about 3 MiB of file.
+const SLURP_LEN: u64 = 2 * 1024 * 1024;
 
 /// The reference's failure when the source is a directory, from `stat` or from `slurp`.
 const IS_A_DIRECTORY: &str = "remote file is a directory, fetch cannot work on directories";
@@ -51,6 +56,12 @@ enum State {
     Start,
     Stat,
     Slurp,
+    /// The file read in pieces into `tmp`, which then takes the place of `path`.
+    Pieces {
+        path: PathBuf,
+        tmp: PathBuf,
+        remote: String,
+    },
 }
 
 struct Fetch {
@@ -262,10 +273,35 @@ impl Fetch {
             return self.slurp();
         };
         self.remote_checksum = Some(remote.to_string());
+        let large = found
+            .get("size")
+            .and_then(Value::as_u64)
+            .is_some_and(|size| size > SLURP_LEN);
+        let remote = remote.to_string();
         match self.target(&self.source) {
-            Ok(path) => self
-                .unchanged(&path, remote)
-                .map_or_else(|| self.slurp(), Step::Done),
+            Ok(path) => match self.unchanged(&path, &remote) {
+                Some(done) => Step::Done(done),
+                None if large => self.pieces(path, remote),
+                None => self.slurp(),
+            },
+            Err(msg) => Step::Done(TaskResult::failed_with(msg)),
+        }
+    }
+
+    /// Asks for the file a piece at a time, into a file of its own beside `path`.
+    fn pieces(&mut self, path: PathBuf, remote: String) -> Step {
+        match self.begin(&path) {
+            Ok(tmp) => {
+                self.state = State::Pieces {
+                    path,
+                    tmp: tmp.clone(),
+                    remote,
+                };
+                Step::GetFile {
+                    remote: self.source.clone(),
+                    local: tmp,
+                }
+            }
             Err(msg) => Step::Done(TaskResult::failed_with(msg)),
         }
     }
@@ -275,23 +311,6 @@ impl Fetch {
         let mut args = Map::new();
         args.insert("src".into(), Value::String(self.src.clone()));
         Sub::run("slurp", args)
-    }
-
-    /// The result when the local file already has the remote sum.
-    fn unchanged(&self, path: &Path, remote: &str) -> Option<TaskResult> {
-        let local = std::fs::read(path).ok().map(|b| sha1_hex(&b));
-        if local.as_deref() != Some(remote) {
-            return None;
-        }
-        // Measured: `changed: false`, the local sum, and no remote one.
-        let mut out = Map::new();
-        out.insert("changed".into(), Value::Bool(false));
-        out.insert("checksum".into(), Value::String(remote.to_string()));
-        out.insert("dest".into(), Value::String(path.display().to_string()));
-        out.insert("file".into(), Value::String(self.source.clone()));
-        out.insert("md5sum".into(), Value::Null);
-        out.insert("remote_checksum".into(), Value::Null);
-        Some(TaskResult(out))
     }
 
     /// The result of a source that is not there, or that `stat` could not look at.
@@ -354,74 +373,6 @@ impl Fetch {
             Err(msg) => TaskResult::failed_with(msg),
         }
     }
-
-    /// The bytes written next to their place, checked, then renamed over it.
-    fn write(&self, path: PathBuf, data: &[u8], remote: &str) -> TaskResult {
-        // A name of this write's own: two hosts fetching `flat` to one path run at once, each on
-        // its own driver, and a shared temporary name would mix their bytes.
-        static WRITES: AtomicU64 = AtomicU64::new(0);
-        let mut tmp = path.clone().into_os_string();
-        tmp.push(format!(
-            ".{}-{}.volant-tmp",
-            std::process::id(),
-            WRITES.fetch_add(1, Ordering::Relaxed)
-        ));
-        let tmp = PathBuf::from(tmp);
-        // A `dest` a host named is walked from the directory of the list, so no link and no
-        // directory another user controls stands between it and the file.
-        let written = self.contained().and_then(|anchor| {
-            walk(
-                anchor.as_deref().unwrap_or(self.walk_root()),
-                &path,
-                true,
-                anchor.is_some(),
-            )
-        });
-        let written = written.and_then(|()| {
-            let fail = |err: std::io::Error| format!("Failed to fetch the file: {err}");
-            // The file being replaced keeps its mode, as the reference's write in place does: a
-            // `0600` kubeconfig fetched again stays `0600`. `walk` refused a link at `path`.
-            let kept = std::fs::symlink_metadata(&path)
-                .ok()
-                .filter(std::fs::Metadata::is_file)
-                .map(|m| m.permissions());
-            let mut file = std::fs::File::create_new(&tmp).map_err(fail)?;
-            if let Some(kept) = kept {
-                file.set_permissions(kept).map_err(fail)?;
-            }
-            file.write_all(data).map_err(fail)?;
-            drop(file);
-            std::fs::read(&tmp).map(|b| sha1_hex(&b)).map_err(fail)
-        });
-        let new = match written {
-            Ok(new) => new,
-            Err(msg) => {
-                let _ = std::fs::remove_file(&tmp);
-                return TaskResult::failed_with(msg);
-            }
-        };
-        let dest = Value::String(path.display().to_string());
-        let mut out = Map::new();
-        if self.validate_checksum && new != remote {
-            // Unlike the reference, which leaves the mismatched file in place, nothing is written.
-            let _ = std::fs::remove_file(&tmp);
-            out.insert("failed".into(), Value::Bool(true));
-            out.insert("msg".into(), Value::String("checksum mismatch".into()));
-            out.insert("file".into(), Value::String(self.source.clone()));
-        } else if let Err(err) = std::fs::rename(&tmp, &path) {
-            let _ = std::fs::remove_file(&tmp);
-            return TaskResult::failed_with(format!("Failed to fetch the file: {err}"));
-        } else {
-            out.insert("changed".into(), Value::Bool(true));
-        }
-        out.insert("checksum".into(), Value::String(new));
-        out.insert("dest".into(), dest);
-        // No MD5 here; the reference too reports `None` where it cannot compute one.
-        out.insert("md5sum".into(), Value::Null);
-        out.insert("remote_checksum".into(), Value::String(remote.to_string()));
-        out.insert("remote_md5sum".into(), Value::Null);
-        TaskResult(out)
-    }
 }
 
 impl Plugin for Fetch {
@@ -437,9 +388,43 @@ impl Plugin for Fetch {
                 Some(result) => self.stated(result),
                 None => Step::Done(lost("stat")),
             },
-            State::Slurp => Step::Done(last.map_or_else(|| lost("slurp"), |r| self.slurped(r))),
+            // Under `become` the size is known only from here: a file `slurp` cannot carry is
+            // looked at, then read in pieces.
+            State::Slurp => match last {
+                Some(result) if self.escalated && too_big(&result) => {
+                    self.state = State::Stat;
+                    stat(&self.src, true, true)
+                }
+                Some(result) => Step::Done(self.slurped(result)),
+                None => Step::Done(lost("slurp")),
+            },
+            State::Pieces {
+                ref path,
+                ref tmp,
+                ref remote,
+            } => {
+                let (path, tmp, remote) = (path.clone(), tmp.clone(), remote.clone());
+                let sum = last.as_ref().and_then(|r| r.0.get("checksum")?.as_str());
+                Step::Done(match (sum, last.as_ref()) {
+                    (Some(sum), _) => self.finish(&path, &tmp, sum.to_string(), &remote),
+                    (None, failed) => {
+                        let _ = std::fs::remove_file(&tmp);
+                        failed.cloned().unwrap_or_else(|| lost("read_file"))
+                    }
+                })
+            }
         }
     }
+}
+
+/// Whether `slurp` failed because the file is more than one result carries.
+fn too_big(result: &TaskResult) -> bool {
+    result.failed()
+        && result
+            .0
+            .get("msg")
+            .and_then(Value::as_str)
+            .is_some_and(|msg| msg.contains("more than a result can carry"))
 }
 
 #[cfg(test)]

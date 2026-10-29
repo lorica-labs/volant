@@ -1,0 +1,29 @@
+{
+  "args": [
+    "role",
+    "install",
+    "git+file://<golden-tmp>/repo/.git,,gitrole",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 0,
+  "repos": [
+    {
+      "path": "repo",
+      "sources": [
+        "src"
+      ]
+    }
+  ],
+  "requests": [],
+  "setup": [],
+  "stderr": "",
+  "stdout": "Starting galaxy role install process\n- extracting gitrole to <golden-tmp>/roles/gitrole\n- gitrole was installed successfully\n",
+  "tree": {
+    "roles/gitrole/meta/.galaxy_install_info": "052401967949aecbce0ab4ffd82085a52918c5b143f195735509793cc5a1b785",
+    "roles/gitrole/meta/main.yml": "2a804f3e5fca5607f5deb5c6e6db3628e53c94f4c098104c827fb28a8139f563",
+    "roles/gitrole/tasks/main.yml": "917db34454c6324575baa9db183cb763c870bb720612f211a950f6a541cc8233"
+  }
+}

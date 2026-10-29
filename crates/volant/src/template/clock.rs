@@ -173,6 +173,11 @@ pub(crate) fn local_now(format: &str) -> String {
     strftime::format(&DateTime::now(false), format)
 }
 
+/// The current UTC time, `datetime.now(timezone.utc).strftime(format)`.
+pub(crate) fn utc_now(format: &str) -> String {
+    strftime::format(&DateTime::now(true), format)
+}
+
 /// The day count from 1970-01-01 of a calendar date.
 fn days_from_civil(year: i64, month: u32, day: u32) -> i64 {
     let month = i64::from(month);

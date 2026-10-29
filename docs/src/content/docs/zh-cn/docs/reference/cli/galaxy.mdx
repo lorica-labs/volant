@@ -58,6 +58,12 @@ tar 包 URL、命名空间目录和签名在原生实现之前都会被拒绝：
 
 `collection verify NAME... [-p PATH] [--offline]` 校验每个已安装的集合：先是 `MANIFEST.json`，再按清单给出的哈希校验 `FILES.json`，再逐个校验每个文件，最后在目录树中查找 `FILES.json` 未列出的文件和目录（`*.pyc` 除外）。每处差异列在 `Collection <name> contains modified content in the following files:` 之下，命令以 1 退出。不带 `--offline` 时会下载服务器上同一版本的 tar 包，以其 `MANIFEST.json` 为准；带上时以已安装的为准。集合未安装或没有 `MANIFEST.json` 时报错；`-i` 把错误变为警告。
 
+## 安装和管理角色
+
+`role install NAME... [-p PATH] [-r FILE]` 把每个角色安装到第一个角色路径：`-p`，或配置中的第一个。名称写作 `owner.role[,version[,name]]`，通过第一个服务器的 API v1 查找；不指定版本时取服务器列出的最高版本，其次是仓库的分支，再次是 `master`。tar 包路径、URL 和 `git+` 源同样可以安装；tar 包或 git 源的角色名取自该行的第三个字段，该字段为空时取自路径。归档的顶层目录会被去掉，`meta/.galaxy_install_info` 记录版本和安装日期。已安装且版本相同的角色会被跳过；版本不同时给出警告并保留，除非 `--force` 替换它。随后安装 `meta/main.yml` 和 `meta/requirements.yml` 中的依赖，带 `-n` 时不安装；`--force-with-deps` 会替换已安装的依赖。安装失败的角色给出警告，命令以 1 退出，除非 `-i` 让它继续。`-g` 保留 git 角色的 `.git` 目录。
+
+`role list [NAME] [-p PATH]` 以 `# <path>` 打印每个角色路径，再对其中每个角色打印 `- <role>, <version>`，角色没有安装信息时版本为 `(unknown version)`。`role remove NAME... [-p PATH]` 从第一个角色路径删除每个角色，目录中没有角色时打印 `- <role> is not installed, skipping.`。
+
 ## Galaxy 服务器
 
 服务器取自 `-s`，否则取自 `ansible.cfg` 的 `[galaxy] server_list` 和 `[galaxy_server.<name>]` 节，再否则取自 `GALAXY_SERVER`，默认是 `https://galaxy.ansible.com`。每个 `ANSIBLE_GALAXY_*` 环境变量优先于文件。每个服务器接受 `url`、`token`、`validate_certs` 和 `timeout`。`--token` 优先于文件中的令牌，`-c` 关闭证书校验，`--timeout` 设置等待时间，默认 60 秒。无法访问的服务器会以 `ansible-galaxy` 的警告跳过，并询问下一个服务器。

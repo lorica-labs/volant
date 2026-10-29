@@ -14,7 +14,7 @@ use crate::galaxy::build::Source;
 use crate::galaxy::requirements::{self, Requirements};
 use crate::galaxy::settings::{self, Settings};
 use crate::galaxy::{self, Failure};
-use crate::galaxy::{download, install, inventory};
+use crate::galaxy::{download, install, inventory, role};
 
 /// Runs `args` and returns the exit code.
 #[must_use]
@@ -112,32 +112,45 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
             );
         }
         Kind::Role(Role::Install {
-            role_name,
+            common,
+            force,
+            roles_path,
+            ignore_errors,
+            no_deps,
+            force_with_deps,
             requirements,
-            ..
+            keep_scm_meta,
+            role_name,
         }) => {
-            if let Some(file) =
-                galaxy::one_of_roles_requirements(role_name, requirements.as_deref())?
-                && requirements_of(&file, true, verbose)?.roles.is_empty()
-            {
-                println!("Skipping install, no requirements found");
-                return Ok(0);
-            }
-            "role install"
+            let options = role::Options {
+                force: *force,
+                force_with_deps: *force_with_deps,
+                no_deps: *no_deps,
+                ignore_errors: *ignore_errors,
+                keep_scm_meta: *keep_scm_meta,
+                verbose,
+            };
+            return role_install(
+                common,
+                (role_name, requirements.as_deref()),
+                roles_path.as_deref(),
+                options,
+                &config,
+            );
         }
-        Kind::Role(Role::List { roles_path, .. }) => {
+        Kind::Role(Role::List {
+            roles_path, role, ..
+        }) => {
             let paths = galaxy::roles_paths(roles_path.as_deref(), &config.roles_path);
-            let (warnings, failure) = galaxy::missing_roles_paths(&paths);
-            for warning in warnings {
-                eprintln!("[WARNING]: {warning}");
-            }
-            if let Some(failure) = failure {
-                return Err(failure);
-            }
-            "role list"
+            return role::list(&paths, role.as_deref());
         }
         Kind::Role(Role::Init { .. }) => "role init",
-        Kind::Role(Role::Remove { .. }) => "role remove",
+        Kind::Role(Role::Remove {
+            roles_path, role, ..
+        }) => {
+            let paths = galaxy::roles_paths(roles_path.as_deref(), &config.roles_path);
+            return role::remove(role, &paths.first().cloned().unwrap_or_default());
+        }
         Kind::Collection(Collection::Publish { .. }) => return Err(refused("collection publish")),
         Kind::Role(Role::Delete { .. }) => return Err(refused("role delete")),
         Kind::Role(Role::Search { .. }) => return Err(refused("role search")),
@@ -148,6 +161,40 @@ fn run(kind: &Kind, verbose: u8) -> Result<i32, Failure> {
     Err(Failure::error(format!(
         "volant galaxy {name} is not supported yet"
     )))
+}
+
+/// `role install`: the roles named or listed, into the first roles path
+/// (`_execute_install_role`).
+fn role_install(
+    common: &args::Common,
+    (names, requirements): (&[String], Option<&str>),
+    roles_path: Option<&str>,
+    options: role::Options,
+    config: &Config,
+) -> Result<i32, Failure> {
+    let (wanted, only) = match galaxy::one_of_roles_requirements(names, requirements)? {
+        Some(file) => (requirements_of(&file, true, options.verbose)?.roles, names),
+        None => (
+            names
+                .iter()
+                .map(|name| requirements::role(&serde_json::Value::String(name.trim().into())))
+                .collect::<Result<_, _>>()?,
+            &[][..],
+        ),
+    };
+    if wanted.is_empty() {
+        println!("Skipping install, no requirements found");
+        return Ok(0);
+    }
+    let paths = galaxy::roles_paths(roles_path, &config.roles_path);
+    let mut servers = servers(common, (false, false), config, options.verbose, false);
+    role::install(
+        &wanted,
+        only,
+        &paths.first().cloned().unwrap_or_default(),
+        &mut servers,
+        options,
+    )
 }
 
 /// `collection build`: each source tree, `.` by default, built into `--output-path`, `./` by

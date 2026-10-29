@@ -1,0 +1,22 @@
+{
+  "args": [
+    "role",
+    "install",
+    "demo.nope",
+    "-s",
+    "<golden-server>",
+    "-p",
+    "<golden-tmp>/roles"
+  ],
+  "rc": 1,
+  "repos": [],
+  "requests": [
+    "GET /",
+    "GET /api",
+    "GET /api/v1/roles/?owner__username=demo&name=nope"
+  ],
+  "setup": [],
+  "stderr": "[WARNING]: - demo.nope was NOT installed successfully: - sorry, demo.nope was not found on http://127.0.0.1:<golden-port>/api.\n[ERROR]: - you can use --ignore-errors to skip failed roles and finish processing the list.\n",
+  "stdout": "Starting galaxy role install process\n- downloading role 'nope', owned by demo\n",
+  "tree": {}
+}

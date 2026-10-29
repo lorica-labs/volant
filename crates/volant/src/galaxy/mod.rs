@@ -25,6 +25,7 @@ pub mod requirements;
 pub mod resolve;
 #[cfg(test)]
 mod resolve_tests;
+pub mod role;
 pub mod settings;
 #[cfg(test)]
 mod settings_tests;
@@ -154,22 +155,6 @@ pub fn roles_paths(option: Option<&str>, configured: &[PathBuf]) -> Vec<PathBuf>
         .into_iter()
         .chain(configured.iter().cloned())
         .collect()
-}
-
-/// What `role list` says of `paths`: a warning for each one that does not exist, then the error
-/// when none does.
-pub fn missing_roles_paths(paths: &[PathBuf]) -> (Vec<String>, Option<Failure>) {
-    let warnings: Vec<String> = paths
-        .iter()
-        .filter(|p| !p.exists())
-        .map(|p| format!("- the configured path {} does not exist.", p.display()))
-        .collect();
-    let failure = (warnings.len() == paths.len()).then(|| {
-        Failure::options(
-            "- None of the provided paths were usable. Please specify a valid path with --roles-path",
-        )
-    });
-    (warnings, failure)
 }
 
 /// A requirements file named by `-r`, once it exists.

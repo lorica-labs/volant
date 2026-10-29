@@ -58,32 +58,6 @@ fn the_roles_paths_put_p_first() {
     assert_eq!(with[1..], configured[..]);
 }
 
-/// Measured on ansible-core 2.19.12: `role list -p /tmp/gm/r` with none of the paths there warns
-/// for each, then fails with exit 5.
-#[test]
-fn every_missing_roles_path_is_warned_about() {
-    let dir = tempfile::tempdir().expect("a directory");
-    let there = dir.path().to_path_buf();
-    let gone = dir.path().join("gone");
-    let (warnings, failure) = missing_roles_paths(&[gone.clone(), there]);
-    assert_eq!(
-        warnings,
-        [format!(
-            "- the configured path {} does not exist.",
-            gone.display()
-        )]
-    );
-    assert_eq!(failure, None);
-    let (warnings, failure) = missing_roles_paths(std::slice::from_ref(&gone));
-    assert_eq!(warnings.len(), 1);
-    assert_eq!(
-        failure,
-        Some(Failure::options(
-            "- None of the provided paths were usable. Please specify a valid path with --roles-path"
-        ))
-    );
-}
-
 #[rstest]
 #[case::both(&["a.b"], Some("x.yml"), Failure::error("The positional collection_name arg and --requirements-file are mutually exclusive."))]
 #[case::neither(&[], None, Failure::error("You must specify a collection name or a requirements file."))]

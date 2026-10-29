@@ -23,8 +23,8 @@ use super::pymethods::mutable::{
 use super::pymethods::percent;
 use super::vm::{concat, note_emit};
 use super::{
-    ADD_KEY, ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, ITEM_KEY, MATTR_KEY, MITEM_KEY,
-    MKLIST_KEY, MKMAP_KEY, REM_KEY, REMT_KEY, SUB_KEY, VAR_KEY,
+    ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, ITEM_KEY, MATTR_KEY, MITEM_KEY, MKLIST_KEY,
+    MKMAP_KEY, REM_KEY, REMT_KEY, VAR_KEY,
 };
 
 /// The engine's environment: minijinja's, strict about undefined values, with every filter,
@@ -81,9 +81,7 @@ pub(super) fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> En
     env.add_function("cycler", globals::cycler);
     env.add_function("joiner", minijinja_contrib::globals::joiner);
     env.add_function("undef", globals::undef);
-    env.add_function("now", super::clock::now);
-    env.add_function(ADD_KEY, super::clock::add);
-    env.add_function(SUB_KEY, super::clock::sub);
+    super::clock::register(&mut env);
     env.add_function("lipsum", super::lipsum::lipsum);
     env.add_function(ITEM_KEY, chained_item);
     env.add_function(MITEM_KEY, mutable_item);

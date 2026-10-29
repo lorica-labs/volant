@@ -19,7 +19,7 @@ use super::globals::{Callee, bind, python_type};
 mod delta;
 mod strftime;
 
-pub(super) use delta::{TimeDelta, add, container_repr, sub};
+pub(super) use delta::{TimeDelta, container_repr};
 #[cfg(test)]
 mod tests;
 
@@ -407,6 +407,13 @@ impl DateTime {
         };
         Ok(Value::from(self.isoformat(sep, timespec)))
     }
+}
+
+/// `now()`, and the routed `+` and `-` a template that calls it uses.
+pub(super) fn register(env: &mut minijinja::Environment<'static>) {
+    env.add_function("now", now);
+    env.add_function(super::ADD_KEY, delta::add);
+    env.add_function(super::SUB_KEY, delta::sub);
 }
 
 /// `now(utc=False, fmt=None)`. Measured on ansible-core 2.19.12: any true `utc` takes UTC, any

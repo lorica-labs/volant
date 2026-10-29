@@ -1,5 +1,5 @@
 ---
-sourceHash: 6f5becabba5b
+sourceHash: bf3f17741eec
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -104,7 +104,7 @@ Ces cas diffèrent d'`ansible-playbook` sans message avant l'exécution, ou avec
 |---|---|
 | `callback_plugins/`, `vars_plugins/` | Ignorés. |
 | `stdout_callback` nommant le callback d'une collection autre que `json`, comme `community.general.unixy` | L'exécution s'arrête avant le premier play avec `Could not load '<name>' callback plugin.`, qu'ansible-core n'affiche que pour un plugin non installé. `default`, `minimal`, `oneline`, `tree` et `json` fonctionnent. |
-| `callbacks_enabled` | `tree`, `ansible.posix.timer` et `ansible.posix.profile_tasks` s'exécutent. Tout autre nom est ignoré avec `[WARNING]: Skipping callback plugin '<name>', unable to load`, qu'ansible-core n'affiche que pour un plugin introuvable. `volant.compat.record` est ignoré sans avertissement. |
+| `callbacks_enabled` | `junit`, `tree`, `ansible.posix.timer` et `ansible.posix.profile_tasks` s'exécutent. Tout autre nom est ignoré avec `[WARNING]: Skipping callback plugin '<name>', unable to load`, qu'ansible-core n'affiche que pour un plugin introuvable. `volant.compat.record` est ignoré sans avertissement. |
 | `volant check` et `volant lint` | Elles n'existent pas. Lancez-les avec ansible-core ou ansible-lint. |
 | Une comparaison écrite entre deux littéraux de types que Python ne sait pas ordonner, comme `{{ 'a' < 1 }}` | Elle répond `false` ou `true` là où ansible-core échoue avec `'<' not supported between instances of 'str' and 'int'`. La bibliothèque de modèles calcule une comparaison de littéraux avant que Volant ne la voie. Avec une variable d'un côté ou de l'autre, la comparaison échoue comme dans ansible-core. |
 | Une tâche avec `no_log: true` qui échoue | Volontaire. Volant affiche `[ERROR]: Task failed: Action failed: <error censored due to no log>` et rien d'autre sur la cause. ansible-core 2.19.12 affiche la cause : `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, l'erreur du module, et les blocs `<<< caused by >>>`. Ce texte peut contenir un secret, comme le `msg` d'un `fail` qui nomme un mot de passe. La [politique de sécurité](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) compte comme une vulnérabilité un secret qui atteint un journal ou un terminal là où `no_log` le cache dans ansible-core : Volant le cache donc. La ligne `fatal:`, le résultat enregistré et le récapitulatif sont identiques dans les deux. Pour lire la cause, exécutez la tâche sans `no_log`. |

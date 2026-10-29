@@ -300,11 +300,20 @@ fn traceback(message: &str, exception: Option<&Value>) -> String {
         },
     );
     let cause = "The above exception was the direct cause of the following exception:";
-    if message.starts_with("Task failed: Module failed") {
-        let target = "The above target exception was the direct cause of the following controller exception:";
-        format!("{first}\n{target}\n\n(traceback missing)\n\n{cause}\n\n(traceback missing)\n")
+    // A failure a module or an action plugin returned was captured: one link more.
+    let captured = if message.starts_with("Task failed: Module failed") {
+        Some("target")
+    } else if message.starts_with("Task failed: Action failed") {
+        Some("action")
     } else {
-        format!("{first}\n{cause}\n\n(traceback missing)\n")
+        None
+    };
+    match captured {
+        Some(context) => format!(
+            "{first}\nThe above {context} exception was the direct cause of the following \
+             controller exception:\n\n(traceback missing)\n\n{cause}\n\n(traceback missing)\n"
+        ),
+        None => format!("{first}\n{cause}\n\n(traceback missing)\n"),
     }
 }
 

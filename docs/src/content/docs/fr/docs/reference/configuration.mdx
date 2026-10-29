@@ -1,5 +1,5 @@
 ---
-sourceHash: f9b4b5cb54e9
+sourceHash: 706c674f580f
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -115,7 +115,7 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
-  D'autres callbacks à exécuter à côté de celui de stdout, en liste séparée par des virgules. Volant exécute `tree`, qui écrit le dernier résultat de chaque hôte dans un fichier de `[callback_tree] directory` (`ANSIBLE_CALLBACK_TREE_DIR`, `~/.ansible/tree` par défaut), et, quand ansible.posix est installé sur le contrôleur, `ansible.posix.timer` et `ansible.posix.profile_tasks` avec leurs options (`[callback_profile_tasks]`, `PROFILE_TASKS_*`). Tout autre nom affiche `[WARNING]: Skipping callback plugin '<name>', unable to load` et l'exécution continue. `volant.compat.record`, qui [enregistre les exécutions d'ansible-playbook](/fr/docs/reference/recording/), est ignoré sans avertissement.
+  D'autres callbacks à exécuter à côté de celui de stdout, en liste séparée par des virgules. Volant exécute `junit`, qui écrit un rapport JUnit XML par playbook dans `JUNIT_OUTPUT_DIR` (`~/.ansible.log` par défaut) et lit les autres variables `JUNIT_*`, `tree`, qui écrit le dernier résultat de chaque hôte dans un fichier de `[callback_tree] directory` (`ANSIBLE_CALLBACK_TREE_DIR`, `~/.ansible/tree` par défaut), et, quand ansible.posix est installé sur le contrôleur, `ansible.posix.timer` et `ansible.posix.profile_tasks` avec leurs options (`[callback_profile_tasks]`, `PROFILE_TASKS_*`). Tout autre nom affiche `[WARNING]: Skipping callback plugin '<name>', unable to load` et l'exécution continue. `volant.compat.record`, qui [enregistre les exécutions d'ansible-playbook](/fr/docs/reference/recording/), est ignoré sans avertissement.
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">

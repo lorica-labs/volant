@@ -293,8 +293,10 @@ fn junit_writes_the_report_ansible_playbook_writes() {
     }
     let want = junit_report(&dir.path().join("junit-reference"));
     assert_eq!(junit_report(&dir.path().join("junit-volant")), want);
-    assert!(
-        want.contains("<failure message=\"non-zero return code\""),
-        "{want}"
-    );
+    for text in [
+        "<error message=\"Task failed: Module failed: non-zero return code\"",
+        "<error message=\"Task failed: Action failed: boom\"",
+    ] {
+        assert!(want.contains(text), "{want}");
+    }
 }

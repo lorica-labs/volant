@@ -201,7 +201,9 @@ fn with_argument_gap(category: &str, name: &str, status: Status, note: &str) -> 
 }
 
 fn later(category: &str, name: &str) -> Option<&'static str> {
-    if category == "callback" && !matches!(name, "default" | "minimal" | "oneline" | "tree") {
+    if category == "callback"
+        && !matches!(name, "default" | "minimal" | "oneline" | "tree" | "junit")
+    {
         return Some("an aggregate callback");
     }
     LATER
@@ -429,7 +431,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
         ("vars", |n: &str| n == "host_group_vars"),
         ("cache", |n: &str| n == "memory" || n == "jsonfile"),
         ("callback", |n: &str| {
-            matches!(n, "default" | "minimal" | "oneline" | "tree")
+            matches!(n, "default" | "minimal" | "oneline" | "tree" | "junit")
         }),
         ("connection", |n: &str| {
             let vars: serde_json::Map<String, Value> =

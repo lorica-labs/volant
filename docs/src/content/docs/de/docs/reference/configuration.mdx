@@ -1,5 +1,5 @@
 ---
-sourceHash: f9b4b5cb54e9
+sourceHash: 706c674f580f
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -115,7 +115,7 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 </Option>
 
 <Option name="callbacks_enabled" id="defaults-callbacks-enabled" env="ANSIBLE_CALLBACKS_ENABLED">
-  Weitere Callbacks, die neben dem Stdout-Callback laufen, als kommagetrennte Liste. Volant führt `tree` aus, das das letzte Ergebnis jedes Hosts in eine Datei in `[callback_tree] directory` schreibt (`ANSIBLE_CALLBACK_TREE_DIR`, standardmäßig `~/.ansible/tree`), und, wenn ansible.posix auf dem Controller installiert ist, `ansible.posix.timer` und `ansible.posix.profile_tasks` mit ihren Optionen (`[callback_profile_tasks]`, `PROFILE_TASKS_*`). Jeder andere Name gibt `[WARNING]: Skipping callback plugin '<name>', unable to load` aus, und der Lauf geht weiter. `volant.compat.record`, das [die Läufe von ansible-playbook aufzeichnet](/docs/reference/recording/), wird ohne Warnung übersprungen.
+  Weitere Callbacks, die neben dem Stdout-Callback laufen, als kommagetrennte Liste. Volant führt `junit` aus, das einen JUnit-XML-Bericht pro Playbook in `JUNIT_OUTPUT_DIR` schreibt (standardmäßig `~/.ansible.log`) und die anderen `JUNIT_*`-Variablen liest, `tree`, das das letzte Ergebnis jedes Hosts in eine Datei in `[callback_tree] directory` schreibt (`ANSIBLE_CALLBACK_TREE_DIR`, standardmäßig `~/.ansible/tree`), und, wenn ansible.posix auf dem Controller installiert ist, `ansible.posix.timer` und `ansible.posix.profile_tasks` mit ihren Optionen (`[callback_profile_tasks]`, `PROFILE_TASKS_*`). Jeder andere Name gibt `[WARNING]: Skipping callback plugin '<name>', unable to load` aus, und der Lauf geht weiter. `volant.compat.record`, das [die Läufe von ansible-playbook aufzeichnet](/docs/reference/recording/), wird ohne Warnung übersprungen.
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">

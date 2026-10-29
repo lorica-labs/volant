@@ -36,6 +36,7 @@ jobs:
       code: ${{ steps.diff.outputs.code }}
       build: ${{ steps.diff.outputs.build }}
       containers: ${{ steps.diff.outputs.containers }}
+      action: ${{ steps.diff.outputs.action }}
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
         with:
@@ -49,6 +50,7 @@ jobs:
               echo code=true
               echo build=true
               echo containers=true
+              echo action=true
             } >> "$GITHUB_OUTPUT"
             exit 0
           fi
@@ -73,6 +75,13 @@ jobs:
             echo containers=true >> "$GITHUB_OUTPUT"
           else
             echo containers=false >> "$GITHUB_OUTPUT"
+          fi
+          # The setup action and the install script it runs.
+          action='^(setup-volant/|docs/public/install\.sh$|\.github/workflows/ci\.yml$)'
+          if grep -Eq "$action" <<<"$changed"; then
+            echo action=true >> "$GITHUB_OUTPUT"
+          else
+            echo action=false >> "$GITHUB_OUTPUT"
           fi
 
   lint:
@@ -447,6 +456,32 @@ jobs:
           name: command-names-output
           path: /tmp/command-names/out
           retention-days: 3
+
+  # The setup action of this commit with the newest release, as a workflow uses it: the
+  # controller, the ansible-* names and the managed runtime, then an ad hoc ping through them.
+  setup-action:
+    needs: changes
+    if: needs.changes.outputs.action == 'true'
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: ./setup-volant
+        with:
+          shims: true
+          runtime: true
+      - run: volant --version
+      - name: Ad hoc ping through the ansible name
+        run: |
+          set -eu
+          test "$(command -v ansible)" = "$RUNNER_TEMP/volant-bin/ansible"
+          ansible all -i localhost, -c local -m ping
 
   # The static controller in an image built FROM scratch: no libc, no shell, no /etc/passwd.
   scratch:

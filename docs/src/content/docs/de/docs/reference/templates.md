@@ -1,5 +1,5 @@
 ---
-sourceHash: dd90c57c02b2
+sourceHash: d61771341944
 title: Referenz der Template-Sprache
 description: Die Python-Methoden, String-Regeln, regulären Ausdrücke und Grenzen des Jinja2 von Volant, mit jedem Unterschied zu ansible-core.
 ---
@@ -225,7 +225,7 @@ Volant lehnt einen YAML-Text ab, den es nicht ohne Risiko laden kann. Der Fehler
 ### Lücken beim Rendern
 
 - Ein String, der zwei Variablen liest, von denen eine über eine dritte verkettet ist, die einen `raw`-Block hält, wird einmal öfter gerendert als in ansible-core.
-- Ein Block `{% set x %}...{% endset %}` in einem String macht das Ergebnis zu einem String, auch wenn der Rest ein einziger Ausdruck ist.
+- Ein Block `{% set x %}...{% endset %}`, dessen Inhalt einen Ausdruck ausgibt, macht das Ergebnis zu einem String, auch wenn der Rest ein einziger Ausdruck ist. Ein Block nur aus Text behält den Typ.
 - `dict` allein und `dict.fromkeys` allein sind kein Ergebnis, wie in ansible-core (`Type 'type' is unsupported for variable storage.`), und werden in einem Text als `<class 'dict'>` und `<built-in method fromkeys of type object>` ausgegeben.
 - Ein `datetime` aus `now()` nimmt an Arithmetik nicht teil, sodass `now() - now()` fehlschlägt, und ihm fehlen die Methoden `date`, `time`, `replace`, `astimezone`, `utcoffset` und `timetuple`.
 

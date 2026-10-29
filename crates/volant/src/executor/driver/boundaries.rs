@@ -1,9 +1,9 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Which steps of a play the hosts meet in front of, read off the task text and the variables.
 
-use std::collections::BTreeSet;
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 
 use serde_json::{Map, Value};
 use volant_protocol::modules::{is_builtin, resolved_name, short_name};
@@ -267,6 +267,20 @@ pub(super) fn reads_across_hosts(task: &PlayTask) -> bool {
 pub(in crate::executor) struct Definitions(Vec<(String, bool, BTreeSet<String>)>);
 
 impl Definitions {
+    /// The `vars_files` of every host, once per file rather than once per host naming it: the
+    /// hosts share what they loaded.
+    pub(in crate::executor) fn add_files(
+        &mut self,
+        per_host: &HashMap<String, Arc<crate::vars::VarsFiles>>,
+    ) {
+        let mut seen = HashSet::new();
+        per_host
+            .values()
+            .filter(|files| seen.insert(Arc::as_ptr(files)))
+            .flat_map(|files| files.maps())
+            .for_each(|m| self.add(m));
+    }
+
     pub(in crate::executor) fn add(&mut self, map: &Map<String, Value>) {
         for (name, value) in map {
             let mut texts = Vec::new();

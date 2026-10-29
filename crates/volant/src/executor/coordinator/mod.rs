@@ -86,13 +86,7 @@ pub(super) async fn run_batch(
         store.playbook_dir().to_path_buf()
     };
     definitions.add(&play.vars);
-    // Once per file, not once per host naming it: the hosts share what they loaded.
-    let mut seen = HashSet::new();
-    vars_files
-        .values()
-        .filter(|files| seen.insert(Arc::as_ptr(files)))
-        .flat_map(|files| files.maps())
-        .for_each(|m| definitions.add(m));
+    definitions.add_files(vars_files);
     let mut first = compiled.clone();
     mark_boundaries(&mut first, &definitions, &playbook_dir);
     let (plan_tx, plan_rx) = watch::channel(Arc::new(first));

@@ -1,5 +1,5 @@
 ---
-sourceHash: fa2d4c2d8c2c
+sourceHash: 028ee36a6a05
 title: 模板语言参考
 description: Volant 的 Jinja2 所支持的 Python 方法、字符串规则、正则表达式和限制，以及与 ansible-core 的每一处差异。
 ---
@@ -227,7 +227,7 @@ Volant 会拒绝无法在没有风险的前提下加载的 YAML 文本。错误�
 
 - 读取两个变量的字符串，若其中一个是经由第三个持有 `raw` 块的变量链接而来，就会比 ansible-core 多渲染一次。
 - `{% include %}` 和 `{% import %}` 会失败，不论在模板文件中还是在字符串中：渲染期间没有任何东西会加载第二个文件。ansible-core 会从 playbook 目录加载该文件。
-- 字符串中的 `{% set x %}...{% endset %}` 块会让结果成为字符串，即使其余部分是一个表达式。
+- 主体中打印了表达式的 `{% set x %}...{% endset %}` 块会让结果成为字符串，即使其余部分是一个表达式。只含文本的块会保留类型。
 - 单独的 `dict` 和单独的 `dict.fromkeys` 不是结果，与 ansible-core 一致（`Type 'type' is unsupported for variable storage.`），在文本中打印为 `<class 'dict'>` 和 `<built-in method fromkeys of type object>`。
 - `now()` 返回的 `datetime` 不参与算术运算，所以 `now() - now()` 会失败，并且它缺少方法 `date`、`time`、`replace`、`astimezone`、`utcoffset` 和 `timetuple`。
 

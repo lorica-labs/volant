@@ -17,7 +17,7 @@ use volant_protocol::TaskResult;
 use volant_protocol::encoding::sha1_hex;
 
 use super::files::{
-    Payload, ansible_bool, check_host_named, not_found, search_paths, unreadable,
+    Payload, ansible_bool, check_host_named, local_mode, not_found, search_paths, unreadable,
     unreadable_failure,
 };
 use super::{Context, Plugin, Step, Sub, lost};
@@ -181,25 +181,6 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
         basename,
         args,
     }))
-}
-
-/// `mode: preserve` read off a controller file, as the reference writes it: `0%03o`.
-#[cfg(unix)]
-pub(super) fn local_mode(path: &std::path::Path) -> Result<String, String> {
-    use std::os::unix::fs::PermissionsExt;
-    let mode = std::fs::metadata(path)
-        .map_err(|err| format!("could not read the mode of {}: {err}", path.display()))?
-        .permissions()
-        .mode();
-    Ok(format!("0{:03o}", mode & 0o7777))
-}
-
-#[cfg(not(unix))]
-pub(super) fn local_mode(path: &std::path::Path) -> Result<String, String> {
-    Err(format!(
-        "mode: preserve reads a unix mode, and {} has none on this controller",
-        path.display()
-    ))
 }
 
 /// A `content` as the reference writes it to its temporary file: a string as it is, a mapping

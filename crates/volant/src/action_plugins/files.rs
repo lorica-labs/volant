@@ -216,6 +216,25 @@ impl Payload {
     }
 }
 
+/// `mode: preserve` read off a controller file, as the reference writes it: `0%03o`.
+#[cfg(unix)]
+pub(crate) fn local_mode(path: &Path) -> Result<String, String> {
+    use std::os::unix::fs::PermissionsExt;
+    let mode = std::fs::metadata(path)
+        .map_err(|err| format!("could not read the mode of {}: {err}", path.display()))?
+        .permissions()
+        .mode();
+    Ok(format!("0{:03o}", mode & 0o7777))
+}
+
+#[cfg(not(unix))]
+pub(crate) fn local_mode(path: &Path) -> Result<String, String> {
+    Err(format!(
+        "mode: preserve reads a unix mode, and {} has none on this controller",
+        path.display()
+    ))
+}
+
 #[cfg(test)]
 mod tests;
 

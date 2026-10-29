@@ -545,7 +545,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `is_link` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `is_mount` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `is_same_file` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `isnan` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
+| `isnan` | <span class="kw kw-runs">runs</span> |  |
 | `issubset` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `issuperset` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `iterable` | <span class="kw kw-runs">runs</span> |  |

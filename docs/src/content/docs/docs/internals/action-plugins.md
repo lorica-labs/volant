@@ -75,7 +75,7 @@ The module `yum` is not a module of its own in ansible-core 2.19: `yum`, `ansibl
 
 A file read from a host, written onto the controller under `dest` and nowhere else.
 
-Without `become` the plugin runs `stat` on the source first and leaves an already-matching local file alone; under `become` it goes straight to `slurp`. The bytes always travel back through `slurp`, decoded strictly, never rendered and never put in a variable. The destination is `dest/<inventory_hostname>/<src>`, unless `flat: true` names `dest` itself directly, or, with a trailing slash, `dest/<basename of src>`.
+Without `become` the plugin runs `stat` on the source first and leaves an already-matching local file alone; under `become` it goes straight to `slurp`. The bytes travel back through `slurp`, decoded strictly, never rendered and never put in a variable. A file past 2 MiB, close to the most `slurp` carries, is read back instead in pieces of at most 16 MiB, straight into a file beside the destination. Under `become` that happens once `slurp` says the file is too big, after a `stat` for its sum. The destination is `dest/<inventory_hostname>/<src>`, unless `flat: true` names `dest` itself directly, or, with a trailing slash, `dest/<basename of src>`.
 
 Measured on ansible-core 2.19.12, a relative `src` climbing with `..` makes ansible-core write outside `dest` on the controller: a `src` of `../../../../../../../../tmp/x` without `flat` writes `/tmp/x`. Here every candidate path is built and normalised without touching the filesystem, and refused unless it sits under `dest`, before a directory is even created:
 
@@ -88,7 +88,7 @@ This is checked twice: once on the `src` the playbook wrote, and again on the pa
 
 A symbolic link anywhere below `dest` is refused rather than followed, on both the path built from the playbook and the one the host names back.
 
-`fail_on_missing`, on by default as in ansible-core, fails the task on a missing source or a directory; `fail_on_missing: false` turns either into an `ok` result carrying ansible-core's own message instead. Either way, any other failure, such as a read the agent refuses because the module server's per-stream limit was reached, still fails the task. That limit is 4 MiB of `slurp`'s base64-encoded stdout, about 3 MiB of source file before encoding. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike ansible-core, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
+`fail_on_missing`, on by default as in ansible-core, fails the task on a missing source or a directory; `fail_on_missing: false` turns either into an `ok` result carrying ansible-core's own message instead. Either way, any other failure, such as a read the host denies, still fails the task. `validate_checksum` checks the written file's SHA-1 against the host's before keeping it; a mismatch fails the task and removes what was written, unlike ansible-core, which leaves the mismatched file where it wrote it. A file being replaced keeps its existing mode, so a `0600` file fetched again stays `0600`.
 
 ### A dest a managed host named
 

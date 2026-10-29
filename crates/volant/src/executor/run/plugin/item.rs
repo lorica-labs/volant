@@ -2,7 +2,6 @@
 
 use std::time::Duration;
 
-use serde_json::{Map, Value};
 use tokio::sync::watch;
 use volant_protocol::modules::CHECK_MODE_ARG;
 use volant_protocol::{BatchOutcome, Task, TaskResult};
@@ -20,6 +19,7 @@ use crate::executor::run::blob::{PUT_FILE_WAIT, blob_preflight, put_file_within}
 use crate::executor::run::channel::{AgentChannel, Relink};
 use crate::executor::run::interpreter::{mark_unsent, sub_task, unreachable_ending};
 use crate::executor::run::judge::timed_out;
+use crate::executor::run::transfer::{get_answer, get_file_within, put_answer};
 
 /// One item of a task an action plugin backs, run to its end.
 ///
@@ -229,6 +229,11 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
                 )
                 .await;
                 last = Some(put_answer(put));
+                continue;
+            }
+            Step::GetFile { remote, local } => {
+                let got = get_file_within(link, host, &remote, &local, logs, capped(PUT_FILE_WAIT));
+                last = Some(get_answer(got.await));
                 continue;
             }
             Step::Run(sub) => {
@@ -483,17 +488,5 @@ pub(in crate::executor::run) async fn run_plugin_item<C: AgentChannel, R: Relink
             });
         }
         last = Some(result);
-    }
-}
-
-/// What a file put hands the plugin: `changed`, or the failure naming why the file is not there.
-fn put_answer(put: Result<bool, String>) -> TaskResult {
-    match put {
-        Ok(changed) => {
-            let mut done = Map::new();
-            done.insert("changed".into(), Value::Bool(changed));
-            TaskResult(done)
-        }
-        Err(why) => TaskResult::failed_with(why),
     }
 }

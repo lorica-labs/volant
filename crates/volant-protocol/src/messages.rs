@@ -43,7 +43,8 @@ use serde_json::{Map, Value};
 ///
 /// 11 added `PutBlobPart` and `EndBlob`: a staged file longer than one frame travels as pieces.
 /// An agent that did not know them would drop both as malformed and leave the controller waiting
-/// for the `BlobState` of a file it never stored.
+/// for the `BlobState` of a file it never stored. It also added `ReadFile`, answered by
+/// `FileBytes`: a file of the host read back a piece at a time, for `fetch`.
 pub const PROTOCOL_VERSION: u32 = 11;
 
 /// How the frame after a `PutBlob` carries the blob.
@@ -120,6 +121,13 @@ pub enum ToAgent {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         mode: Option<u32>,
     },
+    /// Reads at most `len` bytes of the file at `path`, an absolute path, from `offset`. Answered
+    /// by [`FromAgent::FileBytes`].
+    ReadFile {
+        path: String,
+        offset: u64,
+        len: u64,
+    },
     /// Start the Python server for the payload `blob` under `interpreter` now, so that it
     /// imports while the tasks before the first one that needs it run. Never answered: the
     /// first task that needs the server waits for it, and one the agent could not start is
@@ -185,6 +193,19 @@ pub enum FromAgent {
         changed: bool,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         error: Option<String>,
+    },
+    /// The answer to a `read_file`: `len` bytes read from `offset`, fewer than asked at the end of
+    /// the file and none past it, or `error` and nothing. Unless it is empty, the next frame on
+    /// the wire is the bytes themselves, and never a message.
+    FileBytes {
+        offset: u64,
+        len: u64,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        error: Option<String>,
+        /// The bytes, written as the frame after this message rather than inside it: the side
+        /// that sends it writes them there, and the side that reads it takes them from there.
+        #[serde(skip)]
+        data: Vec<u8>,
     },
 }
 

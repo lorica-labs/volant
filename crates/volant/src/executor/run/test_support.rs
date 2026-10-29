@@ -186,11 +186,24 @@ impl AgentChannel for FakeAgent {
                 {
                     busy.running = None;
                 }
+                // The bytes go back on the queue, as the frame that follows this answer.
+                if let FromAgent::FileBytes { data, .. } = &answer
+                    && !data.is_empty()
+                {
+                    self.answers.push_front(answer.clone());
+                }
                 Ok(Some(answer))
             }
             None if self.hangs_when_empty => std::future::pending().await,
             None => Ok(None),
         }
+    }
+
+    async fn answer_bytes(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        Ok(match self.answers.pop_front() {
+            Some(FromAgent::FileBytes { data, .. }) => Some(data),
+            _ => None,
+        })
     }
 
     async fn stop_batch(&mut self, id: u64, _grace: Duration) -> bool {
@@ -311,6 +324,10 @@ impl AgentChannel for StopsAfter {
             let _ = self.stop.send(true);
         }
         Ok(answer)
+    }
+
+    async fn answer_bytes(&mut self) -> std::io::Result<Option<Vec<u8>>> {
+        self.agent.answer_bytes().await
     }
 
     async fn stop_batch(&mut self, id: u64, grace: Duration) -> bool {

@@ -68,6 +68,42 @@ fn refusal(path: &str, err: &io::Error) -> String {
     }
 }
 
+/// The most one `read_file` hands back: a quarter of a frame.
+const READ_LIMIT: u64 = 16 * 1024 * 1024;
+
+/// The answer to a `read_file`: at most `len` bytes of the file at `path` from `offset`, and at
+/// most [`READ_LIMIT`]. Fewer at the end of the file, none past it.
+pub fn read(path: &str, offset: u64, len: u64) -> FromAgent {
+    use std::io::{Read, Seek, SeekFrom};
+    let read = || -> io::Result<Vec<u8>> {
+        if !Path::new(path).is_absolute() {
+            return Err(io::Error::new(
+                io::ErrorKind::InvalidInput,
+                "the path is not absolute",
+            ));
+        }
+        let mut file = fs::File::open(path)?;
+        file.seek(SeekFrom::Start(offset))?;
+        let mut data = Vec::new();
+        file.take(len.min(READ_LIMIT)).read_to_end(&mut data)?;
+        Ok(data)
+    };
+    match read() {
+        Ok(data) => FromAgent::FileBytes {
+            offset,
+            len: data.len() as u64,
+            error: None,
+            data,
+        },
+        Err(err) => FromAgent::FileBytes {
+            offset,
+            len: 0,
+            error: Some(format!("reading {path}: {err}")),
+            data: Vec::new(),
+        },
+    }
+}
+
 /// Whether the content or the mode at `path` changed. A regular file already there is written
 /// in place, as the reference's `put_file` copies onto it: it keeps its owner, group and mode, and
 /// one the agent may not write is refused, the agent running as the connection user. A directory

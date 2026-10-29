@@ -1,5 +1,5 @@
 ---
-sourceHash: bd44eb3d24f2
+sourceHash: 93a0f9272733
 title: Plugins de acción
 description: Cómo Volant ejecuta los módulos que ansible-core ejecuta mediante un plugin de acción en el controlador, en Rust o en el bridge de Python.
 ---
@@ -76,7 +76,7 @@ El módulo `yum` no es un módulo propio en ansible-core 2.19: `yum`, `ansible.b
 
 Un archivo leído de un host, escrito en el controlador bajo `dest` y en ningún otro sitio.
 
-Sin `become`, el plugin ejecuta primero `stat` en el origen y deja en paz un archivo local que ya coincide; bajo `become` va directamente a `slurp`. Los bytes siempre vuelven mediante `slurp`, decodificados de forma estricta, nunca renderizados y nunca puestos en una variable. El destino es `dest/<inventory_hostname>/<src>`, salvo que `flat: true` nombre directamente `dest` mismo o, con una barra final, `dest/<basename of src>`.
+Sin `become`, el plugin ejecuta primero `stat` en el origen y deja en paz un archivo local que ya coincide; bajo `become` va directamente a `slurp`. Los bytes vuelven mediante `slurp`, decodificados de forma estricta, nunca renderizados y nunca puestos en una variable. Un archivo de más de 2 MiB, cerca del máximo que `slurp` transporta, se vuelve a leer en su lugar en trozos de como máximo 16 MiB, directamente en un archivo junto al destino. Bajo `become` eso ocurre cuando `slurp` dice que el archivo es demasiado grande, tras un `stat` para su suma. El destino es `dest/<inventory_hostname>/<src>`, salvo que `flat: true` nombre directamente `dest` mismo o, con una barra final, `dest/<basename of src>`.
 
 Medido en ansible-core 2.19.12, un `src` relativo que sube con `..` hace que ansible-core escriba fuera de `dest` en el controlador: un `src` de `../../../../../../../../tmp/x` sin `flat` escribe `/tmp/x`. Aquí se construye y normaliza cada ruta candidata sin tocar el sistema de archivos, y se rechaza salvo que esté bajo `dest`, antes de crear siquiera un directorio:
 
@@ -89,7 +89,7 @@ Esto se comprueba dos veces: una sobre el `src` que escribió el playbook, y otr
 
 Un enlace simbólico en cualquier punto bajo `dest` se rechaza en lugar de seguirse, tanto en la ruta construida a partir del playbook como en la que devuelve el host.
 
-`fail_on_missing`, activado por defecto como en ansible-core, hace fallar la tarea ante un origen inexistente o un directorio; `fail_on_missing: false` convierte cualquiera de los dos en un resultado `ok` que lleva el mensaje de ansible-core. En ambos casos, cualquier otro fallo, como una lectura que el agente rechaza porque se alcanzó el límite por flujo del servidor de módulos, sigue haciendo fallar la tarea. Ese límite es de 4 MiB del stdout en base64 de `slurp`, unos 3 MiB de archivo de origen antes de codificar. `validate_checksum` comprueba el SHA-1 del archivo escrito frente al del host antes de conservarlo; una discrepancia hace fallar la tarea y elimina lo escrito, a diferencia de ansible-core, que deja el archivo discrepante donde lo escribió. Un archivo que se sustituye conserva su modo existente, así que un archivo `0600` obtenido de nuevo sigue siendo `0600`.
+`fail_on_missing`, activado por defecto como en ansible-core, hace fallar la tarea ante un origen inexistente o un directorio; `fail_on_missing: false` convierte cualquiera de los dos en un resultado `ok` que lleva el mensaje de ansible-core. En ambos casos, cualquier otro fallo, como una lectura que el host deniega, sigue haciendo fallar la tarea. `validate_checksum` comprueba el SHA-1 del archivo escrito frente al del host antes de conservarlo; una discrepancia hace fallar la tarea y elimina lo escrito, a diferencia de ansible-core, que deja el archivo discrepante donde lo escribió. Un archivo que se sustituye conserva su modo existente, así que un archivo `0600` obtenido de nuevo sigue siendo `0600`.
 
 ### Un dest nombrado por un host administrado
 

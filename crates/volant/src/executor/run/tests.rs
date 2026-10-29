@@ -1336,6 +1336,65 @@ async fn a_blob_goes_up_in_the_form_its_size_calls_for() {
     }
 }
 
+/// A file of the host is read back a piece at a time into the controller file named, until a
+/// piece comes back empty, and the sum of what was written is the answer.
+#[tokio::test]
+async fn a_file_is_read_back_in_pieces() {
+    let tmp = tempfile::tempdir().unwrap();
+    let local = tmp.path().join("got");
+    std::fs::write(&local, b"left over").unwrap();
+    let piece = |offset: u64, data: &[u8]| FromAgent::FileBytes {
+        offset,
+        len: data.len() as u64,
+        error: None,
+        data: data.to_vec(),
+    };
+    let mut agent = FakeAgent::answering(vec![
+        piece(0, b"first "),
+        piece(6, b"second"),
+        piece(12, b""),
+    ]);
+    let sum = super::transfer::get_file_within(
+        &mut agent,
+        "h1",
+        "/var/f",
+        &local,
+        &mut Vec::new(),
+        Duration::from_secs(5),
+    )
+    .await
+    .expect("the file came back");
+    assert_eq!(std::fs::read(&local).unwrap(), b"first second");
+    assert_eq!(sum, volant_protocol::encoding::sha1_hex(b"first second"));
+    let offsets: Vec<u64> = agent
+        .sent
+        .iter()
+        .map(|m| match m {
+            ToAgent::ReadFile { offset, .. } => *offset,
+            other => panic!("{other:?}"),
+        })
+        .collect();
+    assert_eq!(offsets, [0, 6, 12]);
+
+    let mut agent = FakeAgent::answering(vec![FromAgent::FileBytes {
+        offset: 0,
+        len: 0,
+        error: Some("reading /var/f: denied".into()),
+        data: Vec::new(),
+    }]);
+    let err = super::transfer::get_file_within(
+        &mut agent,
+        "h1",
+        "/var/f",
+        &local,
+        &mut Vec::new(),
+        Duration::from_secs(5),
+    )
+    .await
+    .unwrap_err();
+    assert_eq!(err, "reading /var/f: denied");
+}
+
 /// Past the disk line a file goes up from disk in pieces, one in memory at a time, and the
 /// agent is asked to put them together.
 #[tokio::test]

@@ -154,6 +154,7 @@ where
                 ToAgent::PutBlob { .. } => "put_blob",
                 ToAgent::PutBlobPart { .. } => "put_blob_part",
                 ToAgent::EndBlob { .. } => "end_blob",
+                ToAgent::ReadFile { .. } => "read_file",
                 ToAgent::PutFile { .. } => "put_file",
                 ToAgent::Warm { .. } => "warm",
             };

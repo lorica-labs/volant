@@ -76,7 +76,7 @@ async fn place_blob<C: AgentChannel>(
 
 /// The most one `put_blob_part` carries: a quarter of a frame, so the agent holds no more than
 /// that of a file at a time, and neither does this side.
-const PIECE_LEN: u64 = 16 * 1024 * 1024;
+pub(super) const PIECE_LEN: u64 = 16 * 1024 * 1024;
 
 /// Sends the `len` bytes `source` yields as the pieces of the staged file `hash`, one piece in
 /// memory at a time, then asks the agent to put them together: whether it holds the file now.
@@ -340,6 +340,11 @@ async fn blob_state<C: AgentChannel>(
             Ok(Some(FromAgent::PutFileDone { .. })) => {
                 return Err(format!(
                     "the agent ended a put_file while asked about the blob {hash}"
+                ));
+            }
+            Ok(Some(FromAgent::FileBytes { .. })) => {
+                return Err(format!(
+                    "the agent sent the bytes of a file while asked about the blob {hash}"
                 ));
             }
             Ok(None) => {

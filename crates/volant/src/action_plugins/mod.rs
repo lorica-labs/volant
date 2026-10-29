@@ -289,6 +289,9 @@ pub(crate) enum Step {
         remote: String,
         mode: Option<u32>,
     },
+    /// The host's file `remote` read into the controller file `local`, which exists, a piece at a
+    /// time. The next call is handed the SHA-1 of what was written as `checksum`, or the failure.
+    GetFile { remote: String, local: PathBuf },
     /// Nothing to run yet: the next call comes once `ready` is notified, or the item's time is
     /// up, and is handed nothing.
     Wait(Arc<tokio::sync::Notify>),

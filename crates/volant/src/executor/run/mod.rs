@@ -18,6 +18,7 @@ mod record;
 mod register;
 pub(super) mod replayed;
 mod retry;
+mod transfer;
 
 pub(super) use argspec::refusal;
 pub(super) use async_job::{Polled, SHOWN, announce_retry, poll_job, polls, shown};

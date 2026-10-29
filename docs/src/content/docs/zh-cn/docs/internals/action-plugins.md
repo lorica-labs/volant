@@ -1,5 +1,5 @@
 ---
-sourceHash: bd44eb3d24f2
+sourceHash: 93a0f9272733
 title: Action plugin
 description: Volant 如何运行 ansible-core 通过控制节点上的 action plugin 运行的模块，用 Rust 或通过 Python 桥接。
 ---
@@ -76,7 +76,7 @@ You should manually specify use_backend to tell the module whether to use the dn
 
 从主机读取的文件，只写到控制节点上 `dest` 之下，不写到别处。
 
-没有 `become` 时，plugin 先对源文件运行 `stat`，并保持已经匹配的本地文件不动；有 `become` 时，它直接用 `slurp`。字节总是通过 `slurp` 传回，严格解码，从不渲染，也从不放入变量。目标是 `dest/<inventory_hostname>/<src>`，除非 `flat: true` 直接把 `dest` 本身作为目标，或者在 `dest` 带有末尾斜杠时，目标是 `dest/<src 的 basename>`。
+没有 `become` 时，plugin 先对源文件运行 `stat`，并保持已经匹配的本地文件不动；有 `become` 时，它直接用 `slurp`。字节通过 `slurp` 传回，严格解码，从不渲染，也从不放入变量。超过 2 MiB 的文件接近 `slurp` 能携带的上限，改为按每块最多 16 MiB 读回，直接写入目标旁边的文件。有 `become` 时，这发生在 `slurp` 报告文件过大之后，并先用一次 `stat` 取得其校验和。目标是 `dest/<inventory_hostname>/<src>`，除非 `flat: true` 直接把 `dest` 本身作为目标，或者在 `dest` 带有末尾斜杠时，目标是 `dest/<src 的 basename>`。
 
 在 ansible-core 2.19.12 上的实测表明，用 `..` 向上爬的相对 `src` 会让 ansible-core 写到控制节点上 `dest` 之外：不带 `flat` 的 `src` 为 `../../../../../../../../tmp/x` 时会写出 `/tmp/x`。这里每个候选路径都在不接触文件系统的情况下构建并规范化，除非位于 `dest` 之下，否则会被拒绝，这发生在创建任何目录之前：
 
@@ -89,7 +89,7 @@ You should manually specify use_backend to tell the module whether to use the dn
 
 `dest` 之下任何位置的符号链接都会被拒绝，而不是被跟随，playbook 所构建的路径和主机回报的路径都是如此。
 
-`fail_on_missing` 默认开启，与 ansible-core 一致，源文件缺失或为目录时让 task 失败；`fail_on_missing: false` 会把这两种情况变成携带 ansible-core 自己信息的 `ok` 结果。无论哪种，其他任何失败仍会让 task 失败，例如因为模块服务的每流上限已到而被 agent 拒绝的读取。该上限是 `slurp` 经 base64 编码的 stdout 的 4 MiB，编码前的源文件约为 3 MiB。`validate_checksum` 会在保留写出的文件之前，用主机的校验和检查它的 SHA-1；不匹配会让 task 失败并删除已写出的内容，这与 ansible-core 不同，后者会把不匹配的文件留在写出的地方。被替换的文件保留其现有权限，所以再次 fetch 的 `0600` 文件仍是 `0600`。
+`fail_on_missing` 默认开启，与 ansible-core 一致，源文件缺失或为目录时让 task 失败；`fail_on_missing: false` 会把这两种情况变成携带 ansible-core 自己信息的 `ok` 结果。无论哪种，其他任何失败仍会让 task 失败，例如主机拒绝的读取。`validate_checksum` 会在保留写出的文件之前，用主机的校验和检查它的 SHA-1；不匹配会让 task 失败并删除已写出的内容，这与 ansible-core 不同，后者会把不匹配的文件留在写出的地方。被替换的文件保留其现有权限，所以再次 fetch 的 `0600` 文件仍是 `0600`。
 
 ### 受管主机指定的 dest
 

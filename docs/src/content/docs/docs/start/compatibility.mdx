@@ -57,7 +57,7 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 | Blocks | `block`, `rescue`, `always` | |
 | Reuse | roles and dependencies, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
 | Delegation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
-| Modules | the modules of ansible-core for Linux hosts, including `copy`, `template`, `dnf`, `service`, `uri` and `reboot`, and the modules of installed collections with their action plugins | a collection's action plugin that needs Windows, action plugins of your own |
+| Modules | the modules of ansible-core for Linux hosts, including `copy`, `template`, `dnf`, `service`, `uri` and `reboot`, and the modules of installed collections with their action plugins, and action plugins in an `action_plugins/` beside the playbook or in a role | a collection's action plugin that needs Windows |
 | Inventories | INI, YAML and TOML files, directories, scripts, `constructed`, `generator` and collection plugins, several `-i`, `group_vars`, `host_vars`, the `jsonfile` fact cache | none left |
 | Connections | `ssh` with keys, an ssh-agent or a password (`-k` or `ansible_password`, needs OpenSSH 8.4 or later), `local`, and `network_cli`, `netconf` and `httpapi` for network devices | other connection plugins, Windows |
 | Escalation | `become` through `sudo` or `su`, with or without a password | `doas` and other methods |
@@ -68,7 +68,6 @@ A file that only a dynamic `include_tasks` or `include_role` names is read when 
 
 | Not supported yet | Why | What you can do today |
 |---|---|---|
-| An action plugin of your own, in `action_plugins/` | Volant runs the action plugins of ansible-core and of installed collections, not yours. | Write a module, or keep the play under `ansible-playbook`. |
 | A collection that is not installed | Volant does not install one during a run. It asks the controller's ansible-core what is installed, before the first connection. | Run `volant runtime install --collections NAME`, the command the error names. See [The managed runtime](/docs/reference/runtime/#collections) and [Modules from collections](/docs/internals/python/#modules-from-collections). |
 | No Python with ansible-core on the controller | Volant installs its own on first need, with `curl` or `wget` and `tar`. | Nothing, or `volant runtime install` ahead of time. Without a network, use `volant runtime pack` and `install --from`. |
 | `apt`, `user`, `group` or `file` under `--check` or `--diff` on a host with no Python | These modules answer through Python on the host when the run asks for a check or a diff. | Install Python on the host, or run the play without `--check` and `--diff`. |

@@ -89,7 +89,7 @@ OpenSSH does the work, so `~/.ssh/config`, `Match`, `Include`, `ProxyJump` and y
 
 Each connection is a separate `ssh` process and costs the controller three file descriptors. With escalation, a run can hold two connections per host: the host's own and one escalated.
 
-At startup Volant raises its own soft limit on open files up to the hard limit, capped at 1,048,576. Most Linux systems ship a hard limit far above what a run needs, so nothing has to be done.
+At startup Volant raises its own soft limit on open files up to the hard limit, capped at 1,048,576. Most Linux systems ship a hard limit far above what a run needs, so nothing has to be done. The agent of a local host starts with the soft limit Volant started with, so its modules get what they would get under `ansible-playbook`, and `ansible_python_module_rlimit_nofile` sets a module's own, `command` and `shell` included.
 
 :::caution
 A hard limit of 1024 still stops a run at about 330 connections, or about 169 escalating hosts. `ssh` then stops starting, and the hosts it happens to hit are reported unreachable although nothing is wrong with them. In bash, `ulimit -n 1024` lowers the hard limit along with the soft one.

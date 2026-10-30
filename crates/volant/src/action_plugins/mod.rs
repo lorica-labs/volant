@@ -25,6 +25,7 @@ mod package;
 mod reboot;
 mod service;
 mod template;
+pub(crate) use template::{decode_text, encode_text};
 mod unarchive;
 
 use std::collections::{BTreeMap, BTreeSet};
@@ -123,12 +124,11 @@ pub(crate) fn waits_for_later(name: &str) -> bool {
 /// knows and the page does not is never run.
 pub(crate) fn kind(module: &str) -> Option<Kind> {
     let short = resolved_name(module);
-    if !builtin_spelling(module) {
-        return collection_actions()
-            .action
-            .get(module)
-            .copied()
-            .map(Kind::Bridged);
+    // What the controller's ansible-core resolved to an action plugin: a collection's, or one in
+    // an `action_plugins/` beside the playbook or in a role, which a short name reaches too.
+    let resolved = collection_actions().action.get(module).copied();
+    if resolved.is_some() || !builtin_spelling(module) {
+        return resolved.map(Kind::Bridged);
     }
     let (name, _) = ACTION_PLUGINS.iter().find(|(name, _)| *name == short)?;
     match short {
@@ -150,7 +150,7 @@ pub(crate) fn kind(module: &str) -> Option<Kind> {
 /// `uri` do. A module run on the controller or by the agent's own `raw` and `async_status` has a
 /// plugin that does not. A collection's action plugin runs as its own, which says so itself.
 pub(crate) fn supports_async(module: &str) -> bool {
-    if !builtin_spelling(module) {
+    if !builtin_spelling(module) || collection_actions().action.contains_key(module) {
         return true;
     }
     if matches!(short_name(module), "raw" | "async_status")

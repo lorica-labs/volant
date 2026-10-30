@@ -385,6 +385,17 @@
   vars: {items: [a, b]}
 - template: "{{ conf is contains 'port' }} {{ conf is contains 8080 }}"
   vars: {conf: {port: 8080}}
+- template: "{{ 2.7 | round(0, 'floor') }} {{ 2.1 | round(0, 'ceil') }} {{ 2.55 | round(1, 'common') }} {{ 2.5 | round }} {{ -2.5 | round(0, 'floor') }}"
+- template: "{{ 2.7 | round(0, 'bogus') }}"
+- template: "{{ [1, 2] | sum(start=10) }} {{ items | sum(attribute='a') }} {{ items | sum(attribute='a', start=1) }}"
+  vars: {items: [{a: 3}, {a: 5}]}
+- template: "{{ 'aaa' | replace('a', 'b', 1) }} {{ 'aaa' | replace('a', 'b', 0) }} {{ 'aaa' | replace('a', 'b', -1) }}"
+- template: "{{ {'b': 1, 'a': 2} | to_json(sort_keys=true) }} {{ {'b': 1, 'a': [1]} | to_json(indent=2) }}"
+- template: "{{ '1.2.3' is version('1.2', '>', strict=true) }} {{ '1.0.0-beta' is version('1.0.0', '<', version_type='semver') }} {{ '1.0.0rc1' is version('1.0.0', '<', version_type='pep440') }} {{ '1!0.1' is version('2.0', '>', version_type='pep440') }}"
+- template: "{{ '1.2.3.4' is version('1.2', '>', strict=true) }}"
+- template: "{{ '1.2' is version('1.2', '==', version_type='bogus') }}"
+- template: "{{ 'hé' | b64encode(encoding='utf-16') }} {{ 'aADpAA==' | b64decode(encoding='utf-16-le') }} {{ 'hé' | b64encode(encoding='latin-1') }}"
+- template: "{{ 'x' | b64encode(encoding='bogus') }}"
 # lookups
 - template: "{{ lookup('vars', name='inventory_hostname') }} {{ lookup('vars', 'x', name='y') }} {{ lookup('dict', {'a': 1}, bogus=1) }} {{ lookup('nested', [1], [2], bogus=1) }}"
   vars: {x: 1}

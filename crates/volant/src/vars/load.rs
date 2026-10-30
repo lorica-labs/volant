@@ -8,9 +8,55 @@ use anyhow::{Context, bail};
 use serde_json::{Map, Value};
 
 use crate::yaml;
-pub(super) fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
+
+/// `hash_behaviour = merge`, set once from the configuration before anything is read.
+static HASH_MERGE: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Sets `hash_behaviour`: `true` for `merge`. Measured on ansible-core 2.19.12, `merge` lays a
+/// mapping over a mapping of the same name key by key, between every two variable sources, and
+/// prints no deprecation warning.
+pub fn set_hash_merge(on: bool) {
+    HASH_MERGE.store(on, std::sync::atomic::Ordering::Relaxed);
+}
+
+pub(crate) fn hash_merge() -> bool {
+    HASH_MERGE.load(std::sync::atomic::Ordering::Relaxed)
+}
+
+/// The variables of `existing` with `new` laid over them, mappings merged key by key all the way
+/// down and anything else replaced: `merge_hash` of ansible-core.
+pub(crate) fn merge_hash(
+    existing: &Map<String, Value>,
+    new: &Map<String, Value>,
+) -> Map<String, Value> {
+    let mut out = existing.clone();
+    for (key, value) in new {
+        let merged = match (out.get(key), value) {
+            (Some(Value::Object(old)), Value::Object(fresh)) => {
+                Value::Object(merge_hash(old, fresh))
+            }
+            _ => value.clone(),
+        };
+        out.insert(key.clone(), merged);
+    }
+    out
+}
+
+/// Lays one value over the variable of that name: `combine_vars` of ansible-core, which replaces
+/// it, or merges two mappings under `hash_behaviour = merge`.
+pub(crate) fn combine_one(target: &mut Map<String, Value>, key: &str, value: &Value) {
+    let merged = match (hash_merge(), target.get(key), value) {
+        (true, Some(Value::Object(old)), Value::Object(fresh)) => {
+            Value::Object(merge_hash(old, fresh))
+        }
+        _ => value.clone(),
+    };
+    target.insert(key.to_string(), merged);
+}
+
+pub(crate) fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
     for (k, v) in source {
-        target.insert(k.clone(), v.clone());
+        combine_one(target, k, v);
     }
 }
 
@@ -22,7 +68,7 @@ pub(super) fn extend_except(
 ) {
     for (k, v) in source {
         if !skip.contains(k) {
-            target.insert(k.clone(), v.clone());
+            combine_one(target, k, v);
         }
     }
 }
@@ -232,7 +278,7 @@ pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<Str
                 bail!("extra var '{word}' is not key=value");
             }
             for (k, v) in options {
-                out.insert(k, Value::String(yaml::literal_escapes(&v)));
+                combine_one(&mut out, &k, &Value::String(yaml::literal_escapes(&v)));
             }
         }
     }

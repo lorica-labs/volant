@@ -158,8 +158,7 @@ These gaps affect the most playbooks. The [Template language reference](/docs/re
 
 ### Filters and tests
 
-- These filter arguments are not supported: the method of `round`, `start` and `attribute` of `sum`, `attribute` of `min` and `max`, `count` of `replace`, `sort_keys` of `to_json`, and `strict` and `version_type` of the `version` test.
-- `b64encode` and `b64decode` accept `encoding` only as `utf-8`. Any other encoding is refused by name.
+- `b64encode` and `b64decode` take as `encoding` utf-8, utf-8-sig, latin-1, ascii, cp1252, iso-8859-15, utf-16 and utf-32, under any of Python's names for them. Another codec fails with `unknown encoding`.
 - `password_hash`, `json_query` and `ipaddr` need the Python packages `passlib`, `jmespath` and `netaddr`. The managed runtime does not carry them, see [What to install](#what-to-install).
 
 ### Integers wider than 128 bits

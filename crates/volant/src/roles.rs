@@ -123,6 +123,11 @@ pub struct RoleSearch {
 }
 
 impl RoleSearch {
+    /// The playbook's directory, whose `roles/` is the first place searched.
+    pub fn playbook_dir(&self) -> Option<&Path> {
+        self.paths.first().and_then(|roles| roles.parent())
+    }
+
     pub fn new(playbook_dir: &Path, config: &Config) -> Self {
         // The reference makes every one of these absolute and folds `.` and `..` out of the text
         // (`unfrackpath`); the search path a role's lookups read is built from them, and so is

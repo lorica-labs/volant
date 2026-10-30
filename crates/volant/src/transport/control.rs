@@ -214,6 +214,7 @@ pub fn raise_open_file_limit() {
         return;
     }
     let wanted = limit.rlim_max.min(1 << 20);
+    let _ = STARTED_SOFT.set(limit.rlim_cur);
     if limit.rlim_cur < wanted {
         limit.rlim_cur = wanted;
         // SAFETY: as above; the struct is only read. A refusal leaves the limit unchanged.
@@ -223,6 +224,39 @@ pub fn raise_open_file_limit() {
 
 #[cfg(not(unix))]
 pub fn raise_open_file_limit() {}
+
+/// The soft limit on open files this process started with, before [`raise_open_file_limit`].
+#[cfg(unix)]
+static STARTED_SOFT: std::sync::OnceLock<libc::rlim_t> = std::sync::OnceLock::new();
+
+/// Starts `command` with the soft limit on open files this process started with. A local host's
+/// agent runs its modules with what they would get under `ansible-playbook`, not with the limit
+/// raised for this controller's own links: measured on ansible-core 2.19.12, `ulimit -n` in a
+/// local task prints the soft limit of the shell that started the run.
+#[cfg(unix)]
+pub(super) fn with_started_open_file_limit(command: &mut Command) {
+    let Some(&soft) = STARTED_SOFT.get() else {
+        return;
+    };
+    // SAFETY: only `getrlimit` and `setrlimit` run between fork and exec, both async-signal-safe,
+    // on a struct the closure owns.
+    unsafe {
+        command.pre_exec(move || {
+            let mut limit = libc::rlimit {
+                rlim_cur: 0,
+                rlim_max: 0,
+            };
+            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) == 0 && limit.rlim_cur != soft {
+                limit.rlim_cur = soft;
+                libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
+            }
+            Ok(())
+        });
+    }
+}
+
+#[cfg(not(unix))]
+pub(super) fn with_started_open_file_limit(_: &mut Command) {}
 
 /// Whether an `ssh -G` dump shows connection sharing already set up. Measured with OpenSSH
 /// 10.2: nothing configured prints `controlmaster false` and `controlpersist no` and no

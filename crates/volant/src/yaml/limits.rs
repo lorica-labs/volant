@@ -185,16 +185,30 @@ fn own_limit(info: &str) -> bool {
 /// own: `YAML parsing failed:`, the sentence, and the place. The parser's error stays the root,
 /// for [`super::is_second_document`]. Text that is no file keeps the parser's error alone.
 pub(super) fn scan_located(err: anyhow::Error, text: &str, source: &str) -> anyhow::Error {
-    let Some(scan) = err
-        .root_cause()
-        .downcast_ref::<ScanError>()
-        .filter(|scan| !own_limit(scan.info()))
-    else {
+    let Some((message, line, col)) = syntax_error(&err, text) else {
         return err;
     };
     let Ok(path) = std::fs::canonicalize(source) else {
         return err;
     };
+    let located = crate::playbook::Located {
+        message,
+        origin: crate::playbook::Origin {
+            path: path.display().to_string().into(),
+            line,
+            col,
+        },
+    };
+    err.context(located)
+}
+
+/// The reference's sentence for the syntax error `err` holds, `YAML parsing failed:` and all, with
+/// its line and column counted from 1.
+pub(super) fn syntax_error(err: &anyhow::Error, text: &str) -> Option<(String, usize, usize)> {
+    let scan = err
+        .root_cause()
+        .downcast_ref::<ScanError>()
+        .filter(|scan| !own_limit(scan.info()))?;
     let mut info = scan.info().to_string();
     // libyaml's word for a second document that does not open with `---`, which only an
     // explicit `...` end lets through.
@@ -204,18 +218,27 @@ pub(super) fn scan_located(err: anyhow::Error, text: &str, source: &str) -> anyh
     if info == SECOND_DOCUMENT && !opened {
         info = "did not find expected <document start>".to_string();
     }
+    // libyaml joins what it was parsing and what went wrong with a space, saphyr with a comma,
+    // and says `did not find expected` where saphyr says `expected`.
+    if info.starts_with("while ")
+        && let Some(at) = info.find(", ")
+    {
+        let missing = if info[at + 2..].starts_with("expected ") {
+            " did not find "
+        } else {
+            " "
+        };
+        info.replace_range(at..at + 2, missing);
+    }
     if let Some(first) = info.get(..1) {
         info.replace_range(..1, &first.to_uppercase());
     }
-    let located = crate::playbook::Located {
-        message: format!("YAML parsing failed: {info}."),
-        origin: crate::playbook::Origin {
-            path: path.display().to_string().into(),
-            line: scan.marker().line(),
-            col: scan.marker().col() + 1,
-        },
-    };
-    err.context(located)
+    let at = scan.marker();
+    Some((
+        format!("YAML parsing failed: {info}."),
+        at.line(),
+        at.col() + 1,
+    ))
 }
 
 fn too_deep(at: Marker) -> ScanError {
@@ -240,7 +263,14 @@ pub(super) fn feed<'a, R: SpannedEventReceiver<'a>>(
         keys.see(&event, span.start);
         receiver.on_event(event, span);
     }
-    DUPLICATES.with(|d| d.borrow_mut().extend(keys.duplicates));
+    // PyYAML builds the mappings of a level before those they hold, each in the order of the
+    // text. A key merged from one anchor into two mappings warns once, as the display shows a
+    // warning once.
+    keys.duplicates.sort_by_key(|(mapping, _)| *mapping);
+    let mut shown = std::collections::HashSet::new();
+    let found = keys.duplicates.into_iter().map(|(_, d)| d);
+    let found: Vec<Duplicate> = found.filter(|d| shown.insert(d.clone())).collect();
+    DUPLICATES.with(|d| d.borrow_mut().extend(found));
     Ok(())
 }
 
@@ -280,43 +310,152 @@ fn key_identity(text: &str, plain: bool) -> (String, String) {
     }
 }
 
-/// The scalar keys of every open mapping, to find one written twice as PyYAML's constructor
-/// does: the same text as a key of the same mapping, a merge key `<<` aside.
+/// A mapping key: its identity as PyYAML's constructor compares it, how the warning shows it,
+/// and its line and column, counted from 1.
+#[derive(Clone)]
+struct Key {
+    same: String,
+    shown: String,
+    line: usize,
+    col: usize,
+}
+
+/// The keys of every open mapping, to find one written twice as PyYAML's constructor does: after
+/// a merge `<<` its constructor holds the merged keys first, then the mapping's own, and warns at
+/// every key one before it already set.
 #[derive(Default)]
 struct Keys {
-    /// One entry per open collection: a mapping's keys and how many of its nodes are done.
-    open: Vec<Option<(std::collections::HashSet<String>, usize)>>,
-    duplicates: Vec<Duplicate>,
+    open: Vec<Held>,
+    /// The keys of each anchored mapping, merged ones first, for a merge that names it.
+    anchored: HashMap<usize, Vec<Key>>,
+    /// Each key written twice, after its mapping's depth, line and column.
+    duplicates: Vec<((usize, usize, usize), Duplicate)>,
+}
+
+enum Held {
+    Mapping {
+        anchor: usize,
+        /// Its depth, line and column.
+        start: (usize, usize, usize),
+        own: Vec<Key>,
+        /// The keys of each mapping merged in, in the order the merge lists them.
+        merged: Vec<Vec<Key>>,
+        /// How many of its nodes are done.
+        done: usize,
+        /// Whether the node being read is the value of `<<`.
+        merging: bool,
+    },
+    /// A sequence, with the keys of its mappings when it is the value of `<<`.
+    Sequence(Option<Vec<Vec<Key>>>),
 }
 
 impl Keys {
     fn see(&mut self, event: &Event<'_>, at: Marker) {
         match event {
             Event::Scalar(text, style, _, tag) => {
-                if let Some(Some((keys, done))) = self.open.last_mut() {
-                    let plain = *style == ScalarStyle::Plain && tag.is_none();
-                    let (same, shown) = key_identity(text, plain);
-                    if *done % 2 == 0 && text.as_ref() != "<<" && !keys.insert(same) {
-                        self.duplicates.push((shown, at.line(), at.col() + 1));
+                if let Some(Held::Mapping {
+                    own, done, merging, ..
+                }) = self.open.last_mut()
+                    && *done % 2 == 0
+                {
+                    if text.as_ref() == "<<" {
+                        *merging = true;
+                    } else {
+                        let plain = *style == ScalarStyle::Plain && tag.is_none();
+                        let (same, shown) = key_identity(text, plain);
+                        own.push(Key {
+                            same,
+                            shown,
+                            line: at.line(),
+                            col: at.col() + 1,
+                        });
                     }
-                    *done += 1;
                 }
+                self.done();
             }
-            Event::Alias(_) => self.done(),
-            Event::MappingStart(..) => self.open.push(Some(Default::default())),
-            Event::SequenceStart(..) => self.open.push(None),
-            Event::MappingEnd | Event::SequenceEnd => {
-                self.open.pop();
+            Event::Alias(anchor) => {
+                if self.merges_into() {
+                    let keys = self.anchored.get(anchor).cloned().unwrap_or_default();
+                    self.merge(keys);
+                }
+                self.done();
+            }
+            Event::MappingStart(anchor, _) => self.open.push(Held::Mapping {
+                anchor: *anchor,
+                start: (self.open.len(), at.line(), at.col()),
+                own: Vec::new(),
+                merged: Vec::new(),
+                done: 0,
+                merging: false,
+            }),
+            Event::SequenceStart(..) => {
+                let merge = matches!(self.open.last(), Some(Held::Mapping { merging: true, .. }));
+                self.open.push(Held::Sequence(merge.then(Vec::new)));
+            }
+            Event::MappingEnd => {
+                if let Some(Held::Mapping {
+                    anchor,
+                    start,
+                    own,
+                    merged,
+                    ..
+                }) = self.open.pop()
+                {
+                    let keys: Vec<Key> = merged.into_iter().flatten().chain(own).collect();
+                    let mut set = std::collections::HashSet::new();
+                    for key in &keys {
+                        if !set.insert(&key.same) {
+                            let found = (key.shown.clone(), key.line, key.col);
+                            self.duplicates.push((start, found));
+                        }
+                    }
+                    if self.merges_into() {
+                        self.merge(keys.clone());
+                    }
+                    if anchor > 0 {
+                        self.anchored.insert(anchor, keys);
+                    }
+                }
+                self.done();
+            }
+            Event::SequenceEnd => {
+                if let Some(Held::Sequence(Some(mut items))) = self.open.pop()
+                    && let Some(Held::Mapping { merged, .. }) = self.open.last_mut()
+                {
+                    // PyYAML merges the last mapping of the list first.
+                    items.reverse();
+                    merged.extend(items);
+                }
                 self.done();
             }
             _ => {}
         }
     }
 
+    /// Whether the node being read merges into the mapping that holds it, directly or from a
+    /// list.
+    fn merges_into(&self) -> bool {
+        matches!(
+            self.open.last(),
+            Some(Held::Mapping { merging: true, .. } | Held::Sequence(Some(_)))
+        )
+    }
+
+    fn merge(&mut self, keys: Vec<Key>) {
+        match self.open.last_mut() {
+            Some(Held::Mapping { merged, .. }) => merged.push(keys),
+            Some(Held::Sequence(Some(items))) => items.push(keys),
+            _ => {}
+        }
+    }
+
     /// A node of the innermost collection is complete.
     fn done(&mut self) {
-        if let Some(Some((_, done))) = self.open.last_mut() {
+        if let Some(Held::Mapping { done, merging, .. }) = self.open.last_mut() {
             *done += 1;
+            if *done % 2 == 0 {
+                *merging = false;
+            }
         }
     }
 }

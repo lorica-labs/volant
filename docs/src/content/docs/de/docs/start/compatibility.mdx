@@ -1,5 +1,5 @@
 ---
-sourceHash: a3ae253d750a
+sourceHash: e2ca4489dac4
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
@@ -58,7 +58,7 @@ Eine Datei, die nur ein dynamisches `include_tasks` oder `include_role` nennt, w
 | Blöcke | `block`, `rescue`, `always` | |
 | Wiederverwendung | Rollen und Abhängigkeiten, `import_tasks`, `import_role`, `import_playbook`, `include_tasks`, `include_role`, `include_vars` | |
 | Delegation | `delegate_to`, `delegate_facts`, `local_action`, `run_once` | |
-| Module | die Module von ansible-core für Linux-Hosts, darunter `copy`, `template`, `dnf`, `service`, `uri` und `reboot`, sowie die Module installierter Collections mit ihren Action-Plugins | das Action-Plugin einer Collection, das Windows braucht, eigene Action-Plugins |
+| Module | die Module von ansible-core für Linux-Hosts, darunter `copy`, `template`, `dnf`, `service`, `uri` und `reboot`, sowie die Module installierter Collections mit ihren Action-Plugins, sowie Action-Plugins in einem `action_plugins/` neben dem Playbook oder in einer Rolle | das Action-Plugin einer Collection, das Windows braucht |
 | Inventories | INI-, YAML- und TOML-Dateien, Verzeichnisse, Skripte, `constructed`, `generator` und Collection-Plugins, mehrere `-i`, `group_vars`, `host_vars`, der Fact-Cache `jsonfile` | nichts mehr offen |
 | Verbindungen | `ssh` mit Schlüsseln, einem ssh-agent oder einem Passwort (`-k` oder `ansible_password`, braucht OpenSSH 8.4 oder neuer), `local`, sowie `network_cli`, `netconf` und `httpapi` für Netzwerkgeräte | andere Connection-Plugins, Windows |
 | Rechteausweitung | `become` über `sudo` oder `su`, mit oder ohne Passwort | `doas` und andere Methoden |
@@ -69,7 +69,6 @@ Eine Datei, die nur ein dynamisches `include_tasks` oder `include_role` nennt, w
 
 | Noch nicht unterstützt | Warum | Was Sie heute tun können |
 |---|---|---|
-| Ein eigenes Action-Plugin in `action_plugins/` | Volant führt die Action-Plugins von ansible-core und installierter Collections aus, nicht Ihre. | Schreiben Sie ein Modul, oder lassen Sie das Play unter `ansible-playbook`. |
 | Eine Collection, die nicht installiert ist | Volant installiert während eines Laufs keine. Es fragt vor der ersten Verbindung das ansible-core des Controllers, was installiert ist. | Führen Sie `volant runtime install --collections NAME` aus, den Befehl, den der Fehler nennt. Siehe [Die verwaltete Runtime](/de/docs/reference/runtime/#collections) und [Module aus Collections](/de/docs/internals/python/#module-aus-collections). |
 | Kein Python mit ansible-core auf dem Controller | Volant installiert bei Bedarf ein eigenes, mit `curl` oder `wget` und `tar`. | Nichts, oder `volant runtime install` vorab. Ohne Netzwerk verwenden Sie `volant runtime pack` und `install --from`. |
 | `apt`, `user`, `group` oder `file` unter `--check` oder `--diff` auf einem Host ohne Python | Diese Module antworten über Python auf dem Host, wenn der Lauf einen Check oder einen Diff verlangt. | Installieren Sie Python auf dem Host, oder führen Sie das Play ohne `--check` und `--diff` aus. |

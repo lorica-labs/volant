@@ -33,8 +33,9 @@ pub use include_dir::{Chain, Failure, Scan, include_dir, join_path, read_failure
 pub use listed::ListedOrigin;
 pub use load::{
     VaultFile, include_vars_paths, load_play_vars_file, load_vars_file, parse_extra_vars,
-    read_vars_document,
+    read_vars_document, set_hash_merge,
 };
+pub(crate) use load::{combine_one, extend, hash_merge, merge_hash};
 pub use magic::ansible_version;
 pub(crate) use play_view::PlayView;
 
@@ -89,6 +90,18 @@ pub struct VarsFiles {
 
 impl VarsFiles {
     pub fn new(files: &[Arc<Map<String, Value>>]) -> Self {
+        // Merged mappings cannot be split between two layers read one after the other, so under
+        // `hash_behaviour = merge` every name is copied into the map.
+        if hash_merge() {
+            let mut templated = Map::new();
+            for file in files {
+                extend(&mut templated, file);
+            }
+            return Self {
+                plain: Arc::default(),
+                templated,
+            };
+        }
         if let [file] = files
             && !file.values().any(crate::template::holds_template)
         {

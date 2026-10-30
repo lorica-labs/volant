@@ -53,10 +53,22 @@ pub fn register(env: &mut Environment<'static>) {
 /// The reference's wording for a test that raised: `The test plugin 'ansible.builtin.changed'
 /// failed: The 'changed' test expects a dictionary`, measured on ansible-core 2.19.12.
 fn failed_test(name: &str, msg: &str) -> Error {
-    Error::new(
-        ErrorKind::InvalidOperation,
-        format!("The test plugin 'ansible.builtin.{name}' failed: {msg}"),
-    )
+    super::bridged::raise(format!(
+        "The test plugin 'ansible.builtin.{name}' failed: {msg}"
+    ))
+}
+
+/// A failure the reference raises from another error, which its chain shows as a cause of the
+/// plugin's failure.
+fn chained_failure(name: &str, cause: &str) -> Error {
+    crate::bridge::remember_chain(
+        &format!("The test plugin 'ansible.builtin.{name}' failed: {cause}"),
+        vec![
+            format!("The test plugin 'ansible.builtin.{name}' failed."),
+            cause.to_owned(),
+        ],
+    );
+    failed_test(name, cause)
 }
 
 fn result_test(name: &str, which: Which, value: &Value) -> Result<bool, Error> {
@@ -152,13 +164,14 @@ fn compare(a: &[Part], b: &[Part]) -> Result<Ordering, String> {
     Ok(a.len().cmp(&b.len()))
 }
 
+const VERSION_TYPES: [&str; 5] = ["loose", "strict", "semver", "semantic", "pep440"];
+
 const OPERATORS: [&str; 14] = [
     "==", "=", "eq", "<", "lt", "<=", "le", ">", "gt", ">=", "ge", "!=", "<>", "ne",
 ];
 
-/// `version_compare(value, version, operator='eq', strict=None, version_type=None)` with the
-/// default `LooseVersion`. `strict` and `version_type` pick another class, which no measured
-/// role asks for, so they are refused by name rather than ignored.
+/// `version_compare(value, version, operator='eq', strict=None, version_type=None)`: the default
+/// `LooseVersion`, or the class `strict` or `version_type` picks (see [`super::version`]).
 fn version_test(
     name: &str,
     value: &Value,
@@ -175,18 +188,19 @@ fn version_test(
             .get::<Option<String>>("operator")?
             .unwrap_or_else(|| "eq".into()),
     };
-    for option in ["strict", "version_type"] {
-        if kwargs
-            .get::<Option<Value>>(option)?
-            .is_some_and(|v| !v.is_none())
-        {
-            return Err(failed_test(
-                name,
-                &format!("{option}= is not supported yet"),
-            ));
-        }
-    }
+    let strict = kwargs
+        .get::<Option<Value>>("strict")?
+        .filter(|v| !v.is_none());
+    let version_type = kwargs
+        .get::<Option<Value>>("version_type")?
+        .filter(|v| !v.is_none());
     kwargs.assert_all_used()?;
+    if strict.is_some() && version_type.is_some() {
+        return Err(failed_test(
+            name,
+            "Cannot specify both 'strict' and 'version_type'",
+        ));
+    }
     let json = |v: &Value| super::bigint::to_json(v).unwrap_or(Json::Null);
     if !truthy(&json(value)) {
         return Err(failed_test(name, "Input version value cannot be empty"));
@@ -195,6 +209,21 @@ fn version_test(
         return Err(failed_test(
             name,
             "Version parameter to compare against cannot be empty",
+        ));
+    }
+    let kind = if strict.as_ref().is_some_and(Value::is_true) {
+        "strict".to_owned()
+    } else {
+        version_type.map_or_else(|| "loose".to_owned(), |v| v.to_string())
+    };
+    if !VERSION_TYPES.contains(&kind.as_str()) {
+        let all: Vec<String> = VERSION_TYPES.iter().map(|t| format!("'{t}'")).collect();
+        return Err(chained_failure(
+            name,
+            &format!(
+                "Invalid version type ({kind}). Must be one of {}",
+                all.join(", ")
+            ),
         ));
     }
     if !OPERATORS.contains(&operator.as_str()) {
@@ -208,8 +237,12 @@ fn version_test(
         ));
     }
     let text = |v: &Value| v.as_str().map_or_else(|| v.to_string(), str::to_string);
-    let order = compare(&loose_version(&text(value)), &loose_version(&text(version)))
-        .map_err(|e| failed_test(name, &format!("Version comparison failed: {e}")))?;
+    let order = if kind == "loose" {
+        compare(&loose_version(&text(value)), &loose_version(&text(version)))
+    } else {
+        super::version::compare(&kind, &text(value), &text(version))
+    }
+    .map_err(|e| chained_failure(name, &format!("Version comparison failed: {e}")))?;
     Ok(match operator.as_str() {
         "==" | "=" | "eq" => order == Ordering::Equal,
         "<" | "lt" => order == Ordering::Less,
@@ -299,7 +332,7 @@ mod unit {
     }
 
     /// The default operator is `eq`, the operator can be given by name, a number compares as
-    /// its text, and the two options no measured role writes are refused by name.
+    /// its text, and `strict` and `version_type` pick a class that refuses what it cannot read.
     #[test]
     fn version_takes_the_reference_s_arguments_and_refuses_the_rest() {
         let t = templar();
@@ -311,12 +344,18 @@ mod unit {
             .unwrap(),
             json!("True True True True")
         );
-        for text in [
-            "{{ '1' is version('2', '<', strict=true) }}",
-            "{{ '1' is version('2', '<', version_type='semver') }}",
+        for (text, said) in [
+            (
+                "{{ '1' is version('2', '<', strict=true) }}",
+                "invalid version number '1'",
+            ),
+            (
+                "{{ '1' is version('2', '<', version_type='semver') }}",
+                "invalid semantic version '1'",
+            ),
         ] {
             let err = t.render(text, &Map::new()).unwrap_err();
-            assert!(err.0.contains("is not supported yet"), "{text}: {err}");
+            assert!(err.0.contains(said), "{text}: {err}");
         }
         let empty = t
             .render("{{ '' is version('2', '<') }}", &Map::new())

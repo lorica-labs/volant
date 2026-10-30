@@ -164,12 +164,13 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
             export,
         );
     }
+    let layering = loaded.layering();
     // In the order the reference merges them, which TOML keeps and JSON and YAML sort.
     let ordered = |host: &str| -> serde_json::Map<String, Value> {
         written(if export {
             store.exported_vars(host)
         } else {
-            store.listed_vars_ordered(host, &loaded.group_var_names(host))
+            store.listed_vars_ordered(host, &layering.var_names(host))
         })
     };
     let vars_of = |host: &str| -> BTreeMap<String, Value> { ordered(host).into_iter().collect() };
@@ -324,6 +325,7 @@ fn yaml_list(
     group_vars: &VarsOf<'_>,
 ) -> minijinja::Value {
     let mut shared: HashMap<(ListedOrigin, String, String), minijinja::Value> = HashMap::new();
+    let layering = inventory.layering();
     let mut host_vars = |host: &str| {
         yaml_mapping(vars_of(host).into_iter().map(|(name, value)| {
             let key = if export {
@@ -331,8 +333,8 @@ fn yaml_list(
             } else {
                 match store.listed_origin(host, &name) {
                     ListedOrigin::Host => None,
-                    ListedOrigin::InventoryGroup => inventory
-                        .group_setting(host, &name)
+                    ListedOrigin::InventoryGroup => layering
+                        .setting(host, &name)
                         .map(|group| (ListedOrigin::InventoryGroup, group.to_string())),
                     origin => Some((origin, String::new())),
                 }

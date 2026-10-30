@@ -1,3 +1,3 @@
 # A !!binary value loads as bytes: it prints as its text and type_debug names it bytes.
 stderr: true
-args: [play.yml]
+args: [-i, inv.ini, play.yml]

@@ -232,10 +232,20 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     // conflict is reported the same whichever key came first.
     let rewritten;
     let mut local = false;
+    // A module named by a template is rendered when the task is read, with no variables, and the
+    // task keeps the template as its name: measured on ansible-core 2.19.12, `action: {module:
+    // "{{ 'echo' }}"}` runs `echo` under the banner `TASK [{{ 'echo' }}]`.
+    let mut shown = None;
     let source = statement.map(|(_, node)| node);
     let module = match statement {
         Some((word, node)) => {
-            let (name, args) = action_statement(node)?;
+            let (mut name, args) = action_statement(node)?;
+            if crate::template::Templar::is_template(&name) {
+                let templar = crate::template::Templar::new(std::path::PathBuf::from("."));
+                if let Ok(Value::String(rendered)) = templar.render(&name, &Map::new()) {
+                    shown = Some(std::mem::replace(&mut name, rendered));
+                }
+            }
             if let Some((other, _)) = &module {
                 return Err(located(
                     format!("conflicting action statements: {name}, {other}"),
@@ -438,12 +448,13 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
             }
         }
     }
-    Ok(PlayTask {
+    let mut task = PlayTask {
         named: name.is_some(),
         implicit: false,
-        name: name.unwrap_or_else(|| module.clone()),
+        name: name.unwrap_or_else(|| shown.unwrap_or_else(|| module.clone())),
         module,
         args,
+        splats: Vec::new(),
         tags: tags(yaml, &context)?,
         ignore_errors,
         timeout,
@@ -488,5 +499,28 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         origin: task_origin(map),
         apply,
         value_origins,
-    })
+    };
+    // The argument splat, rendered when the task runs: a template given as `args:`, then one
+    // given as the action's own value, which a module that reads no raw parameters takes as its
+    // arguments. Measured on ansible-core 2.19.12, the action's template wins over `args:`'s, and
+    // an `args:` mapping and the action's own `key=value` words win over both.
+    if let Some(node @ Yaml::Value(Scalar::String(text))) = field(yaml, "args")
+        && super::keywords::possibly_all_template(text)
+    {
+        task.splats.push((text.to_string(), value_origin(node)));
+    }
+    if let Some(node @ Yaml::Value(Scalar::String(text))) = source.and_then(|s| field(s, "args"))
+        && super::keywords::possibly_all_template(text)
+    {
+        task.splats.push((text.to_string(), value_origin(node)));
+    }
+    if let Some(raw) = super::keywords::stray_raw_params(&task)
+        .filter(|raw| super::keywords::possibly_all_template(raw))
+        .map(str::to_string)
+    {
+        task.args.remove("_raw_params");
+        let at = task.value_origins.get("args._raw_params").cloned();
+        task.splats.push((raw, at));
+    }
+    Ok(task)
 }

@@ -1,5 +1,5 @@
 ---
-sourceHash: 000eea7440ab
+sourceHash: a3ae253d750a
 title: ¿Se ejecutará mi playbook?
 description: Comprueba un proyecto de Ansible existente contra esta versión en unos segundos, sin tocar ningún host.
 ---
@@ -88,7 +88,6 @@ La comprobación previa detiene la ejecución antes de la primera conexión, ant
 | Un argumento de módulo que tiene ansible-core y que esta versión no aplica | `argument 'x' is not supported yet on 'module'`, con ` with 'v'` cuando solo se rechaza ese valor | 4 |
 | `end_role` fuera de un rol | `Cannot execute 'end_role' from outside of a role` | 4 |
 | Un módulo integrado que esta versión no incluye | `module 'x' is not available in this release` | 4 |
-| Un argumento de cadena que es una sola plantilla | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | Un módulo o una colección que no se resuelve | `couldn't resolve module/action 'x' ...`, con el comando de instalación si falta una colección | 4 |
 | Un módulo de colección que necesita un plugin de acción para Windows | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | Un `become_method` distinto de `sudo` y `su` | `become_method 'x' is not supported yet` | 2 |

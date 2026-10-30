@@ -126,6 +126,23 @@ pub(super) fn render_rest(
             note_texts(at, templar, value);
         }
     }
+    // The reference warns once for each template that renders to arguments, at the template.
+    for (_, at) in &task.splats {
+        let place = at
+            .as_ref()
+            .map(|at| {
+                format!(
+                    "
+{}
+",
+                    crate::render::source_context(at)
+                )
+            })
+            .unwrap_or_default();
+        warnings.push(format!(
+            "Using a template for task args is unsafe in some situations (see https://docs.ansible.com/ansible/devel/reference_appendices/faq.html#argsplat-unsafe).{place}"
+        ));
+    }
     let (args, args_untrusted) = render_args(task, plan, templar, vars)?;
     // Per item, against the item's own variables: the reference evaluates the conditional
     // before it renders the task's keywords.
@@ -239,6 +256,33 @@ fn render_args(
         }
     }
     let (mut map, mut untrusted) = rendered.map_err(finalizing)?;
+    // The splats lie under the arguments written as such, each over the one before it.
+    let mut splatted: BTreeMap<String, (Value, bool)> = BTreeMap::new();
+    for (template, _) in &task.splats {
+        let (value, tainted) = templar
+            .render_value_tainted(&Value::String(template.clone()), vars)
+            .map_err(|err| splat_failure(task, &super::undefined_name(template, err.0)))?;
+        let Value::Object(fields) = value else {
+            return Err(splat_failure(
+                task,
+                &format!(
+                    "Task args must resolve to a 'dict' not '{}'.",
+                    crate::executor::python_type(&value)
+                ),
+            ));
+        };
+        for (key, value) in fields {
+            splatted.insert(key, (value, tainted));
+        }
+    }
+    for (key, (value, tainted)) in splatted {
+        if !map.contains_key(&key) {
+            if tainted {
+                untrusted.insert(key.clone());
+            }
+            map.insert(key, value);
+        }
+    }
     if task.name == "Gathering Facts" && task.module == "ansible.legacy.setup" {
         check_gather_subset(raw.get("gather_subset"), map.get("gather_subset"))?;
     }
@@ -309,4 +353,13 @@ fn render_default(
             }
         }
     }
+}
+
+/// The reference's error for an argument splat that did not render to arguments: the
+/// finalization of the task's arguments failed, for the sentence given.
+fn splat_failure(task: &PlayTask, why: &str) -> TemplateError {
+    TemplateError(format!(
+        "{FINALIZING}'{}' failed: {why}",
+        crate::executor::run::action_fqcn(&task.module)
+    ))
 }

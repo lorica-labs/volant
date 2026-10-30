@@ -1,5 +1,5 @@
 ---
-sourceHash: 000eea7440ab
+sourceHash: a3ae253d750a
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -88,7 +88,6 @@ La vérification préalable arrête l'exécution avant la première connexion, a
 | Un argument de module qu'ansible-core a et que cette version n'exploite pas | `argument 'x' is not supported yet on 'module'`, avec ` with 'v'` quand seule cette valeur est refusée | 4 |
 | `end_role` hors d'un rôle | `Cannot execute 'end_role' from outside of a role` | 4 |
 | Un module intégré que cette version n'embarque pas | `module 'x' is not available in this release` | 4 |
-| Un argument de type chaîne qui est un seul modèle | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | Un module ou une collection qui ne se résout pas | `couldn't resolve module/action 'x' ...`, avec la commande d'installation pour une collection manquante | 4 |
 | Un module de collection qui demande un plugin d'action pour Windows | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | Un `become_method` autre que `sudo` et `su` | `become_method 'x' is not supported yet` | 2 |

@@ -1,0 +1,5 @@
+# The deprecations a module returns, a deprecated alias's and its own, stay in its registered
+# result with ansible-core's keys and print as `[DEPRECATION WARNING]` lines after its warnings.
+stderr: true
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

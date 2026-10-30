@@ -1,0 +1,6 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - dep: {old: x}
+      register: r
+    - debug: {var: r}

@@ -176,6 +176,24 @@ pub(in crate::executor) fn unsent(result: &TaskResult) -> bool {
     result.0.contains_key(UNSENT_KEY)
 }
 
+/// The deprecation ansible-core's discovery raises for `auto_legacy` and `auto_legacy_silent`, as a
+/// registered result holds it: measured on ansible-core 2.19.12, worded with the mode asked for.
+pub(in crate::executor) fn legacy_discovery<V: crate::vars::HostSettings + ?Sized>(
+    vars: &V,
+) -> Option<Value> {
+    let mode = crate::vars::host_setting(vars, "ansible_python_interpreter")?
+        .as_str()?
+        .trim();
+    mode.starts_with("auto_legacy").then(|| {
+        json!({
+            "collection_name": "ansible.builtin",
+            "deprecator": {"resolved_name": "ansible.builtin", "type": null},
+            "msg": format!("The '{mode}' option for 'INTERPRETER_PYTHON' now has the same effect as 'auto'."),
+            "version": "2.21",
+        })
+    })
+}
+
 /// The warning for an interpreter found rather than named, as a task registers it.
 pub(in crate::executor) fn discovery_warning(host: &str, interpreter: &str) -> String {
     format!(

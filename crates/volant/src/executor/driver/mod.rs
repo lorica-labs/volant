@@ -2256,6 +2256,35 @@ pub(super) async fn drive_host(
                         .await;
                     warnings.push(text);
                 }
+                // After the warning, as the reference's discovery raises it.
+                if discovered.is_some()
+                    && let Some(i) = first
+                    && let Some(deprecation) = super::run::legacy_discovery(&items[i].vars)
+                {
+                    let shown = TaskResult(Map::from_iter([(
+                        "deprecations".to_string(),
+                        Value::Array(vec![deprecation.clone()]),
+                    )]));
+                    let result = &mut results[i].1;
+                    match result.0.get_mut("deprecations") {
+                        Some(Value::Array(list)) => list.push(deprecation),
+                        _ => {
+                            result
+                                .0
+                                .insert("deprecations".into(), Value::Array(vec![deprecation]));
+                        }
+                    }
+                    for message in super::run::deprecation_warnings(&shown) {
+                        let _ = tx
+                            .send(Event::Warning {
+                                host: name.clone(),
+                                index: *index,
+                                message,
+                                censored: false,
+                            })
+                            .await;
+                    }
+                }
                 let removed = {
                     // One lock for both: a reader between them would see a host that had
                     // registered a result without holding the facts that came in it.

@@ -370,9 +370,7 @@ fn scalar_object(map: &Mapping<'_>) -> anyhow::Result<Value> {
 /// [`key_text`], noting the key in `typed` when it is no string.
 fn typed_text(key: &Yaml<'_>, typed: &mut Vec<(String, Typed)>) -> anyhow::Result<String> {
     let text = key_text(key)?;
-    if let Some(kind) = key_typed(key) {
-        typed.push((text.clone(), kind));
-    }
+    typed.extend(key_typed(key).map(|kind| (text.clone(), kind)));
     Ok(text)
 }
 

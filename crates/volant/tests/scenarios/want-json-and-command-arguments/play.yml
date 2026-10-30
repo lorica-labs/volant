@@ -1,0 +1,39 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - helloworld:
+      register: a
+    - helloworld:
+      args: {salutation: Goodbye, name: Ansible}
+      register: b
+    - debug: {msg: "{{ a.msg }} / {{ b.msg }}"}
+    - shell: echo hi
+      args:
+        expand_argument_vars: false
+      register: r
+      ignore_errors: true
+    - debug: {var: r}
+    - ansible.builtin.shell: echo hi
+      args:
+        expand_argument_vars: "{{ omit }}"
+      register: o
+    - debug: {var: o.stdout}
+    - command: /bin/echo hi
+      args:
+        executable: /bin/bash
+      register: e
+    - debug: {var: e.warnings}
+    - command:
+      args:
+        chdir: /
+      ignore_errors: true
+    - command: echo testing
+      args:
+        argv: [echo, testing]
+      ignore_errors: true
+    - command:
+        cmd: "true"
+        creates: yes
+      check_mode: true
+      register: c
+    - debug: {var: c.changed}

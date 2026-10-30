@@ -79,18 +79,11 @@ const COMMAND_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Inert, ArgStatus::
 /// reference gives `command` and refuses on `shell`.
 ///
 /// Measured on ansible-core 2.19.12: `shell: /bin/echo $HOME` with `expand_argument_vars` set to
-/// either value answers `Unsupported parameters for (shell) module: expand_argument_vars` and
-/// fails the task, while the same line without the argument prints the home directory, because
-/// the shell expands it rather than the module. So a `shell` task diverges here for no value of
-/// this argument, and writing it at all is a playbook the reference refuses: the name is refused
-/// whatever it says, which is the reference's own answer, given before the first connection.
-///
-/// One spelling goes the other way. `expand_argument_vars: "{{ omit }}"` on `shell` takes the
-/// key out of the arguments there and runs the task, while a refusal tied to no value cannot
-/// read a template and refuses it here. It is the only value of the only argument where the two
-/// disagree in that direction, against every literal value where refusing is what the reference
-/// does, and a refusal before the first connection says exactly what it refused.
-const SHELL_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Honoured, ArgStatus::Refused(None));
+/// either value fails the task with `Unsupported parameters for (shell) module:
+/// expand_argument_vars`, raised by the `shell` action before the module runs, and `"{{ omit }}"`
+/// takes the key out and runs it. The executor fails the task the same way, so the name is
+/// neither refused before the run nor read.
+const SHELL_ARGS: [ModuleArg; 12] = command_args(ArgStatus::Honoured, ArgStatus::Inert);
 
 pub const COMMAND: ModuleSpec = ModuleSpec {
     name: "command",

@@ -47,6 +47,25 @@ pub(super) fn with_invocation(run: Run, args: &Map<String, Value>, shell: bool) 
     let Run::Done(mut result) = run else {
         return run;
     };
+    // Measured on ansible-core 2.19.12: `command` names the `executable` it ignores in a warning.
+    if !shell
+        && let Some(executable) = args
+            .get("executable")
+            .and_then(Value::as_str)
+            .filter(|e| !e.is_empty())
+    {
+        let warning = Value::String(format!(
+            "As of Ansible 2.4, the parameter 'executable' is no longer supported with the 'command' module. Not using '{executable}'."
+        ));
+        match result.0.get_mut("warnings") {
+            Some(Value::Array(warnings)) => warnings.push(warning),
+            _ => {
+                result
+                    .0
+                    .insert("warnings".into(), Value::Array(vec![warning]));
+            }
+        }
+    }
     let mut given = args.clone();
     if shell {
         given.insert("_uses_shell".into(), Value::Bool(true));

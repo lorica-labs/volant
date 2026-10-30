@@ -20,7 +20,7 @@ use super::expand::expand_user;
 use super::expand::expand_vars;
 #[cfg(unix)]
 use super::spawn::open_pty;
-use super::spawn::{CANCEL_POLL, collect, drain, exit_code, kill_group};
+use super::spawn::{CANCEL_POLL, collect, collect_output, drain, exit_code, kill_group};
 use super::{bool_arg, chdir_failure, lines, not_run, spawn_failure};
 use crate::clock;
 use crate::modules::{Context, Run, glob};
@@ -57,11 +57,19 @@ pub(crate) fn execute(
         }
     });
 
+    // A shell line keeps its end, the newline a YAML block leaves included: measured on
+    // ansible-core 2.19.12, a `shell: |` block reports it in `cmd`.
     let raw = args
         .get("_raw_params")
         .or_else(|| args.get("cmd"))
         .and_then(Value::as_str)
-        .map_or("", str::trim);
+        .map_or("", |raw| {
+            if uses_shell && !raw.trim().is_empty() {
+                raw.trim_start()
+            } else {
+                raw.trim()
+            }
+        });
     // Measured on ansible-core 2.19.12: an `argv` on `shell` runs the way it runs on `command` -
     // the list is the process and no shell is started for it, and the task reports the list as
     // its `cmd`. A `shell:` written as a mapping carrying only `argv` used to be refused here as
@@ -70,6 +78,25 @@ pub(crate) fn execute(
         Ok(list) => list,
         Err(failure) => return Run::Done(failure),
     };
+    // `required_one_of` and `mutually_exclusive` in `command.py`, measured on ansible-core
+    // 2.19.12: a task that gives none of the three, or more than one, fails in `AnsibleModule`'s
+    // words before anything runs.
+    let given = ["_raw_params", "cmd", "argv"]
+        .iter()
+        .filter(|key| args.get(**key).is_some_and(|v| !v.is_null()))
+        .count();
+    if given == 0 {
+        let mut failed =
+            TaskResult::failed_with("one of the following is required: _raw_params, cmd, argv");
+        failed.0.insert("changed".into(), json!(false));
+        return Run::Done(failed);
+    }
+    if given > 1 {
+        let mut failed =
+            TaskResult::failed_with("parameters are mutually exclusive: _raw_params|cmd|argv");
+        failed.0.insert("changed".into(), json!(false));
+        return Run::Done(failed);
+    }
     let has_argv = from_argv.is_some();
     let mut argv: Vec<String> = match from_argv {
         Some(list) => list,
@@ -115,9 +142,16 @@ pub(crate) fn execute(
     // Measured on ansible-core 2.19.12: `chdir`, `creates` and `removes` are declared as paths, so
     // `~` and `$VAR` are expanded in them for `command` and `shell` alike, and the skip message
     // names the expanded path.
+    // A scalar that is not a string is the path `str()` makes of it: `creates: yes` is `True`.
     let path_arg = |name: &str| {
-        args.get(name).and_then(Value::as_str).map(|p| {
-            let expanded = expand_vars(p, &var);
+        let text = match args.get(name)? {
+            Value::String(p) => p.clone(),
+            Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
+            Value::Number(n) => n.to_string(),
+            _ => return None,
+        };
+        Some(text).map(|p| {
+            let expanded = expand_vars(&p, &var);
             #[cfg(unix)]
             let expanded = expand_user(&expanded, &var);
             expanded
@@ -310,8 +344,7 @@ pub(crate) fn execute(
     let stderr = drain(child.stderr.take());
     // A channel rather than a `JoinHandle`, for the same reason as the readers: a descendant that
     // holds the read end open without reading blocks this write once the pipe buffer is full, and
-    // that wait has to be abandonable. It sends the readers' payload type so one bounded wait
-    // serves all three.
+    // that wait has to be abandonable.
     let stdin_written = child.stdin.take().map(|mut stdin| {
         let (tx, rx) = mpsc::channel();
         thread::spawn(move || {
@@ -393,9 +426,10 @@ pub(crate) fn execute(
         }
     };
     let rc = exit_code(status);
-    // All three pipes wait under what is left of the same deadline. A descendant that outlived the
-    // process it was forked from still holds them, and waiting for it here is what used to carry a
-    // task well past its timeout and then report success. Only the endings below kill the group,
+    // All three pipes wait under what is left of the same deadline, and an output pipe no longer
+    // than a quiet second (`collect_output`): a descendant that outlived the process it was forked
+    // from still holds them, and the reference takes what came before it went quiet, as here.
+    // Only the endings below kill the group,
     // and the success path is not one of them: a write left blocked there is never unblocked by an
     // `EPIPE` that nothing sends. The three calls run before the match, and the `else` asks a
     // fourth time, which is what the latch above is for.
@@ -403,8 +437,8 @@ pub(crate) fn execute(
     // A write the deadline cut short reports the timeout, never a success over a truncated stdin -
     // which is what the reference reports for the same command.
     let (Some(mut stdout), Some(mut stderr), Some(_)) = (
-        collect(&stdout, deadline, cancelled),
-        collect(&stderr, deadline, cancelled),
+        collect_output(&stdout, deadline, cancelled),
+        collect_output(&stderr, deadline, cancelled),
         // Nothing to wait for when the command was given no `stdin:`: its input is `/dev/null`.
         stdin_written
             .as_ref()

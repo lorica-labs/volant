@@ -113,19 +113,73 @@ pub(super) fn exit_code(status: std::process::ExitStatus) -> i64 {
     -1
 }
 
-/// Drains a pipe on its own thread and sends what it read. A channel rather than a join handle,
-/// because the deadline has to be able to stop waiting for a reader that a descendant is keeping
-/// open, and `JoinHandle` has no timed join.
-pub(super) fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<String> {
+/// Drains a pipe on its own thread and sends each chunk it reads, then `None` at its end. A
+/// channel rather than a join handle, because the deadline has to be able to stop waiting for a
+/// reader that a descendant is keeping open, and `JoinHandle` has no timed join.
+pub(super) fn drain<R: Read + Send + 'static>(pipe: Option<R>) -> mpsc::Receiver<Option<Vec<u8>>> {
     let (tx, rx) = mpsc::channel();
     thread::spawn(move || {
-        let mut text = String::new();
         if let Some(mut pipe) = pipe {
-            let mut bytes = Vec::new();
-            let _ = pipe.read_to_end(&mut bytes);
-            text = String::from_utf8_lossy(&bytes).into_owned();
+            let mut buffer = [0u8; 8192];
+            loop {
+                match pipe.read(&mut buffer) {
+                    Ok(0) | Err(_) => break,
+                    Ok(n) => {
+                        if tx.send(Some(buffer[..n].to_vec())).is_err() {
+                            return;
+                        }
+                    }
+                }
+            }
         }
-        let _ = tx.send(text);
+        let _ = tx.send(None);
     });
     rx
+}
+
+/// How long a pipe may stay quiet, once the process has exited, before what it gave is taken as
+/// all of it: ansible-core's `run_command` stops reading after a `select` of one second finds
+/// nothing, so a descendant left in the background holding the pipe does not hold the task.
+const QUIET: Duration = Duration::from_secs(1);
+
+/// What one output pipe gave, read once the process has exited: up to its end, or up to a
+/// [`QUIET`] second with nothing on it, under what is left of the deadline. `None` is the
+/// deadline or a cancellation, as for [`collect`].
+pub(super) fn collect_output(
+    rx: &mpsc::Receiver<Option<Vec<u8>>>,
+    deadline: Option<Instant>,
+    cancelled: &dyn Fn() -> bool,
+) -> Option<String> {
+    let mut bytes = Vec::new();
+    let mut quiet_until = Instant::now() + QUIET;
+    loop {
+        let now = Instant::now();
+        let Some(quiet) = quiet_until.checked_duration_since(now) else {
+            break;
+        };
+        let left = match deadline {
+            Some(d) => match d.checked_duration_since(now) {
+                Some(left) => left.min(quiet).min(CANCEL_POLL),
+                None => match rx.try_recv() {
+                    Ok(Some(chunk)) => {
+                        bytes.extend(chunk);
+                        continue;
+                    }
+                    Ok(None) | Err(mpsc::TryRecvError::Disconnected) => break,
+                    Err(mpsc::TryRecvError::Empty) => return None,
+                },
+            },
+            None => quiet.min(CANCEL_POLL),
+        };
+        match rx.recv_timeout(left) {
+            Ok(Some(chunk)) => {
+                bytes.extend(chunk);
+                quiet_until = Instant::now() + QUIET;
+            }
+            Ok(None) | Err(mpsc::RecvTimeoutError::Disconnected) => break,
+            Err(mpsc::RecvTimeoutError::Timeout) if cancelled() => return None,
+            Err(mpsc::RecvTimeoutError::Timeout) => {}
+        }
+    }
+    Some(String::from_utf8_lossy(&bytes).into_owned())
 }

@@ -37,8 +37,11 @@ pub(super) fn unreadable(items: &[String], base: &Path) -> Option<Unreadable> {
         spaced: false,
     };
     for item in items.iter().filter(|item| !item.is_empty()) {
+        // The reference shows a file by its full path.
+        let mut shown = item.clone();
         let value = if let Some(file) = item.strip_prefix('@') {
             let path = base.join(file);
+            shown = format!("@{}", path.display());
             let Ok(text) = std::fs::read_to_string(&path) else {
                 let p = path.display();
                 return Some(Unreadable {
@@ -50,13 +53,13 @@ pub(super) fn unreadable(items: &[String], base: &Path) -> Option<Unreadable> {
                     spaced: true,
                 });
             };
-            loaded(&text, &path.display().to_string())?
+            loaded(&text, &path.display().to_string(), true)?
         } else if item.starts_with(['/', '.']) {
             return Some(refused(format!(
                 "Please prepend extra_vars filename '{item}' with '@'"
             )));
         } else if item.starts_with(['[', '{']) {
-            loaded(item, "<CLI option '-e'>")?
+            loaded(item, "<CLI option '-e'>", false)?
         } else {
             continue;
         };
@@ -64,7 +67,7 @@ pub(super) fn unreadable(items: &[String], base: &Path) -> Option<Unreadable> {
             Ok(Value::Object(_)) => {}
             Ok(_) => {
                 return Some(refused(format!(
-                    "Invalid extra vars data supplied. '{item}' could not be made into a dictionary"
+                    "Invalid extra vars data supplied. '{shown}' could not be made into a dictionary"
                 )));
             }
             Err(unreadable) => return Some(unreadable),
@@ -73,18 +76,31 @@ pub(super) fn unreadable(items: &[String], base: &Path) -> Option<Unreadable> {
     None
 }
 
-/// The first document of `text`, or the reference's syntax error for it. `None` for an error
-/// [`crate::vars::parse_extra_vars`] reports as it always has.
-fn loaded(text: &str, source: &str) -> Option<Result<Value, Unreadable>> {
+/// The first document of `text`, or the reference's syntax error for it, with the lines around
+/// it when `source` is a file. `None` for an error [`crate::vars::parse_extra_vars`] reports as it
+/// always has.
+fn loaded(text: &str, source: &str, file: bool) -> Option<Result<Value, Unreadable>> {
     let docs = match crate::yaml::load(text, source) {
         Ok(docs) => docs,
         Err(err) => {
             let (message, line, col) = crate::yaml::syntax_error(&err, text)?;
+            let origin = if file {
+                let at = crate::playbook::Origin {
+                    path: source.into(),
+                    line,
+                    col,
+                };
+                let context = crate::render::source_context(&at);
+                context
+                    .strip_prefix("Origin: ")
+                    .unwrap_or(&context)
+                    .to_string()
+            } else {
+                format!("{source}:{line}:{col}\n\n(source not shown: TypeError)")
+            };
             return Some(Err(Unreadable {
                 message,
-                origin: Some(format!(
-                    "{source}:{line}:{col}\n\n(source not shown: TypeError)"
-                )),
+                origin: Some(origin),
                 code: 4,
                 spaced: false,
             }));

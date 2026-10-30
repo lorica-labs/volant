@@ -218,11 +218,17 @@ pub(super) fn syntax_error(err: &anyhow::Error, text: &str) -> Option<(String, u
     if info == SECOND_DOCUMENT && !opened {
         info = "did not find expected <document start>".to_string();
     }
-    // libyaml joins what it was parsing and what went wrong with a space, saphyr with a comma.
+    // libyaml joins what it was parsing and what went wrong with a space, saphyr with a comma,
+    // and says `did not find expected` where saphyr says `expected`.
     if info.starts_with("while ")
         && let Some(at) = info.find(", ")
     {
-        info.replace_range(at..at + 2, " ");
+        let missing = if info[at + 2..].starts_with("expected ") {
+            " did not find "
+        } else {
+            " "
+        };
+        info.replace_range(at..at + 2, missing);
     }
     if let Some(first) = info.get(..1) {
         info.replace_range(..1, &first.to_uppercase());

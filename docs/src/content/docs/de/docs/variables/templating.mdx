@@ -1,5 +1,5 @@
 ---
-sourceHash: c4107e9762a5
+sourceHash: a3cc80fe44da
 title: Templating
 description: Jinja2 auf dem Controller, der strikte Modus, Bedingungen, die Filter, Tests und Lookups von Volant und wie Template-Dateien gerendert werden.
 ---
@@ -159,8 +159,7 @@ Diese Lücken betreffen die meisten Playbooks. Die [Referenz der Template-Sprach
 
 ### Filter und Tests
 
-- Diese Filterargumente werden nicht unterstützt: die Methode von `round`, `start` und `attribute` von `sum`, `attribute` von `min` und `max`, `count` von `replace`, `sort_keys` von `to_json` sowie `strict` und `version_type` des Tests `version`.
-- `b64encode` und `b64decode` akzeptieren `encoding` nur als `utf-8`. Jede andere Kodierung wird namentlich abgelehnt.
+- `b64encode` und `b64decode` nehmen als `encoding` utf-8, utf-8-sig, latin-1, ascii, cp1252, iso-8859-15, utf-16 und utf-32, unter jedem ihrer Python-Namen. Ein anderer Codec scheitert mit `unknown encoding`.
 - `password_hash`, `json_query` und `ipaddr` brauchen die Python-Pakete `passlib`, `jmespath` und `netaddr`. Die verwaltete Runtime enthält sie nicht, siehe [Was zu installieren ist](#was-zu-installieren-ist).
 
 ### Ganzzahlen über 128 Bit

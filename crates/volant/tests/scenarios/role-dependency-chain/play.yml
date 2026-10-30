@@ -1,0 +1,8 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    param_var: play
+  vars_files: [listed.yml]
+  roles:
+    - {role: A, param_var: from_A}
+    - B

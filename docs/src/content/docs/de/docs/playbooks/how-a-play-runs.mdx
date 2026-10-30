@@ -1,5 +1,5 @@
 ---
-sourceHash: 72a9c6ae320c
+sourceHash: 305fc6750726
 title: Plays ausführen
 description: In welcher Reihenfolge Hosts und Tasks laufen, wie Strategien, Serial-Batches, der Debugger, Async-Tasks und Prompts das ändern und wann ein Lauf endet.
 ---
@@ -120,7 +120,6 @@ Eine Action, die ansible-core unter `async` ausführt, läuft hier ebenfalls. Je
 
 - Ein `serial`, das keine Zahl ist, etwa `serial: abc` oder `"50% "` mit einem Leerzeichen am Ende, wird mit Exit-Code 4 und der Meldung von ansible-core abgelehnt. Ansible stürzt mit Exit-Code 250 ab, mit dem Ansible einen Bug in sich selbst meldet, statt ein Playbook abzulehnen.
 - Eine undefinierte Variable in `serial` wird mit dem Präfix von ansible-core und der eigenen Meldung von Volant gemeldet, mit demselben Exit-Code 4.
-- `play_hosts` enthält, was Ansible dort ablegt, aber Volant gibt dafür keine Veraltet-Warnung aus.
 
 <Aside type="tip">
 Wie die Engine diese Reihenfolge aufbaut und ausführt, steht unter [Wie ein Play kompiliert wird](/de/docs/internals/architecture/#wie-ein-play-kompiliert-wird) und [Ein Lauf von Anfang bis Ende](/de/docs/internals/architecture/#ein-lauf-von-anfang-bis-ende).

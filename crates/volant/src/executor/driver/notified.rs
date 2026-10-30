@@ -5,7 +5,7 @@
 
 use tokio::sync::mpsc;
 
-use crate::compile::Compiled;
+use crate::compile::{Compiled, Step, StepKind};
 
 use super::super::coordinator::Event;
 use super::Item;
@@ -17,6 +17,15 @@ pub(super) fn saved_lines(verbosity: u8, to_notify: &[usize], items: &[Item]) ->
         return Vec::new();
     }
     items.iter().flat_map(|i| i.notify.clone()).collect()
+}
+
+/// Whether the host sits out the include at `step`: a handler's when it did not notify that
+/// handler, any other when it runs for its handlers alone.
+pub(super) fn sits_out(step: &Step, notified: &[usize], handlers_only: bool) -> bool {
+    match step.kind {
+        StepKind::Handler(i) => !notified.contains(&i),
+        _ => handlers_only,
+    }
 }
 
 /// A handler's name once, in the order the host notified them: the reference lists the handlers

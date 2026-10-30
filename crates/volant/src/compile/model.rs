@@ -55,8 +55,26 @@ pub(crate) enum IncludeKind {
 /// because a driver waiting on it has no way to learn that on its own. Asked through this one
 /// predicate so a caller cannot honour the flush half and forget the include half, which is how a
 /// host comes to hold an index the splice has moved.
-pub(crate) fn is_splice_point(kind: &StepKind) -> bool {
-    matches!(kind, StepKind::Flush { .. } | StepKind::Include(_))
+pub(crate) fn is_splice_point(step: &Step) -> bool {
+    matches!(step.kind, StepKind::Flush { .. }) || step.include_kind().is_some()
+}
+
+impl Step {
+    /// The dynamic statement this step is: an include step's, or that of a handler written as
+    /// `include_tasks`, which includes its file when it runs. Measured on ansible-core 2.19.12:
+    /// `included: inc.yml for h1` under its `RUNNING HANDLER` banner, then the file's tasks as
+    /// handlers.
+    pub(crate) fn include_kind(&self) -> Option<IncludeKind> {
+        match self.kind {
+            StepKind::Include(kind) => Some(kind),
+            StepKind::Handler(_)
+                if volant_protocol::modules::include_module(&self.task.module) == Some(true) =>
+            {
+                Some(IncludeKind::Tasks)
+            }
+            _ => None,
+        }
+    }
 }
 
 /// One handler, with everything a flush needs to decide whether to run it and what to call it.

@@ -1,0 +1,3 @@
+- role_act:
+  register: r
+- debug: {var: r.said}

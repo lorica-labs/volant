@@ -240,7 +240,12 @@ pub(crate) fn source_context(origin: &crate::playbook::Origin) -> String {
     if origin.line == 0 {
         return format!("Origin: {}", origin.path);
     }
-    let mut out = format!("Origin: {}:{}:{}", origin.path, origin.line, origin.col);
+    // A line with no column, as an INI file places a variable: the whole line is marked.
+    let mut out = if origin.col == 0 {
+        format!("Origin: {}:{}", origin.path, origin.line)
+    } else {
+        format!("Origin: {}:{}:{}", origin.path, origin.line, origin.col)
+    };
     let annotated = annotated_lines(origin);
     if !annotated.is_empty() {
         out.push_str("\n\n");
@@ -296,7 +301,12 @@ pub(super) fn annotated_lines(origin: &crate::playbook::Origin) -> Vec<String> {
         out.push(format!("{:>label$}{gap}{line}", start + i + 1));
     }
     let col = origin.col;
-    if col >= 1 && col <= usable {
+    if col == 0 {
+        let marked = lines.last().map_or(0, |line| {
+            line.trim_end_matches('\n').chars().count().min(usable)
+        });
+        out.push(format!("{} {}", " ".repeat(label), "^".repeat(marked)));
+    } else if col <= usable {
         let marker = format!("column {col}");
         let idx = col - 1;
         let marker = if idx + 2 + marker.len() > max_src {

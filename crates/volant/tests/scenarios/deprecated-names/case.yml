@@ -1,0 +1,7 @@
+# Two deprecations of ansible-core 2.19.12: `play_hosts`, at each value that reads it and not
+# for a task its `when` skips, and an inventory variable whose name is no identifier, at its INI
+# line or its YAML key.
+stderr: true
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.yml, play.yml]

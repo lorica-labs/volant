@@ -1,0 +1,8 @@
+all:
+  vars:
+    "x y": 3
+  hosts:
+    h1:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+      none: 1

@@ -104,6 +104,7 @@ async fn controller_side(
             timeout: task.timeout,
             check_mode: item.check_mode == Some(true),
             diff: item.diff == Some(true),
+            no_log: task.censors(),
             async_val: task.async_val,
             action: &task.module,
         },
@@ -361,7 +362,12 @@ fn local_result(
                     return refused;
                 }
                 crate::vault::begin_failures();
-                match templar.evaluate(var, &item.vars) {
+                let (evaluated, read) =
+                    crate::template::watch_play_hosts(|| templar.evaluate(var, &item.vars));
+                if read {
+                    crate::playbook::deprecate_play_hosts(task.value_origins.get("var"));
+                }
+                match evaluated {
                     Ok(v) => r.insert(var.to_string(), v),
                     // A vaulted value no secret opens is not an undefined name: it fails the
                     // task, at the value, the value's own place after the expression's.

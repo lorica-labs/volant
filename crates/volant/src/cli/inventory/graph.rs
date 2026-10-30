@@ -16,14 +16,14 @@ pub(super) fn graph(
         if !args.vars {
             return Ok(Vec::new());
         }
-        let vars: BTreeMap<String, Value> = match item {
-            GraphItem::Host(name) if export => store.exported_vars(name).into_iter().collect(),
-            GraphItem::Host(name) => store.listed_vars(name).into_iter().collect(),
-            GraphItem::Group(name) => store
-                .listed_group_vars(name, &inventory.group_vars_of(name).into_iter().collect())
-                .into_iter()
-                .collect(),
+        let vars = match item {
+            GraphItem::Host(name) if export => store.exported_vars(name),
+            GraphItem::Host(name) => store.listed_vars(name),
+            GraphItem::Group(name) => {
+                store.listed_group_vars(name, &inventory.group_vars_of(name).into_iter().collect())
+            }
         };
+        let vars: BTreeMap<String, Value> = written(vars).into_iter().collect();
         vars.iter()
             .map(|(name, value)| Ok(format!("{{{name} = {}}}", shown(value)?)))
             .collect()

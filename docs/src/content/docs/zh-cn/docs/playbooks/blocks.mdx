@@ -1,5 +1,5 @@
 ---
-sourceHash: dd334ed7fa20
+sourceHash: 61e526570a4b
 title: 块与 handler
 description: 失败如何在块中传递，rescue 和 always 做什么，以及 handler 何时运行。
 ---
@@ -86,6 +86,8 @@ handlers:
 handler 按定义的顺序运行，而不是按被通知的顺序。`roles:` 中或由 `import_role` 引入的 role，会把它的 handler 放在 play 自己的 handler 之前。由 `include_role` 引入的 role，则把它们放在后面，与 Ansible 一致。
 
 task 只有在报告 `changed` 时才会通知。对于循环，由整体结果决定，所以只要有一个 item 发生了变化就够了。刷新运行之后，通知会被清除，所以除非再次有东西通知它，handler 不会在下一次刷新时再运行。
+
+`handlers:` 列表中可以写 `import_tasks`，无论在 play 中还是在 role 中。它指定的文件里的 handler 会带着它的关键字取代它的位置，可以按名称和 `listen` 通知。文件先在写这条语句的文件旁边查找，然后在 playbook 的目录中查找。
 
 ### 来自 play 的关键字
 

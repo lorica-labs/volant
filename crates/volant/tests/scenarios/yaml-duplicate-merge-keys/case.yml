@@ -1,0 +1,3 @@
+# A key that overrides one a merge `<<` brought in warns as a key written twice.
+stderr: true
+args: [-i, inv.ini, play.yml]

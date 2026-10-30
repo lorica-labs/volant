@@ -9,6 +9,7 @@ use minijinja::{Environment, Error, ErrorKind, State, Value};
 
 mod collections;
 mod int;
+mod jinja;
 mod json;
 mod ordering;
 mod regex;
@@ -126,7 +127,7 @@ pub fn register(
         add_filter(env, "upper", f::upper);
         add_filter(env, "title", f::title);
         add_filter(env, "capitalize", f::capitalize);
-        add_filter(env, "replace", f::replace);
+        add_filter(env, "replace", jinja::replace);
         add_filter(env, "length", f::length);
         add_filter(env, "count", f::length);
         add_filter(env, "dictsort", f::dictsort);
@@ -135,7 +136,7 @@ pub fn register(
         add_filter(env, "trim", f::trim);
         add_text_filter(env, "join", f::join);
         add_filter(env, "lines", f::lines);
-        add_filter(env, "round", f::round);
+        add_filter(env, "round", jinja::round);
         add_filter(env, "abs", f::abs);
         add_filter(env, "attr", f::attr);
         add_filter(env, "first", f::first);
@@ -147,7 +148,7 @@ pub fn register(
         add_text_filter(env, "string", string);
         add_filter(env, "batch", f::batch);
         add_filter(env, "slice", f::slice);
-        add_text_filter(env, "sum", f::sum);
+        add_text_filter(env, "sum", jinja::sum);
         add_filter(env, "indent", super::pymethods::limits::indent);
         add_filter(env, "select", f::select);
         add_filter(env, "reject", f::reject);

@@ -7,9 +7,7 @@ use crate::playbook::PlayTask;
 use crate::roles::{OwnVars, RoleVars};
 
 pub(super) fn extend(target: &mut Map<String, Value>, source: &Map<String, Value>) {
-    for (key, value) in source {
-        target.insert(key.clone(), value.clone());
-    }
+    crate::vars::extend(target, source);
 }
 
 /// Lays what the rest of the play lends under one role's own values.

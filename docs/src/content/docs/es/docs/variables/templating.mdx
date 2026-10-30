@@ -1,5 +1,5 @@
 ---
-sourceHash: c4107e9762a5
+sourceHash: a3cc80fe44da
 title: Plantillas
 description: Jinja2 en el controlador, el modo estricto, las condiciones, los filtros, tests y lookups que ofrece Volant, y cómo se renderizan los archivos de plantilla.
 ---
@@ -159,8 +159,7 @@ Estas carencias afectan a la mayoría de los playbooks. La [referencia del lengu
 
 ### Filtros y tests
 
-- Estos argumentos de filtros no se admiten: el método de `round`, `start` y `attribute` de `sum`, `attribute` de `min` y `max`, `count` de `replace`, `sort_keys` de `to_json`, y `strict` y `version_type` del test `version`.
-- `b64encode` y `b64decode` aceptan `encoding` solo como `utf-8`. Cualquier otra codificación se rechaza por su nombre.
+- `b64encode` y `b64decode` aceptan como `encoding` utf-8, utf-8-sig, latin-1, ascii, cp1252, iso-8859-15, utf-16 y utf-32, con cualquiera de sus nombres en Python. Otro códec falla con `unknown encoding`.
 - `password_hash`, `json_query` e `ipaddr` necesitan los paquetes de Python `passlib`, `jmespath` y `netaddr`. El runtime administrado no los incluye, consulta [Qué instalar](#qué-instalar).
 
 ### Enteros de más de 128 bits

@@ -1,5 +1,5 @@
 ---
-sourceHash: dbf4e0d7f385
+sourceHash: cf697547332c
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -84,6 +84,10 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 
 <Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
   Lässt eine Rolle aus `roles:` oder einem `import_role`, das `public` nicht angibt, ihre `defaults` und `vars` für sich behalten. Auf `false` gesetzt, verleiht auch ein `include_role` ohne `public` sie. Ohne Einstellung behält nur ein `include_role` sie.
+</Option>
+
+<Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">
+  `merge` legt ein Mapping Schlüssel für Schlüssel über ein gleichnamiges Mapping, zwischen je zwei Variablenquellen und zwischen zwei Inventory-Quellen. `replace` behält den Wert der höheren Quelle ganz. Die Option ist in Ansible veraltet, wird dort aber noch beachtet, ohne Warnung.
 </Option>
 
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">

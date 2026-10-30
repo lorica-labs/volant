@@ -15,14 +15,18 @@ use super::{data, from_json_value, invalid};
 ///
 /// Both filters keep `json.dumps`'s `ensure_ascii=True` unless told otherwise: measured,
 /// `{'é': 1} | to_json` gives `{"é": 1}`.
+///
+/// `sort_keys` and `indent` reach `json.dumps` as they do in the reference.
 pub(super) fn to_json(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     let ensure_ascii = ensure_ascii(&kwargs)?;
+    let sort_keys = kwargs.get::<Option<bool>>("sort_keys")?.unwrap_or(false);
+    let indent = kwargs.get::<Option<usize>>("indent")?;
     kwargs.assert_all_used()?;
     not_bytes(&value)?;
     Ok(Value::from(python_json(
         &data(&value)?,
-        None,
-        false,
+        indent,
+        sort_keys,
         ensure_ascii,
         0,
     )))

@@ -152,7 +152,7 @@ fn parse_into(
                         inv.group_mut(&group).priority = Some(priority);
                     }
                 } else {
-                    inv.group_mut(&group).vars.insert(key.to_string(), value);
+                    crate::vars::combine_one(&mut inv.group_mut(&group).vars, key, &value);
                 }
             }
             _ => {

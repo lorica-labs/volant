@@ -1,0 +1,6 @@
+# hash_behaviour = merge lays a mapping over a mapping of the same name key by key, between every
+# two variable sources and between two inventory sources.
+env: {"ANSIBLE_HASH_BEHAVIOUR": "merge"}
+runs:
+  - args: [-i, inv.ini, -e, '{"h": {"extra": "extra vars"}}', play.yml]
+  - args: [-i, inv1.yml, -i, inv2.yml, inventory.yml]

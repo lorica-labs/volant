@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "stderr": "[WARNING]: Found duplicate mapping key 'x'.\nOrigin: <golden-tmp>/play.yml:11:11\n\n 9         m:\n10           <<: *b\n11           x: 3\n             ^ column 11\n\nUsing last defined value only.\n\n",
+  "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": {\n        \"x\": 3,\n        \"y\": 2\n    }\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

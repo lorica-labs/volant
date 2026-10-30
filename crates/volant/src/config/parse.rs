@@ -11,6 +11,27 @@ use super::settings::{
 };
 use super::{Config, tag_list};
 
+/// `[defaults] module_strict_utf8_response`, on unless the file turns it off.
+static STRICT_UTF8: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(true);
+
+/// `MODULE_STRICT_UTF8_RESPONSE`: whether `from_json` refuses a string with a lone surrogate.
+/// `ANSIBLE_MODULE_STRICT_UTF8_RESPONSE` wins over the file.
+pub(crate) fn strict_utf8() -> bool {
+    std::env::var("ANSIBLE_MODULE_STRICT_UTF8_RESPONSE")
+        .ok()
+        .and_then(|flag| python_bool(&flag))
+        .unwrap_or_else(|| STRICT_UTF8.load(std::sync::atomic::Ordering::Relaxed))
+}
+
+/// ansible-core's `boolean()` for a setting: `1`, `yes`, `on`, `true` and the rest, any case.
+fn python_bool(word: &str) -> Option<bool> {
+    match word.trim().to_ascii_lowercase().as_str() {
+        "y" | "yes" | "on" | "1" | "true" | "t" | "1.0" => Some(true),
+        "n" | "no" | "off" | "0" | "false" | "f" | "0.0" => Some(false),
+        _ => None,
+    }
+}
+
 /// Reads `[defaults]` and `[privilege_escalation]`. Relative paths are relative to the
 /// configuration file; `origin` names the file in a refusal, as the reference names it.
 #[expect(clippy::too_many_lines)]
@@ -220,6 +241,11 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
             }
             "duplicate_dict_key" => config.duplicate_dict_key = Some(value.trim().to_string()),
             "facts_modules" => config.facts_modules = tag_list(value.trim()),
+            "module_strict_utf8_response" => {
+                if let Some(on) = python_bool(value) {
+                    STRICT_UTF8.store(on, std::sync::atomic::Ordering::Relaxed);
+                }
+            }
             "show_custom_stats" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.show_custom_stats = on;

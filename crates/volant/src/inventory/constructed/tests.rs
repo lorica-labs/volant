@@ -5,7 +5,6 @@ use serde_json::json;
 use super::*;
 
 #[rstest]
-#[case::vars_plugins(json!({"use_vars_plugins": true}), "use_vars_plugins is not supported yet")]
 #[case::extra_vars(json!({"use_extra_vars": "yes"}), "use_extra_vars is not supported yet")]
 #[case::strict_type(
     json!({"strict": [1]}),

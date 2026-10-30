@@ -230,7 +230,7 @@ Volant refuses a YAML text that it cannot load without risk. The error names the
 
 ### Template file gaps
 
-- `template_host`, `template_uid`, `template_run_date` and `template_mtime` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
+- `template_run_date` and `template_mtime` are text in Python's `str` of a `datetime`, not `datetime` values: they print the same, and `type_debug` says `str`.
 - `line_statement_prefix` and `line_comment_prefix` in a `#jinja2:` line are refused by name. Volant's template engine and Jinja2 differ on a blank line after a line statement and on the newline of a line comment.
 - A delimiter longer than 64 characters and a `#jinja2:` line longer than 16 KiB are refused with an error that names the option. Parentheses in a `#jinja2:` value nest to 200 levels, as in Python.
 - A `variable_end_string` or `block_end_string` that begins with whitespace is refused by name. An empty delimiter is refused too, where Jinja2 reads it in a way that depends on the template.

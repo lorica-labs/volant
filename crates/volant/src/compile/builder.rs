@@ -125,6 +125,10 @@ pub(super) struct Builder<'a> {
     /// is skipped for a host when an identical one ran before, whether that one allowed
     /// duplicates or not, and the `roles:` list is not in the comparison.
     pub(super) imported: Seen,
+    /// What an import's path renders against while the play compiles, before any host: the
+    /// play's `vars:`, the extra variables and `playbook_dir`. The roles' `defaults` and `vars`
+    /// and `role_path` are added when a path is rendered.
+    pub(super) static_vars: Map<String, Value>,
     /// Every role instance read so far in the play, whatever brought it in. The dependencies of an
     /// `import_role` are compared with it: measured on ansible-core 2.19.12, a role the play's
     /// `roles:` ran is not run again as a dependency of a role imported in `tasks:`.
@@ -304,6 +308,7 @@ impl Builder<'_> {
             .or_else(|| task.args.get("_raw_params"))
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
+        let name = &self.import_path(name)?;
         // Inside a role a bare name has two homes and the reference takes the first that exists:
         // the directory of the file that wrote the statement, then the role's own `tasks/`.
         // Measured on ansible-core 2.19.12 with a role whose `tasks/sub/deep.yml` imports

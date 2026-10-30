@@ -181,6 +181,16 @@ pub(crate) fn local_now(format: &str) -> String {
     strftime::format(&DateTime::now(false), format)
 }
 
+/// Python's `str` of the local `datetime` of an instant.
+pub(super) fn local_python_str(secs: i64, microsecond: u32) -> String {
+    DateTime::from_local(secs, microsecond).python_str()
+}
+
+/// Python's `str` of `datetime.now()`.
+pub(super) fn now_python_str() -> String {
+    DateTime::now(false).python_str()
+}
+
 /// The controller's local time as an aware value prints it, `datetime.now().astimezone()`:
 /// `%z` is the zone's offset from UTC, such as `+0100`.
 pub(crate) fn local_now_zoned(format: &str) -> String {

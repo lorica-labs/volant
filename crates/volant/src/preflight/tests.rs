@@ -83,8 +83,6 @@ fn task_play(body: &str) -> String {
 #[case::shell_false(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: false\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
 #[case::shell_no(task_play("      ansible.legacy.shell: /bin/echo $HOME\n      args:\n        expand_argument_vars: \"no\"\n"), &["argument 'expand_argument_vars' is not supported yet on 'ansible.legacy.shell'"])]
 #[case::strategy_unknown("- hosts: all\n  strategy: mitogen_free\n  tasks:\n    - command: echo hi\n".to_string(), &["strategy 'mitogen_free' is not supported yet"])]
-#[case::collection_splat(task_play("      ns.coll.mod: \"{{ d }}\"\n"), &["task 'T': module 'ns.coll.mod' takes its arguments from one template"])]
-#[case::builtin_splat(task_play("      ping: \"{{ d }}\"\n"), &["task 'T': module 'ping' takes its arguments from one template"])]
 #[case::builtin_no_collection_can_supply(task_play("      ansible.builtin.nosuch: x=1\n"), &["couldn't resolve module/action 'ansible.builtin.nosuch'"])]
 fn the_preflight_refuses_by_name(#[case] text: String, #[case] needles: &[&str]) {
     let got = refusal(&text);

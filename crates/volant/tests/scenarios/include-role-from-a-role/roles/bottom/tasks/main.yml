@@ -1,0 +1,2 @@
+- debug:
+    msg: "{{ p }} {{ q }} {{ from_default }} {{ from_vars }}"

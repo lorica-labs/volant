@@ -1,5 +1,5 @@
 ---
-sourceHash: e6b72df6570c
+sourceHash: 376899cd0604
 title: Tests
 description: Comment Volant est vérifié par rapport à ansible-core, les types de réponse enregistrée, et comment ajouter un scénario.
 ---
@@ -49,6 +49,12 @@ Chaque exécution de Volant a lieu dans une copie neuve du répertoire, avec `--
 ## La matrice de parité
 
 `crates/volant/tests/parity.rs` compare chaque nom que connaissent ansible-core 2.19.12 et les collections du paquet `ansible` fixé (mots-clés, modules, filtres, tests, lookups et les autres types de plugins) avec ce que le moteur en fait. `just parity-reference` régénère le côté référence, `crates/volant/tests/parity/reference.json`. Les pages [Parité](/fr/docs/reference/parity/), [Mots-clés](/fr/docs/reference/keywords/) et [Modules](/fr/docs/reference/modules/) sont générées à partir des tables propres du moteur par `just docs-parity`, `just docs-keywords` et `just docs-modules`, et un test échoue quand l'une d'elles est périmée.
+
+## Le corpus YAML
+
+`just yaml-corpus` charge chaque fichier YAML d'un corpus épinglé avec le chargeur de Volant et avec celui d'ansible-core, et compare les valeurs. Le corpus réunit les collections du paquet `ansible` épinglé, l'arborescence `test/` d'ansible-core et des dépôts publics aux commits que nomme `crates/volant/tests/parity/yaml_corpus.yml` : kubespray, debops, ceph-ansible, openstack-ansible et d'autres, environ onze mille fichiers. L'exemple `yaml_dump` affiche le côté de Volant, sans les encodages propres à Volant, et `crates/volant/tests/parity/yaml_corpus.py` affiche les fichiers qui diffèrent, regroupés par cause. Volant lit une date comme du texte, et cet écart n'est pas compté.
+
+`crates/volant/tests/parity/yaml_corpus_known.txt` liste chaque écart connu avec l'issue qui le suit. La recette échoue sur tout autre écart. Le workflow `YAML corpus` la lance chaque semaine et à chaque changement du chargeur. Retirez une entrée quand son issue est corrigée.
 
 ## Les lancer
 

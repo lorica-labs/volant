@@ -1,0 +1,11 @@
+- hosts: h1
+  gather_facts: false
+  roles: [a]
+  pre_tasks:
+    - debug: {msg: "{{ privacy | default('private') }}"}
+
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - include_role: {name: a}
+    - debug: {msg: "{{ privacy | default('private') }}"}

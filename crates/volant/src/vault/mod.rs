@@ -187,6 +187,22 @@ pub fn begin_failures() {
     FAILED_AT.lock().expect("origins lock").clear();
 }
 
+/// The failure of the first `!vault` value still wrapped inside `value`: a list or mapping keeps
+/// a member that failed to render as written, and a whole value that is printed reads them all.
+pub fn unread(value: &serde_json::Value) -> Option<String> {
+    match value {
+        serde_json::Value::String(s) => {
+            let ciphertext = crate::yaml::vault_text(s)?;
+            reveal(&ciphertext)
+                .err()
+                .map(|reason| undecryptable(&ciphertext, &reason))
+        }
+        serde_json::Value::Array(items) => items.iter().find_map(unread),
+        serde_json::Value::Object(map) => map.values().find_map(unread),
+        _ => None,
+    }
+}
+
 /// Where the value whose failure `message` words is written.
 pub fn failure_origin(message: &str) -> Option<Origin> {
     FAILED_AT

@@ -3,3 +3,4 @@
 # the task with the shell's rc 127 and its words, worded as the action's failure.
 stderr: true
 args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

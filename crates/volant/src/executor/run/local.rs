@@ -369,6 +369,10 @@ fn local_result(
                 if read {
                     crate::playbook::deprecate_play_hosts(task.value_origins.get("var"));
                 }
+                let evaluated = evaluated.and_then(|v| match crate::vault::unread(&v) {
+                    Some(failed) => Err(crate::template::TemplateError(failed)),
+                    None => Ok(v),
+                });
                 match evaluated {
                     Ok(v) => r.insert(var.to_string(), v),
                     // A vaulted value no secret opens is not an undefined name: it fails the
@@ -392,6 +396,21 @@ fn local_result(
                                     None
                                 ),
                             ]),
+                        );
+                        return failed;
+                    }
+                    // Measured on ansible-core 2.19.12: only an undefined value is printed as
+                    // not defined; any other error fails the task, its chain at the value.
+                    Err(e) if !e.is_undefined() => {
+                        let said = format!("Error while resolving `var` expression: {}", e.0);
+                        let mut failed = TaskResult::failed_with(format!("Task failed: {said}"));
+                        failed.0.insert(
+                            crate::render::CHAIN_KEY.into(),
+                            json!([crate::render::cause(
+                                &said,
+                                task.value_origins.get("var"),
+                                None
+                            )]),
                         );
                         return failed;
                     }

@@ -385,6 +385,11 @@
   vars: {items: [a, b]}
 - template: "{{ conf is contains 'port' }} {{ conf is contains 8080 }}"
   vars: {conf: {port: 8080}}
+- template: "{{ 'qa_1 qz_1' is search('(?=.*qa_1)(?=.*qz_1)') }} {{ 'ab' | regex_findall('a(?=b)') }} {{ 'ab' | regex_search('a(?!c)') }} {{ 'ab' | regex_replace('(?<=a)b', 'x') }} {{ 'ab' is regex('(?<!x)b') }}"
+- template: "{{ 'aa' | regex_findall('(a)\\1') }} {{ 'aa' | regex_replace('(?P<n>a)(?P=n)', 'x') }} {{ 'ab' | regex_replace('(?>a)', 'x') }} {{ 'abab' | regex_search('(ab)\\1') }}"
+- template: "{{ 'abc' | regex_search('(') }}"
+- template: "{{ 'abc' | regex_replace('(', 'x') }}"
+- template: "{{ 'abc' | to_uuid(namespace='nope') }}"
 - template: "{{ 2.7 | round(0, 'floor') }} {{ 2.1 | round(0, 'ceil') }} {{ 2.55 | round(1, 'common') }} {{ 2.5 | round }} {{ -2.5 | round(0, 'floor') }}"
 - template: "{{ 2.7 | round(0, 'bogus') }}"
 - template: "{{ [1, 2] | sum(start=10) }} {{ items | sum(attribute='a') }} {{ items | sum(attribute='a', start=1) }}"

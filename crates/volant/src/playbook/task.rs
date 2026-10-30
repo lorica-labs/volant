@@ -232,10 +232,12 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     // conflict is reported the same whichever key came first.
     let rewritten;
     let mut local = false;
+    let mut shown = None;
     let source = statement.map(|(_, node)| node);
     let module = match statement {
         Some((word, node)) => {
-            let (name, args) = action_statement(node)?;
+            let (mut name, args) = action_statement(node)?;
+            shown = super::splat::rendered_module(&mut name);
             if let Some((other, _)) = &module {
                 return Err(located(
                     format!("conflicting action statements: {name}, {other}"),
@@ -446,12 +448,13 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
             }
         }
     }
-    Ok(PlayTask {
+    let mut task = PlayTask {
         named: name.is_some(),
         implicit: false,
-        name: name.unwrap_or_else(|| module.clone()),
+        name: name.unwrap_or_else(|| shown.unwrap_or_else(|| module.clone())),
         module,
         args,
+        splats: Vec::new(),
         tags: tags(yaml, &context)?,
         ignore_errors,
         timeout,
@@ -496,5 +499,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         origin: task_origin(map),
         apply,
         value_origins,
-    })
+    };
+    super::splat::read_splats(&mut task, yaml, source);
+    Ok(task)
 }

@@ -19,6 +19,7 @@ mod merge;
 mod quoted;
 mod walk;
 
+pub use escapes::as_reference;
 pub(crate) use escapes::{escape_strings, literal_escapes, written_strings};
 use walk::{lower, mapping_addresses, mapping_starts};
 
@@ -436,6 +437,16 @@ pub(crate) fn note_vault_origins(docs: &[Yaml<'_>], origins: &Origins, source: &
             _ => {}
         }
     }
+}
+
+/// What a `!!binary` value loads as: its base64 text, read back as bytes when it is rendered.
+pub(crate) fn binary_data(base64: &str) -> String {
+    wrap(base64, "volant_binary")
+}
+
+/// The base64 text `binary_data` wrapped, when `s` is exactly such a wrapper.
+pub(crate) fn binary_text(s: &str) -> Option<String> {
+    unwrapped(s, "volant_binary")
 }
 
 /// The ciphertext `vault_data` wrapped, read back by hand like [`unsafe_text`].

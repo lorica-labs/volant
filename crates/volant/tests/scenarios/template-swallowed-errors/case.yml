@@ -1,0 +1,4 @@
+# A failing filter in a debug var expression, and a failing lookup in a task variable another
+# value reads, fail the task; the lookup's template text never becomes a value.
+args: [-i, inv, play.yml]
+needs: ["ansible-core"]

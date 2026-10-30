@@ -1,5 +1,5 @@
 ---
-sourceHash: 9e4faf6c9036
+sourceHash: dc74b7849042
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -78,8 +78,20 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
   Imprime los avisos `[DEPRECATION WARNING]` y la línea que explica cómo silenciarlos. Con `False` no imprime ninguno de los dos.
 </Option>
 
+<Option name="log_path" id="defaults-log-path" default="unset" env="ANSIBLE_LOG_PATH">
+  Un archivo al que se añade cada línea que muestra la ejecución, un registro por mensaje como lo escribe Ansible: `2026-10-30 18:34:18,430 p=<pid> u=<user> n=ansible INFO| TASK [...] ***`, `WARNING` para un `[WARNING]` y `ERROR` para un `[ERROR]`.
+</Option>
+
+<Option name="log_verbosity" id="defaults-log-verbosity" default="0" env="ANSIBLE_LOG_VERBOSITY">
+  El número de `-v` hasta el que una línea va a `log_path` aunque la ejecución no la muestre.
+</Option>
+
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Avisa cuando el inventario no contiene ningún host y solo queda el `localhost` implícito. `all` no incluye ese host.
+</Option>
+
+<Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
+  Hace que un rol de `roles:` o de un `import_role` que no indica `public` guarde para sí sus `defaults` y `vars`. Con `false`, un `include_role` que no indica `public` también los presta. Sin ajuste, solo un `include_role` los guarda.
 </Option>
 
 <Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">

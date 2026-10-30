@@ -58,3 +58,21 @@ pub(super) fn path_list(value: &str, base: &Path) -> Vec<PathBuf> {
         .map(|p| crate::roles::folded(&expand_home(p, base)))
         .collect()
 }
+
+/// `async_dir` of the configuration the run loaded, for the code that names a job's directory
+/// without a `Config` in hand.
+static ASYNC_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
+
+pub(super) fn set_async_dir(dir: Option<String>) {
+    *ASYNC_DIR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner) = dir;
+}
+
+/// The directory `ansible.cfg` names for jobs, if it names one.
+pub(crate) fn configured_async_dir() -> Option<String> {
+    ASYNC_DIR
+        .lock()
+        .unwrap_or_else(std::sync::PoisonError::into_inner)
+        .clone()
+}

@@ -364,10 +364,10 @@ fn jinja_object(value: &Value) -> bool {
 fn failed(kind: PluginKind, name: &str, err: BridgeError) -> Error {
     let what = kind.as_str();
     match (err, kind) {
-        (BridgeError::NotFound(_), PluginKind::Filter) => Error::new(
-            ErrorKind::UnknownFilter,
-            format!("filter {name} is unknown"),
-        ),
+        // Measured on ansible-core 2.19.12: `'x' | nope` fails with this sentence.
+        (BridgeError::NotFound(_), PluginKind::Filter) => {
+            raise(format!("{}'{name}'.", super::NO_FILTER))
+        }
         (BridgeError::NotFound(_), PluginKind::Test) => {
             Error::new(ErrorKind::UnknownTest, format!("test {name} is unknown"))
         }

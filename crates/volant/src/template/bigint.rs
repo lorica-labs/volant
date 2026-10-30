@@ -169,12 +169,21 @@ pub(crate) fn to_template(value: &serde_json::Value) -> Value {
         Json::Null => Value::from(()),
         Json::Bool(b) => Value::from(*b),
         Json::Number(n) => number(n),
-        Json::String(s) => Value::from(s.as_str()),
+        // A `!!binary` value is held as base64 in a wrapper, and read as its bytes.
+        Json::String(s) => crate::yaml::binary_text(s)
+            .and_then(|data| volant_protocol::encoding::b64_decode(&data).ok())
+            .map_or_else(
+                || Value::from(s.as_str()),
+                super::pymethods::bytes::Bytes::value,
+            ),
         Json::Array(items) => items.iter().map(to_template).collect(),
-        Json::Object(map) => Value::from_pairs(
-            map.iter()
-                .map(|(key, item)| (Value::from(key.as_str()), to_template(item))),
-        ),
+        Json::Object(map) => match crate::template::typed_keys::keys(map) {
+            Some(keys) => Value::from_pairs(keys.into_iter().zip(map.values().map(to_template))),
+            None => Value::from_pairs(
+                map.iter()
+                    .map(|(key, item)| (Value::from(key.as_str()), to_template(item))),
+            ),
+        },
     }
 }
 
@@ -242,20 +251,26 @@ pub(crate) fn to_json(value: &Value) -> Result<serde_json::Value, serde_json::Er
         }
         ValueKind::Map => {
             let mut map = serde_json::Map::new();
+            // A number, a boolean or `None` as a key is held as its text and remembered typed.
+            let mut typed = Vec::new();
             if let Ok(keys) = value.try_iter() {
                 for key in keys {
                     let item = value.get_item(&key).unwrap_or(Value::UNDEFINED);
-                    let name = match serde_json::to_value(&key)? {
-                        Json::String(s) => s,
-                        Json::Number(n) => n.to_string(),
-                        Json::Bool(b) => b.to_string(),
-                        _ => {
+                    let name = match (key.as_str(), crate::template::typed_keys::of_template(&key))
+                    {
+                        (Some(text), _) => text.to_string(),
+                        (None, Some((text, kind))) => {
+                            typed.push((text.clone(), kind));
+                            text
+                        }
+                        (None, None) => {
                             return Err(serde::ser::Error::custom("key must be a string"));
                         }
                     };
                     map.insert(name, to_json(&item)?);
                 }
             }
+            crate::template::typed_keys::remember(&map, &typed);
             Ok(Json::Object(map))
         }
         _ => serde_json::to_value(value),

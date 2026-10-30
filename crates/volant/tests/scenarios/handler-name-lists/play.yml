@@ -1,0 +1,17 @@
+- hosts: h1
+  gather_facts: false
+  roles: [r]
+  tasks:
+    - debug: {msg: play task}
+      changed_when: true
+      notify: [h, "r : h", twice]
+  handlers:
+    - name: h
+      debug: {msg: play handler}
+    - name: twice
+      debug: {msg: first twice}
+    - name: twice
+      debug: {msg: second twice}
+    - name: role only
+      listen: heard
+      debug: {msg: play listener}

@@ -30,7 +30,9 @@ mod refusals;
 mod resolved;
 
 pub(crate) use refusals::PROMPT_REFUSED;
-use refusals::{check_arguments, check_end_role, check_pause, refuse_retries};
+use refusals::{
+    check_arguments, check_end_role, check_end_role_handler, check_pause, refuse_retries,
+};
 use resolved::unresolved;
 pub(crate) use resolved::{
     Unresolved, check_built, check_collection_actions, check_resolved, collection_modules,
@@ -103,6 +105,7 @@ pub(crate) fn check_steps(
     }
     for handler in &compiled.handlers {
         check_task(&handler.task).map_err(|e| Refusal::or(CODE, e))?;
+        check_end_role_handler(&handler.task)?;
     }
     Ok(())
 }
@@ -201,18 +204,6 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         // reference and on this engine, the same shape each time - two `FAILED - RETRYING` lines
         // and `attempts: 2`.
         return refuse_retries(task);
-    }
-    // What the loader kept of a string argument that is not `key=value` fails the task when it
-    // runs, as the reference's does (`raw_params_refusal`). A string that is one template is the
-    // reference's argument splat, which renders to the module's arguments and which this release
-    // does not do: refused here, where a task is checked rather than at load, so a role file for
-    // another platform - parsed for the union and never checked - cannot refuse a Linux run.
-    if crate::playbook::stray_raw_params(task).is_some_and(crate::playbook::possibly_all_template) {
-        bail!(
-            "task '{}': module '{}' takes its arguments from one template, which this release does not render into arguments: write them as a mapping",
-            task.name,
-            task.module
-        );
     }
     // A plugin this release runs. `until`, `retries` and `delay` run on it: each attempt replays
     // the plugin's whole sequence of sub-tasks and `until` reads the result it ended with, as a

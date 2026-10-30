@@ -9,6 +9,7 @@ use tokio::sync::{OwnedSemaphorePermit, Semaphore};
 use crate::compile::{Compiled, StepKind, after, after_pending};
 
 use super::Driver;
+use crate::executor::coordinator::already_ran;
 use crate::executor::run::wait_or_stop;
 /// What became of a `run_once` step, from the point of view of a host that did not run it.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -26,7 +27,58 @@ pub(super) enum RunOnce {
     Gone,
 }
 
+/// Why [`Driver::role_done`] could not answer yet.
+pub(super) enum Halt {
+    /// The steps collected so far have to run first.
+    Flush,
+    /// The run was interrupted.
+    Stop,
+}
+
 impl Driver<'_> {
+    /// Whether this host leaves the step at `pos` out because it has completed another instance
+    /// of the step's role, see `already_ran`. A step of a role brought in more than once waits
+    /// for the coordinator to have read every report of this host in front of it: what it
+    /// completed is decided there, and alone in a batch this host would otherwise read the answer
+    /// before it was written.
+    pub(super) async fn role_done(
+        &mut self,
+        compiled: &Compiled,
+        pos: usize,
+        nothing_collected: bool,
+    ) -> Result<bool, Halt> {
+        let step = &compiled.steps[pos];
+        let Some(role) = step.role.and_then(|r| compiled.roles.get(r)) else {
+            return Ok(false);
+        };
+        let repeated = role.unique
+            && role.dedup.as_ref().is_some_and(|id| {
+                let same = |other: &&crate::roles::RoleVars| other.dedup.as_ref() == Some(id);
+                compiled.roles.iter().filter(same).nth(1).is_some()
+            });
+        if !repeated {
+            return Ok(false);
+        }
+        if !nothing_collected {
+            return Err(Halt::Flush);
+        }
+        loop {
+            if self.stopped() {
+                return Err(Halt::Stop);
+            }
+            let p = self.progress.borrow().clone();
+            if pos == 0
+                || p.live_hosts.is_empty()
+                || p.completed_through.is_some_and(|c| c + 1 >= pos)
+            {
+                return Ok(already_ran(compiled, step, self.name, &p));
+            }
+            if self.progress.changed().await.is_err() {
+                return Ok(already_ran(compiled, step, self.name, &p));
+            }
+        }
+    }
+
     /// Waits `delay`, or gives up when the run is interrupted.
     pub(super) async fn sleep_between(&mut self, delay: Duration) -> Option<()> {
         wait_or_stop(delay, &mut self.stop, &mut self.stop_broken).await

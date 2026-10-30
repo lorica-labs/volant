@@ -28,6 +28,18 @@ pub(super) fn read_env(config: &mut Config) -> anyhow::Result<()> {
     if let Ok(flag) = std::env::var("ANSIBLE_NOCOLOR") {
         config.nocolor = boolean("NOCOLOR", "env: ANSIBLE_NOCOLOR", &flag)?;
     }
+    if let Ok(path) = std::env::var("ANSIBLE_LOG_PATH") {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        config.log_path = Some(super::expand_home(path.trim(), &cwd));
+    }
+    if let Ok(level) = std::env::var("ANSIBLE_LOG_VERBOSITY") {
+        let level = super::integer(
+            "DEFAULT_LOG_VERBOSITY",
+            "env: ANSIBLE_LOG_VERBOSITY",
+            level.trim(),
+        )?;
+        config.log_verbosity = u8::try_from(level.max(0)).unwrap_or(u8::MAX);
+    }
     if let Ok(flag) = std::env::var("ANSIBLE_DEPRECATION_WARNINGS") {
         config.deprecation_warnings = boolean(
             "DEPRECATION_WARNINGS",

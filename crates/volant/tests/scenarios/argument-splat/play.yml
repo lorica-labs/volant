@@ -1,0 +1,23 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    checks: {that: [true]}
+    d: {msg: from-d}
+  tasks:
+    - assert: "{{ checks }}"
+    - debug: "{{ d }}"
+    - debug: "{{ d }}"
+      args: {msg: from-args}
+    - debug: "{{ item }}"
+      loop: [{msg: one}, {msg: two}]
+    - debug:
+      args: "{{ d }}"
+    - debug: '{{ ["x"] }}'
+      ignore_errors: true
+    - debug: '{{ "foo" }} var=x'
+      ignore_errors: true
+    - debug: "{{ nope }}"
+      ignore_errors: true
+    - action:
+        module: "{{ 'debug' }}"
+        args: {msg: templated-module}

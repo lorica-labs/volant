@@ -1,5 +1,5 @@
 ---
-sourceHash: ac09abc44b15
+sourceHash: 15a0cbe0471d
 title: Referenz der Template-Sprache
 description: Die Python-Methoden, String-Regeln, regulären Ausdrücke und Grenzen des Jinja2 von Volant, mit jedem Unterschied zu ansible-core.
 ---
@@ -121,9 +121,7 @@ Ein registriertes Ergebnis und jeder andere Text von einem verwalteten Host blei
 
 Manche Python-Syntax hat in der Rust-Crate keine Entsprechung. Ein Muster, das sie verwendet, schlägt mit einem Fehler fehl, der das Konstrukt nennt, wo ansible-core es ausführt:
 
-- Look-ahead und Look-behind: `(?=`, `(?!`, `(?<=`, `(?<!`
-- ein Rückbezug innerhalb des Musters: `\1`, `(?P=name)`
-- possessive Quantifizierer (`a++`), atomare Gruppen (`(?>`) und bedingte Gruppen (`(?(1)a|b)`)
+- possessive Quantifizierer (`a++`) und bedingte Gruppen (`(?(1)a|b)`)
 - `\N{name}`, die Flags `(?a)` und `(?L)` und `(?x:` als Flag mit begrenztem Geltungsbereich
 - eine nicht gierige Wiederholung oder eine leere Alternative vor einer anderen (`a*?`, `|a`), wenn ein leerer Treffer einen längeren an derselben Stelle braucht
 - `$` in einem Muster ohne `multiline`, auf einem Text mit mehr als einer Zeile, der mit einem Zeilenumbruch endet

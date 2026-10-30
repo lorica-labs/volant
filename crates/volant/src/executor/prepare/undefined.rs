@@ -115,6 +115,26 @@ fn keyword_at(task: &PlayTask, err: &TemplateError) -> Option<Value> {
 /// resolving at that value.
 pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let rest = message.strip_prefix(super::item::FINALIZING)?;
+    // A splat that did not render to arguments: its sentence at the template.
+    if !rest.contains(&format!(": {}", crate::template::RESOLVING))
+        && let Some((_, splat_at)) = task.splats.last()
+        && let Some(cut) = rest.find(" failed: ")
+    {
+        let head = format!("{}{} failed.", super::item::FINALIZING, &rest[..cut]);
+        let why = &rest[cut + " failed: ".len()..];
+        let action = task.value_origins.get("action");
+        let resolved = crate::render::cause(why, splat_at.as_ref(), None);
+        return Some(Value::Array(
+            if task.origin.is_some() && task.origin.as_ref() == action {
+                vec![
+                    crate::render::lead(&format!("Task failed: {head}")),
+                    resolved,
+                ]
+            } else {
+                vec![crate::render::cause(&head, action, None), resolved]
+            },
+        ));
+    }
     let at = rest.find(&format!(": {}", crate::template::RESOLVING))?;
     let head = format!("{}{}.", super::item::FINALIZING, &rest[..at]);
     let resolving = &rest[at + 2..];

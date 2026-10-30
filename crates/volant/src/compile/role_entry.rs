@@ -11,7 +11,7 @@ use crate::stats::Refusal;
 use super::builder::{Builder, DEPTH, RECURSION, Seen, identity};
 use super::flatten::validation;
 use super::inherit::{extend, merge};
-use super::model::{Handler, Section, Step, StepKind};
+use super::model::{Section, Step, StepKind};
 
 /// One role of a dependency chain: its own `defaults` and `vars`, and its parameters over those
 /// of the roles above it.
@@ -142,13 +142,7 @@ impl Builder<'_> {
         // The role's handlers, before its tasks are walked, so a role imported by another one
         // contributes its handlers in front of the importer's. Their keywords are merged the way
         // a task's are: a `when` or a `become` written on the role entry reaches them too.
-        for handler in role.handlers {
-            self.handlers.push(Handler {
-                task: merge(&kw, &handler.task),
-                listen: handler.listen,
-                role: Some(index),
-            });
-        }
+        self.push_handlers(&role.handlers, &kw, &path.join("handlers"), Some(index))?;
         // `rolespec_validate: false` leaves the check out, whatever the role ships.
         if let Some(spec) = role.argument_spec.filter(|_| entry.validate) {
             let task = merge(

@@ -1,5 +1,5 @@
 ---
-sourceHash: e6b72df6570c
+sourceHash: 376899cd0604
 title: 测试
 description: Volant 如何对照 ansible-core 进行检查，各种已记录的应答，以及如何添加场景。
 ---
@@ -49,6 +49,12 @@ Volant 的每次运行都发生在目录的一份全新副本中，除非 case �
 ## 对等性矩阵
 
 `crates/volant/tests/parity.rs` 把 ansible-core 2.19.12 和固定版本的 `ansible` 包中的 collection 所认识的每个名字（关键字、模块、过滤器、测试器、lookup 以及其他种类的插件），与引擎对它的处理情况进行比较。`just parity-reference` 重新生成参照一侧，即 `crates/volant/tests/parity/reference.json`。[对等性](/zh-cn/docs/reference/parity/)、[关键字](/zh-cn/docs/reference/keywords/)和[模块](/zh-cn/docs/reference/modules/)这几个页面由 `just docs-parity`、`just docs-keywords` 和 `just docs-modules` 根据引擎自己的表格生成，其中任何一个过期时，都会有测试失败。
+
+## YAML 语料库
+
+`just yaml-corpus` 用 Volant 的加载器和 ansible-core 的加载器分别加载一个固定语料库中的每个 YAML 文件,并比较两边的值。语料库包括所固定的 `ansible` 包中的集合、ansible-core 自身的 `test/` 目录树,以及 `crates/volant/tests/parity/yaml_corpus.yml` 所列提交上的公共仓库:kubespray、debops、ceph-ansible、openstack-ansible 等,约一万一千个文件。示例 `yaml_dump` 输出 Volant 这一边,并去掉 Volant 自己的编码;`crates/volant/tests/parity/yaml_corpus.py` 按原因分组输出有差异的文件。Volant 把日期读成文本,这一差异不计入。
+
+`crates/volant/tests/parity/yaml_corpus_known.txt` 列出每个已知差异以及跟踪它的 issue。出现其他差异时,该命令失败。`YAML corpus` 工作流每周运行一次,加载器每次改动时也会运行。某个 issue 修复后,请删除对应条目。
 
 ## 运行它们
 

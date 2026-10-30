@@ -1,5 +1,5 @@
 ---
-sourceHash: e6b72df6570c
+sourceHash: 376899cd0604
 title: Tests
 description: Wie Volant gegen ansible-core geprüft wird, die Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
@@ -49,6 +49,12 @@ Jeder Volant-Lauf geschieht in einer frischen Kopie des Verzeichnisses, mit `--f
 ## Die Paritätsmatrix
 
 `crates/volant/tests/parity.rs` vergleicht jeden Namen, den ansible-core 2.19.12 und die Collections des festgelegten `ansible`-Pakets kennen (Keywords, Module, Filter, Tests, Lookups und die anderen Plugin-Arten), mit dem, was die Engine damit macht. `just parity-reference` erzeugt die Referenzseite neu, `crates/volant/tests/parity/reference.json`. Die Seiten [Parität](/de/docs/reference/parity/), [Keywords](/de/docs/reference/keywords/) und [Module](/de/docs/reference/modules/) werden von `just docs-parity`, `just docs-keywords` und `just docs-modules` aus den eigenen Tabellen der Engine erzeugt, und ein Test schlägt fehl, wenn eine davon veraltet ist.
+
+## Der YAML-Korpus
+
+`just yaml-corpus` lädt jede YAML-Datei eines fest gepinnten Korpus mit Volants Loader und mit dem von ansible-core und vergleicht die Werte. Der Korpus besteht aus den Collections des gepinnten `ansible`-Pakets, dem `test/`-Baum von ansible-core selbst und öffentlichen Repositories zu den Commits, die `crates/volant/tests/parity/yaml_corpus.yml` nennt: kubespray, debops, ceph-ansible, openstack-ansible und weitere, rund elftausend Dateien. Das Beispiel `yaml_dump` gibt Volants Seite aus, ohne Volants eigene Kodierungen, und `crates/volant/tests/parity/yaml_corpus.py` gibt die abweichenden Dateien nach Ursache gruppiert aus. Ein Datum liest Volant als Text, dieser Unterschied zählt nicht.
+
+`crates/volant/tests/parity/yaml_corpus_known.txt` führt jeden bekannten Unterschied mit dem Issue, das ihn verfolgt. Bei jedem anderen schlägt das Rezept fehl. Der Workflow `YAML corpus` führt es jede Woche und bei jeder Änderung am Loader aus. Ein Eintrag wird entfernt, sobald sein Issue behoben ist.
 
 ## Ausführen
 

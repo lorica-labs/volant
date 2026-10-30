@@ -49,6 +49,12 @@ Each run of Volant happens in a fresh copy of the directory, with `--forks 1` un
 
 `crates/volant/tests/parity.rs` compares every name that ansible-core 2.19.12 and the collections of the pinned `ansible` package know (keywords, modules, filters, tests, lookups and the other plugin kinds) with what the engine does with it. `just parity-reference` regenerates the reference side, `crates/volant/tests/parity/reference.json`. The [Parity](/docs/reference/parity/), [Keywords](/docs/reference/keywords/) and [Modules](/docs/reference/modules/) pages are generated from the engine's own tables by `just docs-parity`, `just docs-keywords` and `just docs-modules`, and a test fails when one of them is out of date.
 
+## The YAML corpus
+
+`just yaml-corpus` loads every YAML file of a pinned corpus with Volant's loader and with ansible-core's, and compares the values. The corpus is the collections of the pinned `ansible` package, ansible-core's own `test/` tree, and public repositories at the commits `crates/volant/tests/parity/yaml_corpus.yml` names: kubespray, debops, ceph-ansible, openstack-ansible and others, about eleven thousand files. The example `yaml_dump` prints Volant's side, with Volant's own encodings undone, and `crates/volant/tests/parity/yaml_corpus.py` prints the files that differ, grouped by cause. A date is read as text by Volant, and that difference is not counted.
+
+`crates/volant/tests/parity/yaml_corpus_known.txt` lists each known difference with the issue that tracks it. The recipe fails on any other one. The `YAML corpus` workflow runs it every week and on every change to the loader. Remove an entry when its issue is fixed.
+
 ## Run them
 
 `just check-touched` is the check to run before a pull request. It formats, runs clippy and the file-size ratchet, runs the tests of the modules the branch changes, and checks spelling. `just check-local` does the same with every test. CI runs every test.

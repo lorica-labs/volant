@@ -1,0 +1,41 @@
+# The YAML files `just yaml-corpus` loads with Volant and with ansible-core, each source pinned.
+# Fields: name, git (the repository), ref (a commit or a tag), paths (the directories of the
+# checkout whose `.yml` and `.yaml` files are read; the whole checkout when left out).
+# The ansible package pinned in ANSIBLE_PACKAGE is read too, every file of its collections.
+- name: ansible-core
+  git: https://github.com/ansible/ansible
+  ref: v2.19.12
+  paths: [test]
+- name: kubespray
+  git: https://github.com/kubernetes-sigs/kubespray
+  ref: c219d80df9bae65db1334805dfb55733df4d2e01
+- name: debops
+  git: https://github.com/debops/debops
+  ref: c7b0813f448fd9a1c0d8a0ee9b2a5d1e170bba28
+- name: ceph-ansible
+  git: https://github.com/ceph/ceph-ansible
+  ref: 2111ba43ce0ca98558416067e6505217d800ff8d
+- name: openstack-ansible
+  git: https://github.com/openstack/openstack-ansible
+  ref: 48456a06dff6b9cda3089530866ae0a7a67af8aa
+- name: rhel9-cis
+  git: https://github.com/ansible-lockdown/RHEL9-CIS
+  ref: 643c592bb7c03562edffa006d762516a80783ec8
+- name: algo
+  git: https://github.com/trailofbits/algo
+  ref: b1444878b67c8bc238a4f344edf9878619deddc6
+- name: geerlingguy-docker
+  git: https://github.com/geerlingguy/ansible-role-docker
+  ref: 38be616950679548ae0ba8a81ffcceca1b3090bd
+- name: geerlingguy-postgresql
+  git: https://github.com/geerlingguy/ansible-role-postgresql
+  ref: 3e6b4e683f37fa519b3457a2b8c4d2df06620c3e
+- name: geerlingguy-nginx
+  git: https://github.com/geerlingguy/ansible-role-nginx
+  ref: 5ff0b235006390a0d5666fd4cce7477410982cdf
+- name: ansible-for-devops
+  git: https://github.com/geerlingguy/ansible-for-devops
+  ref: 86e1bf80098239cd995d54217585e8d61117d2e7
+- name: devsec-hardening
+  git: https://github.com/dev-sec/ansible-collection-hardening
+  ref: 06228adbc840935b3b0a5c6ac8af1a473d462c82

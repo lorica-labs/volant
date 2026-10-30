@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "stderr": "",
+  "stdout": "\nPLAY [listed] ******************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"h1 in ['listed']\"\n}\nok: [h2] => {\n    \"msg\": \"h2 in ['listed']\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

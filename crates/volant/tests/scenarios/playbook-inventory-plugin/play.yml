@@ -1,0 +1,4 @@
+- hosts: listed
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{{ inventory_hostname }} in {{ group_names }}"}

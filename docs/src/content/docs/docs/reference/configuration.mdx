@@ -138,7 +138,7 @@ A file that exists but cannot be read is skipped, and the run continues with the
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">
-  More directories to look for callback plugins in, separated by `:`. Volant reads the setting but loads only its own callbacks.
+  More directories to look for callback plugins in, separated by `:`. Volant loads only its own callbacks, and names the file of one found there that it does not run.
 </Option>
 
 <Option name="bin_ansible_callbacks" id="defaults-bin-ansible-callbacks" default="false" env="ANSIBLE_LOAD_CALLBACK_PLUGINS">

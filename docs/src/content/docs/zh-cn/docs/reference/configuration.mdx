@@ -1,5 +1,5 @@
 ---
-sourceHash: dc74b7849042
+sourceHash: 28eef99c44bb
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -139,7 +139,7 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">
-  查找 callback 插件的其他目录，用 `:` 分隔。Volant 会读取这个设置，但只加载自己的 callback。
+  查找 callback 插件的其他目录，用 `:` 分隔。Volant 只加载自己的 callback；对在那里找到但不运行的 callback，会给出它的文件。
 </Option>
 
 <Option name="bin_ansible_callbacks" id="defaults-bin-ansible-callbacks" default="false" env="ANSIBLE_LOAD_CALLBACK_PLUGINS">

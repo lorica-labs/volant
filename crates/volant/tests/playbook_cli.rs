@@ -6259,6 +6259,42 @@ fn library_module(dir: &Path, name: &str, field: &str) {
     .expect("the module");
 }
 
+/// A Python module run for a `no_log` task is told so, as ansible-core tells it with
+/// `_ansible_no_log`: `AnsibleModule.log` then writes nothing to the system log.
+#[test]
+fn a_no_log_task_tells_its_python_module() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("module-no-log");
+    std::fs::create_dir_all(dir.join("library")).expect("a library directory");
+    std::fs::write(
+        dir.join("library").join("quiet.py"),
+        "from ansible.module_utils.basic import AnsibleModule\n\
+         m = AnsibleModule(argument_spec={})\n\
+         m.exit_json(changed=False, quiet=m.no_log)\n",
+    )
+    .expect("the module");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - quiet:\n      register: loud\n    - quiet:\n      register: hidden\n      no_log: true\n    - debug: {msg: \"{{ loud.quiet }} {{ hidden.quiet }}\"}\n",
+    )
+    .expect("the play");
+    let cache = dir.join("cache");
+    let out = volant_within_env(
+        &["playbook", dir.join("play.yml").to_str().expect("a path")],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python),
+            ("XDG_CACHE_HOME", cache.to_str().expect("a path")),
+        ],
+    );
+    let text = String::from_utf8_lossy(&out.stdout);
+    assert_eq!(out.status.code(), Some(0), "{text}");
+    assert!(text.contains(r#""msg": "False True""#), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A module in `library/` beside the playbook, and one in a role's `library/`, both run.
 #[test]
 fn a_module_in_the_playbook_s_library_or_a_role_s_runs() {

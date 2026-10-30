@@ -1,5 +1,5 @@
 ---
-sourceHash: d61771341944
+sourceHash: 7f0fcac6cc7d
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -227,7 +227,7 @@ Volant refuse un texte YAML qu'il ne peut pas charger sans risque. L'erreur nomm
 - Une chaîne qui lit deux variables, dont l'une est chaînée à travers une troisième qui contient un bloc `raw`, est rendue une fois de plus que dans ansible-core.
 - Un bloc `{% set x %}...{% endset %}` dont le corps affiche une expression fait du résultat une chaîne même quand le reste est une seule expression. Un bloc de texte seul garde le type.
 - `dict` seul et `dict.fromkeys` seul ne sont pas un résultat, comme dans ansible-core (`Type 'type' is unsupported for variable storage.`), et s'affichent `<class 'dict'>` et `<built-in method fromkeys of type object>` à l'intérieur d'un texte.
-- Un `datetime` venant de `now()` ne participe pas à l'arithmétique : `now() - now()` échoue donc, et il n'a pas les méthodes `date`, `time`, `replace`, `astimezone`, `utcoffset` et `timetuple`.
+- Un `datetime` venant de `now()` participe à `+` et `-` avec un autre `datetime` ou un `timedelta`, et à aucune autre arithmétique, et il n'a pas les méthodes `date`, `time`, `astimezone` et `timetuple`.
 
 ### Manques des fichiers modèles
 

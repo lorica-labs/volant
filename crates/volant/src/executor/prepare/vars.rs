@@ -121,6 +121,7 @@ pub(in crate::executor) fn merged_vars(
     origin: &Origin,
     playbook_dir: &Path,
 ) -> HostVars {
+    let by_the_run = matches!(named, Named::ByTheRun);
     let compiled = plan.steps();
     let own_role = role.and_then(|i| compiled.roles.get(i));
     let role = own_role.unwrap_or(&compiled.exported);
@@ -183,6 +184,23 @@ pub(in crate::executor) fn merged_vars(
     // calls (`first_found`, `template`) reads these two names to find its file, and a pass that
     // resolves the task's variables without them first is a pass that lookup cannot complete on.
     insert_search_path(&mut vars, origin, playbook_dir);
+    // `PlayContext.update_vars`: a task's variables name the address it connects to even when
+    // nothing set one. Measured on ansible-core 2.19.12, `lookup('vars', 'ansible_host')` is the
+    // inventory name then, and `hostvars[x]` still has no `ansible_host`.
+    if by_the_run && crate::vars::host_setting(&vars, "ansible_host").is_none() {
+        let ssh_host = crate::vars::host_setting(&vars, "ansible_ssh_host").cloned();
+        let from = if ssh_host.is_some() {
+            "ansible_ssh_host"
+        } else {
+            "inventory_hostname"
+        };
+        let address = ssh_host.unwrap_or_else(|| Value::String(host.to_string()));
+        if vars.untrusted.contains(from) {
+            vars.insert_untrusted("ansible_host".into(), address);
+        } else {
+            vars.insert("ansible_host".into(), address);
+        }
+    }
     if let Some(role) = own_role {
         insert_role_names(&mut vars, role);
     }

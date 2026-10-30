@@ -1,0 +1,2 @@
+- debug:
+    msg: "{{ nested_var }} {{ var_precedence }} {{ param_var }} {{ listed_a }} {{ listed_b }} {{ shared }}"

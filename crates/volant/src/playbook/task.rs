@@ -391,6 +391,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         ("until", field(yaml, "until")),
         ("retries", field(yaml, "retries")),
         ("delay", field(yaml, "delay")),
+        ("timeout", field(yaml, "timeout")),
         ("notify", field(yaml, "notify")),
         ("check_mode", field(yaml, "check_mode")),
         ("diff", field(yaml, "diff")),

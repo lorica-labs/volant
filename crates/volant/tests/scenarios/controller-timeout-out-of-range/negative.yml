@@ -1,0 +1,15 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - command: "true"
+      timeout: -1
+      ignore_errors: true
+    - command: "true"
+      timeout: abc
+      ignore_errors: true
+    - block:
+        - debug: msg=never
+          timeout: -5
+      rescue:
+        - debug: var=ansible_failed_result.msg
+    - debug: msg=after

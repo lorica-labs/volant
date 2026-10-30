@@ -18,7 +18,7 @@ use super::fields::{
 use super::keywords::{META, action_statement, connect_keywords, delegation, escalation, flag};
 use super::load::task_list;
 use super::model::{Apply, Block, PlayTask};
-use super::origin::{key_origin, located, task_origin, value_origin};
+use super::origin::{entry_origins, key_origin, located, task_origin, value_origin};
 use super::play::{collections, environment, module_defaults};
 /// A block, with its three sections parsed recursively and its inherited keywords read into a
 /// module-less [`PlayTask`].
@@ -421,32 +421,14 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     {
         value_origins.insert("args._raw_params".to_string(), origin);
     }
-    if let Some(Yaml::Mapping(control)) = field(yaml, "loop_control") {
-        for (k, v) in control {
-            if let (Some(k), Some(origin)) = (k.as_str(), value_origin(v)) {
-                value_origins.insert(format!("loop_control.{k}"), origin);
-            }
-        }
+    if let Some(control) = field(yaml, "loop_control") {
+        entry_origins(control, "loop_control", &mut value_origins);
     }
     for node in [Some(source.unwrap_or(value)), field(yaml, "args")]
         .into_iter()
         .flatten()
     {
-        if let Yaml::Mapping(map) = node {
-            for (k, v) in map {
-                if let (Some(k), Some(origin)) = (k.as_str(), value_origin(v)) {
-                    value_origins.insert(format!("args.{k}"), origin);
-                }
-                // Each condition of a `that` list, which the reference points at when it fails.
-                if let (Some("that"), Yaml::Sequence(items)) = (k.as_str(), v) {
-                    for (i, item) in items.iter().enumerate() {
-                        if let Some(origin) = value_origin(item) {
-                            value_origins.insert(format!("args.that.{i}"), origin);
-                        }
-                    }
-                }
-            }
-        }
+        entry_origins(node, "args", &mut value_origins);
     }
     let mut task = PlayTask {
         named: name.is_some(),

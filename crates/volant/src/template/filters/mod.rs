@@ -12,6 +12,7 @@ mod int;
 mod json;
 mod ordering;
 mod regex;
+mod surrogates;
 mod text;
 
 use collections::{SetFilter, combine, dict2items, extract, flatten, items2dict, set_filter};

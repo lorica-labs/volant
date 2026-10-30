@@ -138,8 +138,16 @@ pub(super) fn from_json(value: Value) -> Result<Value, Error> {
     let text = value
         .as_str()
         .ok_or_else(|| invalid("from_json requires a string"))?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(text).map_err(|e| invalid(format!("from_json: {e}")))?;
+    let (text, lone) = super::surrogates::stand_in(text);
+    let mut parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| invalid(format!("from_json: {e}")))?;
+    if lone {
+        super::surrogates::resolve(&mut parsed).map_err(|e| {
+            crate::template::bridged::raise(format!(
+                "The filter plugin 'ansible.builtin.from_json' failed: {e}"
+            ))
+        })?;
+    }
     Ok(from_json_value(parsed))
 }
 

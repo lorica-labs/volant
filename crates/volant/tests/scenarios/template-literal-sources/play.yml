@@ -1,0 +1,8 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    raw: "{% raw %}{{ 'a\\.b' }}{% endraw %}"
+  tasks:
+    - debug: {var: raw}
+      run_once: true
+    - debug: {msg: "{{ [i | default(''), j | default(''), r | default('')] }}"}

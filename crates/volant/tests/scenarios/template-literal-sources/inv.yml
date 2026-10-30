@@ -1,0 +1,7 @@
+all:
+  hosts:
+    h2:
+      ansible_connection: local
+      ansible_python_interpreter: /usr/bin/python3
+      r: "{{ \"a.b\" | regex_replace(\"\\\\.\", \"-\") }}"
+      j: '{{"a\nb"|length}}'

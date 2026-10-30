@@ -1,0 +1,5 @@
+- name: h
+  debug: {msg: role handler}
+- name: role only
+  listen: heard
+  debug: {msg: role listener}

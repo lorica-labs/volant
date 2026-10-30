@@ -66,7 +66,9 @@ A role's `defaults` and `vars` are visible to the whole play, so `pre_tasks` and
 
 A dependency also reads what the roles above it hold. Its `vars` sit over its parents' `vars/main.yml` and over the `vars/main.yml` of its own dependencies, which win over the parents'. Its `defaults` go the other way: its dependencies', then its parents', then its own. Its parameters sit over its parents' parameters, so a dependency without a parameter of that name reads the nearest parent's.
 
-An `import_role` with `public: false` keeps them to itself, and an `include_role` does that unless it says `public: true`. See [Role options](#role-options).
+An `import_role` with `public: false` keeps them to itself, and an `include_role` does that unless it says `public: true`. See [Role options](#role-options). [`private_role_vars`](/docs/reference/configuration/#defaults-private-role-vars) changes these defaults.
+
+A role an `include_role` brings in from inside another role reads that role's parameters, over the statement's own `vars:`, and that role's `vars` and `defaults`, however many includes down.
 
 ## Imports and includes
 
@@ -133,7 +135,7 @@ A key of `apply` that a block does not have stops the run with exit code 4 when 
 
 With `public: true`, the `defaults` and `vars` of an `include_role` are visible to everything that runs after the statement, and to the other hosts too, because ansible-core keeps the list of public roles in the play and not in the host. A task that ran before the statement reads nothing of it, and a `when: false` include lends nothing.
 
-With `allow_duplicates: false`, the statement shows its `included:` line and runs nothing for a host that has already had an identical role brought in. Two statements are identical when they name the same role, the same files and the same `vars:`, and for a loop the same item under the same loop variable. `rolespec_validate: false` leaves out the argument-spec check.
+With `allow_duplicates: false`, the statement shows its `included:` line and runs nothing for a host that has already had an identical role brought in. Two statements are identical when they name the same role, the same files and the same `vars:`, and for a loop the same item under the same loop variable. `rolespec_validate: false` leaves out the argument-spec check. An earlier `import_role` or `include_role` of that role counts. A role of `roles:` does not, as in Ansible.
 
 Each option of the four statements, as read by Volant and by ansible-core 2.19.12:
 
@@ -204,5 +206,4 @@ A statement 32 levels deep is rejected. One counter covers role nesting, `import
 - A file that includes itself hits that limit and is reported as a task failure with exit code 2. Ansible recurses until the Python stack runs out, at exit code 250.
 - An included file outside a role's `tasks/` and `handlers/` that does not parse fails the task, with exit code 2 and a recap. Ansible exits with code 4 and no recap. A failure the recap accounts for is more useful, and a `rescue` can catch it.
 - A failing include inside a loop prints the usual `failed: [host] (item=...)` line. Ansible prints only an `[ERROR]` on standard error.
-- `allow_duplicates: false` counts a role as run for a host when its tasks are brought in. ansible-core counts it when the host ran at least one of its tasks, so a role whose tasks all skip still runs again there.
 - `allow_duplicates: false` on an `import_role` compares the statements while the play compiles, and so a `when` on the earlier statement does not change the result for a host.

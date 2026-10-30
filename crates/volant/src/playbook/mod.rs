@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Playbook loading: plays and tasks, with the keywords this release supports.
 
+mod connect;
 mod deferred;
 mod fields;
 mod import;
@@ -9,6 +10,7 @@ mod load;
 mod model;
 mod origin;
 mod play;
+mod splat;
 mod task;
 
 pub use deferred::Deferred;

@@ -1,7 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 use super::announce::module_path_dirs;
 use super::args::PlaybookArgs;
-use super::hosts::{order_hosts, shuffle};
+use super::hosts::{limit_pattern, order_hosts, shuffle};
 use super::passwords::{password_from_file, ssh_words};
 #[cfg(unix)]
 use super::plays::run;
@@ -516,4 +516,40 @@ fn the_carried_compat_collection_is_the_repository_s() {
             "{name}"
         );
     }
+}
+
+/// `--limit` drops its blank parts and reads each `@file`, as ansible-core 2.19.12 does; nothing
+/// left limits nothing.
+#[test]
+fn a_limit_drops_blank_parts_and_reads_files() {
+    let dir = tempfile::tempdir().unwrap();
+    let file = dir.path().join("hosts.txt");
+    std::fs::write(
+        &file,
+        "h1
+
+  h3  
+",
+    )
+    .unwrap();
+    let at = format!("@{}", file.display());
+    assert_eq!(limit_pattern(",,").unwrap(), None);
+    assert_eq!(limit_pattern("").unwrap(), None);
+    assert_eq!(limit_pattern("a, ,  ,b").unwrap().as_deref(), Some("a,b"));
+    assert_eq!(
+        limit_pattern("web:!db").unwrap().as_deref(),
+        Some("web:!db")
+    );
+    assert_eq!(
+        limit_pattern(&format!("h0,{at}")).unwrap().as_deref(),
+        Some("h0,h1,h3")
+    );
+    let missing = limit_pattern("@nosuch").unwrap_err().to_string();
+    assert_eq!(missing, "Unable to find limit file b'nosuch'");
+    let directory = limit_pattern(&format!("@{}", dir.path().display())).unwrap_err();
+    assert!(
+        directory
+            .to_string()
+            .starts_with("Limit starting with \"@\" must be a file")
+    );
 }

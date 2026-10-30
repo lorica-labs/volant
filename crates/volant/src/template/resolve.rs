@@ -135,12 +135,17 @@ impl Templar {
         any: &mut bool,
     ) -> Value {
         match value {
+            // A value that fails stays as written and untainted: a lookup taints the render
+            // before it fails, and a name marked as data would never be rendered again, so its
+            // template text would reach a task as a value.
             Value::String(s) if Self::is_stored_template(s) => {
-                let out = self
-                    .render_in(s, ctx, tainted)
-                    .unwrap_or_else(|_| value.clone());
-                *any |= tainted.load(Ordering::Relaxed) || is_literal(ctx);
-                out
+                match self.render_in(s, ctx, tainted) {
+                    Ok(out) => {
+                        *any |= tainted.load(Ordering::Relaxed) || is_literal(ctx);
+                        out
+                    }
+                    Err(_) => value.clone(),
+                }
             }
             Value::Array(items) => Value::Array(
                 items

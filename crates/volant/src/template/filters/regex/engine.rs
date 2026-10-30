@@ -68,7 +68,8 @@ pub(super) fn compile(
 
 fn build(pattern: &str, ignorecase: bool, multiline: bool) -> Result<Compiled, String> {
     let translated = translate(pattern, multiline).map_err(|failure| match failure {
-        Failure::Invalid(why) => format!("invalid regular expression '{pattern}': {why}"),
+        // Python's own words: the filter's or test's failure names the plugin around them.
+        Failure::Invalid(why) => why,
         Failure::Unsupported(what) => format!(
             "unsupported regular expression '{pattern}': {what} is not supported by the regex engine of Volant"
         ),
@@ -84,7 +85,7 @@ fn build(pattern: &str, ignorecase: bool, multiline: bool) -> Result<Compiled, S
                     .lines()
                     .last()
                     .map_or(text.as_str(), |l| l.strip_prefix("error: ").unwrap_or(l));
-                format!("invalid regular expression '{pattern}': {why}")
+                why.to_owned()
             })
     };
     let strict = make(&translated.strict)?;

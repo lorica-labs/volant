@@ -1,0 +1,5 @@
+# A module's arguments given as one template, as `args:`, or both, rendered per host and item
+# under the arguments written as such; a template that renders to no mapping fails the task, and a
+# module named by a template inside `action:` runs under a banner that keeps the template.
+stderr: true
+args: [-i, inv.ini, play.yml]

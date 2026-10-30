@@ -6,8 +6,7 @@ use std::collections::BTreeSet;
 use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
-use minijinja::functions::Function;
-use minijinja::value::{FunctionArgs, FunctionResult, Rest, ValueKind, ValueOrKwargs};
+use minijinja::value::{Rest, ValueKind, ValueOrKwargs};
 use minijinja::{Environment, ErrorKind, State, UndefinedBehavior};
 use serde_json::Value;
 
@@ -17,10 +16,9 @@ use super::clock::DateTime;
 use super::context::Context;
 use super::filters;
 use super::globals;
-use super::pymethods::mutable::{
-    MutDict, MutList, is_literal, is_mutable, key, mutable, snapshot_answer,
-};
+use super::pymethods::mutable::{MutDict, MutList, is_literal, key, mutable};
 use super::pymethods::percent;
+pub(crate) use super::register::{add_filter, add_test, add_text_filter, undefined_through};
 use super::vm::{concat, note_emit};
 use super::{
     ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, ITEM_KEY, MATTR_KEY, MITEM_KEY, MKLIST_KEY,
@@ -279,93 +277,6 @@ pub(super) fn type_name(v: &Value) -> &'static str {
     }
 }
 
-/// Registers a filter under `name` and again under `ansible.builtin.<name>`: every filter and
-/// test ansible-core ships lives in that collection, and a role is free to spell it out in full.
-/// Measured (A9): minijinja's parser accepts a dotted name after `|` or `is` as a single filter
-/// or test name — `{{ "x" | ansible.builtin.default("y") }}` fails by `unknown filter: filter
-/// ansible.builtin.default is unknown`, not by a syntax error — so registering the qualified
-/// string is all a name needs. `ansible.utils.ipwrap` is registered on its own, never through
-/// this: the reference never exposes it under `ansible.builtin`.
-///
-/// Measured on ansible-core 2.19.12, a filter given an undefined value does not run: the result
-/// is undefined too, so `nope | dict2items` fails as an undefined read and
-/// `nope | dict2items | default('x')` is `x`. The filter is wrapped here to do the same, except
-/// the few that exist to look at an undefined value.
-pub(crate) fn add_filter<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
-where
-    F: Function<Rv, Args>,
-    Rv: FunctionResult,
-    Args: for<'a> FunctionArgs<'a>,
-{
-    let filter = undefined_through(name, f);
-    env.add_filter(format!("ansible.builtin.{name}"), filter.clone());
-    env.add_filter(format!("ansible.legacy.{name}"), filter.clone());
-    env.add_filter(name.to_string(), filter);
-}
-
-/// [`add_filter`] for a filter that turns a container into text or a number (`join`, `string`,
-/// `quote`, `sum`): an undefined value anywhere inside an argument fails as an undefined read.
-/// Measured on ansible-core 2.19.12, `[1, nope] | join(',')` fails where `[nope] | length` and
-/// `[1, nope] | first` answer `1`, so the filters that only count or pick keep [`add_filter`].
-pub(crate) fn add_text_filter<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
-where
-    F: Function<Rv, Args>,
-    Rv: FunctionResult,
-    Args: for<'a> FunctionArgs<'a>,
-{
-    let f = undefined_through(name, f);
-    let filter = move |state: &mut State, args: Rest<ValueOrKwargs>| {
-        if args.iter().any(|v| !v.is_undefined() && holds_undefined(v)) {
-            return Err(minijinja::Error::from(ErrorKind::UndefinedError));
-        }
-        f(state, args)
-    };
-    env.add_filter(format!("ansible.builtin.{name}"), filter.clone());
-    env.add_filter(format!("ansible.legacy.{name}"), filter.clone());
-    env.add_filter(name.to_string(), filter);
-}
-
-/// `f`, answering undefined when an argument it is given is undefined; see [`add_filter`].
-/// Measured on ansible-core 2.19.12: any argument counts, keyword ones included
-/// (`'%s' | format(nope | lower)`, `regex_replace('a', 'b', ignorecase=nope | bool)` are
-/// undefined reads), but only the argument itself, not what it holds (`[nope | lower] | length`
-/// is 1). `ternary` only looks at its input (`true | ternary('a', nope)` is `a`); `default`,
-/// `d`, `mandatory` and `type_debug` look at nothing.
-pub(crate) fn undefined_through<F, Rv, Args>(
-    name: &str,
-    f: F,
-) -> impl Fn(&mut State, Rest<ValueOrKwargs>) -> Result<minijinja::Value, minijinja::Error>
-+ Clone
-+ Send
-+ Sync
-+ 'static
-where
-    F: Function<Rv, Args>,
-    Rv: FunctionResult,
-    Args: for<'a> FunctionArgs<'a>,
-{
-    let f = minijinja::Value::from_function(f);
-    let checked = match name {
-        "default" | "d" | "mandatory" | "type_debug" => 0,
-        "ternary" => 1,
-        _ => usize::MAX,
-    };
-    move |state: &mut State, args: Rest<ValueOrKwargs>| {
-        let args = args.into_values();
-        if any_undefined(&args[..checked.min(args.len())]) {
-            return Ok(minijinja::Value::UNDEFINED);
-        }
-        let answer = f.call(state, &args)?;
-        // ansible-core hands back a copy of what a filter answers, so a list changed in place
-        // does not change through what a filter made of it.
-        Ok(if args.iter().any(is_mutable) {
-            snapshot_answer(&answer)
-        } else {
-            answer
-        })
-    }
-}
-
 /// Whether one of these arguments, or one keyword argument among them, is undefined.
 pub(super) fn any_undefined(args: &[minijinja::Value]) -> bool {
     args.iter().any(|v| {
@@ -392,28 +303,6 @@ pub(crate) fn holds_undefined(v: &minijinja::Value) -> bool {
             .is_ok_and(|mut keys| keys.any(|k| v.get_item(&k).is_ok_and(|x| holds_undefined(&x)))),
         _ => false,
     }
-}
-
-/// The test equivalent of [`add_filter`]. A test given an undefined argument fails as an
-/// undefined read (`nope is none`, measured), except `defined` and `undefined`.
-pub(crate) fn add_test<F, Rv, Args>(env: &mut Environment<'static>, name: &str, f: F)
-where
-    F: Function<Rv, Args>,
-    Rv: FunctionResult,
-    Args: for<'a> FunctionArgs<'a>,
-{
-    let f = minijinja::Value::from_function(f);
-    let sees_undefined = ["defined", "undefined"].contains(&name);
-    let test = move |state: &mut State, args: Rest<ValueOrKwargs>| {
-        let args = args.into_values();
-        if !sees_undefined && any_undefined(&args) {
-            return Err(minijinja::Error::from(ErrorKind::UndefinedError));
-        }
-        f.call(state, &args)
-    };
-    env.add_test(format!("ansible.builtin.{name}"), test.clone());
-    env.add_test(format!("ansible.legacy.{name}"), test.clone());
-    env.add_test(name.to_string(), test);
 }
 
 /// Python truthiness, for messages and for filters that need it.

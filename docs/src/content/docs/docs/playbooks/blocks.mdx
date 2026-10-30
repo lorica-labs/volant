@@ -88,6 +88,8 @@ A task notifies only when it reports `changed`. For a loop, the overall result d
 
 A `handlers:` list may hold an `import_tasks`, in a play or in a role. The handlers of the file it names take its place, with its keywords, and are notified by name and by `listen`. The file is looked for beside the file that wrote the statement, then in the playbook's directory.
 
+When two handlers share a name, the one in the last list defined answers, the play's own list after every role's, and within one list the first. A role's handler also answers to `<role> : <name>`. Every handler that listens for the name runs, except a second listener with the same name as one already found.
+
 ### Keywords from the play
 
 A handler in the play's `handlers:` list takes the play's task keywords as a task does, and as a handler from a role does. This covers `no_log`, `environment`, `ignore_errors`, `ignore_unreachable`, `any_errors_fatal`, `run_once`, `timeout`, `throttle`, `debugger`, `connection`, `port`, `remote_user`, the `become` keywords, `check_mode`, `diff`, `module_defaults` and `collections`. A keyword the handler sets itself wins. A play with `no_log: true` hides the results of its handlers too.

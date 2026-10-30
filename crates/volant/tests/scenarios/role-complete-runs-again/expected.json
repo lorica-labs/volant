@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [a : debug] ***************************************************************\nskipping: [h1]\n\nTASK [set_var : set_fact] ******************************************************\nok: [h1]\n\nTASK [a : debug] ***************************************************************\nok: [h1] => {\n    \"msg\": \"A\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=1    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nplaybook: play.yml\n\n  play #1 (h1): h1\tTAGS: []\n    tasks:\n      debug\tTAGS: []\n      set_fact\tTAGS: []\n      debug\tTAGS: []\n      debug\tTAGS: []\n"
+  }
+]

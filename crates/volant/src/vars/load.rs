@@ -76,7 +76,7 @@ pub(super) fn extend_except(
 /// `group_vars/` or `host_vars/`: for each entry, a file `name`, `name.yml`, `name.yaml`,
 /// `name.json`, or a directory `name/` whose files are merged in name order. Hidden files,
 /// editor backups and `.retry` files are ignored, like Ansible does.
-pub(super) fn load_vars_dir(dir: &Path) -> anyhow::Result<BTreeMap<String, Map<String, Value>>> {
+pub(crate) fn load_vars_dir(dir: &Path) -> anyhow::Result<BTreeMap<String, Map<String, Value>>> {
     let mut out: BTreeMap<String, Map<String, Value>> = BTreeMap::new();
     let Ok(entries) = std::fs::read_dir(dir) else {
         return Ok(out);

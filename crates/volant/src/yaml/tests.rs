@@ -1266,6 +1266,19 @@ fn a_bad_merge_value_is_a_constructor_error() {
     }
 }
 
+/// A `|` or `>` value is placed at its indicator, as ansible-core 2.19.12 places it in an error.
+#[test]
+fn a_block_scalar_value_starts_at_its_indicator() {
+    let text = "m:\n  msg: |\n    a\n  k: >-\n\n    b\n  p: x\n";
+    let (docs, origins) = load_with_origins(text, "t.yml").unwrap();
+    let m = field(&docs[0], "m").unwrap();
+    let at = |key: &str| origins.of_value(field(m, key).unwrap());
+    assert_eq!(
+        (at("msg"), at("k"), at("p")),
+        (Some((2, 8)), Some((4, 6)), Some((7, 6)))
+    );
+}
+
 /// The positions of mappings stay available when a document holds a merge key.
 #[test]
 fn origins_survive_a_merge_key() {

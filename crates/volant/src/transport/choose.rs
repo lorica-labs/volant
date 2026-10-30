@@ -319,7 +319,9 @@ impl Transport {
                     None => None,
                 };
                 let argv = local_argv(&agent, escalated);
-                let child = Command::new(&argv[0])
+                let mut command = Command::new(&argv[0]);
+                super::control::with_started_open_file_limit(&mut command);
+                let child = command
                     .args(&argv[1..])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())

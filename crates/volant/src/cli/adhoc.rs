@@ -277,6 +277,12 @@ impl Adhoc {
             out.warning("No hosts matched, nothing to do", false);
         }
         self.deprecate_callbacks(out);
+        // A template matches no host as it is written, but the play renders it before it runs:
+        // measured on ansible-core 2.19.12, `ansible '{{"localhost"}}'` warns twice, then runs
+        // on `localhost`.
+        if play.hosts.contains("{{") {
+            return Ok(None);
+        }
         Ok(Some(0))
     }
 

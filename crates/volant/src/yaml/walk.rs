@@ -10,6 +10,7 @@ use std::borrow::Cow;
 
 use anyhow::{anyhow, bail};
 use saphyr::{Mapping, MarkedYaml, Scalar, Tag, Yaml, YamlData};
+use saphyr_parser::ScalarStyle;
 use serde_json::{Map, Value};
 
 use super::{Starts, is_vault, read_scalar, read_tagged, scalar, unsafe_data, vault_data};
@@ -211,8 +212,9 @@ fn key_of(key: Yaml<'_>, strict: bool) -> anyhow::Result<Yaml<'_>> {
 }
 
 /// Where each mapping of the source tree starts, and each key and value of it, in the order a
-/// walk down the tree meets them.
-pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
+/// walk down the tree meets them. A `|` or `>` value starts at its indicator, as in the
+/// reference: saphyr's span starts at its first line of text.
+pub(super) fn mapping_starts(root: &MarkedYaml<'_>, text: &str, out: &mut Starts) {
     enum Work<'t, 'a> {
         Node(&'t MarkedYaml<'a>),
         Entry(&'t MarkedYaml<'a>, &'t MarkedYaml<'a>),
@@ -233,7 +235,8 @@ pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
                 _ => {}
             },
             Work::Entry(key, value) => {
-                out.1.push(at(value));
+                out.1
+                    .push(block_indicator(value, text).unwrap_or_else(|| at(value)));
                 out.2.push(at(key));
                 work.push(Work::Node(value));
                 work.push(Work::Node(key));
@@ -280,6 +283,19 @@ pub(super) fn mapping_addresses(root: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usiz
             }
         }
     }
+}
+
+/// The line and column of the `|` or `>` that opens `node`, a block scalar.
+fn block_indicator(node: &MarkedYaml<'_>, text: &str) -> Option<(usize, usize)> {
+    let YamlData::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) = &node.data
+    else {
+        return None;
+    };
+    let start = text.char_indices().nth(node.span.start.index())?.0;
+    let at = text[..start].rfind(['|', '>'])?;
+    let line_start = text[..at].rfind('\n').map_or(0, |n| n + 1);
+    let line = text[..at].matches('\n').count() + 1;
+    Some((line, text[line_start..at].chars().count() + 1))
 }
 
 fn is_scalar(node: &Yaml<'_>) -> bool {

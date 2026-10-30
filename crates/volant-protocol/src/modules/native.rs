@@ -137,6 +137,12 @@ pub const NATIVE_MODULES: &[ModuleSpec] = &[ASYNC_STATUS, COMMAND, RAW, SHELL];
 /// before a module of its own reads the arguments and hands them to a Python one.
 pub const CHECK_MODE_ARG: &str = "_ansible_check_mode";
 pub const DIFF_ARG: &str = "_ansible_diff";
+
+/// The soft limit on open files a module's process starts with, from
+/// `ansible_python_module_rlimit_nofile`: the reference's module wrapper sets it before a module
+/// runs, so it reaches the commands `command` and `shell` start too. The agent takes it out of the
+/// arguments with the two above.
+pub const RLIMIT_NOFILE_ARG: &str = "_volant_rlimit_nofile";
 pub const NO_LOG_ARG: &str = "_ansible_no_log";
 
 /// The Python modules the agent may run natively instead, by the reference's name. The agent

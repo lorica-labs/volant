@@ -1,5 +1,5 @@
 ---
-sourceHash: 9e4faf6c9036
+sourceHash: a5a473543313
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -80,6 +80,10 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Avisa cuando el inventario no contiene ningún host y solo queda el `localhost` implícito. `all` no incluye ese host.
+</Option>
+
+<Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
+  Hace que un rol de `roles:` o de un `import_role` que no indica `public` guarde para sí sus `defaults` y `vars`. Con `false`, un `include_role` que no indica `public` también los presta. Sin ajuste, solo un `include_role` los guarda.
 </Option>
 
 <Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">

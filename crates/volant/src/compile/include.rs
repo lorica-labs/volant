@@ -154,6 +154,11 @@ pub(crate) fn expand_include(
                 .chain(&parent.origin.parent_roles)
                 .cloned()
                 .collect();
+            if let Some(role) = parent.role.and_then(|i| base.roles.get(i)) {
+                builder
+                    .role_chain
+                    .push(super::role_entry::ChainLink::of(role));
+            }
             builder.role(
                 entry,
                 &inherited,
@@ -314,7 +319,11 @@ pub(crate) fn include_role_entry(args: &Map<String, Value>) -> anyhow::Result<Ro
         keywords: PlayTask::empty(),
         // An include keeps the variables of its role to the role unless it says `public: true`,
         // and unlike an import it runs its role again unless it says `allow_duplicates: false`.
-        public: role_flag(args, "public", false)?,
+        public: role_flag(
+            args,
+            "public",
+            crate::roles::private_role_vars().is_some_and(|private| !private),
+        )?,
         validate: role_flag(args, "rolespec_validate", true)?,
         unique: !role_flag(args, "allow_duplicates", true)?,
         ..RoleEntry::named(
@@ -336,17 +345,12 @@ pub(crate) fn include_role_entry(args: &Map<String, Value>) -> anyhow::Result<Ro
 /// statement and what its loop bound. The same item twice is one instance, two items are two, and
 /// so are one item under two names of the loop variable.
 pub(crate) fn role_identity(entry: &RoleEntry, vars: &Map<String, Value>) -> String {
-    serde_json::json!({
-        "name": &entry.name,
-        "vars": sorted(vars),
-        "from": [
-            &entry.from.tasks,
-            &entry.from.vars,
-            &entry.from.defaults,
-            &entry.from.handlers,
-        ],
-    })
-    .to_string()
+    // The format of an `import_role` the play compiled, so an include that says
+    // `allow_duplicates: false` is not run again for a host that ran that import: measured on
+    // ansible-core 2.19.12 with the `roles` target's `end_role.yml`. A role of `roles:` does not
+    // count, measured as well.
+    let (name, identity) = super::builder::identity_with(entry, vars);
+    format!("include {}", serde_json::json!([name, identity]))
 }
 
 /// A boolean option of a role statement: `public`, `allow_duplicates` or `rolespec_validate`.

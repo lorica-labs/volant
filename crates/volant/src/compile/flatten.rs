@@ -129,7 +129,11 @@ pub(super) fn import_role_entry(task: &PlayTask) -> anyhow::Result<RoleEntry> {
         params: Map::new(),
         keywords: PlayTask::empty(),
         // An import lends its variables unless it says otherwise.
-        public: role_flag(&task.args, "public", true)?,
+        public: role_flag(
+            &task.args,
+            "public",
+            !crate::roles::private_role_vars().unwrap_or(false),
+        )?,
         validate: role_flag(&task.args, "rolespec_validate", true)?,
         unique: !role_flag(&task.args, "allow_duplicates", true)?,
         ..RoleEntry::named(

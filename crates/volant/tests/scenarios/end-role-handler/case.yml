@@ -1,0 +1,2 @@
+# end_role written as a handler stops the load, exit 4.
+args: [play.yml]

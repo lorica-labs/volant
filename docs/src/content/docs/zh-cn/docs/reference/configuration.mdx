@@ -1,5 +1,5 @@
 ---
-sourceHash: 9e4faf6c9036
+sourceHash: a5a473543313
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -80,6 +80,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   当 inventory 中没有任何主机、只剩下隐式的 `localhost` 时给出警告。`all` 不会匹配这台主机。
+</Option>
+
+<Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
+  让 `roles:` 中的 role 或未写 `public` 的 `import_role` 把自己的 `defaults` 和 `vars` 留在内部。设为 `false` 时，未写 `public` 的 `include_role` 也会对外提供它们。不设置时，只有 `include_role` 会保留它们。
 </Option>
 
 <Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">

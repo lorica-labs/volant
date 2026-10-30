@@ -286,6 +286,7 @@ fn internal_filter<'a, 's: 'a>(
     let wrapper = source.is_some_and(|s| {
         crate::yaml::unsafe_text(s)
             .or_else(|| crate::yaml::vault_text(s))
+            .or_else(|| crate::yaml::binary_text(s))
             .is_some()
     });
     if wrapper {
@@ -295,7 +296,7 @@ fn internal_filter<'a, 's: 'a>(
         let mut idx = 0;
         while let Some(op) = instructions.get(idx) {
             if let Instruction::ApplyFilter(name, ..) = op
-                && matches!(*name, "volant_unsafe" | "volant_vault")
+                && matches!(*name, "volant_unsafe" | "volant_vault" | "volant_binary")
             {
                 return Err(bridged::raise(format!("{NO_FILTER}'{name}'.")));
             }

@@ -46,12 +46,9 @@ STREAM_LIMIT = 4 * 1024 * 1024
 
 
 def set_open_file_limit(wanted):
-    """Raises the soft limit on open files to what the payload asked for.
-
-    Only upward, and never past the hard limit: the value exists for modules that need more
-    descriptors than the login shell grants, and lowering one a host deliberately raised would be
-    a difference nobody asked for. A refusal is not fatal - the module is the better judge of
-    whether it can work without it.
+    """Sets the soft limit on open files to what the task asked for, as the reference's module
+    wrapper does: up or down, never past the hard limit. A refusal is not fatal - the module is
+    the better judge of whether it can work without it.
     """
     if not wanted:
         return
@@ -61,7 +58,7 @@ def set_open_file_limit(wanted):
         soft, hard = resource.getrlimit(resource.RLIMIT_NOFILE)
         if hard != resource.RLIM_INFINITY:
             wanted = min(wanted, hard)
-        if soft == resource.RLIM_INFINITY or wanted <= soft:
+        if wanted == soft:
             return
         resource.setrlimit(resource.RLIMIT_NOFILE, (wanted, hard))
     except (ImportError, ValueError, OSError):

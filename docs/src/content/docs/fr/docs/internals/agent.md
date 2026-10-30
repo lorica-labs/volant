@@ -1,5 +1,5 @@
 ---
-sourceHash: 3819217d77a5
+sourceHash: a648d11b724a
 title: L'agent sur vos hôtes
 description: Comment Volant envoie, vérifie et répare l'agent qu'il met en cache sur chaque hôte, et comment les connexions ssh vers un hôte sont partagées.
 ---
@@ -90,7 +90,7 @@ C'est OpenSSH qui fait le travail : `~/.ssh/config`, `Match`, `Include`, `Proxy
 
 Chaque connexion est un processus `ssh` distinct et coûte trois descripteurs de fichier au contrôleur. Avec l'élévation, une exécution peut tenir deux connexions par hôte : celle de l'hôte et une avec élévation.
 
-Au démarrage, Volant relève sa propre limite souple de fichiers ouverts jusqu'à la limite stricte, plafonnée à 1,048,576. La plupart des systèmes Linux livrent une limite stricte bien supérieure à ce dont une exécution a besoin : il n'y a donc rien à faire.
+Au démarrage, Volant relève sa propre limite souple de fichiers ouverts jusqu'à la limite stricte, plafonnée à 1,048,576. La plupart des systèmes Linux livrent une limite stricte bien supérieure à ce dont une exécution a besoin : il n'y a donc rien à faire. L'agent d'un hôte local démarre avec la limite souple avec laquelle Volant a démarré, si bien que ses modules reçoivent ce qu'ils recevraient sous `ansible-playbook`, et `ansible_python_module_rlimit_nofile` fixe celle d'un module, `command` et `shell` compris.
 
 :::caution
 Une limite stricte de 1024 arrête encore une exécution à environ 330 connexions, ou environ 169 hôtes avec élévation. `ssh` cesse alors de démarrer, et les hôtes touchés sont signalés injoignables alors qu'ils n'ont aucun problème. Dans bash, `ulimit -n 1024` abaisse la limite stricte en même temps que la limite souple.

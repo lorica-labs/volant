@@ -965,6 +965,7 @@ fn the_entry_point_hands_back_and_reads_the_arguments() {
             interpreter: None,
             remote_tmp: "/tmp".into(),
             check_mode: false,
+            rlimit_nofile: None,
         };
         let args = json!({"strategy": "all"});
         match run(args.as_object().unwrap(), &context, &|| false) {

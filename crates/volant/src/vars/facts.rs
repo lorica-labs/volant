@@ -95,8 +95,12 @@ const RESTRICTED_FACTS: [&str; 39] = [
 ///
 /// `ansible_host_key_checking` and `ansible_ssh_host_key_checking` turn host key checking off
 /// for a `paramiko_ssh` host: a host must not vouch for its own key.
-const ENGINE_RESTRICTED_FACTS: [&str; 15] = [
+///
+/// `ansible_python_module_rlimit_nofile` sets the open file limit every module starts with: a
+/// host that named its own could starve the modules the play runs there.
+const ENGINE_RESTRICTED_FACTS: [&str; 16] = [
     "ansible_host_key_checking",
+    "ansible_python_module_rlimit_nofile",
     "ansible_ssh_host_key_checking",
     "ansible_remote_tmp",
     "ansible_executable",

@@ -142,8 +142,27 @@ pub(super) fn from_json(value: Value) -> Result<Value, Error> {
     let text = value
         .as_str()
         .ok_or_else(|| invalid("from_json requires a string"))?;
-    let parsed: serde_json::Value =
-        serde_json::from_str(text).map_err(|e| invalid(format!("from_json: {e}")))?;
+    let (text, lone) = super::surrogates::stand_in(text);
+    let mut parsed: serde_json::Value =
+        serde_json::from_str(&text).map_err(|e| invalid(format!("from_json: {e}")))?;
+    if lone {
+        super::surrogates::resolve(&mut parsed).map_err(|e| {
+            // The reference chains the refusal, with how to turn the check off, behind the
+            // plugin's own sentence.
+            let plugin = "The filter plugin 'ansible.builtin.from_json' failed";
+            let message = format!("{plugin}: {e}");
+            crate::bridge::remember_chain(
+                &message,
+                vec![
+                    format!("{plugin}."),
+                    format!(
+                        "{e} This check can be disabled with the `MODULE_STRICT_UTF8_RESPONSE` setting."
+                    ),
+                ],
+            );
+            crate::template::bridged::raise(message)
+        })?;
+    }
     Ok(from_json_value(parsed))
 }
 

@@ -101,6 +101,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   The fact modules the play's fact gathering runs, `smart` (`setup`) unless set. A literal list in the plays, their tasks or the inventory (`ansible_facts_modules`) is read too; a module named only by a template cannot be run.
 </Option>
 
+<Option name="module_strict_utf8_response" id="defaults-module-strict-utf8-response" default="true" env="ANSIBLE_MODULE_STRICT_UTF8_RESPONSE">
+  Whether `from_json` refuses a string that holds a lone surrogate, such as `\udc80`. Off, the value keeps it and prints with `?` in its place, with a warning.
+</Option>
+
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">
   Print the statistics that `set_stats` collected after the recap.
 </Option>

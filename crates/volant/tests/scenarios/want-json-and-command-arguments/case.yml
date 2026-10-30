@@ -1,0 +1,7 @@
+# A module written in another language that reads its arguments from a file (`WANT_JSON`) runs
+# with its arguments file; `expand_argument_vars` fails a `shell` task unless it is `omit`;
+# `command` warns about the `executable` it ignores, fails without a command or with two, and
+# reads a `creates` that YAML made a boolean as the path `True`.
+stderr: true
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

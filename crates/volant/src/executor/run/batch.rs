@@ -108,6 +108,7 @@ pub(super) async fn send_batch<C: AgentChannel>(
                     drop_internal_keys(&mut result);
                     add_output_lines(&mut result);
                     summarise_exception(&mut result);
+                    super::deprecation::register_deprecations(&mut result);
                     *slot = Some(result);
                 }
             }

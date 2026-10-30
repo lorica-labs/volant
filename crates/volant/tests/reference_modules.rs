@@ -1049,7 +1049,7 @@ class ActionModule(ActionBase):
 
 class ActionModule(ActionBase):
     def run(self, tmp=None, task_vars=None):
-        return {"path": self._connection.socket_path}
+        return {"path": self._connection.reset}
 "#,
     ),
     (
@@ -1088,7 +1088,7 @@ class ActionModule(ActionBase):
     "HostVar { host: \"other\" }",
     "Tmp(Remove { path: \"/tmp/ansible-tmp-1\" })",
 ], Ok(serde_json::json!({"rc": 0, "stdout": "hi\n", "module": {"ping": "x"}, "other": 7, "args": {"k": "{{ a }}"}})))]
-#[case::member_not_supported("refused", serde_json::json!({}), &[], Ok(serde_json::json!({"failed": true, "msg": "Task failed: Connection.socket_path is not supported yet"})))]
+#[case::member_not_supported("refused", serde_json::json!({}), &[], Ok(serde_json::json!({"failed": true, "msg": "Task failed: Connection.reset is not supported yet"})))]
 #[case::link_failure_is_unreachable("unreachable", serde_json::json!({}), &["Command { cmd: \"/bin/sh -c 'true && sleep 0'\", stdin: None, sudoable: false }"], Ok(serde_json::json!({"unreachable": true, "msg": "Task failed: the host is gone", "changed": false})))]
 #[case::skip("skipped", serde_json::json!({}), &[], Ok(serde_json::json!({"skipped": true, "msg": "not here", "changed": false})))]
 #[case::unknown_plugin("my.col.nosuch", serde_json::json!({}), &[], Err("the handler 'my.col.nosuch' was not found"))]

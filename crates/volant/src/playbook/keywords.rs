@@ -161,16 +161,31 @@ pub(crate) fn print_deprecation_line(text: &str) {
 
 /// Whether deprecations show at all; the line that says how to silence them goes out first, once.
 fn print_deprecation_header() -> bool {
-    if !DEPRECATION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
-        return false;
+    match deprecation_header() {
+        Some(header) => {
+            if let Some(header) = header {
+                let shown = format!("{header}\n");
+                crate::render::log::record(&shown);
+                eprint!("{shown}");
+            }
+            true
+        }
+        None => false,
     }
-    static HEADER: std::sync::Once = std::sync::Once::new();
-    HEADER.call_once(|| {
-        let shown = "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.\n";
-        crate::render::log::record(shown);
-        eprint!("{shown}");
-    });
-    true
+}
+
+/// `None` when deprecations are off; otherwise the line that says how to silence them, the first
+/// time it is asked for in the run, for a caller that prints it in its own order.
+pub(crate) fn deprecation_header() -> Option<Option<&'static str>> {
+    static SAID: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+    if !DEPRECATION_WARNINGS.load(std::sync::atomic::Ordering::Relaxed) {
+        return None;
+    }
+    Some(
+        (!SAID.swap(true, std::sync::atomic::Ordering::Relaxed)).then_some(
+            "[WARNING]: Deprecation warnings can be disabled by setting `deprecation_warnings=False` in ansible.cfg.",
+        ),
+    )
 }
 
 /// The deprecation the reference prints where a value that reads `play_hosts` was written, once

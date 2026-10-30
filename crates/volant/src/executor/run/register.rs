@@ -216,8 +216,11 @@ pub(in crate::executor) fn take_warnings(
             out.extend(list.iter().map(warning_text));
         }
         // A bridged plugin's deprecation, after its warnings: measured on ansible-core 2.19.12.
+        // A module's own are drawn from its result, one line each, unless deprecations are off.
         if let Some(Value::String(text)) = result.0.remove(super::DEPRECATION_TEXT) {
             out.push(format!("{}{text}", crate::render::RAW_WARNING));
+        } else {
+            out.extend(super::deprecation::module_deprecation_warnings(result));
         }
     }
     out

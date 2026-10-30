@@ -28,7 +28,6 @@ pub(super) use batch::{first_batch_id, run_agent_batch};
 pub(super) use channel::Relinker;
 pub(super) use controller::pause_lines;
 pub(crate) use controller::utc_timestamp;
-pub(super) use deprecation::deprecation_warnings;
 pub(super) use interpreter::{
     DISCOVERED_INTERPRETER, DISCOVERY_HELP, action_fqcn, chosen_interpreter, discovers_interpreter,
     discovery_warning, legacy_discovery, python_for, requested_interpreter, running_host_vars,

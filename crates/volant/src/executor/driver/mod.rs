@@ -29,11 +29,11 @@ use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, Polled, Relinker, Replayed,
     RetryLine, announce_retry, any_retried, break_after, broke_before, chosen_interpreter,
     discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
-    judge_attempt, link_for, local_timed_out, notified_handlers, pause_lines, poll_job, polls,
-    python_for, record_facts, record_inventory_results, record_local_facts, record_registered,
-    refusal, release_at_barrier, replayed, requested_interpreter, retry_plans, run_agent_batch,
-    run_local, running_host_vars, shown, silent_discovery, stamp_discovery, step_task, step_tasks,
-    take_warnings, task_fails,
+    judge_attempt, legacy_discovery, link_for, local_timed_out, notified_handlers, pause_lines,
+    poll_job, polls, python_for, record_facts, record_inventory_results, record_local_facts,
+    record_registered, refusal, release_at_barrier, replayed, requested_interpreter, retry_plans,
+    run_agent_batch, run_local, running_host_vars, shown, silent_discovery, stamp_discovery,
+    step_task, step_tasks, take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -2231,59 +2231,31 @@ pub(super) async fn drive_host(
                     _ => None,
                 };
                 let mut warnings = take_warnings(&mut results);
-                for message in &warnings {
-                    let _ = tx
-                        .send(Event::Warning {
-                            host: name.clone(),
-                            index: *index,
-                            message: message.clone(),
-                            censored: task.censors(),
-                        })
-                        .await;
-                }
+                let mut said: Vec<(String, bool)> = warnings
+                    .iter()
+                    .map(|m| (m.clone(), task.censors()))
+                    .collect();
                 // Not censored by `no_log`: measured on ansible-core 2.19.12, the line names the
                 // host and the path and nothing the task returned, and it shows on a hidden task.
                 // Registered without the pointer to the documentation the line ends with.
                 if let (Some(true), Some(path)) = (discovered, &found) {
                     let text = discovery_warning(&name, path);
+                    said.push((format!("{text} {DISCOVERY_HELP}"), false));
+                    warnings.push(text);
+                }
+                if let (Some(_), Some(i)) = (discovered, first) {
+                    let deprecations = legacy_discovery(&mut results[i].1, &items[i].vars);
+                    said.extend(deprecations.into_iter().map(|m| (m, false)));
+                }
+                for (message, censored) in said {
                     let _ = tx
                         .send(Event::Warning {
                             host: name.clone(),
                             index: *index,
-                            message: format!("{text} {DISCOVERY_HELP}"),
-                            censored: false,
+                            message,
+                            censored,
                         })
                         .await;
-                    warnings.push(text);
-                }
-                // After the warning, as the reference's discovery raises it.
-                if discovered.is_some()
-                    && let Some(i) = first
-                    && let Some(deprecation) = super::run::legacy_discovery(&items[i].vars)
-                {
-                    let shown = TaskResult(Map::from_iter([(
-                        "deprecations".to_string(),
-                        Value::Array(vec![deprecation.clone()]),
-                    )]));
-                    let result = &mut results[i].1;
-                    match result.0.get_mut("deprecations") {
-                        Some(Value::Array(list)) => list.push(deprecation),
-                        _ => {
-                            result
-                                .0
-                                .insert("deprecations".into(), Value::Array(vec![deprecation]));
-                        }
-                    }
-                    for message in super::run::deprecation_warnings(&shown) {
-                        let _ = tx
-                            .send(Event::Warning {
-                                host: name.clone(),
-                                index: *index,
-                                message,
-                                censored: false,
-                            })
-                            .await;
-                    }
                 }
                 let removed = {
                     // One lock for both: a reader between them would see a host that had

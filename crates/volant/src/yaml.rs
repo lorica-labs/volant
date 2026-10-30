@@ -19,6 +19,7 @@ mod merge;
 mod quoted;
 mod walk;
 
+pub use escapes::as_reference;
 pub(crate) use escapes::{escape_strings, literal_escapes, written_strings};
 use walk::{lower, mapping_addresses, mapping_starts};
 

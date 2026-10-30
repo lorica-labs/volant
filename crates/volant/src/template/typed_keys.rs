@@ -108,15 +108,17 @@ pub(crate) fn of_template(key: &Value) -> Option<(String, Typed)> {
     match key.kind() {
         ValueKind::None | ValueKind::Undefined => Some(("None".to_string(), Typed::None)),
         ValueKind::Bool => Some((key.is_true().to_string(), Typed::Bool(key.is_true()))),
-        ValueKind::Number => match i64::try_from(key.clone()) {
-            Ok(n) if key.as_i64().is_some() => Some((n.to_string(), Typed::Int(n))),
-            _ => {
-                let f = f64::try_from(key.clone()).ok()?;
-                let text = crate::playbook::python_repr(&serde_json::Value::Number(
-                    serde_json::Number::from_f64(f)?,
-                ));
-                Some((text, Typed::Float(f)))
+        // `as_i64` takes a float with no fraction too: the serialized number tells them apart.
+        ValueKind::Number => match serde_json::to_value(key).ok()? {
+            serde_json::Value::Number(n) if !n.is_f64() => {
+                let n = n.as_i64()?;
+                Some((n.to_string(), Typed::Int(n)))
             }
+            serde_json::Value::Number(n) => {
+                let text = crate::playbook::python_repr(&serde_json::Value::Number(n.clone()));
+                Some((text, Typed::Float(n.as_f64()?)))
+            }
+            _ => None,
         },
         _ => None,
     }

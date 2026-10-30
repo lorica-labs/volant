@@ -12,6 +12,8 @@ use anyhow::{anyhow, bail};
 use saphyr::{Mapping, MarkedYaml, Scalar, Tag, Yaml, YamlData};
 use serde_json::{Map, Value};
 
+use crate::template::typed_keys::Typed;
+
 use super::{Starts, is_vault, read_scalar, read_tagged, scalar, unsafe_data, vault_data};
 
 /// A collection of the source tree whose children are being lowered.
@@ -325,16 +327,43 @@ fn key_text(key: &Yaml<'_>) -> anyhow::Result<String> {
     })
 }
 
+/// What a template reads a key that is no string as: see `template::typed_keys`.
+fn key_typed(key: &Yaml<'_>) -> Option<Typed> {
+    Some(match key {
+        Yaml::Value(Scalar::Integer(i)) => Typed::Int(*i),
+        Yaml::Value(Scalar::FloatingPoint(f)) => Typed::Float(f.into_inner()),
+        Yaml::Value(Scalar::Boolean(b)) => Typed::Bool(*b),
+        Yaml::Value(Scalar::Null) => Typed::None,
+        _ => return None,
+    })
+}
+
 /// A mapping of scalars as JSON.
 fn scalar_object(map: &Mapping<'_>) -> anyhow::Result<Value> {
     let mut out = Map::new();
+    let mut typed = Vec::new();
     for (k, v) in map {
-        let key = key_text(k)?;
+        let key = typed_text(k, &mut typed)?;
         if let Yaml::Value(scalar) = v {
             out.insert(key, scalar_json(scalar, false));
         }
     }
-    Ok(Value::Object(out))
+    Ok(finished(&mut out, &typed))
+}
+
+/// [`key_text`], noting the key in `typed` when it is no string.
+fn typed_text(key: &Yaml<'_>, typed: &mut Vec<(String, Typed)>) -> anyhow::Result<String> {
+    let text = key_text(key)?;
+    if let Some(kind) = key_typed(key) {
+        typed.push((text.clone(), kind));
+    }
+    Ok(text)
+}
+
+/// A converted mapping, its typed keys remembered for the templates that read it.
+fn finished(out: &mut Map<String, Value>, typed: &[(String, Typed)]) -> Value {
+    crate::template::typed_keys::remember(out, typed);
+    Value::Object(std::mem::take(out))
 }
 
 /// A collection of the lowered tree whose children are being converted.
@@ -347,6 +376,8 @@ enum Converting<'t, 'a> {
         entries: Box<dyn Iterator<Item = (&'t Yaml<'a>, &'t Yaml<'a>)> + 't>,
         key: Option<String>,
         out: Map<String, Value>,
+        /// The keys that were no strings: see `template::typed_keys`.
+        typed: Vec<(String, Typed)>,
     },
     /// A `!unsafe`, and whether it is the outermost: it wraps the strings below it, once.
     Unsafe { outermost: bool },
@@ -382,6 +413,7 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
                     entries: Box::new(map.iter()),
                     key: None,
                     out: Map::new(),
+                    typed: Vec::new(),
                 }),
                 Yaml::Tagged(tag, inner) if tag.handle == "!" && is_vault(&tag.suffix) => {
                     match &**inner {
@@ -432,12 +464,17 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
                 Some(item) => next = Some(item),
                 None => done = Some(Value::Array(std::mem::take(out))),
             },
-            Some(Converting::Object { entries, key, out }) => match entries.next() {
+            Some(Converting::Object {
+                entries,
+                key,
+                out,
+                typed,
+            }) => match entries.next() {
                 Some((k, v)) => {
-                    *key = Some(key_text(k)?);
+                    *key = Some(typed_text(k, typed)?);
                     next = Some(v);
                 }
-                None => done = Some(Value::Object(std::mem::take(out))),
+                None => done = Some(finished(out, typed)),
             },
             _ => {}
         }

@@ -265,7 +265,7 @@ pub(super) fn regex_findall(
     let pattern = unfold_pattern(&text_arg("regex_findall", "pattern", a.first())?);
     let re = compile(&pattern, flag(a.get(2)), flag(a.get(1)))?;
     let group_text =
-        |caps: &regex::Captures<'_>, n: usize| Value::from(caps.get(n).map_or("", |m| m.as_str()));
+        |caps: &engine::Captures<'_>, n: usize| Value::from(caps.get(n).map_or("", |m| m.as_str()));
     let mut found = Vec::new();
     re.scan(&text, re.groups > 0, |hit| {
         found.push(match (&hit.caps, re.groups) {

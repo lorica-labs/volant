@@ -2311,6 +2311,18 @@
   },
   {
     "case": {
+      "template": "{{ 'qa_1 qz_1' is search('(?=.*qa_1)(?=.*qz_1)') }} {{ 'ab' | regex_findall('a(?=b)') }} {{ 'ab' | regex_search('a(?!c)') }} {{ 'ab' | regex_replace('(?<=a)b', 'x') }} {{ 'ab' is regex('(?<!x)b') }}"
+    },
+    "result": "True ['a'] a ax True"
+  },
+  {
+    "case": {
+      "template": "{{ 'aa' | regex_findall('(a)\\1') }} {{ 'aa' | regex_replace('(?P<n>a)(?P=n)', 'x') }} {{ 'ab' | regex_replace('(?>a)', 'x') }} {{ 'abab' | regex_search('(ab)\\1') }}"
+    },
+    "result": "['a'] x xb abab"
+  },
+  {
+    "case": {
       "template": "{{ 'abc' | regex_search('(') }}"
     },
     "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.regex_search' failed: missing ), unterminated subpattern at position 0"

@@ -530,20 +530,11 @@ fn the_regex_filters_return_what_python_re_returned() {
     }
 }
 
-/// Python syntax the `regex` crate lacks is refused by the construct's name, not answered wrongly.
+/// Python syntax the engine lacks is refused by the construct's name, not answered wrongly.
 /// The rows in `cases.yml` cover what both engines run.
 #[test]
 fn a_pattern_without_a_rust_counterpart_is_refused_by_name() {
     let rows = [
-        ("{{ 'ab' | regex_findall('a(?=b)') }}", "look-ahead"),
-        ("{{ 'ab' | regex_search('a(?!c)') }}", "look-ahead"),
-        ("{{ 'ab' | regex_replace('(?<=a)b', 'x') }}", "look-behind"),
-        ("{{ 'ab' is regex('(?<!x)b') }}", "look-behind"),
-        ("{{ 'aa' | regex_findall('(a)\\1') }}", "back reference"),
-        (
-            "{{ 'aa' | regex_replace('(?P<n>a)(?P=n)', 'x') }}",
-            "'(?P=name)'",
-        ),
         (
             "{{ 'ab' | regex_replace('a++', 'x') }}",
             "possessive quantifier",
@@ -552,7 +543,6 @@ fn a_pattern_without_a_rust_counterpart_is_refused_by_name() {
             "{{ 'ab' | regex_replace('a{1,2}+', 'x') }}",
             "possessive quantifier",
         ),
-        ("{{ 'ab' | regex_replace('(?>a)', 'x') }}", "atomic group"),
         (
             "{{ 'ab' | regex_findall('(a)?(?(1)b|c)') }}",
             "conditional group",

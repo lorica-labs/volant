@@ -1,12 +1,17 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! A compiled Python pattern, and the walk over its matches that `re.findall` and `re.sub` make.
+//! `fancy-regex` runs it: look-around, atomic groups and back references go to its backtracking
+//! engine, and every other pattern to the `regex` crate it wraps.
 
 use std::cell::RefCell;
 use std::collections::HashMap;
 use std::rc::Rc;
 
+use fancy_regex::{Regex, RegexBuilder};
 use minijinja::Error;
-use regex::{Captures, Regex, RegexBuilder};
+
+/// The groups of one match.
+pub(super) type Captures<'t> = fancy_regex::Captures<'t, str>;
 
 use super::invalid;
 use super::pattern::{Failure, translate};
@@ -134,25 +139,35 @@ impl Compiled {
         with_caps: bool,
     ) -> Result<Option<Hit<'t>>, Error> {
         let re = self.engine(text)?;
-        Ok(Self::at(re, text, 0, with_caps))
+        Self::at(re, text, 0, with_caps)
     }
 
-    fn at<'t>(re: &Regex, text: &'t str, from: usize, with_caps: bool) -> Option<Hit<'t>> {
+    fn at<'t>(
+        re: &Regex,
+        text: &'t str,
+        from: usize,
+        with_caps: bool,
+    ) -> Result<Option<Hit<'t>>, Error> {
+        // The backtracking engine gives up on a pattern that backtracks too much.
+        let failed = |e: fancy_regex::Error| invalid(format!("regular expression: {e}"));
         if with_caps {
-            let caps = re.captures_at(text, from)?;
-            let whole = caps.get(0)?;
-            Some(Hit {
+            let Some(caps) = re.captures_from_pos(text, from).map_err(failed)? else {
+                return Ok(None);
+            };
+            let Some(whole) = caps.get(0) else {
+                return Ok(None);
+            };
+            Ok(Some(Hit {
                 start: whole.start(),
                 end: whole.end(),
                 caps: Some(caps),
-            })
+            }))
         } else {
-            let m = re.find_at(text, from)?;
-            Some(Hit {
+            Ok(re.find_from_pos(text, from).map_err(failed)?.map(|m| Hit {
                 start: m.start(),
                 end: m.end(),
                 caps: None,
-            })
+            }))
         }
     }
 
@@ -169,7 +184,7 @@ impl Compiled {
         let mut from = 0;
         let mut must_advance = false;
         while from <= text.len() {
-            let Some(hit) = Self::at(re, text, from, with_caps) else {
+            let Some(hit) = Self::at(re, text, from, with_caps)? else {
                 break;
             };
             if must_advance && hit.start == from && hit.end == from {

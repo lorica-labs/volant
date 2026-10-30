@@ -1,5 +1,5 @@
 ---
-sourceHash: ac09abc44b15
+sourceHash: 15a0cbe0471d
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -121,9 +121,7 @@ Un résultat enregistré et tout autre texte venu d'un hôte géré restent du t
 
 Certaines syntaxes Python n'ont pas d'équivalent dans la crate Rust. Un motif qui les utilise échoue avec une erreur qui nomme la construction, là où ansible-core l'exécute :
 
-- l'anticipation et la rétrospection : `(?=`, `(?!`, `(?<=`, `(?<!`
-- une référence arrière dans le motif : `\1`, `(?P=name)`
-- les quantificateurs possessifs (`a++`), les groupes atomiques (`(?>`) et les groupes conditionnels (`(?(1)a|b)`)
+- les quantificateurs possessifs (`a++`) et les groupes conditionnels (`(?(1)a|b)`)
 - `\N{name}`, les drapeaux `(?a)` et `(?L)`, et `(?x:` comme drapeau à portée limitée
 - une répétition paresseuse ou une alternative vide avant une autre (`a*?`, `|a`) quand une correspondance vide demande d'en essayer une plus longue au même endroit
 - `$` dans un motif sans `multiline`, sur un texte qui a plus d'une ligne et se termine par un saut de ligne

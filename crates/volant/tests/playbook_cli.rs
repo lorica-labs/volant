@@ -6282,12 +6282,10 @@ fn an_own_cache_plugin_is_refused_with_its_file() {
     );
     let err = String::from_utf8_lossy(&out.stderr);
     assert_eq!(out.status.code(), Some(4), "{err}");
-    let file = std::path::absolute(dir.join("cache_plugins").join("mine.py")).expect("a path");
+    // The directory as the run sees it: macOS names its temporary directory under `/private`.
     assert!(
-        err.contains(&format!(
-            "fact cache plugin 'mine' (from 'env: ANSIBLE_CACHE_PLUGIN') at '{}' is not supported yet",
-            file.display()
-        )),
+        err.contains("fact cache plugin 'mine' (from 'env: ANSIBLE_CACHE_PLUGIN') at '/")
+            && err.contains("/cache_plugins/mine.py' is not supported yet"),
         "{err}"
     );
     let _ = std::fs::remove_dir_all(&dir);

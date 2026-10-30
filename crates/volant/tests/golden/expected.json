@@ -2311,6 +2311,36 @@
   },
   {
     "case": {
+      "template": "{{ 'qa_1 qz_1' is search('(?=.*qa_1)(?=.*qz_1)') }} {{ 'ab' | regex_findall('a(?=b)') }} {{ 'ab' | regex_search('a(?!c)') }} {{ 'ab' | regex_replace('(?<=a)b', 'x') }} {{ 'ab' is regex('(?<!x)b') }}"
+    },
+    "result": "True ['a'] a ax True"
+  },
+  {
+    "case": {
+      "template": "{{ 'aa' | regex_findall('(a)\\1') }} {{ 'aa' | regex_replace('(?P<n>a)(?P=n)', 'x') }} {{ 'ab' | regex_replace('(?>a)', 'x') }} {{ 'abab' | regex_search('(ab)\\1') }}"
+    },
+    "result": "['a'] x xb abab"
+  },
+  {
+    "case": {
+      "template": "{{ 'abc' | regex_search('(') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.regex_search' failed: missing ), unterminated subpattern at position 0"
+  },
+  {
+    "case": {
+      "template": "{{ 'abc' | regex_replace('(', 'x') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.regex_replace' failed: missing ), unterminated subpattern at position 0"
+  },
+  {
+    "case": {
+      "template": "{{ 'abc' | to_uuid(namespace='nope') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.to_uuid' failed: Invalid value 'nope' for 'namespace': badly formed hexadecimal UUID string"
+  },
+  {
+    "case": {
       "template": "{{ 2.7 | round(0, 'floor') }} {{ 2.1 | round(0, 'ceil') }} {{ 2.55 | round(1, 'common') }} {{ 2.5 | round }} {{ -2.5 | round(0, 'floor') }}"
     },
     "result": "2.0 3.0 2.5 2.0 -3.0"

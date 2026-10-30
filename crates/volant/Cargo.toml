@@ -54,6 +54,7 @@ tokio.workspace = true
 toml_edit.workspace = true
 ureq.workspace = true
 volant-protocol.workspace = true
+fancy-regex.workspace = true
 
 [dev-dependencies]
 insta.workspace = true

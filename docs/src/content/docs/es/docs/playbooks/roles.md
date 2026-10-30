@@ -1,5 +1,5 @@
 ---
-sourceHash: 2f3467c64674
+sourceHash: f3d5d68d17df
 title: Roles, includes e imports
 description: Dónde busca Volant los roles, cómo funcionan las dependencias, las especificaciones de argumentos y las variables de un rol, y cómo los imports y los includes traen otros archivos a un play.
 ---
@@ -67,7 +67,9 @@ Los `defaults` y `vars` de un rol son visibles para todo el play, así que `pre_
 
 Una dependencia también lee lo que tienen los roles por encima de ella. Sus `vars` quedan por encima del `vars/main.yml` de sus padres y del `vars/main.yml` de sus propias dependencias, que gana al de los padres. Sus `defaults` van al revés: los de sus dependencias, luego los de sus padres y luego los suyos. Sus parámetros quedan por encima de los de sus padres, así que una dependencia sin un parámetro con ese nombre lee el del padre más cercano.
 
-Un `import_role` con `public: false` los mantiene para sí, y un `include_role` hace lo mismo salvo que indique `public: true`. Consulta [Opciones de rol](#opciones-de-rol).
+Un `import_role` con `public: false` los mantiene para sí, y un `include_role` hace lo mismo salvo que indique `public: true`. Consulta [Opciones de rol](#opciones-de-rol). [`private_role_vars`](/es/docs/reference/configuration/#defaults-private-role-vars) cambia estos valores por defecto.
+
+Un rol que un `include_role` trae desde dentro de otro rol lee los parámetros de ese rol, por encima de las `vars:` de la sentencia, y sus `vars` y `defaults`, sin importar cuántos includes haya entre ambos.
 
 ## Imports e includes
 
@@ -134,7 +136,7 @@ Una clave de `apply` que un bloque no tiene detiene la ejecución con el código
 
 Con `public: true`, los `defaults` y `vars` de un `include_role` son visibles para todo lo que se ejecuta después de la sentencia, y también para los demás hosts, porque ansible-core guarda la lista de roles públicos en el play y no en el host. Una tarea que se ejecutó antes de la sentencia no lee nada de ella, y un include con `when: false` no aporta nada.
 
-Con `allow_duplicates: false`, la sentencia muestra su línea `included:` y no ejecuta nada para un host al que ya se le ha traído un rol idéntico. Dos sentencias son idénticas cuando nombran el mismo rol, los mismos archivos y las mismas `vars:`, y, en un bucle, el mismo elemento bajo la misma variable de bucle. `rolespec_validate: false` omite la comprobación de la especificación de argumentos.
+Con `allow_duplicates: false`, la sentencia muestra su línea `included:` y no ejecuta nada para un host al que ya se le ha traído un rol idéntico. Dos sentencias son idénticas cuando nombran el mismo rol, los mismos archivos y las mismas `vars:`, y, en un bucle, el mismo elemento bajo la misma variable de bucle. `rolespec_validate: false` omite la comprobación de la especificación de argumentos. Cuenta un `import_role` o un `include_role` anterior de ese rol. Un rol de `roles:` no cuenta, como en Ansible.
 
 Cada opción de las cuatro sentencias, tal como las leen Volant y ansible-core 2.19.12:
 
@@ -205,5 +207,4 @@ Una sentencia a 32 niveles de profundidad se rechaza. Un solo contador cubre el 
 - Un archivo que se incluye a sí mismo llega a ese límite y se informa como un fallo de tarea con el código de salida 2. Ansible recurre hasta que se agota la pila de Python, con el código de salida 250.
 - Un archivo incluido fuera de `tasks/` y `handlers/` de un rol que no se interpreta hace fallar la tarea, con el código de salida 2 y un recap. Ansible termina con el código 4 y sin recap. Un fallo que el recap contabiliza es más útil, y un `rescue` puede capturarlo.
 - Un include que falla dentro de un bucle imprime la línea habitual `failed: [host] (item=...)`. Ansible imprime solo un `[ERROR]` en la salida de error estándar.
-- `allow_duplicates: false` cuenta un rol como ejecutado para un host cuando se traen sus tareas. ansible-core lo cuenta cuando el host ejecutó al menos una de sus tareas, así que un rol cuyas tareas se omiten todas se ejecuta de nuevo allí.
 - `allow_duplicates: false` en un `import_role` compara las sentencias mientras se compila el play, y por eso un `when` en la sentencia anterior no cambia el resultado para un host.

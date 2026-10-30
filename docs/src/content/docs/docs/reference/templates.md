@@ -120,9 +120,7 @@ A registered result and any other text from a managed host stays text: it is nev
 
 Some Python syntax has no counterpart in the Rust crate. A pattern that uses it fails with an error that names the construct, where ansible-core runs it:
 
-- look-ahead and look-behind: `(?=`, `(?!`, `(?<=`, `(?<!`
-- a back reference inside the pattern: `\1`, `(?P=name)`
-- possessive quantifiers (`a++`), atomic groups (`(?>`) and conditional groups (`(?(1)a|b)`)
+- possessive quantifiers (`a++`) and conditional groups (`(?(1)a|b)`)
 - `\N{name}`, the flags `(?a)` and `(?L)`, and `(?x:` as a scoped flag
 - a lazy repeat or an empty alternative before another one (`a*?`, `|a`) when an empty match needs a longer one tried at the same place
 - `$` in a pattern without `multiline`, on a text that has more than one line and ends with a newline

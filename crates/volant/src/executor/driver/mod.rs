@@ -61,7 +61,7 @@ use rendered::{Rendered, render_keywords, step_at};
 pub(in crate::executor) use throttle::Turn as ThrottleTurn;
 use timings::file_timings;
 use unreachable::{ignore_the_batch, ignore_unreachable};
-use waits::RunOnce;
+use waits::{Halt, RunOnce};
 
 /// The `meta` actions whose `when` the reference does not read: it warns that the task does not
 /// support one and runs the action all the same.
@@ -430,7 +430,12 @@ pub(super) async fn drive_host(
             let masked_out = step
                 .hosts
                 .as_ref()
-                .is_some_and(|only| !only.iter().any(|h| h == &name));
+                .is_some_and(|only| !only.iter().any(|h| h == &name))
+                || match driver.role_done(&c, pos, batch.is_empty()).await {
+                    Ok(done) => done,
+                    Err(Halt::Flush) => break,
+                    Err(Halt::Stop) => break 'run,
+                };
             // A handler nothing notified is a step this host has nothing to do at: it reports
             // that it is done with it, shows nothing and moves on. Measured on ansible-core
             // 2.19.12 with two hosts and one notifying: the banner shows once, with the line of

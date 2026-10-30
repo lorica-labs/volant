@@ -8,6 +8,7 @@ use volant_protocol::modules::short_name;
 
 use crate::roles::RoleEntry;
 
+pub use super::connect::Connect;
 use super::deferred::Deferred;
 use super::fields::Debugger;
 use super::keywords::{Flag, META_ONCE, is_meta};
@@ -193,6 +194,11 @@ pub struct PlayTask {
     pub implicit: bool,
     pub module: String,
     pub args: Map<String, Value>,
+    /// Templates that render to more of the module's arguments, lowest first, each with where it
+    /// was written: one given as `args:`, then one given as the action's own value
+    /// (`assert: "{{ checks }}"`). Rendered per item under `args`, as ansible-core's argument
+    /// splat is.
+    pub splats: Vec<(String, Option<Origin>)>,
     /// The tags written here and on everything above it, sorted and free of duplicates. An
     /// empty list is what the reference calls `untagged`.
     pub tags: Vec<String>,
@@ -325,6 +331,7 @@ impl PlayTask {
             named: false,
             implicit: false,
             module: String::new(),
+            splats: Vec::new(),
             args: Map::new(),
             tags: Vec::new(),
             ignore_errors: None,
@@ -463,37 +470,5 @@ impl PlayTask {
     /// Whether an unreachable host stays in the play after this task.
     pub fn ignores_unreachable(&self) -> bool {
         self.ignore_unreachable == Some(true)
-    }
-}
-
-/// `remote_user`, `port`, `connection` and the escalation program's keywords `become_method`,
-/// `become_exe` and `become_flags`, wherever they are written, as written: each may be a
-/// template, rendered when the task runs, except `become_method`, which names one of
-/// [`super::BECOME_METHODS`]. A task's own value wins over its block's and its play's, and a host
-/// variable wins over all of them; see `Transport::for_task` and `become_for`.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct Connect {
-    pub remote_user: Option<String>,
-    pub port: Option<String>,
-    pub connection: Option<String>,
-    pub become_method: Option<String>,
-    pub become_exe: Option<String>,
-    pub become_flags: Option<String>,
-}
-
-impl Connect {
-    /// This layer over the one outside it.
-    pub fn over(&self, outer: &Connect) -> Connect {
-        let pick = |inner: &Option<String>, outer: &Option<String>| {
-            inner.clone().or_else(|| outer.clone())
-        };
-        Connect {
-            remote_user: pick(&self.remote_user, &outer.remote_user),
-            port: pick(&self.port, &outer.port),
-            connection: pick(&self.connection, &outer.connection),
-            become_method: pick(&self.become_method, &outer.become_method),
-            become_exe: pick(&self.become_exe, &outer.become_exe),
-            become_flags: pick(&self.become_flags, &outer.become_flags),
-        }
     }
 }

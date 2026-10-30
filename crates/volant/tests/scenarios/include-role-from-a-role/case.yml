@@ -1,0 +1,4 @@
+# A role an include_role brings in from a role reads that role's parameters, over the
+# statement's vars:, and its vars and defaults, several includes down; an include that says
+# allow_duplicates: false does not run again a role the play's roles: ran.
+args: [-i, inv.ini, play.yml]

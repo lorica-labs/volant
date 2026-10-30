@@ -1,5 +1,5 @@
 ---
-sourceHash: 61e526570a4b
+sourceHash: b9c6f7e0fcd1
 title: 块与 handler
 description: 失败如何在块中传递，rescue 和 always 做什么，以及 handler 何时运行。
 ---
@@ -88,6 +88,8 @@ handler 按定义的顺序运行，而不是按被通知的顺序。`roles:` 中
 task 只有在报告 `changed` 时才会通知。对于循环，由整体结果决定，所以只要有一个 item 发生了变化就够了。刷新运行之后，通知会被清除，所以除非再次有东西通知它，handler 不会在下一次刷新时再运行。
 
 `handlers:` 列表中可以写 `import_tasks`，无论在 play 中还是在 role 中。它指定的文件里的 handler 会带着它的关键字取代它的位置，可以按名称和 `listen` 通知。文件先在写这条语句的文件旁边查找，然后在 playbook 的目录中查找。
+
+两个 handler 同名时，由最后定义的那个列表中的 handler 响应，play 自己的列表排在所有 role 的列表之后；同一个列表中则是第一个。role 的 handler 也响应 `<role> : <name>`。所有监听该名称的 handler 都会运行，但与已找到的 handler 同名的第二个监听者除外。
 
 ### 来自 play 的关键字
 

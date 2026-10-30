@@ -35,6 +35,10 @@ pub struct InventoryArgs {
     /// Print the group tree, the whole inventory or one group.
     #[arg(long, value_name = "GROUP", num_args = 0..=1, overrides_with = "graph")]
     graph: Option<Option<String>>,
+    /// The group `--graph` starts at, after the options as ansible-inventory takes it. The other
+    /// actions ignore it: `--list --yaml all` lists the whole inventory.
+    #[arg(value_name = "GROUP")]
+    group: Option<String>,
     /// With `--graph`, add the variables of every host and group. The other actions ignore it.
     #[arg(long)]
     vars: bool,
@@ -104,15 +108,14 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     let chosen = usize::from(args.list)
         + usize::from(args.host.is_some())
         + usize::from(args.graph.is_some());
-    if chosen == 0 {
+    if chosen != 1 {
         eprintln!(
-            "[ERROR]: No action selected, at least one of --host, --graph or --list needs to be specified."
-        );
-        return Ok(5);
-    }
-    if chosen > 1 {
-        eprintln!(
-            "[ERROR]: Conflicting options used, only one of --host, --graph or --list can be used at the same time."
+            "[ERROR]: {}",
+            if chosen == 0 {
+                "No action selected, at least one of --host, --graph or --list needs to be specified."
+            } else {
+                "Conflicting options used, only one of --host, --graph or --list can be used at the same time."
+            }
         );
         return Ok(5);
     }
@@ -154,18 +157,19 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     if let Some(group) = &args.graph {
         return graph(
             args,
-            group.as_deref().unwrap_or("all"),
+            group.as_deref().or(args.group.as_deref()).unwrap_or("all"),
             &loaded,
             &store,
             export,
         );
     }
+    let layering = loaded.layering();
     // In the order the reference merges them, which TOML keeps and JSON and YAML sort.
     let ordered = |host: &str| -> serde_json::Map<String, Value> {
         written(if export {
             store.exported_vars(host)
         } else {
-            store.listed_vars_ordered(host, &loaded.group_var_names(host))
+            store.listed_vars_ordered(host, &layering.var_names(host))
         })
     };
     let vars_of = |host: &str| -> BTreeMap<String, Value> { ordered(host).into_iter().collect() };
@@ -320,6 +324,7 @@ fn yaml_list(
     group_vars: &VarsOf<'_>,
 ) -> minijinja::Value {
     let mut shared: HashMap<(ListedOrigin, String, String), minijinja::Value> = HashMap::new();
+    let layering = inventory.layering();
     let mut host_vars = |host: &str| {
         yaml_mapping(vars_of(host).into_iter().map(|(name, value)| {
             let key = if export {
@@ -327,8 +332,8 @@ fn yaml_list(
             } else {
                 match store.listed_origin(host, &name) {
                     ListedOrigin::Host => None,
-                    ListedOrigin::InventoryGroup => inventory
-                        .group_setting(host, &name)
+                    ListedOrigin::InventoryGroup => layering
+                        .setting(host, &name)
                         .map(|group| (ListedOrigin::InventoryGroup, group.to_string())),
                     origin => Some((origin, String::new())),
                 }

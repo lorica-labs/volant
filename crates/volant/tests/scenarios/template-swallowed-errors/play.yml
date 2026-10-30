@@ -1,0 +1,18 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+        var: "'http://a.b/c' | urlsplit('bad_filter')"
+      ignore_errors: true
+      register: r1
+    - set_fact:
+        bad: "{{ v }}"
+      vars:
+        v: "{{ lookup('dict', 1) }}"
+      ignore_errors: true
+      register: r2
+    - debug: {msg: "{{ r1 is failed }} {{ r2 is failed }} {{ bad | default('unset') }}"}
+    - debug: {msg: "{{ w }}"}
+      vars:
+        w: "{{ lookup('dict', 1) }}"
+      ignore_errors: true

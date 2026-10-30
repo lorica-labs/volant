@@ -129,6 +129,18 @@ pub(super) fn check_arguments(task: &PlayTask) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `end_role` written as a handler, a role's or the play's: measured on ansible-core 2.19.12, the
+/// reference stops loading the playbook, exit 4, before the first banner.
+pub(super) fn check_end_role_handler(task: &PlayTask) -> anyhow::Result<()> {
+    if is_meta(task) && meta_action(task) == "end_role" {
+        return Err(Refusal::at(
+            CODE,
+            "Cannot execute 'end_role' from a handler",
+        ));
+    }
+    Ok(())
+}
+
 /// `end_role` written where no role is: the reference stops loading the playbook, exit 4. Only the
 /// compiled steps know which role a task belongs to, so this is asked of them and not of the
 /// play's own lists.

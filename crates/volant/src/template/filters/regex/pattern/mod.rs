@@ -305,7 +305,23 @@ impl Scanner {
                     self.open(open_at);
                     let _ = write!(self.out, "(?P<{name}>");
                 }
-                Some('=') => return unsupported("a back reference to a named group, '(?P=name)'"),
+                Some('=') => {
+                    self.at += 1;
+                    let start = self.at;
+                    while self.peek().is_some_and(|c| c != ')') {
+                        self.at += 1;
+                    }
+                    if self.peek().is_none() {
+                        return invalid("missing ), unterminated name", start);
+                    }
+                    let name: String = self.src[start..self.at].iter().collect();
+                    self.at += 1;
+                    if !is_identifier(&name) {
+                        return invalid(format!("bad character in group name '{name}'"), start);
+                    }
+                    let _ = write!(self.out, "\\k<{name}>");
+                    self.item();
+                }
                 Some('>') => return unsupported("a recursive group, '(?P>name)'"),
                 _ => return invalid("unknown extension ?P", self.at),
             },
@@ -318,12 +334,23 @@ impl Scanner {
                 }
                 self.at += 1;
             }
-            '=' | '!' => return unsupported("look-ahead, '(?=' and '(?!'"),
+            // Look-around and atomic groups, which the backtracking engine runs.
+            '=' | '!' => {
+                self.open(open_at);
+                let _ = write!(self.out, "(?{c}");
+            }
             '<' => match self.peek() {
-                Some('=' | '!') => return unsupported("look-behind, '(?<=' and '(?<!'"),
+                Some(kind @ ('=' | '!')) => {
+                    self.at += 1;
+                    self.open(open_at);
+                    let _ = write!(self.out, "(?<{kind}");
+                }
                 _ => return invalid("unknown extension ?<", self.at),
             },
-            '>' => return unsupported("an atomic group, '(?>'"),
+            '>' => {
+                self.open(open_at);
+                self.out.push_str("(?>");
+            }
             '(' => return unsupported("a conditional group, '(?(id)yes|no)'"),
             c if c.is_ascii_alphabetic() || c == '-' => {
                 self.at -= 1;

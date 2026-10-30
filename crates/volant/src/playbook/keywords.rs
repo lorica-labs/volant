@@ -109,6 +109,9 @@ pub(super) fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Y
                             args.insert(k.clone(), v.clone());
                         }
                     }
+                    // A template is an argument splat, which the task reads for itself.
+                    (Some("args"), Yaml::Value(Scalar::String(text)))
+                        if possibly_all_template(text) => {}
                     _ => {
                         args.insert(key.clone(), value.clone());
                     }

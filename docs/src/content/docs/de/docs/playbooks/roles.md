@@ -1,5 +1,5 @@
 ---
-sourceHash: 2f3467c64674
+sourceHash: f3d5d68d17df
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -67,7 +67,9 @@ Die `defaults` und `vars` einer Rolle sind für das ganze Play sichtbar, sodass 
 
 Eine Abhängigkeit liest auch, was die Rollen über ihr halten. Ihre `vars` liegen über der `vars/main.yml` ihrer Eltern und über der `vars/main.yml` ihrer eigenen Abhängigkeiten, die gegen die der Eltern gewinnt. Ihre `defaults` laufen umgekehrt: erst die ihrer Abhängigkeiten, dann die ihrer Eltern, dann ihre eigenen. Ihre Parameter liegen über den Parametern ihrer Eltern, sodass eine Abhängigkeit ohne Parameter dieses Namens den des nächsten Elternteils liest.
 
-Ein `import_role` mit `public: false` behält sie für sich, und ein `include_role` tut das, sofern es nicht `public: true` sagt. Siehe [Rollenoptionen](#rollenoptionen).
+Ein `import_role` mit `public: false` behält sie für sich, und ein `include_role` tut das, sofern es nicht `public: true` sagt. Siehe [Rollenoptionen](#rollenoptionen). [`private_role_vars`](/de/docs/reference/configuration/#defaults-private-role-vars) ändert diese Standardwerte.
+
+Eine Rolle, die ein `include_role` aus einer anderen Rolle heraus einbringt, liest die Parameter dieser Rolle, über den `vars:` der Anweisung, sowie ihre `vars` und `defaults`, egal wie viele Includes dazwischen liegen.
 
 ## Imports und Includes
 
@@ -134,7 +136,7 @@ Ein Schlüssel in `apply`, den ein Block nicht hat, bricht den Lauf wie in ansib
 
 Mit `public: true` sind die `defaults` und `vars` eines `include_role` für alles sichtbar, was nach der Anweisung läuft, und auch für die anderen Hosts, weil ansible-core die Liste der öffentlichen Rollen im Play führt und nicht im Host. Ein Task, der vor der Anweisung lief, liest nichts davon, und ein Include mit `when: false` stellt nichts bereit.
 
-Mit `allow_duplicates: false` zeigt die Anweisung ihre Zeile `included:` und führt für einen Host nichts aus, dem bereits eine identische Rolle eingebracht wurde. Zwei Anweisungen sind identisch, wenn sie dieselbe Rolle, dieselben Dateien und dieselben `vars:` nennen, und bei einer Schleife dasselbe Element unter derselben Schleifenvariable. `rolespec_validate: false` lässt die Prüfung des Argument-Specs aus.
+Mit `allow_duplicates: false` zeigt die Anweisung ihre Zeile `included:` und führt für einen Host nichts aus, dem bereits eine identische Rolle eingebracht wurde. Zwei Anweisungen sind identisch, wenn sie dieselbe Rolle, dieselben Dateien und dieselben `vars:` nennen, und bei einer Schleife dasselbe Element unter derselben Schleifenvariable. `rolespec_validate: false` lässt die Prüfung des Argument-Specs aus. Ein früheres `import_role` oder `include_role` dieser Rolle zählt. Eine Rolle aus `roles:` zählt nicht, wie in Ansible.
 
 Jede Option der vier Anweisungen, wie Volant und ansible-core 2.19.12 sie lesen:
 
@@ -205,5 +207,4 @@ Eine Anweisung auf Ebene 32 wird abgelehnt. Ein Zähler deckt die Rollenverschac
 - Eine Datei, die sich selbst einbindet, trifft auf diese Grenze und wird als Task-Fehler mit Exit-Code 2 gemeldet. Ansible rekursiert, bis der Python-Stack erschöpft ist, bei Exit-Code 250.
 - Eine eingebundene Datei außerhalb von `tasks/` und `handlers/` einer Rolle, die sich nicht parsen lässt, lässt den Task mit Exit-Code 2 und einem Recap fehlschlagen. Ansible endet mit Code 4 und ohne Recap. Ein Fehler, den der Recap mitzählt, ist nützlicher, und ein `rescue` kann ihn auffangen.
 - Ein fehlschlagendes Include in einer Schleife gibt die übliche Zeile `failed: [host] (item=...)` aus. Ansible gibt nur ein `[ERROR]` auf der Standardfehlerausgabe aus.
-- `allow_duplicates: false` zählt eine Rolle als für einen Host ausgeführt, wenn ihre Tasks eingebracht werden. ansible-core zählt sie, wenn der Host mindestens einen ihrer Tasks ausgeführt hat, sodass eine Rolle, deren Tasks alle übersprungen werden, dort erneut läuft.
 - `allow_duplicates: false` bei einem `import_role` vergleicht die Anweisungen, während das Play kompiliert wird, ein `when` an der früheren Anweisung ändert das Ergebnis für einen Host daher nicht.

@@ -318,6 +318,12 @@ impl VarStore {
         // so the merged inventory view is applied first and files for the host's groups after.
         if let Some(inv) = self.inventory_vars.get(host) {
             extend(&mut vars, inv);
+        } else if self.is_implicit_localhost(host) {
+            // Measured on ansible-core 2.19.12: the implicit `localhost` is in no group, and it
+            // still reads the inventory's `all` variables, those of every source.
+            let mut all = self.dynamic.group_vars_of("all");
+            all.remove("ansible_group_priority");
+            extend(&mut vars, &all);
         }
         if let Some(names) = self.group_names.get(host) {
             for files in &self.group_files {

@@ -110,23 +110,6 @@ fn tagged_type(value: &Value) -> String {
     }
 }
 
-/// The variables of `existing` with `new` laid over them, mappings merged key by key all the way
-/// down and anything else replaced: `merge_hash` of ansible-core, which `hash_behaviour: merge`
-/// asks for.
-fn merge_hash(existing: &Map<String, Value>, new: &Map<String, Value>) -> Map<String, Value> {
-    let mut out = existing.clone();
-    for (key, value) in new {
-        let merged = match (out.get(key), value) {
-            (Some(Value::Object(old)), Value::Object(fresh)) => {
-                Value::Object(merge_hash(old, fresh))
-            }
-            _ => value.clone(),
-        };
-        out.insert(key.clone(), merged);
-    }
-    out
-}
-
 /// `include_vars`, for one item of the task.
 pub(super) fn run_include_vars(item: &Item, step: &Step, store: &Mutex<VarStore>) -> TaskResult {
     let args = &item.args;
@@ -220,7 +203,7 @@ fn merged_over(vars: &HostVars, facts: Map<String, Value>) -> (Map<String, Value
                     if vars.untrusted.contains(&key) {
                         data.push(key.clone());
                     }
-                    Value::Object(merge_hash(old, fresh))
+                    Value::Object(crate::vars::merge_hash(old, fresh))
                 }
                 _ => value,
             };

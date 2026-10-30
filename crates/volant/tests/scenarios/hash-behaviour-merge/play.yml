@@ -1,0 +1,12 @@
+- hosts: h1
+  gather_facts: false
+  vars_files: [vars.yml]
+  vars:
+    h: {play: play vars}
+  roles:
+    - role: r
+      h: {param: role parameter}
+  tasks:
+    - set_fact:
+        h: {fact: set_fact}
+    - debug: {var: h}

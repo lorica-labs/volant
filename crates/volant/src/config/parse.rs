@@ -209,6 +209,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     config.host_key_checking = on;
                 }
             }
+            "hash_behaviour" => crate::vars::set_hash_merge(value.trim() == "merge"),
             "force_handlers" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.force_handlers = on;

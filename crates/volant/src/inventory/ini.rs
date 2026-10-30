@@ -92,6 +92,17 @@ fn parse_into(
         }
         if let Some(m) = SECTION.captures(line) {
             group = m[1].to_string();
+            // `add_group` warns once about a name with characters outside `[A-Za-z0-9_]`.
+            if let Some(cx) = cx
+                && group
+                    .chars()
+                    .any(|c| !(c.is_ascii_alphanumeric() || c == '_'))
+            {
+                cx.warn_once(
+                    "Invalid characters were found in group names but not replaced, use -vvvv to                      see details"
+                        .to_string(),
+                );
+            }
             state = m.get(2).map_or("hosts", |k| k.as_str()).to_string();
             if !matches!(state.as_str(), "hosts" | "children" | "vars") {
                 return Err(err(format!(

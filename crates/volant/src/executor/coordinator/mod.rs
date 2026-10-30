@@ -28,7 +28,7 @@ mod meta;
 mod publish;
 mod types;
 
-use arrivals::{Arrivals, arrivals, played};
+use arrivals::{Arrivals, arrivals};
 use display::{arrived, header, header_for, report_result, switch_header};
 use events::{
     Held, answer, book, debug_ask, debugging, show_now, shows_a_line, step_of, streams,
@@ -38,7 +38,7 @@ use meta::{MetaContext, apply_meta};
 use publish::{Coordinator, Rendering, keep_links, take_links, task_name};
 pub(in crate::executor) use publish::{escalated_links, render_name};
 pub use types::Progress;
-pub(in crate::executor) use types::{BatchEnd, Event, MetaEffect, Shade};
+pub(in crate::executor) use types::{BatchEnd, Event, MetaEffect, Shade, already_ran};
 use types::{Round, Unreached};
 
 /// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list
@@ -133,6 +133,7 @@ pub(super) async fn run_batch(
         removed: HashSet::new(),
         ending: BTreeSet::new(),
         dismissed: BTreeSet::new(),
+        completion: arrivals::Completion::default(),
         rendering: Some(Rendering::new(&plan, &plan_tx, state, options)),
     };
     let mut round = Round {
@@ -248,9 +249,6 @@ pub(super) async fn run_batch(
     // host reports its request and then blocks, which it may do while this loop is still holding
     // an earlier index for a slower host.
     let mut includes: HashMap<usize, Vec<(String, Vec<IncludeGroup>)>> = HashMap::new();
-    // The role instances each host has had brought in, which is what `allow_duplicates: false`
-    // is checked against.
-    let mut roles_run = played(&plan.steps().roles, &play_hosts);
     // What a host that could not be reached owes the terminal, by host and the step its batch
     // began at. The host leaves the play on arrival; its block and line print where the host
     // stands in the step's order, like a result, instead of in front of the hosts before it.
@@ -379,6 +377,7 @@ pub(super) async fn run_batch(
                 }
                 match rx.recv().await {
                     Some(event @ Event::Result { .. }) => {
+                        coordinator.note_result(&event, &plan.steps());
                         let (key, lost, sank) = verdict(&event);
                         let event = if let Some(waiting) = held.get_mut(&key) {
                             waiting.hold(event, lost, sank)
@@ -476,6 +475,9 @@ pub(super) async fn run_batch(
                         names.insert((host, index), name);
                     }
                     Some(Event::TaskDone { host, index }) => {
+                        coordinator
+                            .completion
+                            .task_done(&host, index, &plan.steps());
                         coordinator.finished(&mut done, &host, index);
                         // `or_insert` keeps the verdict of the host that ran the task, which is
                         // the first to report the step. A host that has already failed is the
@@ -624,7 +626,7 @@ pub(super) async fn run_batch(
                     mut asking,
                     lines,
                     expansions,
-                } = arrivals(arrived, &play_hosts, &mut roles_run);
+                } = arrivals(arrived, &play_hosts, &coordinator.completion);
                 crate::compile::graft(&mut next, index + 1, &step, expansions);
                 for (what, hosts, label) in lines {
                     // The banner goes in front of the first line this step shows, and for an

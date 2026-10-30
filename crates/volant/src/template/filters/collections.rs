@@ -65,11 +65,20 @@ pub(super) fn dict2items(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
     let serde_json::Value::Object(map) = data(&value)? else {
         return Err(invalid("dict2items requires a dictionary"));
     };
-    let items: Vec<serde_json::Value> = map
+    // A key YAML gave a type keeps it: see `template::typed_keys`.
+    let keys = crate::template::typed_keys::keys(&map)
+        .unwrap_or_else(|| map.keys().map(|k| Value::from(k.as_str())).collect());
+    let items: Vec<Value> = keys
         .into_iter()
-        .map(|(k, v)| serde_json::json!({ key_name.clone(): k, value_name.clone(): v }))
+        .zip(map)
+        .map(|(k, (_, v))| {
+            Value::from_pairs([
+                (Value::from(key_name.as_str()), k),
+                (Value::from(value_name.as_str()), from_json_value(v)),
+            ])
+        })
         .collect();
-    Ok(from_json_value(serde_json::Value::Array(items)))
+    Ok(Value::from(items))
 }
 
 pub(super) fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {

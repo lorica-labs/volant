@@ -29,10 +29,26 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
     if let Some(refusal) = unsupported(&task.module, &ASSERT, &["msg"], &item.args) {
         return unchanged_failure(refusal);
     }
-    let Some(that) = task.args.get("that").filter(|v| !v.is_null()) else {
+    // A `that` an argument splat gave is already rendered: its strings are conditions, unless a
+    // managed host wrote them.
+    let splatted = task.args.get("that").is_none_or(Value::is_null);
+    let Some(that) = (if splatted {
+        item.args.get("that")
+    } else {
+        task.args.get("that")
+    })
+    .filter(|v| !v.is_null()) else {
         return TaskResult::failed_with("missing required arguments: that");
     };
     let conditions = match that {
+        Value::Array(list) if splatted && item.args_untrusted.contains("that") => {
+            if list.iter().any(Value::is_string) {
+                return TaskResult::failed_with(conditional_error(&TemplateError(
+                    "Encountered untrusted template or expression.".into(),
+                )));
+            }
+            list.clone()
+        }
         Value::Array(list) => list.clone(),
         Value::String(s) if Templar::is_template(s) => {
             match templar.render_value_tainted(that, &item.vars) {

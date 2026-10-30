@@ -166,3 +166,71 @@ pub(in crate::inventory) fn reason(error: &str, expr: &str, vars: &Map<String, V
             |name| format!("'{name}' is undefined"),
         )
 }
+
+/// What `use_vars_plugins` adds: the `group_vars` and `host_vars` files beside each source the
+/// inventory was read from and beside the plugin's own file, as `host_group_vars` reads them.
+#[derive(Default)]
+pub(super) struct PluginVars {
+    /// Per directory, in source order: the files of each group, then of each host.
+    dirs: Vec<(FileVars, FileVars)>,
+}
+
+type FileVars = std::collections::BTreeMap<String, Map<String, Value>>;
+
+impl PluginVars {
+    pub(super) fn read(inv: &Inventory, own: &crate::inventory::Source) -> anyhow::Result<Self> {
+        let mut roots: Vec<std::path::PathBuf> = Vec::new();
+        let sources = inv.hosts.iter().filter_map(|h| inv.source_of(&h.name));
+        for path in sources.chain([own.path()]) {
+            let root = if path.is_dir() {
+                Some(path)
+            } else {
+                path.parent()
+            };
+            if let Some(root) = root.map(std::path::Path::to_path_buf)
+                && !roots.contains(&root)
+            {
+                roots.push(root);
+            }
+        }
+        let mut dirs = Vec::new();
+        for root in roots {
+            dirs.push((
+                crate::vars::load_vars_dir(&root.join("group_vars"))?,
+                crate::vars::load_vars_dir(&root.join("host_vars"))?,
+            ));
+        }
+        Ok(Self { dirs })
+    }
+
+    /// `vars`, a host's inventory variables, with the files' under them: the reference layers
+    /// the groups' files over the groups' variables and the host's files over its own.
+    pub(super) fn over(
+        &self,
+        inv: &Inventory,
+        host: &str,
+        mut vars: Map<String, Value>,
+    ) -> Map<String, Value> {
+        if self.dirs.is_empty() {
+            return vars;
+        }
+        let mut groups = vec!["all".to_string()];
+        groups.extend(inv.layered_groups_of(host));
+        for (group_files, _) in &self.dirs {
+            for group in &groups {
+                if let Some(file) = group_files.get(group) {
+                    crate::vars::extend(&mut vars, file);
+                }
+            }
+        }
+        if let Some(own) = inv.host_line_vars(host) {
+            crate::vars::extend(&mut vars, own);
+        }
+        for (_, host_files) in &self.dirs {
+            if let Some(file) = host_files.get(host) {
+                crate::vars::extend(&mut vars, file);
+            }
+        }
+        vars
+    }
+}

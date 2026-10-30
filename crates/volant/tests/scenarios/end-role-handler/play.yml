@@ -1,0 +1,9 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug:
+      changed_when: true
+      notify: h
+  handlers:
+    - name: h
+      meta: end_role

@@ -1,0 +1,42 @@
+name: YAML corpus
+
+# Loads a pinned corpus of real YAML files with Volant and with ansible-core and fails on a
+# difference that crates/volant/tests/parity/yaml_corpus_known.txt does not list: weekly, and on
+# a change to the loader or to the corpus.
+on:
+  schedule:
+    - cron: "23 4 * * 1"
+  push:
+    branches: [main]
+    paths:
+      - crates/volant/src/yaml.rs
+      - crates/volant/src/yaml/**
+      - crates/volant/tests/parity/yaml_corpus*
+  pull_request:
+    paths:
+      - crates/volant/src/yaml.rs
+      - crates/volant/src/yaml/**
+      - crates/volant/tests/parity/yaml_corpus*
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: yaml-corpus-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: taiki-e/install-action@86f7a0ffb25f40114606501a311ebcfaf882ea32 # v2
+        with:
+          tool: just,uv
+      - name: Install the reference ansible-core
+        run: uv tool install ansible-core==2.19.12
+      - run: just yaml-corpus

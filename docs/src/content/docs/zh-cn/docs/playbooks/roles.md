@@ -1,5 +1,5 @@
 ---
-sourceHash: 2f3467c64674
+sourceHash: f3d5d68d17df
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -67,7 +67,9 @@ role 的 `defaults` 和 `vars` 对整个 play 可见，所以 `pre_tasks` 和之
 
 依赖还会读取它上层各个 role 的值。它的 `vars` 位于父 role 的 `vars/main.yml` 和它自己的依赖的 `vars/main.yml` 之上，而它自己的依赖又胜过父 role。它的 `defaults` 方向相反：先是它的依赖的，然后是父 role 的，最后是它自己的。它的参数位于父 role 的参数之上，所以没有同名参数的依赖会读取最近的父 role 的参数。
 
-`public: false` 的 `import_role` 会把它们保留在自己内部，而 `include_role` 除非写了 `public: true`，否则也这样处理。见 [Role 选项](#role-选项)。
+`public: false` 的 `import_role` 会把它们保留在自己内部，而 `include_role` 除非写了 `public: true`，否则也这样处理。见 [Role 选项](#role-选项)。 [`private_role_vars`](/zh-cn/docs/reference/configuration/#defaults-private-role-vars) 会改变这些默认行为。
+
+在一个 role 内部用 `include_role` 引入的 role，会读取该 role 的参数（优先于语句自己的 `vars:`），以及该 role 的 `vars` 和 `defaults`，不论中间隔了多少层 include。
 
 ## import 与 include
 
@@ -134,7 +136,7 @@ Volant 会在运行之前检查 include 带来的内容。到那时，主机已�
 
 使用 `public: true` 时，`include_role` 的 `defaults` 和 `vars` 对这条语句之后运行的一切可见，其他主机也能看到，因为 ansible-core 把公开 role 的列表保存在 play 里，而不是主机里。在这条语句之前运行的 task 读不到它的任何内容，`when: false` 的 include 也不会提供任何内容。
 
-使用 `allow_duplicates: false` 时，对于已经引入过相同 role 的主机，这条语句会显示它的 `included:` 行，但不运行任何东西。当两条语句指定了相同的 role、相同的文件和相同的 `vars:` 时，它们就是相同的；在循环中，还要求相同的循环变量下有相同的 item。`rolespec_validate: false` 会跳过参数规范检查。
+使用 `allow_duplicates: false` 时，对于已经引入过相同 role 的主机，这条语句会显示它的 `included:` 行，但不运行任何东西。当两条语句指定了相同的 role、相同的文件和相同的 `vars:` 时，它们就是相同的；在循环中，还要求相同的循环变量下有相同的 item。`rolespec_validate: false` 会跳过参数规范检查。 之前对该 role 的 `import_role` 或 `include_role` 会计算在内，`roles:` 中的 role 不算，与 Ansible 一致。
 
 这四条语句的每个选项，在 Volant 和 ansible-core 2.19.12 中的读法：
 
@@ -205,5 +207,4 @@ Volant 会在运行之前检查 include 带来的内容。到那时，主机已�
 - include 自身的文件会触及这个上限，并作为 task 失败报告，退出码为 2。Ansible 会一直递归到 Python 栈耗尽，以退出码 250 结束。
 - role 的 `tasks/` 和 `handlers/` 之外、无法解析的被 include 文件，会让 task 失败，退出码为 2，并有汇总。Ansible 以退出码 4 退出，且没有汇总。汇总能体现的失败更有用，`rescue` 也可以捕获它。
 - 循环内失败的 include 会打印通常的 `failed: [host] (item=...)` 行。Ansible 只在标准错误上打印一条 `[ERROR]`。
-- `allow_duplicates: false` 在 role 的 task 被引入时，就把该 role 算作该主机已运行。ansible-core 则在主机至少运行过它的一个 task 时才这么算，所以 task 全部被跳过的 role，在那里仍会再次运行。
 - `import_role` 上的 `allow_duplicates: false` 在 play 编译时比较各条语句，所以较早那条语句上的 `when` 不会改变某台主机的结果。

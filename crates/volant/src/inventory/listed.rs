@@ -276,29 +276,6 @@ impl Inventory {
         results
     }
 
-    /// The names the host's groups set, in the order the reference merges the groups, each once.
-    pub fn group_var_names(&self, host: &str) -> Vec<String> {
-        let mut names: Vec<String> = Vec::new();
-        for group in self.sorted_groups_of(host) {
-            for name in group.vars.keys() {
-                if !names.contains(name) {
-                    names.push(name.clone());
-                }
-            }
-        }
-        names
-    }
-
-    /// The group whose inventory variable `name` a host reads: the last of its groups, in the
-    /// order they are merged, that sets it.
-    pub fn group_setting(&self, host: &str, name: &str) -> Option<&str> {
-        self.sorted_groups_of(host)
-            .into_iter()
-            .rev()
-            .find(|g| g.vars.contains_key(name))
-            .map(|g| g.name.as_str())
-    }
-
     /// A group's own variables, as the inventory sources wrote them.
     pub fn group_vars_of(&self, name: &str) -> serde_json::Map<String, Value> {
         let Some(group) = self.group(name) else {

@@ -82,6 +82,9 @@ pub struct Progress {
     /// finds them no longer in the inventory it read again. They leave quietly, not failed,
     /// and a host reads this once it has read the step's verdict.
     pub dismissed: BTreeSet<String>,
+    /// The role identities each host has completed, which a task of an instance that does not
+    /// allow duplicates is left out for. See `completion`.
+    pub completed_roles: super::arrivals::Completed,
 }
 
 pub(in crate::executor) enum Event {
@@ -365,4 +368,37 @@ impl Round {
         let reported = self.finishing.remove(host);
         failed && !reported
     }
+}
+
+/// `hosts` as a shared list: the one `current` already holds when the names are the same, so an
+/// unchanged list costs a comparison and no copy.
+pub(super) fn shared<'a>(
+    current: &Arc<[String]>,
+    hosts: impl Iterator<Item = &'a String> + Clone,
+) -> Arc<[String]> {
+    if current.iter().eq(hosts.clone()) {
+        Arc::clone(current)
+    } else {
+        hosts.cloned().collect()
+    }
+}
+
+/// Whether `host` leaves `step` out: its role instance does not allow duplicates, and the host
+/// has completed an instance with the same identity.
+pub(in crate::executor) fn already_ran(
+    compiled: &Compiled,
+    step: &crate::compile::Step,
+    host: &str,
+    progress: &Progress,
+) -> bool {
+    let Some(role) = step.role.and_then(|r| compiled.roles.get(r)) else {
+        return false;
+    };
+    role.unique
+        && role.dedup.as_ref().is_some_and(|id| {
+            progress
+                .completed_roles
+                .get(host)
+                .is_some_and(|done| done.contains(id))
+        })
 }

@@ -2,11 +2,15 @@
 //! What the hosts that reached one include step asked for, grouped for the splice.
 
 use std::collections::hash_map::Entry;
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::sync::Arc;
 
-use crate::compile::{Compiled, Grafted};
+use crate::compile::{Compiled, Grafted, Step};
 use crate::executor::include::IncludeGroup;
+use crate::roles::RoleKind;
+use crate::stats::Outcome;
+
+use super::types::Event;
 
 /// One `included:` line: what it names, the hosts that show it, and the item's label.
 pub(super) type Line = (String, Vec<String>, Option<String>);
@@ -25,11 +29,12 @@ pub(super) struct Arrivals {
 ///
 /// A host whose role has already run still shows the `included:` line of an `include_role` that
 /// says `allow_duplicates: false`, measured, and the steps behind it are spliced in for the other
-/// hosts only. `roles_run` holds the role instances each host has had brought in.
+/// hosts only. A role counts as run once the host has completed it, see `completion`: an
+/// earlier `import_role` or `include_role` of it, not a role of `roles:`.
 pub(super) fn arrivals(
     mut arrived: Vec<(String, Vec<IncludeGroup>)>,
     play_hosts: &[String],
-    roles_run: &mut HashMap<String, HashSet<String>>,
+    completion: &Completion,
 ) -> Arrivals {
     // `usize::MAX` rather than `None` for a host the batch does not hold, which would otherwise
     // sort in front of every rank and take the first line.
@@ -47,10 +52,7 @@ pub(super) fn arrivals(
         for group in groups {
             let runs = match &group.role_id {
                 Some(id) => {
-                    let ran = !roles_run
-                        .entry(host.clone())
-                        .or_default()
-                        .insert(id.clone());
+                    let ran = completion.completed(&host, id);
                     !(ran && group.unique)
                 }
                 None => true,
@@ -77,7 +79,13 @@ pub(super) fn arrivals(
         lines.push((group.what, hosts, group.label));
         if !runners.is_empty() {
             let mut expanded = group.expanded;
-            narrow_dependencies(&mut expanded, &runners, roles_run);
+            // The included role completes under the statement's identity, which a later
+            // `include_role` of it that says `allow_duplicates: false` is compared with.
+            for role in &mut expanded.roles {
+                if role.kind == RoleKind::Include {
+                    role.dedup.clone_from(&group.role_id);
+                }
+            }
             expansions.push(Grafted {
                 expanded,
                 params: group.params,
@@ -92,45 +100,126 @@ pub(super) fn arrivals(
     }
 }
 
-/// A role that does not allow duplicates runs once per host. Measured on ansible-core 2.19.12: an
-/// `include_role` whose role depends on one the host has already run, in the play's `roles:` or
-/// through an earlier include, leaves it out for that host. Its steps are spliced in for the
-/// hosts that have not run it.
-fn narrow_dependencies(
-    expanded: &mut Compiled,
-    runners: &[String],
-    roles_run: &mut HashMap<String, HashSet<String>>,
-) {
-    for (index, role) in expanded.roles.iter().enumerate() {
-        let Some(id) = &role.dedup else { continue };
-        let hosts: Vec<String> = runners
-            .iter()
-            .filter(|host| {
-                roles_run
-                    .entry((*host).clone())
-                    .or_default()
-                    .insert(id.clone())
+// Which role instances each host has completed, the way ansible-core 2.19.12 counts them.
+//
+// Measured with the `roles` integration target's `role_complete.yml`, and read off
+// `StrategyBase._process_pending_results` and the implicit `meta: role_complete` a role ends
+// with: a task of a role that came back ok or failed, and not skipped, marks the role as having
+// had a task run for that host, and once the host passes the role's last task it has completed
+// it. From then on every task of an instance with the same identity is left out for that host
+// when that instance does not allow duplicates. A role whose tasks all skipped, or that the host
+// could not be reached for, runs again at its next instance.
+
+/// The role identities each host has completed.
+pub(in crate::executor) type Completed = Arc<HashMap<String, HashSet<String>>>;
+
+#[derive(Default)]
+pub(in crate::executor) struct Completion {
+    /// The role identities a task ran for, per host.
+    ran: HashMap<String, HashSet<String>>,
+    done: Completed,
+    /// The step that ends each role instance, by step index.
+    ends: HashMap<usize, usize>,
+    /// Each role instance's identity, and whether a host that completed it leaves it out.
+    roles: Vec<(Option<String>, bool)>,
+    /// The length of the step list `ends` and `roles` were read from.
+    read_from: (usize, usize),
+}
+
+impl Completion {
+    /// Notes a result: a task of a role that was not skipped. A `run_once` result counts for the
+    /// host elected to run it alone. Unreachable hosts report no result.
+    pub(super) fn result(
+        &mut self,
+        event: &Event,
+        compiled: &Compiled,
+        elected: &BTreeMap<usize, String>,
+    ) {
+        let Event::Result {
+            host,
+            index,
+            outcome,
+            counts: true,
+            ..
+        } = event
+        else {
+            return;
+        };
+        let Some(step) = compiled.steps.get(*index) else {
+            return;
+        };
+        if *outcome == Outcome::Skipped
+            || step.task.bypasses_host_loop() && elected.get(index) != Some(host)
+        {
+            return;
+        }
+        if let Some(id) = identity(compiled, step) {
+            self.ran.entry(host.clone()).or_default().insert(id.clone());
+        }
+    }
+
+    /// A host is done with the step at `index`: past the last step of a role it ran a task of, it
+    /// has completed that role.
+    pub(super) fn task_done(&mut self, host: &str, index: usize, compiled: &Compiled) {
+        self.read(compiled);
+        let Some(id) = self
+            .ends
+            .get(&index)
+            .and_then(|r| self.roles.get(*r)?.0.as_ref())
+        else {
+            return;
+        };
+        if !self.ran.get(host).is_some_and(|ran| ran.contains(id)) || self.completed(host, id) {
+            return;
+        }
+        let mut done = (*self.done).clone();
+        done.entry(host.to_string()).or_default().insert(id.clone());
+        self.done = Arc::new(done);
+    }
+
+    /// What the drivers read, see `already_ran`.
+    pub(super) fn done(&self) -> Completed {
+        Arc::clone(&self.done)
+    }
+
+    pub(super) fn completed(&self, host: &str, id: &str) -> bool {
+        self.done.get(host).is_some_and(|done| done.contains(id))
+    }
+
+    /// Whether `host` leaves `step` out, for the election of a `run_once` runner.
+    pub(super) fn skips(&self, step: &Step, host: &str) -> bool {
+        step.role
+            .and_then(|r| self.roles.get(r))
+            .is_some_and(|(id, unique)| {
+                *unique && id.as_ref().is_some_and(|id| self.completed(host, id))
             })
-            .cloned()
+    }
+
+    fn read(&mut self, compiled: &Compiled) {
+        let size = (compiled.steps.len(), compiled.roles.len());
+        if self.read_from == size {
+            return;
+        }
+        self.read_from = size;
+        let mut last: HashMap<usize, usize> = HashMap::new();
+        for (index, step) in compiled.steps.iter().enumerate() {
+            if let Some(role) = step.role {
+                last.insert(role, index);
+            }
+        }
+        self.ends = last
+            .into_iter()
+            .map(|(role, index)| (index, role))
             .collect();
-        if hosts.len() == runners.len() {
-            continue;
-        }
-        let hosts: Arc<[String]> = hosts.into();
-        for step in expanded.steps.iter_mut().filter(|s| s.role == Some(index)) {
-            step.hosts = Some(Arc::clone(&hosts));
-        }
+        self.roles = compiled
+            .roles
+            .iter()
+            .map(|role| (role.dedup.clone(), role.unique))
+            .collect();
     }
 }
 
-/// What `roles_run` starts from: the play's own role instances, which run for every host of it.
-pub(super) fn played(
-    roles: &[crate::roles::RoleVars],
-    hosts: &[String],
-) -> HashMap<String, HashSet<String>> {
-    let ids: HashSet<String> = roles.iter().filter_map(|r| r.dedup.clone()).collect();
-    hosts
-        .iter()
-        .map(|host| (host.clone(), ids.clone()))
-        .collect()
+/// The identity a host completes by running `step`, if `step` belongs to a role.
+fn identity<'a>(compiled: &'a Compiled, step: &Step) -> Option<&'a String> {
+    compiled.roles.get(step.role?)?.dedup.as_ref()
 }

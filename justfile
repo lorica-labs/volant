@@ -43,6 +43,20 @@ parity-reference:
     [ -d "$dir/ansible_collections" ] || uv pip install --python "$py" --target "$dir" --no-deps "ansible==$pin"
     "$py" crates/volant/tests/parity/generate.py "$dir"
 
+# Load every YAML file of the corpus pinned in tests/parity/yaml_corpus.yml, and of the pinned
+# `ansible` package, with Volant and with the reference ansible-core, and print the files that load
+# differently, grouped by cause. Fails on a difference yaml_corpus_known.txt does not list.
+# Needs `uv`, `git` and network access the first time.
+yaml-corpus:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    py="$(uv tool dir)/ansible-core/bin/python"
+    pin="$(cat crates/volant/tests/parity/ANSIBLE_PACKAGE)"
+    dir="target/parity/ansible-$pin"
+    [ -d "$dir/ansible_collections" ] || uv pip install --python "$py" --target "$dir" --no-deps "ansible==$pin"
+    cargo build --release -p volant --example yaml_dump
+    "$py" crates/volant/tests/parity/yaml_corpus.py target/yaml-corpus target/release/examples/yaml_dump "$dir"
+
 # Regenerate the managed runtime's manifest (crates/volant/src/runtime/manifest.toml): the pinned
 # python-build-standalone builds and, for each platform, the hash-pinned ansible-core wheels.
 # Needs Python 3.12+ and network access.

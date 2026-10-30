@@ -12,8 +12,12 @@ import os
 import subprocess
 import sys
 
-import yaml as pyyaml
-from ansible.parsing.utils.yaml import from_yaml
+# Both loaders read a key written twice the same way; the reference's warnings would only fill
+# the output.
+os.environ.setdefault("ANSIBLE_DUPLICATE_YAML_DICT_KEY", "ignore")
+
+import yaml as pyyaml  # noqa: E402
+from ansible.parsing.utils.yaml import from_yaml  # noqa: E402
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 PINS = os.path.join(HERE, "yaml_corpus.yml")
@@ -71,6 +75,13 @@ def plain(value):
         return "VAULT:" + value._ciphertext.strip()
     if isinstance(value, (bytes, set)):
         return {"__unsupported__": type(value).__name__}
+    # ansible-core tags what it loads with subclasses of the plain types.
+    if isinstance(value, bool):
+        return bool(value)
+    if isinstance(value, int):
+        return int(value)
+    if isinstance(value, float):
+        return float(value)
     if isinstance(value, str):
         return str(value)
     return value

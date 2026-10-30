@@ -1,5 +1,5 @@
 ---
-sourceHash: 39514765b116
+sourceHash: cf4ec0e98731
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -30,7 +30,7 @@ Das Verzeichnis `handlers/` einer Rolle wird zusammen mit ihren Tasks gelesen. B
 
 ## Abhängigkeiten
 
-Die `dependencies` in `meta/main.yml` sind eigenständige Rollen. Sie laufen vor der Rolle, die sie angefordert hat, und eine Abhängigkeit, die sich zwei Rollen teilen, läuft einmal. `allow_duplicates: true` schaltet diese Deduplizierung für eine Rolle ab.
+Die `dependencies` in `meta/main.yml` sind eigenständige Rollen. Sie laufen vor der Rolle, die sie angefordert hat, und eine Abhängigkeit, die sich zwei Rollen teilen, läuft einmal. `allow_duplicates: true` schaltet diese Deduplizierung für eine Rolle ab. Das gilt auch über Anweisungen hinweg: Eine Rolle, die `roles:` des Plays ausgeführt hat oder die ein früheres `include_role` für einen Host geholt hat, läuft nicht erneut als Abhängigkeit einer Rolle, die später ein `import_role` oder ein `include_role` holt.
 
 Die Deduplizierung betrachtet mehr als den Namen. Die Parameter des Eintrags, seine `vars:`, sein `when:` und seine `*_from`-Auswahlen gehören alle zu seiner Identität:
 
@@ -63,7 +63,9 @@ Eine Rolle liefert drei Schichten von Variablen, die in der [Rangfolge](/de/docs
 `vars:` an einem Rolleneintrag ist kein Rollenparameter. Es wird wie ein gewöhnliches Task-Keyword weitergereicht. Die beiden Schreibweisen sehen ähnlich aus, prüfen Sie also, welche Sie verwendet haben, wenn eine Rolle einen Wert liest, den Sie nicht erwartet haben.
 :::
 
-Die `defaults` und `vars` einer Rolle sind für das ganze Play sichtbar, sodass `pre_tasks` und spätere Rollen sie lesen können. Für die eigenen Schritte der Rolle werden ihre Werte wieder obenauf gelegt. Rollenparameter bleiben innerhalb der Rolle.
+Die `defaults` und `vars` einer Rolle sind für das ganze Play sichtbar, sodass `pre_tasks` und spätere Rollen sie lesen können. Für die eigenen Schritte der Rolle werden ihre Werte wieder obenauf gelegt. Rollenparameter bleiben innerhalb der Rolle und der Rollen, von denen sie abhängt.
+
+Eine Abhängigkeit liest auch, was die Rollen über ihr halten. Ihre `vars` liegen über der `vars/main.yml` ihrer Eltern und über der `vars/main.yml` ihrer eigenen Abhängigkeiten, die gegen die der Eltern gewinnt. Ihre `defaults` laufen umgekehrt: erst die ihrer Abhängigkeiten, dann die ihrer Eltern, dann ihre eigenen. Ihre Parameter liegen über den Parametern ihrer Eltern, sodass eine Abhängigkeit ohne Parameter dieses Namens den des nächsten Elternteils liest.
 
 Ein `import_role` mit `public: false` behält sie für sich, und ein `include_role` tut das, sofern es nicht `public: true` sagt. Siehe [Rollenoptionen](#rollenoptionen).
 

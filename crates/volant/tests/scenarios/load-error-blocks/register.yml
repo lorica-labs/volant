@@ -1,0 +1,6 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - name: test registering
+      debug: {msg: x}
+      register: 200

@@ -1319,10 +1319,41 @@ fn a_quoted_scalar_continued_left_of_its_parent_loads() {
         ("m:\n  k: \"a\n b\"\n", json!({"m": {"k": "a b"}})),
         ("- \"a\nb\"\n", json!(["a b"])),
         ("x: \"é\"\nk: \"a\nb\"\n", json!({"x": "é", "k": "a b"})),
+        ("k: 'a\n\t\tb'\n", json!({"k": "a b"})),
+        (
+            "m:\n  k: \"a\n\t \tb\n\tc\"\n",
+            json!({"m": {"k": "a b c"}}),
+        ),
+        ("k: \"a\\\n\tb\"\n", json!({"k": "ab"})),
         (
             "a: \"x\ny\"\nb: \"p\n\nq\"\n",
             json!({"a": "x y", "b": "p\nq"}),
         ),
+    ]);
+}
+
+/// A block scalar that ends a text without a final newline has no line break to keep, as in
+/// PyYAML: `ansible.parsing.utils.yaml.from_yaml` on ansible-core 2.19.12.
+#[test]
+fn a_block_scalar_ending_the_text_keeps_no_missing_break() {
+    assert_loads_as(&[
+        ("k: |\n  a\n  b", json!({"k": "a\nb"})),
+        ("k: |\n  a\n  b\n", json!({"k": "a\nb\n"})),
+        ("k: >\n  a\n  b", json!({"k": "a b"})),
+        ("k: >\n  a\n  b\n", json!({"k": "a b\n"})),
+        ("k: |+\n  a\n  b", json!({"k": "a\nb"})),
+        ("k: |+\n  a\n  b\n\n", json!({"k": "a\nb\n\n"})),
+        ("k: |+\n  a\n\n  ", json!({"k": "a\n\n"})),
+        ("k: |-\n  a\n  b", json!({"k": "a\nb"})),
+        ("k: |-\n  a\n  b\n", json!({"k": "a\nb"})),
+        ("k: |\n  a\n\n  ", json!({"k": "a\n"})),
+        ("k: |\n  a\n# c", json!({"k": "a\n"})),
+        ("- [1]\n- k: >\n    a\n\n    b", json!([[1], {"k": "a\nb"}])),
+        (
+            "a: &n |\n  x\n  y\nb: *n",
+            json!({"a": "x\ny\n", "b": "x\ny\n"}),
+        ),
+        ("- &n |\n  x\n- *n", json!(["x\n", "x\n"])),
     ]);
 }
 

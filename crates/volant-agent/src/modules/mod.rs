@@ -13,7 +13,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 use volant_protocol::modules::{
-    ArgStatus, CHECK_MODE_ARG, DIFF_ARG, ModuleSpec, arg_bool, short_name,
+    ArgStatus, CHECK_MODE_ARG, DIFF_ARG, ModuleSpec, NO_LOG_ARG, arg_bool, short_name,
 };
 use volant_protocol::{ExecPath, Ran, StagedFile, Task, TaskResult};
 
@@ -82,6 +82,7 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
     let mut args = task.args.clone();
     let check_mode = args.remove(CHECK_MODE_ARG) == Some(Value::Bool(true));
     let diff = args.remove(DIFF_ARG) == Some(Value::Bool(true));
+    let no_log = args.remove(NO_LOG_ARG) == Some(Value::Bool(true));
     let mut context = Context {
         timeout: task.timeout.map(Duration::from_secs),
         environment: task.environment.clone(),
@@ -129,7 +130,11 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
                 }
             }
             let mut flagged = args.clone();
-            for (key, on) in [(CHECK_MODE_ARG, check_mode), (DIFF_ARG, diff)] {
+            for (key, on) in [
+                (CHECK_MODE_ARG, check_mode),
+                (DIFF_ARG, diff),
+                (NO_LOG_ARG, no_log),
+            ] {
                 if on {
                     flagged.insert(key.into(), Value::Bool(true));
                 }

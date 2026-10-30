@@ -81,7 +81,7 @@ pub(super) fn environment(base_dir: PathBuf, bridge: Option<&Arc<Bridge>>) -> En
     env.add_function("cycler", globals::cycler);
     env.add_function("joiner", minijinja_contrib::globals::joiner);
     env.add_function("undef", globals::undef);
-    env.add_function("now", super::clock::now);
+    super::clock::register(&mut env);
     env.add_function("lipsum", super::lipsum::lipsum);
     env.add_function(ITEM_KEY, chained_item);
     env.add_function(MITEM_KEY, mutable_item);
@@ -118,6 +118,10 @@ pub(super) fn container_repr(value: &minijinja::Value) -> Option<String> {
     }
     if super::pymethods::bytes::holds(value) {
         return Some(super::pymethods::format::repr(value));
+    }
+    let special = super::bigint::python_non_finite(value).map(str::to_owned);
+    if let Some(text) = special.or_else(|| super::clock::container_repr(value)) {
+        return Some(text);
     }
     if !matches!(
         value.kind(),
@@ -266,7 +270,8 @@ pub(super) fn type_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "NoneType",
         Value::Bool(_) => "bool",
-        Value::Number(n) if n.is_f64() => "float",
+        // A NaN or an infinity travels as the text `NaN`, `Infinity` or `-Infinity`.
+        Value::Number(n) if n.is_f64() || n.as_str().ends_with(['N', 'y']) => "float",
         Value::Number(_) => "int",
         Value::String(_) => "str",
         Value::Array(_) => "list",

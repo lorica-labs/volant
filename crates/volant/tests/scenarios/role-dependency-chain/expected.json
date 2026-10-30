@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [nested_dep : debug] ******************************************************\nok: [localhost] => {\n    \"msg\": \"A dependency from_A one two second\"\n}\n\nTASK [nested_dep : debug] ******************************************************\nok: [localhost] => {\n    \"msg\": \"B dependency play one two second\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

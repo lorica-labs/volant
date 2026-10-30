@@ -70,6 +70,11 @@ pub(crate) const NO_FILTER: &str = "Syntax error in template: No filter named ";
 /// What [`Templar::render_map_tainted`] puts before a plugin's failure, then the key in quotes.
 pub(crate) const RESOLVING: &str = "Error while resolving value for ";
 
+/// The reference's refusal of an expression that came from untrusted data, and the help its error
+/// block gives under it.
+pub const UNTRUSTED: &str = "Encountered untrusted template or expression.";
+pub const UNTRUSTED_HELP: &str = "Templates and expressions must be defined by trusted sources such as playbooks or roles, not untrusted sources such as module results.";
+
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct TemplateError(pub String);
 

@@ -187,7 +187,7 @@ pub fn load_with_origins<'a>(
     // positions, the lowered one the addresses.
     let mut starts = (Vec::new(), Vec::new(), Vec::new());
     for doc in &marked {
-        mapping_starts(doc, &mut starts);
+        mapping_starts(doc, text, &mut starts);
     }
     let docs = lower_all(marked, source, false)?;
     let mut addresses = (Vec::new(), Vec::new());

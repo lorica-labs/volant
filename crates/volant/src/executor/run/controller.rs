@@ -39,7 +39,7 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
                 Ok((Value::Array(list), from_host)) => {
                     if from_host && list.iter().any(Value::is_string) {
                         return TaskResult::failed_with(conditional_error(&TemplateError(
-                            "Encountered untrusted template or expression.".into(),
+                            crate::template::UNTRUSTED.into(),
                         )));
                     }
                     list
@@ -60,7 +60,8 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
     {
         r.insert(crate::render::VERBOSE_ALWAYS.into(), json!(true));
     }
-    for condition in &conditions {
+    let listed = task.args.get("that").is_some_and(Value::is_array);
+    for (i, condition) in conditions.iter().enumerate() {
         // A YAML boolean reaches `condition` spelled the way `when` spells one.
         let text = match condition {
             Value::String(s) => s.clone(),
@@ -69,6 +70,21 @@ pub(super) fn assert_module(task: &PlayTask, item: &Item, templar: &Templar) -> 
         };
         crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         match templar.condition(&text, &item.vars) {
+            // Measured on ansible-core 2.19.12: an untrusted `that` is refused with a cause at
+            // the `that` value.
+            Err(e) if e.0 == crate::template::UNTRUSTED => {
+                return super::retry::raised(
+                    &conditional_error(&e),
+                    vec![super::retry::conditional_cause(
+                        &e,
+                        task.value_origins.get(&if listed {
+                            format!("args.that.{i}")
+                        } else {
+                            "args.that".to_string()
+                        }),
+                    )],
+                );
+            }
             Err(e) => return TaskResult::failed_with(conditional_error(&e)),
             Ok(true) => {}
             Ok(false) => {

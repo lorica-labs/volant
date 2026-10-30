@@ -212,13 +212,29 @@ fn key_of(key: Yaml<'_>, strict: bool) -> anyhow::Result<Yaml<'_>> {
 
 /// Where each mapping of the source tree starts, and each key and value of it, in the order a
 /// walk down the tree meets them.
-pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
+pub(super) fn mapping_starts(root: &MarkedYaml<'_>, text: &str, out: &mut Starts) {
     enum Work<'t, 'a> {
         Node(&'t MarkedYaml<'a>),
         Entry(&'t MarkedYaml<'a>, &'t MarkedYaml<'a>),
         Item(&'t MarkedYaml<'a>),
     }
-    let at = |n: &MarkedYaml<'_>| (n.span.start.line(), n.span.start.col() + 1);
+    // A tagged node starts at its tag, as PyYAML marks it: `var: !unsafe x` is at the `!`. The
+    // parser marks the content, so the tag is found in front of it on the same line.
+    let at = |n: &MarkedYaml<'_>| {
+        let (line, col) = (n.span.start.line(), n.span.start.col() + 1);
+        let tagged = match &n.data {
+            YamlData::Tagged(tag, _) | YamlData::Representation(_, _, Some(tag)) => {
+                text.lines().nth(line - 1).and_then(|row| {
+                    let before: String = row.chars().take(col - 1).collect();
+                    let tag = format!("{}{}", tag.handle, tag.suffix);
+                    let head = before.trim_end().strip_suffix(tag.as_str())?;
+                    Some(head.chars().count() + 1)
+                })
+            }
+            _ => None,
+        };
+        (line, tagged.unwrap_or(col))
+    };
     let mut work = vec![Work::Node(root)];
     while let Some(item) = work.pop() {
         match item {

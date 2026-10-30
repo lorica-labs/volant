@@ -1,5 +1,5 @@
 ---
-sourceHash: a3cc80fe44da
+sourceHash: 1d836c016a17
 title: Templating
 description: Jinja2 auf dem Controller, der strikte Modus, Bedingungen, die Filter, Tests und Lookups von Volant und wie Template-Dateien gerendert werden.
 ---
@@ -112,6 +112,7 @@ Ein Template, das Sie geschrieben haben, ist Code. Ein Wert, den ein verwalteter
 - Vertrauenswürdige Werte sind die, die das Playbook mitbringt: `vars` von Plays und Tasks, `--extra-vars`, Inventory-Variablen, `vars_files` und `include_vars`. `!unsafe` kennzeichnet einen davon als Daten.
 - Ein nicht vertrauenswürdiger Wert wird einmal gerendert. Sieht das Ergebnis erneut wie ein Template aus, bleibt es Text.
 - Eine Bedingung oder ein `debug: var:`, das einen Host-Wert als Ausdruck auswerten würde, schlägt mit `Encountered untrusted template or expression.` fehl.
+- Ein Ausdruck, den Sie unter `!unsafe` in `debug: var:`, das `that` eines `assert`, `when`, `changed_when`, `failed_when` oder `until` schreiben, schlägt genauso fehl.
 
 Die [Referenz der Template-Sprache](/de/docs/reference/templates/#vertrauenswürdige-und-nicht-vertrauenswürdige-werte) enthält die vollständigen Regeln und Beispiele.
 

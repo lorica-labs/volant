@@ -323,9 +323,7 @@ async fn a_that_naming_a_list_is_that_list() {
     let r = local_with("assert", json!({"that": "{{ remote }}"}), host_vars).await;
     assert_eq!(
         r.0["msg"],
-        json!(
-            "Task failed: Error while evaluating conditional: Encountered untrusted template or expression."
-        ),
+        json!("Task failed: Encountered untrusted template or expression."),
         "{:?}",
         r.0
     );

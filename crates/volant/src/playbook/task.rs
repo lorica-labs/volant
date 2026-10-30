@@ -435,6 +435,14 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
                 if let (Some(k), Some(origin)) = (k.as_str(), value_origin(v)) {
                     value_origins.insert(format!("args.{k}"), origin);
                 }
+                // Each condition of a `that` list, which the reference points at when it fails.
+                if let (Some("that"), Yaml::Sequence(items)) = (k.as_str(), v) {
+                    for (i, item) in items.iter().enumerate() {
+                        if let Some(origin) = value_origin(item) {
+                            value_origins.insert(format!("args.that.{i}"), origin);
+                        }
+                    }
+                }
             }
         }
     }

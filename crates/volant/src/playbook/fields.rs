@@ -190,12 +190,56 @@ pub(super) fn conditions(yaml: &Yaml, key: &str, context: &str) -> anyhow::Resul
 }
 
 pub(super) fn condition(node: &Yaml, key: &str, context: &str) -> anyhow::Result<String> {
+    if let Some(data) = unsafe_expression(node) {
+        return Ok(data);
+    }
     match node {
         Yaml::Value(Scalar::String(s)) => Ok(s.to_string()),
         Yaml::Value(Scalar::Boolean(b)) => Ok(if *b { "True" } else { "False" }.to_string()),
         other => bail!(
             "{context}'{key}' must be an expression or a list of expressions, found {other:?}"
         ),
+    }
+}
+
+/// An expression written under `!unsafe`, kept as data whatever it holds: evaluating it is
+/// refused, as the reference refuses an untrusted expression. A plain `!unsafe` string with no
+/// template syntax would otherwise load as the bare text and be compiled.
+fn unsafe_expression(node: &Yaml) -> Option<String> {
+    match node {
+        Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => {
+            inner.as_str().map(crate::yaml::unsafe_string)
+        }
+        _ => None,
+    }
+}
+
+/// The argument a module compiles as an expression: `debug`'s `var`, `assert`'s `that`.
+fn mark_unsafe_expression(
+    module: &str,
+    entries: &saphyr::Mapping<'_>,
+    args: &mut Map<String, Value>,
+) {
+    let key = match short_name(module) {
+        "debug" => "var",
+        "assert" => "that",
+        _ => return,
+    };
+    let Some(node) = entries
+        .iter()
+        .find(|(k, _)| k.as_str() == Some(key))
+        .map(|(_, v)| v)
+    else {
+        return;
+    };
+    if let Some(data) = unsafe_expression(node) {
+        args.insert(key.into(), Value::String(data));
+    } else if let (Yaml::Sequence(items), Some(Value::Array(out))) = (node, args.get_mut(key)) {
+        for (item, slot) in items.iter().zip(out) {
+            if let Some(data) = unsafe_expression(item) {
+                *slot = Value::String(data);
+            }
+        }
     }
 }
 
@@ -224,10 +268,11 @@ pub(super) fn module_args(module: &str, value: &Yaml) -> anyhow::Result<Map<Stri
                 args.insert(key, to_json(value)?);
             }
         }
-        Yaml::Mapping(_) => {
+        Yaml::Mapping(entries) => {
             if let Value::Object(map) = to_json(value)? {
                 args = map;
             }
+            mark_unsafe_expression(module, entries, &mut args);
         }
         // The line of `command`, `shell`, `raw` and `script` is the reference's `parse_kv` with
         // `check_raw`: the command options come out, the rest is the command or the script and

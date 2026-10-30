@@ -26,9 +26,6 @@ use super::output::summarise_exception;
 /// once per item.
 const UNTRUSTED_VAR: &str = "Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.";
 
-/// The help the reference's error block gives under that refusal's last cause.
-const UNTRUSTED_HELP: &str = "Templates and expressions must be defined by trusted sources such as playbooks or roles, not untrusted sources such as module results.";
-
 /// The modules in `LOCAL_MODULES` never leave the controller. `stop` is the run's interruption,
 /// which a `pause` waits on beside its timer: `None` is a pause the run's stop ended, which the
 /// driver answers the way it answers every other wait the stop ends, with no task line and no
@@ -341,7 +338,12 @@ fn local_result(
                 // there is data, and compiling data is how a remote string runs code on the
                 // controller. Refused with the reference's own sentence, measured on
                 // ansible-core 2.19.12 for both the plain form and the loop form.
-                if item.args_untrusted.contains("var") {
+                let written_unsafe = task
+                    .args
+                    .get("var")
+                    .and_then(Value::as_str)
+                    .is_some_and(|s| crate::yaml::unsafe_text(s).is_some());
+                if written_unsafe || item.args_untrusted.contains("var") {
                     let at = task.value_origins.get("var");
                     let mut refused = TaskResult::failed_with(UNTRUSTED_VAR);
                     refused.0.insert(
@@ -353,9 +355,9 @@ fn local_result(
                                 None
                             ),
                             crate::render::cause(
-                                "Encountered untrusted template or expression.",
+                                crate::template::UNTRUSTED,
                                 at,
-                                Some(UNTRUSTED_HELP),
+                                Some(crate::template::UNTRUSTED_HELP),
                             ),
                         ]),
                     );

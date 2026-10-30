@@ -79,6 +79,15 @@ pub(crate) fn beside_or_in_role(file_dir: &Path, role_dir: Option<&Path>, name: 
 pub(crate) fn resolve_notify(c: &Compiled, name: &str, names: &[Option<String>]) -> Vec<usize> {
     // The lists in the order they were defined, each a run of handlers of one role instance or of
     // the play.
+    // A role brought in again adds a copy of its list, which the reference does not search: it
+    // holds one list per role. Measured with the `include-role-duplicates` scenario, a handler
+    // three includes of one role notify runs once.
+    let role_of = |i: usize| {
+        c.handlers[i]
+            .role
+            .and_then(|r| c.roles.get(r))
+            .map(crate::roles::RoleVars::full_name)
+    };
     let mut lists: Vec<Vec<usize>> = Vec::new();
     for (i, handler) in c.handlers.iter().enumerate() {
         match lists.last_mut() {
@@ -86,6 +95,15 @@ pub(crate) fn resolve_notify(c: &Compiled, name: &str, names: &[Option<String>])
             _ => lists.push(vec![i]),
         }
     }
+    let mut kept: Vec<Option<String>> = Vec::new();
+    lists.retain(|list| {
+        let role = role_of(list[0]);
+        if role.is_some() && kept.contains(&role) {
+            return false;
+        }
+        kept.push(role);
+        true
+    });
     let answers = |i: usize| {
         let Some(own) = names.get(i).and_then(Option::as_deref) else {
             return false;

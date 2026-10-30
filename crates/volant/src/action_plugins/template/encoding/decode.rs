@@ -50,10 +50,23 @@ fn utf8(bytes: &[u8]) -> Result<String, String> {
     })
 }
 
+/// Python's error for the bytes `start..end`, which names the byte when there is only one.
+fn refused_bytes(codec: &str, bytes: &[u8], start: usize, end: usize, reason: &str) -> String {
+    if end - start == 1 {
+        return refused(codec, bytes, start, reason);
+    }
+    format!(
+        "'{codec}' codec can't decode bytes in position {start}-{}: {reason}",
+        end - 1
+    )
+}
+
 /// UTF-16 or UTF-32: a marked codec reads the byte order from the mark, little-endian without one.
+/// The units are read in order, so the error is the first one Python meets, at its position in
+/// the bytes as given, mark included.
 fn wide(bytes: &[u8], order: Order, four: bool) -> Result<String, String> {
     let size = if four { 4 } else { 2 };
-    let (mut big, mut body) = (order == Order::Big, bytes);
+    let (mut big, mut at) = (order == Order::Big, 0);
     if order == Order::Marked {
         let mark: &[u8] = if four {
             &[0xff, 0xfe, 0, 0]
@@ -61,10 +74,10 @@ fn wide(bytes: &[u8], order: Order, four: bool) -> Result<String, String> {
             &[0xff, 0xfe]
         };
         let flipped: Vec<u8> = mark.iter().rev().copied().collect();
-        if let Some(rest) = body.strip_prefix(mark) {
-            body = rest;
-        } else if let Some(rest) = body.strip_prefix(flipped.as_slice()) {
-            (big, body) = (true, rest);
+        if bytes.starts_with(mark) {
+            at = size;
+        } else if bytes.starts_with(&flipped) {
+            (big, at) = (true, size);
         }
     }
     let name = match (four, big) {
@@ -73,32 +86,50 @@ fn wide(bytes: &[u8], order: Order, four: bool) -> Result<String, String> {
         (true, false) => "utf-32-le",
         (true, true) => "utf-32-be",
     };
-    let whole = body.len() / size * size;
-    if whole != body.len() {
-        return Err(refused(name, body, whole, "truncated data"));
-    }
-    let units = body.chunks(size).map(|chunk| {
+    let unit = |at: usize| {
         let mut word = [0u8; 4];
-        word[..size].copy_from_slice(chunk);
+        word[..size].copy_from_slice(&bytes[at..at + size]);
         if big {
             word[..size].reverse();
         }
         u32::from_le_bytes(word)
-    });
-    if four {
-        return units
-            .enumerate()
-            .map(|(i, u)| {
-                char::from_u32(u)
-                    .ok_or_else(|| refused(name, body, i * 4, "code point not in range(0x110000)"))
-            })
-            .collect();
+    };
+    let fail = |start: usize, end: usize, reason: &str| {
+        Err(refused_bytes(name, bytes, start, end, reason))
+    };
+    let mut out = String::new();
+    while at < bytes.len() {
+        if bytes.len() - at < size {
+            return fail(at, bytes.len(), "truncated data");
+        }
+        let u = unit(at);
+        if let Some(c) = char::from_u32(u) {
+            out.push(c);
+            at += size;
+        } else if four && (0xd800..0xe000).contains(&u) {
+            return fail(
+                at,
+                at + 4,
+                "code point in surrogate code point range(0xd800, 0xe000)",
+            );
+        } else if four {
+            return fail(at, at + 4, "code point not in range(0x110000)");
+        } else if u >= 0xdc00 {
+            return fail(at, at + 2, "illegal encoding");
+        } else if bytes.len() - at < 4 {
+            return fail(at, bytes.len(), "unexpected end of data");
+        } else {
+            let low = unit(at + 2);
+            if !(0xdc00..0xe000).contains(&low) {
+                return fail(at, at + 2, "illegal UTF-16 surrogate");
+            }
+            out.extend(char::from_u32(
+                0x10000 + ((u - 0xd800) << 10) + (low - 0xdc00),
+            ));
+            at += 4;
+        }
     }
-    let units: Vec<u16> = units.map(|u| u16::try_from(u).unwrap_or(0)).collect();
-    char::decode_utf16(units.iter().copied())
-        .enumerate()
-        .map(|(i, c)| c.map_err(|_| refused(name, body, i * 2, "illegal encoding")))
-        .collect()
+    Ok(out)
 }
 
 pub(super) fn decode(bytes: &[u8], codec: Codec) -> Result<String, String> {

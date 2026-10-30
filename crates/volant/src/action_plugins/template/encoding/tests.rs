@@ -182,6 +182,61 @@ fn a_byte_a_codec_cannot_read_is_named_as_python_names_it() {
             b"a",
             "'utf-16-le' codec can't decode byte 0x61 in position 0: truncated data",
         ),
+        (
+            "utf-16",
+            b"\xff\xfea\0b",
+            "'utf-16-le' codec can't decode byte 0x62 in position 4: truncated data",
+        ),
+        (
+            "utf-16-le",
+            b"\0\xdc",
+            "'utf-16-le' codec can't decode bytes in position 0-1: illegal encoding",
+        ),
+        (
+            "utf-16-le",
+            b"=\xd8\0\xde\0\xdc",
+            "'utf-16-le' codec can't decode bytes in position 4-5: illegal encoding",
+        ),
+        (
+            "utf-16-le",
+            b"\0\xd8a\0",
+            "'utf-16-le' codec can't decode bytes in position 0-1: illegal UTF-16 surrogate",
+        ),
+        (
+            "utf-16-le",
+            b"\0\xd8",
+            "'utf-16-le' codec can't decode bytes in position 0-1: unexpected end of data",
+        ),
+        (
+            "utf-16-le",
+            b"a\0\0\xd8\0",
+            "'utf-16-le' codec can't decode bytes in position 2-4: unexpected end of data",
+        ),
+        (
+            "utf-32-le",
+            b"\0\0\x11\0",
+            "'utf-32-le' codec can't decode bytes in position 0-3: code point not in range(0x110000)",
+        ),
+        (
+            "utf-32-be",
+            b"\0\x11\0\0",
+            "'utf-32-be' codec can't decode bytes in position 0-3: code point not in range(0x110000)",
+        ),
+        (
+            "utf-32-le",
+            b"a\0\0\0\0\xd8\0\0",
+            "'utf-32-le' codec can't decode bytes in position 4-7: code point in surrogate code point range(0xd800, 0xe000)",
+        ),
+        (
+            "utf-32",
+            b"abc",
+            "'utf-32-le' codec can't decode bytes in position 0-2: truncated data",
+        ),
+        (
+            "utf-32-le",
+            b"a\0\0\0b\0",
+            "'utf-32-le' codec can't decode bytes in position 4-5: truncated data",
+        ),
     ] {
         assert_eq!(
             decode_text(bytes, name).unwrap_err(),

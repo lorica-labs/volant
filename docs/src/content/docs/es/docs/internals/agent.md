@@ -1,5 +1,5 @@
 ---
-sourceHash: 3819217d77a5
+sourceHash: a648d11b724a
 title: El agente en tus hosts
 description: Cómo Volant sube, comprueba y repara el agente que guarda en caché en cada host, y cómo se comparten las conexiones ssh con un host.
 ---
@@ -89,7 +89,7 @@ OpenSSH hace el trabajo, así que `~/.ssh/config`, `Match`, `Include`, `ProxyJum
 
 Cada conexión es un proceso `ssh` distinto y le cuesta al controlador tres descriptores de archivo. Con escalado de privilegios, una ejecución puede mantener dos conexiones por host: la propia del host y una con escalado.
 
-Al iniciarse, Volant sube su propio límite flexible de archivos abiertos hasta el límite estricto, con un tope de 1,048,576. La mayoría de los sistemas Linux traen un límite estricto muy superior a lo que necesita una ejecución, así que no hay que hacer nada.
+Al iniciarse, Volant sube su propio límite flexible de archivos abiertos hasta el límite estricto, con un tope de 1,048,576. La mayoría de los sistemas Linux traen un límite estricto muy superior a lo que necesita una ejecución, así que no hay que hacer nada. El agente de un host local arranca con el límite flexible con el que arrancó Volant, así que sus módulos reciben lo que recibirían con `ansible-playbook`, y `ansible_python_module_rlimit_nofile` fija el de cada módulo, `command` y `shell` incluidos.
 
 :::caution
 Un límite estricto de 1024 sigue deteniendo una ejecución en unas 330 conexiones, o en unos 169 hosts con escalado de privilegios. Entonces `ssh` deja de iniciarse y los hosts a los que les toca se notifican como inalcanzables aunque no les pase nada. En bash, `ulimit -n 1024` baja el límite estricto junto con el flexible.

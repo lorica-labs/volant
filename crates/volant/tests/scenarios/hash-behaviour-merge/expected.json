@@ -1,0 +1,10 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h1] **********************************************************************\n\nTASK [r : debug] ***************************************************************\nok: [h1] => {\n    \"h\": {\n        \"defaults\": \"role defaults\",\n        \"extra\": \"extra vars\",\n        \"group_all\": \"group_vars/all\",\n        \"param\": \"role parameter\",\n        \"play\": \"play vars\",\n        \"role_vars\": \"role vars\",\n        \"vars_file\": \"vars_files\"\n    }\n}\n\nTASK [set_fact] ****************************************************************\nok: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"h\": {\n        \"defaults\": \"role defaults\",\n        \"extra\": \"extra vars\",\n        \"fact\": \"set_fact\",\n        \"group_all\": \"group_vars/all\",\n        \"play\": \"play vars\",\n        \"role_vars\": \"role vars\",\n        \"vars_file\": \"vars_files\"\n    }\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=3    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [h2] **********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h2] => {\n    \"hv\": {\n        \"both\": 2,\n        \"one\": 1,\n        \"two\": 2\n    }\n}\n\nTASK [debug] *******************************************************************\nok: [h2] => {\n    \"gv\": {\n        \"both\": 2,\n        \"one\": 1,\n        \"two\": 2\n    }\n}\n\nPLAY RECAP *********************************************************************\nh2                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

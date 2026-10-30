@@ -1,0 +1,6 @@
+# `ansible_python_module_rlimit_nofile` sets the soft limit on open files a module starts with,
+# which the commands `shell` and `command` run inherit, and an interpreter that is not there fails
+# the task with the shell's rc 127 and its words, worded as the action's failure.
+stderr: true
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

@@ -169,47 +169,6 @@ const PERSISTENT: [&str; 3] = [
     "ansible.netcommon.httpapi",
 ];
 
-/// Filters and tests the engine knows by name whose arguments fail in part. Decided here, from
-/// probes against ansible-core 2.19.12; a row that is fixed leaves the list in the same change.
-const ARGUMENT_GAPS: &[(&str, &str, &str)] = &[
-    ("filter", "round", "the method argument is not supported"),
-    (
-        "filter",
-        "sum",
-        "the start and attribute arguments are not supported",
-    ),
-    ("filter", "min", "the attribute argument is not supported"),
-    ("filter", "max", "the attribute argument is not supported"),
-    ("filter", "replace", "the count argument is not supported"),
-    (
-        "filter",
-        "to_json",
-        "the sort_keys argument is not supported",
-    ),
-    ("filter", "b64encode", "only utf-8 encoding is supported"),
-    (
-        "test",
-        "version",
-        "the strict and version_type arguments are not supported",
-    ),
-    (
-        "test",
-        "version_compare",
-        "the strict and version_type arguments are not supported",
-    ),
-];
-
-/// The rows of a category with the argument gaps applied: a row that runs and has a gap is partial.
-fn with_argument_gap(category: &str, name: &str, status: Status, note: &str) -> (Status, String) {
-    match ARGUMENT_GAPS
-        .iter()
-        .find(|(c, n, _)| *c == category && *n == name)
-    {
-        Some((_, _, gap)) if status == Status::Runs => (Status::Partial, (*gap).to_string()),
-        _ => (status, note.to_string()),
-    }
-}
-
 fn later(category: &str, name: &str) -> Option<&'static str> {
     if category == "callback"
         && !matches!(name, "default" | "minimal" | "oneline" | "tree" | "junit")
@@ -405,8 +364,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             Status::Partial => (Status::Partial, "one spelling only"),
             s => (s, ""),
         };
-        let (s, note) = with_argument_gap("filter", &f, s, note);
-        rows.push(row("filter", &f, s, &note));
+        rows.push(row("filter", &f, s, note));
     }
     for f in names(&r, &["builtin", "test"]) {
         let fqcn = format!("ansible.builtin.{f}");
@@ -415,8 +373,7 @@ fn matrix(probe_dir: &std::path::Path) -> Vec<Row> {
             Status::Partial => (Status::Partial, "one spelling only"),
             s => (s, ""),
         };
-        let (s, note) = with_argument_gap("test", &f, s, note);
-        rows.push(row("test", &f, s, &note));
+        rows.push(row("test", &f, s, note));
     }
     for l in names(&r, &["builtin", "lookup"]) {
         let (s, note) = if volant::template::lookup_supported(&l) {

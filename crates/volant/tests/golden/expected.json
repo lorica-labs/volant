@@ -2323,6 +2323,76 @@
   },
   {
     "case": {
+      "template": "{{ 2.7 | round(0, 'floor') }} {{ 2.1 | round(0, 'ceil') }} {{ 2.55 | round(1, 'common') }} {{ 2.5 | round }} {{ -2.5 | round(0, 'floor') }}"
+    },
+    "result": "2.0 3.0 2.5 2.0 -3.0"
+  },
+  {
+    "case": {
+      "template": "{{ 2.7 | round(0, 'bogus') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.round' failed: method must be common, ceil or floor"
+  },
+  {
+    "case": {
+      "template": "{{ [1, 2] | sum(start=10) }} {{ items | sum(attribute='a') }} {{ items | sum(attribute='a', start=1) }}",
+      "vars": {
+        "items": [
+          {
+            "a": 3
+          },
+          {
+            "a": 5
+          }
+        ]
+      }
+    },
+    "result": "13 8 9"
+  },
+  {
+    "case": {
+      "template": "{{ 'aaa' | replace('a', 'b', 1) }} {{ 'aaa' | replace('a', 'b', 0) }} {{ 'aaa' | replace('a', 'b', -1) }}"
+    },
+    "result": "baa aaa bbb"
+  },
+  {
+    "case": {
+      "template": "{{ {'b': 1, 'a': 2} | to_json(sort_keys=true) }} {{ {'b': 1, 'a': [1]} | to_json(indent=2) }}"
+    },
+    "result": "{\"a\": 2, \"b\": 1} {\n  \"b\": 1,\n  \"a\": [\n    1\n  ]\n}"
+  },
+  {
+    "case": {
+      "template": "{{ '1.2.3' is version('1.2', '>', strict=true) }} {{ '1.0.0-beta' is version('1.0.0', '<', version_type='semver') }} {{ '1.0.0rc1' is version('1.0.0', '<', version_type='pep440') }} {{ '1!0.1' is version('2.0', '>', version_type='pep440') }}"
+    },
+    "result": "True True True True"
+  },
+  {
+    "case": {
+      "template": "{{ '1.2.3.4' is version('1.2', '>', strict=true) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The test plugin 'ansible.builtin.version' failed: Version comparison failed: invalid version number '1.2.3.4'"
+  },
+  {
+    "case": {
+      "template": "{{ '1.2' is version('1.2', '==', version_type='bogus') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The test plugin 'ansible.builtin.version' failed: Invalid version type (bogus). Must be one of 'loose', 'strict', 'semver', 'semantic', 'pep440'"
+  },
+  {
+    "case": {
+      "template": "{{ 'hé' | b64encode(encoding='utf-16') }} {{ 'aADpAA==' | b64decode(encoding='utf-16-le') }} {{ 'hé' | b64encode(encoding='latin-1') }}"
+    },
+    "result": "//5oAOkA hé aOk="
+  },
+  {
+    "case": {
+      "template": "{{ 'x' | b64encode(encoding='bogus') }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': The filter plugin 'ansible.builtin.b64encode' failed: unknown encoding: bogus"
+  },
+  {
+    "case": {
       "template": "{{ lookup('vars', name='inventory_hostname') }} {{ lookup('vars', 'x', name='y') }} {{ lookup('dict', {'a': 1}, bogus=1) }} {{ lookup('nested', [1], [2], bogus=1) }}",
       "vars": {
         "x": 1

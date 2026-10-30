@@ -20,8 +20,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | YAML tag | 2 | 0 | 0 | 0 |
 | module | 71 | 0 | 0 | 0 |
 | action plugin | 28 | 0 | 0 | 0 |
-| filter | 115 | 7 | 0 | 0 |
-| test | 80 | 2 | 0 | 0 |
+| filter | 122 | 0 | 0 | 0 |
+| test | 82 | 0 | 0 | 0 |
 | lookup | 25 | 0 | 0 | 0 |
 | become | 2 | 0 | 0 | 1 |
 | strategy | 4 | 0 | 0 | 0 |
@@ -386,7 +386,7 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `abs` | <span class="kw kw-runs">runs</span> |  |
 | `attr` | <span class="kw kw-runs">runs</span> |  |
 | `b64decode` | <span class="kw kw-runs">runs</span> |  |
-| `b64encode` | <span class="kw kw-partial">partial</span> | only utf-8 encoding is supported |
+| `b64encode` | <span class="kw kw-runs">runs</span> |  |
 | `basename` | <span class="kw kw-runs">runs</span> |  |
 | `batch` | <span class="kw kw-runs">runs</span> |  |
 | `bool` | <span class="kw kw-runs">runs</span> |  |
@@ -436,9 +436,9 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `lower` | <span class="kw kw-runs">runs</span> |  |
 | `mandatory` | <span class="kw kw-runs">runs</span> |  |
 | `map` | <span class="kw kw-runs">runs</span> |  |
-| `max` | <span class="kw kw-partial">partial</span> | the attribute argument is not supported |
+| `max` | <span class="kw kw-runs">runs</span> |  |
 | `md5` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `min` | <span class="kw kw-partial">partial</span> | the attribute argument is not supported |
+| `min` | <span class="kw kw-runs">runs</span> |  |
 | `normpath` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `password_hash` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `path_join` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
@@ -457,10 +457,10 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `rejectattr` | <span class="kw kw-runs">runs</span> |  |
 | `rekey_on_member` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `relpath` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `replace` | <span class="kw kw-partial">partial</span> | the count argument is not supported |
+| `replace` | <span class="kw kw-runs">runs</span> |  |
 | `reverse` | <span class="kw kw-runs">runs</span> |  |
 | `root` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `round` | <span class="kw kw-partial">partial</span> | the method argument is not supported |
+| `round` | <span class="kw kw-runs">runs</span> |  |
 | `safe` | <span class="kw kw-runs">runs</span> |  |
 | `select` | <span class="kw kw-runs">runs</span> |  |
 | `selectattr` | <span class="kw kw-runs">runs</span> |  |
@@ -474,12 +474,12 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `string` | <span class="kw kw-runs">runs</span> |  |
 | `striptags` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `subelements` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `sum` | <span class="kw kw-partial">partial</span> | the start and attribute arguments are not supported |
+| `sum` | <span class="kw kw-runs">runs</span> |  |
 | `symmetric_difference` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `ternary` | <span class="kw kw-runs">runs</span> |  |
 | `title` | <span class="kw kw-runs">runs</span> |  |
 | `to_datetime` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
-| `to_json` | <span class="kw kw-partial">partial</span> | the sort_keys argument is not supported |
+| `to_json` | <span class="kw kw-runs">runs</span> |  |
 | `to_nice_json` | <span class="kw kw-runs">runs</span> |  |
 | `to_nice_yaml` | <span class="kw kw-runs">runs</span> |  |
 | `to_uuid` | <span class="kw kw-runs">runs</span> |  |
@@ -590,8 +590,8 @@ Each row is a keyword, option or plugin that ansible-core 2.19.12 ships, or a mo
 | `urn` | <span class="kw kw-runs">runs</span> | through the Python helper; needs the plugin's Python libraries |
 | `vault_encrypted` | <span class="kw kw-runs">runs</span> |  |
 | `vaulted_file` | <span class="kw kw-runs">runs</span> |  |
-| `version` | <span class="kw kw-partial">partial</span> | the strict and version_type arguments are not supported |
-| `version_compare` | <span class="kw kw-partial">partial</span> | the strict and version_type arguments are not supported |
+| `version` | <span class="kw kw-runs">runs</span> |  |
+| `version_compare` | <span class="kw kw-runs">runs</span> |  |
 
 ## lookup
 

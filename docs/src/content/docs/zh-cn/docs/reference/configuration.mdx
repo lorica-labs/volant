@@ -1,5 +1,5 @@
 ---
-sourceHash: dbf4e0d7f385
+sourceHash: cf697547332c
 title: 配置
 description: Volant 读取的 ansible.cfg 设置和环境变量，按段列出，并附带默认值。
 ---
@@ -84,6 +84,10 @@ Volant 读取与 `ansible-playbook` 相同的 `ansible.cfg`，并在找到的第
 
 <Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
   让 `roles:` 中的 role 或未写 `public` 的 `import_role` 把自己的 `defaults` 和 `vars` 留在内部。设为 `false` 时，未写 `public` 的 `include_role` 也会对外提供它们。不设置时，只有 `include_role` 会保留它们。
+</Option>
+
+<Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">
+  `merge` 会在任意两个变量来源之间、以及两个 inventory 来源之间，把同名 mapping 按键逐个合并。`replace` 则完整保留优先级更高来源的值。该选项在 Ansible 中已弃用，但仍会生效，且不会给出警告。
 </Option>
 
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">

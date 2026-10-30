@@ -1,0 +1,5 @@
+all:
+  hosts:
+    h2: {hv: {two: 2, both: 2}}
+  vars:
+    gv: {two: 2, both: 2}

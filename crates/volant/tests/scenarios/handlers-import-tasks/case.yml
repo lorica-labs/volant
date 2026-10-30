@@ -1,0 +1,3 @@
+# Handlers an import_tasks in a handlers list brings in are found by name and by listen, a
+# role's under its name, and a role without the file reads the playbook's.
+args: [-i, inv.ini, play.yml]

@@ -1,5 +1,5 @@
 ---
-sourceHash: c4107e9762a5
+sourceHash: a3cc80fe44da
 title: 模板
 description: 控制节点上的 Jinja2、严格模式、条件、Volant 提供的过滤器、测试器和 lookup，以及模板文件如何渲染。
 ---
@@ -159,8 +159,7 @@ Volant 没有某个名称的 Rust 版本时，这个名称就需要 Python。[�
 
 ### 过滤器和测试器
 
-- 这些过滤器参数不受支持：`round` 的 method、`sum` 的 `start` 和 `attribute`、`min` 和 `max` 的 `attribute`、`replace` 的 `count`、`to_json` 的 `sort_keys`，以及 `version` 测试器的 `strict` 和 `version_type`。
-- `b64encode` 和 `b64decode` 的 `encoding` 只接受 `utf-8`。其他任何编码都会按名称被拒绝。
+- `b64encode` 和 `b64decode` 的 `encoding` 接受 utf-8、utf-8-sig、latin-1、ascii、cp1252、iso-8859-15、utf-16 和 utf-32，可使用它们在 Python 中的任一名称。其他编解码器会以 `unknown encoding` 失败。
 - `password_hash`、`json_query` 和 `ipaddr` 需要 Python 包 `passlib`、`jmespath` 和 `netaddr`。托管运行时不带它们，见[要安装什么](#要安装什么)。
 
 ### 宽于 128 位的整数

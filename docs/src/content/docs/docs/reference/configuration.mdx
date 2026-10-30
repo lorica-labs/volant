@@ -85,6 +85,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Make a role of `roles:` or of an `import_role` that does not say `public` keep its `defaults` and `vars` to itself. Set to `false`, an `include_role` that does not say `public` lends them too. Left unset, only an `include_role` keeps them.
 </Option>
 
+<Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">
+  `merge` lays a mapping over a mapping of the same name key by key, between every two variable sources and between two inventory sources. `replace` keeps the value of the higher source whole. The option is deprecated in Ansible, which still honours it and prints no warning for it.
+</Option>
+
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
   Run notified handlers even on hosts that failed.
 </Option>

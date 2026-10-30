@@ -413,10 +413,7 @@ impl Reader<'_, '_> {
                 self.inv.group_mut(group).priority = Some(priority);
             }
         } else {
-            self.inv
-                .group_mut(group)
-                .vars
-                .insert(var.to_string(), value.clone());
+            crate::vars::combine_one(&mut self.inv.group_mut(group).vars, var, value);
         }
         Ok(())
     }

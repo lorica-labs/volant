@@ -128,14 +128,28 @@ fn normalize(name: &str) -> String {
     out
 }
 
+/// The codec `name` stands for, as Python's lookup finds it.
+fn codec_of(name: &str) -> Option<Codec> {
+    let norm = normalize(name);
+    NAMES.iter().find(|(n, _)| *n == norm).map(|(_, c)| *c)
+}
+
+/// Python's refusal of a name that is no text codec here.
+fn unknown(name: &str) -> String {
+    let norm = normalize(name);
+    if NOT_TEXT.contains(&norm.as_str()) {
+        format!("'{norm}' is not a text encoding; use codecs.encode() to handle arbitrary codecs")
+    } else {
+        format!("unknown encoding: {name}")
+    }
+}
+
 /// The bytes of `text` in the codec `name`, or the reference's error for it.
 pub(super) fn encode(text: &str, name: &str) -> Result<Vec<u8>, String> {
-    let norm = normalize(name);
-    let Some(&(_, codec)) = NAMES.iter().find(|(n, _)| *n == norm) else {
+    let Some(codec) = codec_of(name) else {
+        let norm = normalize(name);
         return Err(if NOT_TEXT.contains(&norm.as_str()) {
-            format!(
-                "'{norm}' is not a text encoding; use codecs.encode() to handle arbitrary codecs"
-            )
+            unknown(name)
         } else {
             // A name is echoed up to 64 characters, so a long one does not fill the message.
             let shown: String = name.chars().take(64).collect();
@@ -150,6 +164,21 @@ pub(super) fn encode(text: &str, name: &str) -> Result<Vec<u8>, String> {
             )
         });
     };
+    encode_with(codec, text)
+}
+
+/// `text.encode(name)`, Python's error for a name it does not know included.
+pub(crate) fn encode_text(text: &str, name: &str) -> Result<Vec<u8>, String> {
+    encode_with(codec_of(name).ok_or_else(|| unknown(name))?, text)
+}
+
+/// `bytes.decode(name)`.
+pub(crate) fn decode_text(bytes: &[u8], name: &str) -> Result<String, String> {
+    let codec = codec_of(name).ok_or_else(|| unknown(name))?;
+    decode::decode(bytes, codec)
+}
+
+fn encode_with(codec: Codec, text: &str) -> Result<Vec<u8>, String> {
     match codec {
         Codec::Utf8 => Ok(text.as_bytes().to_vec()),
         Codec::Utf8Sig => Ok([&[0xef, 0xbb, 0xbf][..], text.as_bytes()].concat()),
@@ -299,5 +328,6 @@ fn wide(text: &str, order: Order, four: bool) -> Vec<u8> {
     out
 }
 
+mod decode;
 #[cfg(test)]
 mod tests;

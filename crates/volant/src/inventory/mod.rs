@@ -3,6 +3,7 @@
 //! them: each source offered to the enabled plugins in turn, directories walked, several
 //! sources merged into one inventory.
 
+mod adjacent;
 mod auto;
 mod collection;
 mod constructed;

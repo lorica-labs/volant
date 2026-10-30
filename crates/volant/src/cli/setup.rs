@@ -94,6 +94,19 @@ fn load_inventory(
     }
     let sources = inventory_sources(&args.hosts.inventory, &config);
     let bridge = Bridge::late();
+    // The playbooks' own plugin directories come first, as `ansible-playbook` adds them before it
+    // reads the inventory: an `inventory_plugins/` beside a playbook can parse it.
+    let playbook_dirs = args
+        .playbooks
+        .iter()
+        .filter_map(|p| {
+            std::path::absolute(p)
+                .ok()?
+                .parent()
+                .map(std::path::Path::to_path_buf)
+        })
+        .collect();
+    bridge.set_plugin_dirs(playbook_dirs)?;
     let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {
         match note {

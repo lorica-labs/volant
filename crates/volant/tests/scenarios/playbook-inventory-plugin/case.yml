@@ -1,0 +1,6 @@
+# An inventory plugin in an `inventory_plugins/` beside the playbook parses the inventory, as
+# `ansible-playbook` adds the playbook's plugin directories before it reads the inventory.
+stderr: true
+args: [-i, hosts.listed, play.yml]
+env: {ANSIBLE_INVENTORY_ENABLED: listed}
+needs: [ansible-core]

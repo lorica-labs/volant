@@ -354,6 +354,39 @@ impl Bridge {
         )
     }
 
+    /// [`Bridge::inventory`] for the plugin `plugin` itself rather than `auto`: `declined` when
+    /// its `verify_file` refuses `path`.
+    pub fn inventory_plugin(&self, plugin: &str, path: &str) -> Result<Value, BridgeError> {
+        self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "inventory", "name": plugin, "args": [path], "kwargs": {"plugin": plugin}}),
+        )
+    }
+
+    /// Where the controller's ansible-core finds the `kind` plugin `name` (`callback`, `cache`),
+    /// `None` when it finds none or cannot be asked.
+    pub fn plugin_path(&self, kind: &str, name: &str) -> Option<String> {
+        self.request(
+            PluginKind::Lookup,
+            name,
+            json!({"kind": "plugin_path", "name": name, "args": [kind], "kwargs": {}}),
+        )
+        .ok()?
+        .as_str()
+        .map(str::to_string)
+    }
+
+    /// Whether the controller's ansible-core loads an inventory plugin of that name.
+    pub fn inventory_plugin_exists(&self, plugin: &str) -> bool {
+        self.request(
+            PluginKind::Lookup,
+            plugin,
+            json!({"kind": "inventory_plugin", "name": plugin, "args": [], "kwargs": {}}),
+        )
+        .is_ok_and(|found| found.as_bool() == Some(true))
+    }
+
     fn defaults_request(
         &self,
         kind: &str,

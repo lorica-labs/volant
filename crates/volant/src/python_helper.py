@@ -823,12 +823,13 @@ def marked(value):
     return plain(value)
 
 
-def inventory(path):
+def inventory(path, plugin=None):
     """One collection inventory plugin reading `path`, as the reference's `auto` plugin runs it,
     inside the same `_InventoryDataWrapper` the inventory manager gives it (so a plugin's trust
     and origins are the reference's) and with its cache: the groups, children, hosts and host
     variables it made as plain JSON, and the lines it said. A failure is answered as data, so
-    the warnings said before it are kept."""
+    the warnings said before it are kept. `plugin` names an enabled plugin to run in place of
+    `auto`, which answers `declined` when its `verify_file` refuses the source."""
     from ansible._internal._datatag._tags import Origin
     from ansible.inventory.manager import InventoryManager, _InventoryDataWrapper
     from ansible.parsing.dataloader import DataLoader
@@ -848,10 +849,14 @@ def inventory(path):
         loader = DataLoader()
         manager = InventoryManager(loader, sources=[path], parse=False)
         manager._inventory.current_source = path
-        auto = inventory_loader.get("auto")
-        origin = Origin(description="<inventory plugin 'auto' with source %r>" % path)
-        wrapper = _InventoryDataWrapper(manager._inventory, target_plugin=auto, origin=origin)
-        auto.parse(wrapper, loader, path, cache=True)
+        target = inventory_loader.get(plugin or "auto")
+        if plugin and not target.verify_file(path):
+            return {"declined": True, "verbose": verbose, "warnings": warnings}
+        origin = Origin(
+            description="<inventory plugin %r with source %r>" % (plugin or "auto", path)
+        )
+        wrapper = _InventoryDataWrapper(manager._inventory, target_plugin=target, origin=origin)
+        target.parse(wrapper, loader, path, cache=True)
         data = manager._inventory
         # What `ansible-inventory --list` does next: the variables of each host, which is where
         # the reference warns about a variable that has a reserved name.
@@ -956,7 +961,16 @@ def call(request):
     loaders()
     kind, name = request["kind"], request["name"]
     if kind == "inventory":
-        return {"value": inventory(request["args"][0])}
+        return {"value": inventory(request["args"][0], request["kwargs"].get("plugin"))}
+    if kind == "inventory_plugin":
+        from ansible.plugins.loader import inventory_loader
+
+        return {"value": inventory_loader.has_plugin(name)}
+    if kind == "plugin_path":
+        from ansible.plugins import loader as plugin_loader
+
+        found = getattr(plugin_loader, "%s_loader" % request["args"][0]).find_plugin(name)
+        return {"value": found}
     if kind == "diff":
         return {"value": diff_text(request["args"][0], request["kwargs"].get("color", False))}
     if kind == "action_groups":

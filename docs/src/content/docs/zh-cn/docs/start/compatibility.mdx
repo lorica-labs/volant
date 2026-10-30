@@ -1,5 +1,5 @@
 ---
-sourceHash: e2ca4489dac4
+sourceHash: e661323a4182
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -47,7 +47,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | `async` 能用吗？ | 能：`async`、`poll`，以及 `poll: 0` 搭配 `async_status`。ansible-core 无法在 `async` 下运行的模块，会在每台主机上失败，并给出 `This action (<name>) does not support async.`。见[运行 play](/zh-cn/docs/playbooks/how-a-play-runs/#异步任务)。 |
 | `--diff` 能用吗？ | 能，可以和 `--check` 一起用，也可以单独用。当运行要求检查或 diff 时，`apt`、`user`、`group`、`file`、`lineinfile` 和 `systemd` 需要主机上有 Python。见[检查模式、diff 与列表输出](/zh-cn/docs/playbooks/check-and-diff/)。 |
 | `become`、vault 和 `ansible.cfg` 能用吗？ | 通过 `sudo` 或 `su` 的 `become`、vault 和 `ansible.cfg` 都能用。`doas` 和其他方式不能。见[连接与 become](/zh-cn/docs/hosts/connections/)。 |
-| 我自己写的插件能用吗？ | 暂时不能。自己写的 action 插件会让运行停止，`callback_plugins/` 和 `vars_plugins/` 会被忽略。见[已知缺口](#已知缺口)。 |
+| 我自己写的插件能用吗？ | 部分能用。playbook 旁边或角色中的 action、connection 和 inventory 插件通过 ansible-core 运行。自己写的 callback 或 cache 插件会让运行停止并给出它的文件，`vars_plugins/` 会被忽略。见[已知缺口](#已知缺口)。 |
 
 ## 一览
 
@@ -100,9 +100,10 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 | 内容 | 会发生什么 |
 |---|---|
-| `callback_plugins/`、`vars_plugins/` | 被忽略。 |
-| `stdout_callback` 指定 `json` 以外的 collection callback，例如 `community.general.unixy` | 运行在第一个 play 之前以 `Could not load '<name>' callback plugin.` 停止，而 ansible-core 只对未安装的插件打印这句。`default`、`minimal`、`oneline`、`tree` 和 `json` 可以用。 |
-| `callbacks_enabled` | `junit`、`tree`、`ansible.posix.timer` 和 `ansible.posix.profile_tasks` 会运行。其他名字都以 `[WARNING]: Skipping callback plugin '<name>', unable to load` 被跳过，而 ansible-core 只对找不到的插件打印这句。`volant.compat.record` 被跳过，不打印警告。 |
+| `vars_plugins/` | 被忽略。 |
+| 自己写的 cache 插件作为 `fact_caching` | 运行以退出码 4 和 `fact cache plugin '<name>' ... is not supported yet` 停止；文件在 `cache_plugins/` 或 `ANSIBLE_CACHE_PLUGINS` 中时会给出文件。 |
+| `stdout_callback` 指定 `json` 以外的 collection callback，例如 `community.general.unixy` | 运行在第一个 play 之前以 `Could not load '<name>' callback plugin.` 停止；控制端的 ansible-core 找到插件文件时（例如 `callback_plugins/` 中的插件），后面会给出该文件。`default`、`minimal`、`oneline`、`tree` 和 `json` 可以用。 |
+| `callbacks_enabled` | `junit`、`tree`、`ansible.posix.timer` 和 `ansible.posix.profile_tasks` 会运行。其他名字都以 `[WARNING]: Skipping callback plugin '<name>', unable to load` 被跳过；控制端的 ansible-core 找到插件文件时，后面会给出该文件。`volant.compat.record` 被跳过，不打印警告。 |
 | `volant check` 和 `volant lint` | 它们不存在。请用 ansible-core 或 ansible-lint 运行。 |
 | 在两个 Python 无法排序的类型的字面量之间写比较，例如 `{{ 'a' < 1 }}` | 它会回答 `false` 或 `true`，而 ansible-core 会失败并报 `'<' not supported between instances of 'str' and 'int'`。模板库在 Volant 看到之前就算出了字面量的比较结果。任意一边是变量时，比较会像 ansible-core 一样失败。 |
 | 失败的带 `no_log: true` 的 task | 这是有意为之。Volant 打印 `[ERROR]: Task failed: Action failed: <error censored due to no log>`，不打印失败原因的其他内容。ansible-core 2.19.12 会打印原因：`[ERROR]: Task failed: Action failed: <the msg of fail or assert>`、模块的错误，以及 `<<< caused by >>>` 块。这些文字可能包含机密，例如点出密码的 `fail` 的 `msg`。[安全策略](https://github.com/lorica-labs/volant/blob/main/SECURITY.md)把在 ansible-core 里被 `no_log` 隐藏、却进入日志或终端的机密算作漏洞，所以 Volant 把它隐藏起来。`fatal:` 行、已注册的结果和汇总在两者中相同。要读到原因，请去掉 `no_log` 再运行这个 task。 |

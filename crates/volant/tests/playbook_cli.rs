@@ -6259,6 +6259,87 @@ fn library_module(dir: &Path, name: &str, field: &str) {
     .expect("the module");
 }
 
+/// A cache plugin of the playbook's own, in `cache_plugins/`, is refused before the run with
+/// its file named.
+#[test]
+fn an_own_cache_plugin_is_refused_with_its_file() {
+    let dir = probe_dir("own-cache-plugin");
+    std::fs::create_dir_all(dir.join("cache_plugins")).expect("the plugin directory");
+    std::fs::write(dir.join("cache_plugins").join("mine.py"), "").expect("the plugin");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks: []\n",
+    )
+    .expect("the play");
+    let out = volant_within_full(
+        &["playbook", "-i", "localhost,", "play.yml"],
+        std::time::Duration::from_secs(60),
+        None,
+        None,
+        Some(&dir),
+        None,
+        &[("ANSIBLE_CACHE_PLUGIN", "mine")],
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(4), "{err}");
+    let file = std::path::absolute(dir.join("cache_plugins").join("mine.py")).expect("a path");
+    assert!(
+        err.contains(&format!(
+            "fact cache plugin 'mine' (from 'env: ANSIBLE_CACHE_PLUGIN') at '{}' is not supported yet",
+            file.display()
+        )),
+        "{err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A stdout callback the controller's ansible-core finds beside the playbook is refused with
+/// its file named.
+#[test]
+fn an_own_stdout_callback_is_refused_with_its_file() {
+    let Some(python) = python::reference_python().map(|p| p.display().to_string()) else {
+        return;
+    };
+    let dir = probe_dir("own-callback");
+    let plugins = dir.join("callback_plugins");
+    std::fs::create_dir_all(&plugins).expect("the plugin directory");
+    std::fs::write(
+        plugins.join("mine.py"),
+        "from ansible.plugins.callback import CallbackBase\n\nclass CallbackModule(CallbackBase):\n    CALLBACK_NAME = 'mine'\n    CALLBACK_TYPE = 'stdout'\n",
+    )
+    .expect("the plugin");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks: []\n",
+    )
+    .expect("the play");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            "localhost,",
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[
+            ("VOLANT_PYTHON", &python),
+            ("ANSIBLE_STDOUT_CALLBACK", "mine"),
+            (
+                "ANSIBLE_CALLBACK_PLUGINS",
+                plugins.to_str().expect("a path"),
+            ),
+        ],
+    );
+    let err = String::from_utf8_lossy(&out.stderr);
+    assert_eq!(out.status.code(), Some(1), "{err}");
+    assert!(
+        err.contains("[ERROR]: Could not load 'mine' callback plugin: '")
+            && err.contains("mine.py' is a callback plugin this release does not run."),
+        "{err}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// `log_path` gets every displayed line, a record each in the reference's format.
 #[test]
 fn log_path_writes_what_the_run_displays() {

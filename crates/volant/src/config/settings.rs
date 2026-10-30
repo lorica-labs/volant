@@ -65,13 +65,36 @@ pub(super) fn cache_plugin(value: &str, origin: &str) -> anyhow::Result<String> 
         name @ ("memory" | "jsonfile" | "ansible.builtin.memory" | "ansible.builtin.jsonfile") => {
             Ok(name.trim_start_matches("ansible.builtin.").to_string())
         }
-        other => Err(crate::stats::Refusal::at(
-            4,
-            format!(
-                "fact cache plugin '{other}' (from '{origin}') is not supported yet; use 'memory' or 'jsonfile'"
-            ),
-        )),
+        other => {
+            // A plugin of the playbook's own: named with its file when it sits where the
+            // reference looks first, a `cache_plugins/` here or on `ANSIBLE_CACHE_PLUGINS`.
+            let file = own_cache_plugin(other)
+                .map(|path| format!(" at '{}'", path.display()))
+                .unwrap_or_default();
+            Err(crate::stats::Refusal::at(
+                4,
+                format!(
+                    "fact cache plugin '{other}' (from '{origin}'){file} is not supported yet; use 'memory' or 'jsonfile'"
+                ),
+            ))
+        }
     }
+}
+
+/// The file of the cache plugin `name` in `./cache_plugins` or a directory of
+/// `ANSIBLE_CACHE_PLUGINS`, when one is there.
+fn own_cache_plugin(name: &str) -> Option<std::path::PathBuf> {
+    let configured = std::env::var("ANSIBLE_CACHE_PLUGINS").unwrap_or_default();
+    std::iter::once(std::path::PathBuf::from("cache_plugins"))
+        .chain(
+            configured
+                .split(':')
+                .filter(|d| !d.is_empty())
+                .map(std::path::PathBuf::from),
+        )
+        .map(|dir| dir.join(format!("{name}.py")))
+        .find(|file| file.is_file())
+        .and_then(|file| std::path::absolute(file).ok())
 }
 
 /// The `gathering` policy: one of the three words the reference knows, refused otherwise.

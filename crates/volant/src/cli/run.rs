@@ -96,7 +96,7 @@ async fn run_all(
         Err(code) => return Ok(code),
     };
     let show_custom_stats = config.show_custom_stats;
-    if let Err(code) = load_callbacks(&config, plays, out) {
+    if let Err(code) = load_callbacks(&config, plays, out, &bridge) {
         return Ok(code);
     }
     let dump = if out.verbose_at(4) {

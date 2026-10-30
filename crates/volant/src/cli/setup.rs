@@ -33,6 +33,11 @@ pub(super) fn set_up(
     let config = crate::runtime::resolve::configured(Config::load()?);
     out.set_path_on_failure(config.show_task_path_on_failure);
     playbook::set_deprecation_warnings(config.deprecation_warnings);
+    if let Some(path) = &config.log_path
+        && let Err(why) = crate::render::log::open(path, config.log_verbosity)
+    {
+        out.warning(&why, false);
+    }
     for notice in &args.adhoc_deprecations {
         playbook::print_deprecation_line(notice);
     }

@@ -6259,6 +6259,49 @@ fn library_module(dir: &Path, name: &str, field: &str) {
     .expect("the module");
 }
 
+/// `log_path` gets every displayed line, a record each in the reference's format.
+#[test]
+fn log_path_writes_what_the_run_displays() {
+    let dir = probe_dir("log-path");
+    std::fs::write(
+        dir.join("play.yml"),
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - name: normal task\n      debug: {msg: hi}\n",
+    )
+    .expect("the play");
+    let log = dir.join("run.log");
+    let out = volant_within_env(
+        &[
+            "playbook",
+            "-i",
+            "localhost,",
+            dir.join("play.yml").to_str().expect("a path"),
+        ],
+        std::time::Duration::from_secs(60),
+        &[("ANSIBLE_LOG_PATH", log.to_str().expect("a path"))],
+    );
+    assert_eq!(out.status.code(), Some(0));
+    let text = std::fs::read_to_string(&log).expect("the log");
+    let tasks: Vec<&str> = text
+        .lines()
+        .filter(|l| l.contains("TASK [normal task]"))
+        .collect();
+    assert_eq!(tasks.len(), 1, "{text}");
+    let task = tasks[0];
+    assert!(task.contains(" p=") && task.contains(" u="), "{task}");
+    assert!(
+        task.contains(" n=ansible INFO| TASK [normal task] ***"),
+        "{task}"
+    );
+    // The date, the time and its milliseconds, as Python's logging writes them.
+    let stamp = &task[..23];
+    assert!(
+        stamp.as_bytes()[4] == b'-' && stamp.as_bytes()[10] == b' ' && stamp.as_bytes()[19] == b',',
+        "{task}"
+    );
+    assert!(text.contains("INFO| PLAY RECAP"), "{text}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
 /// A Python module run for a `no_log` task is told so, as ansible-core tells it with
 /// `_ansible_no_log`: `AnsibleModule.log` then writes nothing to the system log.
 #[test]

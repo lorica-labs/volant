@@ -77,6 +77,14 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Print the `[DEPRECATION WARNING]` notices and the line that tells how to stop them. Set to `False` to print neither.
 </Option>
 
+<Option name="log_path" id="defaults-log-path" default="unset" env="ANSIBLE_LOG_PATH">
+  A file every line the run displays is appended to, one record each as Ansible writes it: `2026-10-30 18:34:18,430 p=<pid> u=<user> n=ansible INFO| TASK [...] ***`, `WARNING` for a `[WARNING]` and `ERROR` for an `[ERROR]`.
+</Option>
+
+<Option name="log_verbosity" id="defaults-log-verbosity" default="0" env="ANSIBLE_LOG_VERBOSITY">
+  The number of `-v`s up to which a line goes to `log_path` even when the run does not show it.
+</Option>
+
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Warn when the inventory holds no host, so that only the implicit `localhost` is left. `all` does not match that host.
 </Option>

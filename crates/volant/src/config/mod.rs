@@ -23,7 +23,7 @@ pub use callbacks::Callbacks;
 pub(crate) use locate::{defaults_value, is_world_writable};
 use parse::parse;
 pub(crate) use parse::strict_utf8;
-pub(crate) use paths::expand_home;
+pub(crate) use paths::{configured_async_dir, expand_home};
 use paths::{default_collections_path, default_roles_path, path_list};
 pub use settings::HostNamedPaths;
 use settings::{
@@ -36,17 +36,6 @@ pub const DEFAULT_REMOTE_TMP: &str = "~/.ansible/tmp";
 /// Ansible's own default for `forks`: how many hosts a play runs at once.
 pub const DEFAULT_FORKS: usize = 5;
 
-/// `async_dir` of the configuration the run loaded, for the code that names a job's directory
-/// without a `Config` in hand.
-static ASYNC_DIR: std::sync::Mutex<Option<String>> = std::sync::Mutex::new(None);
-
-/// The directory `ansible.cfg` names for jobs, if it names one.
-pub(crate) fn configured_async_dir() -> Option<String> {
-    ASYNC_DIR
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
-}
 /// Ansible's own defaults for `[privilege_escalation]`.
 pub const DEFAULT_BECOME_USER: &str = "root";
 pub const DEFAULT_BECOME_METHOD: &str = "sudo";
@@ -114,6 +103,11 @@ pub struct Config {
     /// `[defaults] deprecation_warnings` or `ANSIBLE_DEPRECATION_WARNINGS`: print the
     /// `[DEPRECATION WARNING]` blocks and the line that tells how to stop them. On by default.
     pub deprecation_warnings: bool,
+    /// `[defaults] log_path` or `ANSIBLE_LOG_PATH`, and `log_verbosity` or
+    /// `ANSIBLE_LOG_VERBOSITY`: the file every displayed line is written to, and the `-v` level
+    /// up to which lines go there even when they are not shown.
+    pub log_path: Option<PathBuf>,
+    pub log_verbosity: u8,
     /// `[ssh_connection] usetty` or `ANSIBLE_SSH_USETTY`: give `raw`, `script` and the commands a
     /// plugin sends without input a terminal (`ssh -tt`). On by default; `ansible_ssh_use_tty`
     /// on a host wins over both.
@@ -476,11 +470,7 @@ impl Config {
             config.collections_path,
             crate::runtime::collections::active_dir(),
         );
-        let mut held = ASYNC_DIR
-            .lock()
-            .unwrap_or_else(std::sync::PoisonError::into_inner);
-        held.clone_from(&config.async_dir);
-        drop(held);
+        paths::set_async_dir(config.async_dir.clone());
         Ok(config)
     }
 }

@@ -46,6 +46,22 @@ pub(crate) fn written_strings(value: &mut Value) {
     each_string(value, &as_written);
 }
 
+/// `value`, a value [`super::to_json`] made, with Volant's own encodings undone: what
+/// ansible-core's loader returns for the same text. Template literals keep their backslashes as
+/// written, an `!unsafe` string is its text, and a `!vault` value is `VAULT:` and its ciphertext.
+/// For comparing the two loaders: see `just yaml-corpus`.
+pub fn as_reference(value: &mut Value) {
+    each_string(value, &|text| {
+        if let Some(plain) = super::unsafe_text(text) {
+            plain
+        } else if let Some(ciphertext) = super::vault_text(text) {
+            format!("VAULT:{}", ciphertext.trim())
+        } else {
+            as_written(text)
+        }
+    });
+}
+
 fn each_string(value: &mut Value, change: &dyn Fn(&str) -> String) {
     match value {
         Value::String(s) => *s = change(s),

@@ -358,7 +358,8 @@ pub(in crate::executor) fn render_name(
     store: &Mutex<VarStore>,
 ) -> String {
     let task = &step.task;
-    if !Templar::is_template(&task.name) {
+    // A task with no name is called after its action as written, a template left as it is.
+    if !task.named || !Templar::is_template(&task.name) {
         return task.name.clone();
     }
     let playbook_dir = store

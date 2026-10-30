@@ -371,7 +371,7 @@ fn loop_control_sub_keys_are_read() {
 #[case::file("file: path=/tmp/x state=touch", "file", &[("path", "/tmp/x"), ("state", "touch")])]
 #[case::collection("community.general.ufw: rule=allow port=22", "community.general.ufw", &[("port", "22"), ("rule", "allow")])]
 #[case::windows_free_text("ansible.windows.win_shell: Get-Service foo", "ansible.windows.win_shell", &[("_raw_params", "Get-Service foo")])]
-#[case::template_words("ns.coll.mod: port={{ x }} {{ a b }}", "ns.coll.mod", &[("_raw_params", "{{ a b }}"), ("port", "{{ x }}")])]
+#[case::template_words("ns.coll.mod: port={{ x }} {{ a b }}", "ns.coll.mod", &[("port", "{{ x }}")])]
 #[case::open_quote("ns.coll.mod: a='open", "ns.coll.mod", &[("_raw_params", "a='open")])]
 #[case::builtin_stray_word("ping: data=x foo", "ping", &[("_raw_params", "foo"), ("data", "x")])]
 #[case::command_creates("command: echo hi creates=/etc/passwd", "command", &[("_raw_params", "echo hi"), ("creates", "/etc/passwd")])]

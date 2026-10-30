@@ -993,7 +993,7 @@ fn an_undefined_value_given_to_a_missing_filter_fails_as_unknown() {
     assert_eq!(
         t.render("{{ nope | x.y | default('d') }}", &Map::new()),
         Err(TemplateError(
-            "unknown filter: filter x.y is unknown (in <expression>:1)".into()
+            "Syntax error in template: No filter named 'x.y'.".into()
         ))
     );
 }

@@ -109,10 +109,15 @@ pub(crate) fn python_json(
             let fields: Vec<String> = keys
                 .into_iter()
                 .map(|k| {
+                    let name = if crate::template::typed_keys::is_none(map, k) {
+                        "null"
+                    } else {
+                        k
+                    };
                     format!(
                         "{}{}: {}",
                         pad(depth + 1),
-                        string(k),
+                        string(name),
                         python_json(&map[k], indent, sort_keys, ensure_ascii, depth + 1)
                     )
                 })

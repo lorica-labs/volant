@@ -17,6 +17,13 @@ pub(super) fn item(parent: &Value, key: &Value) -> Result<Value, Error> {
     if !read.is_undefined() || parent.kind() != ValueKind::Map {
         return Ok(read);
     }
+    // A typed key equal by value: `True == 1 == 1.0`, as Python's dict finds them.
+    for other in equals(key) {
+        let found = parent.get_item(&other)?;
+        if !found.is_undefined() {
+            return Ok(found);
+        }
+    }
     for text in texts(key) {
         let found = parent.get_item(&Value::from(text))?;
         if !found.is_undefined() {
@@ -24,6 +31,23 @@ pub(super) fn item(parent: &Value, key: &Value) -> Result<Value, Error> {
         }
     }
     Ok(read)
+}
+
+/// The other typed keys equal to `key`.
+fn equals(key: &Value) -> Vec<Value> {
+    match key.kind() {
+        ValueKind::Bool => vec![Value::from(i64::from(key.is_true()))],
+        ValueKind::Number => match key.as_i64() {
+            Some(n @ (0 | 1)) => vec![Value::from(n == 1), Value::from(n as f64)],
+            Some(n) => vec![Value::from(n as f64)],
+            None => f64::try_from(key.clone())
+                .ok()
+                .filter(|f| f.fract() == 0.0 && f.abs() < 9e15)
+                .map(|f| vec![Value::from(f as i64)])
+                .unwrap_or_default(),
+        },
+        _ => Vec::new(),
+    }
 }
 
 /// The texts a YAML key equal to `key` is held under, in the order the reference would match.

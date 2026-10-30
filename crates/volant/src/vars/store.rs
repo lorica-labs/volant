@@ -27,25 +27,25 @@ fn inventory_maps(
     BTreeMap<String, Vec<String>>,
 ) {
     let groups = inventory.groups();
+    let layering = inventory.layering();
     let mut inventory_vars = BTreeMap::new();
     let mut host_line_vars = BTreeMap::new();
     let mut group_names = BTreeMap::new();
     for host in &groups["all"] {
         // Not `resolve`: a name that is both a group and a host resolves as the group, and
         // an empty group would leave this host without its own inventory variables.
-        let resolved = inventory.host_with_vars(host);
-        inventory_vars.insert(host.clone(), resolved.vars.into_iter().collect());
+        inventory_vars.insert(host.clone(), layering.vars_of(host).into_iter().collect());
         host_line_vars.insert(
             host.clone(),
-            inventory
-                .host_line_vars(host)
+            layering
+                .line_vars(host)
                 .cloned()
                 .unwrap_or_default()
                 .into_iter()
                 .collect(),
         );
         // In layering order; the `group_names` magic variable sorts its own copy.
-        group_names.insert(host.clone(), inventory.layered_groups_of(host));
+        group_names.insert(host.clone(), layering.layered(host));
     }
     (groups, inventory_vars, host_line_vars, group_names)
 }

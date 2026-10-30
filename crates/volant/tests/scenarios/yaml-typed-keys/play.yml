@@ -1,0 +1,21 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    d:
+      1: one
+      true: t
+      2.5: f
+      ~: n
+      x: s
+  tasks:
+    - debug: {msg: "{{ d[\"1\"] | default(\"undefined\") }}"}
+    - debug: {msg: "{{ d.keys() | list }}"}
+    - debug: {msg: "{{ d | dict2items | map(attribute=\"key\") | map(\"type_debug\") | list }}"}
+    - debug: {msg: "{{ [d[1], d[true], d[2.5], d[none], d.x] }}"}
+    - debug: {var: d}
+    - debug: {msg: "{{ d }}"}
+    - debug: {msg: "{{ d | to_json }}"}
+    - debug: {msg: "{{ 1 in d }} {{ '1' in d }} {{ d.items() | list }}"}
+    - set_fact: {e: "{{ d }}"}
+    - debug: {msg: "{{ e.keys() | list }}"}
+    - debug: {msg: "{{ {1: 'a', 'b': 2} | dict2items | map(attribute='key') | map('type_debug') | list }}"}

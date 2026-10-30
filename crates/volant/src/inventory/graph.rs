@@ -59,7 +59,7 @@ impl Inventory {
             Some(host) => {
                 self.unsafe_vars
                     .retain(|(h, v), _| h != name || !vars.contains_key(v));
-                host.vars.extend(vars);
+                crate::vars::extend(&mut host.vars, &vars);
             }
             None => self.hosts.push(Host {
                 name: name.to_string(),

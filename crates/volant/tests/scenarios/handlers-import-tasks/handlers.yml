@@ -1,0 +1,5 @@
+- name: play handler
+  debug: {msg: play handler ran}
+- name: other
+  listen: heard
+  debug: {msg: listener ran}

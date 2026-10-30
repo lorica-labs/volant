@@ -1,0 +1,2 @@
+# The implicit localhost is in no group and still reads the inventory's all variables.
+args: [-i, inv.ini, play.yml]

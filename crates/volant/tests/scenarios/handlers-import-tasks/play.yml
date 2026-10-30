@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  roles: [r]
+  tasks:
+    - debug: {msg: main}
+      changed_when: true
+      notify: [play handler, heard]
+  handlers:
+    - import_tasks: handlers.yml

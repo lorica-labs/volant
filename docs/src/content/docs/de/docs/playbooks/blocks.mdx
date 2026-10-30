@@ -1,5 +1,5 @@
 ---
-sourceHash: dd334ed7fa20
+sourceHash: 61e526570a4b
 title: Blöcke und Handler
 description: Wie ein Fehler durch Blöcke wandert, was rescue und always tun und wann Handler laufen.
 ---
@@ -86,6 +86,8 @@ Ein Flush-Punkt in einer `include_tasks`-Datei läuft nur für die Hosts, deren 
 Handler laufen in der Reihenfolge, in der sie definiert sind, nicht in der Reihenfolge, in der sie benachrichtigt wurden. Eine Rolle, die in `roles:` oder per `import_role` genannt wird, stellt ihre Handler vor die des Plays. Eine Rolle, die per `include_role` eingebracht wird, stellt sie dahinter, wie in Ansible.
 
 Ein Task benachrichtigt nur, wenn er `changed` meldet. Bei einer Schleife entscheidet das Gesamtergebnis, ein geändertes Element genügt also. Nach einem Flush werden die Benachrichtigungen gelöscht, ein Handler läuft also beim nächsten Flush nicht erneut, es sei denn, etwas benachrichtigt ihn wieder.
+
+Eine `handlers:`-Liste darf ein `import_tasks` enthalten, in einem Play oder in einer Rolle. Die Handler der genannten Datei treten mit seinen Keywords an seine Stelle und werden über ihren Namen und über `listen` benachrichtigt. Die Datei wird neben der Datei gesucht, die die Anweisung enthält, dann im Verzeichnis des Playbooks.
 
 ### Keywords aus dem Play
 

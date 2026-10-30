@@ -69,40 +69,39 @@ pub(super) fn text_of(value: &Value) -> String {
 /// `encoding` and `urlsafe`, the two options `b64decode` and `b64encode` share. Only UTF-8 is
 /// an encoding here: any other is refused by name rather than read as UTF-8.
 pub(super) fn b64_options(
-    filter: &str,
     encoding: Option<String>,
     kwargs: &Kwargs,
-) -> Result<bool, Error> {
+) -> Result<(String, bool), Error> {
     let encoding = kwargs
         .get::<Option<String>>("encoding")?
         .or(encoding)
         .unwrap_or_else(|| "utf-8".to_string());
     let urlsafe = kwargs.get::<Option<bool>>("urlsafe")?.unwrap_or(false);
     kwargs.assert_all_used()?;
-    if !encoding.eq_ignore_ascii_case("utf-8") && !encoding.eq_ignore_ascii_case("utf8") {
-        return Err(invalid(format!(
-            "{filter}: the encoding '{encoding}' is not supported, only utf-8 is"
-        )));
-    }
-    Ok(urlsafe)
+    Ok((encoding, urlsafe))
 }
 
-/// `base64.b64decode`, then the bytes read as UTF-8 text; `urlsafe` reads `-` and `_` for `+`
+fn b64_failed(filter: &str, msg: &str) -> Error {
+    crate::template::bridged::raise(format!(
+        "The filter plugin 'ansible.builtin.{filter}' failed: {msg}"
+    ))
+}
+
+/// `base64.b64decode`, then the bytes read as text in `encoding`; `urlsafe` reads `-` and `_` for `+`
 /// and `/`. Called without `validate`, Python's decoder skips whitespace, so this does too.
 pub(super) fn b64decode(
     value: Value,
     encoding: Option<String>,
     kwargs: Kwargs,
 ) -> Result<String, Error> {
-    let urlsafe = b64_options("b64decode", encoding, &kwargs)?;
+    let (encoding, urlsafe) = b64_options(encoding, &kwargs)?;
     let mut text = text_of(&value);
     text.retain(|c| !c.is_ascii_whitespace());
     if urlsafe {
         text = text.replace('-', "+").replace('_', "/");
     }
     let bytes = b64_decode(&text).map_err(|e| invalid(format!("b64decode: {e}")))?;
-    String::from_utf8(bytes)
-        .map_err(|e| invalid(format!("b64decode: the decoded bytes are not UTF-8: {e}")))
+    crate::action_plugins::decode_text(&bytes, &encoding).map_err(|e| b64_failed("b64decode", &e))
 }
 
 pub(super) fn b64encode(
@@ -110,10 +109,13 @@ pub(super) fn b64encode(
     encoding: Option<String>,
     kwargs: Kwargs,
 ) -> Result<String, Error> {
-    let urlsafe = b64_options("b64encode", encoding, &kwargs)?;
+    let (encoding, urlsafe) = b64_options(encoding, &kwargs)?;
     let out = match super::super::pymethods::bytes::of(&value) {
         Some(bytes) => b64_encode(&bytes.0),
-        None => b64_encode(text_of(&value).as_bytes()),
+        None => b64_encode(
+            &crate::action_plugins::encode_text(&text_of(&value), &encoding)
+                .map_err(|e| b64_failed("b64encode", &e))?,
+        ),
     };
     Ok(if urlsafe {
         out.replace('+', "-").replace('/', "_")

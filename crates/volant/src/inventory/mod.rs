@@ -14,6 +14,7 @@ mod layering;
 mod listed;
 mod names;
 mod patterns;
+mod pyliteral;
 pub mod ranges;
 mod script;
 mod sources;
@@ -164,7 +165,7 @@ impl Inventory {
         if let Some(host) = self.hosts.iter_mut().find(|h| h.name == name) {
             self.unsafe_vars
                 .retain(|(h, v), _| h != name || !vars.contains_key(v));
-            host.vars.extend(vars);
+            crate::vars::extend(&mut host.vars, &vars);
             return false;
         }
         let mut all = serde_json::Map::new();
@@ -175,7 +176,7 @@ impl Inventory {
         // `ungrouped` always are groups: the variables of a host so named are that group's.
         // Measured on ansible-core 2.19.12, every host then reads them.
         if matches!(name, "all" | "ungrouped") {
-            self.group_mut(name).vars.extend(vars);
+            crate::vars::extend(&mut self.group_mut(name).vars, &vars);
         } else {
             all.extend(vars);
         }
@@ -394,10 +395,11 @@ impl Inventory {
             .cloned()
             .unwrap_or_default();
         let mut vars = serde_json::Map::new();
+        // `combine_vars`, as the reference layers them: mappings merge under `hash_behaviour = merge`.
         for g in self.sorted_groups_of(name) {
-            vars.extend(g.vars.clone());
+            crate::vars::extend(&mut vars, &g.vars);
         }
-        vars.extend(host.vars);
+        crate::vars::extend(&mut vars, &host.vars);
         Host {
             name: host.name,
             vars,

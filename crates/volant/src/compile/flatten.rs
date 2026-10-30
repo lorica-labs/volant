@@ -13,8 +13,8 @@ use crate::template::Templar;
 
 use super::builder::{Builder, Seen};
 use super::include::role_flag;
-use super::inherit::{extend, lay_under, merge};
-use super::model::{Compiled, Handler, Section, Step, StepKind};
+use super::inherit::{extend, lay_under};
+use super::model::{Compiled, Section, Step, StepKind};
 use super::tags::TagSelection;
 /// The check the reference inserts in front of a role that ships `meta/argument_specs.yml`.
 ///
@@ -355,19 +355,12 @@ pub(crate) fn compile_with(
     mark = builder.steps.len();
     builder.items(&play.post_tasks, &empty, None, Section::Body, None)?;
     builder.flush_point(mark);
-    // The play's own handlers run behind every role's, measured.
-    for handler in &play.handlers {
-        // Every keyword the play carries in `empty` reaches a handler as it reaches a task,
-        // the way it reaches a handler out of a role: `no_log`, `environment`, `timeout`, the
-        // play's check and diff modes (`--check` and `--diff` among them: a handler that ran for
-        // real under `--check` would change the host) and the rest.
-        let task = merge(&empty, &handler.task);
-        builder.handlers.push(Handler {
-            task,
-            listen: handler.listen.clone(),
-            role: None,
-        });
-    }
+    // The play's own handlers run behind every role's, measured. Every keyword the play carries
+    // in `empty` reaches a handler as it reaches a task, the way it reaches a handler out of a
+    // role: `no_log`, `environment`, `timeout`, the play's check and diff modes (`--check` and
+    // `--diff` among them: a handler that ran for real under `--check` would change the host)
+    // and the rest.
+    builder.push_handlers(&play.handlers, &empty, &play.dir, None)?;
 
     // Every role lends its `defaults` and its `vars` to the whole play, so the two layers are
     // folded once here rather than accumulated as the list is walked, and each role's own values

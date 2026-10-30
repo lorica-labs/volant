@@ -27,8 +27,8 @@ mod persistent;
 mod wire;
 
 use conversation::{answer, defaults_shape};
-pub(crate) use wire::split_failure;
 pub use wire::{Ask, BridgeError, PluginKind, Reply, TmpOp};
+pub(crate) use wire::{remember_chain, split_failure};
 
 pub(crate) type Start = Box<dyn Fn() -> anyhow::Result<PythonBuilder> + Send + Sync>;
 

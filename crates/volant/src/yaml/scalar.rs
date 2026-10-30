@@ -108,7 +108,16 @@ pub(super) fn read<'a>(
             Err("While constructing an ordered map expected a sequence, but found scalar.".into())
         }
         "pairs" => Err("While constructing pairs expected a sequence, but found scalar.".into()),
-        "binary" => Err("The '!!binary' tag is not supported.".into()),
+        "binary" => {
+            // Kept as base64 in a wrapper the template engine reads back as bytes: the
+            // variables are JSON, which holds no bytes. PyYAML skips the line breaks.
+            let data: String = value.chars().filter(|c| !c.is_ascii_whitespace()).collect();
+            volant_protocol::encoding::b64_decode(&data)
+                .map_err(|e| format!("Failed to convert base64 data: {e}"))?;
+            Ok(Yaml::Value(Scalar::String(
+                super::binary_data(&data).into(),
+            )))
+        }
         _ => Err(no_constructor(tag)),
     }
 }

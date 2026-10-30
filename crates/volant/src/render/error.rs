@@ -343,6 +343,7 @@ impl Renderer {
             text.push('\n');
         }
         if block.on_stderr {
+            super::log::record(&text);
             let _ = writeln!(anstream::stderr(), "{}", self.paint(FAILED, &text));
         } else {
             let _ = writeln!(self.out, "{}", self.paint(FAILED, &text));

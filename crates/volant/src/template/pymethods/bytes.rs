@@ -27,7 +27,7 @@ static MADE: AtomicBool = AtomicBool::new(false);
 pub(crate) struct Bytes(pub(crate) Vec<u8>);
 
 impl Bytes {
-    pub(super) fn value(bytes: Vec<u8>) -> Value {
+    pub(crate) fn value(bytes: Vec<u8>) -> Value {
         MADE.store(true, Ordering::Relaxed);
         Value::from_object(Bytes(bytes))
     }

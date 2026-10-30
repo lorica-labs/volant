@@ -1,4 +1,3 @@
 # The files of `just yaml-corpus` that Volant and ansible-core load differently, each with the
 # issue that tracks it. A line is `<source>/<path>  #<issue>`; the recipe fails on any other file
 # that differs, and an entry goes away with the fix of its issue.
-ansible-core/test/integration/targets/roles_arg_spec/test_complex_role_fails.yml  #1195

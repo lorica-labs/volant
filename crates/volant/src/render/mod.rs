@@ -11,6 +11,7 @@ mod callback;
 mod error;
 mod json_doc;
 mod junit;
+pub mod log;
 mod oneline;
 mod recap;
 mod recap_json;
@@ -118,7 +119,7 @@ fn auto<S: anstream::stream::RawStream + anstream::stream::AsLockedWrite + 'stat
 ) -> (Box<dyn Write>, bool) {
     let stream = AutoStream::new(stream, choice);
     let color = stream.current_choice() != ColorChoice::Never;
-    (Box::new(stream), color)
+    (Box::new(log::Tee(Box::new(stream))), color)
 }
 
 impl Renderer {
@@ -132,7 +133,7 @@ impl Renderer {
             .filter(|w| *w >= 40)
             .unwrap_or(79);
         Self {
-            out: Box::new(stream),
+            out: Box::new(log::Tee(Box::new(stream))),
             color,
             width,
             verbosity,
@@ -307,6 +308,8 @@ impl Renderer {
     pub fn verbose(&mut self, level: u8, line: &str) {
         if self.verbosity >= level {
             let _ = writeln!(self.out, "{}", self.paint(VERBOSE, line));
+        } else if log::logs_level(level) {
+            log::record(line);
         }
     }
 
@@ -314,6 +317,8 @@ impl Renderer {
     pub fn plain(&mut self, level: u8, line: &str) {
         if self.verbosity >= level {
             let _ = writeln!(self.out, "{line}");
+        } else if log::logs_level(level) {
+            log::record(line);
         }
     }
 
@@ -398,6 +403,7 @@ impl Renderer {
         // Text written as it came, a deprecation the helper worded in full.
         if let Some(raw) = text.strip_prefix(RAW_WARNING) {
             if self.warned.insert(raw.to_string()) {
+                log::record_each(raw);
                 let _ = write!(anstream::stderr(), "{raw}");
             }
             return;
@@ -407,6 +413,7 @@ impl Renderer {
         if !self.warned.insert(line.clone()) {
             return;
         }
+        log::record(&format!("{line}\n"));
         let _ = writeln!(anstream::stderr(), "{}", self.paint(WARNING, &line));
     }
 

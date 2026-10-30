@@ -42,6 +42,12 @@ pub fn register(
         }
         text
     });
+    // What a `!!binary` value loads as: its base64 text, read back as bytes.
+    env.add_filter("volant_binary", |data: String| {
+        volant_protocol::encoding::b64_decode(&data)
+            .map(super::pymethods::bytes::Bytes::value)
+            .map_err(|e| invalid(format!("Failed to convert base64 data: {e}")))
+    });
     // What a `!vault` value loads as: its ciphertext, read when the value is rendered. A value
     // nothing renders is never read, so one that cannot be decrypted raises nothing until used.
     env.add_filter("volant_vault", |state: &State, ciphertext: String| {

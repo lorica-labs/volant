@@ -144,14 +144,18 @@ pub(crate) fn set_deprecation_warnings(on: bool) {
 /// printed once per run; nothing when `deprecation_warnings` is off.
 pub(crate) fn print_deprecation(text: &str) {
     if print_deprecation_header() {
-        eprintln!("[DEPRECATION WARNING]: {text}\n");
+        let shown = format!("[DEPRECATION WARNING]: {text}\n\n");
+        crate::render::log::record(&shown);
+        eprint!("{shown}");
     }
 }
 
 /// [`print_deprecation`] for a notice of one line, which the reference ends with no blank line.
 pub(crate) fn print_deprecation_line(text: &str) {
     if print_deprecation_header() {
-        eprintln!("[DEPRECATION WARNING]: {text}");
+        let shown = format!("[DEPRECATION WARNING]: {text}\n");
+        crate::render::log::record(&shown);
+        eprint!("{shown}");
     }
 }
 
@@ -160,7 +164,9 @@ fn print_deprecation_header() -> bool {
     match deprecation_header() {
         Some(header) => {
             if let Some(header) = header {
-                eprintln!("{header}");
+                let shown = format!("{header}\n");
+                crate::render::log::record(&shown);
+                eprint!("{shown}");
             }
             true
         }
@@ -192,6 +198,22 @@ pub(crate) fn deprecate_play_hosts(origin: Option<&super::Origin>) {
         .unwrap_or_default();
     let text = format!(
         "The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.\n{place}Use `ansible_play_batch` instead."
+    );
+    if SAID.lock().expect("said lock").insert(text.clone()) {
+        print_deprecation(&text);
+    }
+}
+
+/// The deprecation the reference prints for a condition written as one template that renders
+/// to something other than an expression, at where it was written, once per place for the run.
+pub(crate) fn deprecate_conditional_template(origin: Option<&super::Origin>) {
+    static SAID: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+    let place = origin
+        .map(|origin| format!("\n{}", crate::render::source_context(origin)))
+        .unwrap_or_default();
+    let text = format!(
+        "Conditionals should not be surrounded by templating delimiters such as {{{{ }}}} or {{% %}}. This feature will be removed from ansible-core version 2.23.{place}"
     );
     if SAID.lock().expect("said lock").insert(text.clone()) {
         print_deprecation(&text);

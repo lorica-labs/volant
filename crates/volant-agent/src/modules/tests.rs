@@ -40,18 +40,15 @@ fn an_argument_the_reference_does_not_have_gets_the_reference_s_sentence() {
     );
 }
 
-/// `shell` refuses `expand_argument_vars` whatever its value, a template the pre-flight could not
-/// read included; `command` reads it.
+/// `expand_argument_vars` is no refusal of the agent's: `command` reads it, and on `shell` the
+/// controller fails the task before it is sent, as the reference's `shell` action does.
 #[test]
 fn a_refused_argument_whose_value_arrives_late_fails_the_task() {
     use crate::testing::args;
     for any in [json!(true), json!(false), json!("no"), json!("maybe")] {
         assert_eq!(
-            refused_argument(&SHELL, &args(json!({"expand_argument_vars": any.clone()})))
-                .as_deref(),
-            Some(
-                "argument 'expand_argument_vars' is not supported yet on 'shell'. The host renders this value, so the check before the run could not read it."
-            ),
+            refused_argument(&SHELL, &args(json!({"expand_argument_vars": any.clone()}))),
+            None,
             "{any}"
         );
     }

@@ -13,7 +13,8 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 use volant_protocol::modules::{
-    ArgStatus, CHECK_MODE_ARG, DIFF_ARG, ModuleSpec, NO_LOG_ARG, arg_bool, short_name,
+    ArgStatus, CHECK_MODE_ARG, DIFF_ARG, ModuleSpec, NO_LOG_ARG, RLIMIT_NOFILE_ARG, arg_bool,
+    short_name,
 };
 use volant_protocol::{ExecPath, Ran, StagedFile, Task, TaskResult};
 
@@ -48,6 +49,8 @@ pub struct Context {
     pub remote_tmp: String,
     /// The task runs in check mode: report what would change, change nothing.
     pub check_mode: bool,
+    /// The soft limit on open files the module starts with, when the task asks for one.
+    pub rlimit_nofile: Option<u64>,
 }
 
 impl Context {
@@ -83,10 +86,15 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
     let check_mode = args.remove(CHECK_MODE_ARG) == Some(Value::Bool(true));
     let diff = args.remove(DIFF_ARG) == Some(Value::Bool(true));
     let no_log = args.remove(NO_LOG_ARG) == Some(Value::Bool(true));
+    let rlimit_nofile = args
+        .remove(RLIMIT_NOFILE_ARG)
+        .and_then(|n| n.as_u64())
+        .filter(|n| *n > 0);
     let mut context = Context {
         timeout: task.timeout.map(Duration::from_secs),
         environment: task.environment.clone(),
         check_mode,
+        rlimit_nofile,
         ..Context::default()
     };
     let mut ran = ran_natively();

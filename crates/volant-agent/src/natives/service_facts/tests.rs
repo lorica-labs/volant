@@ -412,6 +412,7 @@ fn what_the_native_does_not_read_hands_back_whole() {
             interpreter: None,
             remote_tmp: "/tmp".into(),
             check_mode: false,
+            rlimit_nofile: None,
         };
         let args = json!({"x": 1});
         match run(args.as_object().unwrap(), &context, &|| false) {

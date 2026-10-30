@@ -232,6 +232,12 @@ impl Servers {
                 Err(err) if err.kind() == io::ErrorKind::Interrupted => {
                     return (Run::Cancelled, Timing::default());
                 }
+                Err(err) if err.kind() == io::ErrorKind::NotFound => {
+                    return (
+                        Run::Done(interpreter_not_found(&payload.interpreter)),
+                        Timing::default(),
+                    );
+                }
                 Err(err) => {
                     let msg = format!("{err}");
                     self.refused.insert(key, msg.clone());
@@ -278,5 +284,50 @@ impl Servers {
             Ok(false) => Err(format!("payload {} is not on this host", payload.blob)),
             Err(err) => Err(format!("payload {}: {err}", payload.blob)),
         }
+    }
+}
+
+/// What a module whose interpreter is not there reports. The reference starts a module as
+/// `/bin/sh -c '<interpreter> ...'`, so the shell says it is missing, and the action reads its
+/// words back: measured on ansible-core 2.19.12, rc 127, the shell's line as `module_stderr`, and
+/// `The module interpreter '<path>' was not found.`, which the controller words as the action's
+/// failure. The same line comes from this host's own shell here, which words it its own way.
+fn interpreter_not_found(interpreter: &str) -> volant_protocol::TaskResult {
+    let shell = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(shell_word(interpreter))
+        .stdin(std::process::Stdio::null())
+        .stdout(std::process::Stdio::null())
+        .output();
+    let (rc, stderr) = match shell {
+        Ok(out) => (
+            out.status.code().unwrap_or(127),
+            String::from_utf8_lossy(&out.stderr).into_owned(),
+        ),
+        Err(_) => (127, String::new()),
+    };
+    let msg = format!("The module interpreter '{interpreter}' was not found.");
+    let result = serde_json::json!({
+        "changed": false,
+        "failed": true,
+        "module_stderr": stderr,
+        "module_stdout": "",
+        "msg": msg,
+        "rc": rc,
+    });
+    volant_protocol::TaskResult(result.as_object().cloned().unwrap_or_default())
+}
+
+/// `word` as one word of a shell command: as it is when it holds nothing the shell reads, else in
+/// single quotes.
+fn shell_word(word: &str) -> String {
+    if !word.is_empty()
+        && word
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "/._-+=:@%,".contains(c))
+    {
+        word.to_string()
+    } else {
+        format!("'{}'", word.replace('\'', r"'\''"))
     }
 }

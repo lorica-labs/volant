@@ -21,6 +21,27 @@ pub use pool::{batch_started, run, warm};
 use server::Server;
 pub use server::set_perf;
 
+/// Sets this process's soft limit on open files to `wanted`, never past the hard limit, as
+/// `set_open_file_limit` in the server does for a Python module. Called between fork and exec,
+/// so it does nothing but the two calls, and a refusal leaves the limit as it was.
+#[cfg(unix)]
+pub(crate) fn set_open_file_limit(wanted: u64) {
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
+    };
+    // SAFETY: `getrlimit` writes into the struct it is given, which lives for the whole call.
+    if unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } != 0 {
+        return;
+    }
+    let wanted = (wanted as libc::rlim_t).min(limit.rlim_max);
+    if wanted != limit.rlim_cur {
+        limit.rlim_cur = wanted;
+        // SAFETY: as above; the struct is only read.
+        unsafe { libc::setrlimit(libc::RLIMIT_NOFILE, &limit) };
+    }
+}
+
 /// Where a Python task's time went, as the server measured it: the fork, the module's import up
 /// to the moment it builds its `AnsibleModule`, and the rest of its run. Each is `None` when the
 /// server did not report it.

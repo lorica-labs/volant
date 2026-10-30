@@ -1,0 +1,4 @@
+# A notified name reaches the last list of handlers that has it, the play's before a role's,
+# and the first of that list; a role handler also answers to "<role> : <name>"; of two listeners
+# with one name only the one searched first runs.
+args: [-i, inv.ini, play.yml]

@@ -64,25 +64,58 @@ pub(crate) fn beside_or_in_role(file_dir: &Path, role_dir: Option<&Path>, name: 
     }
 }
 
-/// The handlers one name notifies, in definition order: the **first** one carrying it as its
-/// `name`, and **every** one listening for it.
+/// The handlers one name notifies, in definition order: one carrying it as its name, and every
+/// one listening for it.
 ///
-/// The asymmetry is measured on ansible-core 2.19.12, both halves on their own: two handlers
-/// written with the same name run the first alone, and a handler named `x` beside one listening
-/// for `x` both run when `x` is notified. It is what makes a role that runs three times
-/// contribute one handler rather than three - the three copies share a name, and only the first
-/// of them is ever reached.
+/// Measured on ansible-core 2.19.12 and read off `StrategyBase.search_handlers_by_notification`:
+/// the handlers are searched one list at a time, the play's own list and each role instance's,
+/// the **last** list first and each list from its top. So a play handler named `h` wins over a
+/// role's, and of two handlers named `h` in one list the first runs. A role's handler also
+/// answers to `<role> : <name>` and `<collection>.<role> : <name>`. Every handler listening for
+/// the name runs, but of two listeners with the same name only the one searched first does.
 ///
 /// `names` is what each handler's `name` renders to for the host asking, one per handler in
 /// order, `None` for one that does not render: a handler name may be a template, `listen` never is.
 pub(crate) fn resolve_notify(c: &Compiled, name: &str, names: &[Option<String>]) -> Vec<usize> {
-    let named = names.iter().position(|n| n.as_deref() == Some(name));
-    c.handlers
-        .iter()
-        .enumerate()
-        .filter(|(i, h)| named == Some(*i) || h.listen.iter().any(|l| l == name))
-        .map(|(i, _)| i)
-        .collect()
+    // The lists in the order they were defined, each a run of handlers of one role instance or of
+    // the play.
+    let mut lists: Vec<Vec<usize>> = Vec::new();
+    for (i, handler) in c.handlers.iter().enumerate() {
+        match lists.last_mut() {
+            Some(list) if c.handlers[list[0]].role == handler.role => list.push(i),
+            _ => lists.push(vec![i]),
+        }
+    }
+    let answers = |i: usize| {
+        let Some(own) = names.get(i).and_then(Option::as_deref) else {
+            return false;
+        };
+        own == name
+            || c.handlers[i]
+                .role
+                .and_then(|r| c.roles.get(r))
+                .is_some_and(|role| {
+                    name == format!("{} : {own}", role.role_name)
+                        || name == format!("{} : {own}", role.full_name())
+                })
+    };
+    let searched = || lists.iter().rev().flatten().copied();
+    let mut found: Vec<usize> = searched().find(|i| answers(*i)).into_iter().collect();
+    let mut seen: Vec<&str> = Vec::new();
+    for i in searched() {
+        if c.handlers[i].listen.iter().any(|l| l == name) {
+            if let Some(own) = names.get(i).and_then(Option::as_deref) {
+                if seen.contains(&own) {
+                    continue;
+                }
+                seen.push(own);
+            }
+            found.push(i);
+        }
+    }
+    found.sort_unstable();
+    found.dedup();
+    found
 }
 
 /// The steps a flush point at `at` inserts behind itself: one per handler, in definition order.

@@ -1,5 +1,5 @@
 ---
-sourceHash: a3cc80fe44da
+sourceHash: 1d836c016a17
 title: 模板
 description: 控制节点上的 Jinja2、严格模式、条件、Volant 提供的过滤器、测试器和 lookup，以及模板文件如何渲染。
 ---
@@ -112,6 +112,7 @@ Volant 没有某个名称的 Rust 版本时，这个名称就需要 Python。[�
 - 可信的值是 playbook 自带的那些：play 和 task 的 `vars`、`--extra-vars`、inventory 变量、`vars_files` 和 `include_vars`。`!unsafe` 把其中一个标记为数据。
 - 不可信的值只渲染一次。如果结果看起来又像模板，它仍然是文本。
 - 会把主机的值作为表达式求值的条件或 `debug: var:`，会失败，并给出 `Encountered untrusted template or expression.`
+- 在 `debug: var:`、`assert` 的 `that`、`when`、`changed_when`、`failed_when` 或 `until` 中写在 `!unsafe` 下的表达式，也会以同样方式失败。
 
 [模板语言参考](/zh-cn/docs/reference/templates/#可信值与不可信值)有完整的规则和示例。
 

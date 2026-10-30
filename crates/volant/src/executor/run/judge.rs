@@ -129,7 +129,7 @@ pub(super) fn apply_conditions(
 fn unevaluable(mut result: TaskResult, condition: &str, err: &TemplateError) -> TaskResult {
     let text = match err.0.strip_prefix("syntax error: ") {
         Some(rest) => format!("Syntax error in template: {rest}"),
-        None => format!("Error while evaluating conditional: {}", err.0),
+        None => super::retry::conditional_sentence(err),
     };
     result.0.insert("failed".into(), json!(true));
     result

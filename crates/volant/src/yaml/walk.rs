@@ -10,12 +10,14 @@ use std::borrow::Cow;
 
 use anyhow::{anyhow, bail};
 use saphyr::{Mapping, MarkedYaml, Scalar, Tag, Yaml, YamlData};
-use saphyr_parser::ScalarStyle;
 use serde_json::{Map, Value};
 
 use crate::template::typed_keys::Typed;
 
-use super::{Starts, is_vault, read_scalar, read_tagged, scalar, unsafe_data, vault_data};
+mod starts;
+pub(super) use starts::{mapping_addresses, mapping_starts};
+
+use super::{is_vault, read_scalar, read_tagged, scalar, unsafe_data, vault_data};
 
 /// A collection of the source tree whose children are being lowered.
 #[expect(
@@ -211,93 +213,6 @@ fn key_of(key: Yaml<'_>, strict: bool) -> anyhow::Result<Yaml<'_>> {
         Yaml::Tagged(tag, inner) if tag.handle == "!" && tag.suffix == "unsafe" => Ok(*inner),
         key => Ok(key),
     }
-}
-
-/// Where each mapping of the source tree starts, and each key and value of it, in the order a
-/// walk down the tree meets them. A `|` or `>` value starts at its indicator, as in the
-/// reference: saphyr's span starts at its first line of text.
-pub(super) fn mapping_starts(root: &MarkedYaml<'_>, text: &str, out: &mut Starts) {
-    enum Work<'t, 'a> {
-        Node(&'t MarkedYaml<'a>),
-        Entry(&'t MarkedYaml<'a>, &'t MarkedYaml<'a>),
-        Item(&'t MarkedYaml<'a>),
-    }
-    let at = |n: &MarkedYaml<'_>| (n.span.start.line(), n.span.start.col() + 1);
-    let mut work = vec![Work::Node(root)];
-    while let Some(item) = work.pop() {
-        match item {
-            Work::Node(node) => match &node.data {
-                YamlData::Sequence(items) => work.extend(items.iter().rev().map(Work::Item)),
-                YamlData::Mapping(map) => {
-                    out.0.push(at(node));
-                    let entries: Vec<_> = map.iter().map(|(k, v)| Work::Entry(k, v)).collect();
-                    work.extend(entries.into_iter().rev());
-                }
-                YamlData::Tagged(_, inner) => work.push(Work::Node(inner)),
-                _ => {}
-            },
-            Work::Entry(key, value) => {
-                out.1
-                    .push(block_indicator(value, text).unwrap_or_else(|| at(value)));
-                out.2.push(at(key));
-                work.push(Work::Node(value));
-                work.push(Work::Node(key));
-            }
-            // An item of a sequence is placed like a value, its own start standing for its key.
-            Work::Item(item) => {
-                out.1.push(at(item));
-                out.2.push(at(item));
-                work.push(Work::Node(item));
-            }
-        }
-    }
-}
-
-/// The address of each mapping of the lowered tree, and of each value in it, in the order
-/// [`mapping_starts`] lists the positions.
-pub(super) fn mapping_addresses(root: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usize>)) {
-    enum Work<'t, 'a> {
-        Node(&'t Yaml<'a>),
-        Entry(&'t Yaml<'a>, &'t Yaml<'a>),
-        Item(&'t Yaml<'a>),
-    }
-    let mut work = vec![Work::Node(root)];
-    while let Some(item) = work.pop() {
-        match item {
-            Work::Node(node) => match node {
-                Yaml::Sequence(items) => work.extend(items.iter().rev().map(Work::Item)),
-                Yaml::Mapping(map) => {
-                    out.0.push(std::ptr::from_ref(map).addr());
-                    let entries: Vec<_> = map.iter().map(|(k, v)| Work::Entry(k, v)).collect();
-                    work.extend(entries.into_iter().rev());
-                }
-                Yaml::Tagged(_, inner) => work.push(Work::Node(inner)),
-                _ => {}
-            },
-            Work::Entry(key, value) => {
-                out.1.push(std::ptr::from_ref(value).addr());
-                work.push(Work::Node(value));
-                work.push(Work::Node(key));
-            }
-            Work::Item(item) => {
-                out.1.push(std::ptr::from_ref(item).addr());
-                work.push(Work::Node(item));
-            }
-        }
-    }
-}
-
-/// The line and column of the `|` or `>` that opens `node`, a block scalar.
-fn block_indicator(node: &MarkedYaml<'_>, text: &str) -> Option<(usize, usize)> {
-    let YamlData::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) = &node.data
-    else {
-        return None;
-    };
-    let start = text.char_indices().nth(node.span.start.index())?.0;
-    let at = text[..start].rfind(['|', '>'])?;
-    let line_start = text[..at].rfind('\n').map_or(0, |n| n + 1);
-    let line = text[..at].matches('\n').count() + 1;
-    Some((line, text[line_start..at].chars().count() + 1))
 }
 
 fn is_scalar(node: &Yaml<'_>) -> bool {

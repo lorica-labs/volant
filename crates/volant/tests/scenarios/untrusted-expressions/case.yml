@@ -1,0 +1,3 @@
+# An expression written under !unsafe is refused wherever one is compiled: debug var, assert's
+# that, when, changed_when, failed_when and until.
+args: [-i, inv, play.yml]

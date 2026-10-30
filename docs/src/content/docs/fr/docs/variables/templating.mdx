@@ -1,5 +1,5 @@
 ---
-sourceHash: a3cc80fe44da
+sourceHash: 1d836c016a17
 title: Templating
 description: Jinja2 sur le contrôleur, mode strict, conditions, filtres, tests et lookups fournis par Volant, et rendu des fichiers modèles.
 ---
@@ -110,6 +110,7 @@ Un modèle que vous avez écrit est du code. Une valeur qu'un hôte géré a ren
 - Les valeurs fiables sont celles que porte le playbook : `vars` de play et de tâche, `--extra-vars`, variables d'inventaire, `vars_files` et `include_vars`. `!unsafe` marque l'une d'elles comme donnée.
 - Une valeur non fiable est rendue une seule fois. Si le résultat ressemble encore à un modèle, il reste du texte.
 - Une condition ou un `debug: var:` qui évaluerait une valeur d'hôte comme une expression échoue avec `Encountered untrusted template or expression.`
+- Une expression écrite sous `!unsafe` dans `debug: var:`, le `that` d'un `assert`, `when`, `changed_when`, `failed_when` ou `until` échoue de la même manière.
 
 La [Référence du langage de modèles](/fr/docs/reference/templates/#valeurs-fiables-et-non-fiables) donne les règles complètes et des exemples.
 

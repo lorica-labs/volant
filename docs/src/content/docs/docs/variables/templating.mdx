@@ -111,6 +111,7 @@ A template you wrote is code. A value a managed host sent back is data, and it n
 - Trusted values are the ones the playbook carries: play and task `vars`, `--extra-vars`, inventory variables, `vars_files` and `include_vars`. `!unsafe` marks one of them as data.
 - An untrusted value renders once. If the result looks like a template again, it stays text.
 - A condition or a `debug: var:` that would evaluate a host value as an expression fails with `Encountered untrusted template or expression.`
+- An expression you write under `!unsafe` in `debug: var:`, an `assert` `that`, `when`, `changed_when`, `failed_when` or `until` fails the same way.
 
 The [Template language reference](/docs/reference/templates/#trusted-and-untrusted-values) has the full rules and examples.
 

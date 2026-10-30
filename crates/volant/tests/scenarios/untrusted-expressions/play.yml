@@ -1,0 +1,31 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    debug_me: 1
+  tasks:
+    - debug:
+        var: !unsafe debug_me
+      ignore_errors: true
+      register: debug_out_unsafe
+    - assert:
+        that: debug_out_unsafe is failed
+    - assert:
+        that: !unsafe "1 == 1"
+      ignore_errors: true
+    - assert:
+        that:
+          - true
+          - !unsafe "1 == 1"
+      ignore_errors: true
+    - debug: {msg: x}
+      when: !unsafe "debug_me == 1"
+      ignore_errors: true
+    - debug: {msg: x}
+      changed_when: !unsafe "debug_me == 1"
+      ignore_errors: true
+      register: rc
+    - debug: {msg: x}
+      failed_when: !unsafe "debug_me == 1"
+      ignore_errors: true
+      register: rf
+    - debug: {msg: "{{ rc.changed_when_result }} / {{ rf.failed_when_result }}"}

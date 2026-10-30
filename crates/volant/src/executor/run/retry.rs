@@ -329,14 +329,9 @@ fn attempt_verdict(
         // Measured on ansible-core 2.19.12: `changed: false`, and a cause pointing at the
         // `until` value.
         Err(e) => {
-            let cause = format!("Error while evaluating conditional: {}", e.0);
             return Attempt::Done(raised(
                 &conditional_error(&e),
-                vec![crate::render::cause(
-                    &cause,
-                    task.value_origins.get("until"),
-                    None,
-                )],
+                vec![conditional_cause(&e, task.value_origins.get("until"))],
             ));
         }
         Ok(true) => {
@@ -362,6 +357,27 @@ fn attempt_verdict(
 /// type 'dict' has no attribute 'nosuchkey'`, with no further attempt and no `attempts`. The
 /// prefix is the reference's, which is what a playbook testing `'Task failed' in result.msg`
 /// reads; the sentence behind it is this engine's own wording for the same fault.
+///
+/// An untrusted expression is refused in the reference's own words, with no prefix.
 pub(super) fn conditional_error(err: &TemplateError) -> String {
-    format!("Task failed: Error while evaluating conditional: {}", err.0)
+    format!("Task failed: {}", conditional_sentence(err))
+}
+
+/// The sentence of a condition that cannot be evaluated, without `Task failed: `.
+pub(super) fn conditional_sentence(err: &TemplateError) -> String {
+    if err.0 == crate::template::UNTRUSTED {
+        err.0.clone()
+    } else {
+        format!("Error while evaluating conditional: {}", err.0)
+    }
+}
+
+/// The cause a condition that cannot be evaluated gives at `origin`, with the reference's help
+/// under an untrusted expression.
+pub(super) fn conditional_cause(
+    err: &TemplateError,
+    origin: Option<&crate::playbook::Origin>,
+) -> Value {
+    let help = (err.0 == crate::template::UNTRUSTED).then_some(crate::template::UNTRUSTED_HELP);
+    crate::render::cause(&conditional_sentence(err), origin, help)
 }

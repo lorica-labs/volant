@@ -67,6 +67,29 @@ pub(super) fn value_origin(value: &Yaml<'_>) -> Option<Origin> {
     })
 }
 
+/// Where each value of the mapping `node` was written, under `prefix.key`, and each condition of
+/// a `that` list, which the reference points at when that condition fails.
+pub(super) fn entry_origins(
+    node: &Yaml<'_>,
+    prefix: &str,
+    out: &mut std::collections::BTreeMap<String, Origin>,
+) {
+    let Yaml::Mapping(map) = node else { return };
+    for (k, v) in map {
+        let Some(k) = k.as_str() else { continue };
+        if let Some(origin) = value_origin(v) {
+            out.insert(format!("{prefix}.{k}"), origin);
+        }
+        if let ("that", Yaml::Sequence(items)) = (k, v) {
+            for (i, item) in items.iter().enumerate() {
+                if let Some(origin) = value_origin(item) {
+                    out.insert(format!("{prefix}.that.{i}"), origin);
+                }
+            }
+        }
+    }
+}
+
 /// Where the key of `value`'s entry was written, when it is a mapping entry's value in the file
 /// being parsed.
 pub(super) fn key_origin(value: &Yaml<'_>) -> Option<Origin> {

@@ -91,6 +91,16 @@ pub(crate) fn keys(map: &serde_json::Map<String, serde_json::Value>) -> Option<V
     Some(keys)
 }
 
+/// Whether `key` of `map` was `None`, which Python's `json.dumps` writes `null`.
+pub(crate) fn is_none(map: &serde_json::Map<String, serde_json::Value>, key: &str) -> bool {
+    key == "None"
+        && keys(map).is_some_and(|keys| {
+            map.keys()
+                .zip(keys)
+                .any(|(text, typed)| text == key && typed.is_none())
+        })
+}
+
 /// The typed value of the template key `key`, and the text the variables hold it under, or
 /// `None` for a string.
 pub(crate) fn of_template(key: &Value) -> Option<(String, Typed)> {

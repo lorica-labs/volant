@@ -1,3 +1,4 @@
 # An action plugin in an `action_plugins/` beside the playbook, and one in a role's, run through
 # the controller's ansible-core, the role's running a command on the host.
 args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

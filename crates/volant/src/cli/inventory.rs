@@ -35,6 +35,10 @@ pub struct InventoryArgs {
     /// Print the group tree, the whole inventory or one group.
     #[arg(long, value_name = "GROUP", num_args = 0..=1, overrides_with = "graph")]
     graph: Option<Option<String>>,
+    /// The group `--graph` starts at, after the options as ansible-inventory takes it. The other
+    /// actions ignore it: `--list --yaml all` lists the whole inventory.
+    #[arg(value_name = "GROUP")]
+    group: Option<String>,
     /// With `--graph`, add the variables of every host and group. The other actions ignore it.
     #[arg(long)]
     vars: bool,
@@ -154,7 +158,7 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     if let Some(group) = &args.graph {
         return graph(
             args,
-            group.as_deref().unwrap_or("all"),
+            group.as_deref().or(args.group.as_deref()).unwrap_or("all"),
             &loaded,
             &store,
             export,

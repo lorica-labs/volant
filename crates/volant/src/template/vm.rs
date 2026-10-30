@@ -46,10 +46,11 @@ pub(super) fn unwrap_unsafe(value: &mut Value) -> bool {
     }
 }
 
-/// Whether any string inside a value still carries a template marker.
+/// Whether any string inside a value still carries a template marker. A `!!binary` wrapper is
+/// data: a read turns it into bytes, where a render would make it text.
 pub(crate) fn holds_template(value: &Value) -> bool {
     match value {
-        Value::String(s) => Templar::is_stored_template(s),
+        Value::String(s) => Templar::is_stored_template(s) && crate::yaml::binary_text(s).is_none(),
         Value::Array(items) => items.iter().any(holds_template),
         Value::Object(map) => map.values().any(holds_template),
         _ => false,

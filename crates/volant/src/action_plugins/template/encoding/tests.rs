@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
-use super::encode;
+use super::{decode_text, encode};
 
 /// Each row was written by `template` of ansible-core 2.19.12 with this `output_encoding`.
 #[test]
@@ -119,4 +119,74 @@ fn a_long_name_is_cut_in_the_error() {
     let err = encode("x", &"z".repeat(1_000_000)).unwrap_err();
     assert!(err.starts_with(&format!("output_encoding '{}...' is not", "z".repeat(64))));
     assert!(err.len() < 300, "{}", err.len());
+}
+
+/// Each row is what `bytes.decode` of Python 3.12 returns or raises for the same bytes.
+#[test]
+fn the_bytes_read_back_as_python_reads_them() {
+    for (name, bytes, text) in [
+        ("utf-8", &b"\xc3\xa9"[..], "\u{e9}"),
+        ("utf-8-sig", b"\xef\xbb\xbfa", "a"),
+        ("utf-8-sig", b"a", "a"),
+        ("latin-1", b"\xe9", "\u{e9}"),
+        ("cp1252", b"\x80\x93", "\u{20ac}\u{201c}"),
+        ("iso-8859-15", b"\xa4\xbc", "\u{20ac}\u{152}"),
+        ("utf-16", b"\xff\xfea\0", "a"),
+        ("utf-16", b"\xfe\xff\0a", "a"),
+        ("utf-16", b"a\0", "a"),
+        ("utf-16-be", b"\0a", "a"),
+        ("utf-16-le", b"=\xd8\0\xde", "\u{1f600}"),
+        ("utf-32", b"\xff\xfe\0\0a\0\0\0", "a"),
+        ("utf-32", b"\0\0\xfe\xff\0\0\0a", "a"),
+        ("utf-32-be", b"\0\0\0a", "a"),
+    ] {
+        assert_eq!(decode_text(bytes, name).unwrap(), text, "{name} {bytes:?}");
+    }
+}
+
+#[test]
+fn a_byte_a_codec_cannot_read_is_named_as_python_names_it() {
+    for (name, bytes, err) in [
+        (
+            "ascii",
+            &b"a\xe9"[..],
+            "'ascii' codec can't decode byte 0xe9 in position 1: ordinal not in range(128)",
+        ),
+        (
+            "cp1252",
+            b"a\x81",
+            "'charmap' codec can't decode byte 0x81 in position 1: character maps to <undefined>",
+        ),
+        (
+            "utf-8",
+            b"a\xc3",
+            "'utf-8' codec can't decode byte 0xc3 in position 1: unexpected end of data",
+        ),
+        (
+            "utf-8",
+            b"\x80",
+            "'utf-8' codec can't decode byte 0x80 in position 0: invalid start byte",
+        ),
+        (
+            "utf-8",
+            b"\xc3a",
+            "'utf-8' codec can't decode byte 0xc3 in position 0: invalid continuation byte",
+        ),
+        (
+            "utf-8",
+            b"\xff",
+            "'utf-8' codec can't decode byte 0xff in position 0: invalid start byte",
+        ),
+        (
+            "utf-16",
+            b"a",
+            "'utf-16-le' codec can't decode byte 0x61 in position 0: truncated data",
+        ),
+    ] {
+        assert_eq!(
+            decode_text(bytes, name).unwrap_err(),
+            err,
+            "{name} {bytes:?}"
+        );
+    }
 }

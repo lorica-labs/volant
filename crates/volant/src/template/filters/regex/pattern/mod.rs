@@ -466,3 +466,5 @@ impl Scanner {
 
 mod chars;
 use chars::push_literal;
+#[cfg(test)]
+mod tests;

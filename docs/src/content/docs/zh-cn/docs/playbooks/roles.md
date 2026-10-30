@@ -1,5 +1,5 @@
 ---
-sourceHash: 0bdf359c30fc
+sourceHash: f3d5d68d17df
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -207,5 +207,4 @@ Volant 会在运行之前检查 include 带来的内容。到那时，主机已�
 - include 自身的文件会触及这个上限，并作为 task 失败报告，退出码为 2。Ansible 会一直递归到 Python 栈耗尽，以退出码 250 结束。
 - role 的 `tasks/` 和 `handlers/` 之外、无法解析的被 include 文件，会让 task 失败，退出码为 2，并有汇总。Ansible 以退出码 4 退出，且没有汇总。汇总能体现的失败更有用，`rescue` 也可以捕获它。
 - 循环内失败的 include 会打印通常的 `failed: [host] (item=...)` 行。Ansible 只在标准错误上打印一条 `[ERROR]`。
-- `allow_duplicates: false` 在 role 的 task 被引入时，就把该 role 算作该主机已运行。ansible-core 则在主机至少运行过它的一个 task 时才这么算，所以 task 全部被跳过的 role，在那里仍会再次运行。
 - `import_role` 上的 `allow_duplicates: false` 在 play 编译时比较各条语句，所以较早那条语句上的 `when` 不会改变某台主机的结果。

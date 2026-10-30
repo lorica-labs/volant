@@ -1,0 +1,10 @@
+- hosts: h1
+  gather_facts: false
+  roles:
+    - role: a
+      when: role_set_var is defined
+    - role: set_var
+    - role: a
+      when: role_set_var is defined
+    - role: a
+      when: role_set_var is defined

@@ -1,0 +1,6 @@
+# A role counts as run for a host once the host ran one of its tasks: skipped the first time,
+# it runs at its next instance, and the instance after that is left out. The listing shows all
+# three.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, --list-tasks, play.yml]

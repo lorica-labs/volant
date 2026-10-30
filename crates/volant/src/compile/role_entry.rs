@@ -103,10 +103,9 @@ impl Builder<'_> {
         })?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
         let key = identity(entry);
-        if kind != RoleKind::Import && !role.allow_duplicates && seen.contains(&key) {
-            return Ok(());
-        }
-        let dedup = dedup_id(kind, role.allow_duplicates, &key);
+        // A role brought in twice is compiled twice: whether a host runs it again is decided
+        // while the play runs, once it has completed the first, see `completion`.
+        let (dedup, unique) = instance_identity(kind, entry.unique, role.allow_duplicates, &key);
         self.played.push(key.clone());
         seen.push(key.clone());
         // Two roles that import each other never repeat an identity - `import_role` starts a
@@ -163,6 +162,7 @@ impl Builder<'_> {
             inherited_vars,
             public: exporting,
             dedup,
+            unique,
             own: None,
         });
         // The role's handlers, before its tasks are walked, so a role imported by another one
@@ -196,15 +196,21 @@ impl Builder<'_> {
     }
 }
 
-/// What a host that ran this instance records in `roles_run`, see [`RoleVars::dedup`]. Two kinds of
-/// identity, as ansible-core 2.19.12 hashes `from_include` into its own: a role an `import_role`
-/// brought in is one an `include_role` that says `allow_duplicates: false` does not run again,
-/// and a role of `roles:` is not.
-fn dedup_id(kind: RoleKind, allow_duplicates: bool, key: &(String, Value)) -> Option<String> {
+/// The identity a host that completed this instance records, see [`RoleVars::dedup`], and
+/// whether a host that did leaves the instance out. Two kinds of identity, as ansible-core 2.19.12
+/// hashes `from_include` into its own: a role an `import_role` brought in is one an `include_role`
+/// that says `allow_duplicates: false` does not run again, and a role of `roles:` is not. An
+/// `include_role`'s own instance is named by the coordinator, from the statement.
+fn instance_identity(
+    kind: RoleKind,
+    statement_unique: bool,
+    allow_duplicates: bool,
+    key: &(String, Value),
+) -> (Option<String>, bool) {
     let identity = serde_json::json!([&key.0, &key.1]);
     match kind {
-        RoleKind::Include => None,
-        RoleKind::Import => Some(format!("include {identity}")),
-        _ => (!allow_duplicates).then(|| format!("role {identity}")),
+        RoleKind::Include => (None, false),
+        RoleKind::Import => (Some(format!("include {identity}")), statement_unique),
+        _ => (Some(format!("role {identity}")), !allow_duplicates),
     }
 }

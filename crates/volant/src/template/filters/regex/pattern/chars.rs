@@ -129,6 +129,8 @@ impl Scanner {
         }
         let mut first = true;
         let mut prev = Prev::None;
+        // Where the element `prev` was read from starts.
+        let mut prev_at = 0;
         loop {
             let Some(c) = self.peek() else {
                 return invalid("unterminated character set", open_at);
@@ -140,34 +142,29 @@ impl Scanner {
                 return Ok(());
             }
             first = false;
-            if c == '-' && self.peek().is_some_and(|n| n != ']') {
-                match prev {
-                    Prev::Char(_) => {
-                        self.out.push('-');
-                        let Some(end) = self.peek() else {
-                            return invalid("unterminated character set", open_at);
-                        };
-                        self.at += 1;
-                        let end_at = self.at - 1;
-                        let (end, is_class) = self.set_element(end, end_at)?;
-                        let (Prev::Char(low), Some(high)) = (prev, end) else {
-                            return invalid("bad character range", end_at);
-                        };
-                        if is_class || low > high {
-                            return invalid(format!("bad character range {low}-{high}"), end_at);
-                        }
-                        push_set_char(&mut self.out, high);
-                        prev = Prev::None;
-                    }
-                    Prev::Class => return invalid("bad character range", self.at - 1),
-                    Prev::None => {
-                        push_set_char(&mut self.out, '-');
-                        prev = Prev::Char('-');
-                    }
+            if let Some(end) = self.peek().filter(|n| c == '-' && *n != ']') {
+                if prev == Prev::None {
+                    push_set_char(&mut self.out, '-');
+                    prev = Prev::Char('-');
+                    prev_at = self.at - 1;
+                    continue;
                 }
+                self.out.push('-');
+                let end_at = self.at;
+                self.at += 1;
+                let (high, _) = self.set_element(end, end_at)?;
+                let (Prev::Char(low), Some(high)) = (prev, high) else {
+                    return self.bad_range(prev_at, end_at);
+                };
+                if low > high {
+                    return self.bad_range(prev_at, end_at);
+                }
+                push_set_char(&mut self.out, high);
+                prev = Prev::None;
                 continue;
             }
-            let (ch, is_class) = self.set_element(c, self.at - 1)?;
+            prev_at = self.at - 1;
+            let (ch, is_class) = self.set_element(c, prev_at)?;
             if let Some(ch) = ch {
                 push_set_char(&mut self.out, ch);
                 prev = Prev::Char(ch);
@@ -176,6 +173,19 @@ impl Scanner {
                 prev = Prev::Class;
             }
         }
+    }
+
+    /// A range from the element at `start` to the one at `end` that Python refuses. Python names
+    /// each end by the token it read first, `\x` for `\x41`, and counts the position back from
+    /// the end of the range by the length of those tokens.
+    fn bad_range<T>(&self, start: usize, end: usize) -> Result<T, Failure> {
+        let token = |at: usize| -> String {
+            let len = if self.src[at] == '\\' { 2 } else { 1 };
+            self.src[at..at + len].iter().collect()
+        };
+        let (this, that) = (token(start), token(end));
+        let at = self.at - this.chars().count() - 1 - that.chars().count();
+        invalid(format!("bad character range {this}-{that}"), at)
     }
 
     /// One element of a set that starts with `c`: the character it stands for, or `None` after

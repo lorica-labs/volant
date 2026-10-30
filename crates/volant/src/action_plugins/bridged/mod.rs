@@ -263,6 +263,7 @@ pub(super) fn start(
     task.insert("_volant_action".into(), json!(ctx.action));
     task.insert("check_mode".into(), Value::Bool(ctx.check_mode));
     task.insert("diff".into(), Value::Bool(ctx.diff));
+    task.insert("no_log".into(), Value::Bool(ctx.no_log));
     // What `ActionBase.run` reads to refuse an action that does not support it, and what a plugin
     // such as `uri` reads to ask for its module to be wrapped.
     if ctx.async_val > 0 {

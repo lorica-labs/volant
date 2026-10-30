@@ -226,11 +226,11 @@ Volant refuses a YAML text that it cannot load without risk. The error names the
 - A string that reads two variables, one of them chained through a third that holds a `raw` block, is rendered once more than in ansible-core.
 - A `{% set x %}...{% endset %}` block whose body prints an expression makes the result a string even when the rest is one expression. A block of text alone keeps the type.
 - `dict` alone and `dict.fromkeys` alone are no result, as in ansible-core (`Type 'type' is unsupported for variable storage.`), and print as `<class 'dict'>` and `<built-in method fromkeys of type object>` inside a text.
-- A `datetime` from `now()` does not take part in arithmetic, so `now() - now()` fails, and it lacks the methods `date`, `time`, `replace`, `astimezone`, `utcoffset` and `timetuple`.
+- A `datetime` from `now()` takes part in `+` and `-` with another `datetime` or a `timedelta` and in no other arithmetic, and it lacks the methods `date`, `time`, `astimezone` and `timetuple`.
 
 ### Template file gaps
 
-- `template_host`, `template_uid`, `template_run_date` and `template_mtime` are not set, unlike `template_path`, `template_fullpath` and `ansible_managed`.
+- `template_run_date` and `template_mtime` are text in Python's `str` of a `datetime`, not `datetime` values: they print the same, and `type_debug` says `str`.
 - `line_statement_prefix` and `line_comment_prefix` in a `#jinja2:` line are refused by name. Volant's template engine and Jinja2 differ on a blank line after a line statement and on the newline of a line comment.
 - A delimiter longer than 64 characters and a `#jinja2:` line longer than 16 KiB are refused with an error that names the option. Parentheses in a `#jinja2:` value nest to 200 levels, as in Python.
 - A `variable_end_string` or `block_end_string` that begins with whitespace is refused by name. An empty delimiter is refused too, where Jinja2 reads it in a way that depends on the template.

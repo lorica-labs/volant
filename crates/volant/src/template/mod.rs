@@ -12,8 +12,10 @@ mod clock;
 mod context;
 mod env;
 mod file;
+mod file_vars;
 mod filters;
 pub(crate) use clock::{local_now, local_now_zoned, utc_now};
+pub(crate) use file_vars::{file_vars, node_name};
 pub(crate) use filters::python_json;
 pub(crate) use include::{asked_in, is_not_found, widened};
 mod globals;
@@ -37,7 +39,7 @@ pub(crate) use yaml_dump::{
     callback_yaml, inventory_yaml, mapping as yaml_mapping, node as yaml_node,
 };
 
-pub use context::{ALLITEMS_KEY, Vars, complete_loop, with_allitems};
+pub use context::{ALLITEMS_KEY, Vars, complete_loop, watch_play_hosts, with_allitems};
 use context::{Context, TaintSink, context_of, take_failure};
 pub(crate) use env::{
     add_filter, add_test, add_text_filter, holds_undefined, truthy, undefined_through,
@@ -134,6 +136,9 @@ const MATTR_KEY: &str = "volant::mattr:";
 /// see [`vm::route_calls`].
 const REM_KEY: &str = "volant::rem";
 const REMT_KEY: &str = "volant::remt";
+/// The names `+` and `-` are routed through in a template that calls `now()`.
+const ADD_KEY: &str = "volant::add";
+const SUB_KEY: &str = "volant::sub";
 /// Prefix of the name a list or mapping literal is routed through in such a template, then the
 /// literal as JSON: minijinja folds a literal of constants into one shared value, and a template
 /// that changes a list needs a new one each time the literal runs.

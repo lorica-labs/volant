@@ -1,5 +1,5 @@
 ---
-sourceHash: d7ee7e46b08e
+sourceHash: 2f3467c64674
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -63,7 +63,9 @@ roles:
 写在 role 条目上的 `vars:` 不是 role 参数。它作为普通的 task 关键字传递。两种写法看起来很像，所以当 role 读到你没有预料到的值时，请检查你用的是哪一种。
 :::
 
-role 的 `defaults` 和 `vars` 对整个 play 可见，所以 `pre_tasks` 和之后的 role 可以读取它们。对于 role 自己的步骤，它的值会重新叠放在最上面。role 参数只留在 role 内部。
+role 的 `defaults` 和 `vars` 对整个 play 可见，所以 `pre_tasks` 和之后的 role 可以读取它们。对于 role 自己的步骤，它的值会重新叠放在最上面。role 参数只留在 role 及其依赖的 role 内部。
+
+依赖还会读取它上层各个 role 的值。它的 `vars` 位于父 role 的 `vars/main.yml` 和它自己的依赖的 `vars/main.yml` 之上，而它自己的依赖又胜过父 role。它的 `defaults` 方向相反：先是它的依赖的，然后是父 role 的，最后是它自己的。它的参数位于父 role 的参数之上，所以没有同名参数的依赖会读取最近的父 role 的参数。
 
 `public: false` 的 `import_role` 会把它们保留在自己内部，而 `include_role` 除非写了 `public: true`，否则也这样处理。见 [Role 选项](#role-选项)。
 
@@ -84,6 +86,8 @@ role 的 `defaults` 和 `vars` 对整个 play 可见，所以 `pre_tasks` 和之
 ### 静态 import
 
 `import_tasks` 的路径先在导入它的文件旁边查找，再在 role 自己的 `tasks/` 目录里查找。
+
+`import_tasks` 的路径可以包含模板。它在编译 play 时渲染，可用 `role_path`、`playbook_dir`、play 的 `vars:`、`-e` 变量以及各 role 的 `defaults` 和 `vars`，所以 `{{ role_path }}/tests/main.yml` 可以工作。此时还没有主机，所以 inventory 变量在这里未定义，会以退出码 4 停止加载。
 
 `import_playbook` 把另一个文件里的 play 插入到这条语句所在的位置，每个被导入的 play 保留它来源文件所在的目录。它的文件名用 `-e` 变量渲染，并通过[过滤器和 lookup 使用的 Python 路径](/zh-cn/docs/variables/templating/#需要-python-的过滤器测试器和-lookup)渲染，所以 `{{ which }}.yml` 可以搭配 `-e which=sub.yml` 使用，用 `lookup('env', ...)` 或 collection 过滤器构造的名字也可以。此时还没有 inventory，所以名字不能取决于某台主机。读取未定义变量的名字会让加载以退出码 4 停止：`Error processing keyword 'import_playbook': 'nosuchvar' is undefined`。
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: d61771341944
+sourceHash: ac09abc44b15
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -227,11 +227,11 @@ Volant refuse un texte YAML qu'il ne peut pas charger sans risque. L'erreur nomm
 - Une chaîne qui lit deux variables, dont l'une est chaînée à travers une troisième qui contient un bloc `raw`, est rendue une fois de plus que dans ansible-core.
 - Un bloc `{% set x %}...{% endset %}` dont le corps affiche une expression fait du résultat une chaîne même quand le reste est une seule expression. Un bloc de texte seul garde le type.
 - `dict` seul et `dict.fromkeys` seul ne sont pas un résultat, comme dans ansible-core (`Type 'type' is unsupported for variable storage.`), et s'affichent `<class 'dict'>` et `<built-in method fromkeys of type object>` à l'intérieur d'un texte.
-- Un `datetime` venant de `now()` ne participe pas à l'arithmétique : `now() - now()` échoue donc, et il n'a pas les méthodes `date`, `time`, `replace`, `astimezone`, `utcoffset` et `timetuple`.
+- Un `datetime` venant de `now()` participe à `+` et `-` avec un autre `datetime` ou un `timedelta`, et à aucune autre arithmétique, et il n'a pas les méthodes `date`, `time`, `astimezone` et `timetuple`.
 
 ### Manques des fichiers modèles
 
-- `template_host`, `template_uid`, `template_run_date` et `template_mtime` ne sont pas définis, contrairement à `template_path`, `template_fullpath` et `ansible_managed`.
+- `template_run_date` et `template_mtime` sont du texte sous la forme du `str` Python d'un `datetime`, pas des valeurs `datetime` : ils s'affichent pareil, et `type_debug` donne `str`.
 - `line_statement_prefix` et `line_comment_prefix` dans une ligne `#jinja2:` sont refusés par leur nom. Le moteur de modèles de Volant et Jinja2 diffèrent sur une ligne vide après une instruction de ligne et sur le saut de ligne d'un commentaire de ligne.
 - Un délimiteur de plus de 64 caractères et une ligne `#jinja2:` de plus de 16 KiB sont refusés avec une erreur qui nomme l'option. Les parenthèses dans une valeur `#jinja2:` s'imbriquent sur 200 niveaux, comme dans Python.
 - Un `variable_end_string` ou un `block_end_string` qui commence par une espace est refusé par son nom. Un délimiteur vide est refusé aussi, là où Jinja2 le lit d'une façon qui dépend du modèle.

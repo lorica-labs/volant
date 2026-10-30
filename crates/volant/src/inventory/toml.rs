@@ -88,7 +88,7 @@ fn item_value(item: &Item) -> Value {
 fn value(v: &toml_edit::Value) -> Value {
     use toml_edit::Value as T;
     match v {
-        T::String(s) => Value::String(s.value().clone()),
+        T::String(s) => Value::String(crate::yaml::literal_escapes(s.value())),
         T::Integer(i) => Value::from(*i.value()),
         T::Float(f) => serde_json::Number::from_f64(*f.value()).map_or(Value::Null, Value::Number),
         T::Boolean(b) => Value::Bool(*b.value()),

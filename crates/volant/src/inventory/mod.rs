@@ -12,6 +12,7 @@ mod host_list;
 mod ini;
 mod layering;
 mod listed;
+mod names;
 mod patterns;
 pub mod ranges;
 mod script;

@@ -8,7 +8,7 @@ pub(super) struct Names {
 }
 
 pub(super) fn host_names() -> Names {
-    let node = node_name();
+    let node = crate::template::node_name();
     let fqdn = fqdn(&node);
     let mut all: Vec<String> = Vec::new();
     for name in [
@@ -26,25 +26,6 @@ pub(super) fn host_names() -> Names {
 
 pub(super) fn first_label(name: &str) -> String {
     name.split('.').next().unwrap_or_default().to_string()
-}
-
-/// `platform.node()`.
-#[cfg(unix)]
-fn node_name() -> String {
-    let mut buf = [0_u8; 256];
-    // SAFETY: `buf` is valid for its length; `gethostname` writes a terminated name into it.
-    let ok = unsafe { libc::gethostname(buf.as_mut_ptr().cast(), buf.len()) } == 0;
-    let end = buf.iter().position(|b| *b == 0).unwrap_or(buf.len());
-    if ok {
-        String::from_utf8_lossy(&buf[..end]).into_owned()
-    } else {
-        String::new()
-    }
-}
-
-#[cfg(not(unix))]
-fn node_name() -> String {
-    std::env::var("COMPUTERNAME").unwrap_or_default()
 }
 
 /// `socket.getfqdn()`: the name the node's first address resolves back to, else the node name.

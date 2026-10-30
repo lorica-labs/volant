@@ -35,19 +35,26 @@ pub(crate) fn lay_under(
         own.group_defaults = defaults;
         own.group_vars = vars;
     }
-    role.defaults = stacked(&exported.defaults, &own.group_defaults, &own.defaults);
-    role.vars = stacked(&exported.vars, &own.group_vars, &own.vars);
+    role.defaults = stacked(&[
+        &exported.defaults,
+        &own.group_defaults,
+        &role.inherited_defaults,
+        &own.defaults,
+    ]);
+    role.vars = stacked(&[
+        &exported.vars,
+        &own.group_vars,
+        &role.inherited_vars,
+        &own.vars,
+    ]);
 }
 
-/// Three layers in one copy: `under`, then `middle`, then `over`.
-fn stacked(
-    under: &Map<String, Value>,
-    middle: &Map<String, Value>,
-    over: &Map<String, Value>,
-) -> Map<String, Value> {
-    let mut out = under.clone();
-    extend(&mut out, middle);
-    extend(&mut out, over);
+/// Layers in one copy, the lowest first.
+fn stacked(layers: &[&Map<String, Value>]) -> Map<String, Value> {
+    let mut out = Map::new();
+    for layer in layers {
+        extend(&mut out, layer);
+    }
     out
 }
 

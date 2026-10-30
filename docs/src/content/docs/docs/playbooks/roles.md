@@ -62,7 +62,9 @@ A role contributes three layers of variables, and they sit at different heights 
 `vars:` written on a role entry is not a role parameter. It travels as an ordinary task keyword. The two spellings look alike, so check which one you used when a role reads a value you did not expect.
 :::
 
-A role's `defaults` and `vars` are visible to the whole play, so `pre_tasks` and later roles can read them. For the role's own steps, its values are laid back on top. Role parameters stay inside the role.
+A role's `defaults` and `vars` are visible to the whole play, so `pre_tasks` and later roles can read them. For the role's own steps, its values are laid back on top. Role parameters stay inside the role and the roles it depends on.
+
+A dependency also reads what the roles above it hold. Its `vars` sit over its parents' `vars/main.yml` and over the `vars/main.yml` of its own dependencies, which win over the parents'. Its `defaults` go the other way: its dependencies', then its parents', then its own. Its parameters sit over its parents' parameters, so a dependency without a parameter of that name reads the nearest parent's.
 
 An `import_role` with `public: false` keeps them to itself, and an `include_role` does that unless it says `public: true`. See [Role options](#role-options).
 
@@ -83,6 +85,8 @@ A dynamic include is resolved per host, because its file name can depend on that
 ### Static imports
 
 An `import_tasks` path is looked for next to the importing file first, then in the role's own `tasks/` directory.
+
+An `import_tasks` path may hold a template. It renders while the play compiles, against `role_path`, `playbook_dir`, the play's `vars:`, the `-e` variables and the roles' `defaults` and `vars`, so `{{ role_path }}/tests/main.yml` works. There is no host yet, so an inventory variable is undefined there and stops the load with exit 4.
 
 `import_playbook` inserts the other file's plays where the statement stands, and each imported play keeps the directory of the file it came from. Its file name renders with the `-e` variables and through the [Python path for filters and lookups](/docs/variables/templating/#filters-tests-and-lookups-that-need-python), so `{{ which }}.yml` works with `-e which=sub.yml`, and so does a name built with `lookup('env', ...)` or a collection filter. Nothing has an inventory yet, so a name cannot depend on a host. A name that reads an undefined variable stops the load with exit 4: `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`.
 

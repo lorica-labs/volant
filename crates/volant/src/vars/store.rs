@@ -130,6 +130,10 @@ impl VarStore {
             untrusted_hosts: None,
             shared: None,
             templated_facts: false,
+            verbosity: 0,
+            inventory_sources: sources.iter().map(|s| s.text().to_string()).collect(),
+            config_file: crate::config::locate()
+                .map(|p| std::path::absolute(&p).unwrap_or(p).display().to_string()),
             dynamic: inventory.clone(),
             added: Vec::new(),
             reload: None,
@@ -370,6 +374,12 @@ impl VarStore {
     /// What `ansible_forks` reports for this run.
     pub fn set_forks(&mut self, forks: usize) {
         self.forks = forks;
+        self.forget_hostvars();
+    }
+
+    /// What `ansible_verbosity` reports for this run.
+    pub fn set_verbosity(&mut self, verbosity: u8) {
+        self.verbosity = verbosity;
         self.forget_hostvars();
     }
 

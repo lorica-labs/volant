@@ -31,7 +31,7 @@ impl InventoryPlugin for Ini {
         &self,
         source: &Source,
         into: &mut Inventory,
-        _cx: &ParseCx,
+        cx: &ParseCx,
     ) -> Result<(), PluginError> {
         let failed = |message: String| PluginError {
             message: format!("Failed to parse inventory: {message}"),
@@ -40,7 +40,7 @@ impl InventoryPlugin for Ini {
         };
         let bytes = std::fs::read(source.path()).map_err(|e| failed(e.to_string()))?;
         let text = String::from_utf8(bytes).map_err(|e| failed(e.to_string()))?;
-        parse_into(&text, into, Some(source.path())).map_err(|e| {
+        parse_into(&text, into, Some(source.path()), Some(cx)).map_err(|e| {
             // Measured: the reference raises this one inside `except ValueError`, so it chains
             // the message as a second block under `Failed to parse inventory.`; every other
             // error of the file prints the merged one-block shape.
@@ -62,7 +62,7 @@ impl Inventory {
     /// An inventory read from INI text alone.
     pub fn parse_ini(text: &str) -> Result<Self, InventoryError> {
         let mut inv = Inventory::default();
-        parse_into(text, &mut inv, None)?;
+        parse_into(text, &mut inv, None, None)?;
         Ok(inv)
     }
 }
@@ -70,7 +70,12 @@ impl Inventory {
 /// Reads INI text into `inv`, the way ansible-core 2.19.12's `ini` plugin reads a file: what was
 /// added before an error stays, as the reference's does.
 #[expect(clippy::too_many_lines)]
-fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<(), InventoryError> {
+fn parse_into(
+    text: &str,
+    inv: &mut Inventory,
+    file: Option<&Path>,
+    cx: Option<&ParseCx>,
+) -> Result<(), InventoryError> {
     let mut group = "ungrouped".to_string();
     let mut state = "hosts".to_string();
     // The reference's `pending_declarations`: a group named by a `:vars` header or a
@@ -123,6 +128,9 @@ fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<()
                 };
                 let (names, port) = expand_hostpattern(pattern).map_err(err)?;
                 let vars = key_values(pairs).map_err(err)?;
+                if let (Some(cx), Some(file)) = (cx, file) {
+                    super::names::note_line(cx, file, idx + 1, vars.keys());
+                }
                 for name in names {
                     if name.is_empty() {
                         return Err(err("Invalid empty host name provided: ".to_string()));
@@ -136,6 +144,9 @@ fn parse_into(text: &str, inv: &mut Inventory, file: Option<&Path>) -> Result<()
                     .split_once('=')
                     .ok_or_else(|| err(format!("Expected key=value, got: {line}")))?;
                 let (key, value) = (key.trim(), literal(value.trim()));
+                if let (Some(cx), Some(file)) = (cx, file) {
+                    super::names::note_line(cx, file, idx + 1, [&key.to_string()]);
+                }
                 if key == "ansible_group_priority" {
                     if let Some(priority) = priority(&value).map_err(err)? {
                         inv.group_mut(&group).priority = Some(priority);
@@ -310,10 +321,17 @@ fn python_int(t: &str) -> Option<serde_json::Number> {
     format!("{sign}{clean}").parse().ok()
 }
 
-/// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text.
+/// What Ansible's INI plugin does with a value: `ast.literal_eval`, falling back to the text,
+/// with the escapes of its template literals kept as written (see `yaml::escape_strings`).
 /// Integers, floats, `True`/`False`/`None`, quoted strings, and JSON-shaped lists and dicts
 /// are recognised; everything else, `yes` included, stays a string.
 fn literal(text: &str) -> Value {
+    let mut value = python_literal(text);
+    crate::yaml::escape_strings(&mut value);
+    value
+}
+
+fn python_literal(text: &str) -> Value {
     let t = text.trim();
     if let Some(i) = python_int(t) {
         return Value::Number(i);

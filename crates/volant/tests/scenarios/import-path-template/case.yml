@@ -1,0 +1,5 @@
+# An import_tasks path renders role_path, playbook_dir, play vars, extra vars and role vars while
+# the play compiles; an inventory variable is undefined there, exit 4.
+runs:
+  - args: [-i, inv.ini, -e, ev=sub, play.yml]
+  - args: [-i, inv.ini, inventory_var.yml]

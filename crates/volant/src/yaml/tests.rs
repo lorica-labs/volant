@@ -1280,15 +1280,30 @@ fn origins_survive_a_merge_key() {
     assert_eq!(origins.of_value(value), Some((2, 15)));
 }
 
-/// Escapes in the string literals of `{{ }}` stay as written; `{% %}` and text outside keep theirs.
+/// Escapes in the string literals of `{{ }}` stay as written; `{% %}`, a `{% raw %}` block and
+/// text outside keep theirs. Shown as stored, the text is as written again.
 #[rstest::rstest]
 #[case(r#"{{ "a\nb" | length }}"#, r#"{{ "a\\nb" | length }}"#)]
 #[case(r"{{ 'a\'b' }}", r"{{ 'a\\\'b' }}")]
 #[case(r#"{{ "a\\b" }}"#, r#"{{ "a\\\\b" }}"#)]
+#[case(r#"{{ "a\\\"b\x" }}"#, r#"{{ "a\\\\\\\"b\\x" }}"#)]
 #[case(r#"{% set x = "a\nb" %}{{ x }}"#, r#"{% set x = "a\nb" %}{{ x }}"#)]
 #[case(r"plain \n text", r"plain \n text")]
+#[case(
+    r"{% raw %}{{ 'a\.b' }}{% endraw %}",
+    r"{% raw %}{{ 'a\.b' }}{% endraw %}"
+)]
+#[case(
+    r"{%- raw -%}{{ 'a\.b' }}{% endraw %}{{ 'c\.d' }}",
+    r"{%- raw -%}{{ 'a\.b' }}{% endraw %}{{ 'c\\.d' }}"
+)]
+#[case(
+    r"{{ 'a\.b' }}{% raw %}{{ '\' }}",
+    r"{{ 'a\\.b' }}{% raw %}{{ '\\\' }}"
+)]
 fn template_literals_keep_their_escapes(#[case] text: &str, #[case] want: &str) {
-    assert_eq!(walk::literal_escapes(text), want);
+    assert_eq!(literal_escapes(text), want);
+    assert_eq!(escapes::as_written(want), text);
 }
 
 /// A mapping key YAML reads as a number, a boolean or null is held as the text the reference
@@ -1329,6 +1344,31 @@ fn a_quoted_scalar_continued_left_of_its_parent_loads() {
             "a: \"x\ny\"\nb: \"p\n\nq\"\n",
             json!({"a": "x y", "b": "p\nq"}),
         ),
+    ]);
+}
+
+/// A block scalar that ends a text without a final newline has no line break to keep, as in
+/// PyYAML: `ansible.parsing.utils.yaml.from_yaml` on ansible-core 2.19.12.
+#[test]
+fn a_block_scalar_ending_the_text_keeps_no_missing_break() {
+    assert_loads_as(&[
+        ("k: |\n  a\n  b", json!({"k": "a\nb"})),
+        ("k: |\n  a\n  b\n", json!({"k": "a\nb\n"})),
+        ("k: >\n  a\n  b", json!({"k": "a b"})),
+        ("k: >\n  a\n  b\n", json!({"k": "a b\n"})),
+        ("k: |+\n  a\n  b", json!({"k": "a\nb"})),
+        ("k: |+\n  a\n  b\n\n", json!({"k": "a\nb\n\n"})),
+        ("k: |+\n  a\n\n  ", json!({"k": "a\n\n"})),
+        ("k: |-\n  a\n  b", json!({"k": "a\nb"})),
+        ("k: |-\n  a\n  b\n", json!({"k": "a\nb"})),
+        ("k: |\n  a\n\n  ", json!({"k": "a\n"})),
+        ("k: |\n  a\n# c", json!({"k": "a\n"})),
+        ("- [1]\n- k: >\n    a\n\n    b", json!([[1], {"k": "a\nb"}])),
+        (
+            "a: &n |\n  x\n  y\nb: *n",
+            json!({"a": "x\ny\n", "b": "x\ny\n"}),
+        ),
+        ("- &n |\n  x\n- *n", json!(["x\n", "x\n"])),
     ]);
 }
 

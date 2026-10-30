@@ -1,5 +1,5 @@
 ---
-sourceHash: d61771341944
+sourceHash: ac09abc44b15
 title: Referenz der Template-Sprache
 description: Die Python-Methoden, String-Regeln, regulären Ausdrücke und Grenzen des Jinja2 von Volant, mit jedem Unterschied zu ansible-core.
 ---
@@ -227,11 +227,11 @@ Volant lehnt einen YAML-Text ab, den es nicht ohne Risiko laden kann. Der Fehler
 - Ein String, der zwei Variablen liest, von denen eine über eine dritte verkettet ist, die einen `raw`-Block hält, wird einmal öfter gerendert als in ansible-core.
 - Ein Block `{% set x %}...{% endset %}`, dessen Inhalt einen Ausdruck ausgibt, macht das Ergebnis zu einem String, auch wenn der Rest ein einziger Ausdruck ist. Ein Block nur aus Text behält den Typ.
 - `dict` allein und `dict.fromkeys` allein sind kein Ergebnis, wie in ansible-core (`Type 'type' is unsupported for variable storage.`), und werden in einem Text als `<class 'dict'>` und `<built-in method fromkeys of type object>` ausgegeben.
-- Ein `datetime` aus `now()` nimmt an Arithmetik nicht teil, sodass `now() - now()` fehlschlägt, und ihm fehlen die Methoden `date`, `time`, `replace`, `astimezone`, `utcoffset` und `timetuple`.
+- Ein `datetime` aus `now()` nimmt an `+` und `-` mit einem anderen `datetime` oder einem `timedelta` teil und an keiner anderen Arithmetik, und ihm fehlen die Methoden `date`, `time`, `astimezone` und `timetuple`.
 
 ### Lücken bei Template-Dateien
 
-- `template_host`, `template_uid`, `template_run_date` und `template_mtime` werden nicht gesetzt, anders als `template_path`, `template_fullpath` und `ansible_managed`.
+- `template_run_date` und `template_mtime` sind Text in der Form von Pythons `str` eines `datetime`, keine `datetime`-Werte: Sie werden gleich ausgegeben, und `type_debug` liefert `str`.
 - `line_statement_prefix` und `line_comment_prefix` in einer `#jinja2:`-Zeile werden mit Namen abgelehnt. Die Template-Engine von Volant und Jinja2 unterscheiden sich bei einer Leerzeile nach einer Zeilenanweisung und beim Zeilenumbruch eines Zeilenkommentars.
 - Ein Begrenzer, der länger als 64 Zeichen ist, und eine `#jinja2:`-Zeile, die länger als 16 KiB ist, werden mit einem Fehler abgelehnt, der die Option nennt. Klammern in einem `#jinja2:`-Wert verschachteln bis 200 Ebenen, wie in Python.
 - Ein `variable_end_string` oder `block_end_string`, das mit Leerraum beginnt, wird mit Namen abgelehnt. Ein leerer Begrenzer wird ebenfalls abgelehnt, wo Jinja2 ihn je nach Template unterschiedlich liest.

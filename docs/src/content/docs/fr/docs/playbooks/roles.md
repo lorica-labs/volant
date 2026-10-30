@@ -1,5 +1,5 @@
 ---
-sourceHash: 0bdf359c30fc
+sourceHash: f3d5d68d17df
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -207,5 +207,4 @@ Une instruction imbriquée sur 32 niveaux est rejetée. Un seul compteur couvre 
 - Un fichier qui s'inclut lui-même atteint cette limite et est signalé comme un échec de tâche avec le code de sortie 2. Ansible récurse jusqu'à épuisement de la pile Python, au code de sortie 250.
 - Un fichier inclus hors de `tasks/` et `handlers/` d'un rôle qui ne s'analyse pas fait échouer la tâche, avec le code de sortie 2 et un récapitulatif. Ansible se termine avec le code 4 et sans récapitulatif. Un échec que le récapitulatif comptabilise est plus utile, et un `rescue` peut l'attraper.
 - Un include en échec dans une boucle affiche la ligne habituelle `failed: [host] (item=...)`. Ansible n'affiche qu'un `[ERROR]` sur la sortie d'erreur standard.
-- `allow_duplicates: false` compte un rôle comme exécuté pour un hôte dès que ses tâches sont apportées. ansible-core le compte quand l'hôte a exécuté au moins une de ses tâches : un rôle dont toutes les tâches sont sautées s'exécute donc de nouveau là-bas.
 - `allow_duplicates: false` sur un `import_role` compare les instructions pendant la compilation du play : un `when` sur l'instruction précédente ne change donc pas le résultat pour un hôte.

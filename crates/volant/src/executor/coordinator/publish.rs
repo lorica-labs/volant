@@ -12,7 +12,9 @@ use crate::compile::{Compiled, IncludeKind, Step, StepKind};
 use crate::template::Templar;
 use crate::vars::VarStore;
 
+use super::arrivals::Completion;
 use super::types::Progress;
+use super::types::shared;
 use crate::executor::prepare::{PlayPlan, host_vars, strategy_reads_as_true};
 use crate::executor::{Abort, LinkKey, LocalPool, RunOptions, RunState};
 /// The coordinator's published state: everything a publish reads, held in one place because it
@@ -65,6 +67,8 @@ pub(super) struct Coordinator<'a> {
     pub(super) ending: BTreeSet<usize>,
     /// See `Progress::dismissed`.
     pub(super) dismissed: BTreeSet<String>,
+    /// The role instances each host has completed. See `completion`.
+    pub(super) completion: Completion,
     /// What reads a `run_once` that is a template, once the hosts of the batch have met in front
     /// of its step.
     pub(super) rendering: Option<Rendering<'a>>,
@@ -125,6 +129,11 @@ impl Coordinator<'_> {
     /// `lost` and `steps` stay parameters: the first is the run's own failed set, which the
     /// caller borrows mutably elsewhere in the same scope, and the second is a list that grows
     /// under the caller, read again at each call.
+    /// A result, for the role instances each host has completed.
+    pub(super) fn note_result(&mut self, event: &super::types::Event, compiled: &Compiled) {
+        self.completion.result(event, compiled, &self.elected);
+    }
+
     pub(super) fn publish(&mut self, lost: &HashSet<String>, steps: &[Step]) {
         let staying = |h: &&String| !lost.contains(*h) && !self.removed.contains(*h);
         let (live_hosts, play_hosts_left) = {
@@ -190,7 +199,7 @@ impl Coordinator<'_> {
                         fatal: self.fatal.clone(),
                         aborted: self.aborted,
                         ending: self.ending.clone(),
-                        dismissed: self.dismissed.clone(),
+                        ..Progress::default()
                     },
                 ),
             _ => None,
@@ -206,9 +215,8 @@ impl Coordinator<'_> {
             && step.task.bypasses_host_loop()
             && !self.elected.contains_key(&at)
             && let Some(runner) = live_hosts.iter().find(|h| {
-                step.hosts
-                    .as_ref()
-                    .is_none_or(|only| only.iter().any(|m| m == *h))
+                step.hosts.as_ref().is_none_or(|only| only.contains(*h))
+                    && !self.completion.skips(step, h)
             })
         {
             self.elected.insert(at, runner.clone());
@@ -224,6 +232,7 @@ impl Coordinator<'_> {
             aborted: self.aborted,
             ending: self.ending.clone(),
             dismissed: self.dismissed.clone(),
+            completed_roles: self.completion.done(),
         };
         // Sent only when it says something new. Every waiting driver wakes on a send and reads
         // nothing but this value, so a report that moved no barrier, list or verdict - most of
@@ -481,18 +490,5 @@ impl<'a> Rendering<'a> {
         let settled = settled.clone();
         self.steps.send_replace(Arc::new(list));
         Some((settled, runner))
-    }
-}
-
-/// `hosts` as a shared list: the one `current` already holds when the names are the same, so an
-/// unchanged list costs a comparison and no copy.
-fn shared<'a>(
-    current: &Arc<[String]>,
-    hosts: impl Iterator<Item = &'a String> + Clone,
-) -> Arc<[String]> {
-    if current.iter().eq(hosts.clone()) {
-        Arc::clone(current)
-    } else {
-        hosts.cloned().collect()
     }
 }

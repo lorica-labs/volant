@@ -1,5 +1,5 @@
 ---
-sourceHash: 0bdf359c30fc
+sourceHash: f3d5d68d17df
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -207,5 +207,4 @@ Eine Anweisung auf Ebene 32 wird abgelehnt. Ein Zähler deckt die Rollenverschac
 - Eine Datei, die sich selbst einbindet, trifft auf diese Grenze und wird als Task-Fehler mit Exit-Code 2 gemeldet. Ansible rekursiert, bis der Python-Stack erschöpft ist, bei Exit-Code 250.
 - Eine eingebundene Datei außerhalb von `tasks/` und `handlers/` einer Rolle, die sich nicht parsen lässt, lässt den Task mit Exit-Code 2 und einem Recap fehlschlagen. Ansible endet mit Code 4 und ohne Recap. Ein Fehler, den der Recap mitzählt, ist nützlicher, und ein `rescue` kann ihn auffangen.
 - Ein fehlschlagendes Include in einer Schleife gibt die übliche Zeile `failed: [host] (item=...)` aus. Ansible gibt nur ein `[ERROR]` auf der Standardfehlerausgabe aus.
-- `allow_duplicates: false` zählt eine Rolle als für einen Host ausgeführt, wenn ihre Tasks eingebracht werden. ansible-core zählt sie, wenn der Host mindestens einen ihrer Tasks ausgeführt hat, sodass eine Rolle, deren Tasks alle übersprungen werden, dort erneut läuft.
 - `allow_duplicates: false` bei einem `import_role` vergleicht die Anweisungen, während das Play kompiliert wird, ein `when` an der früheren Anweisung ändert das Ergebnis für einen Host daher nicht.

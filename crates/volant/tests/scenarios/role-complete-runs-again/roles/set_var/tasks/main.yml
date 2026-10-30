@@ -1,0 +1,1 @@
+- set_fact: {role_set_var: true}

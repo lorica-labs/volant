@@ -48,6 +48,9 @@ pub struct RoleVars {
     /// dependency an include brings in is compared with, and `include ...` for an `import_role`,
     /// which an `include_role` that says `allow_duplicates: false` is compared with.
     pub dedup: Option<String>,
+    /// Whether a host that has completed `dedup` leaves this instance out: its role does not
+    /// allow duplicates, or the `import_role` that brought it in said `allow_duplicates: false`.
+    pub unique: bool,
     /// What the role itself says, set aside when the rest of the play's values were first laid
     /// under it, so that a variable another role publishes later can be laid under it again.
     pub own: Option<Box<OwnVars>>,

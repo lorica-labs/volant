@@ -1,5 +1,5 @@
 ---
-sourceHash: 706c674f580f
+sourceHash: cf7de5bce6e1
 title: Configuration
 description: Les paramètres d'ansible.cfg et les variables d'environnement que Volant lit, section par section, avec leurs valeurs par défaut.
 ---
@@ -92,6 +92,10 @@ Un fichier qui existe mais ne peut pas être lu est ignoré, et l'exécution con
 
 <Option name="facts_modules" id="defaults-facts-modules" default="smart" env="ANSIBLE_FACTS_MODULES">
   Les modules de facts que lance la collecte des facts d'une play, `smart` (`setup`) sauf réglage. Une liste littérale dans les plays, leurs tâches ou l'inventaire (`ansible_facts_modules`) est lue aussi ; un module que seul un template nomme ne peut pas être lancé.
+</Option>
+
+<Option name="module_strict_utf8_response" id="defaults-module-strict-utf8-response" default="true" env="ANSIBLE_MODULE_STRICT_UTF8_RESPONSE">
+  Indique si `from_json` refuse une chaîne qui contient un surrogate isolé, comme `\udc80`. Désactivé, la valeur le garde et s'affiche avec `?` à sa place, avec un avertissement.
 </Option>
 
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">

@@ -123,3 +123,37 @@ fn text(s: &mut String) -> Result<(), String> {
     }
     Ok(())
 }
+
+#[cfg(test)]
+mod tests {
+    use super::{resolve, stand_in};
+
+    /// A pair is left to the decoder; a lone surrogate, high or low, is refused with its place,
+    /// in the words of ansible-core 2.19.12's strict check.
+    #[test]
+    fn a_lone_surrogate_is_refused_where_it_stands() {
+        let refusal = |json: &str| {
+            let (text, lone) = stand_in(json);
+            let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
+            (lone, resolve(&mut value).err(), value)
+        };
+        assert_eq!(
+            refusal(r#""\ud83d\ude00 \\udc80""#),
+            (false, None, serde_json::json!("😀 \\udc80"))
+        );
+        let refused =
+            "Refusing to deserialize an invalid UTF8 string value: 'utf-8' codec can't encode";
+        assert_eq!(
+            refusal(r#"["ok", {"k": "hi \udc80 mom"}]"#).1,
+            Some(format!(
+                "{refused} character '\\udc80' in position 3: surrogates not allowed"
+            ))
+        );
+        assert_eq!(
+            refusal(r#""ab\ud800\udbff""#).1,
+            Some(format!(
+                "{refused} characters in position 2-3: surrogates not allowed"
+            ))
+        );
+    }
+}

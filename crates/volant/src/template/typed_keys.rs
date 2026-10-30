@@ -123,3 +123,35 @@ pub(crate) fn of_template(key: &Value) -> Option<(String, Typed)> {
         _ => None,
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use minijinja::Value;
+
+    /// A YAML key read by a template keeps its type, and goes back to JSON as its text.
+    #[test]
+    fn a_yaml_key_keeps_its_type_through_the_variables() {
+        let docs = crate::yaml::load("1: one\n2.5: f\n~: n\nx: s\n", "t.yml").unwrap();
+        let json = crate::yaml::to_json(&docs[0]).unwrap();
+        let read = crate::template::bigint::to_template(&json);
+        let keys: Vec<Value> = read.try_iter().unwrap().collect();
+        let want = [
+            Value::from(1),
+            Value::from(2.5),
+            Value::from(()),
+            Value::from("x"),
+        ];
+        assert_eq!(keys, want);
+        assert!(read.get_item(&Value::from("1")).unwrap().is_undefined());
+        let back = crate::template::bigint::to_json(&read).unwrap();
+        assert_eq!(back, json);
+        // A mapping a template builds keeps its keys typed the same way.
+        let built = Value::from_pairs([(Value::from(7), Value::from("seven"))]);
+        let stored = crate::template::bigint::to_json(&built).unwrap();
+        let again: Vec<Value> = crate::template::bigint::to_template(&stored)
+            .try_iter()
+            .unwrap()
+            .collect();
+        assert_eq!(again, [Value::from(7)]);
+    }
+}

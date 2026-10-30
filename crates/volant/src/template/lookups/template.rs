@@ -170,11 +170,25 @@ pub(super) fn render_template_at(
         "template_fullpath".into(),
         path.display().to_string().into(),
     );
-    untrusted.remove("template_path");
-    untrusted.remove("template_fullpath");
-    // The two names just written beat a gathered fact of the same name, which would otherwise
+    // The lookup renders no destination, which the reference leaves `None`.
+    map.insert("template_destpath".into(), serde_json::Value::Null);
+    for (name, value) in crate::template::file_vars(path) {
+        map.insert(name.into(), value);
+    }
+    let named = [
+        "template_path",
+        "template_fullpath",
+        "template_destpath",
+        "template_host",
+        "template_uid",
+        "template_mtime",
+        "template_run_date",
+    ];
+    for name in named {
+        untrusted.remove(name);
+    }
+    // The names just written beat a gathered fact of the same name, which would otherwise
     // answer first from its own layer.
-    let named = ["template_path", "template_fullpath"];
     let facts = facts.map(|f| {
         if named.iter().any(|k| f.contains_key(*k)) {
             let mut f = serde_json::Map::clone(f);

@@ -46,6 +46,47 @@ pub(super) fn max_fail_percentage(
         .ok_or_else(|| refuse(format!("The value {rendered} is not a number.")))
 }
 
+/// The play with its `strategy` and `order` rendered, when the playbook wrote either as a
+/// template: measured on ansible-core 2.19.12, `strategy: "{{ s | default('linear') }}"` reads the
+/// play's variables and the extra vars when the play starts. A strategy this engine does not run
+/// is refused then, as the pre-flight refuses one written plainly.
+pub(crate) fn render_play_names<'a>(
+    play: &'a Play,
+    templar: &Templar,
+    vars: &Map<String, Value>,
+) -> anyhow::Result<std::borrow::Cow<'a, Play>> {
+    let templated = |v: &Option<String>| v.as_deref().is_some_and(Templar::is_template);
+    if !templated(&play.strategy) && !templated(&play.order) {
+        return Ok(std::borrow::Cow::Borrowed(play));
+    }
+    let render = |key: &str, raw: &Option<String>| -> anyhow::Result<Option<String>> {
+        match raw {
+            Some(raw) if Templar::is_template(raw) => templar
+                .render(raw, vars)
+                .map(|v| Some(v.as_str().map_or_else(|| v.to_string(), str::to_string)))
+                .map_err(|err| {
+                    crate::stats::Refusal::at(
+                        4,
+                        format!("Error processing keyword '{key}': {}", err.0),
+                    )
+                }),
+            other => Ok(other.clone()),
+        }
+    };
+    let mut rendered = play.clone();
+    rendered.strategy = render("strategy", &play.strategy)?;
+    rendered.order = render("order", &play.order)?;
+    if let Some(strategy) = &rendered.strategy
+        && !crate::preflight::STRATEGIES.contains(&strategy.as_str())
+    {
+        return Err(crate::stats::Refusal::at(
+            4,
+            format!("strategy '{strategy}' is not supported yet"),
+        ));
+    }
+    Ok(std::borrow::Cow::Owned(rendered))
+}
+
 /// What the play's `gather_facts` and `force_handlers` came to, when the playbook wrote either as
 /// a template.
 #[derive(Default)]

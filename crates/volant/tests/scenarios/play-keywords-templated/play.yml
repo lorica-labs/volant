@@ -1,0 +1,14 @@
+- hosts: all
+  gather_facts: false
+  strategy: "{{ test_strategy | default('linear') }}"
+  order: "{{ myorder | default('inventory') }}"
+  tasks:
+    - debug: {msg: x}
+
+- hosts: all
+  gather_facts: false
+  vars:
+    picked: sorted
+  order: "{{ picked }}"
+  tasks:
+    - debug: {msg: y}

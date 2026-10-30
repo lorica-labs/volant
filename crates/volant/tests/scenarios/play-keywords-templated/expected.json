@@ -1,0 +1,14 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"x\"\n}\nok: [h2] => {\n    \"msg\": \"x\"\n}\nok: [h3] => {\n    \"msg\": \"x\"\n}\n\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"y\"\n}\nok: [h2] => {\n    \"msg\": \"y\"\n}\nok: [h3] => {\n    \"msg\": \"y\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh3                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h3] => {\n    \"msg\": \"x\"\n}\nok: [h2] => {\n    \"msg\": \"x\"\n}\nok: [h1] => {\n    \"msg\": \"x\"\n}\n\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"y\"\n}\nok: [h2] => {\n    \"msg\": \"y\"\n}\nok: [h3] => {\n    \"msg\": \"y\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh3                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"x\"\n}\n\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"y\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=2    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

@@ -627,7 +627,8 @@ async fn run_all(
                     &extra,
                     &mut prompt_warned,
                 )?;
-                let rendered = rendered(&prompted, compiled, &state, &inventory, limit.as_ref())?;
+                let named = executor::render_play_names(&prompted, &state.templar, &play_vars)?;
+                let rendered = rendered(&named, compiled, &state, &inventory, limit.as_ref())?;
                 let play = &*rendered;
                 let hosts = play_hosts(&inventory, play, limit.as_ref(), out, &mut warned, true)?;
                 if !local_agent_checked && options.replay.is_none() && hosts.iter().any(&is_local) {

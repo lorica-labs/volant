@@ -25,6 +25,7 @@ use volant_protocol::modules::{import_module, include_module, is_builtin, is_kno
 use crate::action_plugins;
 use crate::playbook::{Play, PlayTask, Playbook, TaskOrBlock, is_meta};
 use crate::stats::Refusal;
+use crate::template::Templar;
 
 mod refusals;
 mod resolved;
@@ -60,7 +61,9 @@ pub fn check(playbook: &Playbook) -> anyhow::Result<()> {
 }
 
 fn check_play(play: &Play) -> anyhow::Result<()> {
+    // A template is rendered and checked when the play starts (`render_play_names`).
     if let Some(strategy) = &play.strategy
+        && !Templar::is_template(strategy)
         && !STRATEGIES.contains(&strategy.as_str())
     {
         bail!("strategy '{strategy}' is not supported yet");

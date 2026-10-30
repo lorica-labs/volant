@@ -202,7 +202,7 @@ static CHAINS: std::sync::Mutex<Vec<(String, Vec<String>)>> = std::sync::Mutex::
 /// Most failures kept; a run that raises more distinct messages than this forgets the oldest.
 const CHAINS_KEPT: usize = 256;
 
-pub(super) fn remember_chain(message: &str, blocks: Vec<String>) {
+pub(crate) fn remember_chain(message: &str, blocks: Vec<String>) {
     let mut kept = CHAINS
         .lock()
         .unwrap_or_else(std::sync::PoisonError::into_inner);

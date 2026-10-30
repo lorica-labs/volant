@@ -1025,6 +1025,16 @@ fn a_short_hostname_drops_the_domain_and_a_homonym_keeps_its_variables() {
     }
 }
 
+/// A `-e key=value` template keeps the backslashes of its literals as written, as a YAML one
+/// does: measured on ansible-core 2.19.12, `-e 'e={{ "a\\nb" | length }}'` renders 4.
+#[test]
+fn a_key_value_extra_var_keeps_its_template_escapes() {
+    let tmp = tree();
+    let parsed =
+        parse_extra_vars(&[r#"e='{{ "a\\nb" | length }}'"#.to_string()], tmp.path()).unwrap();
+    assert_eq!(parsed["e"], json!(r#"{{ "a\\nb" | length }}"#));
+}
+
 /// Extra vars take key=value, JSON and files; a broken vars file names itself, a comment-only
 /// one is empty and a scalar is refused.
 #[test]

@@ -246,6 +246,8 @@ fn run(path: &str, args: &[&str]) -> Result<(Map<String, Value>, String), Plugin
                     )));
                 }
             }
+            let mut map = map;
+            map.values_mut().for_each(crate::yaml::escape_strings);
             Ok((map, stderr.clone()))
         }
         Ok(other) => Err(decoder(format!(
@@ -266,7 +268,10 @@ fn host_variables(path: &str, host: &str) -> Result<Map<String, Value>, PluginEr
         return Ok(Map::new());
     }
     match serde_json::from_str::<Value>(&text) {
-        Ok(Value::Object(vars)) => Ok(vars),
+        Ok(Value::Object(mut vars)) => {
+            vars.values_mut().for_each(crate::yaml::escape_strings);
+            Ok(vars)
+        }
         Err(e) => {
             let mut error = with_stderr(
                 path,

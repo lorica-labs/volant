@@ -1,0 +1,9 @@
+- hosts: h1
+  gather_facts: false
+  vars: {pv: sub}
+  roles: [r]
+  tasks:
+    - import_tasks: "{{ playbook_dir }}/sub/t.yml"
+    - import_tasks: "{{ pv }}/t.yml"
+    - import_tasks: "{{ ev }}/t.yml"
+    - import_tasks: "{{ rv }}/t.yml"

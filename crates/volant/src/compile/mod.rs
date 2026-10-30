@@ -16,6 +16,7 @@
 mod builder;
 mod compiled;
 mod flatten;
+mod import_path;
 mod include;
 mod inherit;
 mod model;
@@ -27,7 +28,9 @@ pub(crate) use builder::DEPTH;
 pub(crate) use compiled::{
     META_ACTIONS, batches, beside_or_in_role, handler_steps, meta_action, resolve_notify,
 };
+#[cfg(test)]
 pub(crate) use flatten::compile;
+pub(crate) use flatten::compile_with;
 pub(crate) use include::{
     Grafted, IncludeRequest, IncludeTarget, expand_include, graft, include_role_entry,
     role_identity,

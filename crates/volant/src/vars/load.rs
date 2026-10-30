@@ -278,7 +278,7 @@ pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<Str
                 bail!("extra var '{word}' is not key=value");
             }
             for (k, v) in options {
-                combine_one(&mut out, &k, &Value::String(v));
+                combine_one(&mut out, &k, &Value::String(yaml::literal_escapes(&v)));
             }
         }
     }

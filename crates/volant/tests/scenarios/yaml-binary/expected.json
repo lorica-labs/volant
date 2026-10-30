@@ -1,0 +1,5 @@
+{
+  "code": 0,
+  "stderr": "[WARNING]: provided hosts list is empty, only localhost is available. Note that the implicit localhost does not match 'all'\n",
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"k\": \"hello\"\n}\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"msg\": \"bytes\"\n}\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"msg\": \"aGVsbG8=\"\n}\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"d\": {\n        \"x\": \"world\"\n    }\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=4    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

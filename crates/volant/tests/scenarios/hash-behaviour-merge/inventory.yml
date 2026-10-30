@@ -1,0 +1,5 @@
+- hosts: h2
+  gather_facts: false
+  tasks:
+    - debug: {var: hv}
+    - debug: {var: gv}

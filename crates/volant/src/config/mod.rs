@@ -318,6 +318,9 @@ impl Config {
         {
             config.r#become = on;
         }
+        if let Ok(behaviour) = std::env::var("ANSIBLE_HASH_BEHAVIOUR") {
+            crate::vars::set_hash_merge(behaviour.trim() == "merge");
+        }
         if let Ok(flag) = std::env::var("ANSIBLE_FORCE_HANDLERS")
             && let Some(on) = crate::yaml::bool_from_str(flag.trim())
         {

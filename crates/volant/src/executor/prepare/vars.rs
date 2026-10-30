@@ -129,7 +129,7 @@ pub(in crate::executor) fn merged_vars(
     // measured, it beats a `set_fact` of the same name, which a task's own `vars:` does not.
     let mut role_params = role.params.clone();
     for (key, value) in include_params.iter().flat_map(|p| &p.values) {
-        role_params.insert(key.clone(), value.clone());
+        crate::vars::combine_one(&mut role_params, key, value);
     }
     let scope = Scope {
         play_vars: plan.play_vars.clone(),

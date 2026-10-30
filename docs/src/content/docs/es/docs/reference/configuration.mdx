@@ -1,5 +1,5 @@
 ---
-sourceHash: cf7de5bce6e1
+sourceHash: 9e4faf6c9036
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -80,6 +80,10 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Avisa cuando el inventario no contiene ningún host y solo queda el `localhost` implícito. `all` no incluye ese host.
+</Option>
+
+<Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">
+  `merge` coloca un mapping sobre otro del mismo nombre clave por clave, entre dos fuentes de variables cualesquiera y entre dos fuentes de inventario. `replace` conserva entero el valor de la fuente más alta. La opción está obsoleta en Ansible, que aún la respeta y no muestra ningún aviso.
 </Option>
 
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">

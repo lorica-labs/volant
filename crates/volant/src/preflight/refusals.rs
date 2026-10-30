@@ -141,6 +141,19 @@ pub(super) fn check_end_role_handler(task: &PlayTask) -> anyhow::Result<()> {
     Ok(())
 }
 
+/// `include_role` written as a handler: measured on ansible-core 2.19.12, the reference stops
+/// loading the playbook, exit 4, at the handler.
+pub(super) fn check_include_role_handler(handler: &crate::compile::Handler) -> anyhow::Result<()> {
+    if volant_protocol::modules::include_module(&handler.task.module) != Some(false) {
+        return Ok(());
+    }
+    let mut message = "Using 'include_role' as a handler is not supported.".to_string();
+    if let Some(origin) = &handler.task.origin {
+        message = format!("{message}\n{}", crate::render::source_context(origin));
+    }
+    Err(Refusal::plain(CODE, message))
+}
+
 /// `end_role` written where no role is: the reference stops loading the playbook, exit 4. Only the
 /// compiled steps know which role a task belongs to, so this is asked of them and not of the
 /// play's own lists.

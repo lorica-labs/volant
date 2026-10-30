@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=one
+      changed_when: true
+      notify: role
+  handlers:
+    - name: role
+      include_role: {name: hr}

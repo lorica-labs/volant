@@ -1,0 +1,21 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: msg=one
+      changed_when: true
+      notify: inc
+      when: inventory_hostname == "h1"
+    - debug: msg=two
+      changed_when: true
+      notify: heard
+    - meta: flush_handlers
+    - debug: msg=after
+    - debug: msg=three
+      changed_when: true
+      notify: inc
+  handlers:
+    - name: inc
+      include_tasks: inc.yml
+    - name: other
+      include_tasks: inc.yml
+      listen: heard

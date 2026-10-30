@@ -611,7 +611,7 @@ pub(super) async fn run_batch(
         // reported the splice point or stepped over it. A play with no handlers splices nothing
         // and still publishes, because the drivers waiting on it have no way to know that and
         // would wait for ever.
-        if crate::compile::is_splice_point(&step.kind) && resumed.is_none() {
+        if crate::compile::is_splice_point(&step) && resumed.is_none() {
             let mut next = { (**plan_tx.borrow()).clone() };
             if let StepKind::Flush { .. } = step.kind {
                 let steps = crate::compile::handler_steps(&next, index);

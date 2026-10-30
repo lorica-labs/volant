@@ -254,8 +254,7 @@ impl Driver<'_> {
 
     /// Whether the step at `i` is a splice point this host has to wait at.
     pub(super) fn splices(&self, compiled: &Compiled, i: usize) -> bool {
-        crate::compile::is_splice_point(&compiled.steps[i].kind)
-            && !self.nothing_to_splice(compiled, i)
+        crate::compile::is_splice_point(&compiled.steps[i]) && !self.nothing_to_splice(compiled, i)
     }
 
     /// Waits until the hosts in front of this one in a `host_pinned` batch have queued for their

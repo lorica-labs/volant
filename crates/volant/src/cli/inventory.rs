@@ -108,15 +108,14 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     let chosen = usize::from(args.list)
         + usize::from(args.host.is_some())
         + usize::from(args.graph.is_some());
-    if chosen == 0 {
+    if chosen != 1 {
         eprintln!(
-            "[ERROR]: No action selected, at least one of --host, --graph or --list needs to be specified."
-        );
-        return Ok(5);
-    }
-    if chosen > 1 {
-        eprintln!(
-            "[ERROR]: Conflicting options used, only one of --host, --graph or --list can be used at the same time."
+            "[ERROR]: {}",
+            if chosen == 0 {
+                "No action selected, at least one of --host, --graph or --list needs to be specified."
+            } else {
+                "Conflicting options used, only one of --host, --graph or --list can be used at the same time."
+            }
         );
         return Ok(5);
     }

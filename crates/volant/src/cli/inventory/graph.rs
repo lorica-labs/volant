@@ -12,6 +12,11 @@ pub(super) fn graph(
     store: &VarStore,
     export: bool,
 ) -> anyhow::Result<i32> {
+    // The tree leaves `--limit` out, but a `@file` it cannot read still ends the run.
+    if let Some(Err(err)) = args.limit.as_deref().map(crate::cli::hosts::limit_pattern) {
+        eprintln!("[ERROR]: {err}");
+        return Ok(1);
+    }
     let mut lines = |item: GraphItem<'_>| -> Result<Vec<String>, String> {
         if !args.vars {
             return Ok(Vec::new());

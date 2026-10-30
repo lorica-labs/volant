@@ -19,10 +19,37 @@ pub(super) fn unresolved_tail(module: &str) -> String {
     )
 }
 
+/// The warning the reference gives a name whose collection nobody installed, under the full name
+/// the loader looked for.
+pub(crate) fn load_warning(module: &str, collection: &str) -> String {
+    let full = if module.contains('.') {
+        module.to_string()
+    } else {
+        format!("{collection}.{module}")
+    };
+    crate::transport::plugin_load_warning(&full, collection)
+}
+
+/// Whether the task names its module in an `action:` or `local_action:` statement, which the
+/// reference resolves only when the task runs: measured on ansible-core 2.19.12, such a task a
+/// `when` skips needs nothing, and one that runs fails with `Cannot resolve`.
+pub(crate) fn resolved_at_run(task: &PlayTask) -> bool {
+    task.value_origins.contains_key("action.value")
+}
+
+/// What [`crate::python::missing`] says of the module of a task [`resolved_at_run`]: `Some` when
+/// nothing answers to it, with the collection to install, if one would.
+pub(crate) fn missing_at_run(task: &PlayTask) -> Option<Option<String>> {
+    resolved_at_run(task)
+        .then(|| crate::python::missing(&task.module))
+        .flatten()
+}
+
 /// Every `(task, module)` of a compiled play whose module only the controller's ansible-core can
-/// answer, set aside by [`super::check_task`] for it to resolve.
+/// answer, set aside by [`super::check_task`] for it to resolve before the run.
 pub(crate) fn collection_modules(compiled: &crate::compile::Compiled) -> Vec<(String, String)> {
     set_aside(compiled)
+        .filter(|task| !resolved_at_run(task))
         .map(|task| (task.name.clone(), task.module.clone()))
         .collect()
 }
@@ -88,10 +115,7 @@ impl Unresolved {
     /// goes last, on its own line, so the first line stays the reference's.
     pub fn report(&self) -> (Option<String>, String) {
         let warning = match &self.collection {
-            Some(collection) => Some(crate::transport::plugin_load_warning(
-                &self.module,
-                collection,
-            )),
+            Some(collection) => Some(load_warning(&self.module, collection)),
             // `ns.name` is not a collection reference, which the reference says before it fails.
             None if self.module.matches('.').count() == 1 => Some(format!(
                 "Error loading plugin '{0}': {0} is not a valid collection reference",
@@ -187,6 +211,25 @@ pub(crate) fn check_built(
     for task in set_aside(expanded).filter(|task| action_plugins::kind(&task.module).is_none()) {
         let (name, module) = (&task.name, &task.module);
         if !union.is_some_and(|u| u.modules.contains_key(crate::python::payload_key(module))) {
+            match crate::python::missing(module) {
+                // Failed by the task when it runs (`argspec::refusal`).
+                Some(_) if resolved_at_run(task) => continue,
+                // Measured on ansible-core 2.19.12: an included file naming a module nothing
+                // answers to ends the run at exit 4, at the include, as a playbook's is refused.
+                Some(collection) => {
+                    let (_, error) = Unresolved {
+                        task: name.clone(),
+                        module: module.clone(),
+                        collection,
+                        origin: task.origin.clone(),
+                    }
+                    .report();
+                    return Err(anyhow::Error::new(crate::playbook::TaskFileRefused(
+                        error, true,
+                    )));
+                }
+                None => {}
+            }
             // What the controller made of a name it set aside, as the pre-flight says it for one
             // a play names.
             if let Some(why) = union.and_then(|u| u.refused.get(module)) {

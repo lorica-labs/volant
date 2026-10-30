@@ -369,6 +369,13 @@ pub(super) fn prepare(
             connect,
         ));
     }
+    // The loader's warning about a module whose collection nobody installed, said once the task
+    // runs, before `argspec::refusal` fails it.
+    if items.iter().any(|item| item.skipped.is_none())
+        && let Some(Some(collection)) = crate::preflight::missing_at_run(task)
+    {
+        warnings.push(crate::preflight::load_warning(&task.module, &collection));
+    }
     // The module's half of the payload, when this module is one the run built one for. The
     // interpreter is not here: it is the host's, and no link to it exists yet.
     //

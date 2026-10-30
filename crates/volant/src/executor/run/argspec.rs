@@ -276,9 +276,13 @@ pub(in crate::executor) fn raw_params_refusal(task: &PlayTask) -> Option<TaskRes
 ///
 /// Measured on ansible-core 2.19.12: the play starts, the banner shows the word, and the task
 /// fails with `Task failed: Cannot resolve 'module=ping' to an action or module.` and a cause at
-/// the `action:` value; `ignore_errors` and `rescue` take it like any failure of a task.
+/// the `action:` value; `ignore_errors` and `rescue` take it like any failure of a task. So does
+/// a module nothing on the controller answers to, named in an `action:` statement, after the
+/// loader's warning when its collection is not installed (`prepare` says it).
 fn unresolved_action_refusal(task: &PlayTask) -> Option<TaskResult> {
-    if !crate::playbook::names_no_action(&task.module) {
+    if !crate::playbook::names_no_action(&task.module)
+        && crate::preflight::missing_at_run(task).is_none()
+    {
         return None;
     }
     let msg = format!("Cannot resolve '{}' to an action or module.", task.module);

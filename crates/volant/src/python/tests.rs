@@ -377,7 +377,7 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
         crate::preflight::check_built(&compiled, Some(&kept)).unwrap_err()
     );
     assert!(
-        text.starts_with("task 'Moved': couldn't resolve module/action 'volanttest.coll.moved'")
+        text.starts_with("couldn't resolve module/action 'volanttest.coll.moved'")
             && text
                 .ends_with("install it with volant runtime install --collections absentns.absent"),
         "{text}"

@@ -36,7 +36,7 @@ use refusals::{
 use resolved::unresolved;
 pub(crate) use resolved::{
     Unresolved, check_built, check_collection_actions, check_resolved, collection_modules,
-    locate_unresolved, refusal_of, unresolvable_here,
+    load_warning, locate_unresolved, missing_at_run, refusal_of, unresolvable_here,
 };
 
 /// The strategies this engine implements: the reference's four. A play asking for another one is

@@ -1,0 +1,7 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - include_tasks: skipped.yml
+    - debug: msg=before
+    - include_tasks: unknown.yml
+    - debug: msg=after

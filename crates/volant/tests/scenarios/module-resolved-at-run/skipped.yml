@@ -1,0 +1,3 @@
+- action: nosuch_module_xyz
+  when: false
+- debug: msg=in

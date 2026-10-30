@@ -173,3 +173,49 @@ fn output_writes_the_file_and_prints_nothing() {
     let written = std::fs::read_to_string(dir.path().join("out.json")).expect("the file");
     assert_eq!(format!("{written}\n"), printed);
 }
+
+/// `-e` that cannot be read fails each plugin that takes the source, then the run, measured on
+/// ansible-core 2.19.12: exit 4 for invalid YAML, 5 for a value that is no mapping.
+#[rstest]
+#[case::invalid_yaml(
+    "{bad",
+    4,
+    "YAML parsing failed: While parsing a flow mapping did not find expected ',' or '}'.",
+    "\nOrigin: <CLI option '-e'>:2:1\n\n(source not shown: TypeError)\n"
+)]
+#[case::not_a_mapping(
+    "[1]",
+    5,
+    "Invalid extra vars data supplied. '[1]' could not be made into a dictionary",
+    ""
+)]
+fn unreadable_extra_vars_fail_each_plugin(
+    #[case] extra: &str,
+    #[case] code: i32,
+    #[case] message: &str,
+    #[case] origin: &str,
+) {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let root = dir.path().canonicalize().expect("the scratch path");
+    write(&root, "inv.ini", "h1\n");
+    let source = root.join("inv.ini").display().to_string();
+    let failed = |plugin: &str| {
+        let origin = if origin.is_empty() {
+            format!("\nOrigin: <inventory plugin '{plugin}' with source '{source}'>\n")
+        } else {
+            origin.to_string()
+        };
+        format!(
+            "[WARNING]: Failed to parse inventory with '{plugin}' plugin: {message}\n\nFailed to parse inventory with '{plugin}' plugin.\n\n<<< caused by >>>\n\n{message}{origin}\n"
+        )
+    };
+    let want = format!(
+        "{}[WARNING]: Unable to parse {source} as an inventory source\n[WARNING]: No inventory was parsed, only implicit localhost is available\n[ERROR]: {message}{origin}\n",
+        failed("ini"),
+    );
+    let (got, stdout, stderr) = run_in(&root, &["-i", &source, "--list", "-e", extra]);
+    assert_eq!(
+        (got, stdout.as_str(), stderr.as_str()),
+        (code, "", want.as_str())
+    );
+}

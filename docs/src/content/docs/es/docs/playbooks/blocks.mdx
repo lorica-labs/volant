@@ -1,5 +1,5 @@
 ---
-sourceHash: dd334ed7fa20
+sourceHash: 61e526570a4b
 title: Bloques y handlers
 description: Cómo viaja un fallo por los bloques, qué hacen rescue y always, y cuándo se ejecutan los handlers.
 ---
@@ -86,6 +86,8 @@ Un punto de flush dentro de un archivo de `include_tasks` se ejecuta solo para l
 Los handlers se ejecutan en el orden en que están definidos, no en el orden en que fueron notificados. Un rol nombrado en `roles:` o por `import_role` pone sus handlers delante de los del play. Un rol traído por `include_role` los pone detrás, como en Ansible.
 
 Una tarea solo notifica cuando informa `changed`. En un bucle decide el resultado global, así que basta con un elemento cambiado. Cuando se ha ejecutado un flush, las notificaciones se borran, de modo que un handler no se vuelve a ejecutar en el siguiente flush a menos que algo lo notifique de nuevo.
+
+Una lista `handlers:` puede contener un `import_tasks`, en un play o en un rol. Los handlers del archivo que nombra ocupan su lugar, con sus palabras clave, y se notifican por su nombre y por `listen`. El archivo se busca junto al archivo que contiene la sentencia y después en el directorio del playbook.
 
 ### Palabras clave del play
 

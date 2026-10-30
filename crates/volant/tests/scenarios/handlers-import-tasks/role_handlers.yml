@@ -1,0 +1,2 @@
+- name: role handler
+  debug: {msg: role handler ran}

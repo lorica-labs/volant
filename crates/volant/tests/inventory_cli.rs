@@ -174,6 +174,64 @@ fn output_writes_the_file_and_prints_nothing() {
     assert_eq!(format!("{written}\n"), printed);
 }
 
+/// A template literal's backslashes print as each source holds them, whatever the template engine
+/// is given to read them as written.
+#[test]
+fn template_backslashes_print_as_written() {
+    let dir = tempfile::tempdir().expect("a scratch directory");
+    let root = dir.path();
+    write(
+        root,
+        "inv.ini",
+        "h1 i=\"{{ 'a\\.b' | regex_replace('\\.', '-') }}\" j=\"{{ 'a\\nb' | length }}\"\n",
+    );
+    write(
+        root,
+        "inv.yml",
+        "all:\n  hosts:\n    h2:\n      r: \"{{ \\\"a.b\\\" | regex_replace(\\\"\\\\\\\\.\\\", \\\"-\\\") }}\"\n      j: '{{\"a\\nb\"|length}}'\n",
+    );
+    write(
+        root,
+        "inv.toml",
+        "[ungrouped.hosts.h3]\nt = '{{ \"a\\nb\" | length }}'\n",
+    );
+    let sources = ["-i", "inv.ini", "-i", "inv.yml", "-i", "inv.toml"];
+    let host = |name: &str, extra: &[&str]| {
+        let args: Vec<&str> = sources
+            .iter()
+            .copied()
+            .chain(["--host", name])
+            .chain(extra.iter().copied())
+            .collect();
+        run_in(root, &args)
+    };
+    assert_eq!(
+        host("h1", &[]),
+        (
+            0,
+            "{\n    \"i\": \"{{ 'a\\\\.b' | regex_replace('\\\\.', '-') }}\",\n    \"j\": \"{{ 'a\\\\nb' | length }}\"\n}\n".to_string(),
+            String::new()
+        )
+    );
+    assert_eq!(
+        host("h2", &["--yaml"]),
+        (
+            0,
+            "j: '{{\"a\\nb\"|length}}'\nr: '{{ \"a.b\" | regex_replace(\"\\\\.\", \"-\") }}'\n"
+                .to_string(),
+            String::new()
+        )
+    );
+    assert_eq!(
+        host("h3", &[]),
+        (
+            0,
+            "{\n    \"t\": \"{{ \\\"a\\\\nb\\\" | length }}\"\n}\n".to_string(),
+            String::new()
+        )
+    );
+}
+
 /// `-e` that cannot be read fails each plugin that takes the source, then the run, measured on
 /// ansible-core 2.19.12: exit 4 for invalid YAML, 5 for a value that is no mapping.
 #[rstest]

@@ -162,11 +162,11 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     }
     // In the order the reference merges them, which TOML keeps and JSON and YAML sort.
     let ordered = |host: &str| -> serde_json::Map<String, Value> {
-        if export {
+        written(if export {
             store.exported_vars(host)
         } else {
             store.listed_vars_ordered(host, &loaded.group_var_names(host))
-        }
+        })
     };
     let vars_of = |host: &str| -> BTreeMap<String, Value> { ordered(host).into_iter().collect() };
     let toml = args.toml && !args.yaml;
@@ -236,15 +236,16 @@ fn list_text(
         None => loaded,
     };
     let group_vars = |name: &str| -> BTreeMap<String, Value> {
-        store
-            .listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect())
+        written(store.listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect()))
             .into_iter()
             .collect()
     };
     if args.toml && !args.yaml {
         let mut groups = |name: &str| {
             if export {
-                store.listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect())
+                written(
+                    store.listed_group_vars(name, &shown.group_vars_of(name).into_iter().collect()),
+                )
             } else {
                 serde_json::Map::new()
             }
@@ -258,6 +259,13 @@ fn list_text(
         let group_vars: &VarsOf<'_> = &group_vars;
         to_json(&shown.dump_with(vars_of, export.then_some(group_vars)))?
     }))
+}
+
+/// `vars` with their strings as the sources hold them, before loading doubled the backslashes of
+/// their template literals: see `yaml::written_strings`.
+fn written(mut vars: serde_json::Map<String, Value>) -> serde_json::Map<String, Value> {
+    vars.values_mut().for_each(crate::yaml::written_strings);
+    vars
 }
 
 /// What `--host` prints as JSON or YAML.

@@ -294,60 +294,8 @@ fn scalar_json(scalar: &Scalar<'_>, unsafe_text: bool) -> Value {
         Scalar::FloatingPoint(f) => serde_json::Number::from_f64(f.into_inner())
             .map_or_else(|| Value::String(f.to_string()), Value::Number),
         Scalar::String(s) if unsafe_text => Value::String(s.to_string()),
-        Scalar::String(s) => Value::String(literal_escapes(s)),
+        Scalar::String(s) => Value::String(super::escapes::literal_escapes(s)),
     }
-}
-
-/// `text` with the backslashes of the string literals inside its `{{ }}` doubled, so that the
-/// engine reads each escape as the two characters written. Measured on ansible-core 2.19.12: in a
-/// YAML string value, `{{ "a\nb" | length }}` is 4 and `'\x41'` stays four characters, while
-/// `{% %}`, a bare expression and a template file decode them.
-pub(crate) fn literal_escapes(text: &str) -> String {
-    if !text.contains('\\') || !text.contains("{{") {
-        return text.to_string();
-    }
-    let mut out = String::with_capacity(text.len() + 8);
-    let mut chars = text.chars().peekable();
-    // Inside `{{ }}`, and inside a string literal there, opened by this quote.
-    let mut expression = false;
-    let mut quote: Option<char> = None;
-    while let Some(c) = chars.next() {
-        match (expression, quote, c) {
-            (false, _, '{') if chars.peek() == Some(&'{') => {
-                chars.next();
-                out.push_str("{{");
-                expression = true;
-            }
-            (true, None, '}') if chars.peek() == Some(&'}') => {
-                chars.next();
-                out.push_str("}}");
-                expression = false;
-            }
-            (true, None, '"' | '\'') => {
-                quote = Some(c);
-                out.push(c);
-            }
-            // `\q` (the closing quote or a backslash) becomes `\\\q`, any other `\x` becomes
-            // `\\x`: either decodes to the two characters written.
-            (true, Some(open), '\\') => match chars.next() {
-                Some(next) if next == open || next == '\\' => {
-                    out.push_str("\\\\\\");
-                    out.push(next);
-                }
-                Some(next) => {
-                    out.push_str("\\\\");
-                    out.push(next);
-                }
-                None => out.push('\\'),
-            },
-            (true, Some(open), _) if c == open => {
-                quote = None;
-                out.push(c);
-            }
-            _ => out.push(c),
-        }
-    }
-    out
 }
 
 /// A sequence of scalars as JSON.

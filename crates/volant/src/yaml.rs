@@ -12,12 +12,14 @@ use saphyr_parser::{ScalarStyle, Tag};
 use serde_json::Value;
 
 mod chomp;
+mod escapes;
 mod flow;
 mod limits;
 mod merge;
 mod quoted;
 mod walk;
 
+pub(crate) use escapes::{escape_strings, literal_escapes, written_strings};
 use walk::{lower, mapping_addresses, mapping_starts};
 
 /// The deepest nesting a YAML text may have, for the code that must read a value back.

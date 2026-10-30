@@ -162,11 +162,16 @@ async fn run_all(
     // compilation is wrapped in the code the reference gives a playbook it cannot make sense of,
     // and the refusals that measured a code of their own carry it through untouched.
     let mut compiled: Vec<Vec<Compiled>> = Vec::new();
+    // Read here for the paths an import renders, and kept for the local-agent check further down,
+    // which runs before any host has an effective view and would otherwise read
+    // `ansible_connection` from the inventory alone.
+    let extra = crate::vars::parse_extra_vars(&args.extra_vars, &std::env::current_dir()?)?;
     for pb in &playbooks {
         let mut plays = Vec::new();
         for play in &pb.plays {
             let search = RoleSearch::new(&play.dir, &config);
-            plays.push(compile::compile(play, &search, &selection).map_err(|e| Refusal::or(4, e))?);
+            let play = compile::compile_with(play, &search, &selection, &extra);
+            plays.push(play.map_err(|e| Refusal::or(4, e))?);
         }
         compiled.push(plays);
     }
@@ -485,12 +490,7 @@ async fn run_all(
     };
 
     let playbook_dir = playbook::base_dir(&files[0]);
-    let cwd = std::env::current_dir()?;
-    let extra = crate::vars::parse_extra_vars(&args.extra_vars, &cwd)?;
-    // Kept for the local-agent check below, which runs before any host has an effective view
-    // and would otherwise read `ansible_connection` from the inventory alone.
-    let extra_for_check = extra.clone();
-    let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra)
+    let mut store = VarStore::with_sources(&inventory, &sources, &playbook_dir, extra.clone())
         .inspect_err(|err| banner_before_vars_refusal(out, err, &playbooks))?;
     store.set_forks(forks);
     store.set_verbosity(args.verbose);
@@ -581,7 +581,7 @@ async fn run_all(
             .iter()
             .map(|(k, v)| (k.clone(), v.clone()))
             .collect();
-        for (key, value) in &extra_for_check {
+        for (key, value) in &extra {
             vars.insert(key.clone(), value.clone());
         }
         Transport::is_local_before_run(&host.name, &vars, &options.defaults)
@@ -624,7 +624,7 @@ async fn run_all(
                     play,
                     &state.templar,
                     &play_vars,
-                    &extra_for_check,
+                    &extra,
                     &mut prompt_warned,
                 )?;
                 let rendered = rendered(&prompted, compiled, &state, &inventory, limit.as_ref())?;
@@ -635,13 +635,8 @@ async fn run_all(
                     local_agent_checked = true;
                 }
                 let connection = play.connect.connection.as_deref();
-                crate::runtime::extras::check(
-                    &hosts,
-                    connection,
-                    &extra_for_check,
-                    &options.defaults,
-                )
-                .map_err(|e| Refusal::at(4, e))?;
+                crate::runtime::extras::check(&hosts, connection, &extra, &options.defaults)
+                    .map_err(|e| Refusal::at(4, e))?;
                 state.played |= !hosts.is_empty();
                 let end = executor::run_play(
                     play, compiled, hosts, &agents, &options, &mut state, out, &mut stats,

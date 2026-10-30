@@ -1280,15 +1280,30 @@ fn origins_survive_a_merge_key() {
     assert_eq!(origins.of_value(value), Some((2, 15)));
 }
 
-/// Escapes in the string literals of `{{ }}` stay as written; `{% %}` and text outside keep theirs.
+/// Escapes in the string literals of `{{ }}` stay as written; `{% %}`, a `{% raw %}` block and
+/// text outside keep theirs. Shown as stored, the text is as written again.
 #[rstest::rstest]
 #[case(r#"{{ "a\nb" | length }}"#, r#"{{ "a\\nb" | length }}"#)]
 #[case(r"{{ 'a\'b' }}", r"{{ 'a\\\'b' }}")]
 #[case(r#"{{ "a\\b" }}"#, r#"{{ "a\\\\b" }}"#)]
+#[case(r#"{{ "a\\\"b\x" }}"#, r#"{{ "a\\\\\\\"b\\x" }}"#)]
 #[case(r#"{% set x = "a\nb" %}{{ x }}"#, r#"{% set x = "a\nb" %}{{ x }}"#)]
 #[case(r"plain \n text", r"plain \n text")]
+#[case(
+    r"{% raw %}{{ 'a\.b' }}{% endraw %}",
+    r"{% raw %}{{ 'a\.b' }}{% endraw %}"
+)]
+#[case(
+    r"{%- raw -%}{{ 'a\.b' }}{% endraw %}{{ 'c\.d' }}",
+    r"{%- raw -%}{{ 'a\.b' }}{% endraw %}{{ 'c\\.d' }}"
+)]
+#[case(
+    r"{{ 'a\.b' }}{% raw %}{{ '\' }}",
+    r"{{ 'a\\.b' }}{% raw %}{{ '\\\' }}"
+)]
 fn template_literals_keep_their_escapes(#[case] text: &str, #[case] want: &str) {
-    assert_eq!(walk::literal_escapes(text), want);
+    assert_eq!(literal_escapes(text), want);
+    assert_eq!(escapes::as_written(want), text);
 }
 
 /// A mapping key YAML reads as a number, a boolean or null is held as the text the reference

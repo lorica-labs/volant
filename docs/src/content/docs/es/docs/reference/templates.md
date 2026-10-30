@@ -1,5 +1,5 @@
 ---
-sourceHash: 7f0fcac6cc7d
+sourceHash: ac09abc44b15
 title: Referencia del lenguaje de plantillas
 description: Los métodos de Python, las reglas de cadenas, las expresiones regulares y los límites del Jinja2 de Volant, con todas las diferencias con ansible-core.
 ---
@@ -232,7 +232,7 @@ Volant rechaza un texto YAML que no puede cargar sin riesgo. El error nombra el 
 
 ### Carencias de archivos de plantilla
 
-- `template_host`, `template_uid`, `template_run_date` y `template_mtime` no están definidos, a diferencia de `template_path`, `template_fullpath` y `ansible_managed`.
+- `template_run_date` y `template_mtime` son texto con la forma del `str` de Python de un `datetime`, no valores `datetime`: se imprimen igual, y `type_debug` da `str`.
 - `line_statement_prefix` y `line_comment_prefix` en una línea `#jinja2:` se rechazan por su nombre. El motor de plantillas de Volant y Jinja2 difieren en una línea en blanco después de una sentencia de línea y en el salto de línea de un comentario de línea.
 - Un delimitador de más de 64 caracteres y una línea `#jinja2:` de más de 16 KiB se rechazan con un error que nombra la opción. Los paréntesis en un valor de `#jinja2:` se anidan hasta 200 niveles, como en Python.
 - Un `variable_end_string` o `block_end_string` que empieza por un espacio en blanco se rechaza por su nombre. Un delimitador vacío se rechaza también, donde Jinja2 lo interpreta de una forma que depende de la plantilla.

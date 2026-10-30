@@ -1,5 +1,5 @@
 ---
-sourceHash: a5a473543313
+sourceHash: dc74b7849042
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -76,6 +76,14 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 
 <Option name="deprecation_warnings" id="defaults-deprecation-warnings" default="true" env="ANSIBLE_DEPRECATION_WARNINGS">
   Imprime los avisos `[DEPRECATION WARNING]` y la línea que explica cómo silenciarlos. Con `False` no imprime ninguno de los dos.
+</Option>
+
+<Option name="log_path" id="defaults-log-path" default="unset" env="ANSIBLE_LOG_PATH">
+  Un archivo al que se añade cada línea que muestra la ejecución, un registro por mensaje como lo escribe Ansible: `2026-10-30 18:34:18,430 p=<pid> u=<user> n=ansible INFO| TASK [...] ***`, `WARNING` para un `[WARNING]` y `ERROR` para un `[ERROR]`.
+</Option>
+
+<Option name="log_verbosity" id="defaults-log-verbosity" default="0" env="ANSIBLE_LOG_VERBOSITY">
+  El número de `-v` hasta el que una línea va a `log_path` aunque la ejecución no la muestre.
 </Option>
 
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">

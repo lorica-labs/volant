@@ -169,7 +169,13 @@ pub(crate) fn to_template(value: &serde_json::Value) -> Value {
         Json::Null => Value::from(()),
         Json::Bool(b) => Value::from(*b),
         Json::Number(n) => number(n),
-        Json::String(s) => Value::from(s.as_str()),
+        // A `!!binary` value is held as base64 in a wrapper, and read as its bytes.
+        Json::String(s) => crate::yaml::binary_text(s)
+            .and_then(|data| volant_protocol::encoding::b64_decode(&data).ok())
+            .map_or_else(
+                || Value::from(s.as_str()),
+                super::pymethods::bytes::Bytes::value,
+            ),
         Json::Array(items) => items.iter().map(to_template).collect(),
         Json::Object(map) => match crate::template::typed_keys::keys(map) {
             Some(keys) => Value::from_pairs(keys.into_iter().zip(map.values().map(to_template))),

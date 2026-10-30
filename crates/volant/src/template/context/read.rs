@@ -278,7 +278,11 @@ impl Context {
             return Some((view, true));
         }
         if let Some(value) = self.vars.get(key) {
-            if !untrusted && !engine_owned(key) && holds_template(value) {
+            // A `!!binary` value is read as its bytes, with nothing to render.
+            let binary = value
+                .as_str()
+                .is_some_and(|s| crate::yaml::binary_text(s).is_some());
+            if !untrusted && !engine_owned(key) && !binary && holds_template(value) {
                 if self.reads_author_text_only(key, &mut Vec::new()) {
                     return Some(self.resolve(key, value));
                 }

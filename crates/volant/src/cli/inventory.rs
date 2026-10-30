@@ -225,7 +225,19 @@ fn list_text(
     // YAML and TOML forms do not go through.
     let named_all = loaded.all_host_names().len() > 1
         && loaded.all_host_names().iter().any(|name| name == "all");
-    let shown = match args.limit.as_deref().or(named_all.then_some("all")) {
+    let given = match args
+        .limit
+        .as_deref()
+        .map(super::hosts::limit_pattern)
+        .transpose()
+    {
+        Ok(given) => given.flatten(),
+        Err(err) => {
+            eprintln!("[ERROR]: {err}");
+            return Ok(Err(1));
+        }
+    };
+    let shown = match given.as_deref().or(named_all.then_some("all")) {
         Some(pattern) => match limit(loaded, pattern, out) {
             Ok(inventory) => {
                 limited = inventory;

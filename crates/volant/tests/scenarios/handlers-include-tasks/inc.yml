@@ -1,0 +1,3 @@
+- debug: {msg: in handler include}
+- debug: {msg: second}
+  changed_when: true

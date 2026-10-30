@@ -299,6 +299,27 @@ fn unresolved_action_refusal(task: &PlayTask) -> Option<TaskResult> {
     Some(r)
 }
 
+/// `expand_argument_vars` on `shell`, which the reference's `shell` action raises on before its
+/// module runs, whatever the value, naming the action as the task wrote it. A value that is
+/// `omit` takes the key out there, and is let through here to the same end.
+fn shell_expand_refusal(task: &PlayTask) -> Option<TaskResult> {
+    let value = task.args.get("expand_argument_vars")?;
+    let omitted = value
+        .as_str()
+        .is_some_and(|text| crate::template::Templar::is_template(text) && text.contains("omit"));
+    if omitted || volant_protocol::modules::native(&task.module).is_none_or(|m| m.name != "shell") {
+        return None;
+    }
+    let mut r = TaskResult::failed_with(format!(
+        "Unsupported parameters for ({}) module: expand_argument_vars",
+        task.module
+    ));
+    r.0.insert("changed".into(), json!(false));
+    r.0.insert("exception".into(), json!("(traceback unavailable)"));
+    r.0.insert(super::RAISED_FAIL.into(), json!(true));
+    Some(r)
+}
+
 /// What each item of a task reports when the task asks for `async` and its action does not
 /// support it, the raw parameters it was given are refused, or its action cannot be resolved: the
 /// failure the reference raises before the action runs, so neither `failed_when` nor `retries`
@@ -306,5 +327,6 @@ fn unresolved_action_refusal(task: &PlayTask) -> Option<TaskResult> {
 pub(in crate::executor) fn refusal(task: &PlayTask) -> Option<TaskResult> {
     unresolved_action_refusal(task)
         .or_else(|| raw_params_refusal(task))
+        .or_else(|| shell_expand_refusal(task))
         .or_else(|| super::async_job::async_refusal(task))
 }

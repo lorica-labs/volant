@@ -244,6 +244,10 @@ pub(crate) fn graft(
             step.include_params = Some(Arc::clone(&params));
             // A dependency the coordinator narrowed to the hosts that have not run it keeps that.
             step.hosts = Some(step.hosts.take().unwrap_or_else(|| Arc::clone(&hosts)));
+            // The tasks a handler's include brought run as handlers of the same flush.
+            if let (super::StepKind::Handler(i), super::StepKind::Task) = (parent.kind, step.kind) {
+                step.kind = super::StepKind::Handler(i);
+            }
             steps.push(step);
         }
         for mut span in sub.blocks {

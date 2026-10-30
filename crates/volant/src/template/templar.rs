@@ -445,6 +445,9 @@ impl Templar {
         expr: &str,
         vars: impl Into<Vars<'a>>,
     ) -> Result<bool, TemplateError> {
+        if crate::yaml::unsafe_text(expr).is_some() {
+            return Err(TemplateError(super::UNTRUSTED.into()));
+        }
         let (ctx, tainted) = context_of(self, vars.into());
         let delimited = single_expression(expr);
         let mut value = self.evaluate_in(delimited.unwrap_or(expr.trim()), &ctx)?;
@@ -452,9 +455,7 @@ impl Templar {
             && let Value::String(text) = &value
         {
             if tainted.load(Ordering::Relaxed) {
-                return Err(TemplateError(
-                    "Encountered untrusted template or expression.".into(),
-                ));
+                return Err(TemplateError(super::UNTRUSTED.into()));
             }
             value = self.evaluate_in(single_expression(text).unwrap_or(text.trim()), &ctx)?;
         }

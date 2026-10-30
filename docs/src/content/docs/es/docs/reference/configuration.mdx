@@ -1,5 +1,5 @@
 ---
-sourceHash: dc74b7849042
+sourceHash: 28eef99c44bb
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -139,7 +139,7 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 </Option>
 
 <Option name="callback_plugins" id="defaults-callback-plugins" env="ANSIBLE_CALLBACK_PLUGINS">
-  Más directorios donde buscar plugins de callback, separados por `:`. Volant lee el ajuste pero solo carga sus propios callbacks.
+  Más directorios donde buscar plugins de callback, separados por `:`. Volant solo carga sus propios callbacks y nombra el archivo de uno encontrado allí que no ejecuta.
 </Option>
 
 <Option name="bin_ansible_callbacks" id="defaults-bin-ansible-callbacks" default="false" env="ANSIBLE_LOAD_CALLBACK_PLUGINS">

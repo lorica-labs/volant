@@ -145,6 +145,7 @@ pub(super) fn load_callbacks(
     config: &Config,
     plays: &Plays<'_>,
     out: &mut Renderer,
+    bridge: &crate::bridge::Bridge,
 ) -> Result<(), i32> {
     let adhoc = match plays {
         Plays::Adhoc(adhoc) => Some(*adhoc),
@@ -166,7 +167,14 @@ pub(super) fn load_callbacks(
         return Err(1);
     }
     let Some(stdout) = StdoutCallback::named(name) else {
-        eprintln!("[ERROR]: Could not load '{name}' callback plugin.");
+        // One the controller's ansible-core finds is a plugin of the playbook's own or of a
+        // collection, which this release does not run: named with its file.
+        match bridge.plugin_path("callback", name) {
+            Some(path) => eprintln!(
+                "[ERROR]: Could not load '{name}' callback plugin: '{path}' is a callback plugin this release does not run."
+            ),
+            None => eprintln!("[ERROR]: Could not load '{name}' callback plugin."),
+        }
         return Err(1);
     };
     if loads {
@@ -184,10 +192,13 @@ pub(super) fn load_callbacks(
                 None if StdoutCallback::named(enabled).is_none()
                     && !enabled.starts_with("volant.") =>
                 {
-                    out.warning(
-                        &format!("Skipping callback plugin '{enabled}', unable to load"),
-                        false,
-                    );
+                    let warning = match bridge.plugin_path("callback", enabled) {
+                        Some(path) => format!(
+                            "Skipping callback plugin '{enabled}', unable to load: '{path}' is a callback plugin this release does not run"
+                        ),
+                        None => format!("Skipping callback plugin '{enabled}', unable to load"),
+                    };
+                    out.warning(&warning, false);
                 }
                 None => {}
             }

@@ -1,0 +1,4 @@
+# A handler written as `include_tasks` includes its file when notified and runs its tasks as handlers, `listen` and `flush_handlers` included; one written as `include_role` stops the load, exit 4.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, role.yml]

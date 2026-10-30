@@ -259,6 +259,11 @@ pub fn load_sources_with(
         let short = name.strip_prefix("ansible.builtin.").unwrap_or(name);
         match PLUGINS.iter().find(|p| p.name() == short) {
             Some(plugin) => plugins.push(*plugin),
+            // A name no builtin answers to is the controller's ansible-core's to load, from an
+            // `inventory_plugins/` beside the playbook or a collection, as the reference loads it.
+            None if cx.helper().inventory_plugin_exists(name) => plugins.push(Box::leak(Box::new(
+                super::adjacent::Adjacent(Box::leak(name.clone().into_boxed_str())),
+            ))),
             None => cx.warn(format!("Failed to load inventory plugin, skipping {name}")),
         }
     }
@@ -396,6 +401,16 @@ impl Chain<'_, '_> {
                     continue;
                 }
                 match self.parse(*plugin, source, into) {
+                    Err(err) if err.message == super::adjacent::DECLINED => {
+                        self.cx.verbose(
+                            3,
+                            format!(
+                                "{} declined parsing {} as it did not pass its verify_file() method",
+                                plugin.name(),
+                                source.text
+                            ),
+                        );
+                    }
                     Ok(()) => {
                         parsed = true;
                         self.cx.verbose(

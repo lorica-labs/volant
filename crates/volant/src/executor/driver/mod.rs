@@ -38,7 +38,7 @@ use super::run::{
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
 use messages::dump_of;
-use notified::{announce_notified, saved_lines};
+use notified::{announce_notified, saved_lines, sits_out};
 
 mod boundaries;
 mod messages;
@@ -413,7 +413,7 @@ pub(super) async fn drive_host(
                     &c,
                     pos,
                     strict(options.batching, &store) || plan.lockstep,
-                ) || crate::compile::is_splice_point(&step.kind)
+                ) || crate::compile::is_splice_point(step)
                     || driver.steps_over_a_splice_point(&c, pos))
             {
                 release_at_barrier(&mut permit, &mut links, &mut checked, &options.local);
@@ -438,6 +438,7 @@ pub(super) async fn drive_host(
             // the host that notified and nothing for the other, whose recap counts no `ok`.
             if let StepKind::Handler(i) = step.kind
                 && !notified.contains(&i)
+                && step.include_kind().is_none()
             {
                 if !batch.is_empty() {
                     break;
@@ -683,7 +684,7 @@ pub(super) async fn drive_host(
             // then read the list again. The batch has to be empty to get here, which is the
             // liveness half of the splice rule - a host blocked at an index while a step in front
             // of it is still unreported waits for an index the coordinator can never reach.
-            if let StepKind::Include(kind) = step.kind {
+            if let Some(kind) = step.include_kind() {
                 if !batch.is_empty() {
                     break;
                 }
@@ -693,7 +694,7 @@ pub(super) async fn drive_host(
                 // step and waits: the steps go in behind this index for everyone's list. Measured
                 // on ansible-core 2.19.12, `include_tasks` under `run_once: true`: `included:
                 // inc.yml for h1` names the one host, the tasks run for h1 alone, h2 counts none.
-                let asked = if masked_out || handlers_only || follower {
+                let asked = if masked_out || follower || sits_out(step, &notified, handlers_only) {
                     Vec::new()
                 } else {
                     let mut warnings = Vec::new();

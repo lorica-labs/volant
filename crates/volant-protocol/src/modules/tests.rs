@@ -221,9 +221,10 @@ fn executable_is_read_only_where_a_shell_runs() {
     assert!(row("shell").contains("`executable`"), "{}", row("shell"));
 }
 
-/// `expand_argument_vars` is read by `command` and refused by name on `shell`, as the reference does.
+/// `expand_argument_vars` is read by `command`, and on `shell` it is no refusal before the run:
+/// the executor fails the task, as the reference's `shell` action does.
 #[test]
-fn expand_argument_vars_is_read_on_command_and_refused_on_shell() {
+fn expand_argument_vars_is_read_on_command_and_not_refused_on_shell() {
     let status = |m: &ModuleSpec| {
         m.args
             .iter()
@@ -231,14 +232,11 @@ fn expand_argument_vars_is_read_on_command_and_refused_on_shell() {
             .map(|a| a.status)
     };
     assert_eq!(status(&COMMAND), Some(ArgStatus::Honoured));
-    assert_eq!(status(&SHELL), Some(ArgStatus::Refused(None)));
+    assert_eq!(status(&SHELL), Some(ArgStatus::Inert));
     assert_eq!(status(&RAW), None);
     let page = documentation_table();
     assert!(
-        page.contains(
-            "- `shell`: `expand_argument_vars`
-"
-        ),
+        !page.contains("- `shell`: `expand_argument_vars`"),
         "{page}"
     );
     assert!(!page.contains("- `command`:"), "{page}");

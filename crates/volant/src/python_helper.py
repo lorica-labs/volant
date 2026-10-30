@@ -196,6 +196,23 @@ def scan_once():
         kept_init(getattr(module_common, name))
 
 
+class WantJson(RuntimeError):
+    """A module in another language that reads its arguments from the file named on its command
+    line (`WANT_JSON`). It ships as itself rather than in a zip: ansible-core's own
+    `_execute_module` copies it and its arguments file to the host and runs it there."""
+
+
+def want_json(name):
+    """Whether the module `name` is one `WantJson` stands for."""
+    try:
+        build(name)
+    except WantJson:
+        return True
+    except Exception:
+        return False
+    return False
+
+
 def build(name):
     """One module's zip and facts, or RuntimeError saying why it cannot be shipped.
 
@@ -224,6 +241,8 @@ def build(name):
         )
     except Exception as failure:
         raise RuntimeError("building module %r: %s" % (name, failure))
+    if built.module_style == "non_native_want_json":
+        raise WantJson(name)
     # A module built `old` has no zip at all: its whole body is the payload, and what makes it
     # work is an action plugin on the controller, or it is a documentation stub. `resolve`
     # answers those as unusable before a task can name them; this is the belt to that pair of
@@ -586,6 +605,10 @@ def resolve_one(name):
         return {"action_plugin": handler, "with_module": built}
     try:
         build(name)
+    except WantJson:
+        # Run by ansible-core's `normal` action plugin, as the reference runs every module with
+        # no plugin of its own.
+        return {"action_plugin": "ansible.builtin.normal", "with_module": False}
     except RuntimeError as unbuildable:
         return {"unusable": str(unbuildable)}
     owner = module.plugin_resolved_collection
@@ -834,12 +857,13 @@ def marked(value):
     return plain(value)
 
 
-def inventory(path):
+def inventory(path, plugin=None):
     """One collection inventory plugin reading `path`, as the reference's `auto` plugin runs it,
     inside the same `_InventoryDataWrapper` the inventory manager gives it (so a plugin's trust
     and origins are the reference's) and with its cache: the groups, children, hosts and host
     variables it made as plain JSON, and the lines it said. A failure is answered as data, so
-    the warnings said before it are kept."""
+    the warnings said before it are kept. `plugin` names an enabled plugin to run in place of
+    `auto`, which answers `declined` when its `verify_file` refuses the source."""
     from ansible._internal._datatag._tags import Origin
     from ansible.inventory.manager import InventoryManager, _InventoryDataWrapper
     from ansible.parsing.dataloader import DataLoader
@@ -859,10 +883,14 @@ def inventory(path):
         loader = DataLoader()
         manager = InventoryManager(loader, sources=[path], parse=False)
         manager._inventory.current_source = path
-        auto = inventory_loader.get("auto")
-        origin = Origin(description="<inventory plugin 'auto' with source %r>" % path)
-        wrapper = _InventoryDataWrapper(manager._inventory, target_plugin=auto, origin=origin)
-        auto.parse(wrapper, loader, path, cache=True)
+        target = inventory_loader.get(plugin or "auto")
+        if plugin and not target.verify_file(path):
+            return {"declined": True, "verbose": verbose, "warnings": warnings}
+        origin = Origin(
+            description="<inventory plugin %r with source %r>" % (plugin or "auto", path)
+        )
+        wrapper = _InventoryDataWrapper(manager._inventory, target_plugin=target, origin=origin)
+        target.parse(wrapper, loader, path, cache=True)
         data = manager._inventory
         # What `ansible-inventory --list` does next: the variables of each host, which is where
         # the reference warns about a variable that has a reserved name.
@@ -967,7 +995,16 @@ def call(request):
     loaders()
     kind, name = request["kind"], request["name"]
     if kind == "inventory":
-        return {"value": inventory(request["args"][0])}
+        return {"value": inventory(request["args"][0], request["kwargs"].get("plugin"))}
+    if kind == "inventory_plugin":
+        from ansible.plugins.loader import inventory_loader
+
+        return {"value": inventory_loader.has_plugin(name)}
+    if kind == "plugin_path":
+        from ansible.plugins import loader as plugin_loader
+
+        found = getattr(plugin_loader, "%s_loader" % request["args"][0]).find_plugin(name)
+        return {"value": found}
     if kind == "diff":
         return {"value": diff_text(request["args"][0], request["kwargs"].get("color", False))}
     if kind == "action_groups":
@@ -1158,6 +1195,9 @@ def shim():
         allow_executable = True
         module_implementation_preferences = (".py", "")
         _remote_is_local = False
+        # Read by ansible-core's own `_execute_module`, which runs a `WANT_JSON` module here:
+        # no persistent connection stands behind the link.
+        socket_path = None
 
         def __init__(self, ident, shell, play_context, ssh_options=None):
             self._ident = ident
@@ -1226,6 +1266,12 @@ def shim():
         # `tmp` and `delete_remote_tmp` are ignored as ansible-core ignores them; `persist_files`
         # and `task_vars` shape the module's upload and interpreter, which the controller owns.
         name = self._task.action if module_name is None else module_name
+        if want_json(name):
+            # Copied with its arguments file and run over the link, by ansible-core's own code.
+            return original[0](
+                self, module_name, module_args, tmp, task_vars, persist_files,
+                delete_remote_tmp, wrap_async, ignore_unknown_opts,
+            )
         args = plain(self._task.args if module_args is None else module_args)
         # What `_update_module_args` adds: the name the module's own messages call it by.
         args = dict(args, _ansible_module_name=name)

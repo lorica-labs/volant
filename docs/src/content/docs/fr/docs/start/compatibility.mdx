@@ -1,5 +1,5 @@
 ---
-sourceHash: 9be5f899151e
+sourceHash: f734791df9a1
 title: Mon playbook va-t-il s'exécuter ?
 description: Vérifiez en quelques secondes un projet Ansible existant par rapport à cette version, sans toucher à un hôte.
 ---
@@ -47,7 +47,7 @@ Un fichier que seul un `include_tasks` ou un `include_role` dynamique nomme est 
 | `async` fonctionne-t-il ? | Oui : `async`, `poll`, et `poll: 0` avec `async_status`. Un module qu'ansible-core ne peut pas exécuter sous `async` échoue sur chaque hôte avec `This action (<name>) does not support async.` Voir [Exécution des plays](/fr/docs/playbooks/how-a-play-runs/#tâches-async). |
 | `--diff` fonctionne-t-il ? | Oui, avec `--check` ou seul. Un hôte a besoin de Python pour `apt`, `user`, `group`, `file`, `lineinfile` et `systemd` quand une exécution demande un check ou un diff. Voir [Mode check, diff et listes](/fr/docs/playbooks/check-and-diff/). |
 | `become`, vault et `ansible.cfg` fonctionnent-ils ? | `become` par `sudo` ou `su`, vault et `ansible.cfg` fonctionnent. `doas` et les autres méthodes non. Voir [Connexions et become](/fr/docs/hosts/connections/). |
-| Mes propres plugins fonctionnent-ils ? | Pas encore. Vos propres plugins d'action arrêtent l'exécution, et `callback_plugins/` et `vars_plugins/` sont ignorés. Voir les [limites connues](#limites-connues). |
+| Mes propres plugins fonctionnent-ils ? | En partie. Les plugins d'action, de connexion et d'inventaire à côté du playbook ou dans un rôle s'exécutent par ansible-core. Un plugin de callback ou de cache à vous arrête l'exécution en nommant son fichier, et `vars_plugins/` sont ignorés. Voir les [limites connues](#limites-connues). |
 
 ## En un coup d'œil
 
@@ -100,9 +100,10 @@ Ces cas diffèrent d'`ansible-playbook` sans message avant l'exécution, ou avec
 
 | Quoi | Ce qui se passe |
 |---|---|
-| `callback_plugins/`, `vars_plugins/` | Ignorés. |
-| `stdout_callback` nommant le callback d'une collection autre que `json`, comme `community.general.unixy` | L'exécution s'arrête avant le premier play avec `Could not load '<name>' callback plugin.`, qu'ansible-core n'affiche que pour un plugin non installé. `default`, `minimal`, `oneline`, `tree` et `json` fonctionnent. |
-| `callbacks_enabled` | `junit`, `tree`, `ansible.posix.timer` et `ansible.posix.profile_tasks` s'exécutent. Tout autre nom est ignoré avec `[WARNING]: Skipping callback plugin '<name>', unable to load`, qu'ansible-core n'affiche que pour un plugin introuvable. `volant.compat.record` est ignoré sans avertissement. |
+| `vars_plugins/` | Ignorés. |
+| Un plugin de cache à vous comme `fact_caching` | L'exécution s'arrête avec le code 4 et `fact cache plugin '<name>' ... is not supported yet`, en nommant le fichier quand il est dans `cache_plugins/` ou sur `ANSIBLE_CACHE_PLUGINS`. |
+| `stdout_callback` nommant le callback d'une collection autre que `json`, comme `community.general.unixy` | L'exécution s'arrête avant le premier play avec `Could not load '<name>' callback plugin.`, suivi du fichier du plugin quand l'ansible-core du contrôleur en trouve un, comme un plugin dans `callback_plugins/`. `default`, `minimal`, `oneline`, `tree` et `json` fonctionnent. |
+| `callbacks_enabled` | `junit`, `tree`, `ansible.posix.timer` et `ansible.posix.profile_tasks` s'exécutent. Tout autre nom est ignoré avec `[WARNING]: Skipping callback plugin '<name>', unable to load`, suivi du fichier du plugin quand l'ansible-core du contrôleur en trouve un. `volant.compat.record` est ignoré sans avertissement. |
 | `volant check` et `volant lint` | Elles n'existent pas. Lancez-les avec ansible-core ou ansible-lint. |
 | Une comparaison écrite entre deux littéraux de types que Python ne sait pas ordonner, comme `{{ 'a' < 1 }}` | Elle répond `false` ou `true` là où ansible-core échoue avec `'<' not supported between instances of 'str' and 'int'`. La bibliothèque de modèles calcule une comparaison de littéraux avant que Volant ne la voie. Avec une variable d'un côté ou de l'autre, la comparaison échoue comme dans ansible-core. |
 | Une tâche avec `no_log: true` qui échoue | Volontaire. Volant affiche `[ERROR]: Task failed: Action failed: <error censored due to no log>` et rien d'autre sur la cause. ansible-core 2.19.12 affiche la cause : `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, l'erreur du module, et les blocs `<<< caused by >>>`. Ce texte peut contenir un secret, comme le `msg` d'un `fail` qui nomme un mot de passe. La [politique de sécurité](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) compte comme une vulnérabilité un secret qui atteint un journal ou un terminal là où `no_log` le cache dans ansible-core : Volant le cache donc. La ligne `fatal:`, le résultat enregistré et le récapitulatif sont identiques dans les deux. Pour lire la cause, exécutez la tâche sans `no_log`. |

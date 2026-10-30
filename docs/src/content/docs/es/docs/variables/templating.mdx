@@ -1,5 +1,5 @@
 ---
-sourceHash: a3cc80fe44da
+sourceHash: 1d836c016a17
 title: Plantillas
 description: Jinja2 en el controlador, el modo estricto, las condiciones, los filtros, tests y lookups que ofrece Volant, y cómo se renderizan los archivos de plantilla.
 ---
@@ -112,6 +112,7 @@ Una plantilla que escribiste es código. Un valor que devolvió un host administ
 - Son valores fiables los que lleva el playbook: `vars` de play y de tarea, `--extra-vars`, variables del inventario, `vars_files` e `include_vars`. `!unsafe` marca uno de ellos como datos.
 - Un valor no fiable se renderiza una vez. Si el resultado vuelve a parecer una plantilla, se queda como texto.
 - Una condición o un `debug: var:` que evaluaría un valor del host como expresión falla con `Encountered untrusted template or expression.`
+- Una expresión que escribes bajo `!unsafe` en `debug: var:`, el `that` de un `assert`, `when`, `changed_when`, `failed_when` o `until` falla de la misma manera.
 
 La [referencia del lenguaje de plantillas](/es/docs/reference/templates/#valores-fiables-y-no-fiables) tiene las reglas completas y ejemplos.
 

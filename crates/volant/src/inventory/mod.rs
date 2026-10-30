@@ -13,6 +13,7 @@ mod ini;
 mod listed;
 mod names;
 mod patterns;
+mod pyliteral;
 pub mod ranges;
 mod script;
 mod sources;

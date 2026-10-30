@@ -1,5 +1,5 @@
 ---
-sourceHash: 72a9c6ae320c
+sourceHash: 305fc6750726
 title: Ejecución de plays
 description: En qué orden se ejecutan los hosts y las tareas, cómo lo cambian las estrategias, los lotes con serial, el depurador, las tareas asíncronas y los prompts, y cuándo se detiene una ejecución.
 ---
@@ -120,7 +120,6 @@ Una acción que ansible-core ejecuta bajo `async` se ejecuta también aquí. Cua
 
 - Un `serial` que no es un número, como `serial: abc` o `"50% "` con un espacio al final, se rechaza con el código de salida 4 y el mensaje de ansible-core. Ansible falla con el código de salida 250, que es Ansible informando de un error propio en lugar de rechazar un playbook.
 - Una variable sin definir en `serial` se informa con el prefijo de ansible-core y el mensaje propio de Volant, con el mismo código de salida 4.
-- `play_hosts` contiene lo que Ansible pone ahí, pero Volant no imprime ningún aviso de obsolescencia para él.
 
 <Aside type="tip">
 Para ver cómo construye y ejecuta el motor este orden, consulta [Cómo se compila un play](/es/docs/internals/architecture/#cómo-se-compila-un-play) y [Una ejecución, de principio a fin](/es/docs/internals/architecture/#una-ejecución-de-principio-a-fin).

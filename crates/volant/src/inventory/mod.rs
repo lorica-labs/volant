@@ -11,6 +11,7 @@ mod graph;
 mod host_list;
 mod ini;
 mod listed;
+mod names;
 mod patterns;
 pub mod ranges;
 mod script;

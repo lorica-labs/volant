@@ -1,0 +1,2 @@
+# A dependency sees its parents' role vars under its own dependencies', and its parents' parameters under its own.
+args: [-i, inv.ini, play.yml]

@@ -228,6 +228,18 @@ impl<'a> ParseCx<'a> {
     pub fn deprecate(&self, text: String) {
         self.notes.borrow_mut().push(Note::Deprecation(text));
     }
+
+    /// [`ParseCx::deprecate`], unless the same block was already noted.
+    pub fn deprecate_once(&self, text: String) {
+        let seen = self
+            .notes
+            .borrow()
+            .iter()
+            .any(|n| matches!(n, Note::Deprecation(t) if *t == text));
+        if !seen {
+            self.deprecate(text);
+        }
+    }
 }
 
 /// One inventory plugin: whether it takes a source, and reading it into the inventory. What it

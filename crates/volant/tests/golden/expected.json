@@ -2237,6 +2237,30 @@
   },
   {
     "case": {
+      "template": "{{ (now() - now()).days }}"
+    },
+    "result": -1
+  },
+  {
+    "case": {
+      "template": "{% set d = now().replace(year=2020, month=1, day=1, hour=0, minute=0, second=0, microsecond=0) %}{{ d }} {{ d.replace(day=3, hour=5) - d }} {{ d - d.replace(microsecond=5) }} {{ d + (d.replace(day=2) - d) }} {{ [d.replace(day=2) - d, d] }} {{ (d.replace(day=2) - d).total_seconds() }} {{ (d - d) | type_debug }}"
+    },
+    "result": "2020-01-01 00:00:00 2 days, 5:00:00 -1 day, 23:59:59.999995 2020-01-02 00:00:00 [datetime.timedelta(days=1), datetime.datetime(2020, 1, 1, 0, 0)] 86400.0 timedelta"
+  },
+  {
+    "case": {
+      "template": "{{ now() - 1 }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: unsupported operand type(s) for -: 'datetime.datetime' and 'int'"
+  },
+  {
+    "case": {
+      "template": "{{ now().replace(day=31, month=2) }}"
+    },
+    "error": "Task failed: Finalization of task args for 'ansible.builtin.debug' failed: Error while resolving value for 'msg': Error rendering template: day is out of range for month"
+  },
+  {
+    "case": {
       "template": "{{ 'nan' | float }} {{ 'nan' | float is isnan }} {{ ('nan' | float) | type_debug }}"
     },
     "result": "nan True float"
@@ -2284,6 +2308,15 @@
       }
     },
     "result": "True False"
+  },
+  {
+    "case": {
+      "template": "{{ lookup('vars', name='inventory_hostname') }} {{ lookup('vars', 'x', name='y') }} {{ lookup('dict', {'a': 1}, bogus=1) }} {{ lookup('nested', [1], [2], bogus=1) }}",
+      "vars": {
+        "x": 1
+      }
+    },
+    "result": "[] 1 {'key': 'a', 'value': 1} [1, 2]"
   },
   {
     "case": {

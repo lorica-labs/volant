@@ -20,6 +20,7 @@ mod include;
 mod inherit;
 mod model;
 mod nav;
+mod role_entry;
 mod tags;
 
 pub(crate) use builder::DEPTH;

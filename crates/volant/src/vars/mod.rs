@@ -32,7 +32,8 @@ pub use host_vars::{HostSettings, HostVars, host_setting, omit_token, settled, s
 pub use include_dir::{Chain, Failure, Scan, include_dir, join_path, read_failure};
 pub use listed::ListedOrigin;
 pub use load::{
-    VaultFile, include_vars_paths, load_vars_file, parse_extra_vars, read_vars_document,
+    VaultFile, include_vars_paths, load_play_vars_file, load_vars_file, parse_extra_vars,
+    read_vars_document,
 };
 pub use magic::ansible_version;
 pub(crate) use play_view::PlayView;

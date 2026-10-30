@@ -73,6 +73,7 @@ fn start_within(
         timeout: None,
         check_mode: false,
         diff: false,
+        no_log: false,
         async_val: 0,
         action: "probe",
     })

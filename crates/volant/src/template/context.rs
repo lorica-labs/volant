@@ -19,9 +19,9 @@ use super::env::{chained_attr, fresh_const, mutable_attr, mutable_var};
 use super::pymethods::mutable::{identity, mutable};
 use super::templar::Templar;
 use super::{
-    ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, HOSTVARS_KEYS, ITEM_KEY, MATTR_KEY, MITEM_KEY,
-    MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY, TAINT_KEY, Tainted, TemplateError,
-    VAR_KEY,
+    ADD_KEY, ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, HOSTVARS_KEYS, ITEM_KEY, MATTR_KEY,
+    MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY, SUB_KEY, TAINT_KEY, Tainted,
+    TemplateError, VAR_KEY,
 };
 
 /// The name, in the variables an extended loop shares between its items, under which the list of
@@ -303,6 +303,9 @@ impl Context {
 impl Object for Context {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
+        if key == "play_hosts" {
+            PLAY_HOSTS_READ.set(true);
+        }
         // Not a variable: the VM looks the root up before the globals, so a variable of that
         // name (`-e '{"volant::concat": 1}'`) would otherwise replace every `~`.
         if [
@@ -314,6 +317,8 @@ impl Object for Context {
             MKMAP_KEY,
             REM_KEY,
             REMT_KEY,
+            ADD_KEY,
+            SUB_KEY,
             ALLITEMS_KEY,
         ]
         .contains(&key)
@@ -439,4 +444,19 @@ pub(super) fn context_tracking(
         failed: AtomicBool::new(false),
     });
     (ctx, tainted)
+}
+
+thread_local! {
+    /// Set when a render reads `play_hosts`, which the reference deprecates where it is read.
+    static PLAY_HOSTS_READ: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// Runs `render` and says whether it read `play_hosts`. A render runs on one thread from start
+/// to end, so the flag it sets is its own; one watched inside another reports to both.
+pub fn watch_play_hosts<T>(render: impl FnOnce() -> T) -> (T, bool) {
+    let before = PLAY_HOSTS_READ.replace(false);
+    let out = render();
+    let read = PLAY_HOSTS_READ.get();
+    PLAY_HOSTS_READ.set(before || read);
+    (out, read)
 }

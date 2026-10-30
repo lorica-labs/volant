@@ -3,7 +3,6 @@
 
 use std::path::{Path, PathBuf};
 
-use minijinja::value::Kwargs;
 use minijinja::{Error, State, Value};
 
 use super::first_found::found_path;
@@ -24,10 +23,8 @@ use super::{search_path, text_of};
 pub(super) fn fileglob(
     state: &State,
     terms: &[Value],
-    kwargs: Kwargs,
     base_dir: &Path,
 ) -> Result<Vec<Value>, Error> {
-    kwargs.assert_all_used()?;
     let search = search_path(state, base_dir);
     let mut out: Vec<String> = Vec::new();
     for term in terms {

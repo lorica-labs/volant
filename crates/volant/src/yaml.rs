@@ -11,6 +11,7 @@ use saphyr::{Mapping, MarkedYaml, Scalar, Yaml, YamlLoader};
 use saphyr_parser::{ScalarStyle, Tag};
 use serde_json::Value;
 
+mod chomp;
 mod flow;
 mod limits;
 mod merge;
@@ -78,7 +79,9 @@ fn marked<'a>(text: &'a str, source: &str) -> anyhow::Result<Vec<MarkedYaml<'a>>
         .with_context(|| format!("{source}: invalid YAML"))
         .map_err(|err| limits::scan_located(err, text, source))?;
     duplicate_keys(source)?;
-    Ok(loader.into_documents())
+    let mut docs = loader.into_documents();
+    chomp::unclip_last(&mut docs, text);
+    Ok(docs)
 }
 
 /// What a key written twice gets: `DUPLICATE_YAML_DICT_KEY`, read by the configuration. 0 warns

@@ -1,0 +1,9 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug: {var: play_hosts}
+    - debug: {msg: "{{ play_hosts | length }}"}
+    - debug: {var: play_hosts}
+      when: false
+    - debug: {msg: x}
+      when: play_hosts | length > 0

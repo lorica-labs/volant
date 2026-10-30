@@ -4,7 +4,7 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 use tokio::sync::watch;
-use volant_protocol::modules::{CHECK_MODE_ARG, DIFF_ARG, short_name};
+use volant_protocol::modules::{CHECK_MODE_ARG, DIFF_ARG, NO_LOG_ARG, short_name};
 use volant_protocol::{BatchOutcome, Task, TaskResult};
 
 use crate::executor::prepare::Item;
@@ -69,6 +69,7 @@ impl PluginStart<'_> {
             timeout: task.timeout,
             check_mode: item.check_mode == Some(true),
             diff: item.diff == Some(true),
+            no_log: task.censors(),
             async_val: task.async_val,
             action: &task.module,
         }
@@ -249,7 +250,7 @@ pub(in crate::executor) fn protocol_task(
     Task {
         only_if: None,
         module: task.module.clone(),
-        args: with_modes(item, args),
+        args: with_modes(task, item, args),
         // An item is not the task: a failing item never stops the ones behind it, exactly as in
         // Ansible. The task's own failure is decided later, by `report_task`, from every item's
         // result.
@@ -271,13 +272,19 @@ pub(in crate::executor) fn protocol_task(
 }
 
 /// `args` with what ansible-core's `_update_module_args` adds for the task's check and diff
-/// modes, sent only when on. Whatever the playbook wrote under those names goes, as the reference
-/// overwrites it: a task cannot talk a module out of check mode through its arguments.
+/// modes and its `no_log`, sent only when on. Whatever the playbook wrote under those names goes,
+/// as the reference overwrites it: a task cannot talk a module out of check mode through its
+/// arguments.
 pub(in crate::executor::run) fn with_modes(
+    task: &PlayTask,
     item: &Item,
     mut args: Map<String, Value>,
 ) -> Map<String, Value> {
-    for (key, on) in [(CHECK_MODE_ARG, item.check_mode), (DIFF_ARG, item.diff)] {
+    for (key, on) in [
+        (CHECK_MODE_ARG, item.check_mode),
+        (DIFF_ARG, item.diff),
+        (NO_LOG_ARG, Some(task.censors())),
+    ] {
         args.remove(key);
         if on == Some(true) {
             args.insert(key.into(), Value::Bool(true));

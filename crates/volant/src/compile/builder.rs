@@ -13,10 +13,11 @@ use crate::roles::{RoleEntry, RoleKind, RoleSearch, RoleVars};
 use crate::stats::Refusal;
 
 use super::compiled::{FLUSH_HANDLERS, beside_or_in_role, meta_action};
-use super::flatten::{import_role_entry, unknown_options, validation};
+use super::flatten::{import_role_entry, unknown_options};
 use super::include::{include_options, include_role_options, include_vars_options};
 use super::inherit::merge;
 use super::model::{BlockSpan, Handler, IncludeKind, Origin, Section, Step, StepKind};
+use super::role_entry::{ChainLink, Lent};
 use super::tags::TagSelection;
 /// How deep roles and imported files may nest before the run is refused: the same ceiling a
 /// cycle through an inventory's `:children` is given, for the same reason - a cycle here reads
@@ -35,7 +36,7 @@ pub(crate) const DEPTH: usize = 32;
 /// `Unexpected Exception, this is probably a bug`. This engine refuses that shape too, at exit 1
 /// and in its own words - the divergence is deliberate, since 250 is the reference reporting its
 /// own crash and there is no traceback here to go with it.
-const RECURSION: &str = "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded";
+pub(super) const RECURSION: &str = "A recursion loop was detected with the roles specified. Make sure child roles do not have dependencies on parent roles: maximum recursion depth exceeded";
 
 /// The role instances a play has already run.
 ///
@@ -47,7 +48,7 @@ const RECURSION: &str = "A recursion loop was detected with the roles specified.
 /// skipped a role the playbook asked for reports success having done less than it says.
 pub(super) type Seen = Vec<(String, Value)>;
 
-fn identity(entry: &RoleEntry) -> (String, Value) {
+pub(super) fn identity(entry: &RoleEntry) -> (String, Value) {
     identity_with(entry, &entry.keywords.vars)
 }
 
@@ -99,6 +100,13 @@ pub(super) struct Builder<'a> {
     pub(super) role_dir: Option<PathBuf>,
     /// The roles whose `meta/main.yml` pulled in the role being compiled, nearest first.
     pub(super) parent_roles: Vec<PathBuf>,
+    /// The same roles' own values, outermost first, for what a dependency inherits: see
+    /// [`RoleVars::inherited_vars`].
+    pub(super) role_chain: Vec<ChainLink>,
+    /// What each role read so far lends the roles that depend on it, by identity: its
+    /// dependencies' `defaults` and `vars` under its own. Kept for a dependency the dedup skips,
+    /// which still lends them, as `Role.get_all_dependencies` lists it.
+    pub(super) exports: Vec<((String, Value), Lent)>,
     /// How many roles and imported files are open above whatever is being compiled now.
     pub(super) depth: usize,
     /// How many includes deep the statement that started this compilation was. Zero for a play;
@@ -117,12 +125,16 @@ pub(super) struct Builder<'a> {
     /// is skipped for a host when an identical one ran before, whether that one allowed
     /// duplicates or not, and the `roles:` list is not in the comparison.
     pub(super) imported: Seen,
+    /// Every role instance read so far in the play, whatever brought it in. The dependencies of an
+    /// `import_role` are compared with it: measured on ansible-core 2.19.12, a role the play's
+    /// `roles:` ran is not run again as a dependency of a role imported in `tasks:`.
+    pub(super) played: Seen,
 }
 
 impl Builder<'_> {
     /// The one place a step is added, so the tag selection cannot be honoured on one path and
     /// forgotten on another.
-    fn push(&mut self, step: Step) {
+    pub(super) fn push(&mut self, step: Step) {
         if self.selection.selects(&step.task.tags) {
             self.steps.push(step);
         }
@@ -207,7 +219,7 @@ impl Builder<'_> {
                 return self.role(
                     &entry,
                     &merge(inherited, task),
-                    &mut Vec::new(),
+                    &mut self.played.clone(),
                     block,
                     section,
                     RoleKind::Import,
@@ -302,13 +314,14 @@ impl Builder<'_> {
         // so trying the importer's directory alone refuses a role the reference compiles.
         let path = beside_or_in_role(&self.file_dir, self.role_dir.as_deref(), name);
         if !path.is_file() {
-            // Exit 1, measured, with the reference's own two sentences. The reference adds a
-            // third naming Python's own errno, which this engine has nothing to say about.
-            return Err(Refusal::at(
+            // Exit 1, measured, with the reference's three sentences and the blank line that
+            // ends a block of several lines. The errno tail is Python's, kept as the include
+            // result keeps it.
+            return Err(Refusal::plain(
                 1,
                 format!(
-                    "Unable to retrieve file contents.\nCould not find or access '{}' on the Ansible Controller.",
-                    path.display()
+                    "Unable to retrieve file contents.\nCould not find or access '{p}' on the Ansible Controller.\nIf you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '{p}'\n",
+                    p = path.display()
                 ),
             ));
         }
@@ -335,112 +348,6 @@ impl Builder<'_> {
         );
         let result = self.items(&imported, &merged, block, section, role);
         self.file_dir = previous;
-        self.depth -= 1;
-        result
-    }
-
-    /// One role entry: its dependencies first, then its argument-spec check, then its tasks.
-    ///
-    /// Measured on ansible-core 2.19.12: a `meta/main.yml` dependency runs before the role that
-    /// depends on it, with its own parameters, and a dependency two roles share runs once.
-    pub(super) fn role(
-        &mut self,
-        entry: &RoleEntry,
-        inherited: &PlayTask,
-        seen: &mut Seen,
-        block: Option<usize>,
-        section: Section,
-        kind: RoleKind,
-    ) -> anyhow::Result<()> {
-        let path = self.search.locate(&entry.name).map_err(|err| {
-            // Measured on ansible-core 2.19.12: `[ERROR]:` and the sentence, at the entry.
-            match &entry.keywords.origin {
-                Some(origin) => Refusal::plain(
-                    1,
-                    crate::playbook::Located {
-                        message: format!("{err:#}"),
-                        origin: origin.clone(),
-                    }
-                    .text(),
-                ),
-                None => err,
-            }
-        })?;
-        let role = crate::roles::load(&path, &entry.name, &entry.from)?;
-        let key = identity(entry);
-        if !role.allow_duplicates && seen.contains(&key) {
-            return Ok(());
-        }
-        seen.push(key);
-        // Two roles that import each other never repeat an identity - `import_role` starts a
-        // `seen` list of its own, as measured - so the dedup above stops nothing and only the
-        // depth does. The reference's own sentence, at the exit 1 measured with it.
-        self.depth += 1;
-        if self.depth > DEPTH {
-            return Err(Refusal::at(1, RECURSION));
-        }
-        let mut kw = merge(inherited, &entry.keywords);
-        // A role does not inherit the play's `collections`: it searches its own `meta/main.yml`
-        // list, which may be empty, and a block or task inside it may still write another.
-        kw.collections = Some(role.collections.clone());
-        // What this role lends is settled for it and for the roles it depends on, and restored
-        // before its tasks are read: an `import_role` written in them is a statement of its own.
-        let outer_exporting = self.exporting;
-        self.exporting = outer_exporting && entry.public;
-        let exporting = self.exporting;
-        self.parent_roles.insert(0, path.clone());
-        let dependencies: anyhow::Result<()> =
-            role.dependencies.iter().try_for_each(|dependency| {
-                self.role(dependency, &kw, seen, block, section, RoleKind::Dependency)
-            });
-        self.parent_roles.remove(0);
-        dependencies?;
-        let index = self.roles.len();
-        self.exporting = outer_exporting;
-        let (role_name, collection) = crate::roles::identity(&path, &entry.name);
-        self.roles.push(RoleVars {
-            name: entry.name.clone(),
-            role_name,
-            collection,
-            kind,
-            defaults: role.defaults,
-            vars: role.vars,
-            params: entry.params.clone(),
-            public: exporting,
-            own: None,
-        });
-        // The role's handlers, before its tasks are walked, so a role imported by another one
-        // contributes its handlers in front of the importer's. Their keywords are merged the way
-        // a task's are: a `when` or a `become` written on the role entry reaches them too.
-        for handler in role.handlers {
-            self.handlers.push(Handler {
-                task: merge(&kw, &handler.task),
-                listen: handler.listen,
-                role: Some(index),
-            });
-        }
-        // `rolespec_validate: false` leaves the check out, whatever the role ships.
-        if let Some(spec) = role.argument_spec.filter(|_| entry.validate) {
-            let task = merge(
-                &kw,
-                &validation(entry, &path, spec, role.argument_spec_description),
-            );
-            self.push(Step {
-                kind: StepKind::Task,
-                task,
-                block,
-                section,
-                role: Some(index),
-                origin: self.origin(),
-                include_params: None,
-                hosts: None,
-            });
-        }
-        let previous = std::mem::replace(&mut self.file_dir, path.join("tasks"));
-        let outer_role = self.role_dir.replace(path);
-        let result = self.items(&role.tasks, &kw, block, section, Some(index));
-        self.file_dir = previous;
-        self.role_dir = outer_role;
         self.depth -= 1;
         result
     }

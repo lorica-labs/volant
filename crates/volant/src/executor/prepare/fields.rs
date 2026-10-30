@@ -65,7 +65,11 @@ pub(super) fn render_fields(
         crate::profile::count(crate::profile::Counter::RenderWhen, 1);
         at.note(templar, condition, true);
         // A conditional that cannot be evaluated yields to a kept loop error, as there.
-        let holds = match templar.condition(condition, vars) {
+        let (held, read) = crate::template::watch_play_hosts(|| templar.condition(condition, vars));
+        if read && condition.contains("play_hosts") {
+            crate::playbook::deprecate_play_hosts(task.value_origins.get("when"));
+        }
+        let holds = match held {
             // A condition that reads an unknown value takes the recorded branch.
             Err(e) if crate::template::unknown::reason_in(&e.0).is_some() => {
                 match crate::shadow::replay::recorded_skip(task, at.item) {
@@ -219,7 +223,22 @@ fn render_args(
             err
         }
     };
-    let (mut map, mut untrusted) = templar.render_map_tainted(&raw, vars).map_err(finalizing)?;
+    let (rendered, read) =
+        crate::template::watch_play_hosts(|| templar.render_map_tainted(&raw, vars));
+    // Placed at each argument that names it: one read through another variable is not placed.
+    if read {
+        for (key, value) in raw.iter() {
+            if value
+                .as_str()
+                .is_some_and(|text| text.contains("play_hosts"))
+            {
+                crate::playbook::deprecate_play_hosts(
+                    task.value_origins.get(&format!("args.{key}")),
+                );
+            }
+        }
+    }
+    let (mut map, mut untrusted) = rendered.map_err(finalizing)?;
     if task.name == "Gathering Facts" && task.module == "ansible.legacy.setup" {
         check_gather_subset(raw.get("gather_subset"), map.get("gather_subset"))?;
     }

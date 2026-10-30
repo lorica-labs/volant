@@ -31,9 +31,22 @@ pub struct RoleVars {
     pub kind: RoleKind,
     pub defaults: Map<String, Value>,
     pub vars: Map<String, Value>,
+    /// The role's own parameters over those of the roles whose `meta/main.yml` pulled it in,
+    /// outermost first: ansible-core's `Role.get_role_params` along the dependency chain.
     pub params: Map<String, Value>,
+    /// What a role inherits along its dependency chain, laid between what the play lends and the
+    /// role's own values: for the defaults, its dependencies' and then its parents', outermost
+    /// first (`Role.get_default_vars`); for the vars, its parents' and then its dependencies'
+    /// (`Role.get_vars`). Measured on ansible-core 2.19.12 with the `roles_var_inheritance` and
+    /// `var_precedence` targets.
+    pub inherited_defaults: Map<String, Value>,
+    pub inherited_vars: Map<String, Value>,
     /// Whether this instance lends `defaults` and `vars` to the rest of the play.
     pub public: bool,
+    /// The instance's identity when its role does not allow duplicates, and it was not brought in
+    /// by an `include_role` statement of its own: a host that has run it does not run it again
+    /// as a dependency an include brings in. See the coordinator's `roles_run`.
+    pub dedup: Option<String>,
     /// What the role itself says, set aside when the rest of the play's values were first laid
     /// under it, so that a variable another role publishes later can be laid under it again.
     pub own: Option<Box<OwnVars>>,

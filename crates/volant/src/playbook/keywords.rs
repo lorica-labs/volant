@@ -166,6 +166,22 @@ fn print_deprecation_header() -> bool {
     true
 }
 
+/// The deprecation the reference prints where a value that reads `play_hosts` was written, once
+/// per place for the whole run: its display keeps every deprecation it printed.
+pub(crate) fn deprecate_play_hosts(origin: Option<&super::Origin>) {
+    static SAID: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+    let place = origin
+        .map(|origin| format!("{}\n\n", crate::render::source_context(origin)))
+        .unwrap_or_default();
+    let text = format!(
+        "The `play_hosts` magic variable is deprecated. This feature will be removed from ansible-core version 2.23.\n{place}Use `ansible_play_batch` instead."
+    );
+    if SAID.lock().expect("said lock").insert(text.clone()) {
+        print_deprecation(&text);
+    }
+}
+
 /// The deprecation the reference prints, on stderr, for a mapping given as an action.
 fn warn_action_mapping(node: &Yaml) {
     let origin = value_origin(node)
@@ -277,7 +293,13 @@ pub(crate) fn python_repr(value: &Value) -> String {
     match value {
         Value::Null => "None".to_string(),
         Value::Bool(b) => if *b { "True" } else { "False" }.to_string(),
-        Value::Number(n) => n.to_string(),
+        // The text JSON carries for a NaN or an infinity, as Python's `repr` prints it.
+        Value::Number(n) => match n.as_str() {
+            "NaN" => "nan".into(),
+            "Infinity" => "inf".into(),
+            "-Infinity" => "-inf".into(),
+            _ => n.to_string(),
+        },
         Value::String(s) => python_str_repr(s),
         Value::Array(items) => format!(
             "[{}]",

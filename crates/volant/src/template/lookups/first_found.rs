@@ -24,7 +24,6 @@ pub(super) fn first_found(
         paths: kwargs.get::<Option<Value>>("paths")?.unwrap_or_default(),
         skip: kwargs.get::<Option<bool>>("skip")?.unwrap_or(false),
     };
-    kwargs.assert_all_used()?;
     let mut candidates = Vec::new();
     if terms.is_empty() {
         let files = split_on(&options.files, &[',', ';']);

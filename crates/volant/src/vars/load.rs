@@ -162,6 +162,27 @@ pub fn load_vars_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
     }
 }
 
+/// A play's `vars_files` file: a mapping, or a list of mappings merged in order, a later one
+/// winning, as ansible-core 2.19.12's `preprocess_vars` reads one.
+pub fn load_play_vars_file(path: &Path) -> anyhow::Result<Map<String, Value>> {
+    match read_vars_document(path)?.value {
+        Value::Array(items) if items.iter().all(Value::is_object) => {
+            let mut merged = Map::new();
+            for item in items {
+                if let Value::Object(map) = item {
+                    merged.extend(map);
+                }
+            }
+            Ok(merged)
+        }
+        Value::Array(_) => bail!(
+            "{}: a variables file must contain a mapping or a list of mappings",
+            path.display()
+        ),
+        _ => load_vars_file(path),
+    }
+}
+
 /// Every path an `include_vars` naming `name` looks in, in the order it looks.
 ///
 /// Measured on ansible-core 2.19.12 by reading the list a missing file prints. From a task inside

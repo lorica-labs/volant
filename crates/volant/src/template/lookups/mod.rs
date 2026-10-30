@@ -196,29 +196,25 @@ fn lookup(
         _ => None,
     };
     if let Some(shape) = shaping {
-        kwargs.assert_all_used()?;
         taint(state);
         return shape(terms);
     }
     if matches!(name, "fileglob" | "ansible.builtin.fileglob") {
-        return fileglob(state, terms, kwargs, base_dir);
+        return fileglob(state, terms, base_dir);
     }
     if matches!(
         name,
         "inventory_hostnames" | "ansible.builtin.inventory_hostnames"
     ) {
-        kwargs.assert_all_used()?;
         return inventory_hostnames(state, terms);
     }
     if matches!(name, "varnames" | "ansible.builtin.varnames") {
-        kwargs.assert_all_used()?;
         return varnames(state, terms);
     }
     let default_value: Option<Value> = kwargs.get::<Option<Value>>("default")?;
     let render_options = matches!(name, "template" | "ansible.builtin.template")
         .then(|| template_options(&kwargs))
         .transpose()?;
-    kwargs.assert_all_used()?;
     // Whatever a lookup read at run time is data: a file's text, a command's output, an
     // environment variable. Measured on ansible-core 2.19.12, all three come back carrying the
     // tag that stops the engine templating them again, and the three display the same

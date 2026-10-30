@@ -358,6 +358,8 @@ pub(crate) struct Context<'a> {
     /// The task's `check_mode` and `diff`, `--check` and `--diff` included.
     pub check_mode: bool,
     pub diff: bool,
+    /// The task's `no_log`, which a plugin passes its module as `_ansible_no_log`.
+    pub no_log: bool,
     /// The task's `async` seconds, which the plugin reads off its task as the reference's does.
     pub async_val: u64,
     /// The action as the task wrote it, before a `runtime.yml` redirect: `self._task.action`.

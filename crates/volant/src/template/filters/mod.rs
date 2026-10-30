@@ -261,6 +261,8 @@ pub fn register(
             "UndefinedMarker"
         } else if v.downcast_object_ref::<super::clock::DateTime>().is_some() {
             "datetime"
+        } else if v.downcast_object_ref::<super::clock::TimeDelta>().is_some() {
+            "timedelta"
         } else if v.is_tuple() {
             "tuple"
         } else if super::pymethods::bytes::of(&v).is_some() {
@@ -282,6 +284,10 @@ pub fn register(
 
     super::test_plugins::register(env);
     add_test(env, "truthy", |v: Value| truthy(&json(&v)));
+    // `math.isnan`; a value that is no number is not a NaN, as the reference's test answers.
+    add_test(env, "isnan", |v: Value| {
+        v.kind() == ValueKind::Number && f64::try_from(v).is_ok_and(f64::is_nan)
+    });
     add_test(env, "falsy", |v: Value| !truthy(&json(&v)));
     for name in ["match", "search", "regex"] {
         add_test(

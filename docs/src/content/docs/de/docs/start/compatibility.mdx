@@ -1,5 +1,5 @@
 ---
-sourceHash: e2ca4489dac4
+sourceHash: 9be5f899151e
 title: Läuft mein Playbook?
 description: Prüfen Sie ein bestehendes Ansible-Projekt in wenigen Sekunden gegen dieses Release, ohne einen Host anzufassen.
 ---
@@ -87,7 +87,7 @@ Die Vorabprüfung bricht den Lauf vor der ersten Verbindung ab, vor jedem Banner
 | Ein Modulargument, das ansible-core hat und das dieses Release nicht umsetzt | `argument 'x' is not supported yet on 'module'`, mit ` with 'v'`, wenn nur dieser Wert abgelehnt wird | 4 |
 | `end_role` außerhalb einer Rolle | `Cannot execute 'end_role' from outside of a role` | 4 |
 | Ein eingebautes Modul, das dieses Release nicht mitbringt | `module 'x' is not available in this release` | 4 |
-| Ein Modul oder eine Collection, die sich nicht auflösen lässt | `couldn't resolve module/action 'x' ...`, mit dem Installationsbefehl für eine fehlende Collection | 4 |
+| Ein Modul oder eine Collection, die sich nicht auflösen lässt, als Schlüssel der Task geschrieben (in `action:` oder `local_action:` genannt, scheitert die Task erst beim Ausführen, mit `Cannot resolve 'x' to an action or module.`) | `couldn't resolve module/action 'x' ...`, mit dem Installationsbefehl für eine fehlende Collection | 4 |
 | Ein Collection-Modul, das ein Action-Plugin für Windows braucht | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | Eine `become_method` außer `sudo` und `su` | `become_method 'x' is not supported yet` | 2 |
 | Eine Rolle in `roles:` oder `import_role`, die niemand findet | `the role 'x' was not found in ...` | 1 |

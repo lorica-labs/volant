@@ -1,5 +1,5 @@
 ---
-sourceHash: e2ca4489dac4
+sourceHash: 9be5f899151e
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -87,7 +87,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | ansible-core 有、而这个版本不处理的模块参数 | `argument 'x' is not supported yet on 'module'`，只有该值被拒绝时再加上 ` with 'v'` | 4 |
 | role 之外的 `end_role` | `Cannot execute 'end_role' from outside of a role` | 4 |
 | 这个版本不带的内置模块 | `module 'x' is not available in this release` | 4 |
-| 无法解析的模块或 collection | `couldn't resolve module/action 'x' ...`，缺少 collection 时还会附上安装命令 | 4 |
+| 无法解析的模块或 collection，写作任务的键（写在 `action:` 或 `local_action:` 里时，任务在运行时才失败，报 `Cannot resolve 'x' to an action or module.`） | `couldn't resolve module/action 'x' ...`，缺少 collection 时还会附上安装命令 | 4 |
 | 需要 Windows action 插件的 collection 模块 | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | `become_method` 不是 `sudo` 和 `su` | `become_method 'x' is not supported yet` | 2 |
 | `roles:` 或 `import_role` 中没有人能找到的 role | `the role 'x' was not found in ...` | 1 |

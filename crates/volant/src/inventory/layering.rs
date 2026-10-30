@@ -8,7 +8,7 @@ use serde_json::{Map, Value};
 
 use super::{Group, Host, Inventory};
 
-/// Each host's groups, `all` included, in the order [`Inventory::sorted_groups_of`] gives them,
+/// Each host's groups, `all` included, in the order `Inventory::sorted_groups_of` gives them,
 /// and each host's own line. One walk over the groups serves every host: asked host by host,
 /// each question walks every group again, and an inventory of 18,000 hosts took ten minutes to
 /// list.

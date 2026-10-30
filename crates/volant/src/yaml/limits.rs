@@ -185,16 +185,30 @@ fn own_limit(info: &str) -> bool {
 /// own: `YAML parsing failed:`, the sentence, and the place. The parser's error stays the root,
 /// for [`super::is_second_document`]. Text that is no file keeps the parser's error alone.
 pub(super) fn scan_located(err: anyhow::Error, text: &str, source: &str) -> anyhow::Error {
-    let Some(scan) = err
-        .root_cause()
-        .downcast_ref::<ScanError>()
-        .filter(|scan| !own_limit(scan.info()))
-    else {
+    let Some((message, line, col)) = syntax_error(&err, text) else {
         return err;
     };
     let Ok(path) = std::fs::canonicalize(source) else {
         return err;
     };
+    let located = crate::playbook::Located {
+        message,
+        origin: crate::playbook::Origin {
+            path: path.display().to_string().into(),
+            line,
+            col,
+        },
+    };
+    err.context(located)
+}
+
+/// The reference's sentence for the syntax error `err` holds, `YAML parsing failed:` and all, with
+/// its line and column counted from 1.
+pub(super) fn syntax_error(err: &anyhow::Error, text: &str) -> Option<(String, usize, usize)> {
+    let scan = err
+        .root_cause()
+        .downcast_ref::<ScanError>()
+        .filter(|scan| !own_limit(scan.info()))?;
     let mut info = scan.info().to_string();
     // libyaml's word for a second document that does not open with `---`, which only an
     // explicit `...` end lets through.
@@ -204,18 +218,27 @@ pub(super) fn scan_located(err: anyhow::Error, text: &str, source: &str) -> anyh
     if info == SECOND_DOCUMENT && !opened {
         info = "did not find expected <document start>".to_string();
     }
+    // libyaml joins what it was parsing and what went wrong with a space, saphyr with a comma,
+    // and says `did not find expected` where saphyr says `expected`.
+    if info.starts_with("while ")
+        && let Some(at) = info.find(", ")
+    {
+        let missing = if info[at + 2..].starts_with("expected ") {
+            " did not find "
+        } else {
+            " "
+        };
+        info.replace_range(at..at + 2, missing);
+    }
     if let Some(first) = info.get(..1) {
         info.replace_range(..1, &first.to_uppercase());
     }
-    let located = crate::playbook::Located {
-        message: format!("YAML parsing failed: {info}."),
-        origin: crate::playbook::Origin {
-            path: path.display().to_string().into(),
-            line: scan.marker().line(),
-            col: scan.marker().col() + 1,
-        },
-    };
-    err.context(located)
+    let at = scan.marker();
+    Some((
+        format!("YAML parsing failed: {info}."),
+        at.line(),
+        at.col() + 1,
+    ))
 }
 
 fn too_deep(at: Marker) -> ScanError {

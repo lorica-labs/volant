@@ -368,7 +368,7 @@ impl Server {
             "module_fqn": payload.module_fqn,
             "extensions": payload.extensions,
             "environment": context.environment,
-            "rlimit_nofile": payload.rlimit_nofile,
+            "rlimit_nofile": context.rlimit_nofile.unwrap_or(payload.rlimit_nofile),
             "preload": !self.abandoned.contains(&payload.module_fqn),
         });
         write_frame(&mut self.stdin, &serde_json::to_vec(&request)?)?;

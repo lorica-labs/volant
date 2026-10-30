@@ -1,5 +1,5 @@
 ---
-sourceHash: 3819217d77a5
+sourceHash: a648d11b724a
 title: Der Agent auf Ihren Hosts
 description: Wie Volant den Agent, den es auf jedem Host zwischenspeichert, hochlädt, prüft und repariert, und wie die ssh-Verbindungen zu einem Host geteilt werden.
 ---
@@ -90,7 +90,7 @@ OpenSSH erledigt die Arbeit, daher gelten `~/.ssh/config`, `Match`, `Include`, `
 
 Jede Verbindung ist ein eigener `ssh`-Prozess und kostet den Controller drei Dateideskriptoren. Mit Rechteausweitung kann ein Lauf zwei Verbindungen pro Host halten: die eigene des Hosts und eine mit erweiterten Rechten.
 
-Beim Start hebt Volant sein eigenes weiches Limit für offene Dateien bis zum harten Limit an, begrenzt auf 1.048.576. Die meisten Linux-Systeme liefern ein hartes Limit weit über dem, was ein Lauf braucht, sodass nichts zu tun ist.
+Beim Start hebt Volant sein eigenes weiches Limit für offene Dateien bis zum harten Limit an, begrenzt auf 1.048.576. Die meisten Linux-Systeme liefern ein hartes Limit weit über dem, was ein Lauf braucht, sodass nichts zu tun ist. Der Agent eines lokalen Hosts startet mit dem weichen Limit, mit dem Volant gestartet ist, sodass seine Module bekommen, was sie unter `ansible-playbook` bekämen, und `ansible_python_module_rlimit_nofile` setzt das Limit eines Moduls selbst, `command` und `shell` eingeschlossen.
 
 :::caution
 Ein hartes Limit von 1024 stoppt einen Lauf bei etwa 330 Verbindungen oder etwa 169 Hosts mit Rechteausweitung. `ssh` startet dann nicht mehr, und die Hosts, die es gerade trifft, werden als nicht erreichbar gemeldet, obwohl mit ihnen alles in Ordnung ist. In bash senkt `ulimit -n 1024` das harte Limit zusammen mit dem weichen.

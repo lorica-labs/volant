@@ -4,7 +4,9 @@ use std::time::Duration;
 
 use serde_json::{Map, Value};
 use tokio::sync::watch;
-use volant_protocol::modules::{CHECK_MODE_ARG, DIFF_ARG, NO_LOG_ARG, short_name};
+use volant_protocol::modules::{
+    CHECK_MODE_ARG, DIFF_ARG, NO_LOG_ARG, RLIMIT_NOFILE_ARG, short_name,
+};
 use volant_protocol::{BatchOutcome, Task, TaskResult};
 
 use crate::executor::prepare::Item;
@@ -289,6 +291,21 @@ pub(in crate::executor::run) fn with_modes(
         if on == Some(true) {
             args.insert(key.into(), Value::Bool(true));
         }
+    }
+    // The soft limit on open files the reference's module wrapper sets, which `raw` never goes
+    // through. A value that is not a whole number is left to the module's defaults.
+    args.remove(RLIMIT_NOFILE_ARG);
+    if short_name(&task.module) != "raw"
+        && let Some(limit) =
+            crate::vars::host_setting(&item.vars, "ansible_python_module_rlimit_nofile")
+                .and_then(|value| match value {
+                    Value::Number(n) => n.as_u64(),
+                    Value::String(s) => s.trim().parse().ok(),
+                    _ => None,
+                })
+                .filter(|limit| *limit > 0)
+    {
+        args.insert(RLIMIT_NOFILE_ARG.into(), Value::from(limit));
     }
     args
 }

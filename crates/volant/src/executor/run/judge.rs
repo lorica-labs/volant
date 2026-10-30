@@ -287,8 +287,9 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
             .as_ref()
             .or_else(|| result.0.get("exception"))
             .and_then(grouped_segment);
+        let missing = missing_interpreter(result);
         let by = match result.0.get("exception") {
-            Some(e) if !local && !python_falsy(e) && grouped.is_none() => "Module",
+            Some(e) if !local && !missing && !python_falsy(e) && grouped.is_none() => "Module",
             _ => "Action",
         };
         // A module that raised sends no `msg`, only the summary of its exception, which the
@@ -325,6 +326,22 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
         } else {
             crate::render::task_failed(&crate::render::concat_message(&by_failed, &detail))
         };
+        // The action raises it with a hint as the cause, measured on ansible-core 2.19.12.
+        if missing && !result.0.contains_key(crate::render::CHAIN_KEY) {
+            result.0.insert(
+                crate::render::CHAIN_KEY.into(),
+                json!([
+                    crate::render::lead(&crate::render::task_failed(&by_failed)),
+                    crate::render::cause(
+                        &format!(
+                            "{detail} Consider overriding the configured interpreter path for this host. See stdout/stderr for the returned output."
+                        ),
+                        None,
+                        None
+                    )
+                ]),
+            );
+        }
         if let Some(segment) = grouped
             && !result.0.contains_key(crate::render::CHAIN_KEY)
         {
@@ -364,6 +381,21 @@ pub(super) fn settle_failure(result: &mut TaskResult, task: &PlayTask) {
             .0
             .insert("exception".into(), json!("(traceback unavailable)"));
     }
+}
+
+/// Whether `result` is the agent's report of a module whose interpreter is not there: the shell's
+/// rc 127, no output, and the reference's sentence, which its action raises rather than the
+/// module returning it.
+fn missing_interpreter(result: &TaskResult) -> bool {
+    result.0.get("rc").and_then(Value::as_i64) == Some(127)
+        && result.0.get("module_stdout").and_then(Value::as_str) == Some("")
+        && result
+            .0
+            .get("msg")
+            .and_then(Value::as_str)
+            .is_some_and(|msg| {
+                msg.starts_with("The module interpreter '") && msg.ends_with("' was not found.")
+            })
 }
 
 pub(super) fn all_hold(

@@ -141,6 +141,8 @@ def cause(ours, theirs):
 
 
 def main(corpus, dump, package):
+    # ansible-core's loader takes an absolute file name only.
+    corpus, dump, package = map(os.path.abspath, (corpus, dump, package))
     pins = pyyaml.safe_load(open(PINS, encoding="utf-8"))
     sources = [("ansible", package, ["ansible_collections"])]
     sources += [(p["name"], fetch(corpus, p), p.get("paths")) for p in pins]

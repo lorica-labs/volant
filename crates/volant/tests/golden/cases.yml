@@ -385,6 +385,8 @@
   vars: {items: [a, b]}
 - template: "{{ conf is contains 'port' }} {{ conf is contains 8080 }}"
   vars: {conf: {port: 8080}}
+- template: "{{ 'qa_1 qz_1' is search('(?=.*qa_1)(?=.*qz_1)') }} {{ 'ab' | regex_findall('a(?=b)') }} {{ 'ab' | regex_search('a(?!c)') }} {{ 'ab' | regex_replace('(?<=a)b', 'x') }} {{ 'ab' is regex('(?<!x)b') }}"
+- template: "{{ 'aa' | regex_findall('(a)\\1') }} {{ 'aa' | regex_replace('(?P<n>a)(?P=n)', 'x') }} {{ 'ab' | regex_replace('(?>a)', 'x') }} {{ 'abab' | regex_search('(ab)\\1') }}"
 # lookups
 - template: "{{ lookup('vars', name='inventory_hostname') }} {{ lookup('vars', 'x', name='y') }} {{ lookup('dict', {'a': 1}, bogus=1) }} {{ lookup('nested', [1], [2], bogus=1) }}"
   vars: {x: 1}

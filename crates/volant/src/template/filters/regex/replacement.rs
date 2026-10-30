@@ -117,7 +117,7 @@ impl Template {
     }
 
     /// The expansion for one match, an unmatched group giving nothing.
-    pub(super) fn expand(&self, caps: &regex::Captures<'_>, out: &mut String) {
+    pub(super) fn expand(&self, caps: &super::engine::Captures<'_>, out: &mut String) {
         for piece in &self.pieces {
             match piece {
                 Piece::Text(text) => out.push_str(text),

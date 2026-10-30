@@ -1,5 +1,5 @@
 ---
-sourceHash: ac09abc44b15
+sourceHash: 15a0cbe0471d
 title: Referencia del lenguaje de plantillas
 description: Los métodos de Python, las reglas de cadenas, las expresiones regulares y los límites del Jinja2 de Volant, con todas las diferencias con ansible-core.
 ---
@@ -121,9 +121,7 @@ Un resultado registrado y cualquier otro texto de un host administrado sigue sie
 
 Parte de la sintaxis de Python no tiene equivalente en el crate de Rust. Un patrón que la usa falla con un error que nombra la construcción, donde ansible-core lo ejecuta:
 
-- anticipación y retroceso (look-ahead y look-behind): `(?=`, `(?!`, `(?<=`, `(?<!`
-- una referencia hacia atrás dentro del patrón: `\1`, `(?P=name)`
-- cuantificadores posesivos (`a++`), grupos atómicos (`(?>`) y grupos condicionales (`(?(1)a|b)`)
+- cuantificadores posesivos (`a++`) y grupos condicionales (`(?(1)a|b)`)
 - `\N{name}`, los indicadores `(?a)` y `(?L)`, y `(?x:` como indicador con ámbito
 - una repetición perezosa o una alternativa vacía antes de otra (`a*?`, `|a`) cuando una coincidencia vacía necesita que se pruebe una más larga en el mismo lugar
 - `$` en un patrón sin `multiline`, en un texto que tiene más de una línea y termina con un salto de línea

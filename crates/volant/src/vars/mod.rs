@@ -35,7 +35,7 @@ pub use load::{
     VaultFile, include_vars_paths, load_play_vars_file, load_vars_file, parse_extra_vars,
     read_vars_document, set_hash_merge,
 };
-pub(crate) use load::{combine_one, extend, hash_merge, merge_hash};
+pub(crate) use load::{combine_one, extend, hash_merge, load_vars_dir, merge_hash};
 pub use magic::ansible_version;
 pub(crate) use play_view::PlayView;
 

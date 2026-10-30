@@ -13,7 +13,7 @@ use super::yaml::{Dialect, add_child_checked, falsy};
 use super::{Inventory, InventoryPlugin, ParseCx, PluginError, Source};
 use crate::playbook::python_repr;
 use crate::template::Templar;
-use helpers::{add_group, host_vars, is_blank, is_original, safe_group_name, set_var};
+use helpers::{PluginVars, add_group, host_vars, is_blank, is_original, safe_group_name, set_var};
 pub(in crate::inventory) use helpers::{invalid_chars_report, py_str, reason};
 
 pub(super) struct Constructed;
@@ -40,9 +40,15 @@ impl InventoryPlugin for Constructed {
             .path()
             .parent()
             .map_or_else(PathBuf::new, Path::to_path_buf);
+        let plugin_vars = if options.use_vars_plugins {
+            PluginVars::read(into, source).map_err(|e| failed(format!("{e:#}")))?
+        } else {
+            PluginVars::default()
+        };
         Run {
             options,
             templar: cx.templar_for(base, &Value::Object(config)),
+            plugin_vars,
         }
         .hosts(into)
         .map_err(|f| f.into_error(path))
@@ -112,6 +118,7 @@ impl Failure {
 
 struct Options {
     strict: bool,
+    use_vars_plugins: bool,
     leading_separator: bool,
     compose: Map<String, Value>,
     groups: Map<String, Value>,
@@ -154,14 +161,12 @@ impl Options {
                 ));
             }
         };
-        if flag("use_vars_plugins", false)? {
-            return Err("use_vars_plugins is not supported yet".to_string());
-        }
         if flag("use_extra_vars", false)? {
             return Err("use_extra_vars is not supported yet".to_string());
         }
         Ok(Self {
             strict: flag("strict", false)?,
+            use_vars_plugins: flag("use_vars_plugins", false)?,
             leading_separator: flag("leading_separator", true)?,
             compose: map("compose")?,
             groups: map("groups")?,
@@ -173,13 +178,14 @@ impl Options {
 struct Run {
     options: Options,
     templar: Templar,
+    plugin_vars: PluginVars,
 }
 
 impl Run {
     fn hosts(&self, inv: &mut Inventory) -> Result<(), Failure> {
         let hosts: Vec<String> = inv.hosts.iter().map(|h| h.name.clone()).collect();
         for host in &hosts {
-            let vars = host_vars(inv, host);
+            let vars = self.plugin_vars.over(inv, host, host_vars(inv, host));
             for (name, expr) in &self.options.compose {
                 match self.evaluate(expr, &vars) {
                     Ok(value) => set_var(inv, host, name, value, &vars),
@@ -192,7 +198,7 @@ impl Run {
                 }
             }
             // Composed variables are visible to what follows; the groups they add are not.
-            let vars = host_vars(inv, host);
+            let vars = self.plugin_vars.over(inv, host, host_vars(inv, host));
             self.composed_groups(inv, host, &vars)?;
             for entry in &self.options.keyed_groups {
                 self.keyed_group(inv, host, &vars, entry)?;

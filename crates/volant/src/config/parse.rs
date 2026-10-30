@@ -262,6 +262,11 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                 config.deprecation_warnings =
                     boolean("DEPRECATION_WARNINGS", origin, value.trim())?;
             }
+            "log_path" => config.log_path = Some(expand_home(value.trim(), base)),
+            "log_verbosity" => {
+                let level = integer("DEFAULT_LOG_VERBOSITY", origin, value.trim())?;
+                config.log_verbosity = u8::try_from(level.max(0)).unwrap_or(u8::MAX);
+            }
             "callback_result_format" => {
                 config.callback_result_format = Some(value.trim().to_string());
             }

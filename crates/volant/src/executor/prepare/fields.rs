@@ -69,6 +69,16 @@ pub(super) fn render_fields(
         if read && condition.contains("play_hosts") {
             crate::playbook::deprecate_play_hosts(task.value_origins.get("when"));
         }
+        // Measured on ansible-core 2.19.12: a condition that is one template is rendered first,
+        // and deprecated when it renders to anything but an expression.
+        if held.is_ok()
+            && crate::playbook::possibly_all_template(condition.trim())
+            && templar
+                .render(condition.trim(), vars)
+                .is_ok_and(|rendered| !rendered.is_string())
+        {
+            crate::playbook::deprecate_conditional_template(task.value_origins.get("when"));
+        }
         let holds = match held {
             // A condition that reads an unknown value takes the recorded branch.
             Err(e) if crate::template::unknown::reason_in(&e.0).is_some() => {

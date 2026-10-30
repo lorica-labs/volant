@@ -281,13 +281,13 @@ impl Refusal {
             Some(r) if r.plain || r.unresolved.is_some() => r.show(),
             _ => {
                 if let Some(located) = err.downcast_ref::<crate::playbook::Located>() {
-                    eprintln!("[ERROR]: {}", located.text());
+                    say(&format!("[ERROR]: {}\n", located.text()));
                 } else {
                     // ansible-core 2.19 prints every error that stops a run behind `[ERROR]:`,
                     // and a message of several lines ends with a blank line.
                     let text = format!("{err:#}");
                     let end = if text.contains('\n') { "\n" } else { "" };
-                    eprintln!("[ERROR]: {text}{end}");
+                    say(&format!("[ERROR]: {text}{end}\n"));
                 }
             }
         }
@@ -300,11 +300,11 @@ impl Refusal {
             Some(u) => {
                 let (warning, error) = u.report();
                 if let Some(warning) = warning {
-                    eprintln!("[WARNING]: {warning}");
+                    say(&format!("[WARNING]: {warning}\n"));
                 }
-                eprintln!("[ERROR]: {error}");
+                say(&format!("[ERROR]: {error}\n"));
             }
-            None => eprintln!("[ERROR]: {}", self.message),
+            None => say(&format!("[ERROR]: {}\n", self.message)),
         }
     }
 
@@ -350,6 +350,12 @@ pub fn exit_code(stats: &Stats) -> i32 {
     } else {
         0
     }
+}
+
+/// `text` on stderr, and in the log the run keeps.
+fn say(text: &str) {
+    crate::render::log::record(text);
+    eprint!("{text}");
 }
 
 #[cfg(test)]

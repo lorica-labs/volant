@@ -34,6 +34,8 @@ impl Default for Config {
             force_color: false,
             nocolor: false,
             deprecation_warnings: true,
+            log_path: None,
+            log_verbosity: 0,
             ssh_usetty: true,
             plugins: crate::transport::PluginSettings::default(),
             enable_task_debugger: false,

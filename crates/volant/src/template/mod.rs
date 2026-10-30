@@ -28,6 +28,7 @@ mod once;
 mod one_pass;
 mod order;
 mod pymethods;
+mod register;
 mod resolve;
 mod templar;
 mod test_plugins;

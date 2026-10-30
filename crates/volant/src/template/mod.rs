@@ -33,6 +33,7 @@ mod resolve;
 mod templar;
 mod test_plugins;
 pub(crate) mod unknown;
+mod version;
 mod vm;
 mod yaml_dump;
 pub(crate) use pymethods::format::float::repr as python_float_repr;

@@ -1,5 +1,5 @@
 ---
-sourceHash: c4107e9762a5
+sourceHash: a3cc80fe44da
 title: Templating
 description: Jinja2 sur le contrôleur, mode strict, conditions, filtres, tests et lookups fournis par Volant, et rendu des fichiers modèles.
 ---
@@ -157,8 +157,7 @@ Ces manques touchent le plus de playbooks. La [Référence du langage de modèle
 
 ### Filtres et tests
 
-- Ces arguments de filtres ne sont pas pris en charge : la méthode de `round`, `start` et `attribute` de `sum`, `attribute` de `min` et `max`, `count` de `replace`, `sort_keys` de `to_json`, et `strict` et `version_type` du test `version`.
-- `b64encode` et `b64decode` n'acceptent `encoding` que sous la forme `utf-8`. Tout autre encodage est refusé par son nom.
+- `b64encode` et `b64decode` prennent comme `encoding` utf-8, utf-8-sig, latin-1, ascii, cp1252, iso-8859-15, utf-16 et utf-32, sous n'importe lequel de leurs noms Python. Un autre codec échoue avec `unknown encoding`.
 - `password_hash`, `json_query` et `ipaddr` ont besoin des paquets Python `passlib`, `jmespath` et `netaddr`. Le runtime géré ne les embarque pas, voir [Ce qu'il faut installer](#ce-quil-faut-installer).
 
 ### Entiers de plus de 128 bits

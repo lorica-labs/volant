@@ -73,10 +73,13 @@ pub(super) fn limit_names(
     inventory: &Inventory,
     out: &mut Renderer,
 ) -> anyhow::Result<Option<HashSet<String>>> {
-    let Some(pattern) = &args.hosts.limit else {
+    let Some(pattern) = args.hosts.limit.as_deref().map(limit_pattern).transpose()? else {
         return Ok(None);
     };
-    let resolution = inventory.resolve(pattern);
+    let Some(pattern) = pattern else {
+        return Ok(None);
+    };
+    let resolution = inventory.resolve(&pattern);
     if let Some(bad) = &resolution.invalid {
         anyhow::bail!("Invalid host list pattern: {bad}");
     }
@@ -91,6 +94,39 @@ pub(super) fn limit_names(
         );
     }
     Ok(Some(resolution.hosts.into_iter().map(|h| h.name).collect()))
+}
+
+/// `--limit` as the reference's `InventoryManager.subset` reads it: the parts between commas,
+/// blank ones dropped, and each `@file` replaced by the lines of the file. `None` when nothing is
+/// left, which limits nothing: measured on ansible-core 2.19.12, `--limit ,`, `--limit ''` and an
+/// empty `@file` keep every host.
+pub(super) fn limit_pattern(given: &str) -> anyhow::Result<Option<String>> {
+    if !given.contains(',') && !given.trim_start().starts_with('@') {
+        return Ok((!given.trim().is_empty()).then(|| given.to_string()));
+    }
+    let mut parts = Vec::new();
+    for part in given.split(',').map(str::trim).filter(|p| !p.is_empty()) {
+        let Some(file) = part.strip_prefix('@') else {
+            parts.push(part.to_string());
+            continue;
+        };
+        let path = std::path::Path::new(file);
+        let shown = file.replace('\\', "\\\\").replace('\'', "\\'");
+        if !path.exists() {
+            anyhow::bail!("Unable to find limit file b'{shown}'");
+        }
+        if !path.is_file() {
+            anyhow::bail!("Limit starting with \"@\" must be a file, not a directory: b'{shown}'");
+        }
+        let text = std::fs::read_to_string(path)?;
+        parts.extend(
+            text.lines()
+                .map(str::trim)
+                .filter(|l| !l.is_empty())
+                .map(String::from),
+        );
+    }
+    Ok((!parts.is_empty()).then(|| parts.join(",")))
 }
 
 /// The play with its `hosts` rendered, for a play whose `hosts` is a template, against the

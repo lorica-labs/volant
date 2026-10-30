@@ -19,6 +19,7 @@ mod merge;
 mod quoted;
 mod walk;
 
+pub use escapes::as_reference;
 pub(crate) use escapes::{escape_strings, literal_escapes, written_strings};
 use walk::{lower, mapping_addresses, mapping_starts};
 
@@ -53,6 +54,12 @@ pub fn is_second_document(error: &anyhow::Error) -> bool {
         .root_cause()
         .downcast_ref::<saphyr_parser::ScanError>()
         .is_some_and(|e| e.info() == limits::SECOND_DOCUMENT)
+}
+
+/// The reference's `YAML parsing failed:` sentence for the syntax error `error` holds, with its
+/// line and column, or `None` for another error.
+pub fn syntax_error(error: &anyhow::Error, text: &str) -> Option<(String, usize, usize)> {
+    limits::syntax_error(error, text)
 }
 
 /// Every document of `text` with saphyr's positions, a key written twice keeping its last value.
@@ -181,7 +188,7 @@ pub fn load_with_origins<'a>(
     // positions, the lowered one the addresses.
     let mut starts = (Vec::new(), Vec::new(), Vec::new());
     for doc in &marked {
-        mapping_starts(doc, &mut starts);
+        mapping_starts(doc, text, &mut starts);
     }
     let docs = lower_all(marked, source, false)?;
     let mut addresses = (Vec::new(), Vec::new());

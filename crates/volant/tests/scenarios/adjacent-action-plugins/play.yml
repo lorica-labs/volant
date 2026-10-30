@@ -1,0 +1,7 @@
+- hosts: all
+  gather_facts: false
+  roles: [r]
+  tasks:
+    - pb_act: {word: hi}
+      register: p
+    - debug: {var: p.said}

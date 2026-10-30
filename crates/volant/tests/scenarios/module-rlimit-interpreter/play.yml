@@ -1,0 +1,16 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - shell: ulimit -n
+      vars: {ansible_python_module_rlimit_nofile: 123}
+      register: lim
+    - debug: {msg: "{{ lim.stdout }}"}
+    - command: sh -c 'ulimit -n'
+      vars: {ansible_python_module_rlimit_nofile: 200}
+      register: lim
+    - debug: {msg: "{{ lim.stdout }}"}
+    - ping:
+      vars: {ansible_python_interpreter: /bogus/path}
+      ignore_errors: true
+      register: p
+    - debug: {var: p}

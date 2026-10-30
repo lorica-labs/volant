@@ -121,6 +121,14 @@ pub(super) fn include_request(
                 step.role.and_then(|i| compiled.roles.get(i)),
                 &step.origin.role_dir,
             ) {
+                // And its parameters go down over the statement's own `vars:`, measured on
+                // 2.19.12: `IncludeRole.get_include_params` updates the include's parameters with
+                // the parent role's, so `{role: top, p: param}` including a role whose
+                // statement says `vars: {p: statement}` reads `param` there.
+                for (key, value) in &parent.params {
+                    vars.untrusted.remove(key);
+                    vars.values.insert(key.clone(), value.clone());
+                }
                 prepend(
                     &mut vars,
                     "ansible_parent_role_names",

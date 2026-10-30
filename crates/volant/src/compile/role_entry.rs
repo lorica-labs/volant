@@ -21,6 +21,30 @@ pub(super) struct ChainLink {
     params: Map<String, Value>,
 }
 
+impl ChainLink {
+    /// The role an `include_role` is written in, as the first link of the included role's chain:
+    /// what it inherited itself under its own values. Measured on ansible-core 2.19.12 with the
+    /// `roles` target's `47023.yml`: a role four `include_role`s down still reads the `vars` and
+    /// `defaults` of the first, which is not public.
+    pub(super) fn of(role: &RoleVars) -> Self {
+        let (own_defaults, own_vars) = role
+            .own
+            .as_ref()
+            .map_or((&role.defaults, &role.vars), |own| {
+                (&own.defaults, &own.vars)
+            });
+        let mut defaults = role.inherited_defaults.clone();
+        extend(&mut defaults, own_defaults);
+        let mut vars = role.inherited_vars.clone();
+        extend(&mut vars, own_vars);
+        Self {
+            defaults,
+            vars,
+            params: Map::new(),
+        }
+    }
+}
+
 /// A role's `defaults` and `vars` as it lends them to the roles that depend on it.
 pub(super) type Lent = (Map<String, Value>, Map<String, Value>);
 
@@ -79,11 +103,9 @@ impl Builder<'_> {
         })?;
         let role = crate::roles::load(&path, &entry.name, &entry.from)?;
         let key = identity(entry);
-        if kind != RoleKind::Import && !role.allow_duplicates && seen.contains(&key) {
-            return Ok(());
-        }
-        let dedup = (kind != RoleKind::Include && !role.allow_duplicates)
-            .then(|| serde_json::json!([&key.0, &key.1]).to_string());
+        // A role brought in twice is compiled twice: whether a host runs it again is decided
+        // while the play runs, once it has completed the first, see `completion`.
+        let (dedup, unique) = instance_identity(kind, entry.unique, role.allow_duplicates, &key);
         self.played.push(key.clone());
         seen.push(key.clone());
         // Two roles that import each other never repeat an identity - `import_role` starts a
@@ -100,7 +122,10 @@ impl Builder<'_> {
         // What this role lends is settled for it and for the roles it depends on, and restored
         // before its tasks are read: an `import_role` written in them is a statement of its own.
         let outer_exporting = self.exporting;
-        self.exporting = outer_exporting && entry.public;
+        // A `roles:` entry cannot say `public`: `private_role_vars` decides for it.
+        let public = entry.public
+            && !(kind == RoleKind::Entry && crate::roles::private_role_vars() == Some(true));
+        self.exporting = outer_exporting && public;
         let exporting = self.exporting;
         let mut params = self
             .role_chain
@@ -137,6 +162,7 @@ impl Builder<'_> {
             inherited_vars,
             public: exporting,
             dedup,
+            unique,
             own: None,
         });
         // The role's handlers, before its tasks are walked, so a role imported by another one
@@ -167,5 +193,24 @@ impl Builder<'_> {
         self.role_dir = outer_role;
         self.depth -= 1;
         result
+    }
+}
+
+/// The identity a host that completed this instance records, see [`RoleVars::dedup`], and
+/// whether a host that did leaves the instance out. Two kinds of identity, as ansible-core 2.19.12
+/// hashes `from_include` into its own: a role an `import_role` brought in is one an `include_role`
+/// that says `allow_duplicates: false` does not run again, and a role of `roles:` is not. An
+/// `include_role`'s own instance is named by the coordinator, from the statement.
+fn instance_identity(
+    kind: RoleKind,
+    statement_unique: bool,
+    allow_duplicates: bool,
+    key: &(String, Value),
+) -> (Option<String>, bool) {
+    let identity = serde_json::json!([&key.0, &key.1]);
+    match kind {
+        RoleKind::Include => (None, false),
+        RoleKind::Import => (Some(format!("include {identity}")), statement_unique),
+        _ => (Some(format!("role {identity}")), !allow_duplicates),
     }
 }

@@ -19,7 +19,7 @@ pub use local::{
 };
 pub use native::{
     ASYNC_STATUS, CHECK_MODE_ARG, COMMAND, DIFF_ARG, NATIVE_CANDIDATES, NATIVE_ENABLED,
-    NATIVE_MODULES, NO_LOG_ARG, RAW, SHELL,
+    NATIVE_MODULES, NO_LOG_ARG, RAW, RLIMIT_NOFILE_ARG, SHELL,
 };
 use spec::honoured;
 pub use spec::{ArgStatus, ModuleArg, ModuleSpec, arg_bool};

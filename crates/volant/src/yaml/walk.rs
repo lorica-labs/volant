@@ -10,7 +10,10 @@ use std::borrow::Cow;
 
 use anyhow::{anyhow, bail};
 use saphyr::{Mapping, MarkedYaml, Scalar, Tag, Yaml, YamlData};
+use saphyr_parser::ScalarStyle;
 use serde_json::{Map, Value};
+
+use crate::template::typed_keys::Typed;
 
 use super::{Starts, is_vault, read_scalar, read_tagged, scalar, unsafe_data, vault_data};
 
@@ -211,8 +214,9 @@ fn key_of(key: Yaml<'_>, strict: bool) -> anyhow::Result<Yaml<'_>> {
 }
 
 /// Where each mapping of the source tree starts, and each key and value of it, in the order a
-/// walk down the tree meets them.
-pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
+/// walk down the tree meets them. A `|` or `>` value starts at its indicator, as in the
+/// reference: saphyr's span starts at its first line of text.
+pub(super) fn mapping_starts(root: &MarkedYaml<'_>, text: &str, out: &mut Starts) {
     enum Work<'t, 'a> {
         Node(&'t MarkedYaml<'a>),
         Entry(&'t MarkedYaml<'a>, &'t MarkedYaml<'a>),
@@ -233,7 +237,8 @@ pub(super) fn mapping_starts(root: &MarkedYaml<'_>, out: &mut Starts) {
                 _ => {}
             },
             Work::Entry(key, value) => {
-                out.1.push(at(value));
+                out.1
+                    .push(block_indicator(value, text).unwrap_or_else(|| at(value)));
                 out.2.push(at(key));
                 work.push(Work::Node(value));
                 work.push(Work::Node(key));
@@ -282,6 +287,19 @@ pub(super) fn mapping_addresses(root: &Yaml<'_>, out: &mut (Vec<usize>, Vec<usiz
     }
 }
 
+/// The line and column of the `|` or `>` that opens `node`, a block scalar.
+fn block_indicator(node: &MarkedYaml<'_>, text: &str) -> Option<(usize, usize)> {
+    let YamlData::Representation(_, ScalarStyle::Literal | ScalarStyle::Folded, _) = &node.data
+    else {
+        return None;
+    };
+    let start = text.char_indices().nth(node.span.start.index())?.0;
+    let at = text[..start].rfind(['|', '>'])?;
+    let line_start = text[..at].rfind('\n').map_or(0, |n| n + 1);
+    let line = text[..at].matches('\n').count() + 1;
+    Some((line, text[line_start..at].chars().count() + 1))
+}
+
 fn is_scalar(node: &Yaml<'_>) -> bool {
     matches!(node, Yaml::Value(_))
 }
@@ -325,16 +343,41 @@ fn key_text(key: &Yaml<'_>) -> anyhow::Result<String> {
     })
 }
 
+/// What a template reads a key that is no string as: see `template::typed_keys`.
+fn key_typed(key: &Yaml<'_>) -> Option<Typed> {
+    Some(match key {
+        Yaml::Value(Scalar::Integer(i)) => Typed::Int(*i),
+        Yaml::Value(Scalar::FloatingPoint(f)) => Typed::Float(f.into_inner()),
+        Yaml::Value(Scalar::Boolean(b)) => Typed::Bool(*b),
+        Yaml::Value(Scalar::Null) => Typed::None,
+        _ => return None,
+    })
+}
+
 /// A mapping of scalars as JSON.
 fn scalar_object(map: &Mapping<'_>) -> anyhow::Result<Value> {
     let mut out = Map::new();
+    let mut typed = Vec::new();
     for (k, v) in map {
-        let key = key_text(k)?;
+        let key = typed_text(k, &mut typed)?;
         if let Yaml::Value(scalar) = v {
             out.insert(key, scalar_json(scalar, false));
         }
     }
-    Ok(Value::Object(out))
+    Ok(finished(&mut out, &typed))
+}
+
+/// [`key_text`], noting the key in `typed` when it is no string.
+fn typed_text(key: &Yaml<'_>, typed: &mut Vec<(String, Typed)>) -> anyhow::Result<String> {
+    let text = key_text(key)?;
+    typed.extend(key_typed(key).map(|kind| (text.clone(), kind)));
+    Ok(text)
+}
+
+/// A converted mapping, its typed keys remembered for the templates that read it.
+fn finished(out: &mut Map<String, Value>, typed: &[(String, Typed)]) -> Value {
+    crate::template::typed_keys::remember(out, typed);
+    Value::Object(std::mem::take(out))
 }
 
 /// A collection of the lowered tree whose children are being converted.
@@ -347,6 +390,8 @@ enum Converting<'t, 'a> {
         entries: Box<dyn Iterator<Item = (&'t Yaml<'a>, &'t Yaml<'a>)> + 't>,
         key: Option<String>,
         out: Map<String, Value>,
+        /// The keys that were no strings: see `template::typed_keys`.
+        typed: Vec<(String, Typed)>,
     },
     /// A `!unsafe`, and whether it is the outermost: it wraps the strings below it, once.
     Unsafe { outermost: bool },
@@ -382,6 +427,7 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
                     entries: Box::new(map.iter()),
                     key: None,
                     out: Map::new(),
+                    typed: Vec::new(),
                 }),
                 Yaml::Tagged(tag, inner) if tag.handle == "!" && is_vault(&tag.suffix) => {
                     match &**inner {
@@ -432,12 +478,17 @@ pub(super) fn to_json(root: &Yaml) -> anyhow::Result<Value> {
                 Some(item) => next = Some(item),
                 None => done = Some(Value::Array(std::mem::take(out))),
             },
-            Some(Converting::Object { entries, key, out }) => match entries.next() {
+            Some(Converting::Object {
+                entries,
+                key,
+                out,
+                typed,
+            }) => match entries.next() {
                 Some((k, v)) => {
-                    *key = Some(key_text(k)?);
+                    *key = Some(typed_text(k, typed)?);
                     next = Some(v);
                 }
-                None => done = Some(Value::Object(std::mem::take(out))),
+                None => done = Some(finished(out, typed)),
             },
             _ => {}
         }

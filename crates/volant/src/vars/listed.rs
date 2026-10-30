@@ -13,7 +13,7 @@ use super::load::extend;
 pub enum ListedOrigin {
     /// The host's own line or one of its `host_vars` files.
     Host,
-    /// A group's variable in the inventory sources; [`crate::inventory::Inventory::group_setting`]
+    /// A group's variable in the inventory sources; [`crate::inventory::Layering::setting`]
     /// names the group.
     InventoryGroup,
     /// The `group_vars` file of a group, in the files' order.

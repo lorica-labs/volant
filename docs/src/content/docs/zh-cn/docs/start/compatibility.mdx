@@ -1,5 +1,5 @@
 ---
-sourceHash: 000eea7440ab
+sourceHash: e2ca4489dac4
 title: 我的 playbook 能运行吗？
 description: 几秒钟内对照当前版本检查现有的 Ansible 项目，不接触任何主机。
 ---
@@ -58,7 +58,7 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | 块 | `block`、`rescue`、`always` | |
 | 复用 | role 与依赖、`import_tasks`、`import_role`、`import_playbook`、`include_tasks`、`include_role`、`include_vars` | |
 | 委派 | `delegate_to`、`delegate_facts`、`local_action`、`run_once` | |
-| 模块 | ansible-core 面向 Linux 主机的模块，包括 `copy`、`template`、`dnf`、`service`、`uri` 和 `reboot`，以及已安装 collection 的模块和它们的 action 插件 | 需要 Windows 的 collection action 插件，自己写的 action 插件 |
+| 模块 | ansible-core 面向 Linux 主机的模块，包括 `copy`、`template`、`dnf`、`service`、`uri` 和 `reboot`，以及已安装 collection 的模块和它们的 action 插件，还有 playbook 旁边或角色中 `action_plugins/` 里的 action 插件 | 需要 Windows 的 collection action 插件 |
 | Inventory | INI、YAML 和 TOML 文件，目录，脚本，`constructed`、`generator` 和 collection 插件，多个 `-i`，`group_vars`，`host_vars`，`jsonfile` facts 缓存 | 无 |
 | 连接 | `ssh`（密钥、ssh-agent 或密码：`-k` 或 `ansible_password`，需要 OpenSSH 8.4 或更高版本），`local`，以及用于网络设备的 `network_cli`、`netconf` 和 `httpapi` | 其他连接插件，Windows |
 | 提权 | 通过 `sudo` 或 `su` 的 `become`，带密码或不带密码 | `doas` 和其他方式 |
@@ -69,7 +69,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 
 | 尚不支持 | 原因 | 现在可以怎么做 |
 |---|---|---|
-| `action_plugins/` 里自己写的 action 插件 | Volant 运行 ansible-core 和已安装 collection 的 action 插件，不运行你自己的。 | 改写成模块，或者让这个 play 继续使用 `ansible-playbook`。 |
 | 没有安装的 collection | Volant 不会在运行中安装 collection。它会在第一次连接之前，向控制节点的 ansible-core 询问已安装了什么。 | 运行 `volant runtime install --collections NAME`，也就是错误消息给出的命令。见[托管运行时](/zh-cn/docs/reference/runtime/#collection)和 [来自 collection 的模块](/zh-cn/docs/internals/python/#来自-collection-的模块)。 |
 | 控制节点上没有带 ansible-core 的 Python | 首次需要时，Volant 会用 `curl` 或 `wget` 和 `tar` 安装自己的一份。 | 什么都不用做，或者提前运行 `volant runtime install`。没有网络时，使用 `volant runtime pack` 和 `install --from`。 |
 | 在没有 Python 的主机上，`--check` 或 `--diff` 下的 `apt`、`user`、`group` 或 `file` | 当运行要求检查或 diff 时，这些模块要通过主机上的 Python 来应答。 | 在主机上安装 Python，或者不带 `--check` 和 `--diff` 运行这个 play。 |
@@ -88,7 +87,6 @@ import { Steps, Aside } from '@astrojs/starlight/components';
 | ansible-core 有、而这个版本不处理的模块参数 | `argument 'x' is not supported yet on 'module'`，只有该值被拒绝时再加上 ` with 'v'` | 4 |
 | role 之外的 `end_role` | `Cannot execute 'end_role' from outside of a role` | 4 |
 | 这个版本不带的内置模块 | `module 'x' is not available in this release` | 4 |
-| 整个是一个模板的字符串参数 | `module 'x' takes its arguments from one template ... write them as a mapping` | 4 |
 | 无法解析的模块或 collection | `couldn't resolve module/action 'x' ...`，缺少 collection 时还会附上安装命令 | 4 |
 | 需要 Windows action 插件的 collection 模块 | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | `become_method` 不是 `sudo` 和 `su` | `become_method 'x' is not supported yet` | 2 |

@@ -19,6 +19,7 @@ use crate::stats::error_code;
 use crate::template::{inventory_yaml, yaml_mapping, yaml_node};
 use crate::vars::{ListedOrigin, VarStore};
 
+mod extra;
 mod graph;
 use graph::graph;
 
@@ -34,6 +35,10 @@ pub struct InventoryArgs {
     /// Print the group tree, the whole inventory or one group.
     #[arg(long, value_name = "GROUP", num_args = 0..=1, overrides_with = "graph")]
     graph: Option<Option<String>>,
+    /// The group `--graph` starts at, after the options as ansible-inventory takes it. The other
+    /// actions ignore it: `--list --yaml all` lists the whole inventory.
+    #[arg(value_name = "GROUP")]
+    group: Option<String>,
     /// With `--graph`, add the variables of every host and group. The other actions ignore it.
     #[arg(long)]
     vars: bool,
@@ -103,15 +108,14 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     let chosen = usize::from(args.list)
         + usize::from(args.host.is_some())
         + usize::from(args.graph.is_some());
-    if chosen == 0 {
+    if chosen != 1 {
         eprintln!(
-            "[ERROR]: No action selected, at least one of --host, --graph or --list needs to be specified."
-        );
-        return Ok(5);
-    }
-    if chosen > 1 {
-        eprintln!(
-            "[ERROR]: Conflicting options used, only one of --host, --graph or --list can be used at the same time."
+            "[ERROR]: {}",
+            if chosen == 0 {
+                "No action selected, at least one of --host, --graph or --list needs to be specified."
+            } else {
+                "Conflicting options used, only one of --host, --graph or --list can be used at the same time."
+            }
         );
         return Ok(5);
     }
@@ -133,11 +137,12 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
         }
     };
     crate::vault::install(secrets);
-    let loaded = match load(&args.inventory, &config, &mut out) {
+    let base = std::env::current_dir()?;
+    let unreadable = extra::unreadable(&args.extra_vars, &base);
+    let loaded = match load(&args.inventory, &config, unreadable.as_ref(), &mut out) {
         Ok(inventory) => inventory,
         Err(code) => return Ok(code),
     };
-    let base = std::env::current_dir()?;
     let extra = crate::vars::parse_extra_vars(&args.extra_vars, &base)?;
     // The reference reads `group_vars` and `host_vars` beside each source and in the directory
     // it was started from.
@@ -152,18 +157,19 @@ fn execute(args: &InventoryArgs) -> anyhow::Result<i32> {
     if let Some(group) = &args.graph {
         return graph(
             args,
-            group.as_deref().unwrap_or("all"),
+            group.as_deref().or(args.group.as_deref()).unwrap_or("all"),
             &loaded,
             &store,
             export,
         );
     }
+    let layering = loaded.layering();
     // In the order the reference merges them, which TOML keeps and JSON and YAML sort.
     let ordered = |host: &str| -> serde_json::Map<String, Value> {
         written(if export {
             store.exported_vars(host)
         } else {
-            store.listed_vars_ordered(host, &loaded.group_var_names(host))
+            store.listed_vars_ordered(host, &layering.var_names(host))
         })
     };
     let vars_of = |host: &str| -> BTreeMap<String, Value> { ordered(host).into_iter().collect() };
@@ -223,7 +229,19 @@ fn list_text(
     // YAML and TOML forms do not go through.
     let named_all = loaded.all_host_names().len() > 1
         && loaded.all_host_names().iter().any(|name| name == "all");
-    let shown = match args.limit.as_deref().or(named_all.then_some("all")) {
+    let given = match args
+        .limit
+        .as_deref()
+        .map(super::hosts::limit_pattern)
+        .transpose()
+    {
+        Ok(given) => given.flatten(),
+        Err(err) => {
+            eprintln!("[ERROR]: {err}");
+            return Ok(Err(1));
+        }
+    };
+    let shown = match given.as_deref().or(named_all.then_some("all")) {
         Some(pattern) => match limit(loaded, pattern, out) {
             Ok(inventory) => {
                 limited = inventory;
@@ -306,6 +324,7 @@ fn yaml_list(
     group_vars: &VarsOf<'_>,
 ) -> minijinja::Value {
     let mut shared: HashMap<(ListedOrigin, String, String), minijinja::Value> = HashMap::new();
+    let layering = inventory.layering();
     let mut host_vars = |host: &str| {
         yaml_mapping(vars_of(host).into_iter().map(|(name, value)| {
             let key = if export {
@@ -313,8 +332,8 @@ fn yaml_list(
             } else {
                 match store.listed_origin(host, &name) {
                     ListedOrigin::Host => None,
-                    ListedOrigin::InventoryGroup => inventory
-                        .group_setting(host, &name)
+                    ListedOrigin::InventoryGroup => layering
+                        .setting(host, &name)
                         .map(|group| (ListedOrigin::InventoryGroup, group.to_string())),
                     origin => Some((origin, String::new())),
                 }
@@ -343,14 +362,17 @@ fn yaml_list(
 /// The inventory every `-i` names, else the configuration's, else the reference's default; what
 /// is said while reading goes to the terminal as `ansible-playbook` says it. `Err` carries the
 /// exit code, with the message already printed.
-pub(super) fn load(
+fn load(
     given: &[String],
     config: &Config,
+    unreadable: Option<&extra::Unreadable>,
     out: &mut Renderer,
 ) -> Result<Inventory, i32> {
     let sources = inventory_sources(given, config);
     let bridge = Bridge::late();
-    let loaded = load_sources_with(&sources, &config.inventory_plugins, &|| Arc::clone(&bridge));
+    let mut plugins = config.inventory_plugins.clone();
+    plugins.extra_vars_error = unreadable.map(|u| (u.message.clone(), u.origin.clone()));
+    let loaded = load_sources_with(&sources, &plugins, &|| Arc::clone(&bridge));
     for note in &loaded.notes {
         match note {
             Note::Verbose(level, text) => out.verbose(*level, text),
@@ -365,6 +387,11 @@ pub(super) fn load(
     if let Some(fatal) = loaded.error {
         eprintln!("[ERROR]: {}", fatal.message);
         return Err(fatal.code);
+    }
+    // The reference reads `-e` again once the inventory is read, and stops there.
+    if let Some(unreadable) = unreadable {
+        eprintln!("[ERROR]: {}", unreadable.text());
+        return Err(unreadable.code);
     }
     // Said once the inventory is read, whatever is asked of it, as the reference says it.
     for warning in loaded.inventory.resolve("all").warnings {

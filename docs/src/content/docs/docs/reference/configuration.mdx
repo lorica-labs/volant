@@ -81,6 +81,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Warn when the inventory holds no host, so that only the implicit `localhost` is left. `all` does not match that host.
 </Option>
 
+<Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
+  Make a role of `roles:` or of an `import_role` that does not say `public` keep its `defaults` and `vars` to itself. Set to `false`, an `include_role` that does not say `public` lends them too. Left unset, only an `include_role` keeps them.
+</Option>
+
 <Option name="hash_behaviour" id="defaults-hash-behaviour" default="replace" env="ANSIBLE_HASH_BEHAVIOUR">
   `merge` lays a mapping over a mapping of the same name key by key, between every two variable sources and between two inventory sources. `replace` keeps the value of the higher source whole. The option is deprecated in Ansible, which still honours it and prints no warning for it.
 </Option>
@@ -95,6 +99,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
 
 <Option name="facts_modules" id="defaults-facts-modules" default="smart" env="ANSIBLE_FACTS_MODULES">
   The fact modules the play's fact gathering runs, `smart` (`setup`) unless set. A literal list in the plays, their tasks or the inventory (`ansible_facts_modules`) is read too; a module named only by a template cannot be run.
+</Option>
+
+<Option name="module_strict_utf8_response" id="defaults-module-strict-utf8-response" default="true" env="ANSIBLE_MODULE_STRICT_UTF8_RESPONSE">
+  Whether `from_json` refuses a string that holds a lone surrogate, such as `\udc80`. Off, the value keeps it and prints with `?` in its place, with a warning.
 </Option>
 
 <Option name="show_custom_stats" id="defaults-show-custom-stats" default="false" env="ANSIBLE_SHOW_CUSTOM_STATS">

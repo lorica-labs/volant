@@ -29,16 +29,18 @@ impl Scanner {
                 self.item();
             }
             '0'..='9' => {
-                let ch = self.numeric(c, at)?;
-                match ch {
-                    Some(ch) => {
-                        push_literal(&mut self.out, ch);
-                        self.item();
-                    }
-                    None => {
-                        return unsupported("a back reference inside the pattern, such as '\\1'");
+                if let Some(ch) = self.numeric(c, at)? {
+                    push_literal(&mut self.out, ch);
+                } else {
+                    // A back reference, `\1` to `\99`, which the engine keeps as it is.
+                    self.out.push('\\');
+                    self.out.push(c);
+                    if let Some(next) = self.peek().filter(char::is_ascii_digit) {
+                        self.out.push(next);
+                        self.at += 1;
                     }
                 }
+                self.item();
             }
             _ => {
                 let ch = self.character(c, at)?;

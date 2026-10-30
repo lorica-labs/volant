@@ -1,0 +1,4 @@
+# A mapping key YAML reads as a number, a boolean or null keeps its type wherever a template
+# reads it, and prints as the text the reference shows for it.
+stderr: true
+args: [-i, inv.ini, play.yml]

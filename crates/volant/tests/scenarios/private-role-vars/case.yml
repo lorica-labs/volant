@@ -1,0 +1,4 @@
+# private_role_vars set false: a roles: entry lends its vars, and so does an include_role that
+# does not say public.
+env: {"ANSIBLE_PRIVATE_ROLE_VARS": "0"}
+args: [-i, inv.ini, play.yml]

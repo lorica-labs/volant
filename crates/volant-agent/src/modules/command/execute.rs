@@ -307,6 +307,17 @@ pub(crate) fn execute(
     // already behind us - the escalated agent is the process this one is forked from.
     command.envs(&ctx.environment);
     #[cfg(unix)]
+    if let Some(wanted) = ctx.rlimit_nofile {
+        use std::os::unix::process::CommandExt;
+        // SAFETY: `getrlimit` and `setrlimit` are async-signal-safe and touch only the child.
+        unsafe {
+            command.pre_exec(move || {
+                crate::python::set_open_file_limit(wanted);
+                Ok(())
+            });
+        }
+    }
+    #[cfg(unix)]
     if master.is_none() {
         use std::os::unix::process::CommandExt;
         command.process_group(0);

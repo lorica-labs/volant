@@ -1,5 +1,5 @@
 ---
-sourceHash: 2f3467c64674
+sourceHash: 0bdf359c30fc
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -67,7 +67,9 @@ Les `defaults` et `vars` d'un rôle sont visibles de tout le play : `pre_tasks`
 
 Une dépendance lit aussi ce que portent les rôles au-dessus d'elle. Ses `vars` se placent au-dessus du `vars/main.yml` de ses parents et de celui de ses propres dépendances, qui l'emporte sur celui des parents. Ses `defaults` vont dans l'autre sens : ceux de ses dépendances, puis ceux de ses parents, puis les siens. Ses paramètres se placent au-dessus de ceux de ses parents : une dépendance sans paramètre de ce nom lit celui du parent le plus proche.
 
-Un `import_role` avec `public: false` les garde pour lui, et un `include_role` fait de même sauf s'il dit `public: true`. Voir [Options de rôle](#options-de-rôle).
+Un `import_role` avec `public: false` les garde pour lui, et un `include_role` fait de même sauf s'il dit `public: true`. Voir [Options de rôle](#options-de-rôle). [`private_role_vars`](/fr/docs/reference/configuration/#defaults-private-role-vars) change ces valeurs par défaut.
+
+Un rôle qu'un `include_role` amène depuis un autre rôle lit les paramètres de ce rôle, au-dessus des `vars:` de l'instruction, ainsi que ses `vars` et ses `defaults`, quel que soit le nombre d'includes entre les deux.
 
 ## Imports et includes
 
@@ -134,7 +136,7 @@ Une clé d'`apply` qu'un bloc n'a pas arrête l'exécution avec le code de sorti
 
 Avec `public: true`, les `defaults` et `vars` d'un `include_role` sont visibles de tout ce qui s'exécute après l'instruction, et des autres hôtes aussi, parce qu'ansible-core garde la liste des rôles publics dans le play et non dans l'hôte. Une tâche qui s'est exécutée avant l'instruction n'en lit rien, et un include `when: false` n'apporte rien.
 
-Avec `allow_duplicates: false`, l'instruction affiche sa ligne `included:` et n'exécute rien pour un hôte qui s'est déjà vu apporter un rôle identique. Deux instructions sont identiques quand elles nomment le même rôle, les mêmes fichiers et les mêmes `vars:`, et, pour une boucle, le même élément sous la même variable de boucle. `rolespec_validate: false` omet la vérification de la spécification d'arguments.
+Avec `allow_duplicates: false`, l'instruction affiche sa ligne `included:` et n'exécute rien pour un hôte qui s'est déjà vu apporter un rôle identique. Deux instructions sont identiques quand elles nomment le même rôle, les mêmes fichiers et les mêmes `vars:`, et, pour une boucle, le même élément sous la même variable de boucle. `rolespec_validate: false` omet la vérification de la spécification d'arguments. Un `import_role` ou un `include_role` antérieur de ce rôle compte. Un rôle de `roles:` ne compte pas, comme dans Ansible.
 
 Chaque option des quatre instructions, telle que Volant et ansible-core 2.19.12 la lisent :
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 706c674f580f
+sourceHash: dbf4e0d7f385
 title: Konfiguration
 description: Die ansible.cfg-Einstellungen und Umgebungsvariablen, die Volant liest, Abschnitt für Abschnitt und mit ihren Standardwerten.
 ---
@@ -80,6 +80,10 @@ Eine Datei, die existiert, sich aber nicht lesen lässt, wird übersprungen, und
 
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Warnt, wenn das Inventory keinen Host enthält und nur das implizite `localhost` übrig bleibt. `all` trifft diesen Host nicht.
+</Option>
+
+<Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
+  Lässt eine Rolle aus `roles:` oder einem `import_role`, das `public` nicht angibt, ihre `defaults` und `vars` für sich behalten. Auf `false` gesetzt, verleiht auch ein `include_role` ohne `public` sie. Ohne Einstellung behält nur ein `include_role` sie.
 </Option>
 
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">

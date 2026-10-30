@@ -30,7 +30,9 @@ mod refusals;
 mod resolved;
 
 pub(crate) use refusals::PROMPT_REFUSED;
-use refusals::{check_arguments, check_end_role, check_pause, refuse_retries};
+use refusals::{
+    check_arguments, check_end_role, check_end_role_handler, check_pause, refuse_retries,
+};
 use resolved::unresolved;
 pub(crate) use resolved::{
     Unresolved, check_built, check_collection_actions, check_resolved, collection_modules,
@@ -103,6 +105,7 @@ pub(crate) fn check_steps(
     }
     for handler in &compiled.handlers {
         check_task(&handler.task).map_err(|e| Refusal::or(CODE, e))?;
+        check_end_role_handler(&handler.task)?;
     }
     Ok(())
 }

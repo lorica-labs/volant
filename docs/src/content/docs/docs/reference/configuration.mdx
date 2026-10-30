@@ -81,6 +81,10 @@ A file that exists but cannot be read is skipped, and the run continues with the
   Warn when the inventory holds no host, so that only the implicit `localhost` is left. `all` does not match that host.
 </Option>
 
+<Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">
+  Make a role of `roles:` or of an `import_role` that does not say `public` keep its `defaults` and `vars` to itself. Set to `false`, an `include_role` that does not say `public` lends them too. Left unset, only an `include_role` keeps them.
+</Option>
+
 <Option name="force_handlers" id="defaults-force-handlers" default="false" flag="--force-handlers" env="ANSIBLE_FORCE_HANDLERS">
   Run notified handlers even on hosts that failed.
 </Option>

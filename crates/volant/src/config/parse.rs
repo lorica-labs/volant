@@ -209,6 +209,11 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     config.host_key_checking = on;
                 }
             }
+            "private_role_vars" => {
+                if let Some(private) = crate::yaml::bool_from_str(value.trim()) {
+                    crate::roles::set_private_role_vars(private);
+                }
+            }
             "force_handlers" => {
                 if let Some(on) = crate::yaml::bool_from_str(value.trim()) {
                     config.force_handlers = on;

@@ -7,6 +7,7 @@ use std::sync::Arc;
 
 use crate::compile::{Compiled, Grafted};
 use crate::executor::include::IncludeGroup;
+use crate::roles::RoleKind;
 
 /// One `included:` line: what it names, the hosts that show it, and the item's label.
 pub(super) type Line = (String, Vec<String>, Option<String>);
@@ -102,7 +103,13 @@ fn narrow_dependencies(
     roles_run: &mut HashMap<String, HashSet<String>>,
 ) {
     for (index, role) in expanded.roles.iter().enumerate() {
-        let Some(id) = &role.dedup else { continue };
+        let Some(id) = role
+            .dedup
+            .as_ref()
+            .filter(|_| role.kind == RoleKind::Dependency)
+        else {
+            continue;
+        };
         let hosts: Vec<String> = runners
             .iter()
             .filter(|host| {

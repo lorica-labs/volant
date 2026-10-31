@@ -43,5 +43,4 @@ task-args                      #1284
 template                       #1290
 templating                     #1282
 templating_lookup_args         #1289
-var_reserved                   #1288
 var_templating                 #1289

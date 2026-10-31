@@ -114,6 +114,9 @@ pub(super) fn debugger(yaml: &Yaml, context: &str) -> anyhow::Result<Option<Debu
 
 /// A keyword whose value has to be a mapping, kept raw: `vars`, on a task or on a block.
 pub(super) fn mapping(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Map<String, Value>> {
+    if key == "vars" {
+        super::origin::warn_reserved_keys(field(yaml, key));
+    }
     match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Map::new()),
         Some(v) => match to_json(v).with_context(|| format!("{context}'{key}'"))? {

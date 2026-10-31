@@ -288,6 +288,14 @@ fn read_file(item: &Item, step: &Step, store: &Mutex<VarStore>) -> Result<Read, 
             return Err(Done::Returned(Box::new(failure)));
         }
     };
+    // Each reserved name at its line, the file read again only when it holds one.
+    if facts.keys().any(|k| crate::vars::reserved::is_reserved(k)) {
+        let text = std::fs::read_to_string(path).unwrap_or_default();
+        for name in facts.keys() {
+            let at = crate::vars::reserved::top_level_key(&shown, &text, name);
+            crate::vars::reserved::warn_if_reserved(name, at.as_ref());
+        }
+    }
     Ok((facts, vec![shown], document.encrypted))
 }
 

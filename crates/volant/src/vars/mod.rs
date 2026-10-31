@@ -11,6 +11,7 @@ mod load;
 mod magic;
 mod play_view;
 mod refresh;
+pub(crate) mod reserved;
 mod shared;
 mod store;
 

@@ -67,8 +67,9 @@ pub(super) fn value_origin(value: &Yaml<'_>) -> Option<Origin> {
     })
 }
 
-/// Where each value of the mapping `node` was written, under `prefix.key`, and each condition of
-/// a `that` list, which the reference points at when that condition fails.
+/// Where each value of the mapping `node` was written, under `prefix.key`, each key of the
+/// arguments under `args.key:key`, and each condition of a `that` list, which the reference
+/// points at when that condition fails.
 pub(super) fn entry_origins(
     node: &Yaml<'_>,
     prefix: &str,
@@ -79,6 +80,12 @@ pub(super) fn entry_origins(
         let Some(k) = k.as_str() else { continue };
         if let Some(origin) = value_origin(v) {
             out.insert(format!("{prefix}.{k}"), origin);
+        }
+        // A `set_fact` warns about a reserved name at its key.
+        if prefix == "args"
+            && let Some(origin) = key_origin(v)
+        {
+            out.insert(format!("args.{k}:key"), origin);
         }
         if let ("that", Yaml::Sequence(items)) = (k, v) {
             for (i, item) in items.iter().enumerate() {
@@ -203,5 +210,18 @@ pub(super) fn located(message: String, map: &saphyr::Mapping<'_>) -> anyhow::Err
     match task_origin(map) {
         Some(origin) => anyhow::Error::new(Located { message, origin }),
         None => anyhow::anyhow!(message),
+    }
+}
+
+/// Warns about each key of the mapping `node` that is a reserved name, at the key: a `vars:`
+/// section, or the arguments of a `set_fact`.
+pub(super) fn warn_reserved_keys(node: Option<&Yaml<'_>>) {
+    let Some(Yaml::Mapping(map)) = node else {
+        return;
+    };
+    for (k, v) in map {
+        if let Some(name) = k.as_str() {
+            crate::vars::reserved::warn_if_reserved(name, key_origin(v).as_ref());
+        }
     }
 }

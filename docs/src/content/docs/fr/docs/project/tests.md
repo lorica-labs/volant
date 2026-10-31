@@ -1,5 +1,5 @@
 ---
-sourceHash: 376899cd0604
+sourceHash: 0c814d31d6fc
 title: Tests
 description: Comment Volant est vérifié par rapport à ansible-core, les types de réponse enregistrée, et comment ajouter un scénario.
 ---
@@ -55,6 +55,12 @@ Chaque exécution de Volant a lieu dans une copie neuve du répertoire, avec `--
 `just yaml-corpus` charge chaque fichier YAML d'un corpus épinglé avec le chargeur de Volant et avec celui d'ansible-core, et compare les valeurs. Le corpus réunit les collections du paquet `ansible` épinglé, l'arborescence `test/` d'ansible-core et des dépôts publics aux commits que nomme `crates/volant/tests/parity/yaml_corpus.yml` : kubespray, debops, ceph-ansible, openstack-ansible et d'autres, environ onze mille fichiers. L'exemple `yaml_dump` affiche le côté de Volant, sans les encodages propres à Volant, et `crates/volant/tests/parity/yaml_corpus.py` affiche les fichiers qui diffèrent, regroupés par cause. Volant lit une date comme du texte, et cet écart n'est pas compté.
 
 `crates/volant/tests/parity/yaml_corpus_known.txt` liste chaque écart connu avec l'issue qui le suit. La recette échoue sur tout autre écart. Le workflow `YAML corpus` la lance chaque semaine et à chaque changement du chargeur. Retirez une entrée quand son issue est corrigée.
+
+## Les cibles d'intégration d'ansible-core
+
+`just integration-targets` exécute les cibles d'intégration d'ansible-core, prises dans ses sources au tag de l'ansible-core de référence, sous ansible-core et sous Volant. Ce sont des playbooks remplis d'`assert` qui vérifient le comportement d'ansible-core lui-même : une cible qui passe sous ansible-core et échoue sous Volant est une différence, même sans sortie à comparer. Chaque cible s'exécute comme `ansible-test integration` l'exécute : une cible de rôle comme un play sur `testhost` avec `ansible_connection=local`, une cible de script comme son `runme.sh`, avec les noms de commande `ansible-*` de Volant en tête du `PATH`. Les cibles qui modifient la machine (`destructive`, `needs/root`) et toutes les cibles de script s'exécutent chacune dans un conteneur jetable, en root. Les cibles qui demandent ssh, un serveur HTTP de test, un conteneur privilégié, un cloud, Windows ou un équipement réseau sont ignorées. La recette affiche une ligne par cible et garde le journal de chaque exécution sous `target/integration/work/`.
+
+`crates/volant/tests/parity/integration_targets_known.txt` liste chaque cible qui diffère avec le ticket qui la suit. La recette échoue sur toute autre cible qui diffère, et sur une cible listée qui passe désormais, pour que la liste reste à jour. `--only <cible>...` exécute certaines cibles, `--no-container` saute celles qui demandent un conteneur, et `--jobs` fixe combien s'exécutent à la fois. Le workflow `Integration targets` la lance chaque semaine.
 
 ## Les lancer
 

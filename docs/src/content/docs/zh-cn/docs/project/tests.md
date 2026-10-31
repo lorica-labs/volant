@@ -1,5 +1,5 @@
 ---
-sourceHash: 376899cd0604
+sourceHash: 0c814d31d6fc
 title: 测试
 description: Volant 如何对照 ansible-core 进行检查，各种已记录的应答，以及如何添加场景。
 ---
@@ -55,6 +55,12 @@ Volant 的每次运行都发生在目录的一份全新副本中，除非 case �
 `just yaml-corpus` 用 Volant 的加载器和 ansible-core 的加载器分别加载一个固定语料库中的每个 YAML 文件,并比较两边的值。语料库包括所固定的 `ansible` 包中的集合、ansible-core 自身的 `test/` 目录树,以及 `crates/volant/tests/parity/yaml_corpus.yml` 所列提交上的公共仓库:kubespray、debops、ceph-ansible、openstack-ansible 等,约一万一千个文件。示例 `yaml_dump` 输出 Volant 这一边,并去掉 Volant 自己的编码;`crates/volant/tests/parity/yaml_corpus.py` 按原因分组输出有差异的文件。Volant 把日期读成文本,这一差异不计入。
 
 `crates/volant/tests/parity/yaml_corpus_known.txt` 列出每个已知差异以及跟踪它的 issue。出现其他差异时,该命令失败。`YAML corpus` 工作流每周运行一次,加载器每次改动时也会运行。某个 issue 修复后,请删除对应条目。
+
+## ansible-core 的集成测试目标
+
+`just integration-targets` 会取参考 ansible-core 对应标签的源码，分别在 ansible-core 和 Volant 下运行 ansible-core 的集成测试目标。这些目标是充满 `assert` 的 playbook，检查的是 ansible-core 自身的行为：一个目标在 ansible-core 下通过而在 Volant 下失败，就是一处差异，即使没有输出可以比较。每个目标都按 `ansible-test integration` 的方式运行：role 目标作为 `testhost` 上带 `ansible_connection=local` 的 play 运行，脚本目标运行其 `runme.sh`，并把 Volant 的 `ansible-*` 命令名放在 `PATH` 最前面。会改动机器的目标（`destructive`、`needs/root`）和所有脚本目标，各自在一次性容器里以 root 运行。需要 ssh、HTTP 测试服务器、特权容器、云、Windows 或网络设备的目标会被跳过。该配方每个目标输出一行，并把每次运行的日志保存在 `target/integration/work/` 下。
+
+`crates/volant/tests/parity/integration_targets_known.txt` 列出每个存在差异的目标，以及跟踪它的 issue。出现任何未列出的差异目标，或已列出的目标现在通过了，配方都会失败，从而让列表保持最新。`--only <目标>...` 只运行部分目标，`--no-container` 跳过需要容器的目标，`--jobs` 设置同时运行的数量。`Integration targets` 工作流每周运行一次。
 
 ## 运行它们
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 376899cd0604
+sourceHash: 0c814d31d6fc
 title: Tests
 description: Wie Volant gegen ansible-core geprüft wird, die Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
@@ -55,6 +55,12 @@ Jeder Volant-Lauf geschieht in einer frischen Kopie des Verzeichnisses, mit `--f
 `just yaml-corpus` lädt jede YAML-Datei eines fest gepinnten Korpus mit Volants Loader und mit dem von ansible-core und vergleicht die Werte. Der Korpus besteht aus den Collections des gepinnten `ansible`-Pakets, dem `test/`-Baum von ansible-core selbst und öffentlichen Repositories zu den Commits, die `crates/volant/tests/parity/yaml_corpus.yml` nennt: kubespray, debops, ceph-ansible, openstack-ansible und weitere, rund elftausend Dateien. Das Beispiel `yaml_dump` gibt Volants Seite aus, ohne Volants eigene Kodierungen, und `crates/volant/tests/parity/yaml_corpus.py` gibt die abweichenden Dateien nach Ursache gruppiert aus. Ein Datum liest Volant als Text, dieser Unterschied zählt nicht.
 
 `crates/volant/tests/parity/yaml_corpus_known.txt` führt jeden bekannten Unterschied mit dem Issue, das ihn verfolgt. Bei jedem anderen schlägt das Rezept fehl. Der Workflow `YAML corpus` führt es jede Woche und bei jeder Änderung am Loader aus. Ein Eintrag wird entfernt, sobald sein Issue behoben ist.
+
+## Die Integrationsziele von ansible-core
+
+`just integration-targets` führt die Integrationsziele von ansible-core aus, aus seinen Quellen am Tag des Referenz-ansible-core, unter ansible-core und unter Volant. Es sind Playbooks voller `assert`, die das Verhalten von ansible-core selbst prüfen: Ein Ziel, das unter ansible-core besteht und unter Volant scheitert, ist ein Unterschied, auch ohne Ausgabe zum Vergleichen. Jedes Ziel läuft so, wie `ansible-test integration` es ausführt: ein Rollenziel als Play auf `testhost` mit `ansible_connection=local`, ein Skriptziel als sein `runme.sh`, mit den `ansible-*`-Befehlsnamen von Volant vorn im `PATH`. Die Ziele, die die Maschine verändern (`destructive`, `needs/root`), und jedes Skriptziel laufen jeweils in einem Wegwerf-Container, als root. Ziele, die ssh, einen HTTP-Testserver, einen privilegierten Container, eine Cloud, Windows oder ein Netzwerkgerät brauchen, werden übersprungen. Das Rezept gibt eine Zeile pro Ziel aus und bewahrt das Log jedes Laufs unter `target/integration/work/` auf.
+
+`crates/volant/tests/parity/integration_targets_known.txt` listet jedes abweichende Ziel mit dem Issue, das es verfolgt. Das Rezept scheitert an jedem anderen abweichenden Ziel und an einem gelisteten, das jetzt besteht, damit die Liste aktuell bleibt. `--only <ziel>...` führt einige Ziele aus, `--no-container` überspringt die, die einen Container brauchen, und `--jobs` legt fest, wie viele gleichzeitig laufen. Der Workflow `Integration targets` führt es jede Woche aus.
 
 ## Ausführen
 

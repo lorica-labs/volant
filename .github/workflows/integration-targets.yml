@@ -1,0 +1,44 @@
+name: Integration targets
+
+# Runs ansible-core's own integration targets under the reference and under Volant, and fails on a
+# target that passes under ansible-core and fails under Volant unless
+# crates/volant/tests/parity/integration_targets_known.txt lists it, or on a listed one that now
+# passes: weekly, and on a change to the runner or to its list.
+on:
+  schedule:
+    - cron: "11 3 * * 2"
+  pull_request:
+    paths:
+      - crates/volant/tests/parity/integration_targets*
+      - crates/volant/tests/fixtures/integration/**
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: integration-targets-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  compare:
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@ecabd13d1c56bd1345c230e542e9144811ad706f # v2
+      - uses: taiki-e/install-action@68a389c788b2cd04016ce8c80ee23b80d2ab3d68 # v2
+        with:
+          tool: just,uv
+      - name: Install the reference ansible-core
+        run: uv tool install ansible-core==2.19.12
+      - run: just integration-targets
+      - name: Keep the logs
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
+        with:
+          name: integration-targets-logs
+          path: target/integration/work/*/logs/
+          retention-days: 14

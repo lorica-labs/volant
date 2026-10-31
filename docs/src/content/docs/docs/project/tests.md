@@ -55,6 +55,12 @@ Each run of Volant happens in a fresh copy of the directory, with `--forks 1` un
 
 `crates/volant/tests/parity/yaml_corpus_known.txt` lists each known difference with the issue that tracks it. The recipe fails on any other one. The `YAML corpus` workflow runs it every week and on every change to the loader. Remove an entry when its issue is fixed.
 
+## ansible-core's integration targets
+
+`just integration-targets` runs the integration targets of ansible-core, from its source at the tag of the reference ansible-core, under ansible-core and under Volant. They are playbooks full of `assert` that check ansible-core's own behaviour, so a target that passes under ansible-core and fails under Volant is a difference, even with no output to compare. Each target runs the way `ansible-test integration` runs it: a role target as a play on `testhost` with `ansible_connection=local`, a script target as its `runme.sh` with Volant's `ansible-*` command names first on `PATH`. The targets that change the machine (`destructive`, `needs/root`) and every script target run in a throwaway container each, as root. Targets that need ssh, an HTTP test server, a privileged container, a cloud, Windows or a network device are skipped. The recipe prints one line per target and keeps each run's log under `target/integration/work/`.
+
+`crates/volant/tests/parity/integration_targets_known.txt` lists each target that differs with the issue that tracks it. The recipe fails on any other target that differs, and on a listed one that now passes, so the list stays current. `--only <target>...` runs some targets, `--no-container` skips the ones that need a container, and `--jobs` sets how many run at once. The `Integration targets` workflow runs it every week.
+
 ## Run them
 
 `just check-touched` is the check to run before a pull request. It formats, runs clippy and the file-size ratchet, runs the tests of the modules the branch changes, and checks spelling. `just check-local` does the same with every test. CI runs every test.

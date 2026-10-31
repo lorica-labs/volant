@@ -1,5 +1,5 @@
 ---
-sourceHash: 376899cd0604
+sourceHash: 0c814d31d6fc
 title: Tests
 description: Cómo se comprueba Volant contra ansible-core, los tipos de respuesta grabada y cómo añadir un escenario.
 ---
@@ -55,6 +55,12 @@ Cada ejecución de Volant se hace en una copia nueva del directorio, con `--fork
 `just yaml-corpus` carga cada archivo YAML de un corpus fijado con el cargador de Volant y con el de ansible-core, y compara los valores. El corpus son las colecciones del paquete `ansible` fijado, el árbol `test/` del propio ansible-core y repositorios públicos en los commits que nombra `crates/volant/tests/parity/yaml_corpus.yml`: kubespray, debops, ceph-ansible, openstack-ansible y otros, unos once mil archivos. El ejemplo `yaml_dump` imprime el lado de Volant, sin las codificaciones propias de Volant, y `crates/volant/tests/parity/yaml_corpus.py` imprime los archivos que difieren, agrupados por causa. Volant lee una fecha como texto, y esa diferencia no cuenta.
 
 `crates/volant/tests/parity/yaml_corpus_known.txt` lista cada diferencia conocida con el issue que la sigue. La receta falla con cualquier otra. El workflow `YAML corpus` la ejecuta cada semana y con cada cambio del cargador. Quite una entrada cuando su issue esté resuelto.
+
+## Los objetivos de integración de ansible-core
+
+`just integration-targets` ejecuta los objetivos de integración de ansible-core, tomados de su código en la etiqueta del ansible-core de referencia, bajo ansible-core y bajo Volant. Son playbooks llenos de `assert` que comprueban el comportamiento del propio ansible-core: un objetivo que pasa bajo ansible-core y falla bajo Volant es una diferencia, aunque no haya salida que comparar. Cada objetivo se ejecuta como lo ejecuta `ansible-test integration`: un objetivo de rol como un play en `testhost` con `ansible_connection=local`, un objetivo de script como su `runme.sh`, con los nombres de comando `ansible-*` de Volant primero en el `PATH`. Los objetivos que cambian la máquina (`destructive`, `needs/root`) y todos los objetivos de script se ejecutan cada uno en un contenedor desechable, como root. Se omiten los objetivos que necesitan ssh, un servidor HTTP de prueba, un contenedor privilegiado, una nube, Windows o un equipo de red. La receta imprime una línea por objetivo y guarda el registro de cada ejecución en `target/integration/work/`.
+
+`crates/volant/tests/parity/integration_targets_known.txt` lista cada objetivo que difiere con la incidencia que lo sigue. La receta falla con cualquier otro objetivo que difiera, y con uno listado que ahora pasa, para que la lista se mantenga al día. `--only <objetivo>...` ejecuta algunos objetivos, `--no-container` omite los que necesitan un contenedor y `--jobs` fija cuántos se ejecutan a la vez. El flujo `Integration targets` la ejecuta cada semana.
 
 ## Ejecutarlos
 

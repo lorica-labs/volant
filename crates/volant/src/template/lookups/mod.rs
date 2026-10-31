@@ -220,6 +220,16 @@ fn lookup(
     // Peeked first: an undefined `default` is no default to `get`, and `env` still needs it.
     let env_default = kwargs.peek::<Value>("default").ok();
     let default_value: Option<Value> = kwargs.get::<Option<Value>>("default")?;
+    // `file`'s two options, as Python's `str.lstrip()` and `str.rstrip()` read them.
+    let is_file = matches!(name, "file" | "ansible.builtin.file");
+    let strip = |key: &str, default: bool| -> Result<bool, Error> {
+        Ok(if is_file {
+            kwargs.get::<Option<bool>>(key)?.unwrap_or(default)
+        } else {
+            default
+        })
+    };
+    let (lstrip, rstrip) = (strip("lstrip", false)?, strip("rstrip", true)?);
     let render_options = matches!(name, "template" | "ansible.builtin.template")
         .then(|| template_options(&kwargs))
         .transpose()?;
@@ -241,10 +251,12 @@ fn lookup(
                 match (std::env::var(&term_text), &env_default) {
                     (Ok(set), _) => Value::from(set),
                     (Err(_), None) => Value::from(""),
+                    // Undefined, and saying why when something reads it: measured, `lookup('env',
+                    // 'X', default=undef()) is defined` is false for an `X` that is not set.
                     (Err(_), Some(default)) if default.is_undefined() => {
-                        return Err(super::bridged::raise(format!(
+                        super::missing::undefined_saying(format!(
                             "The environment variable '{term_text}' is not set."
-                        )));
+                        ))
                     }
                     (Err(_), Some(default)) => default.clone(),
                 }
@@ -261,8 +273,10 @@ fn lookup(
                         read_failure(&path, &e)
                     ))
                 })?;
+                let text = unvaulted(text)?;
                 taint();
-                Value::from(text.trim_end_matches(['\r', '\n']))
+                let text = if lstrip { text.trim_start() } else { &text };
+                Value::from(if rstrip { text.trim_end() } else { text })
             }
             // The file as it reads once decrypted, a plain one as it is, and no newline dropped:
             // measured, `lookup('unvault', 'f.txt')` of `txt_secret\n` keeps the newline.
@@ -323,6 +337,7 @@ fn lookup(
                 let path = find_template(state, &term_text, base_dir)?;
                 let text =
                     std::fs::read_to_string(&path).map_err(|e| invalid(read_failure(&path, &e)))?;
+                let text = unvaulted(text)?;
                 taint();
                 render_template(
                     state,
@@ -339,6 +354,17 @@ fn lookup(
         results.push(found);
     }
     Ok(results)
+}
+
+/// A file's text as the loader's `get_text_file_contents` hands it over: decrypted when it is
+/// vaulted. Measured, `lookup('template')` renders a vaulted template.
+fn unvaulted(text: String) -> Result<String, Error> {
+    if !crate::vault::is_encrypted(text.as_bytes()) {
+        return Ok(text);
+    }
+    let plain = crate::vault::decrypt(text.as_bytes(), &crate::vault::run_secrets())
+        .map_err(|e| invalid(e.0))?;
+    Ok(String::from_utf8_lossy(&plain).into_owned())
 }
 
 /// `find_file_in_search_path`: each entry's `files/<term>`, then its `<term>`.

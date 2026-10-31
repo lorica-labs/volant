@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - include_role: {name: r, public: true}
+      vars:
+        x: "{{ later if later is defined else nope }}"
+    - include_tasks: t.yml
+      vars:
+        y: "{{ never_defined }}"
+      ignore_errors: true

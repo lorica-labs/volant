@@ -454,9 +454,19 @@ pub(super) fn flag_for(
 ) -> Result<Option<bool>, TemplateError> {
     match flag {
         Some(Flag::Fixed(b)) => Ok(Some(*b)),
+        Some(Flag::Template(raw)) if omitted(raw, vars, templar) => Ok(None),
         Some(Flag::Template(raw)) if !skipped => boolean_keyword(key, raw, vars, templar).map(Some),
         _ => Ok(None),
     }
+}
+
+/// Whether a keyword's template renders to `omit`, which leaves the keyword to the layers around
+/// the task: measured on ansible-core 2.19.12, `become: '{{ omit }}'` under a play's `become:
+/// yes` escalates.
+pub(super) fn omitted(raw: &str, vars: &HostVars, templar: &Templar) -> bool {
+    templar
+        .render(raw, vars)
+        .is_ok_and(|v| v == crate::vars::omit_token())
 }
 
 /// A boolean keyword written as a template, rendered and read as ansible-core reads it.

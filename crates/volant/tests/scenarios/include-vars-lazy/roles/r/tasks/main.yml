@@ -1,0 +1,3 @@
+- debug: {msg: hi}
+- set_fact: {later: 1}
+- debug: {msg: "{{ x }}"}

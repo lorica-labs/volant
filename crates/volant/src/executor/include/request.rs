@@ -44,22 +44,7 @@ pub(super) fn include_request(
     // A render that read a name from a managed host hands back that host's text: the name goes
     // down with the value, so the steps below treat it as the data it is.
     let mut own = Map::new();
-    for (key, raw) in &task.vars {
-        match templar.render_value_tainted(raw, &item.vars) {
-            Ok((value, tainted)) => {
-                own.insert(key.clone(), value.clone());
-                if tainted {
-                    vars.untrusted.insert(key.clone());
-                } else {
-                    vars.untrusted.remove(key);
-                }
-                vars.values.insert(key.clone(), value);
-            }
-            Err(err) => {
-                return Err(TaskResult::failed_with(format!("Task failed: {}", err.0)));
-            }
-        }
-    }
+    own_vars(task, item, templar, &mut vars, &mut own)?;
     if item.element.is_some() {
         bind_loop(task, item, &mut vars, &mut own);
     }
@@ -152,6 +137,40 @@ pub(super) fn include_request(
         label: item.label.clone(),
         role_id,
     })
+}
+
+/// The statement's own `vars:` rendered into what goes down, and into `own`.
+fn own_vars(
+    task: &PlayTask,
+    item: &Item,
+    templar: &Templar,
+    vars: &mut IncludeParams,
+    own: &mut Map<String, Value>,
+) -> Result<(), TaskResult> {
+    for (key, raw) in &task.vars {
+        match templar.render_value_tainted(raw, &item.vars) {
+            Ok((value, tainted)) => {
+                own.insert(key.clone(), value.clone());
+                if tainted {
+                    vars.untrusted.insert(key.clone());
+                } else {
+                    vars.untrusted.remove(key);
+                }
+                vars.values.insert(key.clone(), value);
+            }
+            // Measured on ansible-core 2.19.12: a value that reads a name not defined yet goes
+            // down as written, and renders when a task below reads it.
+            Err(err) if err.is_undefined() => {
+                own.insert(key.clone(), raw.clone());
+                vars.untrusted.remove(key);
+                vars.values.insert(key.clone(), raw.clone());
+            }
+            Err(err) => {
+                return Err(TaskResult::failed_with(format!("Task failed: {}", err.0)));
+            }
+        }
+    }
+    Ok(())
 }
 
 /// `value` put in front of the list `name` holds in `vars`, the engine's own and so trusted.

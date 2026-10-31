@@ -4,6 +4,7 @@
 //! 'dict' has no attribute 'b'`). The engine raises one sentence for both and does not say which
 //! name it was, so the source is read back against the variables the render saw.
 
+use std::cell::RefCell;
 use std::collections::HashSet;
 use std::sync::LazyLock;
 
@@ -215,6 +216,18 @@ fn reason(source: &str, ctx: &minijinja::Value) -> Option<String> {
     None
 }
 
+thread_local! {
+    /// What the last value a plugin handed back undefined on purpose says when it is read, as
+    /// `lookup('env', 'X', default=undef())` does for a variable that is not set.
+    static HANDED: RefCell<Option<String>> = const { RefCell::new(None) };
+}
+
+/// An undefined value that says `why` when it is read: what the reference's `_undef(why)` is.
+pub(super) fn undefined_saying(why: String) -> minijinja::Value {
+    HANDED.with(|h| *h.borrow_mut() = Some(why));
+    minijinja::Value::UNDEFINED
+}
+
 /// `error` with its sentence replaced by the one that names what was missing, when it is the
 /// engine's bare one and `source` says which read it was.
 pub(super) fn named(error: TemplateError, source: &str, ctx: &minijinja::Value) -> TemplateError {
@@ -226,7 +239,8 @@ pub(super) fn named(error: TemplateError, source: &str, ctx: &minijinja::Value) 
         return error;
     }
     super::written::set_inner(None);
-    let found = reason(source, ctx);
+    let handed = HANDED.with(|h| h.borrow_mut().take());
+    let found = reason(source, ctx).or(handed);
     // Reading a variable can render it, which may leave a failure behind for the next render.
     let _ = take_failure(ctx);
     found.map_or(error, TemplateError)

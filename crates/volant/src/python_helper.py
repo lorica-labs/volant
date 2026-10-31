@@ -689,6 +689,26 @@ def resolve_action(name):
     return context.resolved_fqcn if context.resolved else None
 
 
+def own_plugins():
+    """The filters and tests defined outside ansible-core, in the playbook's own plugin
+    directories or the configured ones, by short name: the loader finds them before its own."""
+    import ansible
+    from ansible.plugins.loader import filter_loader, test_loader
+
+    loaders()
+    core = os.path.dirname(os.path.realpath(ansible.__file__)) + os.sep
+    return {
+        kind: sorted(
+            {
+                plugin.ansible_name
+                for plugin in loader.all()
+                if not os.path.realpath(plugin._original_path).startswith(core)
+            }
+        )
+        for kind, loader in (("filter", filter_loader), ("test", test_loader))
+    }
+
+
 def actions(names):
     """Whether each name a `module_defaults` key spells resolves to an action or a module."""
     loaders()
@@ -1042,6 +1062,8 @@ def call(request):
         return {"value": action_groups(request["args"])}
     if kind == "actions":
         return {"value": actions(request["args"])}
+    if kind == "own_plugins":
+        return {"value": own_plugins()}
     if kind == "connections":
         return {"value": connections(request["args"])}
     if kind == "lookup_needs":

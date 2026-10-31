@@ -59,6 +59,10 @@ impl Drop for Stats {
     }
 }
 
+/// The key of a failed result a `rescue` takes all the same: it counts as failed in the recap,
+/// and the host does not fail the run. Dropped with the other `_volant_` keys.
+pub const RESCUED: &str = "_volant_rescued";
+
 impl Stats {
     /// `changed` is the result's own flag: an ignored failure still counts as changed when the
     /// module reported one, on top of counting as ignored. A hard failure never counts as

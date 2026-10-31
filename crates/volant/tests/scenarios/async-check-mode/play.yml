@@ -1,0 +1,22 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - command: "true"
+      async: 10
+      poll: 0
+      register: job
+    - command: sleep 1
+      check_mode: false
+    - async_status: {jid: "{{ job.ansible_job_id }}"}
+      register: status
+    - debug: {msg: "{{ status.msg }} / {{ status.skipped }}"}
+    - shell: echo hi
+      async: 10
+      poll: 1
+    - file: {path: "{{ playbook_dir }}/touched", state: touch}
+      async: 10
+      poll: 1
+    - nocheck:
+      async: 10
+      poll: 1
+    - debug: msg=after

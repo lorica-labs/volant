@@ -37,7 +37,6 @@
     - name: async
       command: echo later
       async: 10
-      check_mode: false
       poll: 1
     - name: failing
       command: "false"

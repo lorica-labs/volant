@@ -53,18 +53,8 @@ where
                 ]))),
                 modules::ran_natively(),
             ),
-            // The reference's `ActionBase.run` refuses the pair before the module starts.
-            Some(_)
-                if task.args.get(volant_protocol::modules::CHECK_MODE_ARG)
-                    == Some(&serde_json::Value::Bool(true)) =>
-            {
-                (
-                    Run::Done(volant_protocol::TaskResult::failed_with(
-                        "check mode and async cannot be used on same task.",
-                    )),
-                    modules::ran_natively(),
-                )
-            }
+            // In check mode too: measured on ansible-core 2.19.12, the module runs under the job in
+            // check mode, and `command` comes back skipped.
             Some(job) => (
                 Run::Done(crate::jobs::start(task, job)),
                 modules::ran_natively(),

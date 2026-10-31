@@ -354,10 +354,25 @@ pub(super) fn cycler(items: Rest<Value>) -> Result<Value, Error> {
 }
 
 /// `undef(hint=none, name=none)`: a value that is undefined, so that reading it fails and
-/// `default` and `is defined` see it as missing. The hint is not kept: the failure it causes
-/// reads as any other undefined variable.
-pub(super) fn undef(_args: Rest<ValueOrKwargs>) -> Value {
-    Value::UNDEFINED
+/// `default` and `is defined` see it as missing. The failure says the hint, or `Mandatory
+/// variable has not been overridden`, measured on ansible-core 2.19.12.
+pub(super) fn undef(args: Rest<ValueOrKwargs>) -> Value {
+    let args = args.into_values();
+    let hint = args
+        .iter()
+        .find(|a| !a.is_kwargs())
+        .cloned()
+        .or_else(|| {
+            args.iter()
+                .find(|a| a.is_kwargs())
+                .and_then(|kw| kw.get_item(&Value::from("hint")).ok())
+                .filter(|v| !v.is_undefined())
+        })
+        .filter(|v| !v.is_none())
+        .and_then(|v| v.as_str().map(str::to_string));
+    super::missing::undefined_saying(
+        hint.unwrap_or_else(|| "Mandatory variable has not been overridden".to_string()),
+    )
 }
 
 /// What a call is bound to. Python words the failure of a function written in Python and of one

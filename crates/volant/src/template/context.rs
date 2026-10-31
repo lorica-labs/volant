@@ -303,6 +303,17 @@ impl Context {
     }
 }
 
+thread_local! {
+    /// The last name a render looked for and did not find, which `mandatory` names in its
+    /// refusal as the reference's undefined value carries its name.
+    static MISSING: std::cell::RefCell<Option<String>> = const { std::cell::RefCell::new(None) };
+}
+
+/// The last name a render on this thread did not find, taken.
+pub(in crate::template) fn take_missing() -> Option<String> {
+    MISSING.with(|m| m.borrow_mut().take())
+}
+
 impl Object for Context {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
@@ -373,7 +384,10 @@ impl Object for Context {
         if let Some(value) = self.memo.lookup(key) {
             return Some(value);
         }
-        let (value, keep) = self.read(key, untrusted)?;
+        let Some((value, keep)) = self.read(key, untrusted) else {
+            MISSING.with(|m| *m.borrow_mut() = Some(key.to_string()));
+            return None;
+        };
         let value = super::env::known(value);
         if keep {
             self.memo.store(key, &value);

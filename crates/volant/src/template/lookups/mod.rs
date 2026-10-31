@@ -249,7 +249,10 @@ fn lookup(
             "env" | "ansible.builtin.env" => {
                 taint();
                 match (std::env::var(&term_text), &env_default) {
-                    (Ok(set), _) => Value::from(set),
+                    (Ok(set), _) => {
+                        super::missing::forget_handed();
+                        Value::from(set)
+                    }
                     (Err(_), None) => Value::from(""),
                     // Undefined, and saying why when something reads it: measured, `lookup('env',
                     // 'X', default=undef()) is defined` is false for an `X` that is not set.

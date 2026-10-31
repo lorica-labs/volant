@@ -108,6 +108,8 @@ impl Hostvars {
             ctx,
             tainted,
             reader: Arc::clone(&self.tainted),
+            written: entry.as_object().cloned().unwrap_or_default(),
+            walked: std::sync::atomic::AtomicBool::new(false),
         }
     }
 }
@@ -123,6 +125,10 @@ struct HostView {
     /// Whether a render in `ctx` read host text, which the reader's render then holds too.
     tainted: Tainted,
     reader: Tainted,
+    /// The host's variables as written, for one whose template does not render.
+    written: Map<String, Value>,
+    /// Whether the host is being read as a whole, every variable in turn.
+    walked: std::sync::atomic::AtomicBool,
 }
 
 impl Object for HostView {
@@ -131,10 +137,22 @@ impl Object for HostView {
         if self.tainted.load(Ordering::Relaxed) {
             self.reader.store(true, Ordering::Relaxed);
         }
+        // A variable whose template does not render, `rekey_on_member(defined_later)` read
+        // before `defined_later` is, does not take the whole host down with it when the host is
+        // read as a whole: it is its text there, and that text is data, never rendered again.
+        // Read on its own it stays undefined, so `default` still answers for it.
+        if self.walked.load(Ordering::Relaxed)
+            && found.as_ref().is_none_or(minijinja::Value::is_undefined)
+            && let Some(text) = key.as_str().and_then(|k| self.written.get(k))
+        {
+            self.reader.store(true, Ordering::Relaxed);
+            return Some(crate::template::bigint::to_template(text));
+        }
         found
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
+        self.walked.store(true, Ordering::Relaxed);
         self.ctx
             .as_object()
             .map_or(Enumerator::Empty, minijinja::value::DynObject::enumerate)

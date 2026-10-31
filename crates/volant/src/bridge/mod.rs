@@ -23,6 +23,7 @@ mod actions;
 pub use actions::ActionCall;
 mod connections;
 mod conversation;
+mod own;
 mod persistent;
 mod wire;
 
@@ -72,6 +73,8 @@ pub struct Bridge {
     needs: Mutex<HashMap<String, LookupNeeds>>,
     /// The persistent connection socket of each host, see `persistent`.
     sockets: Mutex<HashMap<String, String>>,
+    /// The filters and tests the plugin directories define, see `own`.
+    own: Mutex<own::Own>,
 }
 
 /// The variables a lookup plugin reads: the names it asks for, or all of them when it
@@ -109,6 +112,7 @@ impl Bridge {
             dirs,
             needs: Mutex::default(),
             sockets: Mutex::default(),
+            own: Mutex::default(),
         })
     }
 
@@ -155,6 +159,7 @@ impl Bridge {
             dirs: Arc::default(),
             needs: Mutex::default(),
             sockets: Mutex::default(),
+            own: Mutex::default(),
         })
     }
 

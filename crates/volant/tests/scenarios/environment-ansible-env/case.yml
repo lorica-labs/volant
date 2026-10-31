@@ -1,0 +1,2 @@
+# An `environment` value that reads an undefined `ansible_env` is left out, and the others are kept.
+args: [-i, inv.ini, play.yml]

@@ -125,8 +125,10 @@ pub(super) fn arrived(event: Event, stats: &mut Stats) -> Event {
         host,
         outcome: Outcome::Failed,
         counts: true,
+        result,
         ..
     } = &event
+        && !result.0.contains_key(crate::stats::RESCUED)
     {
         stats.fail(host);
     }

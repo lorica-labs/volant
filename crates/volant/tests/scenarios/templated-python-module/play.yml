@@ -1,0 +1,16 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - set_fact:
+        module_to_run: "{{ 'ping' if inventory_hostname == 'h1' else 'debug' }}"
+    - action:
+        module: "{{ module_to_run }}"
+      register: out
+    - debug:
+        msg: "{{ 'ping' in out }}"
+    - action: "{{ prefix }}stat path=/"
+      vars:
+        prefix: ""
+      register: st
+    - debug:
+        msg: "{{ st.stat.isdir }}"

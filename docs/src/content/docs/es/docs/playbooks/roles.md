@@ -1,5 +1,5 @@
 ---
-sourceHash: f3d5d68d17df
+sourceHash: 053a11b38c33
 title: Roles, includes e imports
 description: Dónde busca Volant los roles, cómo funcionan las dependencias, las especificaciones de argumentos y las variables de un rol, y cómo los imports y los includes traen otros archivos a un play.
 ---
@@ -103,7 +103,7 @@ Las demás palabras clave que ansible-core 2.19 acepta en la entrada, como `igno
 
 ### Includes dinámicos
 
-De lo que dice la propia sentencia, solo sus `vars:` viajan al archivo incluido. Esas variables entran en el nivel de los parámetros de rol del [orden de precedencia](/es/docs/variables/precedence/), por encima de los facts y por debajo de `--extra-vars`, y se acumulan a través de includes anidados. Los `tags` de la propia sentencia se quedan en la sentencia, y su `when` se evalúa solo para ella.
+De lo que dice la propia sentencia, solo sus `vars:` viajan al archivo incluido. Esas variables entran en el nivel de los parámetros de rol del [orden de precedencia](/es/docs/variables/precedence/), por encima de los facts y por debajo de `--extra-vars`, y se acumulan a través de includes anidados. Un valor que lee un nombre aún no definido baja tal como está escrito y se renderiza cuando una tarea de abajo lo lee, como en Ansible. Los `tags` de la propia sentencia se quedan en la sentencia, y su `when` se evalúa solo para ella.
 
 Lo que dicen las capas que rodean la sentencia sí llega a las tareas incluidas: el play, la entrada del rol que trajo el archivo y los bloques que lo envuelven. Sus `tags`, `become`, `become_user`, `no_log`, `when`, `environment`, `delegate_to`, `ignore_errors`, `notify` y `vars` se aplican a todas las tareas incluidas, y el valor propio de una tarea gana al heredado. Es la regla de ansible-core 2.19, que se salta un padre cargado dinámicamente y pregunta al abuelo. Un `check_mode: true` heredado se rechaza en el archivo incluido en lugar de descartarse.
 

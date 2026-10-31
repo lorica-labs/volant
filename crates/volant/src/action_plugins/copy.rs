@@ -120,7 +120,7 @@ fn source(ctx: &Context<'_>) -> Result<Option<CopyOf>, String> {
             if dest.is_some_and(|d| d.ends_with('/')) {
                 return Err("can not use content with a dir as dest".into());
             }
-            let bytes = content_text(content).into_bytes();
+            let bytes = super::escaped_bytes(&content_text(content));
             // The reference names the temporary file it writes the content to, `.1f6t2baj` in
             // the measurement. The name means nothing beyond itself: nothing is ever written
             // under it, since a directory destination is refused for a `content`.

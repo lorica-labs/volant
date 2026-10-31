@@ -1,5 +1,5 @@
 ---
-sourceHash: 9fc80a8d570e
+sourceHash: "387854768339"
 title: 委派、meta 任务与 environment
 description: 对一个批次只运行一次 task 或在另一台主机上运行，每个 meta 动作的作用，以及 environment 和 no_log 如何影响 task。
 ---
@@ -43,7 +43,7 @@ task 通过 delegate 自己的连接传送，使用 delegate 自己的连接设�
 
 `set_fact` 或 `debug` 这样的控制节点端模块，无论 `delegate_to` 怎么写，始终在控制节点上运行。此时 delegate 只决定结果行上显示的名字，以及在配合 `delegate_facts` 时由谁来写入 facts。
 
-`action:` 和 `local_action:` 接受一个字符串（`command echo hi`）、一个带 `module:` 的映射（Ansible 已弃用这种写法），或者一个单独的模块名，参数放在 `args:` 下。模块名可以是模板，例如 `action: "{{ module_to_run }} msg=hi"`：task 运行时会为每台主机渲染它，标题按原样显示模板。如果模板指向本次运行没有构建的 Python 模块，task 会失败，因为模块在第一次连接之前就已构建。`action:` 之后像 `module=command` 这样的词不指定任何模块。主机执行到它时 task 失败，退出码为 2，`rescue` 或 `ignore_errors` 会像在 Ansible 中一样接住这个失败。
+`action:` 和 `local_action:` 接受一个字符串（`command echo hi`）、一个带 `module:` 的映射（Ansible 已弃用这种写法），或者一个单独的模块名，参数放在 `args:` 下。模块名可以是模板，例如 `action: "{{ module_to_run }} msg=hi"`：task 运行时会为每台主机渲染它，标题按原样显示模板。模块在第一次连接之前就已构建，所以含有这种模板的运行会构建所有内置 Python 模块。如果模板指向某个 collection 或 `library/` 目录中的模块，而没有 task 直接写出该模块，task 会失败。`action:` 之后像 `module=command` 这样的词不指定任何模块。主机执行到它时 task 失败，退出码为 2，`rescue` 或 `ignore_errors` 会像在 Ansible 中一样接住这个失败。
 
 `delegate_to` 和 `delegate_facts` 可以写在块和 task 上，不能写在 play 上，Ansible 也只接受这样的写法。这两个关键字可以组合：带有 `delegate_to` 的 `run_once` task 只运行一次，在 delegate 上运行。
 
@@ -103,7 +103,7 @@ facts 和 `set_fact` 的值保持原样。见 [Inventory](/zh-cn/docs/hosts/inve
 
 各层按键逐个合并，每一层覆盖前一层：先是 play，然后是每个外层的块（由外向内），最后是 task。每一层都用当前循环 item 的变量渲染。
 
-值会变成 Python 的 `str()` 对它们的处理结果，所以 `42` 变成 `"42"`，`true` 变成 `"True"`，`null` 变成 `"None"`。`environment` 内部未定义的变量会让 task 失败。
+值会变成 Python 的 `str()` 对它们的处理结果，所以 `42` 变成 `"42"`，`true` 变成 `"True"`，`null` 变成 `"None"`。`environment` 内部未定义的变量会让 task 失败。但映射中的某个值如果未定义的名字是 `ansible_env`，就会被省略，与 Ansible 一致，因为 facts 可能还没有收集。
 
 `environment` 也可以是由映射组成的列表，按顺序合并。值为 `omit` 的条目或值会被省略。
 

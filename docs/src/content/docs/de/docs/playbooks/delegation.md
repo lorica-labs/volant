@@ -1,5 +1,5 @@
 ---
-sourceHash: 9fc80a8d570e
+sourceHash: "387854768339"
 title: Delegation, Meta-Tasks und Umgebungsvariablen
 description: Einen Task einmal pro Batch oder auf einem anderen Host ausführen, was jede meta-Action tut und wie environment und no_log einen Task prägen.
 ---
@@ -43,7 +43,7 @@ Der Task läuft über die eigene Verbindung des Delegierten, mit dessen Verbindu
 
 Ein Modul, das auf dem Controller läuft, etwa `set_fact` oder `debug`, läuft immer auf dem Controller, was `delegate_to` auch sagt. Der Delegierte bestimmt dann nur den Namen in der Ergebniszeile und, mit `delegate_facts`, wessen Facts geschrieben werden.
 
-`action:` und `local_action:` nehmen einen String (`command echo hi`), ein Mapping mit `module:`, das Ansible als veraltet kennzeichnet, oder einen bloßen Modulnamen mit den Argumenten unter `args:`. Das Modul darf ein Template sein, etwa `action: "{{ module_to_run }} msg=hi"`: Es wird für jeden Host gerendert, wenn der Task läuft, und das Banner zeigt es so, wie es geschrieben ist. Ein Template, das ein Python-Modul nennt, das dieser Lauf nicht gebaut hat, lässt den Task fehlschlagen, weil die Module vor der ersten Verbindung gebaut werden. Ein Wort wie `module=command` nach `action:` nennt kein Modul. Der Task schlägt fehl, wenn ein Host ihn erreicht, mit Exit 2, und ein `rescue` oder `ignore_errors` übernimmt den Fehler, wie in Ansible.
+`action:` und `local_action:` nehmen einen String (`command echo hi`), ein Mapping mit `module:`, das Ansible als veraltet kennzeichnet, oder einen bloßen Modulnamen mit den Argumenten unter `args:`. Das Modul darf ein Template sein, etwa `action: "{{ module_to_run }} msg=hi"`: Es wird für jeden Host gerendert, wenn der Task läuft, und das Banner zeigt es so, wie es geschrieben ist. Die Module werden vor der ersten Verbindung gebaut, deshalb baut ein Lauf mit einem solchen Template jedes eingebaute Python-Modul. Ein Template, das ein Modul einer Collection oder eines `library/`-Verzeichnisses nennt, das kein Task direkt nennt, lässt den Task fehlschlagen. Ein Wort wie `module=command` nach `action:` nennt kein Modul. Der Task schlägt fehl, wenn ein Host ihn erreicht, mit Exit 2, und ein `rescue` oder `ignore_errors` übernimmt den Fehler, wie in Ansible.
 
 `delegate_to` und `delegate_facts` können an einem Block und an einem Task stehen, nicht an einem Play, wo Ansible sie ebenfalls akzeptiert. Die beiden Keywords lassen sich kombinieren: Ein `run_once`-Task mit einem `delegate_to` läuft einmal, auf dem Delegierten.
 
@@ -103,7 +103,7 @@ Facts und `set_fact`-Werte bleiben, wie sie waren. Siehe [Inventories](/de/docs/
 
 Die Schichten werden Schlüssel für Schlüssel zusammengeführt, jede über der vorherigen: zuerst das Play, dann jeder umgebende Block von außen nach innen, dann der Task. Jede Schicht wird mit den Variablen des aktuellen Schleifenelements gerendert.
 
-Werte werden zu dem, was `str()` von Python aus ihnen macht: `42` wird zu `"42"`, `true` zu `"True"` und `null` zu `"None"`. Eine undefinierte Variable in `environment` lässt den Task fehlschlagen.
+Werte werden zu dem, was `str()` von Python aus ihnen macht: `42` wird zu `"42"`, `true` zu `"True"` und `null` zu `"None"`. Eine undefinierte Variable in `environment` lässt den Task fehlschlagen. Ein Wert eines Mappings, dessen undefinierter Name `ansible_env` ist, entfällt stattdessen, wie in Ansible, da die Facts vielleicht noch nicht gesammelt sind.
 
 `environment` darf auch eine Liste von Mappings sein, die der Reihe nach zusammengeführt werden. Ein Eintrag oder ein Wert, der `omit` ist, entfällt.
 

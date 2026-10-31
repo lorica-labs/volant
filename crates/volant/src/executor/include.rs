@@ -22,7 +22,10 @@ use super::prepare::{
 use super::run::{break_after, classify, empty_loop_result, loops, registered_value};
 
 mod request;
+mod shown;
 use request::include_request;
+pub(super) use shown::NO_FAILED_VARS;
+use shown::{Shown, item_error};
 
 /// One expansion a host asked for at an include step.
 pub(super) struct IncludeGroup {
@@ -317,55 +320,6 @@ fn registered_entry(item: &super::prepare::Item, role: bool, is_loop: bool) -> T
     TaskResult(entry)
 }
 
-/// One item of an include statement that has a line to show: a `when` left it out, or resolving
-/// what it named went wrong.
-pub(super) struct Shown {
-    element: Option<Value>,
-    label: Option<String>,
-    result: TaskResult,
-    /// Whether this is a failure rather than a skip. Carried here rather than read off the
-    /// result's own `failed` key, because the reference's `fatal:` line for an include is
-    /// `{"changed": false, "include": "nosuch.yml", "reason": "..."}` - measured, with no
-    /// `failed` in it - and a key put there to be classified by would be a key on the line.
-    failed: bool,
-    /// A file that could not be loaded: the reference prints its reason in an `[ERROR]` block,
-    /// and in a loop prints no line of its own for the item.
-    load_failed: bool,
-    /// The statement's `ignore_errors` as `prepare` rendered it for this item, when it is a
-    /// template; `None` reads the keyword as written.
-    ignored: Option<bool>,
-}
-
-/// The `[ERROR]` block of one item's line, when it has one.
-fn item_error(item: &Shown, task: &PlayTask, censored: bool) -> Option<crate::render::ErrorBlock> {
-    if item.load_failed {
-        return Some(load_error(&item.result));
-    }
-    (item.failed && item.result.0.contains_key(crate::render::CHAIN_KEY))
-        .then(|| crate::render::ErrorBlock::of(&item.result, task.origin.as_ref(), censored))
-}
-
-/// The key a failure carries when the rescue that takes it reads no `ansible_failed_result` and
-/// no `ansible_failed_task`.
-pub(super) const NO_FAILED_VARS: &str = "_volant_no_failed_vars";
-
-/// The `[ERROR]` block of a file an include could not load: its reason, and no place.
-fn load_error(result: &TaskResult) -> crate::render::ErrorBlock {
-    crate::render::ErrorBlock {
-        message: result
-            .0
-            .get("reason")
-            .and_then(Value::as_str)
-            .unwrap_or_default()
-            .to_string(),
-        origin: None,
-        unknown: None,
-        causes: Vec::new(),
-        lead: None,
-        on_stderr: true,
-    }
-}
-
 /// Sends the lines an include step shows and its `TaskDone`, and answers with the result a rescue
 /// would be given when it failed for good.
 ///
@@ -395,12 +349,7 @@ pub(super) async fn report_include(
     for item in shown {
         let ignored = item.ignored.unwrap_or_else(|| task.ignores_errors());
         unignored |= item.failed && !ignored;
-        let outcome = match (item.failed, ignored) {
-            (false, _) => Outcome::Skipped,
-            (true, true) => Outcome::Ignored,
-            (true, false) if rescuable => Outcome::Rescued,
-            (true, false) => Outcome::Failed,
-        };
+        let (outcome, result) = item.outcome(ignored, rescuable);
         if item.failed {
             if failure.is_none() {
                 failure = Some(item.result.clone());
@@ -413,12 +362,12 @@ pub(super) async fn report_include(
                 index,
                 label: item.label.clone(),
                 outcome,
-                result: item.result.clone(),
+                result,
                 dump: Dump::No,
                 // Measured on ansible-core 2.19.12: a file a loop item could not load prints its
                 // `[ERROR]` block and no line, and the host fails all the same.
                 show: !(item.load_failed && is_loop),
-                counts: !is_loop,
+                counts: !is_loop || item.load_failed,
                 censored,
                 delegate: None,
                 error: item_error(item, task, censored),
@@ -452,8 +401,7 @@ pub(super) async fn report_include(
                 }
             };
             // A file a loop item could not load fails the host from the strategy, not the task:
-            // measured on ansible-core 2.19.12, a rescue still runs, but the recap counts the
-            // failure, not a rescue, and the rescue reads no `ansible_failed_result`.
+            // its items counted it, and the rescue reads no `ansible_failed_result`.
             let unloaded = shown.iter().any(|s| s.load_failed);
             if any_failed {
                 aggregate.0.insert("failed".into(), json!(true));
@@ -479,7 +427,7 @@ pub(super) async fn report_include(
                     result: aggregate,
                     dump: Dump::No,
                     show: skipped,
-                    counts: true,
+                    counts: !unloaded,
                     censored,
                     delegate: None,
                     error: None,

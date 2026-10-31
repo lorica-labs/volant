@@ -42,7 +42,7 @@ The task travels over the delegate's own connection, with the delegate's connect
 
 A controller-side module such as `set_fact` or `debug` always runs on the controller, whatever `delegate_to` says. The delegate then only decides the name shown on the result line and, with `delegate_facts`, whose facts are written.
 
-`action:` and `local_action:` take a string (`command echo hi`), a mapping with `module:` that Ansible deprecates, or a bare module name with the arguments under `args:`. The module may be a template, such as `action: "{{ module_to_run }} msg=hi"`: it is rendered for each host when the task runs, and the banner shows it as written. A template that names a Python module this run did not build fails the task, since the modules are built before the first connection. A word such as `module=command` after `action:` names no module. The task fails when a host reaches it, with exit 2, and a `rescue` or `ignore_errors` takes the failure, as in Ansible.
+`action:` and `local_action:` take a string (`command echo hi`), a mapping with `module:` that Ansible deprecates, or a bare module name with the arguments under `args:`. The module may be a template, such as `action: "{{ module_to_run }} msg=hi"`: it is rendered for each host when the task runs, and the banner shows it as written. The modules are built before the first connection, so a run with such a template builds every builtin Python module. A template that names a module of a collection or of a `library/` directory, and no task names that module outright, fails the task. A word such as `module=command` after `action:` names no module. The task fails when a host reaches it, with exit 2, and a `rescue` or `ignore_errors` takes the failure, as in Ansible.
 
 `delegate_to` and `delegate_facts` can be written on a block and on a task, not on a play, which is where Ansible accepts them too. The two keywords combine: a `run_once` task with a `delegate_to` runs once, on the delegate.
 
@@ -102,7 +102,7 @@ Facts and `set_fact` values stay as they were. See [Inventories](/docs/hosts/inv
 
 Layers are merged key by key, each one over the previous: the play first, then each enclosing block from the outside in, then the task. Each layer is rendered with the variables of the current loop item.
 
-Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true` becomes `"True"` and `null` becomes `"None"`. An undefined variable inside `environment` fails the task.
+Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true` becomes `"True"` and `null` becomes `"None"`. An undefined variable inside `environment` fails the task. A mapping value whose undefined name is `ansible_env` is left out instead, as in Ansible, since the facts may not be gathered yet.
 
 `environment` may also be a list of mappings, merged in order. An entry or a value that is `omit` is left out.
 

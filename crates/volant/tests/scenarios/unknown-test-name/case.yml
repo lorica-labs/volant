@@ -1,0 +1,3 @@
+# A test or a filter nobody ships fails as a syntax error naming it, in a template and in a condition.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

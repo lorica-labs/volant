@@ -129,6 +129,7 @@ pub(crate) fn expand_include(
         imported: Vec::new(),
         static_vars: Map::new(),
         role_chain: Vec::new(),
+        outer_role: None,
         exports: Vec::new(),
         played: Vec::new(),
     };
@@ -140,6 +141,10 @@ pub(crate) fn expand_include(
         IncludeTarget::File(path) => {
             let tasks = crate::playbook::parse_tasks_file(path)?;
             builder.file_dir = path.parent().unwrap_or(Path::new(".")).to_path_buf();
+            builder.outer_role = parent
+                .role
+                .and_then(|i| base.roles.get(i))
+                .map(RoleVars::full_name);
             builder.items(&tasks, &inherited, None, parent.section, None)?;
         }
         IncludeTarget::Role(entry) => {
@@ -241,7 +246,12 @@ pub(crate) fn graft(
         for mut step in sub.steps {
             step.block = step.block.map(|b| b + block_offset).or(parent.block);
             step.role = step.role.map(|r| r + role_offset).or(parent.role);
-            step.include_params = Some(Arc::clone(&params));
+            // An `import_role` of the expansion named its parent role already, nearer than any
+            // the statement hands down.
+            step.include_params = Some(match &step.include_params {
+                Some(own) => Arc::new(own.under(&params)),
+                None => Arc::clone(&params),
+            });
             // A dependency the coordinator narrowed to the hosts that have not run it keeps that.
             step.hosts = Some(step.hosts.take().unwrap_or_else(|| Arc::clone(&hosts)));
             // The tasks a handler's include brought run as handlers of the same flush.

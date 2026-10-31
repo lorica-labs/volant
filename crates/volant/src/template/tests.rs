@@ -948,7 +948,7 @@ fn a_lookup_is_sent_the_variables_it_reads(
 #[case::unknown_test(
     empty_helper,
     "{{ 'a' is x.y }}",
-    Err("unknown test: test x.y is unknown (in <expression>:1)")
+    Err("Syntax error in template: No test named 'x.y'.")
 )]
 #[case::unknown_lookup(
     empty_helper,

@@ -225,6 +225,7 @@ pub(crate) fn compile_with(
         exporting: true,
         imported: Vec::new(),
         role_chain: Vec::new(),
+        outer_role: None,
         exports: Vec::new(),
         played: Vec::new(),
     };

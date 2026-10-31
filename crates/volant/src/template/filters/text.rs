@@ -101,7 +101,8 @@ pub(super) fn b64decode(
         text = text.replace('-', "+").replace('_', "/");
     }
     let bytes = b64_decode(&text).map_err(|e| invalid(format!("b64decode: {e}")))?;
-    crate::action_plugins::decode_text(&bytes, &encoding).map_err(|e| b64_failed("b64decode", &e))
+    crate::action_plugins::decode_escaping(&bytes, &encoding)
+        .map_err(|e| b64_failed("b64decode", &e))
 }
 
 pub(super) fn b64encode(

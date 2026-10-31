@@ -53,6 +53,7 @@ pub(super) fn keyword_bool(
     templar: &Templar,
 ) -> Result<Option<bool>, TemplateError> {
     match template {
+        Some(raw) if super::item::omitted(raw, vars, templar) => Ok(None),
         Some(raw) => boolean_keyword(key, raw, vars, templar)
             .map(Some)
             .map_err(task_failed),

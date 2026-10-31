@@ -25,7 +25,7 @@ use volant_protocol::TaskResult;
 
 mod encoding;
 use encoding::encode;
-pub(crate) use encoding::{decode_text, encode_text};
+pub(crate) use encoding::{decode_escaping, encode_text, escaped_bytes};
 
 /// The `Syntax` field one delimiter option sets.
 type Field = fn(&mut Syntax) -> &mut String;

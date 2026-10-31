@@ -24,6 +24,24 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let map = yaml
         .as_mapping()
         .ok_or_else(|| anyhow!("a play must be a mapping"))?;
+    // `user` is the deprecated spelling of `remote_user`, which the reference renames as it
+    // loads the play, and refuses beside the other, measured on ansible-core 2.19.12.
+    let has = |name: &str| map.iter().any(|(k, _)| k.as_str() == Some(name));
+    if has("user") {
+        if has("remote_user") {
+            bail!(
+                "both 'user' and 'remote_user' are set for this play. The use of 'user' is                  deprecated, and should be removed"
+            );
+        }
+        let renamed = map
+            .iter()
+            .map(|(k, v)| match k.as_str() {
+                Some("user") => (Yaml::Value(Scalar::String("remote_user".into())), v.clone()),
+                _ => (k.clone(), v.clone()),
+            })
+            .collect();
+        return parse_play(&Yaml::Mapping(renamed), dir);
+    }
     for (key, _) in map {
         let key = key.as_str().unwrap_or_default();
         // The reference's own words, measured: an attribute it does not have refuses the load
@@ -34,6 +52,10 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     }
     let host_list = matches!(field(yaml, "hosts"), Some(Yaml::Sequence(_)));
     let host_patterns = match field(yaml, "hosts") {
+        // Measured on ansible-core 2.19.12, for `hosts: []`.
+        Some(Yaml::Sequence(items)) if items.is_empty() => {
+            bail!("Hosts list cannot be empty. Please check your playbook")
+        }
         Some(Yaml::Value(Scalar::String(s))) => vec![s.to_string()],
         // Every entry, or none: `filter_map` here dropped a non-string entry and ran the play
         // against the rest, which is a host list quietly shorter than the one written. The
@@ -288,7 +310,11 @@ pub(super) fn collections(yaml: &Yaml, context: &str) -> anyhow::Result<Option<V
 /// parameters and runs before the role that depends on it.
 pub(crate) fn parse_role_entries(node: &Yaml) -> anyhow::Result<Vec<RoleEntry>> {
     let Yaml::Sequence(items) = node else {
-        bail!("'roles' must be a list of roles");
+        bail!(
+            "A malformed role declaration was encountered: ds ({}) should be a list but was a {}",
+            shown(node),
+            super::load::tagged_class(node)
+        );
     };
     items
         .iter()
@@ -305,6 +331,10 @@ pub(crate) fn parse_role_entries(node: &Yaml) -> anyhow::Result<Vec<RoleEntry>> 
 /// not - so `vars:` is read as the block keyword it is and only the leftovers are parameters.
 fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
     if let Some(name) = yaml.as_str() {
+        // The `src,version,name` requirement of an old `requirements.yml`, refused in a play.
+        if name.contains(',') {
+            bail!("Invalid old style role requirement: {name}");
+        }
         let mut entry = RoleEntry::named(name, RoleFrom::default());
         entry.keywords.origin = value_origin(yaml);
         return Ok(entry);

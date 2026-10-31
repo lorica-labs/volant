@@ -168,6 +168,41 @@ pub(crate) struct IncludeParams {
     pub untrusted: BTreeSet<String>,
 }
 
+impl IncludeParams {
+    /// What an `import_role` written in the role `name` at `dir` hands the steps of the role it
+    /// brings in: measured on ansible-core 2.19.12, an import heads `ansible_parent_role_names`
+    /// and `ansible_parent_role_paths` as an include does.
+    pub fn parent_role(name: &str, dir: &Path) -> Self {
+        let mut values = Map::new();
+        values.insert(PARENT_ROLE_KEYS[0].into(), Value::from(vec![name]));
+        values.insert(
+            PARENT_ROLE_KEYS[1].into(),
+            Value::from(vec![dir.display().to_string()]),
+        );
+        Self {
+            values,
+            untrusted: BTreeSet::new(),
+        }
+    }
+
+    /// These parameters inside `outer`'s: what `outer` hands down, with the parent roles these
+    /// name in front of the ones `outer` names, which are further out.
+    pub fn under(&self, outer: &Self) -> Self {
+        let mut out = outer.clone();
+        for key in PARENT_ROLE_KEYS {
+            let list = |p: &Self| p.values.get(key).and_then(Value::as_array).cloned();
+            let mut names = list(self).unwrap_or_default();
+            names.extend(list(outer).unwrap_or_default());
+            if !names.is_empty() {
+                out.values.insert(key.into(), Value::Array(names));
+            }
+        }
+        out
+    }
+}
+
+const PARENT_ROLE_KEYS: [&str; 2] = ["ansible_parent_role_names", "ansible_parent_role_paths"];
+
 #[derive(Debug, Clone)]
 pub(crate) struct Step {
     pub kind: StepKind,

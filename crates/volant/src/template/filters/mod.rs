@@ -241,7 +241,13 @@ pub fn register(
     add_filter(env, "items2dict", items2dict);
     add_filter(env, "to_json", to_json);
     add_filter(env, "to_nice_json", to_nice_json);
-    add_filter(env, "from_json", from_json);
+    add_filter(env, "from_json", |value: Value, kwargs: Kwargs| {
+        // `profile` picks how ansible-core decodes the data's tags, which this engine does not
+        // keep: measured, `from_json(profile="inventory_legacy")` parses as `from_json` does.
+        let _profile = kwargs.get::<Option<Value>>("profile")?;
+        kwargs.assert_all_used()?;
+        from_json(value)
+    });
     add_filter(env, "basename", basename);
     add_filter(env, "dirname", dirname);
     add_filter(env, "split", split);
@@ -352,8 +358,11 @@ fn invalid(msg: impl Into<String>) -> Error {
 /// `default(value, other='', boolean=False)`: `other` when `value` is undefined, or when
 /// `boolean` is set and `value` is false-y. The arguments are read as they were passed, so that
 /// `default(none)` gives `None` (measured on ansible-core 2.19.12) where `Option` would read
-/// "not given".
+/// "not given". Either may also be passed by its name, `default_value` and `boolean`, as Jinja's
+/// `do_default` takes them: measured, `false | default('passed', boolean=true)` is `passed`.
 fn default(value: Value, args: Rest<Value>, kwargs: Kwargs) -> Result<Value, Error> {
+    let named_other = kwargs.get::<Option<Value>>("default_value")?;
+    let named_boolean = kwargs.get::<Option<Value>>("boolean")?;
     kwargs.assert_all_used()?;
     let (other, boolean) = match args.as_slice() {
         [] => (Value::from(""), false),
@@ -366,6 +375,8 @@ fn default(value: Value, args: Rest<Value>, kwargs: Kwargs) -> Result<Value, Err
             ));
         }
     };
+    let other = named_other.unwrap_or(other);
+    let boolean = named_boolean.map_or(boolean, |b| b.is_true());
     Ok(
         if value.is_undefined() || (boolean && !truthy(&json(&value))) {
             other

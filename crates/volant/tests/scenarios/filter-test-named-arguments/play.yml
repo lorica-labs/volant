@@ -1,0 +1,18 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    text: '{"a": 1, "b": [true, null]}'
+  tasks:
+    - debug:
+        msg:
+          - "{{ false | default('passed', boolean=true) }}"
+          - "{{ false | default('unused', boolean=false) }}"
+          - "{{ nosuch | default(default_value='named') }}"
+          - "{{ '' | default('empty', true) }}"
+    - debug:
+        msg:
+          - "{{ '1.0' is version('1.0', '==', true) }}"
+          - "{{ '1.0' is version_compare('1.0', '==', true) }}"
+          - "{{ '1.0' is version('1.0', strict=False) }}"
+    - debug:
+        msg: "{{ text | from_json(profile='inventory_legacy') }}"

@@ -1,0 +1,2 @@
+# `default`, the `version` test and `from_json` take their arguments as ansible-core does: `default`'s by name, `version`'s `strict` third, and `from_json`'s `profile`.
+args: [-i, inv.ini, play.yml]

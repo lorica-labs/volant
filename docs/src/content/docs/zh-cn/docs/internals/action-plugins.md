@@ -1,5 +1,5 @@
 ---
-sourceHash: 93a0f9272733
+sourceHash: 5a320c445d7e
 title: Action plugin
 description: Volant 如何运行 ansible-core 通过控制节点上的 action plugin 运行的模块，用 Rust 或通过 Python 桥接。
 ---
@@ -176,7 +176,7 @@ plugin 读取链路的密钥和用户（主机变量、`--private-key`、`-u` �
 - 被跳过的桥接结果带有 `"failed": false`。
 - plugin 用 `display` 写出的警告会进入辅助进程的标准错误，而不是 task 的输出；ansible-core 对未知 collection 名称的 `Error loading plugin` 警告也是如此。
 - `runtime.yml` 路由到名称不同的 action plugin 的模块，会以 task 自己的名称运行。
-- 在 `serial` 的 play 内加入一台主机时，`ansible_play_hosts_all` 不会增长，被委派的 `add_host` 或 `group_by` 作用于 task 自己的主机。
+- 被委派的 `add_host` 或 `group_by` 作用于 task 自己的主机。
 
 ## 受管主机指定的源文件
 

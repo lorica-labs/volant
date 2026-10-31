@@ -175,7 +175,7 @@ The plugin reads the link's key and user (the host variable, `--private-key`, `-
 - A skipped bridged result carries `"failed": false`.
 - The warnings a plugin writes with `display` go to the helper's standard error, not to the task's output; so does ansible-core's `Error loading plugin` warning for an unknown collection name.
 - A module that `runtime.yml` routes to a differently named action plugin runs under the task's own name.
-- `ansible_play_hosts_all` does not grow for a host added inside a `serial` play, and a delegated `add_host` or `group_by` applies to the task's own host.
+- A delegated `add_host` or `group_by` applies to the task's own host.
 
 ## A source file a managed host named
 

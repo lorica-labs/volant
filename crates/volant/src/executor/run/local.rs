@@ -254,6 +254,22 @@ fn invalid_variable_name(name: &Value) -> Option<String> {
     Some(format!("Invalid variable name{shown}{of}."))
 }
 
+/// The warning ansible-core 2.19.12 shows before a `debug: var` result whose expression failed,
+/// at where the expression was written. Its display drops a text it has shown already, so a loop
+/// warns once for the same place.
+fn warn_template_error(message: &str, origin: Option<&crate::playbook::Origin>) {
+    static SAID: std::sync::LazyLock<Mutex<std::collections::HashSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+    let place = origin
+        .map(|origin| format!("{}\n\n", crate::render::source_context(origin)))
+        .unwrap_or_default();
+    let text = format!("[WARNING]: Encountered 1 template error.\nerror 1 - {message}\n{place}");
+    if SAID.lock().expect("said lock").insert(text.clone()) {
+        crate::render::log::record(&text);
+        eprint!("{text}");
+    }
+}
+
 /// Every controller-side module but `pause`, none of which waits.
 #[expect(clippy::too_many_lines)]
 fn local_result(
@@ -414,10 +430,17 @@ fn local_result(
                         );
                         return failed;
                     }
-                    Err(e) => r.insert(
-                        var.to_string(),
-                        Value::String(format!("VARIABLE IS NOT DEFINED!: {e}")),
-                    ),
+                    Err(e) => {
+                        // `var=a` written free-form is placed at the free-form text.
+                        let at = ["var", "args._raw_params", "action.value"]
+                            .iter()
+                            .find_map(|key| task.value_origins.get(*key));
+                        warn_template_error(&e.0, at);
+                        r.insert(
+                            var.to_string(),
+                            Value::String(format!("<< error 1 - {} >>", e.0)),
+                        )
+                    }
                 };
             } else {
                 r.insert(

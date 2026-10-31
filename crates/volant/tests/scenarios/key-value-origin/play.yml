@@ -1,0 +1,10 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: msg="{{ nope }}"
+      ignore_errors: true
+    - debug: msg="a {{ nope | int + 1 }}" verbosity=0
+      ignore_errors: true
+    - debug: var=nope2
+    - debug: var="{{ nope3 }}"
+      ignore_errors: true

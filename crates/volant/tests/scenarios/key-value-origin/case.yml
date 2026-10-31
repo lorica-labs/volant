@@ -1,0 +1,4 @@
+# A failing template in a key=value argument line is placed where the line starts, on the cause
+# about the argument, for msg= and var=.
+args: [-i, inv, play.yml]
+stderr: true

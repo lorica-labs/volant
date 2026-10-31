@@ -428,11 +428,7 @@ fn local_result(
                         return failed;
                     }
                     Err(e) => {
-                        // `var=a` written free-form is placed at the free-form text.
-                        let at = ["var", "args._raw_params", "action.value"]
-                            .iter()
-                            .find_map(|key| task.value_origins.get(*key));
-                        warn_template_error(&e.0, at);
+                        warn_template_error(&e.0, task.value_origins.get("var"));
                         r.insert(
                             var.to_string(),
                             Value::String(format!("<< error 1 - {} >>", e.0)),

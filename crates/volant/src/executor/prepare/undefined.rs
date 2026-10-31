@@ -50,7 +50,13 @@ fn when_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let sentence = message.strip_prefix("Task failed: ").unwrap_or(message);
     // A lookup's sentence without `Task failed: ` is a `with_` loop's, shown with no task around it.
     let lookup = message.starts_with("Task failed: The lookup plugin '");
-    if sentence.starts_with(CONDITIONAL) || lookup || sentence == crate::template::UNTRUSTED {
+    // A syntax error in the condition is its own sentence at the condition, as Jinja words it.
+    let syntax = sentence.starts_with("Syntax error in ");
+    if sentence.starts_with(CONDITIONAL)
+        || lookup
+        || syntax
+        || sentence == crate::template::UNTRUSTED
+    {
         let help =
             (sentence == crate::template::UNTRUSTED).then_some(crate::template::UNTRUSTED_HELP);
         return Some(serde_json::json!([crate::render::cause(

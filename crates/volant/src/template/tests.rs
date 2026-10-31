@@ -1516,7 +1516,7 @@ fn an_expression_closing_its_own_block_is_a_syntax_error() {
     for expr in ["}}) else False", "}} x"] {
         let err = t.evaluate(expr, &Map::new()).unwrap_err();
         assert!(
-            err.0.contains("unexpected end of variable block"),
+            err.0 == "Syntax error in expression: unexpected 'end of print statement'",
             "{expr:?}: {}",
             err.0
         );

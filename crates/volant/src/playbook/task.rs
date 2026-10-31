@@ -431,6 +431,18 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     {
         entry_origins(node, "args", &mut value_origins);
     }
+    // A `key=value` line places each of its arguments at the line's value, as the reference
+    // points an argument's failure there; an `args:` mapping keeps its own places.
+    if let Some(at) = value_origins.get("args._raw_params").cloned() {
+        for key in args.keys().filter(|k| *k != "_raw_params") {
+            value_origins
+                .entry(format!("args.{key}"))
+                .or_insert_with(|| at.clone());
+        }
+        if args.contains_key("var") {
+            value_origins.entry("var".to_string()).or_insert(at);
+        }
+    }
     let mut task = PlayTask {
         named: name.is_some(),
         implicit: false,

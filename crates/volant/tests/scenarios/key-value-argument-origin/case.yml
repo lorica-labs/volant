@@ -1,0 +1,3 @@
+# A template that fails in a `key=value` argument line: the cause about the argument points at
+# the start of the line, for `msg=`, for `var=` and for a module argument.
+args: [play.yml]

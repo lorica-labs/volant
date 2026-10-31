@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    bad: "{{ 1 / 0 }}"
+  tasks:
+    - debug: msg="{{ nope }}"
+      ignore_errors: true
+    - debug: var=bad
+      ignore_errors: true
+    - copy: content="{{ nope }}" dest=/nonexistent/key-value-origin
+      ignore_errors: true

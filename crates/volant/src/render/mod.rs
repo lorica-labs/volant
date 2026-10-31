@@ -69,6 +69,10 @@ pub struct Renderer {
     /// The action of the one task `volant adhoc` runs, when the output is the `minimal`
     /// callback's rather than the default one's.
     minimal: Option<String>,
+    /// What the `minimal` callback prints for an ad hoc `include_tasks` or `include_role` in
+    /// place of `included:`: the statement's own result, once per host, and the hosts shown it.
+    minimal_include: Option<serde_json::Map<String, serde_json::Value>>,
+    include_shown: std::collections::HashSet<String>,
     /// `result_format = yaml`: a result is dumped as YAML rather than JSON.
     yaml: bool,
     /// `pretty_results`, `None` when it is not set.
@@ -143,6 +147,8 @@ impl Renderer {
             diffs: None,
             path_on_failure: false,
             minimal: None,
+            minimal_include: None,
+            include_shown: std::collections::HashSet::new(),
             yaml: false,
             pretty: None,
             json: None,
@@ -181,6 +187,8 @@ impl Renderer {
             diffs: None,
             path_on_failure: false,
             minimal: None,
+            minimal_include: None,
+            include_shown: std::collections::HashSet::new(),
             yaml: false,
             pretty: None,
             json: None,
@@ -201,6 +209,11 @@ impl Renderer {
     /// the module of the run's one task, which picks the command form or the JSON form of a line.
     pub fn set_minimal(&mut self, action: &str) {
         self.minimal = Some(action.to_string());
+    }
+
+    /// The result an ad hoc include shows under the `minimal` callback, see `included`.
+    pub fn set_minimal_include(&mut self, result: serde_json::Map<String, serde_json::Value>) {
+        self.minimal_include = Some(result);
     }
 
     /// Prints the results as the `oneline` callback does, and the `tree` callback's files into
@@ -359,11 +372,28 @@ impl Renderer {
     /// painted like an `ok:` line, which is what the reference's own callback does with it.
     pub fn included(&mut self, what: &str, hosts: &[String], label: Option<&str>) {
         if self.minimal.is_some() {
+            for host in hosts {
+                self.show_include(host);
+            }
             return;
         }
         let item = label.map(|l| format!(" => (item={l})")).unwrap_or_default();
         let line = format!("included: {what} for {}{item}", hosts.join(", "));
         let _ = writeln!(self.out, "{}", self.paint(OK, &line));
+    }
+
+    /// The ad hoc include's own result, before the first line of `host`. Measured on ansible-core
+    /// 2.19.12: `ansible h1 -m include_role -a name=r` prints `h1 | SUCCESS => {"changed": false,
+    /// "include_args": {"name": "r"}}` first, and still does in front of the `FAILED!` of a role
+    /// nobody has.
+    pub(super) fn show_include(&mut self, host: &str) {
+        let Some(result) = self.minimal_include.clone() else {
+            return;
+        };
+        if self.include_shown.insert(host.to_string()) {
+            let line = format!("{host} | SUCCESS => {}", self.minimal_dump(result));
+            let _ = writeln!(self.out, "{}", self.paint(OK, &line));
+        }
     }
 
     /// What the reference prints, once from the task and once from the play, when a batch fails

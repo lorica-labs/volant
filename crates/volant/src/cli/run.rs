@@ -42,6 +42,9 @@ pub(super) fn drive(args: &PlaybookArgs, plays: &Plays<'_>) -> i32 {
     args.lend_shown(&mut out);
     if let Plays::Adhoc(adhoc) = plays {
         out.set_minimal(adhoc.module());
+        if let Some(result) = adhoc.include_result() {
+            out.set_minimal_include(result);
+        }
         adhoc.show(&mut out);
     }
     crate::transport::trace::configure(args.verbose, choice);

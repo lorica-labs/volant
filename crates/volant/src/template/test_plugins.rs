@@ -43,8 +43,12 @@ pub fn register(env: &mut Environment<'static>) {
         add_test(
             env,
             name,
-            move |value: Value, version: Value, operator: Option<String>, kwargs: Kwargs| {
-                version_test(name, &value, &version, operator, &kwargs)
+            move |value: Value,
+                  version: Value,
+                  operator: Option<String>,
+                  strict: Option<Value>,
+                  kwargs: Kwargs| {
+                version_test(name, &value, &version, (operator, strict), &kwargs)
             },
         );
     }
@@ -176,7 +180,7 @@ fn version_test(
     name: &str,
     value: &Value,
     version: &Value,
-    operator: Option<String>,
+    (operator, positional_strict): (Option<String>, Option<Value>),
     kwargs: &Kwargs,
 ) -> Result<bool, Error> {
     if version.is_undefined() {
@@ -188,8 +192,11 @@ fn version_test(
             .get::<Option<String>>("operator")?
             .unwrap_or_else(|| "eq".into()),
     };
+    // `strict` may come third, as `version('1.0', '==', true)` passes it: measured on
+    // ansible-core 2.19.12, under both names.
     let strict = kwargs
         .get::<Option<Value>>("strict")?
+        .or(positional_strict)
         .filter(|v| !v.is_none());
     let version_type = kwargs
         .get::<Option<Value>>("version_type")?

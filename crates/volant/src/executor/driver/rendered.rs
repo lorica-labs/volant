@@ -86,6 +86,12 @@ pub(super) async fn render_keywords(
     }
     if let Some(copy) = resolution.step {
         rendered.insert(index, *copy);
+    } else if items.is_empty()
+        // Every item failed before its keywords could be read: their `no_log` still applies,
+        // measured on ansible-core 2.19.12 for a loop whose arguments do not render.
+        && let Some(copy) = hide_after_failure(step, host, plan, live, templar, store)
+    {
+        rendered.insert(index, *copy);
     }
     match resolution.error {
         Some(err) => Err(err),

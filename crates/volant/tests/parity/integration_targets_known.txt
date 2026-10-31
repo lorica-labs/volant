@@ -42,9 +42,7 @@ lookup_varnames                #1284
 lookup_vars                    #1284
 loop-connection                #1290
 loops                          #1289
-meta_tasks                     #1287
 module_defaults                #1289
-no_log                         #1287
 order                          #1289
 preflight_encoding             #1283
 protomatter                    #1282

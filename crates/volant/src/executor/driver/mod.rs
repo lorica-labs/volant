@@ -39,7 +39,7 @@ use super::run::{
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
-use messages::dump_of;
+use messages::{dump_of, meta_done};
 use notified::{announce_notified, saved_lines, sits_out};
 
 mod boundaries;
@@ -1003,6 +1003,7 @@ pub(super) async fn drive_host(
                     if !held {
                         driver.meta_skipped(pos, action, role, task.censors()).await;
                     } else {
+                        driver.meta_said(pos, &meta_done(action, &name, role)).await;
                         match action {
                             "end_host" => {
                                 driver.meta(pos, MetaEffect::EndHost).await;

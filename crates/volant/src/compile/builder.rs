@@ -143,7 +143,8 @@ pub(super) struct Builder<'a> {
 impl Builder<'_> {
     /// The one place a step is added, so the tag selection cannot be honoured on one path and
     /// forgotten on another.
-    pub(super) fn push(&mut self, step: Step) {
+    pub(super) fn push(&mut self, mut step: Step) {
+        step.task.tags = self.rendered_tags(&step.task.tags);
         if self.selection.selects(&step.task.tags) {
             self.steps.push(step);
         }

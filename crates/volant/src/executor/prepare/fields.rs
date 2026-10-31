@@ -12,7 +12,8 @@ use crate::template::{Templar, TemplateError};
 use crate::vars::HostVars;
 
 use super::escalation::remove_omit;
-use super::item::{FINALIZING, check_gather_subset, environment_for, flag_for, ignore_errors_for};
+use super::item::{FINALIZING, check_gather_subset, environment_for};
+use super::keyword::{flag_for, ignore_errors_for};
 use super::plan::PlayPlan;
 
 /// What one item renders before it runs.

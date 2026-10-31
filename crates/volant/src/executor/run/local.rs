@@ -308,6 +308,8 @@ fn local_result(
                 .into_iter()
                 .zip(written_keys(item))
                 .map(|((name, value, _), key)| {
+                    let at = task.value_origins.get(&format!("args.{key}:key"));
+                    crate::vars::reserved::warn_if_reserved(&name, at);
                     let value =
                         vaulted_fact(task, item, &key).map_or_else(|| value.clone(), Value::String);
                     (name, value)

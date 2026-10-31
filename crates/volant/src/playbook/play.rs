@@ -86,6 +86,7 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
         boolean_or_template(yaml, "gather_facts", &mut deferred.gather_facts).map_err(refused)?;
     let gather_facts = gather_written.unwrap_or(true);
     let gather_written = gather_written.is_some() || deferred.gather_facts.is_some();
+    super::origin::warn_reserved_keys(field(yaml, "vars"));
     let vars = match field(yaml, "vars") {
         None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
         Some(v) => match to_json(v).context("'vars'")? {

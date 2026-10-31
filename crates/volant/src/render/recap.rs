@@ -3,10 +3,8 @@
 
 use std::io::Write;
 
-use anstyle::Style;
-
 use super::recap_json::dumps_indented;
-use super::{CHANGED, FAILED, HOST_COLUMN, OK, Renderer, SKIPPED, UNREACHABLE};
+use super::{CHANGED, FAILED, HOST_COLUMN, OK, Renderer, SKIPPED, Style, UNREACHABLE, WARNING};
 use crate::stats::{CustomStats, Stats};
 
 impl Renderer {
@@ -80,7 +78,7 @@ impl Renderer {
                 field("failed", h.failed, FAILED),
                 field("skipped", h.skipped, SKIPPED),
                 field("rescued", h.rescued, OK),
-                field("ignored", h.ignored, SKIPPED),
+                field("ignored", h.ignored, WARNING),
             );
         }
         let _ = writeln!(self.out);

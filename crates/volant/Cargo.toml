@@ -25,7 +25,6 @@ aes.workspace = true
 # The controller's allocator: see `ALLOCATOR` in lib.rs.
 mimalloc.workspace = true
 anstream.workspace = true
-anstyle.workspace = true
 anyhow.workspace = true
 blake3.workspace = true
 clap.workspace = true

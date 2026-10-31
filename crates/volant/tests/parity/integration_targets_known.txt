@@ -39,7 +39,6 @@ inventory_script               #1282
 lookup_env                     #1282
 lookup_first_found             #1289
 lookup_varnames                #1284
-lookup_vars                    #1284
 loop-connection                #1290
 loops                          #1289
 meta_tasks                     #1287

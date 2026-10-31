@@ -12,6 +12,8 @@ mod callbacks;
 mod color;
 mod defaults;
 mod docker;
+mod filters;
+pub(crate) use filters::rejected;
 mod locate;
 pub(crate) use locate::locate;
 mod paramiko;

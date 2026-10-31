@@ -19,6 +19,21 @@ pub(super) fn unresolved_tail(module: &str) -> String {
     )
 }
 
+/// A module the `plugin_filters_cfg` file rejects, refused at its task as a name nothing
+/// answers to.
+pub(super) fn rejected(task: &PlayTask) -> anyhow::Error {
+    Refusal::unresolved(
+        CODE,
+        unresolved(&task.name, &task.module),
+        Unresolved {
+            task: task.name.clone(),
+            module: task.module.clone(),
+            collection: None,
+            origin: task.origin.clone(),
+        },
+    )
+}
+
 /// The warning the reference gives a name whose collection nobody installed, under the full name
 /// the loader looked for.
 pub(crate) fn load_warning(module: &str, collection: &str) -> String {
@@ -127,6 +142,10 @@ impl Unresolved {
         if let Some(origin) = &self.origin {
             error.push('\n');
             error.push_str(&crate::render::source_context(origin));
+            // The reference ends the excerpt with a blank line.
+            if self.collection.is_none() {
+                error.push('\n');
+            }
         }
         if let Some(collection) = &self.collection {
             error = format!(
@@ -147,7 +166,7 @@ pub(crate) fn locate_unresolved<'a>(
         Ok(refusal) => refusal,
         Err(err) => return err,
     };
-    if let Some(u) = &mut refusal.unresolved {
+    if let Some(u) = refusal.unresolved.as_mut().filter(|u| u.origin.is_none()) {
         u.origin = plays
             .flat_map(set_aside)
             .find(|t| t.module == u.module && t.name == u.task)

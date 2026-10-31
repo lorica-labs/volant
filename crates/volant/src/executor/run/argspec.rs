@@ -224,11 +224,20 @@ fn converts(value: &Value, wanted: &str) -> Result<(), String> {
                 display(value)
             )),
         },
+        // Measured on ansible-core 2.19.12: `boolean()` refuses a string or a number in its own
+        // words, and lists its booleans in the order of a Python set, which changes from one
+        // run to the next.
         "bool" => match value {
             Value::Bool(_) => Ok(()),
             Value::String(s) if crate::yaml::bool_from_str(s.trim()).is_some() => Ok(()),
-            Value::Number(n) if n.as_i64() == Some(0) || n.as_i64() == Some(1) => Ok(()),
-            _ => Err(format!(
+            Value::Number(n) if n.as_f64().is_some_and(|f| f == 0.0 || f == 1.0) => Ok(()),
+            Value::String(_) | Value::Number(_) => Err(format!(
+                "The value '{}' is not a valid boolean. Valid booleans include: 0, 1, '0', 't', 'true', 'n', 'off', 'false', 'f', '1', 'no', 'yes', 'y', 'on'",
+                display(value)
+            )),
+            Value::Array(_) => Err("<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'> cannot be converted to a bool".into()),
+            Value::Object(_) => Err("<class 'ansible.module_utils._internal._datatag._AnsibleTaggedDict'> cannot be converted to a bool".into()),
+            Value::Null => Err(format!(
                 "\"'{}'\" cannot be converted to a {wanted}",
                 display(value)
             )),

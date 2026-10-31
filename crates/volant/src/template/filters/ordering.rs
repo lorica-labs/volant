@@ -6,7 +6,7 @@
 use std::cmp::Ordering;
 use std::collections::BTreeSet;
 
-use minijinja::value::{Kwargs, Rest};
+use minijinja::value::{Kwargs, Rest, ValueKind};
 use minijinja::{Error, ErrorKind, Value};
 
 use super::regex::bind;
@@ -93,7 +93,12 @@ fn extreme(
 
 /// `unique(value, case_sensitive=False, attribute=None)`: each item whose key no earlier item
 /// had, the keys told apart as Python's set does.
+///
+/// ansible-core runs Jinja2's filter first and falls back to its own, which compares items with
+/// `==`, when that one fails. It cannot fall back when `case_sensitive=False` or `attribute` is
+/// given, so a key Python cannot hash, a list or a mapping, fails the filter then.
 pub(super) fn unique(value: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result<Value, Error> {
+    const NO_FALLBACK: &str = "Jinja2's unique filter failed and we cannot fall back to Ansible's version as it does not support the parameters supplied";
     let a = bind(
         "unique",
         &["case_sensitive", "attribute"],
@@ -102,21 +107,45 @@ pub(super) fn unique(value: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result<
         true,
     )?;
     let case_sensitive = flag(a[0].as_ref());
+    let strict = a[1].is_some()
+        || a[0]
+            .as_ref()
+            .is_some_and(|v| v.kind() == ValueKind::Bool && !v.is_true());
+    // minijinja iterates `none` as an empty list; Python does not iterate it at all.
+    let not_iterable = || {
+        Error::new(
+            ErrorKind::InvalidOperation,
+            format!("'{}' object is not iterable", type_of(&value)),
+        )
+    };
+    if value.is_none() {
+        return Err(not_iterable());
+    }
+    let items = value.try_iter().map_err(|_| not_iterable())?;
     let mut seen = BTreeSet::new();
     let mut out = Vec::new();
-    for item in value.try_iter()? {
+    for item in items {
         // Measured on ansible-core 2.19.12: an item without the attribute fails the filter.
         let key = match &a[1] {
             Some(attr) => walk(&item, attr).map_err(|said| {
                 Error::new(
                     ErrorKind::InvalidOperation,
-                    format!(
-                        "Jinja2's unique filter failed and we cannot fall back to Ansible's                          version as it does not support the parameters supplied: {said}"
-                    ),
+                    format!("{NO_FALLBACK}: {said}"),
                 )
             })?,
             None => item.clone(),
         };
+        let lazy = match type_of(&key) {
+            "list" => Some("_AnsibleLazyTemplateList"),
+            "dict" => Some("_AnsibleLazyTemplateDict"),
+            _ => None,
+        };
+        if let (true, Some(lazy)) = (strict, lazy) {
+            return Err(Error::new(
+                ErrorKind::InvalidOperation,
+                format!("{NO_FALLBACK}: unhashable type: '{lazy}'"),
+            ));
+        }
         let fresh = unique_key(&folded(key, case_sensitive)).is_none_or(|key| seen.insert(key));
         if fresh {
             out.push(item);

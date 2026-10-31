@@ -1,5 +1,5 @@
 ---
-sourceHash: 28eef99c44bb
+sourceHash: 94ef043b1d7c
 title: Configuración
 description: Los ajustes de ansible.cfg y las variables de entorno que lee Volant, sección por sección, con sus valores por defecto.
 ---
@@ -88,6 +88,10 @@ Un archivo que existe pero no se puede leer se omite, y la ejecución continúa 
 
 <Option name="localhost_warning" id="defaults-localhost-warning" default="true" env="ANSIBLE_LOCALHOST_WARNING">
   Avisa cuando el inventario no contiene ningún host y solo queda el `localhost` implícito. `all` no incluye ese host.
+</Option>
+
+<Option name="plugin_filters_cfg" id="defaults-plugin-filters-cfg" default="unset">
+  Un archivo YAML cuyo `module_rejectlist` nombra los módulos que no se pueden usar, relativo al archivo de configuración. Una tarea que nombra uno detiene el playbook antes de empezar, en esa tarea, con `couldn't resolve module/action`, como un módulo mal escrito. Solo se rechaza el nombre tal como lo escribe la lista: `copy` en la lista deja usable `ansible.builtin.copy`. ansible-core 2.19.12 no lee ninguna variable de entorno para esta opción.
 </Option>
 
 <Option name="private_role_vars" id="defaults-private-role-vars" default="unset" env="ANSIBLE_PRIVATE_ROLE_VARS">

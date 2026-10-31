@@ -700,6 +700,34 @@ fn the_argument_check_speaks_the_reference_s_sentences() {
         json!({"zeta": "z", "alpha_req": "a", "ansible_forks": 5}),
     );
     assert!(!noise.failed(), "{:?}", noise.0);
+
+    // Measured: a number other than 0 and 1 is refused in `boolean()`'s words, a list in
+    // `check_type_bool`'s, and `1.0` passes.
+    for (flag, said) in [
+        (
+            json!(7),
+            "is of type int and we were unable to convert to bool: The value '7' is not a valid boolean. Valid booleans include: ",
+        ),
+        (
+            json!([1]),
+            "is of type list and we were unable to convert to bool: <class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'> cannot be converted to a bool",
+        ),
+    ] {
+        let refused = check(
+            json!({"zeta": "z", "alpha_req": "a", "flag": flag}),
+            json!({}),
+        );
+        let error = refused.0["argument_errors"][0].as_str().unwrap_or_default();
+        assert!(
+            error.starts_with(&format!("argument 'flag' {said}")),
+            "{error}"
+        );
+    }
+    let one = check(
+        json!({"zeta": "z", "alpha_req": "a", "flag": 1.0}),
+        json!({}),
+    );
+    assert!(!one.failed(), "{:?}", one.0);
 }
 
 /// `ansible_failed_task` carries the keys the reference carries, and the ones this engine

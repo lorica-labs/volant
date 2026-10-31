@@ -227,7 +227,12 @@ def find_module(name):
     plain = module_loader.find_plugin_with_context(name, mod_type="")
     if plain.resolved and not os.path.splitext(plain.plugin_resolved_path)[1]:
         return plain
-    return module_loader.find_plugin_with_context(name, mod_type=".py")
+    found = module_loader.find_plugin_with_context(name, mod_type=".py")
+    # A short name `plugin_filters_cfg` rejects is still the module an action plugin runs: the
+    # reference's actions ask for `ansible.legacy.<name>`, which the filter does not hold.
+    if not found.resolved and "." not in name:
+        found = module_loader.find_plugin_with_context("ansible.legacy." + name, mod_type=".py")
+    return found
 
 
 def build(name):

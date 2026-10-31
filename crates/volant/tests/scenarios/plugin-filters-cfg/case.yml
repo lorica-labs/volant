@@ -1,0 +1,4 @@
+# A module the plugin_filters_cfg file rejects cannot be resolved, and the playbook stops while
+# it is parsed, at the task.
+args: [-i, inv, play.yml]
+stderr: true

@@ -1,0 +1,15 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    d: [{a: 1}, {a: 1}]
+  tasks:
+    - debug: {msg: "{{ d | unique }}"}
+    - debug: {msg: "{{ d | unique(case_sensitive=False) }}"}
+      ignore_errors: true
+    - debug: {msg: "{{ [[1]] | unique(attribute=0) }}"}
+      ignore_errors: true
+    - debug: {msg: "{{ d | unique(attribute='a') }}"}
+    - debug: {msg: "{{ true | unique }}"}
+      ignore_errors: true
+    - debug: {msg: "{{ none | unique }}"}
+      ignore_errors: true

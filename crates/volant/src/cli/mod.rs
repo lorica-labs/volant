@@ -13,6 +13,8 @@ mod console;
 mod galaxy;
 mod hosts;
 mod inventory;
+#[cfg(unix)]
+mod locale;
 mod passwords;
 mod plays;
 mod program;
@@ -37,6 +39,8 @@ pub use compat::{CompatCommand, compat};
 pub use console::{ConsoleArgs, console};
 pub use galaxy::{GalaxyArgs, galaxy};
 pub use inventory::{InventoryArgs, inventory};
+#[cfg(unix)]
+pub use locale::check_locale;
 pub(crate) use plays::replay;
 pub use plays::run;
 pub use program::{TOOLS, subcommand_for};

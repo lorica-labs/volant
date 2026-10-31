@@ -1,5 +1,5 @@
 ---
-sourceHash: 8dc270cc846e
+sourceHash: b638cbf2bfa7
 title: Les noms des commandes ansible
 description: Quelle commande de Volant remplace chaque programme d'ansible-core, ce qui est identique, ce qui diffère, et comment garder vos lignes de commande.
 ---
@@ -31,7 +31,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 volant shims install
 ```
 
-Chaque nom est un lien symbolique vers `volant`. Volant lit le nom de fichier sous lequel il a été lancé, si bien que le lien `ansible-vault` lance `volant vault`. Les deux commandes prennent les mêmes arguments et donnent la même sortie et les mêmes codes de sortie. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé, `ansible-vault: error: ...`.
+Chaque nom est un lien symbolique vers `volant`. Volant lit le nom de fichier sous lequel il a été lancé, si bien que le lien `ansible-vault` lance `volant vault`. Les deux commandes prennent les mêmes arguments et donnent la même sortie et les mêmes codes de sortie. Une erreur d'usage sort avec 2 et nomme le programme tel qu'il a été lancé, `ansible-vault: error: ...`. Comme ansible-core, un lien vérifie la locale avant de lire ses arguments. Une locale qu'il ne peut pas appliquer, ou qui n'est pas en UTF-8, sort avec 1 et `ERROR: Ansible could not initialize the preferred locale` ou `ERROR: Ansible requires the locale encoding to be UTF-8`. `LC_ALL=C` est refusé ; sans aucune variable de locale, la locale C compte comme C.UTF-8. `volant` lui-même ne vérifie rien.
 
 `install` ne remplace pas un fichier ou un lien qu'il n'a pas créé, sauf avec `--force`. Quand un autre programme de ce nom se trouve dans votre `PATH`, il le dit : `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH` quand le lien l'emporte, ou `note: ... still runs first, DIR comes later in PATH` sinon. Pour supprimer les liens :
 

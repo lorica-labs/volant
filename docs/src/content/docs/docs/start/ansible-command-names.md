@@ -30,7 +30,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 volant shims install
 ```
 
-Each name is a symbolic link to `volant`. Volant reads the file name it was started as, so the link `ansible-vault` runs `volant vault`. Both commands take the same arguments and give the same output and exit codes. A usage error exits with 2 and names the program as started, `ansible-vault: error: ...`.
+Each name is a symbolic link to `volant`. Volant reads the file name it was started as, so the link `ansible-vault` runs `volant vault`. Both commands take the same arguments and give the same output and exit codes. A usage error exits with 2 and names the program as started, `ansible-vault: error: ...`. Like ansible-core, a link checks the locale before it reads its arguments. A locale it cannot set, or one that is not UTF-8, exits with 1 and `ERROR: Ansible could not initialize the preferred locale` or `ERROR: Ansible requires the locale encoding to be UTF-8`. `LC_ALL=C` is refused; with no locale variable set, the C locale counts as C.UTF-8. `volant` itself does not check.
 
 `install` does not replace a file or link it did not make, unless you give `--force`. When another program of that name is on your `PATH`, it says so: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH` when the link wins, or `note: ... still runs first, DIR comes later in PATH` when it does not. To remove the links:
 

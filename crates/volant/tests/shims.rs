@@ -167,3 +167,36 @@ fn a_missing_directory_and_an_unknown_name_are_refused() {
     let out = shims(&["install", "ansible-test"], "/usr/bin");
     assert_eq!(out.status.code(), Some(2));
 }
+
+/// A program started under an ansible-core name refuses a locale it cannot set, or one that is
+/// not UTF-8, before it reads its arguments; a C locale left to Python's coercion runs.
+#[rstest]
+#[case::unknown(
+    Some("ham_sandwich"),
+    1,
+    "ERROR: Ansible could not initialize the preferred locale: unsupported locale setting\n"
+)]
+#[case::c(
+    Some("C"),
+    1,
+    "ERROR: Ansible requires the locale encoding to be UTF-8; Detected None.\n"
+)]
+#[case::c_utf8(Some("C.UTF-8"), 0, "")]
+#[case::unset(None, 0, "")]
+fn a_tool_name_checks_the_locale(#[case] all: Option<&str>, #[case] code: i32, #[case] err: &str) {
+    let dir = TempDir::new().expect("dir");
+    let ansible = dir.path().join("ansible");
+    symlink(VOLANT, &ansible).expect("link");
+    let mut command = Command::new(&ansible);
+    command
+        .arg("--version")
+        .env_remove("LANG")
+        .env_remove("LC_CTYPE");
+    match all {
+        Some(all) => command.env("LC_ALL", all),
+        None => command.env_remove("LC_ALL"),
+    };
+    let out = command.output().expect("binary runs");
+    assert_eq!(out.status.code(), Some(code));
+    assert_eq!(String::from_utf8_lossy(&out.stderr), err);
+}

@@ -1,5 +1,5 @@
 ---
-sourceHash: f3d5d68d17df
+sourceHash: 053a11b38c33
 title: Rollen, Includes und Imports
 description: Wo Volant nach Rollen sucht, wie Abhängigkeiten, Argument-Specs und Rollenvariablen funktionieren und wie Imports und Includes andere Dateien in ein Play holen.
 ---
@@ -103,7 +103,7 @@ Die übrigen Keywords, die ansible-core 2.19 am Eintrag akzeptiert, etwa `ignore
 
 ### Dynamische Includes
 
-Von dem, was die Anweisung selbst sagt, gelangen nur ihre `vars:` in die eingebundene Datei. Diese Variablen treten auf der Ebene der Rollenparameter in die [Rangfolge](/de/docs/variables/precedence/) ein, über den Facts und unter `--extra-vars`, und sie sammeln sich über verschachtelte Includes an. Die eigenen `tags` der Anweisung enden an der Anweisung, und ihr `when` wird nur für die Anweisung ausgewertet.
+Von dem, was die Anweisung selbst sagt, gelangen nur ihre `vars:` in die eingebundene Datei. Diese Variablen treten auf der Ebene der Rollenparameter in die [Rangfolge](/de/docs/variables/precedence/) ein, über den Facts und unter `--extra-vars`, und sie sammeln sich über verschachtelte Includes an. Ein Wert, der einen noch nicht definierten Namen liest, geht so hinunter, wie er geschrieben ist, und wird gerendert, wenn ein Task darunter ihn liest, wie in Ansible. Die eigenen `tags` der Anweisung enden an der Anweisung, und ihr `when` wird nur für die Anweisung ausgewertet.
 
 Was die Schichten um die Anweisung herum sagen, erreicht dagegen die eingebundenen Tasks: das Play, der Rolleneintrag, der die Datei eingebracht hat, und die Blöcke darum. Ihre `tags`, `become`, `become_user`, `no_log`, `when`, `environment`, `delegate_to`, `ignore_errors`, `notify` und `vars` gelten für jeden eingebundenen Task, und der eigene Wert eines Tasks schlägt einen geerbten. Das ist die Regel von ansible-core 2.19, die ein dynamisch geladenes Elternelement überspringt und das Großelternelement fragt. Ein geerbtes `check_mode: true` wird in der eingebundenen Datei abgelehnt statt verworfen.
 

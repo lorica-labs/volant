@@ -1,5 +1,5 @@
 ---
-sourceHash: f3d5d68d17df
+sourceHash: 053a11b38c33
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -103,7 +103,7 @@ Les autres mots-clés qu'ansible-core 2.19 accepte sur l'entrée, comme `ignore_
 
 ### Includes dynamiques
 
-De ce que dit l'instruction elle-même, seules ses `vars:` passent dans le fichier inclus. Ces variables entrent au niveau des paramètres de rôle de l'[ordre de priorité](/fr/docs/variables/precedence/), au-dessus des facts et sous `--extra-vars`, et elles s'accumulent à travers les includes imbriqués. Les `tags` de l'instruction elle-même s'arrêtent à l'instruction, et son `when` est évalué pour l'instruction seule.
+De ce que dit l'instruction elle-même, seules ses `vars:` passent dans le fichier inclus. Ces variables entrent au niveau des paramètres de rôle de l'[ordre de priorité](/fr/docs/variables/precedence/), au-dessus des facts et sous `--extra-vars`, et elles s'accumulent à travers les includes imbriqués. Une valeur qui lit un nom pas encore défini descend telle qu'elle est écrite et est rendue quand une tâche en dessous la lit, comme dans Ansible. Les `tags` de l'instruction elle-même s'arrêtent à l'instruction, et son `when` est évalué pour l'instruction seule.
 
 Ce que disent les couches autour de l'instruction atteint bien les tâches incluses : le play, l'entrée de rôle qui a amené le fichier, et les blocs autour. Leurs `tags`, `become`, `become_user`, `no_log`, `when`, `environment`, `delegate_to`, `ignore_errors`, `notify` et `vars` s'appliquent à chaque tâche incluse, et la valeur propre à une tâche l'emporte sur une valeur héritée. C'est la règle d'ansible-core 2.19, qui saute un parent chargé dynamiquement et interroge le grand-parent. Un `check_mode: true` hérité est refusé dans le fichier inclus au lieu d'être abandonné.
 

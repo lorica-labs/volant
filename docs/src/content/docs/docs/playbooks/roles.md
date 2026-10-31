@@ -102,7 +102,7 @@ The other keywords that ansible-core 2.19 accepts on the entry, such as `ignore_
 
 ### Dynamic includes
 
-Of what the statement itself says, only its `vars:` travel into the included file. Those variables enter at the role-parameter level of the [precedence order](/docs/variables/precedence/), above facts and below `--extra-vars`, and they accumulate through nested includes. The statement's own `tags` stop at the statement, and its `when` is evaluated for the statement alone.
+Of what the statement itself says, only its `vars:` travel into the included file. Those variables enter at the role-parameter level of the [precedence order](/docs/variables/precedence/), above facts and below `--extra-vars`, and they accumulate through nested includes. A value that reads a name not defined yet goes down as written and renders when a task below reads it, as in Ansible. The statement's own `tags` stop at the statement, and its `when` is evaluated for the statement alone.
 
 What the layers around the statement say does reach the included tasks: the play, the role entry that brought the file in, and the blocks around it. Their `tags`, `become`, `become_user`, `no_log`, `when`, `environment`, `delegate_to`, `ignore_errors`, `notify` and `vars` apply to every included task, and a task's own value wins over an inherited one. This is ansible-core 2.19's rule, which skips a dynamically loaded parent and asks the grandparent. An inherited `check_mode: true` is refused in the included file rather than dropped.
 

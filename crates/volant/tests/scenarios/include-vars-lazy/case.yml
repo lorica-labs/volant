@@ -1,0 +1,3 @@
+# An include's own variable that reads a name not defined yet is rendered when a task below
+# reads it, and fails that task when it is still undefined.
+args: [-i, inv.ini, play.yml]

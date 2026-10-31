@@ -639,6 +639,32 @@ fn int_strips_and_refuses_as_python_does() {
     }
 }
 
+/// `subelements` pairs each element with each value its path reaches, as tuples, and refuses a
+/// path through something that is not a mapping in the reference's words.
+#[test]
+fn subelements_gives_tuples_and_the_references_errors() {
+    let vars = serde_json::json!({"d": [{"n": "a", "g": ["x", "y"]}]});
+    let map = vars.as_object().unwrap();
+    let t = crate::template::Templar::new(PathBuf::new());
+    assert_eq!(
+        t.render(
+            "{{ (d | subelements('g')) == [(d[0], 'x'), (d[0], 'y')] }}",
+            map
+        )
+        .unwrap(),
+        serde_json::json!(true)
+    );
+    let err = t
+        .render("{{ d | subelements(['g', 'k']) }}", map)
+        .unwrap_err();
+    assert!(
+        err.0
+            .contains("the key k should point to a dictionary, got '['x', 'y']'"),
+        "{}",
+        err.0
+    );
+}
+
 /// The fixture of ansible-core's own `filter_encryption` target: a salt makes the text fixed.
 #[test]
 fn a_salted_vault_gives_ansible_s_text() {

@@ -239,6 +239,7 @@ pub fn register(
     add_filter(env, "ternary", ternary);
     add_filter(env, "combine", combine);
     add_filter(env, "dict2items", dict2items);
+    add_filter(env, "subelements", collections::subelements);
     add_filter(env, "items2dict", items2dict);
     add_filter(env, "to_json", to_json);
     add_filter(env, "to_nice_json", to_nice_json);

@@ -70,7 +70,9 @@ fn call(state: &mut State, value: &Value, method: &str, args: &[Value]) -> Resul
             return answer;
         }
         if bytes::THROUGH_STR.contains(&method) {
-            return bytes::through_str(held, args, |text, args| call(state, text, method, args));
+            return bytes::through_str(held, method, args, |text, args| {
+                call(state, text, method, args)
+            });
         }
         return Err(Error::from(ErrorKind::UnknownMethod));
     }

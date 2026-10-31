@@ -264,7 +264,7 @@ fn mutable_item(
     ))
 }
 
-pub(super) fn type_name(v: &Value) -> &'static str {
+pub(crate) fn type_name(v: &Value) -> &'static str {
     match v {
         Value::Null => "NoneType",
         Value::Bool(_) => "bool",

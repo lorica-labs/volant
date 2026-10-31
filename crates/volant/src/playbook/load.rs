@@ -233,11 +233,11 @@ fn rendered_play(
 
 /// The file an `import_playbook` entry names, rendered.
 ///
-/// The reference renders the value with the extra vars and nothing else - measured, `{{ 'sub'
-/// }}.yml` and `{{ which }}.yml` with `-e which=sub.yml` work, and `{{ nosuchvar }}.yml` refuses
-/// the load with `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`, exit 4.
-/// Nothing has an inventory yet at this point, so a name that depends on a host could not be
-/// answered anyway.
+/// The reference renders the value with the extra vars and the entry's `vars:` - measured,
+/// `{{ 'sub' }}.yml` and `{{ which }}.yml` with `-e which=sub.yml` work, and `{{ nosuchvar }}.yml`
+/// refuses the load with `Error processing keyword 'import_playbook': 'nosuchvar' is undefined`,
+/// exit 4. Nothing has an inventory yet at this point, so a name that depends on a host could not
+/// be answered anyway.
 fn imported_playbook(entry: &Yaml, rendering: &Rendering<'_>) -> anyhow::Result<Option<String>> {
     let Some(map) = entry.as_mapping() else {
         return Ok(None);
@@ -262,9 +262,16 @@ fn imported_playbook(entry: &Yaml, rendering: &Rendering<'_>) -> anyhow::Result<
     if !Templar::is_template(raw) {
         return Ok(Some(raw.to_string()));
     }
+    // The entry's own `vars:` under the extra ones: measured, `import_playbook: "{{ test_var }}"`
+    // beside `vars: {test_var: other.yml}` imports `other.yml`.
+    let mut vars = match crate::yaml::field(entry, "vars").map(crate::yaml::to_json) {
+        Some(Ok(Value::Object(own))) => own,
+        _ => Map::new(),
+    };
+    vars.extend(rendering.vars.clone());
     let rendered = rendering
         .templar
-        .render(raw, rendering.vars)
+        .render(raw, &vars)
         .map_err(|err| anyhow!("Error processing keyword 'import_playbook': {}", err.0))?;
     match rendered {
         Value::String(name) => Ok(Some(name)),

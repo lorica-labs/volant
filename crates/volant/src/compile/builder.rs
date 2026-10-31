@@ -217,10 +217,19 @@ impl Builder<'_> {
         match short_name(&task.module) {
             "import_tasks" => return self.import_tasks(task, inherited, block, section, role),
             "import_role" => {
-                let mut entry = import_role_entry(task)?;
+                let mut entry = import_role_entry(&self.rendered_flags(task))?;
                 // A templated name renders while the play compiles, as an import's path does:
                 // measured, `import_playbook`'s `vars:` name the role a play of it imports.
-                entry.name = self.import_path(&entry.name)?;
+                entry.name = self.import_path(&entry.name, &task.vars)?;
+                let from = &mut entry.from;
+                for file in [
+                    &mut from.tasks,
+                    &mut from.vars,
+                    &mut from.defaults,
+                    &mut from.handlers,
+                ] {
+                    *file = self.import_path(file, &task.vars)?;
+                }
                 let key = identity_with(&entry, &task.vars);
                 if entry.unique && self.imported.contains(&key) {
                     return Ok(());
@@ -333,7 +342,7 @@ impl Builder<'_> {
             .or_else(|| task.args.get("_raw_params"))
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
-        let name = &self.import_path(name)?;
+        let name = &self.import_path(name, &task.vars)?;
         // Inside a role a bare name has two homes and the reference takes the first that exists:
         // the directory of the file that wrote the statement, then the role's own `tasks/`.
         // Measured on ansible-core 2.19.12 with a role whose `tasks/sub/deep.yml` imports

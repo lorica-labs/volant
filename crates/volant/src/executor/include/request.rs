@@ -56,8 +56,15 @@ pub(super) fn include_request(
                 .get("file")
                 .or_else(|| item.args.get("_raw_params"))
                 .and_then(Value::as_str)
+                // The reference's words, naming the action as written, in a block at the task.
                 .ok_or_else(|| {
-                    TaskResult::failed_with("Task failed: 'include_tasks' takes a file name")
+                    let text = format!("No file specified for {}", step.task.module);
+                    let mut result = TaskResult::failed_with(text.clone());
+                    result
+                        .0
+                        .insert(crate::render::ERROR_KEY.into(), text.into());
+                    result.0.insert(crate::render::CHAIN_KEY.into(), json!([]));
+                    result
                 })?;
             let path = crate::compile::beside_or_in_role(
                 &step.origin.file_dir,
@@ -211,7 +218,10 @@ fn bind_loop(task: &PlayTask, item: &Item, vars: &mut IncludeParams, own: &mut M
     vars.values.insert("ansible_loop_var".into(), var.clone());
     own.insert("ansible_loop_var".into(), var);
     if let Some(index) = &task.index_var {
-        own.insert("ansible_index_var".into(), Value::String(index.clone()));
+        let index = Value::String(index.clone());
+        vars.values
+            .insert("ansible_index_var".into(), index.clone());
+        own.insert("ansible_index_var".into(), index);
     }
 }
 

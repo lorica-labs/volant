@@ -93,12 +93,22 @@ pub(super) fn resolve_include(
         // ordinary task's is: this arm is reached with the batch empty, so there is nothing to
         // send out first.
         Err(err) => {
+            let result = super::prepare::failed_result(&err);
+            // Registered all the same: measured on ansible-core 2.19.12, `register` on an
+            // include whose `when` fails holds a failed result.
+            super::run::record_registered(
+                &mut store.lock().expect("vars lock"),
+                &step.task,
+                &super::run::fact_targets(&step.task, host, &live.live_hosts),
+                &[(None, result.clone())],
+                &[],
+            );
             return (
                 Vec::new(),
                 vec![Shown {
                     element: None,
                     label: None,
-                    result: super::prepare::failed_result(&err),
+                    result,
                     failed: true,
                     load_failed: false,
                     ignored: None,

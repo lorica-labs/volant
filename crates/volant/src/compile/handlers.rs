@@ -45,10 +45,11 @@ impl Builder<'_> {
                 .or_else(|| handler.task.args.get("_raw_params"))
                 .and_then(Value::as_str)
                 .ok_or_else(|| anyhow::anyhow!("'import_tasks' takes a file name"))?;
-            // Beside the file that wrote it, then in the playbook's directory: measured, a role's
-            // `handlers/main.yml` importing `handlers.yml` reads the playbook's when the role has
-            // none of its own.
-            let path = [Some(dir), self.search.playbook_dir()]
+            // Beside the file that wrote it, then in the role's directory, then in the playbook's:
+            // measured, a role's `handlers/main.yml` importing `tasks/handlers.yml` reads the
+            // role's, and importing `handlers.yml` reads the playbook's when the role has none.
+            let role_dir = role.and(self.origin().role_dir.clone());
+            let path = [Some(dir), role_dir.as_deref(), self.search.playbook_dir()]
                 .into_iter()
                 .flatten()
                 .map(|dir| dir.join(name))

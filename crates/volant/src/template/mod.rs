@@ -48,9 +48,9 @@ pub(crate) use yaml_dump::{
 pub use context::{ALLITEMS_KEY, Vars, complete_loop, watch_play_hosts, with_allitems};
 use context::{Context, TaintSink, context_of, take_failure};
 pub(crate) use env::{
-    add_filter, add_test, add_text_filter, holds_undefined, truthy, undefined_through,
+    add_filter, add_test, add_text_filter, holds_undefined, truthy, type_name, undefined_through,
 };
-use env::{any_undefined, environment, type_name};
+use env::{any_undefined, environment};
 pub use templar::Templar;
 pub(crate) use vm::{EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template};
 use vm::{as_expression, as_template, convert_error, inline_conditional, jinja_syntax, render_str};

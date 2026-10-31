@@ -10,5 +10,9 @@
   {
     "code": 0,
     "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [meta] ********************************************************************\nskipping: [h1]\n\nTASK [meta] ********************************************************************\n\nTASK [meta] ********************************************************************\nskipping: [h1]\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"b\"\n}\nok: [h2] => {\n    \"msg\": \"b\"\n}\nok: [h3] => {\n    \"msg\": \"b\"\n}\nok: [h4] => {\n    \"msg\": \"b\"\n}\n\nPLAY RECAP *********************************************************************\nh1                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh2                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh3                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nh4                         : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 1,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [h1] => {\n    \"msg\": \"before\"\n}\nok: [h2] => {\n    \"msg\": \"before\"\n}\nok: [h3] => {\n    \"msg\": \"before\"\n}\nok: [h4] => {\n    \"msg\": \"before\"\n}\n\nTASK [meta] ********************************************************************\n"
   }
 ]

@@ -57,15 +57,11 @@ use boundaries::{calls_lookup, meets, strict, writes_facts};
 pub(crate) use boundaries::{expressions, strings, task_strings};
 use pinned::Turn;
 use plugin::{PluginBatch, PluginItems, plugin_step, run_plugin_items};
-use rendered::{Rendered, render_keywords, step_at};
+use rendered::{NO_WHEN, Rendered, read_as, render_keywords, step_at};
 pub(in crate::executor) use throttle::Turn as ThrottleTurn;
 use timings::file_timings;
 use unreachable::{ignore_the_batch, ignore_unreachable};
 use waits::{Halt, RunOnce};
-
-/// The `meta` actions whose `when` the reference does not read: it warns that the task does not
-/// support one and runs the action all the same.
-const NO_WHEN: [&str; 3] = ["noop", "refresh_inventory", "reset_connection"];
 
 #[expect(
     clippy::too_many_arguments,
@@ -876,25 +872,11 @@ pub(super) async fn drive_host(
             driver.starting(pos, spoken, runs).await;
             let mut warnings = Vec::new();
             let preparing = Instant::now();
-            // The reference never reads the `when` of these, so a condition that cannot be
-            // evaluated must not fail the host either.
-            let unconditioned;
-            let step_read = if step.kind == StepKind::Meta
-                && NO_WHEN.contains(&crate::compile::meta_action(task))
-            {
-                unconditioned = {
-                    let mut copy = step.clone();
-                    copy.task.when.clear();
-                    copy
-                };
-                &unconditioned
-            } else {
-                step
-            };
+            let step_read = read_as(step);
             let prepared =
                 replayed::preparing(&options, seen.as_ref(), &name, &step_read.task, || {
                     prepare(
-                        step_read,
+                        &step_read,
                         &name,
                         &plan,
                         &live,
@@ -944,6 +926,18 @@ pub(super) async fn drive_host(
             let step = step_at(&c, &rendered, pos);
             let task = &step.task;
             match prepared {
+                // Measured: the reference raises a `meta`'s condition it cannot evaluate out of
+                // the play, at the banner, with exit 1 and no recap.
+                Err(err) if step.kind == StepKind::Meta => {
+                    if batch.is_empty() {
+                        driver.banner(pos).await;
+                        options
+                            .abort
+                            .raise_plain(super::prepare::undefined::meta_error(task, &err));
+                        break 'run;
+                    }
+                    break;
+                }
                 Err(err) => {
                     deferred_error = Some((pos, err));
                     break;

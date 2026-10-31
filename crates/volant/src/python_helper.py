@@ -531,15 +531,26 @@ def resolve(names):
     Each name is answered on its own, so one that raises - a `runtime.yml` tombstone raises
     `AnsiblePluginRemovedError` - is that name's answer and not the whole run's: the pre-flight
     refuses it only if a task names it.
+
+    The loader's warning about a collection nobody installed is not printed: the engine says it
+    when a task needs the name, which a task its `when` skips never does.
     """
+    from ansible.utils.display import Display
+
     loaders()
     track_core()
+    display = Display()
+    said = display.error_as_warning
+    display.error_as_warning = lambda *args, **kwargs: None
     answers = {}
-    for name in names:
-        try:
-            answers[name] = resolve_one(name)
-        except Exception as failure:
-            answers[name] = {"unusable": "%s: %s" % (type(failure).__name__, failure)}
+    try:
+        for name in names:
+            try:
+                answers[name] = resolve_one(name)
+            except Exception as failure:
+                answers[name] = {"unusable": "%s: %s" % (type(failure).__name__, failure)}
+    finally:
+        display.error_as_warning = said
     return {"resolved": answers}
 
 

@@ -29,6 +29,17 @@ pub(super) fn when_error(err: TemplateError, kept: Option<&TemplateError>) -> Te
     }
 }
 
+/// The `[ERROR]` of a `meta` whose condition could not be evaluated: the sentence, at where the
+/// `when` was written.
+pub(in crate::executor) fn meta_error(task: &PlayTask, err: &TemplateError) -> String {
+    let sentence = err.0.strip_prefix("Task failed: ").unwrap_or(&err.0);
+    let origin = task.value_origins.get("when").or(task.origin.as_ref());
+    match origin {
+        Some(origin) => format!("{sentence}\n{}", crate::render::source_context(origin)),
+        None => sentence.to_string(),
+    }
+}
+
 /// The chain of a task whose `when` could not be evaluated, the condition's sentence at where the
 /// `when` was written, or whose keyword did not render ([`keyword_causes`]).
 pub(in crate::executor) fn conditional_causes(task: &PlayTask, message: &str) -> Option<Value> {

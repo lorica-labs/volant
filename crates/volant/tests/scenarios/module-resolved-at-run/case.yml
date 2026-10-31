@@ -1,0 +1,6 @@
+# A module named in an `action:` statement is resolved when the task runs: skipped, it needs nothing; run, it fails with `Cannot resolve`. One named as a key in an included file ends the run at the include, exit 4.
+needs: [ansible-core]
+runs:
+  - args: [-i, inv.ini, action.yml]
+  - args: [-i, inv.ini, include-tasks.yml]
+  - args: [-i, inv.ini, include-role.yml]

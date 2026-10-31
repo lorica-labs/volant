@@ -46,3 +46,20 @@ pub(super) fn mark_failed(
         _ => {}
     }
 }
+
+/// The failure of a vaulted value no secret opens, met rendering a template a `debug: var` value
+/// holds. Measured on ansible-core 2.19.12: it fails the task, where any other failure there is
+/// only marked ([`mark_failed`]).
+pub(super) fn undecryptable_in(
+    value: &Value,
+    render: &dyn Fn(&str) -> Result<Value, crate::template::TemplateError>,
+) -> Option<crate::template::TemplateError> {
+    match value {
+        Value::String(text) if crate::template::holds_template(value) => render(text)
+            .err()
+            .filter(|e| e.0.starts_with(crate::vault::UNDECRYPTABLE)),
+        Value::Array(items) => items.iter().find_map(|item| undecryptable_in(item, render)),
+        Value::Object(map) => map.values().find_map(|item| undecryptable_in(item, render)),
+        _ => None,
+    }
+}

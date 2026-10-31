@@ -113,17 +113,17 @@ impl VarStore {
                 return ListedOrigin::GroupFile(index, group.clone());
             }
         }
-        if has(self.inventory_vars.get(host)) {
-            return ListedOrigin::InventoryGroup;
-        }
-        match self
+        if let Some(index) = self
             .group_files
             .iter()
             .rposition(|files| has(files.get("all")))
         {
-            Some(index) => ListedOrigin::GroupFile(index, "all".to_string()),
-            // No layer sets it: the implicit localhost's own keys, which belong to the host.
-            None => ListedOrigin::Host,
+            return ListedOrigin::GroupFile(index, "all".to_string());
         }
+        if has(self.inventory_vars.get(host)) {
+            return ListedOrigin::InventoryGroup;
+        }
+        // No layer sets it: the implicit localhost's own keys, which belong to the host.
+        ListedOrigin::Host
     }
 }

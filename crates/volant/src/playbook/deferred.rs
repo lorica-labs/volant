@@ -70,6 +70,10 @@ pub(super) fn boolean_or_template(
 }
 
 /// A keyword counting seconds that may be a template: `timeout`, `async` and `poll`.
+///
+/// A negative `timeout` goes to `slot` as well: measured on ansible-core 2.19.12, `timeout:
+/// -1` fails its task when it runs, with `Timeout -1 is invalid, it must be between 0 and
+/// 100000000.`, which `ignore_errors` and `rescue` take, and so does one that is no number.
 pub(super) fn seconds_or_template(
     yaml: &Yaml,
     key: &str,
@@ -79,7 +83,14 @@ pub(super) fn seconds_or_template(
     match field(yaml, key) {
         None | Some(Yaml::Value(Scalar::Null)) => Ok(None),
         Some(Yaml::Value(Scalar::Integer(i))) if *i >= 0 => Ok(Some(*i as u64)),
-        Some(Yaml::Value(Scalar::String(s))) if Templar::is_template(s) => {
+        Some(Yaml::Value(Scalar::Integer(i))) if key == "timeout" => {
+            *slot = Some(i.to_string());
+            Ok(None)
+        }
+        Some(Yaml::Value(Scalar::Integer(i))) => {
+            bail!("{context}'{key}': the value {i} is negative, which is not supported yet")
+        }
+        Some(Yaml::Value(Scalar::String(s))) if Templar::is_template(s) || key == "timeout" => {
             *slot = Some(s.to_string());
             Ok(None)
         }

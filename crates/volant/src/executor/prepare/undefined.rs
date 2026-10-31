@@ -5,7 +5,7 @@
 use serde_json::Value;
 
 use crate::playbook::PlayTask;
-use crate::template::TemplateError;
+use crate::template::{Templar, TemplateError};
 use volant_protocol::TaskResult;
 
 /// What the reference puts before the sentence of a condition it cannot evaluate.
@@ -88,6 +88,21 @@ fn keyword_causes(task: &PlayTask, message: &str) -> Option<Value> {
         .split('\'')
         .next()?;
     let origin = task.value_origins.get(key)?;
+    // A literal `timeout` that is no number: measured, the keyword's sentence and the value's,
+    // both at the value, as for `retries` (`run::retry`).
+    if key == "timeout"
+        && let Some(value) = sentence.strip_prefix("Error processing keyword 'timeout': ")
+        && task
+            .deferred
+            .timeout
+            .as_deref()
+            .is_some_and(|raw| !Templar::is_template(raw))
+    {
+        return Some(serde_json::json!([
+            crate::render::cause("Error processing keyword 'timeout'.", Some(origin), None),
+            crate::render::cause(value, Some(origin), None)
+        ]));
+    }
     Some(serde_json::json!([crate::render::cause(
         sentence,
         Some(origin),

@@ -229,34 +229,26 @@ pub fn raise_open_file_limit() {}
 #[cfg(unix)]
 static STARTED_SOFT: std::sync::OnceLock<libc::rlim_t> = std::sync::OnceLock::new();
 
-/// Starts `command` with the soft limit on open files this process started with. A local host's
-/// agent runs its modules with what they would get under `ansible-playbook`, not with the limit
-/// raised for this controller's own links: measured on ansible-core 2.19.12, `ulimit -n` in a
-/// local task prints the soft limit of the shell that started the run.
+/// The soft limit on open files this process started with, when [`raise_open_file_limit`] moved
+/// it. A local host's agent runs its modules with what they would get under `ansible-playbook`,
+/// not with the limit raised for this controller's own links: measured on ansible-core 2.19.12,
+/// `ulimit -n` in a local task prints the soft limit of the shell that started the run.
 #[cfg(unix)]
-pub(super) fn with_started_open_file_limit(command: &mut Command) {
-    let Some(&soft) = STARTED_SOFT.get() else {
-        return;
+pub(super) fn started_open_file_limit() -> Option<libc::rlim_t> {
+    let soft = *STARTED_SOFT.get()?;
+    let mut limit = libc::rlimit {
+        rlim_cur: 0,
+        rlim_max: 0,
     };
-    // SAFETY: only `getrlimit` and `setrlimit` run between fork and exec, both async-signal-safe,
-    // on a struct the closure owns.
-    unsafe {
-        command.pre_exec(move || {
-            let mut limit = libc::rlimit {
-                rlim_cur: 0,
-                rlim_max: 0,
-            };
-            if libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) == 0 && limit.rlim_cur != soft {
-                limit.rlim_cur = soft;
-                libc::setrlimit(libc::RLIMIT_NOFILE, &limit);
-            }
-            Ok(())
-        });
-    }
+    // SAFETY: `getrlimit` writes into the struct it is given, which lives for the whole call.
+    let read = unsafe { libc::getrlimit(libc::RLIMIT_NOFILE, &mut limit) } == 0;
+    (read && limit.rlim_cur != soft && soft != libc::RLIM_INFINITY).then_some(soft)
 }
 
 #[cfg(not(unix))]
-pub(super) fn with_started_open_file_limit(_: &mut Command) {}
+pub(super) fn started_open_file_limit() -> Option<u64> {
+    None
+}
 
 /// Whether an `ssh -G` dump shows connection sharing already set up. Measured with OpenSSH
 /// 10.2: nothing configured prints `controlmaster false` and `controlpersist no` and no

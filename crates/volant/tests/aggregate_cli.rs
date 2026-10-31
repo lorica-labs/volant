@@ -303,3 +303,52 @@ fn junit_writes_the_report_ansible_playbook_writes() {
         assert!(want.contains(text), "{want}");
     }
 }
+
+/// `junit` on its own, with no reference to compare with: one report a run, a test case per task
+/// and host, and its options read from the environment.
+#[cfg(unix)]
+#[test]
+fn junit_writes_a_report_with_its_options() {
+    let dir = tempfile::tempdir().unwrap();
+    setup(dir.path(), Path::new("/usr/bin/python3"));
+    std::fs::write(dir.path().join("play.yml"), JUNIT_PLAY).unwrap();
+    let volant = Path::new(env!("CARGO_BIN_EXE_volant"));
+    let plain = dir.path().join("plain");
+    run(
+        &[volant, Path::new("playbook")],
+        dir.path(),
+        &[],
+        &[
+            ("ANSIBLE_CALLBACKS_ENABLED", "junit"),
+            ("JUNIT_OUTPUT_DIR", plain.to_str().unwrap()),
+        ],
+    );
+    let report = junit_report(&plain);
+    assert!(report.contains("<testsuites"), "{report}");
+    assert!(report.matches("<testcase ").count() >= 8, "{report}");
+    assert!(
+        report.contains("Task failed: Action failed: boom"),
+        "{report}"
+    );
+    assert!(report.contains("<skipped"), "{report}");
+    let options = dir.path().join("options");
+    run(
+        &[volant, Path::new("playbook")],
+        dir.path(),
+        &[],
+        &[
+            ("ANSIBLE_CALLBACKS_ENABLED", "junit"),
+            ("JUNIT_OUTPUT_DIR", options.to_str().unwrap()),
+            ("JUNIT_TASK_CLASS", "yes"),
+            ("JUNIT_FAIL_ON_CHANGE", "true"),
+            ("JUNIT_FAIL_ON_IGNORE", "true"),
+            ("JUNIT_HIDE_TASK_ARGUMENTS", "true"),
+            ("JUNIT_INCLUDE_SETUP_TASKS_IN_REPORT", "false"),
+            ("JUNIT_TEST_CASE_PREFIX", "check"),
+            ("JUNIT_TASK_RELATIVE_PATH", dir.path().to_str().unwrap()),
+        ],
+    );
+    let with = junit_report(&options);
+    assert_ne!(with, report);
+    assert!(with.contains("<testsuites"), "{with}");
+}

@@ -5,7 +5,7 @@
         url: http://127.0.0.1:9/
         timeout: 5
       async: 30
-      poll: 1
+      poll: 5
       register: polled
       ignore_errors: true
     - debug:
@@ -19,7 +19,7 @@
     - debug:
         msg: "{{ started.started }} {{ started.finished }}"
     - wait_for:
-        timeout: 2
+        timeout: 5
     - async_status:
         jid: "{{ started.ansible_job_id }}"
       register: job

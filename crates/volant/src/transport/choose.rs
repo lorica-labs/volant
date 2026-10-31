@@ -318,9 +318,22 @@ impl Transport {
                     Some(e) => Some((e, check_local_escalation(&agent, e).await?)),
                     None => None,
                 };
-                let argv = local_argv(&agent, escalated);
+                let mut argv = local_argv(&agent, escalated);
+                // The agent gets the open file limit the run started with from a shell in front
+                // of it, not from a hook between fork and exec: such a hook makes the standard
+                // library fork on macOS, where a pipe made for one agent can then reach another
+                // started at the same moment and keep its link open.
+                if let Some(soft) = super::control::started_open_file_limit() {
+                    let agent = argv.pop().unwrap_or_default();
+                    argv.extend([
+                        "sh".to_string(),
+                        "-c".to_string(),
+                        "ulimit -Sn \"$1\" 2>/dev/null; exec \"$0\"".to_string(),
+                        agent,
+                        soft.to_string(),
+                    ]);
+                }
                 let mut command = Command::new(&argv[0]);
-                super::control::with_started_open_file_limit(&mut command);
                 let child = command
                     .args(&argv[1..])
                     .stdin(Stdio::piped())

@@ -76,7 +76,9 @@ impl Session {
             .hosts
             .iter()
             .any(|h| limit.as_ref().is_none_or(|l| l.contains(&h.name)));
-        if !reachable {
+        // An empty inventory refuses nothing here, as `get_host_list` lets it through: a
+        // templated pattern, `'{{"localhost"}}'`, is rendered by the play that runs it.
+        if !reachable && !set.inventory.resolve("all").hosts.is_empty() {
             eprintln!(
                 "[ERROR]: Specified inventory, host pattern and/or --limit leaves us with no hosts to target."
             );

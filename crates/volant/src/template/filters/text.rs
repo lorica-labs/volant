@@ -6,7 +6,7 @@ use std::net::Ipv6Addr;
 use std::str::FromStr;
 
 use minijinja::value::{Kwargs, ValueKind};
-use minijinja::{Error, Value};
+use minijinja::{Error, State, Value};
 
 use volant_protocol::encoding::{b64_decode, b64_encode, sha1_hex};
 
@@ -320,4 +320,26 @@ pub(super) fn ipwrap_scalar(value: &Value) -> Value {
         Ok(bits) if bits <= 128 => Value::from(format!("[{address}]/{prefix}")),
         _ => value.clone(),
     }
+}
+
+/// What `!unsafe` text loads as: the text itself, marked as data so no further pass renders it.
+pub(super) fn volant_unsafe(state: &State, text: String) -> String {
+    if let Some(sink) = state.lookup(super::super::TAINT_KEY)
+        && let Some(sink) = sink.downcast_object_ref::<super::super::TaintSink>()
+    {
+        sink.taint();
+    }
+    // ansible-core's private switch, which the integration tests set to see an untrusted
+    // template met in a render: measured on 2.19.12, `warning` says so, once per text.
+    if super::super::Templar::is_template(&text)
+        && std::env::var("_ANSIBLE_TEMPLAR_UNTRUSTED_TEMPLATE_BEHAVIOR").as_deref() == Ok("warning")
+    {
+        crate::render::warn_once(&format!(
+            "[WARNING]: {}\n\n{text}\n\nTemplates and expressions must be defined by trusted \
+             sources such as playbooks or roles, not untrusted sources such as module \
+             results.\n\n",
+            super::super::UNTRUSTED
+        ));
+    }
+    text
 }

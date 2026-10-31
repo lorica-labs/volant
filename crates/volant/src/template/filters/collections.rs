@@ -12,7 +12,28 @@ pub(super) fn combine(first: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result
     let list_merge: String = kwargs
         .get::<Option<String>>("list_merge")?
         .unwrap_or_else(|| "replace".to_string());
-    kwargs.assert_all_used()?;
+    if kwargs
+        .args()
+        .any(|k| !["recursive", "list_merge"].contains(&k))
+    {
+        return Err(invalid(
+            "'recursive' and 'list_merge' are the only valid keyword arguments",
+        ));
+    }
+    if ![
+        "replace",
+        "keep",
+        "append",
+        "prepend",
+        "append_rp",
+        "prepend_rp",
+    ]
+    .contains(&list_merge.as_str())
+    {
+        return Err(invalid(
+            "merge_hash: 'list_merge' argument can only be equal to 'replace', 'keep', 'append',              'prepend', 'append_rp' or 'prepend_rp'",
+        ));
+    }
     // The reference's `flatten(terms, levels=1)`: a list among the terms gives its items, and a
     // null, `'None'` or `'null'` drops out.
     let null = |v: &serde_json::Value| v.is_null() || v == "None" || v == "null";
@@ -80,6 +101,21 @@ pub(super) fn merge_into(
                 s.append(t);
                 *t = s;
             }
+            // `_rp`, "remove present": what the lower list holds that the higher one also holds
+            // goes, and the higher one is put after it, or before it.
+            (Some(serde_json::Value::Array(t)), serde_json::Value::Array(mut s))
+                if list_merge == "append_rp" || list_merge == "prepend_rp" =>
+            {
+                t.retain(|z| !s.contains(z));
+                if list_merge == "append_rp" {
+                    t.append(&mut s);
+                } else {
+                    s.append(t);
+                    *t = s;
+                }
+            }
+            (Some(serde_json::Value::Array(_)), serde_json::Value::Array(_))
+                if list_merge == "keep" => {}
             (_, v) => {
                 target.insert(k, v);
             }

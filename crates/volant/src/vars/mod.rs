@@ -21,6 +21,13 @@ pub(crate) use host_vars::PENDING_PYTHON;
 /// local hosts, copying the views themselves on each `set_fact` cost 11 s of a 15 s run.
 pub type HostvarsMap = indexmap::IndexMap<String, Arc<Value>>;
 
+/// The hosts holding a name that came from a managed host, each with those names: what a read
+/// of `hostvars[host]` takes as data.
+pub type UntrustedHosts = BTreeMap<String, BTreeSet<String>>;
+
+/// The two names that carry a host's own name, data when the name came from data.
+const HOST_NAMES: [&str; 2] = ["inventory_hostname", "inventory_hostname_short"];
+
 /// A plain map of host views as a [`HostvarsMap`].
 #[cfg(test)]
 pub fn hostvars_map(map: Map<String, Value>) -> HostvarsMap {
@@ -223,7 +230,7 @@ pub struct VarStore {
     implicit_controller: Option<String>,
     /// The hosts that hold at least one untrusted name, built on demand and dropped by the same
     /// rule as `hostvars`: every write that can change it already goes through `set_fact`.
-    untrusted_hosts: Option<Arc<BTreeSet<String>>>,
+    untrusted_hosts: Option<Arc<UntrustedHosts>>,
     /// The inventory-wide values, with the three host lists they were built from. `groups` only
     /// moves when `meta: refresh_inventory` reads the inventory again, but the lists come from the coordinator's last published progress and
     /// move whenever a host drops out, so the map is good for one triple and no longer.

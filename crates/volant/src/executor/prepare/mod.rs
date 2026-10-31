@@ -33,6 +33,7 @@ pub(in crate::executor) use item::{
     FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, pause_of,
     undefined_name,
 };
+pub(crate) use keyword::command_line_modes;
 pub(in crate::executor) use keyword::strict_boolean;
 pub(in crate::executor) use label::{label_failed, label_raised_result, raised_by_label};
 pub(in crate::executor) use late::{
@@ -162,6 +163,7 @@ pub(super) fn prepare(
             extended: false,
             allitems: true,
             pause: None,
+            loop_var: task.loop_var.clone(),
         }
     };
     let list: Vec<&Value> = if options.extended {
@@ -184,13 +186,13 @@ pub(super) fn prepare(
             .map_or_else(|| base.clone(), |c| c.vars(&base));
         if let Some(el) = &element {
             if items_from_host {
-                vars.insert_untrusted(task.loop_var.clone(), el.clone());
+                vars.insert_untrusted(options.loop_var.clone(), el.clone());
             } else {
-                vars.insert(task.loop_var.clone(), el.clone());
+                vars.insert(options.loop_var.clone(), el.clone());
             }
             vars.insert(
                 "ansible_loop_var".into(),
-                Value::String(task.loop_var.clone()),
+                Value::String(options.loop_var.clone()),
             );
             if let Some(name) = &task.index_var {
                 vars.insert(name.clone(), Value::from(index));
@@ -243,7 +245,7 @@ pub(super) fn prepare(
                 later_item: index > 0,
                 item: index,
                 loop_names: [
-                    task.loop_var.as_str(),
+                    options.loop_var.as_str(),
                     task.index_var.as_deref().unwrap_or_default(),
                     "ansible_loop",
                 ],

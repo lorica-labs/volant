@@ -25,8 +25,8 @@ pub struct HostVars {
     pub facts: Arc<Map<String, Value>>,
     /// Names in `map` that came from a managed host, for this host and this task.
     pub untrusted: BTreeSet<String>,
-    /// Hosts holding at least one such name, for the `hostvars[other]` path.
-    pub untrusted_hosts: Arc<BTreeSet<String>>,
+    /// Hosts holding at least one such name, with those names, for the `hostvars[other]` path.
+    pub untrusted_hosts: Arc<crate::vars::UntrustedHosts>,
     /// The variables the items of a loop share, read after `map` and never written: see
     /// [`HostVars::shared_by_items`]. Empty for a map that stands alone.
     pub base: Arc<Map<String, Value>>,

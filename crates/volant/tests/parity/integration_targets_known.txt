@@ -47,7 +47,6 @@ loops                          #1289
 meta_tasks                     #1287
 module_defaults                #1289
 no_log                         #1287
-omit                           #1288
 order                          #1289
 plugin_filtering               #1290
 preflight_encoding             #1283
@@ -63,7 +62,6 @@ task-args                      #1284
 template                       #1290
 templating                     #1284
 templating_lookup_args         #1289
-test_core                      #1289
 throttle                       #1290
 undefined                      #1284
 var_precedence                 #1289

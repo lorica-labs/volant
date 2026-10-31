@@ -5696,7 +5696,7 @@ fn a_name_from_a_hosts_text_is_data_whatever_it_holds() {
                 continue;
             };
             assert_eq!(
-                hosts.contains(name),
+                hosts.contains_key(name),
                 case.host == Some(name),
                 "{} host {name}",
                 case.module

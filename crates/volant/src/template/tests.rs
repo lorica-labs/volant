@@ -501,7 +501,10 @@ fn extract_reads_hostvars_by_host_name_and_taints_like_a_bare_read() {
             json!({"h2": {"x": "{{ 1 + 1 }}"}}),
         )));
         let empty = Map::new();
-        let hosts = BTreeSet::from(["h2".to_string()]);
+        let hosts = crate::vars::UntrustedHosts::from([(
+            "h2".to_string(),
+            BTreeSet::from(["x".to_string()]),
+        )]);
         let mut wrong = Vec::new();
         for (untrusted_hosts, want) in [(Some(&hosts), json!("{{ 1 + 1 }}")), (None, json!(2))] {
             let v = Vars {
@@ -538,7 +541,10 @@ fn a_host_name_from_data_taints_the_hostvars_listing_only() {
         "h2": {"x": "{{ 40 + 2 }}"},
     }))));
     let empty = Map::new();
-    let hosts = BTreeSet::from(["{{ 1 + 1 }}".to_string()]);
+    let hosts = crate::vars::UntrustedHosts::from([(
+        "{{ 1 + 1 }}".to_string(),
+        BTreeSet::from(["inventory_hostname".to_string()]),
+    )]);
     let mut wrong = Vec::new();
     for (keys_data, text, want) in [
         (true, "{{ hostvars | list | first }}", json!("{{ 1 + 1 }}")),
@@ -605,7 +611,10 @@ fn conditions_need_a_boolean_and_never_evaluate_a_host_string() {
         assert!(err.0.contains(boolean), "{err}");
 
         let registered = BTreeSet::from(["s".to_string()]);
-        let hosts = BTreeSet::from(["h2".to_string()]);
+        let hosts = crate::vars::UntrustedHosts::from([(
+            "h2".to_string(),
+            BTreeSet::from(["x".to_string()]),
+        )]);
         let from_host = Vars {
             map: &map,
             hostvars: Some(&view),

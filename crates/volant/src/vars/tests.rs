@@ -540,12 +540,12 @@ fn the_controller_s_text_is_data_under_every_spelling(
     let held = store.untrusted_hosts();
     for spelling in crate::inventory::LOCALHOST_NAMES {
         assert_eq!(
-            held.contains(spelling),
+            held.contains_key(spelling),
             all_spellings,
             "{spelling} after a register under {ran_as}: {held:?}"
         );
     }
-    assert!(held.contains(ran_as));
+    assert!(held.contains_key(ran_as));
 }
 
 /// A fact the controller gathers shows in every spelling that stands for it.
@@ -1378,7 +1378,7 @@ fn an_add_host_name_that_holds_a_template_is_data_wherever_it_is_read() {
             row.name, row.groups, row.reader
         );
         assert_eq!(
-            store.untrusted_hosts().contains(row.name),
+            store.untrusted_hosts().contains_key(row.name),
             row.host_is_data,
             "{:?} as a host that holds a template",
             row.name
@@ -1429,7 +1429,7 @@ fn an_inventory_name_that_holds_template_syntax_is_data() {
             data.contains("groups"),
             data.contains("group_names"),
             data.contains(crate::template::HOSTVARS_KEYS),
-            store.untrusted_hosts().contains("{{x}}"),
+            store.untrusted_hosts().contains_key("{{x}}"),
         )
     };
     let rows: [(&str, &str, &str, Data); 4] = [

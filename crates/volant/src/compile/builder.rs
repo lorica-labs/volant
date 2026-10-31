@@ -286,6 +286,7 @@ impl Builder<'_> {
             false => match short_name(&task.module) {
                 "include_tasks" => {
                     include_options("include_tasks", &task.args)?;
+                    no_file_named(&task)?;
                     StepKind::Include(IncludeKind::Tasks)
                 }
                 "include_role" => {
@@ -422,5 +423,28 @@ impl Builder<'_> {
         self.blocks[id].rescue = rescue..always;
         self.blocks[id].always = always..end;
         Ok(())
+    }
+}
+
+/// Refuses an `include_tasks` that names no file, as the reference's loader does: measured on
+/// ansible-core 2.19.12, `No file specified for ansible.builtin.include_tasks` at the task, and
+/// in a file a dynamic include brings in, the run ends at exit 4.
+fn no_file_named(task: &PlayTask) -> anyhow::Result<()> {
+    let named = ["file", "_raw_params"]
+        .iter()
+        .any(|key| task.args.get(*key).is_some_and(Value::is_string));
+    match (&task.origin, named) {
+        (_, true) => Ok(()),
+        (Some(origin), false) => {
+            let located = crate::playbook::Located {
+                message: format!("No file specified for {}", task.module),
+                origin: origin.clone(),
+            };
+            Err(anyhow::Error::new(crate::playbook::TaskFileRefused(
+                located.text(),
+                true,
+            )))
+        }
+        (None, false) => bail!("No file specified for {}", task.module),
     }
 }

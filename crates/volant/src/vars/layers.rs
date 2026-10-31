@@ -155,7 +155,7 @@ impl VarStore {
     }
 
     /// The merged view for one host, lowest precedence first: a role's `defaults`, inventory
-    /// `all`, `group_vars/all` (inventory then playbook), inventory groups by depth and name,
+    /// `all`, inventory groups by depth and name, `group_vars/all` (inventory then playbook),
     /// `group_vars/<group>` (inventory then playbook), inventory host vars - an implicit
     /// `localhost`'s `local` connection among them - `host_vars/<host>`
     /// (inventory then playbook), gathered facts, play vars, vars_files, a role's `vars`, task
@@ -326,14 +326,11 @@ impl VarStore {
         // A spelling of the controller that the inventory lists under another one is that host.
         let host = self.controller_alias(host).unwrap_or(host);
         let mut vars = Map::new();
-        for files in &self.group_files {
-            if let Some(all) = files.get("all") {
-                extend(&mut vars, all);
-            }
-        }
         // Inventory group vars and inventory host vars arrive already merged in Ansible's
-        // group order from `Inventory::resolve`; `group_vars/<group>` files slot in between,
-        // so the merged inventory view is applied first and files for the host's groups after.
+        // group order from `Inventory::resolve`; the `group_vars` files slot in between, `all`
+        // first, so the merged inventory view is applied first and the files after. Measured on
+        // ansible-core 2.19.12, a playbook `group_vars/all` file beats a child group's variable
+        // in the inventory file.
         if let Some(inv) = self.inventory_vars.get(host) {
             extend(&mut vars, inv);
         } else if self.is_implicit_localhost(host) {
@@ -342,6 +339,11 @@ impl VarStore {
             let mut all = self.dynamic.group_vars_of("all");
             all.remove("ansible_group_priority");
             extend(&mut vars, &all);
+        }
+        for files in &self.group_files {
+            if let Some(all) = files.get("all") {
+                extend(&mut vars, all);
+            }
         }
         if let Some(names) = self.group_names.get(host) {
             for files in &self.group_files {

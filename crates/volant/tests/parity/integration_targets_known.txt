@@ -50,6 +50,5 @@ template                       #1290
 templating                     #1284
 templating_lookup_args         #1289
 throttle                       #1290
-var_precedence                 #1289
 var_reserved                   #1288
 var_templating                 #1289

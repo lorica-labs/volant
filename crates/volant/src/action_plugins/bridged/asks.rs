@@ -225,12 +225,16 @@ impl Bridged {
     pub(super) fn result_of(&self, outcome: Result<Value, BridgeError>) -> TaskResult {
         match outcome {
             Ok(Value::Object(map)) => {
-                // The helper's marks of a raised skip or failure, which the judge reads.
-                let raised: Vec<&str> =
-                    [crate::executor::RAISED_SKIP, crate::executor::RAISED_FAIL]
-                        .into_iter()
-                        .filter(|key| map.contains_key(*key))
-                        .collect();
+                // The helper's marks of a raised skip or failure, which the judge reads, and of
+                // an unreachable result the plugin returned rather than raised.
+                let raised: Vec<&str> = [
+                    crate::executor::RAISED_SKIP,
+                    crate::executor::RAISED_FAIL,
+                    "_volant_returned",
+                ]
+                .into_iter()
+                .filter(|key| map.contains_key(*key))
+                .collect();
                 let deprecation = map.get(crate::executor::DEPRECATION_TEXT).cloned();
                 // The error that gathers others, which the error block frames: see `settle_failure`.
                 let cause = map.get("_volant_cause").cloned();

@@ -403,5 +403,11 @@ pub(super) fn unreachable_ending(
         .get("msg")
         .and_then(Value::as_str)
         .unwrap_or("the plugin reported the host unreachable");
+    if result.0.get("_volant_returned") == Some(&Value::Bool(true)) {
+        return Err(Err(format!(
+            "{}{msg}",
+            crate::executor::coordinator::RETURNED
+        )));
+    }
     Err(Err(msg.to_string()))
 }

@@ -196,11 +196,14 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
     } = &event
     {
         stats.record(host, Outcome::Ignored, false);
-        out.error(&crate::render::ErrorBlock::unreachable(
-            msg,
-            origin.as_ref(),
-            *censored,
-        ));
+        let (plain, msg) = super::returned(msg);
+        if !plain {
+            out.error(&crate::render::ErrorBlock::unreachable(
+                msg,
+                origin.as_ref(),
+                *censored,
+            ));
+        }
         super::types::show_lost(host, msg, items, *censored, delegate.as_deref(), out);
         out.ignoring();
         return;

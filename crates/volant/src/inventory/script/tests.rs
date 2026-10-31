@@ -98,6 +98,8 @@ fn a_script_whose_interpreter_is_missing_names_the_errno() {
     assert!(warned, "{notes:?}");
 }
 
+/// Linux only: on macOS the standard library runs such a file through `/bin/sh` instead.
+#[cfg(target_os = "linux")]
 #[test]
 fn an_executable_that_is_not_a_script_names_the_errno() {
     // Not an ini file either, so every plugin fails and each one says why.

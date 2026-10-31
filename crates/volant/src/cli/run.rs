@@ -124,18 +124,7 @@ async fn run_all(
     // role, task and handler under it inherits whichever applies, as in the reference.
     executor::command_line_modes(args.check, args.diff);
     for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
-        play.check_mode = play
-            .check_mode
-            .take()
-            .or(args.check.then_some(playbook::Flag::Fixed(true)));
-        play.diff = play
-            .diff
-            .take()
-            .or(args.diff.then_some(playbook::Flag::Fixed(true)));
-        // `gathering = explicit` gathers for the plays that ask and for no other.
-        if config.gathering == "explicit" && !play.gather_written {
-            play.gather_facts = false;
-        }
+        play.take_defaults(args.check, args.diff, config.gathering == "explicit");
     }
     let plays_of = playbooks.iter().flat_map(|pb| &pb.plays);
     crate::action_plugins::facts_modules::configure(&config.facts_modules, plays_of, &inventory);

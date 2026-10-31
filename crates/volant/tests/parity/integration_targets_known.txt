@@ -46,7 +46,6 @@ inventory_advanced_host_list   #1286
 inventory_cache                #1286
 inventory_script               #1282
 keyword_inheritance            #1281
-limit_inventory                #1286
 lookup_env                     #1282
 lookup_first_found             #1289
 lookup_template                #1289

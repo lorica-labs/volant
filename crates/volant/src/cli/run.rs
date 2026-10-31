@@ -292,6 +292,7 @@ async fn run_all(
         })
         .collect();
     let reach = python::Reach::walk_run(&named_playbooks).map_err(|e| Refusal::or(4, e))?;
+    reach.note_own_actions();
     python::check_plugin_order(&reach).map_err(|e| Refusal::or(4, e))?;
     let python_modules = python::modules_for_run(&reach);
     let named: Vec<(String, String)> = compiled

@@ -1821,7 +1821,7 @@ fn the_store_of_an_inventory_grows_linearly_with_its_hosts() {
     };
     let time = |hosts: usize| {
         let inventory = build(hosts);
-        (0..3)
+        (0..5)
             .map(|_| {
                 let start = std::time::Instant::now();
                 VarStore::new(&inventory, None, Path::new("."), Map::new()).unwrap();
@@ -1830,9 +1830,11 @@ fn the_store_of_an_inventory_grows_linearly_with_its_hosts() {
             .min()
             .unwrap()
     };
-    let (small, large) = (time(500), time(2000));
+    // Eight times the hosts: a linear store takes about eight times as long, a quadratic one
+    // sixty-four. The bound sits well between the two, so a loaded runner does not trip it.
+    let (small, large) = (time(500), time(4000));
     assert!(
-        large < small * 10,
-        "500 hosts took {small:?} and 2,000 took {large:?}: more than linear"
+        large < small * 24,
+        "500 hosts took {small:?} and 4,000 took {large:?}: more than linear"
     );
 }

@@ -1,0 +1,20 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug:
+      register: short
+    - ansible.legacy.debug:
+      register: legacy_builtin_defaults
+      module_defaults:
+        ansible.builtin.debug:
+          msg: legacy default
+    - ansible.builtin.debug:
+      register: builtin
+    - debug: {msg: given}
+      register: given
+    - assert:
+        that:
+          - short.msg == 'Hello overridden world!'
+          - legacy_builtin_defaults.msg == 'Hello overridden world!'
+          - builtin.msg == 'Hello world!'
+          - given.msg == 'given'

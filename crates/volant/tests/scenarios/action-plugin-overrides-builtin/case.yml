@@ -1,0 +1,3 @@
+# An action plugin beside the playbook under a builtin name answers the short name and `ansible.legacy.<name>`; `ansible.builtin.<name>` keeps the builtin.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

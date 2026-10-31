@@ -167,7 +167,17 @@ pub(crate) fn supports_async(module: &str) -> bool {
 /// Whether the plugin only edits the controller's inventory and statistics: the reference runs it
 /// without a connection, so it goes the way `set_fact` does, whatever state the host is in.
 pub(crate) fn controller_side(module: &str) -> bool {
-    builtin_spelling(module) && matches!(short_name(module), "add_host" | "group_by" | "set_stats")
+    builtin_spelling(module)
+        && matches!(short_name(module), "add_host" | "group_by" | "set_stats")
+        && !overridden(module)
+}
+
+/// Whether an action plugin of the run's own answers this builtin name, which the helper runs
+/// in place of this engine's own (`python::Reach::note_own_actions`).
+pub(crate) fn overridden(module: &str) -> bool {
+    builtin_spelling(module)
+        && !module.starts_with("ansible.builtin.")
+        && collection_actions().action.contains_key(module)
 }
 
 /// Whether the plugin is `wait_for_connection`, which is run even when the host cannot be reached

@@ -110,30 +110,46 @@ fn keyword_causes(task: &PlayTask, message: &str) -> Option<Value> {
     )]))
 }
 
-/// Makes `result` the error of a `loop_control` keyword that read a missing name. Measured on
-/// ansible-core 2.19.12: the error stands alone, with no `Task failed: `, at the value.
+/// Makes `result` the error of a `loop_control` keyword that read a missing name or rendered a
+/// value that does not convert. Measured on ansible-core 2.19.12: the error has no `Task failed: `
+/// and points at the value; for a value that does not convert, the keyword's sentence heads the
+/// block there and the conversion's follows as its cause, at the same place.
 pub(in crate::executor) fn mark_keyword(
     task: &PlayTask,
     err: &TemplateError,
     result: &mut TaskResult,
 ) {
-    if let Some(at) = keyword_at(task, err) {
-        result
-            .0
-            .insert(crate::render::ERROR_KEY.into(), err.0.clone().into());
-        result.0.insert(crate::render::AT_KEY.into(), at);
+    let Some((key, why, origin)) = loop_keyword(task, err) else {
+        return;
+    };
+    let undefined = TemplateError(why.to_string()).is_undefined();
+    if !undefined && !why.starts_with("The value ") {
+        return;
+    }
+    result
+        .0
+        .insert(crate::render::ERROR_KEY.into(), err.0.clone().into());
+    let at = crate::render::cause("", Some(origin), None);
+    result.0.insert(crate::render::AT_KEY.into(), at);
+    if !undefined {
+        let chain = serde_json::json!([
+            crate::render::lead(&format!("{}'{key}'.", super::item::KEYWORD_ERROR)),
+            crate::render::cause(why, Some(origin), None)
+        ]);
+        result.0.insert(crate::render::CHAIN_KEY.into(), chain);
     }
 }
 
-/// Where a `loop_control` keyword's value was written, when the failure is that value reading a
-/// missing name.
-fn keyword_at(task: &PlayTask, err: &TemplateError) -> Option<Value> {
+/// The `loop_control` keyword a failure names, the sentence after it, and where its value was
+/// written.
+fn loop_keyword<'a>(
+    task: &'a PlayTask,
+    err: &'a TemplateError,
+) -> Option<(&'a str, &'a str, &'a crate::playbook::Origin)> {
     let rest = err.0.strip_prefix(super::item::KEYWORD_ERROR)?;
     let (key, why) = rest.strip_prefix('\'')?.split_once("': ")?;
     let origin = task.value_origins.get(&format!("loop_control.{key}"))?;
-    TemplateError(why.to_string())
-        .is_undefined()
-        .then(|| crate::render::cause("", Some(origin), None))
+    Some((key, why, origin))
 }
 
 /// The chain of a task whose arguments a plugin failed to render, as the reference prints it:

@@ -1,0 +1,7 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{{ item }}"}
+      loop: [1]
+      loop_control: {pause: "{{ 'x' }}"}
+    - debug: msg=after

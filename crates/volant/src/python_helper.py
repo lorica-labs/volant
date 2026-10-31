@@ -232,6 +232,10 @@ def find_module(name):
     # reference's actions ask for `ansible.legacy.<name>`, which the filter does not hold.
     if not found.resolved and "." not in name:
         found = module_loader.find_plugin_with_context("ansible.legacy." + name, mod_type=".py")
+    # A POSIX connection prefers `.py`, then any file of that name: measured, a
+    # `library/helloworld.sh` runs as `helloworld`.
+    if not found.resolved and plain.resolved and not plain.plugin_resolved_path.endswith(".ps1"):
+        return plain
     return found
 
 

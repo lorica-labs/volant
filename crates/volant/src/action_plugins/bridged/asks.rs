@@ -54,6 +54,14 @@ impl Bridged {
                             .flatten()
                     })
                     .or_else(|| (builtin && short == "async_status").then_some(&"async_status"))
+                    // The agent's own modules need no payload, so any plugin may run them:
+                    // measured, a local plugin running the `shell` action runs `command`.
+                    .or_else(|| {
+                        builtin
+                            .then(|| volant_protocol::modules::native(short))
+                            .flatten()
+                            .map(|m| &m.name)
+                    })
                     .ok_or_else(|| {
                     Reply::Error(format!(
                         "the module '{name}' is not supported yet in the action plugin '{}'",

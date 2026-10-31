@@ -167,7 +167,7 @@ impl Bridged {
                 |entry| {
                     json!({
                         "vars": crate::vars::settled(entry).into_owned(),
-                        "trusted": !self.untrusted_hosts.iter().any(|hosts| hosts.contains(&host)),
+                        "trusted": !self.untrusted_hosts.iter().any(|hosts| hosts.contains_key(&host)),
                     })
                 },
             ))),

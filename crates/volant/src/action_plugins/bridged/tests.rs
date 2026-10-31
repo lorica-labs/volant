@@ -75,6 +75,7 @@ fn start_naming(
             no_log: false,
             async_val: 0,
             action: "probe",
+            module_defaults: &[],
         },
     )
 }
@@ -335,6 +336,7 @@ fn the_play_context_describes_the_link_the_module_runs_over(
         no_log: false,
         async_val: 0,
         action: "probe",
+        module_defaults: &[],
     };
     assert_eq!(play_context_of(&ctx, running.as_object().unwrap()), want);
 }
@@ -405,8 +407,8 @@ fn another_host_s_variables_say_whether_they_render(#[case] host: &str, #[case] 
         modules: &[],
         hostvars: Arc::new(hostvars.into_iter().collect()),
         untrusted_hosts: [
-            Arc::new(["h3".to_string()].into()),
-            Arc::new(["h4".to_string()].into()),
+            Arc::new([("h3".to_string(), ["v".to_string()].into())].into()),
+            Arc::new([("h4".to_string(), ["v".to_string()].into())].into()),
         ],
         asks,
         replies: Some(replies),

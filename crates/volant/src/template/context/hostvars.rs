@@ -9,7 +9,7 @@ use minijinja::value::{Enumerator, Object};
 use serde_json::{Map, Value};
 
 use super::super::templar::Templar;
-use super::{Deferred, Memo, Tainted, Vars, context_tracking};
+use super::{Memo, Tainted, Vars, context_tracking};
 use crate::inventory::is_localhost;
 
 /// `hostvars`: a map whose values are converted one host at a time. Iterating it still costs
@@ -24,11 +24,10 @@ pub(in crate::template) struct Hostvars {
     pub(super) listed: Option<Arc<Map<String, Value>>>,
     /// Hosts holding at least one name that came from a managed host. Reading any name of such
     /// a host taints the render, which is coarser than the reference's per-string tag.
-    pub(super) untrusted_hosts: BTreeSet<String>,
+    pub(super) untrusted_hosts: crate::vars::UntrustedHosts,
     /// Whether one of the host names came from a managed host: listing them taints the render.
     pub(super) keys_untrusted: bool,
     pub(super) tainted: Tainted,
-    pub(super) deferred: Arc<Deferred>,
     pub(super) memo: Memo,
     pub(super) templar: Templar,
     /// The names of `listed` that hold host text, for the render of another host's variable.
@@ -38,29 +37,24 @@ pub(in crate::template) struct Hostvars {
 impl Object for Hostvars {
     fn get_value(self: &Arc<Self>, key: &minijinja::Value) -> Option<minijinja::Value> {
         let key = key.as_str()?;
-        // Before the memo, for the same reason as in `Context`.
-        if !self.untrusted_hosts.contains(key) {
-            return self.memo.get(key, || {
-                self.hosts.get(key).map(|entry| {
-                    crate::profile::count(crate::profile::Counter::RenderHostvars, 1);
-                    let entry =
-                        super::read::with_playbook_python(crate::vars::settled(entry).into_owned());
-                    minijinja::Value::from_object(self.view_of(&entry))
-                })
-            });
+        // A host that holds host text, a registered result say, is read as any other, its
+        // templates rendered, with the names that hold such text read as data: measured on
+        // ansible-core 2.19.12, a group's `y: "{{ x }}"` reads `100` through `hostvars` after a
+        // `register`. The read taints the render, which is coarser than the reference's
+        // per-string tag.
+        let data = self.untrusted_hosts.get(key);
+        if data.is_some() {
+            self.tainted.store(true, Ordering::Relaxed);
         }
-        self.tainted.store(true, Ordering::Relaxed);
-        let found = self.memo.get(key, || {
+        self.memo.get(key, || {
             self.hosts.get(key).map(|entry| {
                 crate::profile::count(crate::profile::Counter::RenderHostvars, 1);
                 let entry =
                     super::read::with_playbook_python(crate::vars::settled(entry).into_owned());
-                self.deferred.mark_host(key, &entry);
-                crate::template::bigint::to_template(&entry)
+                let empty = BTreeSet::new();
+                minijinja::Value::from_object(self.view_with(&entry, data.unwrap_or(&empty)))
             })
-        });
-        self.deferred.again_host(key);
-        found
+        })
     }
 
     fn enumerate(self: &Arc<Self>) -> Enumerator {
@@ -93,8 +87,9 @@ impl Object for Hostvars {
 }
 
 impl Hostvars {
-    /// One host's variables as a render of that host reads them.
-    fn view_of(&self, entry: &Value) -> HostView {
+    /// One host's variables as a render of that host reads them, the names of `data` read as data.
+    fn view_with(&self, entry: &Value, data: &BTreeSet<String>) -> HostView {
+        let untrusted: BTreeSet<String> = self.listed_untrusted.union(data).cloned().collect();
         let empty = Map::new();
         let (ctx, tainted) = context_tracking(
             &self.templar,
@@ -103,7 +98,7 @@ impl Hostvars {
                 hostvars: None,
                 shared: self.listed.as_ref(),
                 facts: None,
-                untrusted: Some(&self.listed_untrusted),
+                untrusted: Some(&untrusted),
                 untrusted_hosts: None,
                 base: None,
             },

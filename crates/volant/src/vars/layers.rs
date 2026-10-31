@@ -96,23 +96,44 @@ impl VarStore {
     /// the size of the inventory and every rebuild allocated a string per host inside the
     /// critical section. A spelling of the controller is in the set when any spelling is. Dropped
     /// by `forget_hostvars`, which every write to the facts calls.
-    pub fn untrusted_hosts(&mut self) -> Arc<BTreeSet<String>> {
+    pub fn untrusted_hosts(&mut self) -> Arc<super::UntrustedHosts> {
         if let Some(hosts) = &self.untrusted_hosts {
             return Arc::clone(hosts);
         }
-        let mut hosts: BTreeSet<String> = self
-            .untrusted
-            .iter()
-            .filter(|(_, names)| !names.is_empty())
-            .map(|(host, _)| host)
-            .chain(self.gathered.keys())
-            .chain(&self.data_hosts)
-            .cloned()
-            .collect();
+        let mut hosts = super::UntrustedHosts::new();
+        for (host, names) in self.untrusted.iter().filter(|(_, names)| !names.is_empty()) {
+            hosts
+                .entry(host.clone())
+                .or_default()
+                .extend(names.iter().cloned());
+        }
+        // The facts a host gathered are its own text, every one of them.
+        for (host, facts) in &self.gathered {
+            let names = hosts.entry(host.clone()).or_default();
+            names.extend(facts.keys().cloned());
+            names.insert("ansible_facts".into());
+        }
+        // A host named by data is a host whose name is data.
+        for host in &self.data_hosts {
+            hosts
+                .entry(host.clone())
+                .or_default()
+                .extend(super::HOST_NAMES.map(String::from));
+        }
         // The three spellings of the controller read one host through `hostvars`, so what one of
         // them holds, the others hold.
-        if hosts.iter().any(|host| is_localhost(host)) {
-            hosts.extend(LOCALHOST_NAMES.map(str::to_string));
+        let controller: BTreeSet<String> = hosts
+            .iter()
+            .filter(|(host, _)| is_localhost(host))
+            .flat_map(|(_, names)| names.iter().cloned())
+            .collect();
+        if !controller.is_empty() {
+            for name in LOCALHOST_NAMES {
+                hosts
+                    .entry(name.to_string())
+                    .or_default()
+                    .extend(controller.iter().cloned());
+            }
         }
         let hosts = Arc::new(hosts);
         self.untrusted_hosts = Some(Arc::clone(&hosts));

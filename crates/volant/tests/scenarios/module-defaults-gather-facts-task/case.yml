@@ -1,0 +1,4 @@
+# A gather_facts task applies module_defaults for setup to the setup it runs, under the
+# action's own defaults, whichever spelling names the module.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

@@ -374,6 +374,8 @@ pub(crate) struct Context<'a> {
     pub async_val: u64,
     /// The action as the task wrote it, before a `runtime.yml` redirect: `self._task.action`.
     pub action: &'a str,
+    /// The task's `module_defaults`, which a plugin applies to the module it picks itself.
+    pub module_defaults: &'a [Value],
 }
 
 /// The plugin for `kind`. A written one given a shape it does not take hands the item to

@@ -126,6 +126,7 @@ fn start_mode(
         no_log: false,
         async_val: 0,
         action: "probe",
+        module_defaults: &[],
     })
 }
 

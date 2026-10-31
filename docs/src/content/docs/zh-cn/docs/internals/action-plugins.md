@@ -1,5 +1,5 @@
 ---
-sourceHash: 3c2163d53be0
+sourceHash: 658a36da3f86
 title: Action plugin
 description: Volant 如何运行 ansible-core 通过控制节点上的 action plugin 运行的模块，用 Rust 或通过 Python 桥接。
 ---
@@ -156,7 +156,9 @@ plugin 说出它需要什么，控制节点来回答：运行这个模块，运�
 - 不属于 shim 所带的少数几个的连接或 play 上下文成员：`Connection.<name> is not supported yet`、`the connection option <name> is not supported yet`、`the play context field <name> is not supported yet`、`the shell plugin <name> is not supported yet`。
 - 除 `status` 和 `cleanup` 之外的 `async_status` 模式。
 - shim 按文本读取、却不是 UTF-8 文本的模块。
-- 辅助进程内部的 task 关键字 `action`、`local_action` 和 `module_defaults`：控制节点已经合并了默认值。
+- 辅助进程内部的 task 关键字 `action` 和 `local_action`。
+
+task 的 `module_defaults` 会传给 plugin。控制节点已经把 action 自己的默认值合并进参数，`gather_facts` 会把其余的默认值用于它运行的 facts 模块，与 ansible-core 一致。
 
 辅助进程的连接有两处遵循 ansible-core：
 

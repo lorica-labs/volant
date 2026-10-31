@@ -119,7 +119,7 @@ pub struct Vars<'a> {
     pub untrusted: Option<&'a BTreeSet<String>>,
     /// Hosts that have at least one such name, for the `hostvars[other]` path. Coarser than the
     /// reference, which tags each string: reading any name of such a host taints the render.
-    pub untrusted_hosts: Option<&'a BTreeSet<String>>,
+    pub untrusted_hosts: Option<&'a crate::vars::UntrustedHosts>,
     /// Variables an item shares with the others of its loop, read after `map`: a name in `map`
     /// answers first. A caller that owns its whole map leaves it empty.
     pub base: Option<&'a Arc<Map<String, Value>>>,
@@ -189,7 +189,7 @@ pub(super) struct Context {
     /// Whether the caller tracks which names hold host text: `untrusted` is then complete. Without
     /// it, a read of the inventory's names cannot be told from a read of host text.
     pub(super) tracked: bool,
-    pub(super) untrusted_hosts: BTreeSet<String>,
+    pub(super) untrusted_hosts: crate::vars::UntrustedHosts,
     tainted: Tainted,
     /// Set when a pass left text that must stay as it is: see `Templar::render_in`. Not data:
     /// nothing is refused because of it.

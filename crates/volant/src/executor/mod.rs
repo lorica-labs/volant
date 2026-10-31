@@ -15,6 +15,7 @@ mod include;
 mod play_checks;
 mod play_hosts;
 mod prepare;
+pub(crate) use prepare::command_line_modes;
 mod report;
 mod run;
 mod state;

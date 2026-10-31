@@ -166,7 +166,10 @@ pub(in crate::executor) fn merged_vars(
         if data {
             untrusted.extend(["inventory_hostname", "inventory_hostname_short"].map(String::from));
             let mut hosts = (*untrusted_hosts).clone();
-            hosts.insert(host.to_string());
+            hosts
+                .entry(host.to_string())
+                .or_default()
+                .extend(["inventory_hostname", "inventory_hostname_short"].map(String::from));
             untrusted_hosts = Arc::new(hosts);
         }
         let layers = store.layered_for_host(host, &scope);

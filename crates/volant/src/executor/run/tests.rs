@@ -2157,6 +2157,7 @@ async fn plugin_item_on<R: Relink<FakeAgent>>(
                 no_log: false,
                 async_val: 0,
                 action: "probe",
+                module_defaults: &[],
             },
         );
         run_plugin_item(
@@ -5696,7 +5697,7 @@ fn a_name_from_a_hosts_text_is_data_whatever_it_holds() {
                 continue;
             };
             assert_eq!(
-                hosts.contains(name),
+                hosts.contains_key(name),
                 case.host == Some(name),
                 "{} host {name}",
                 case.module

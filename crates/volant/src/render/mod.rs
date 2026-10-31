@@ -432,8 +432,9 @@ impl Renderer {
     /// it has shown in `_warns` and drops a repeat (`_deduplicate`, keyed by that text alone). A
     /// registered result still holds every copy, as the reference's does.
     pub fn warning(&mut self, text: &str, censored: bool) {
-        // Text written as it came, a deprecation the helper worded in full.
+        // Text written as it came, up to what is registered in its place after a NUL.
         if let Some(raw) = text.strip_prefix(RAW_WARNING) {
+            let raw = raw.split('\0').next().unwrap_or(raw);
             if self.warned.insert(raw.to_string()) {
                 log::record_each(raw);
                 let _ = write!(anstream::stderr(), "{raw}");

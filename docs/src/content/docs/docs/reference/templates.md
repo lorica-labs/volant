@@ -193,7 +193,7 @@ An untrusted value renders once. If the result looks like a template again, it s
 Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.
 ```
 
-Writing the name yourself, as in `debug: var: result.stdout`, works as usual. It is `debug: var: "{{ from_a_host }}"` that stops.
+Writing the name yourself, as in `debug: var: result.stdout`, works as usual. It is `debug: var: "{{ from_a_host }}"` that stops. So does `debug: var: "{{ 'name' }}"`: as in ansible-core 2.19, a string literal inside a template is not trusted. A name read from a loop you wrote, as in `debug: var: "{{ item }}"`, still works. A `var` that is not text, a number included, fails the task with the argument spec's message.
 
 Conditions follow the same rule. A `when: "{{ ... }}"` that renders to a string you wrote, such as `"1 == 1"`, is evaluated once more as a condition. If the render read something a host sent, the string is never compiled, and the task fails with the same `Encountered untrusted template or expression.` An `assert` whose `that` is templated works the same way.
 

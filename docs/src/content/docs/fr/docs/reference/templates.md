@@ -1,5 +1,5 @@
 ---
-sourceHash: 97768b377097
+sourceHash: 0228e4fa70e5
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -194,7 +194,7 @@ Une valeur non fiable est rendue une seule fois. Si le résultat ressemble de no
 Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.
 ```
 
-Écrire le nom vous-même, comme dans `debug: var: result.stdout`, fonctionne comme d'habitude. C'est `debug: var: "{{ from_a_host }}"` qui est arrêté.
+Écrire le nom vous-même, comme dans `debug: var: result.stdout`, fonctionne comme d'habitude. C'est `debug: var: "{{ from_a_host }}"` qui est arrêté. `debug: var: "{{ 'name' }}"` l'est aussi : comme dans ansible-core 2.19, une chaîne littérale dans un template n'est pas de confiance. Un nom lu dans une boucle que vous avez écrite, comme dans `debug: var: "{{ item }}"`, fonctionne toujours. Un `var` qui n'est pas du texte, un nombre compris, fait échouer la tâche avec le message de la spécification des arguments.
 
 Les conditions suivent la même règle. Un `when: "{{ ... }}"` qui se rend en une chaîne que vous avez écrite, comme `"1 == 1"`, est évalué une fois de plus comme condition. Si le rendu a lu quelque chose qu'un hôte a envoyé, la chaîne n'est jamais compilée, et la tâche échoue avec le même `Encountered untrusted template or expression.` Un `assert` dont le `that` est un modèle fonctionne de la même façon.
 

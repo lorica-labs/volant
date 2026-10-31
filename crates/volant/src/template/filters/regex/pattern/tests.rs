@@ -59,6 +59,13 @@ fn an_escape_becomes_the_character_python_reads(#[case] pattern: &str, #[case] r
     r"[\777]",
     r"octal escape value \777 outside of range 0-0o377 at position 1"
 )]
+#[case("[z-a]", "bad character range z-a at position 1")]
+#[case(r"[\d-z]", r"bad character range \d-z at position 1")]
+#[case(r"[a-\d]", r"bad character range a-\d at position 1")]
+#[case(r"[\x41-\x40]", r"bad character range \x-\x at position 5")]
+#[case(r"[\101-\100]", r"bad character range \1-\1 at position 5")]
+#[case(r"[b-\x61]", r"bad character range b-\x at position 3")]
+#[case(r"[a-\]", r"bad character range a-\] at position 1")]
 fn a_bad_escape_or_set_fails_as_python_fails(#[case] pattern: &str, #[case] error: &str) {
     assert_eq!(
         translate(pattern, false).err(),

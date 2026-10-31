@@ -49,7 +49,13 @@ pub(super) fn arrivals(
     // The hosts of a group, and among them the ones the steps are spliced in for.
     let mut grouped: HashMap<String, (IncludeGroup, Vec<String>, Vec<String>)> = HashMap::new();
     for (host, groups) in arrived {
+        // A host that asks for the same include twice, a loop over `[foo, foo]` say, joins a
+        // second group: measured on ansible-core 2.19.12, the file is included once per item.
+        let mut seen: HashMap<String, usize> = HashMap::new();
         for group in groups {
+            let nth = seen.entry(group.key.clone()).or_default();
+            let key = format!("{}\0{nth}", group.key);
+            *nth += 1;
             let runs = match &group.role_id {
                 Some(id) => {
                     let ran = completion.completed(&host, id);
@@ -57,9 +63,9 @@ pub(super) fn arrivals(
                 }
                 None => true,
             };
-            match grouped.entry(group.key.clone()) {
+            match grouped.entry(key.clone()) {
                 Entry::Vacant(slot) => {
-                    order.push(group.key.clone());
+                    order.push(key);
                     let runners = if runs { vec![host.clone()] } else { Vec::new() };
                     slot.insert((group, vec![host.clone()], runners));
                 }

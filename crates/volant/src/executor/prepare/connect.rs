@@ -9,7 +9,7 @@ use crate::compile::Origin;
 use crate::playbook::PlayTask;
 use crate::template::{Templar, TemplateError};
 use crate::transport::ConnectionKeywords;
-use crate::vars::HostVars;
+use crate::vars::{HostVars, settled};
 
 /// The task's `remote_user`, `port` and `connection`, rendered once for the task against its
 /// variables, for the reason `delegate_for` renders `delegate_to` that way. An empty result is
@@ -132,7 +132,32 @@ fn missing_plugin(
     Some((result, missing.warning()))
 }
 
+/// The host a task delegates to, and whether its name is data. Each item reads the delegate's
+/// variables as `ansible_delegated_vars`, under its name, as `VariableManager._get_delegated_vars`
+/// files them: measured on ansible-core 2.19.12, a delegated handler's `ansible_delegated_vars is
+/// defined` holds.
 pub(super) fn delegate_for(
+    task: &PlayTask,
+    vars: &HostVars,
+    templar: &Templar,
+    items: &mut [super::Item],
+) -> Result<Option<(String, bool)>, TemplateError> {
+    let delegate = delegate_named(task, vars, templar)?;
+    if let Some((name, _)) = &delegate {
+        let own = vars
+            .hostvars
+            .get(name)
+            .map(|entry| settled(entry).into_owned());
+        let value = serde_json::json!({ name: own.unwrap_or_else(|| serde_json::json!({})) });
+        for item in items {
+            item.vars
+                .insert_untrusted("ansible_delegated_vars".into(), value.clone());
+        }
+    }
+    Ok(delegate)
+}
+
+fn delegate_named(
     task: &PlayTask,
     vars: &HostVars,
     templar: &Templar,

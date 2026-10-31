@@ -4,6 +4,7 @@
 use anyhow::bail;
 use serde_json::{Map, Value};
 
+use crate::playbook::PlayTask;
 use crate::template::Templar;
 
 use super::builder::Builder;
@@ -13,12 +14,21 @@ impl Builder<'_> {
     /// An import's path, rendered when it holds a template. Measured on ansible-core 2.19.12: it
     /// reads `role_path`, `playbook_dir`, the play's `vars:`, `-e` and the roles' `defaults` and
     /// `vars`, and an inventory variable is undefined there, which stops the run at exit 4.
-    pub(super) fn import_path(&self, name: &str) -> anyhow::Result<String> {
+    ///
+    /// The statement's own `vars:` are read over those: measured, `import_tasks: "{{ task_var }}"`
+    /// beside `vars: {task_var: other.yml}` imports `other.yml`.
+    pub(super) fn import_path(
+        &self,
+        name: &str,
+        own: &Map<String, Value>,
+    ) -> anyhow::Result<String> {
         if !Templar::is_template(name) {
             return Ok(name.to_string());
         }
         let templar = Templar::new(self.file_dir.clone());
-        match templar.render(name, &self.compile_vars()) {
+        let mut vars = self.compile_vars();
+        extend(&mut vars, own);
+        match templar.render(name, &vars) {
             Ok(Value::String(path)) => Ok(path),
             Ok(other) => Ok(other.to_string()),
             Err(err) => bail!(
@@ -59,6 +69,29 @@ impl Builder<'_> {
             }
         }
         out
+    }
+
+    /// An `import_role` with its `allow_duplicates`, `public` and `rolespec_validate` rendered
+    /// when they hold a template, against the same variables as an import's path: measured on
+    /// ansible-core 2.19.12, `allow_duplicates: "{{ False | bool }}"` runs the role once. One that
+    /// cannot be rendered stays as written, for the reading to refuse.
+    pub(super) fn rendered_flags(&self, task: &PlayTask) -> PlayTask {
+        let keys = ["allow_duplicates", "public", "rolespec_validate"];
+        let templated = |key: &&str| task.args.get(*key).and_then(Value::as_str);
+        if !keys.iter().filter_map(templated).any(Templar::is_template) {
+            return task.clone();
+        }
+        let (vars, templar) = (self.compile_vars(), Templar::new(self.file_dir.clone()));
+        let mut task = task.clone();
+        for key in keys {
+            let Some(Value::String(raw)) = task.args.get(key) else {
+                continue;
+            };
+            if let Ok(value) = templar.render(raw, &vars) {
+                task.args.insert(key.to_string(), value);
+            }
+        }
+        task
     }
 
     /// What a template renders against while the play compiles, before any host: the roles'

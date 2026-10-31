@@ -416,7 +416,23 @@ pub(super) fn include_role_options(args: &Map<String, Value>) -> anyhow::Result<
             "apply",
         ],
         &[],
-    )
+    )?;
+    // Measured on ansible-core 2.19.12: a list given as `vars_from` stops the playbook as it
+    // loads, whether or not any host runs the play, naming the tagged type the loader made.
+    for key in ["tasks_from", "vars_from", "defaults_from", "handlers_from"] {
+        if let Some(value) = args.get(key).filter(|v| !v.is_string()) {
+            let class = match crate::template::type_name(value) {
+                plain @ ("bool" | "NoneType") => plain.to_string(),
+                tagged => format!(
+                    "ansible.module_utils._internal._datatag._AnsibleTagged{}{}",
+                    tagged[..1].to_uppercase(),
+                    &tagged[1..]
+                ),
+            };
+            anyhow::bail!("Expected a string for {key} but got <class '{class}'> instead");
+        }
+    }
+    Ok(())
 }
 
 /// `include_tasks` takes a file name and `apply`, which the compilation of what the statement

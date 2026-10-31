@@ -56,12 +56,19 @@ impl Compiled {
 /// read the same name the same way, and two copies of this rule would be two chances to move only
 /// one of them. The path it returns is the one to report as missing when nothing is there, which
 /// is why it answers with a path rather than an `Option`.
+///
+/// Last comes the role's own directory: measured, a role's `handlers/main.yml` writing
+/// `include_tasks: tasks/handlers.yml` reads the role's `tasks/handlers.yml`.
 pub(crate) fn beside_or_in_role(file_dir: &Path, role_dir: Option<&Path>, name: &str) -> PathBuf {
     let beside = file_dir.join(name);
-    match role_dir.map(|role| role.join("tasks").join(name)) {
-        Some(in_role) if !beside.is_file() && in_role.is_file() => in_role,
-        _ => beside,
+    if beside.is_file() {
+        return beside;
     }
+    role_dir
+        .into_iter()
+        .flat_map(|role| [role.join("tasks").join(name), role.join(name)])
+        .find(|path| path.is_file())
+        .unwrap_or(beside)
 }
 
 /// The handlers one name notifies, in definition order: one carrying it as its name, and every

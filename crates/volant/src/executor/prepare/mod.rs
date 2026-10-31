@@ -329,7 +329,7 @@ pub(super) fn prepare(
     {
         return Ok(Prepared::Skipped(items));
     }
-    let delegate = delegate_for(task, &base, templar)?;
+    let delegate = delegate_for(task, &base, templar, &mut items)?;
     // A word that names no action fails on the controller before any link is opened.
     if is_local(&task.module)
         || crate::action_plugins::controller_side(&task.module)

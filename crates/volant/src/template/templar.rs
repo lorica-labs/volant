@@ -328,6 +328,7 @@ impl Templar {
                         || err.is_undefined()
                         || err.0.starts_with(super::NO_FILTER)
                         || err.0.starts_with("Error rendering template: ")
+                        || err.0.starts_with("Syntax error in template: ")
                         || super::include::is_not_found(&err.0)
                     {
                         TemplateError(format!("{RESOLVING}'{key}': {}", err.0))
@@ -411,7 +412,9 @@ impl Templar {
     }
 
     fn evaluate_known(&self, expr: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
-        let value = eval_expr(self, expr, ctx).map_err(convert_error);
+        let value = eval_expr(self, expr, ctx).map_err(|e| {
+            super::jinja_syntax(&e, expr).map_or_else(|| convert_error(e), TemplateError)
+        });
         // A variable the expression read failed to render: that is the error, whatever the
         // undefined value it was read as did to the expression.
         if let Some(error) = take_failure(ctx) {
@@ -450,7 +453,11 @@ impl Templar {
         }
         let (ctx, tainted) = context_of(self, vars.into());
         let delimited = single_expression(expr);
-        let mut value = self.evaluate_in(delimited.unwrap_or(expr.trim()), &ctx)?;
+        // A condition written in braces is a template: its syntax errors are a template's.
+        let mut value = match delimited {
+            Some(inner) => super::as_template(expr, inner, || self.evaluate_in(inner, &ctx))?,
+            None => self.evaluate_in(expr.trim(), &ctx)?,
+        };
         if delimited.is_some()
             && let Value::String(text) = &value
         {

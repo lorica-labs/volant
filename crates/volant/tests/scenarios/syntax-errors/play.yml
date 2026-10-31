@@ -1,0 +1,22 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - {debug: {var: "1 +"}, ignore_errors: true}
+    - {debug: {var: "[1, 2"}, ignore_errors: true}
+    - {debug: {var: "a b"}, ignore_errors: true}
+    - {debug: {var: "x | "}, ignore_errors: true}
+    - {debug: {var: "1 $ 2"}, ignore_errors: true}
+    - {debug: {msg: x}, when: "1 +", ignore_errors: true}
+    - {debug: {msg: x}, when: "{{ 1 + }}", ignore_errors: true}
+    - {debug: {msg: "{{ 1 + }}"}, ignore_errors: true}
+    - {debug: {msg: "{{ [1, 2 }}"}, ignore_errors: true}
+    - {debug: {msg: "{{ a b }}"}, ignore_errors: true}
+    - {debug: {msg: "{{ x | }}"}, ignore_errors: true}
+    - {debug: {msg: "{{ 1 $ 2 }}"}, ignore_errors: true}
+    - {debug: {msg: "a {{ 1 + }} b"}, ignore_errors: true}
+    - {debug: {msg: "{{ x "}, ignore_errors: true}
+    - {debug: {msg: "{% if true %}x"}, ignore_errors: true}
+    - {debug: {msg: "{% for x in y %}{% else %}"}, ignore_errors: true}
+    - {debug: {msg: "{% bogus %}"}, ignore_errors: true}
+    - {debug: {msg: "{% for x in y %}{% endif %}"}, ignore_errors: true}
+    - {debug: {msg: "{% if %}{% endif %}"}, ignore_errors: true}

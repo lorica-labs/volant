@@ -53,7 +53,7 @@ pub(crate) use env::{
 use env::{any_undefined, environment, type_name};
 pub use templar::Templar;
 pub(crate) use vm::{EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template};
-use vm::{convert_error, render_str};
+use vm::{as_template, convert_error, jinja_syntax, render_str};
 
 pub(crate) use bridged::is_plugin_failure;
 pub use bridged::{bridged_name, not_sent_reason};

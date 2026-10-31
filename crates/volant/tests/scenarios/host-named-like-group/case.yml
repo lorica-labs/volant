@@ -1,0 +1,8 @@
+# A host named like a group that exists by the time its variables are read gives them to the
+# group, as ansible-core's InventoryData.set_variable does: every member reads them. The same
+# through a script, an ini and a yaml source; an ini host read before its group keeps its own.
+runs:
+  - args: [-i, inv.py, play.yml]
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.yml, play.yml]
+  - args: [-i, before.ini, play.yml]

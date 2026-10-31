@@ -163,6 +163,17 @@ impl Inventory {
         vars: serde_json::Map<String, Value>,
         file: Option<&Path>,
     ) -> bool {
+        // `InventoryData.set_variable` looks a name up among the groups first, and `all` and
+        // `ungrouped` always are groups: the variables of a host named like a group that exists
+        // by then are that group's. Measured on ansible-core 2.19.12, every member then reads
+        // them.
+        let to_group =
+            matches!(name, "all" | "ungrouped") || self.groups.iter().any(|g| g.name == name);
+        let known = self.hosts.iter().any(|h| h.name == name);
+        if known && to_group {
+            crate::vars::extend(&mut self.group_mut(name).vars, &vars);
+            return false;
+        }
         if let Some(host) = self.hosts.iter_mut().find(|h| h.name == name) {
             self.unsafe_vars
                 .retain(|(h, v), _| h != name || !vars.contains_key(v));
@@ -173,10 +184,7 @@ impl Inventory {
         if let Some(port) = port.filter(|p| *p != 0) {
             all.insert("ansible_port".to_string(), Value::from(port));
         }
-        // `InventoryData.set_variable` looks a name up among the groups first, and `all` and
-        // `ungrouped` always are groups: the variables of a host so named are that group's.
-        // Measured on ansible-core 2.19.12, every host then reads them.
-        if matches!(name, "all" | "ungrouped") {
+        if to_group {
             crate::vars::extend(&mut self.group_mut(name).vars, &vars);
         } else {
             all.extend(vars);

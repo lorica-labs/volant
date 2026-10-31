@@ -17,7 +17,8 @@ use crate::playbook::{Deferred, PlayTask, python_repr};
 use crate::template::{Templar, TemplateError};
 use crate::vars::{HostVars, VarStore};
 
-use super::item::{boolean_keyword, undefined_name};
+use super::item::undefined_name;
+use super::keyword::boolean_keyword;
 use super::plan::PlayPlan;
 use super::vars::host_vars;
 
@@ -53,7 +54,7 @@ pub(super) fn keyword_bool(
     templar: &Templar,
 ) -> Result<Option<bool>, TemplateError> {
     match template {
-        Some(raw) if super::item::omitted(raw, vars, templar) => Ok(None),
+        Some(raw) if super::keyword::omitted(raw, vars, templar) => Ok(None),
         Some(raw) => boolean_keyword(key, raw, vars, templar)
             .map(Some)
             .map_err(task_failed),

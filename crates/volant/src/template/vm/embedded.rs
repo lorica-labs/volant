@@ -84,9 +84,16 @@ pub(in crate::template) fn inline_lookup_terms(
                 open.pop();
             }
             Token::Str(text) => {
+                // The whole term, not a part of one: `playbook_dir ~ '/{{ x }}'` stays as written.
+                let whole = matches!(
+                    before,
+                    Some(Token::ParenOpen | Token::Comma | Token::BracketOpen)
+                ) && matches!(
+                    tokens.get(i + 1).map(|(t, _)| t),
+                    Some(Token::ParenClose | Token::Comma | Token::BracketClose)
+                );
                 let term = open.len() == 1 || (open.len() == 2 && open[1]);
-                let keyword = matches!(before, Some(Token::Assign));
-                if let (true, false, Some(expr)) = (term, keyword, expression(text)) {
+                if let (true, true, Some(expr)) = (term, whole, expression(text)) {
                     let (start, end) = (span.start_offset as usize, span.end_offset as usize);
                     out.push_str(&source[from..start]);
                     out.push('(');
@@ -136,6 +143,10 @@ mod tests {
         "lookup('items', '{% if 1 %}x{% endif %}')"
     )]
     #[case("x.lookup('{{ v }}')", "x.lookup('{{ v }}')")]
+    #[case(
+        "lookup('file', d ~ '/{{ x }}.txt')",
+        "lookup('file', d ~ '/{{ x }}.txt')"
+    )]
     fn only_a_constant_term_of_a_lookup_is_inlined(#[case] expr: &str, #[case] want: &str) {
         assert_eq!(
             inline_lookup_terms(expr, true, SyntaxConfig::default()),

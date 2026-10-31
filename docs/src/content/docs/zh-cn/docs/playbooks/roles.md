@@ -1,5 +1,5 @@
 ---
-sourceHash: f3d5d68d17df
+sourceHash: 053a11b38c33
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -103,7 +103,7 @@ ansible-core 2.19 在这个条目上接受的其他关键字，例如 `ignore_er
 
 ### 动态 include
 
-这条语句自己说的内容里，只有它的 `vars:` 会传入被 include 的文件。这些变量进入[优先级顺序](/zh-cn/docs/variables/precedence/)中 role 参数的那一层，高于 facts、低于 `--extra-vars`，并且会在嵌套 include 中累积。语句自己的 `tags` 到语句为止，它的 `when` 只对这条语句本身求值。
+这条语句自己说的内容里，只有它的 `vars:` 会传入被 include 的文件。这些变量进入[优先级顺序](/zh-cn/docs/variables/precedence/)中 role 参数的那一层，高于 facts、低于 `--extra-vars`，并且会在嵌套 include 中累积。如果某个值读取了尚未定义的名字，它会按原样传下去，等下面的 task 读取它时再渲染，与 Ansible 一致。语句自己的 `tags` 到语句为止，它的 `when` 只对这条语句本身求值。
 
 语句周围各层所说的内容，确实会传到被 include 的 task：play、引入该文件的 role 条目，以及它外面的块。它们的 `tags`、`become`、`become_user`、`no_log`、`when`、`environment`、`delegate_to`、`ignore_errors`、`notify` 和 `vars` 适用于每个被 include 的 task，task 自己的值优先于继承的值。这是 ansible-core 2.19 的规则：它跳过动态加载的父级，去问祖父级。继承来的 `check_mode: true` 在被 include 的文件中会被拒绝，而不是被丢弃。
 

@@ -8181,3 +8181,49 @@ fn a_link_named_ansible_playbook_behaves_as_the_playbook_subcommand() {
     assert!(text.starts_with("ansible-playbook: error:"), "{text}");
     assert!(!text.contains("ansible-playbook playbook"), "{text}");
 }
+
+/// A prompt with no terminal to write to goes to standard error as the process inherited it:
+/// redirected to a file in append mode, what the file already held stays.
+#[cfg(unix)]
+#[test]
+fn a_prompt_keeps_what_a_redirected_standard_error_already_held() {
+    use std::io::Write as _;
+    use std::os::unix::process::CommandExt as _;
+    let dir = tempfile::tempdir().unwrap();
+    let book = dir.path().join("play.yml");
+    std::fs::write(
+        &book,
+        "- hosts: localhost\n  gather_facts: false\n  tasks:\n    - debug: {msg: hi}\n",
+    )
+    .unwrap();
+    let log = dir.path().join("err.log");
+    std::fs::write(&log, "earlier line\n").unwrap();
+    let err = std::fs::OpenOptions::new().append(true).open(&log).unwrap();
+    let mut command = Command::new(env!("CARGO_BIN_EXE_volant"));
+    command
+        .args(["playbook", "--ask-vault-pass", book.to_str().unwrap()])
+        .env("NO_COLOR", "1")
+        .env("VOLANT_RUNTIME", "system")
+        .stdin(std::process::Stdio::piped())
+        .stdout(std::process::Stdio::null())
+        .stderr(err);
+    // SAFETY: only an async-signal-safe call between fork and exec: a session of its own, with
+    // no controlling terminal, so the prompt cannot go to one.
+    unsafe {
+        command.pre_exec(|| {
+            libc::setsid();
+            Ok(())
+        });
+    }
+    let mut child = command.spawn().expect("volant starts");
+    child
+        .stdin
+        .take()
+        .expect("stdin piped")
+        .write_all(b"secret\n")
+        .unwrap();
+    assert!(child.wait().unwrap().success());
+    let text = std::fs::read_to_string(&log).unwrap();
+    assert!(text.starts_with("earlier line\n"), "{text:?}");
+    assert!(text.contains("Vault password: "), "{text:?}");
+}

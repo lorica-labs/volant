@@ -312,9 +312,15 @@ fn lookup(
             },
             "pipe" | "ansible.builtin.pipe" => {
                 taint();
+                // Under the open-file limit the run started with, as a local task's command runs:
+                // measured, `lookup('pipe', 'ulimit -n')` and a local `shell: ulimit -n` agree.
+                let script = match crate::transport::started_open_file_limit() {
+                    Some(soft) => format!("ulimit -Sn {soft} 2>/dev/null; {term_text}"),
+                    None => term_text.clone(),
+                };
                 let out = std::process::Command::new("sh")
                     .arg("-c")
-                    .arg(&term_text)
+                    .arg(&script)
                     .output()
                     .map_err(|e| invalid(format!("lookup pipe: {e}")))?;
                 if !out.status.success() {

@@ -234,7 +234,7 @@ static STARTED_SOFT: std::sync::OnceLock<libc::rlim_t> = std::sync::OnceLock::ne
 /// not with the limit raised for this controller's own links: measured on ansible-core 2.19.12,
 /// `ulimit -n` in a local task prints the soft limit of the shell that started the run.
 #[cfg(unix)]
-pub(super) fn started_open_file_limit() -> Option<libc::rlim_t> {
+pub(crate) fn started_open_file_limit() -> Option<libc::rlim_t> {
     let soft = *STARTED_SOFT.get()?;
     let mut limit = libc::rlimit {
         rlim_cur: 0,
@@ -246,7 +246,7 @@ pub(super) fn started_open_file_limit() -> Option<libc::rlim_t> {
 }
 
 #[cfg(not(unix))]
-pub(super) fn started_open_file_limit() -> Option<u64> {
+pub(crate) fn started_open_file_limit() -> Option<u64> {
     None
 }
 

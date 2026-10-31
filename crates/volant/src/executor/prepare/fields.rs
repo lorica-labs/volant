@@ -327,6 +327,7 @@ fn render_args(
     if task.name == "Gathering Facts" && task.module == "ansible.legacy.setup" {
         check_gather_subset(raw.get("gather_subset"), map.get("gather_subset"))?;
     }
+    super::keyword::check_rlimit(vars, templar)?;
     // The task's `module_defaults` lie under its own arguments, each rendered once on its own: a
     // default is a template like an argument, and may be a whole template that renders to a
     // mapping. A task's argument wins, `omit` included.

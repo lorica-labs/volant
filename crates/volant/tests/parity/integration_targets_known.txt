@@ -34,7 +34,6 @@ gathering_facts                #1285
 include_import                 #1288
 include_vars                   #1282
 interpreter_discovery_python   #1284
-inventory-invalid-group        #1286
 inventory_advanced_host_list   #1286
 inventory_cache                #1286
 inventory_script               #1282
@@ -49,10 +48,8 @@ module_defaults                #1289
 no_log                         #1287
 omit                           #1288
 order                          #1289
-plugin_filtering               #1290
 preflight_encoding             #1283
 protomatter                    #1282
-python_module_rlimit_nofile    #1290
 remote_tmp                     #1290
 result_pickle_error            #1284
 roles_arg_spec                 #1284

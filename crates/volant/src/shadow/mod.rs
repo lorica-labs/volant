@@ -85,13 +85,15 @@ fn replay(path: &Path, json: bool, ledger: Option<&Path>) -> i32 {
     let header = &recording.header;
     if !in_profile(&header.ansible_core) {
         eprintln!(
-            "[WARNING]: the recording is of ansible-core {}, outside the 2.19 series Volant              follows: the replay is out-of-profile",
+            "[WARNING]: the recording is of ansible-core {}, outside the 2.19 series Volant \
+             follows: the replay is out-of-profile",
             header.ansible_core
         );
     }
     if recording.truncated {
         eprintln!(
-            "[WARNING]: the recording is truncated: the run was interrupted, and the replay              stops where the recording does"
+            "[WARNING]: the recording is truncated: the run was interrupted, and the replay \
+             stops where the recording does"
         );
     }
     let root = std::env::current_dir().unwrap_or_default();

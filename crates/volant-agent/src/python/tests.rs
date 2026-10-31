@@ -1494,10 +1494,6 @@ fn the_timing_mark_leaves_the_module_s_traceback_alone() {
     "\n    print('Traceback: everything is on fire')\n",
     "everything is on fire"
 )]
-#[case::result_followed_by_noise(
-    "\n    print(json.dumps({\"changed\": True}))\n    print('and then this')\n",
-    "and then this"
-)]
 #[case::killed_by_a_signal(
     "\n    import os, signal\n    os.kill(os.getpid(), signal.SIGKILL)\n",
     "the module was killed by signal 9"
@@ -1534,6 +1530,27 @@ fn a_module_that_delivers_no_result_fails_the_task(#[case] body: &str, #[case] n
         result.0
     );
     assert!(server.alive(), "the module's failure is not the server's");
+}
+
+/// A result with lines around it is the result, as ansible-core's `_filter_non_json_lines` reads
+/// it: what came before is dropped, and what came after is a warning.
+#[test]
+fn a_result_among_other_lines_is_the_result() {
+    let blob = stub_blob(
+        "\n    print('leading junk')\n    print(json.dumps({\"changed\": True}))\n    print('and then this')\n",
+    );
+    let mut server = Server::start(HOST_PYTHON, blob.path(), &|| false).unwrap();
+    let result = done(server.run(
+        &payload("ansible.modules.probe"),
+        &args(json!({})),
+        &Context::default(),
+        &|| false,
+    ));
+    assert!(!result.failed(), "{:?}", result.0);
+    assert_eq!(
+        result.0["warnings"][0],
+        "Module invocation had junk after the JSON data: and then this"
+    );
 }
 
 /// A module's result is reported as it wrote it, with `changed` filled in as false when absent.

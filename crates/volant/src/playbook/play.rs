@@ -30,7 +30,8 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     if has("user") {
         if has("remote_user") {
             bail!(
-                "both 'user' and 'remote_user' are set for this play. The use of 'user' is                  deprecated, and should be removed"
+                "both 'user' and 'remote_user' are set for this play. The use of 'user' is \
+                 deprecated, and should be removed"
             );
         }
         let renamed = map

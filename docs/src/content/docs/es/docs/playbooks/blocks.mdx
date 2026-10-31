@@ -1,5 +1,5 @@
 ---
-sourceHash: c2126b365c1e
+sourceHash: 93e42c829631
 title: Bloques y handlers
 description: Cómo viaja un fallo por los bloques, qué hacen rescue y always, y cuándo se ejecutan los handlers.
 ---
@@ -90,7 +90,7 @@ Una tarea solo notifica cuando informa `changed`. En un bucle decide el resultad
 
 Una lista `handlers:` puede contener un `import_tasks`, en un play o en un rol. Los handlers del archivo que nombra ocupan su lugar, con sus palabras clave, y se notifican por su nombre y por `listen`. El archivo se busca junto al archivo que contiene la sentencia y después en el directorio del playbook.
 
-Un handler también puede ser un `include_tasks`. Cuando se notifica, incluye su archivo en el flush: `included:` aparece bajo su banner `RUNNING HANDLER` y después las tareas del archivo se ejecutan como handlers para los hosts que lo notificaron. Un `include_role` escrito como handler detiene la ejecución antes de que corra nada, con el código de salida 4, como en Ansible.
+Un handler también puede ser un `include_tasks`. Cuando se notifica, incluye su archivo en el flush: `included:` aparece bajo su banner `RUNNING HANDLER` y después las tareas del archivo se ejecutan como handlers para los hosts que lo notificaron. El handler de un rol busca su archivo en el directorio `tasks/` del rol, como una tarea del rol, y sus tareas encuentran las plantillas y los archivos del rol. Un `include_role` escrito como handler detiene la ejecución antes de que corra nada, con el código de salida 4, como en Ansible.
 
 Cuando dos handlers comparten nombre, responde el de la última lista definida, y la lista del play va después de las de todos los roles; dentro de una misma lista, el primero. El handler de un rol también responde a `<rol> : <nombre>`. Se ejecuta todo handler que escucha ese nombre, salvo un segundo listener con el mismo nombre que uno ya encontrado.
 

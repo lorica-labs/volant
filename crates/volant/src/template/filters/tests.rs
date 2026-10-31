@@ -638,3 +638,13 @@ fn int_strips_and_refuses_as_python_does() {
         assert!(err.contains(reason), "{template}: {err}");
     }
 }
+
+/// The fixture of ansible-core's own `filter_encryption` target: a salt makes the text fixed.
+#[test]
+fn a_salted_vault_gives_ansible_s_text() {
+    let want = "$ANSIBLE_VAULT;1.2;AES256;filter_default\n\
+        33370a34333734353636633035656232613935353432656132646533346233326431346232616261\n\
+        6133383034376566366261316365633931356133633337396363370a376664386236313834326561\n\
+        6338373864623763613165366636633031303739\n";
+    assert_eq!(text("{{ 'secret' | vault('test', salt=7) }}"), want);
+}

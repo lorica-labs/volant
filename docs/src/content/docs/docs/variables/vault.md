@@ -74,7 +74,7 @@ mykey: !vault |
 
 ## Known gaps
 
-- The `salt` and `wrap_object` arguments of the `vault` filter are refused as not supported yet.
+- The `wrap_object` argument of the `vault` filter is refused as not supported yet. Its `salt` argument works as in Ansible: the same salt always gives the same text.
 - A `!vault` value written in a play's own `vars:` prints no `Origin:` line when no secret opens it.
 - A `set_fact` of a bare `{{ x }}` that holds a vaulted value loses the vault tag, so `is vault_encrypted` answers false on the fact where ansible-core answers true.
 - At `-vvvvv`, `vault view`, `decrypt` and `rekey` do not print ansible-core's trace of each secret they try (`Trying secret FileVaultSecret(...) for vault_id=...`). The secrets are tried in the same order.

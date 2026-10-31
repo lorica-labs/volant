@@ -186,6 +186,8 @@ pub struct Config {
     pub fact_caching_prefix: String,
     /// `gathering`: `implicit`, `explicit` or `smart`.
     pub gathering: String,
+    /// `playbook_dir`: what `ansible` and `ansible-console` take as `--playbook-dir`.
+    pub playbook_dir: Option<PathBuf>,
     /// `[galaxy]` and `[galaxy_server.<name>]`: section, key and value, as written.
     pub galaxy: Vec<(String, String, String)>,
 }

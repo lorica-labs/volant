@@ -30,6 +30,15 @@ pub(in crate::template) fn as_template<T>(
     out
 }
 
+/// `err` as a bare expression says it. Measured on ansible-core 2.19.12: a filter or a test
+/// nobody ships is an expression's syntax error in a condition, and a template's elsewhere.
+pub(in crate::template) fn as_expression(err: super::TemplateError) -> super::TemplateError {
+    match err.0.strip_prefix("Syntax error in template: No ") {
+        Some(rest) => super::TemplateError(format!("Syntax error in expression: No {rest}")),
+        None => err,
+    }
+}
+
 /// What a block that is open waits for, as Jinja's parser lists it.
 fn awaited(block: &str) -> Option<&'static str> {
     Some(match block {

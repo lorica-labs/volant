@@ -175,11 +175,14 @@ fn run_command(path: &str, args: &[&str]) -> Result<(String, String), PluginErro
             .chain(args.iter().copied())
             .map(shell_quote)
             .collect();
-        // Python's `OSError` text for the two causes a script has: no file (or no interpreter
-        // behind its shebang) and no permission; any other cause keeps the bare sentence.
+        // Python's `OSError` text for the causes a script has: no file (or no interpreter
+        // behind its shebang), no permission, and a file the kernel cannot run; any other cause
+        // keeps the bare sentence.
         let reason = match err.raw_os_error() {
             Some(2) => format!(": [Errno 2] No such file or directory: {}", py_repr(path)),
             Some(13) => format!(": [Errno 13] Permission denied: {}", py_repr(path)),
+            // An executable file the kernel cannot run, such as an ini file with the bit set.
+            Some(8) => format!(": [Errno 8] Exec format error: {}", py_repr(path)),
             _ => ".".to_string(),
         };
         failure(format!(

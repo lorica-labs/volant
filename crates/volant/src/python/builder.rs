@@ -73,6 +73,12 @@ impl PythonBuilder {
         {
             env.push(("ANSIBLE_COLLECTIONS_PATH", paths));
         }
+        let config = crate::config::helper_config();
+        if let Some(config) = config.as_deref().and_then(std::path::Path::to_str)
+            && !env.iter().any(|(name, _)| *name == "ANSIBLE_CONFIG")
+        {
+            env.push(("ANSIBLE_CONFIG", config));
+        }
         PythonBuilder::spawn(python, &helper_args(), &env)
     }
 

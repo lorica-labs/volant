@@ -268,7 +268,9 @@ impl Plugin for Reboot<'_> {
                 // answered and failed - no such program, no permission - fails the task now,
                 // rather than waiting out the timeout for a reboot that will never happen.
                 if !is_gone(&ran) && rc(&ran) != Some(0) {
+                    // `start` is when the command came back, in UTC, as `perform_reboot` sets it.
                     return Step::Done(TaskResult(object(json!({
+                        "changed": false,
                         "elapsed": 0,
                         "failed": true,
                         "msg": format!(
@@ -277,6 +279,7 @@ impl Plugin for Reboot<'_> {
                             text(&ran, "stderr").trim()
                         ),
                         "rebooted": false,
+                        "start": crate::template::utc_now("%Y-%m-%dT%H:%M:%S.%f+00:00"),
                     }))));
                 }
                 let now = Instant::now();

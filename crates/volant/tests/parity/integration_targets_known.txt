@@ -28,7 +28,6 @@ dataloader                     #1288
 debug                          #1283
 deprecations                   #1282
 display-newline                #1287
-environment                    #1285
 filter_core                    #1289
 filter_encryption              #1283
 find                           #1290

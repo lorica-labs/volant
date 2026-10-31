@@ -1,5 +1,5 @@
 ---
-sourceHash: f054303cc0e6
+sourceHash: "387854768339"
 title: 委派、meta 任务与 environment
 description: 对一个批次只运行一次 task 或在另一台主机上运行，每个 meta 动作的作用，以及 environment 和 no_log 如何影响 task。
 ---
@@ -103,7 +103,7 @@ facts 和 `set_fact` 的值保持原样。见 [Inventory](/zh-cn/docs/hosts/inve
 
 各层按键逐个合并，每一层覆盖前一层：先是 play，然后是每个外层的块（由外向内），最后是 task。每一层都用当前循环 item 的变量渲染。
 
-值会变成 Python 的 `str()` 对它们的处理结果，所以 `42` 变成 `"42"`，`true` 变成 `"True"`，`null` 变成 `"None"`。`environment` 内部未定义的变量会让 task 失败。
+值会变成 Python 的 `str()` 对它们的处理结果，所以 `42` 变成 `"42"`，`true` 变成 `"True"`，`null` 变成 `"None"`。`environment` 内部未定义的变量会让 task 失败。但映射中的某个值如果未定义的名字是 `ansible_env`，就会被省略，与 Ansible 一致，因为 facts 可能还没有收集。
 
 `environment` 也可以是由映射组成的列表，按顺序合并。值为 `omit` 的条目或值会被省略。
 

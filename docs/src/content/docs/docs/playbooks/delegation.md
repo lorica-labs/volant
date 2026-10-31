@@ -102,7 +102,7 @@ Facts and `set_fact` values stay as they were. See [Inventories](/docs/hosts/inv
 
 Layers are merged key by key, each one over the previous: the play first, then each enclosing block from the outside in, then the task. Each layer is rendered with the variables of the current loop item.
 
-Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true` becomes `"True"` and `null` becomes `"None"`. An undefined variable inside `environment` fails the task.
+Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true` becomes `"True"` and `null` becomes `"None"`. An undefined variable inside `environment` fails the task. A mapping value whose undefined name is `ansible_env` is left out instead, as in Ansible, since the facts may not be gathered yet.
 
 `environment` may also be a list of mappings, merged in order. An entry or a value that is `omit` is left out.
 

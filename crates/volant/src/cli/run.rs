@@ -500,12 +500,16 @@ async fn run_all(
         super::hosts::with_pattern(args, limit.as_ref())?,
     );
     if let Some(cache) = &cache {
-        let names: Vec<String> = inventory
+        let mut names: Vec<String> = inventory
             .resolve("all")
             .hosts
             .into_iter()
             .map(|h| h.name)
             .collect();
+        // And the controller's implicit names, which no inventory lists and a run still caches.
+        names.extend(crate::inventory::LOCALHOST_NAMES.map(String::from));
+        names.sort_unstable();
+        names.dedup();
         if args.flush_cache {
             cache
                 .flush(names.iter().map(String::as_str))

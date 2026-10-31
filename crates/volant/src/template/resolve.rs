@@ -80,7 +80,11 @@ impl Templar {
             {
                 vaulted.push((k.clone(), s.clone()));
             }
-            if !untrusted.contains(k) && unwrap_unsafe(v) {
+            // A container keeps its wrappers: they render to their text, and mark the pass's
+            // result as data, while the rest of the container still renders. Measured on
+            // ansible-core 2.19.12, `-e '{"x": {"a": {"__ansible_unsafe": "{{ 1 }}"}, "b": "{{
+            // 1 }}"}}'` reads `a` as text and `b` as `1`.
+            if !untrusted.contains(k) && v.is_string() && unwrap_unsafe(v) {
                 untrusted.insert(k.clone());
             }
         }

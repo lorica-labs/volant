@@ -57,7 +57,7 @@ impl InventoryPlugin for YamlInventory {
             yaml::load(&text, source.text()).map(|docs| (docs, yaml::Origins::default()))
         }
         .map_err(|e| failed(load_failure(&e)))?;
-        yaml::note_vault_origins(&docs, &origins, &source.path().display().to_string(), &text);
+        yaml::note_value_origins(&docs, &origins, &source.path().display().to_string(), &text);
         let null = Yaml::Value(Scalar::Null);
         // `load` refuses a second document, so there is at most one.
         let root = docs.first().unwrap_or(&null);

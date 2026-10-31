@@ -1,0 +1,11 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    ind: "{{ nope }}"
+    both: {x: "{{ nope }}", y: "{{ nope2 }}"}
+  tasks:
+    - debug: {var: ind}
+    - debug: {var: both}
+    - debug: {msg: "{{ ind | default('fallback') }}"}
+    - debug: {msg: "{{ ind }}"}
+      ignore_errors: true

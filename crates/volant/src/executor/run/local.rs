@@ -18,6 +18,7 @@ use crate::vars::VarStore;
 use super::argspec::{action_name, unchanged_failure, unknown_args, validate_argument_spec};
 use super::controller::{assert_module, pause};
 use super::include_vars::run_include_vars;
+use super::marked::{mark_failed, warn_template_error};
 use super::output::summarise_exception;
 
 /// What a `debug: var:` naming a value that came from a managed host reports. The reference's
@@ -256,17 +257,6 @@ fn invalid_variable_name(name: &Value) -> Option<String> {
     Some(format!("Invalid variable name{shown}{of}."))
 }
 
-/// The warning ansible-core 2.19.12 shows before a `debug: var` result whose expression failed,
-/// at where the expression was written; a loop warns once for the same place.
-fn warn_template_error(message: &str, origin: Option<&crate::playbook::Origin>) {
-    let place = origin
-        .map(|origin| format!("{}\n\n", crate::render::source_context(origin)))
-        .unwrap_or_default();
-    crate::render::warn_once(&format!(
-        "[WARNING]: Encountered 1 template error.\nerror 1 - {message}\n{place}"
-    ));
-}
-
 /// Every controller-side module but `pause`, none of which waits.
 #[expect(clippy::too_many_lines)]
 fn local_result(
@@ -378,16 +368,23 @@ fn local_result(
                 }
                 crate::vault::begin_failures();
                 let (evaluated, read) =
-                    crate::template::watch_play_hosts(|| templar.evaluate(var, &item.vars));
+                    crate::template::watch_play_hosts(|| templar.evaluate_tainted(var, &item.vars));
                 if read {
                     crate::playbook::deprecate_play_hosts(task.value_origins.get("var"));
                 }
-                let evaluated = evaluated.and_then(|v| match crate::vault::unread(&v) {
+                let evaluated = evaluated.and_then(|(v, tainted)| match crate::vault::unread(&v) {
                     Some(failed) => Err(crate::template::TemplateError(failed)),
-                    None => Ok(v),
+                    None => Ok((v, tainted)),
                 });
                 match evaluated {
-                    Ok(v) => r.insert(var.to_string(), v),
+                    // An item whose template did not render is marked; never one a host wrote.
+                    Ok((mut v, tainted)) => {
+                        if !tainted {
+                            let render = |text: &str| templar.render(text, &item.vars);
+                            mark_failed(&mut v, None, &render, &mut 0);
+                        }
+                        r.insert(var.to_string(), v)
+                    }
                     // A vaulted value no secret opens is not an undefined name: it fails the
                     // task, at the value, the value's own place after the expression's.
                     Err(e) if e.0.starts_with(crate::vault::UNDECRYPTABLE) => {
@@ -428,7 +425,13 @@ fn local_result(
                         return failed;
                     }
                     Err(e) => {
-                        warn_template_error(&e.0, task.value_origins.get("var"));
+                        // A failure inside a variable's template is placed at that template.
+                        let inner = crate::template::inner_origin(&e.0).flatten();
+                        warn_template_error(
+                            1,
+                            &e.0,
+                            inner.as_ref().or(task.value_origins.get("var")),
+                        );
                         r.insert(
                             var.to_string(),
                             Value::String(format!("<< error 1 - {} >>", e.0)),

@@ -13,6 +13,7 @@ mod interpreter;
 mod judge;
 mod links;
 mod local;
+mod marked;
 mod output;
 mod plugin;
 mod record;

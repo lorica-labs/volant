@@ -1,5 +1,5 @@
 ---
-sourceHash: 9fc80a8d570e
+sourceHash: bfb49ba5fe9b
 title: Delegation, Meta-Tasks und Umgebungsvariablen
 description: Einen Task einmal pro Batch oder auf einem anderen Host ausführen, was jede meta-Action tut und wie environment und no_log einen Task prägen.
 ---
@@ -103,7 +103,7 @@ Facts und `set_fact`-Werte bleiben, wie sie waren. Siehe [Inventories](/de/docs/
 
 Die Schichten werden Schlüssel für Schlüssel zusammengeführt, jede über der vorherigen: zuerst das Play, dann jeder umgebende Block von außen nach innen, dann der Task. Jede Schicht wird mit den Variablen des aktuellen Schleifenelements gerendert.
 
-Werte werden zu dem, was `str()` von Python aus ihnen macht: `42` wird zu `"42"`, `true` zu `"True"` und `null` zu `"None"`. Eine undefinierte Variable in `environment` lässt den Task fehlschlagen.
+Werte werden zu dem, was `str()` von Python aus ihnen macht: `42` wird zu `"42"`, `true` zu `"True"` und `null` zu `"None"`. Eine undefinierte Variable in `environment` lässt den Task fehlschlagen. Ein Wert eines Mappings, dessen undefinierter Name `ansible_env` ist, entfällt stattdessen, wie in Ansible, da die Facts vielleicht noch nicht gesammelt sind.
 
 `environment` darf auch eine Liste von Mappings sein, die der Reihe nach zusammengeführt werden. Ein Eintrag oder ein Wert, der `omit` ist, entfällt.
 

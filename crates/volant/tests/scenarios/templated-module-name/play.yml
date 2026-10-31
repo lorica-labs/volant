@@ -1,0 +1,14 @@
+- hosts: all
+  gather_facts: false
+  vars:
+    module_to_run: debug
+  tasks:
+    - action:
+        module: "{{ module_to_run }}"
+        msg: hi
+    - action: "{{ module_to_run }} msg=hi"
+    - name: named
+      action: "{{ module_to_run }} msg=named"
+    - name: per host
+      action: "{{ which }} msg=from-{{ inventory_hostname }}"
+      ignore_errors: true

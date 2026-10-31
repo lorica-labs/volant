@@ -859,6 +859,17 @@ pub(super) async fn drive_host(
                 continue;
             }
             let live = driver.progress.borrow().clone();
+            // A module named by a template is the one it renders to for this host, from here on.
+            let with_module;
+            let (step, task) =
+                match rendered::with_module(step, &name, &plan, &live, &templar, &store) {
+                    Some(copy) => {
+                        rendered.insert(pos, copy.clone());
+                        with_module = copy;
+                        (&with_module, &with_module.task)
+                    }
+                    None => (step, task),
+                };
             // Where a registered variable lands. A `run_once` step is run by one host for the
             // whole batch, so what it registered is written for every live host of the batch:
             // measured on ansible-core 2.19.12, `register: o` under `run_once: true` on h1

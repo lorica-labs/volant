@@ -36,9 +36,24 @@ pub struct Deferred {
     /// variables, like `serial`.
     pub gather_facts: Option<String>,
     pub force_handlers: Option<String>,
+    /// A module an `action:` statement named by a template that needs variables, rendered for
+    /// each host when the task runs, with the arguments the statement gave it as written: a
+    /// `key=value` string or a mapping.
+    pub module: Option<DeferredModule>,
 }
 
+/// A module template and the arguments its `action:` statement gave it, as written.
+pub type DeferredModule = (String, serde_json::Value);
+
 impl Deferred {
+    /// The layer of a task whose `action:` may have named its module by a template.
+    pub fn with_module(module: Option<DeferredModule>) -> Self {
+        Self {
+            module,
+            ..Self::default()
+        }
+    }
+
     /// Whether any keyword of this layer waits to be rendered.
     pub fn any(&self) -> bool {
         self != &Self::default()

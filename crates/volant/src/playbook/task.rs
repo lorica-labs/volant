@@ -232,12 +232,12 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     // conflict is reported the same whichever key came first.
     let rewritten;
     let mut local = false;
-    let mut shown = None;
+    let (mut shown, mut deferred_module) = (None, None);
     let source = statement.map(|(_, node)| node);
     let module = match statement {
         Some((word, node)) => {
             let (mut name, args) = action_statement(node)?;
-            shown = super::splat::rendered_module(&mut name);
+            (shown, deferred_module) = super::splat::read_module(&mut name, &args)?;
             if let Some((other, _)) = &module {
                 return Err(located(
                     format!("conflicting action statements: {name}, {other}"),
@@ -294,7 +294,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         }
     }
     let context = format!("task '{label}': ");
-    let mut deferred = Deferred::default();
+    let mut deferred = Deferred::with_module(deferred_module);
     let ignore_errors = flag(yaml, "ignore_errors")?;
     let timeout = timeout(yaml, &context, &mut deferred)?;
     let async_val =

@@ -92,3 +92,42 @@ pub(super) async fn render_keywords(
         None => prepared,
     }
 }
+
+/// `step` with the module its `action:` template renders to for this host, as the reference
+/// resolves the action when the task runs: `action: "{{ module_to_run }} msg=hi"`. `None` when
+/// the statement named its module outright, or when the template does not render to a name, which
+/// leaves the task to fail on the word it wrote.
+pub(super) fn with_module(
+    step: &Step,
+    host: &str,
+    plan: &PlayPlan,
+    live: &Progress,
+    templar: &Templar,
+    store: &Mutex<VarStore>,
+) -> Option<Step> {
+    let (template, _) = step.task.deferred.module.as_ref()?;
+    let playbook_dir = store
+        .lock()
+        .expect("vars lock")
+        .playbook_dir()
+        .to_path_buf();
+    let vars = super::super::prepare::host_vars(
+        host,
+        plan,
+        &step.task.vars,
+        step.role,
+        step.include_params.as_deref(),
+        live,
+        templar,
+        store,
+        &step.origin,
+        &playbook_dir,
+    );
+    let name = templar.render(template, &vars).ok()?;
+    let name = name.as_str().map(str::trim).filter(|n| !n.is_empty())?;
+    let task = crate::playbook::with_module(&step.task, name).ok()?;
+    Some(Step {
+        task,
+        ..step.clone()
+    })
+}

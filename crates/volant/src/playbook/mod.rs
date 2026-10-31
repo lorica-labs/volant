@@ -11,6 +11,7 @@ mod model;
 mod origin;
 mod play;
 mod splat;
+pub(crate) use splat::with_module;
 mod task;
 
 pub use deferred::Deferred;

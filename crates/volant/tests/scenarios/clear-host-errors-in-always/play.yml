@@ -1,0 +1,16 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - block:
+        - fail: msg=one
+      rescue:
+        - fail: msg=two
+      always:
+        - meta: clear_host_errors
+    - debug: {msg: after the block}
+  post_tasks:
+    - debug: msg=post
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: msg=second

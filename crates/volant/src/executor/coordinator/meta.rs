@@ -68,10 +68,11 @@ pub(super) fn apply_meta(
             // The hosts that are out of the play now stay out of this round, forgiven or not:
             // the reference revives an unreachable host in a round of its own and never a
             // failed one.
+            // The host that ran it is in the play still, in the `always` of a failed rescue.
             coordinator.removed.extend(
                 cx.whole
                     .iter()
-                    .filter(|h| state.failed_hosts.contains(*h))
+                    .filter(|h| *h != cx.host && state.failed_hosts.contains(*h))
                     .cloned(),
             );
             for h in cx.whole {

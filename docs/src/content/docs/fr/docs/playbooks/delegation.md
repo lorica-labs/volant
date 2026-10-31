@@ -1,5 +1,5 @@
 ---
-sourceHash: "387854768339"
+sourceHash: 49150b243c90
 title: Délégation, tâches meta et environment
 description: Exécuter une tâche une seule fois pour un lot ou sur un autre hôte, ce que fait chaque action meta, et comment environment et no_log façonnent une tâche.
 ---
@@ -76,7 +76,7 @@ Un hôte qui se termine avec `end_host`, `end_batch` ou `end_play` n'a pas écho
 
 `clear_host_errors` retire les échecs du lot du code de sortie. Le récapitulatif garde ses comptes : un hôte peut donc afficher `failed=1` dans une exécution qui se termine avec 0.
 
-- Un hôte qui a échoué ne revient pas dans le play où il a échoué. Il revient dans les plays suivants.
+- Un hôte qui a échoué ne revient pas dans le play où il a échoué. Il revient dans les plays suivants. L'exception est l'hôte qui exécute lui-même le `clear_host_errors`, dans le `always` d'un bloc dont le `rescue` a échoué : il reste dans le play et exécute les tâches qui suivent le bloc.
 - Un hôte devenu injoignable revient. Il reprend le play là où il s'était arrêté, et exécute les étapes qu'il a manquées une fois tous les autres hôtes terminés. S'il est de nouveau injoignable, il compte de nouveau.
 - Un hôte qui était injoignable dans un play précédent revient aussi, à partir de la première tâche du play qui a effacé. Il est de nouveau injoignable dans les plays suivants, et le code de sortie dit 4 dans les deux cas.
 

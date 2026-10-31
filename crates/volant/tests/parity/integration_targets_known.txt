@@ -15,7 +15,6 @@ async                          #1290
 become_su                      #1285
 become_sudo                    #1284
 binary_modules_posix           #1281
-blocks                         #1283
 cache-plugins                  #1286
 callback-dispatch              #1287
 callback_results               #1287

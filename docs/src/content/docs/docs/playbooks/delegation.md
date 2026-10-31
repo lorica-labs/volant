@@ -75,7 +75,7 @@ A host that ends with `end_host`, `end_batch` or `end_play` has not failed, and 
 
 `clear_host_errors` takes the failures of the batch off the exit code. The recap keeps its counts, so a host can show `failed=1` in a run that exits 0.
 
-- A host that failed does not come back to the play it failed in. It is back in the plays after it.
+- A host that failed does not come back to the play it failed in. It is back in the plays after it. The exception is the host that runs the `clear_host_errors` itself, in the `always` of a block whose `rescue` failed: it stays in the play and runs the tasks after the block.
 - A host that went unreachable comes back. It picks the play up where it stopped, and runs the steps it missed after every other host is done. If it is unreachable again, it counts again.
 - A host that was unreachable in an earlier play also comes back, from the first task of the play that cleared. It is unreachable again in the plays after, and the exit code says 4 either way.
 

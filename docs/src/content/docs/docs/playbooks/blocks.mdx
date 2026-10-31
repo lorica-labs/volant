@@ -115,7 +115,7 @@ Handlers do not appear in any listing, and neither do the three automatic flush 
 ## Differences from Ansible
 
 - In `ansible_failed_task`, a keyword this release does not execute reads as `null` rather than as ansible-core's default. A default such as `connection: "ssh"` would describe something Volant does not honor.
-- `ansible_failed_task` has one key per keyword and leaves out the six that ansible-core keeps for itself (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`, `loop_with`). Its `args` holds what the playbook wrote, without the nineteen `_ansible_*` keys that ansible-core adds.
+- The `args` of `ansible_failed_task` holds what the playbook wrote, without the nineteen `_ansible_*` keys that ansible-core adds.
 - A host whose `ansible_connection` names a transport this release does not have is reported unreachable, so a rescue does not catch it. Ansible treats that as an ordinary task failure and rescues it.
 - A `notify` and a handler `name` can be templates. They are rendered for each host when the task reports `changed`, and a template that renders to a list notifies every name in it. `listen` is always the literal text. A `notify` that cannot be rendered fails the task before it runs, as in Ansible, and a rescue or `ignore_errors` can take that failure. In a loop, Volant fails the whole task where Ansible fails the item.
 - A `notify` that names no handler ends the run with exit code 1 and the message `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`, as in Ansible: after the task's banner, with no recap. It happens only when the task reports `changed` without failing, and no `ignore_errors` and no `rescue` can catch it.

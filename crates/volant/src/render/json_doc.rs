@@ -29,6 +29,26 @@ pub(super) struct JsonDoc {
     next_id: u64,
 }
 
+/// The first four groups of every uuid this run makes, drawn once, as the reference draws its
+/// own.
+pub(crate) fn uuid_prefix() -> &'static str {
+    static PREFIX: std::sync::OnceLock<String> = std::sync::OnceLock::new();
+    PREFIX.get_or_init(|| {
+        let seed = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos();
+        let pid = std::process::id();
+        format!(
+            "{:08x}-{:04x}-{:04x}-{:04x}",
+            (seed as u32) ^ pid,
+            (seed >> 32) as u16,
+            (seed >> 48) as u16,
+            pid as u16
+        )
+    })
+}
+
 fn now() -> String {
     format!("{}Z", crate::executor::utc_timestamp('T'))
 }
@@ -44,24 +64,12 @@ fn path_of(origin: Option<&Origin>) -> Value {
 
 impl JsonDoc {
     pub(super) fn new(out: Box<dyn Write>, indent: Option<usize>) -> Self {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_nanos();
-        let pid = std::process::id();
-        let prefix = format!(
-            "{:08x}-{:04x}-{:04x}-{:04x}",
-            (seed as u32) ^ pid,
-            (seed >> 32) as u16,
-            (seed >> 48) as u16,
-            pid as u16
-        );
         Self {
             out,
             indent,
             plays: Vec::new(),
             action: String::new(),
-            prefix,
+            prefix: uuid_prefix().to_string(),
             next_id: 0,
         }
     }

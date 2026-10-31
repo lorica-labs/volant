@@ -1,5 +1,5 @@
 ---
-sourceHash: 514cf9b472a1
+sourceHash: 06debf796f2c
 title: 块与 handler
 description: 失败如何在块中传递，rescue 和 always 做什么，以及 handler 何时运行。
 ---
@@ -116,7 +116,7 @@ Handler 不会出现在任何列表输出中，三个自动的刷新点也不会
 ## 与 Ansible 的差异
 
 - 在 `ansible_failed_task` 中，这个版本不执行的关键字读作 `null`，而不是 ansible-core 的默认值。像 `connection: "ssh"` 这样的默认值，描述的是 Volant 并不遵守的东西。
-- `ansible_failed_task` 每个关键字一个键，并省略 ansible-core 留给自己的六个键（`uuid`、`finalized`、`squashed`、`_resolved_action`、`async_val`、`loop_with`）。它的 `args` 保存的是 playbook 所写的内容，不含 ansible-core 添加的十九个 `_ansible_*` 键。
+- `ansible_failed_task` 的 `args` 保存的是 playbook 所写的内容，不含 ansible-core 添加的十九个 `_ansible_*` 键。
 - `ansible_connection` 指定了这个版本不支持的传输方式的主机，会被报告为不可达，所以 rescue 不会捕获它。Ansible 把它当作普通的 task 失败，并加以 rescue。
 - `notify` 和 handler 的 `name` 可以是模板。它们在 task 报告 `changed` 时按每台主机渲染，渲染为列表的模板会通知其中的每个名字。`listen` 始终是字面文字。无法渲染的 `notify` 会像在 Ansible 中一样，在 task 运行之前让它失败，rescue 或 `ignore_errors` 可以接住这个失败。在循环中，Volant 让整个 task 失败，而 Ansible 让那个 item 失败。
 - 没有指向任何 handler 的 `notify`，会让运行以退出码 1 结束，消息为 `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`，与 Ansible 一致：消息出现在 task 的横幅之后，没有汇总。只有 task 在没有失败的情况下报告 `changed` 时才会发生，`ignore_errors` 和 `rescue` 都捕获不了。

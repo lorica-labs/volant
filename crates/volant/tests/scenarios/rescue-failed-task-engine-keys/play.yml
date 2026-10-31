@@ -1,0 +1,29 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - block:
+        - fail: {msg: x}
+      rescue:
+        - debug: {msg: "{{ ansible_failed_task.keys() | sort }}"}
+        - debug:
+            msg:
+              resolved: "{{ ansible_failed_task._resolved_action }}"
+              async: "{{ ansible_failed_task.async_val }}"
+              finalized: "{{ ansible_failed_task.finalized }}"
+              loop_with: "{{ ansible_failed_task.loop_with }}"
+              squashed: "{{ ansible_failed_task.squashed }}"
+              uuid: "{{ ansible_failed_task.uuid | length }}"
+    - block:
+        - command: /bin/false
+          with_items: [1]
+      rescue:
+        - debug:
+            msg:
+              resolved: "{{ ansible_failed_task._resolved_action }}"
+              loop_with: "{{ ansible_failed_task.loop_with }}"
+    - block:
+        - debug: {msg: "{{ item }}"}
+          failed_when: true
+          with_sequence: count=1
+      rescue:
+        - debug: var=ansible_failed_task.loop_with

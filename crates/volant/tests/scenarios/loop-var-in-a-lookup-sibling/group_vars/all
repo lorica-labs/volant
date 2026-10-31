@@ -1,0 +1,3 @@
+dir: "{{ base }}/{{ sub }}"
+base: "{{ lookup('env', 'NO_SUCH_VARIABLE_HERE') }}x"
+sub: "{{ test_id if lookup('env', 'NO_SUCH_VARIABLE_HERE') == '' else 0 }}"

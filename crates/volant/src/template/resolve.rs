@@ -7,7 +7,7 @@ use std::sync::atomic::Ordering;
 
 use serde_json::{Map, Value};
 
-use super::context::{Vars, context_tracking, is_literal};
+use super::context::{Vars, context_tracking, deferred, is_literal};
 use super::templar::Templar;
 use super::vm::{holds_template, unwrap_unsafe};
 use super::{Tainted, TemplateError};
@@ -143,9 +143,17 @@ impl Templar {
             // before it fails, and a name marked as data would never be rendered again, so its
             // template text would reach a task as a value.
             Value::String(s) if Self::is_stored_template(s) => {
+                let before = deferred(ctx);
                 match self.render_in(s, ctx, tainted) {
                     Ok(out) => {
-                        *any |= tainted.load(Ordering::Relaxed) || is_literal(ctx);
+                        let soiled = tainted.load(Ordering::Relaxed) || is_literal(ctx);
+                        // A sibling handed out as written, left for the task to render (a loop
+                        // variable it names is bound later), would become data with the rest:
+                        // the value stays as written too.
+                        if soiled && deferred(ctx) != before {
+                            return value.clone();
+                        }
+                        *any |= soiled;
                         out
                     }
                     Err(_) => value.clone(),

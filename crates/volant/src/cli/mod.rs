@@ -37,7 +37,7 @@ pub use adhoc_usage::usage_error as adhoc_usage_error;
 pub use args::{AdhocArgs, BecomeArgs, ConnectionArgs, HostsArgs, PlaybookArgs, VaultSecretArgs};
 pub use compat::{CompatCommand, compat};
 pub use console::{ConsoleArgs, console};
-pub use galaxy::{GalaxyArgs, galaxy};
+pub use galaxy::{GalaxyArgs, galaxy, implicit_role};
 pub use inventory::{InventoryArgs, inventory};
 #[cfg(unix)]
 pub use locale::check_locale;

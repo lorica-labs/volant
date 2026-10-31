@@ -70,9 +70,15 @@ fn parse() -> Cli {
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
                 .unwrap_or_default();
+            let rest: Vec<OsString> = argv.collect();
+            let rest = if sub == "galaxy" {
+                volant::cli::implicit_role(rest)
+            } else {
+                rest
+            };
             let args = [OsString::from("volant"), OsString::from(sub)]
                 .into_iter()
-                .chain(argv);
+                .chain(rest);
             let parsed = Cli::command()
                 .bin_name(started.clone())
                 .try_get_matches_from(args)

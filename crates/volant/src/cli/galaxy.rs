@@ -17,6 +17,19 @@ use crate::galaxy::settings::{self, Settings};
 use crate::galaxy::{self, Failure};
 use crate::galaxy::{download, install, inventory, role};
 
+/// The arguments after the program name, with `role` put first when they name no kind, as
+/// `GalaxyCLI.parse` does: `ansible-galaxy install -r requirements.yml` installs roles.
+pub fn implicit_role(mut args: Vec<std::ffi::OsString>) -> Vec<std::ffi::OsString> {
+    let named = args.iter().any(|a| a == "role" || a == "collection");
+    let asks = args
+        .first()
+        .is_some_and(|a| a == "-h" || a == "--help" || a == "--version");
+    if !args.is_empty() && !named && !asks {
+        args.insert(0, "role".into());
+    }
+    args
+}
+
 /// Runs `args` and returns the exit code.
 #[must_use]
 pub fn galaxy(args: GalaxyArgs) -> i32 {
@@ -435,4 +448,26 @@ fn requirements_of(
 /// A subcommand that needs a Galaxy account or server-side data, which stays out of Volant.
 fn refused(name: &str) -> Failure {
     Failure::error(format!("volant galaxy {name} is not supported"))
+}
+
+#[cfg(test)]
+mod tests {
+    /// `role` goes first only when no kind is named and the arguments are not a plain question.
+    #[test]
+    fn an_unnamed_kind_is_a_role() {
+        let run = |args: &[&str]| -> Vec<String> {
+            super::implicit_role(args.iter().map(Into::into).collect())
+                .into_iter()
+                .map(|a| a.to_string_lossy().into_owned())
+                .collect()
+        };
+        assert_eq!(
+            run(&["install", "-r", "r.yml"]),
+            ["role", "install", "-r", "r.yml"]
+        );
+        assert_eq!(run(&["collection", "list"]), ["collection", "list"]);
+        assert_eq!(run(&["-v", "role", "list"]), ["-v", "role", "list"]);
+        assert_eq!(run(&["--version"]), ["--version"]);
+        assert!(run(&[]).is_empty());
+    }
 }

@@ -1,0 +1,18 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - shell: echo "IAMHERE = $IAMHERE; NOTHERE = $NOTHERE; ANOTHER = $ANOTHER"
+      environment:
+        - NOTHERE: '{{ omit }}'
+          IAMHERE: hello
+        - '{{ omit }}'
+        - ANOTHER: stillhere
+          IAMHERE: again
+      register: out
+    - debug: var=out.stdout
+    - shell: echo "ONLY = $ONLY; GONE = $GONE"
+      environment:
+        ONLY: one
+        GONE: '{{ omit }}'
+      register: out
+    - debug: var=out.stdout

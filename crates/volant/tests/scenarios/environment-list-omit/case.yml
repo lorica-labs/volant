@@ -1,0 +1,2 @@
+# `environment` as a list of mappings is merged in order, and an entry or a value that is `omit` is left out.
+args: [-i, inv.ini, play.yml]

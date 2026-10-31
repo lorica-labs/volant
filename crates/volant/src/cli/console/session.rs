@@ -89,6 +89,7 @@ impl Session {
             passwords,
             shown: out.take_shown(),
         };
+        let playbook_dir = crate::cli::args::playbook_dir(args.playbook_dir.as_deref());
         Ok(Self {
             inventory: set.inventory,
             limit,
@@ -109,13 +110,11 @@ impl Session {
             timeout: args.task_timeout.unwrap_or(0),
             verbosity: args.verbose,
             collections: None,
-            playbook_dir: args.playbook_dir.clone(),
+            playbook_dir: playbook_dir.clone(),
             carried: Arc::new(Mutex::new(carried)),
             color,
             collection_roots: crate::roles::RoleSearch::new(
-                args.playbook_dir
-                    .as_deref()
-                    .unwrap_or(std::path::Path::new(".")),
+                playbook_dir.as_deref().unwrap_or(std::path::Path::new(".")),
                 &set.config,
             )
             .collections,

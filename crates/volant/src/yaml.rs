@@ -355,6 +355,30 @@ pub(crate) fn unsafe_data(mut value: Value) -> Value {
     value
 }
 
+/// A value as JSON written by ansible-core carries it: a string that is not to be trusted as a
+/// template arrives as `{"__ansible_unsafe": text}` and stays data.
+pub(crate) fn unsafe_markers(value: &Value) -> Value {
+    match value {
+        Value::Object(map) if map.len() == 1 && map.contains_key("__ansible_unsafe") => {
+            match &map["__ansible_unsafe"] {
+                Value::String(text) => Value::String(unsafe_string(text)),
+                _ => Value::Object(
+                    map.iter()
+                        .map(|(k, v)| (k.clone(), unsafe_markers(v)))
+                        .collect(),
+                ),
+            }
+        }
+        Value::Object(map) => Value::Object(
+            map.iter()
+                .map(|(k, v)| (k.clone(), unsafe_markers(v)))
+                .collect(),
+        ),
+        Value::Array(items) => Value::Array(items.iter().map(unsafe_markers).collect()),
+        other => other.clone(),
+    }
+}
+
 /// `text` as data that is never rendered, whatever it holds.
 pub(crate) fn unsafe_string(text: &str) -> String {
     wrap(text, "volant_unsafe")

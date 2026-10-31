@@ -266,6 +266,12 @@ pub fn parse_extra_vars(items: &[String], base: &Path) -> anyhow::Result<Map<Str
         let item = item.trim();
         if let Some(file) = item.strip_prefix('@') {
             extend(&mut out, &load_vars_file(&base.join(file))?);
+        } else if let Ok(Value::Object(map)) = serde_json::from_str::<Value>(item) {
+            // JSON is read as ansible-core's own decoder reads it, `__ansible_unsafe` and all:
+            // measured, `-e '{"x": {"__ansible_unsafe": "{{ 1 }}"}}'` keeps `{{ 1 }}` as text.
+            if let Value::Object(map) = yaml::unsafe_markers(&Value::Object(map)) {
+                extend(&mut out, &map);
+            }
         } else if item.starts_with('{') || item.starts_with('[') {
             let docs = yaml::load(item, "extra vars")?;
             match docs.first().map(yaml::to_json).transpose()? {

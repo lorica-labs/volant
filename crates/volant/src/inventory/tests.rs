@@ -73,9 +73,10 @@ fn a_host_variable_comes_from_the_layer_that_wins(
 #[case::intersection("prod:&web", &["web1", "web2"])]
 #[case::intersection_then_exclusion("prod:&web:!web2", &["web1"])]
 #[case::bare_exclusion_starts_from_all("!web", &["lonely", "db1"])]
-#[case::empty("", &[])]
-#[case::comma_only(",", &[])]
-#[case::colon_only(":", &[])]
+// No term at all is `all`, as `order_patterns` makes it: measured, `ansible ,, --list-hosts`.
+#[case::empty("", &["lonely", "web1", "web2", "db1"])]
+#[case::comma_only(",", &["lonely", "web1", "web2", "db1"])]
+#[case::colon_only(":", &["lonely", "web1", "web2", "db1"])]
 #[case::host_wildcard("w*b1", &["web1"])]
 #[case::group_wildcard("pro*", &["web1", "web2", "db1"])]
 #[case::regex_host("~w.*1", &["web1"])]

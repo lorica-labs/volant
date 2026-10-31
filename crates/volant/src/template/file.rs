@@ -21,7 +21,7 @@ pub struct Syntax {
     pub block_end: String,
     pub comment_start: String,
     pub comment_end: String,
-    /// `line_statement_prefix`: only a `#jinja2:` line sets it, and a render refuses it.
+    /// `line_statement_prefix`: only a `#jinja2:` line sets it.
     pub line_statement_prefix: Option<String>,
     /// `line_comment_prefix`: only a `#jinja2:` line sets it, and a render refuses it.
     pub line_comment_prefix: Option<String>,
@@ -115,16 +115,11 @@ impl Syntax {
                 return Err(format!("{name} must not begin with whitespace"));
             }
         }
-        // minijinja and Jinja2 differ on the lines around a line statement and on a line comment:
-        // a blank line after a statement is kept by one and dropped by the other, and a comment
-        // takes its newline with it in one only. Measured on ansible-core 2.19.12, so refused.
-        for (name, prefix) in [
-            ("line_statement_prefix", &self.line_statement_prefix),
-            ("line_comment_prefix", &self.line_comment_prefix),
-        ] {
-            if prefix.is_some() {
-                return Err(format!("{name} is not supported yet"));
-            }
+        // minijinja and Jinja2 differ on a line comment: it takes its newline with it in one only.
+        // Measured on ansible-core 2.19.12, so refused. A line statement is written as a tag
+        // before the render instead, by `line_statements`.
+        if self.line_comment_prefix.is_some() {
+            return Err("line_comment_prefix is not supported yet".to_string());
         }
         let mut builder = SyntaxConfig::builder();
         builder
@@ -226,7 +221,10 @@ impl Templar {
                     .map_err(|err| format!("these delimiters cannot be used together: {err}"))
             })
             .map_err(|msg| TemplateError(format!("Syntax error in template: {msg}")))?;
-        let normalized = body.replace("\r\n", "\n").replace('\r', "\n");
+        let mut normalized = body.replace("\r\n", "\n").replace('\r', "\n");
+        if let Some(prefix) = &effective.syntax.line_statement_prefix {
+            normalized = line_statements(&normalized, prefix, &effective.syntax);
+        }
         let (ctx, _tainted) = context_of(self, vars.into());
         let name = options.name.as_deref().unwrap_or("<string>");
         let render = || render_str(self, name, &normalized, &ctx, syntax);
@@ -250,6 +248,39 @@ impl Templar {
         }
         Ok(rendered)
     }
+}
+
+/// `text` with each line statement written as a block tag, as Jinja2's lexer reads one: a line
+/// whose first non-blank characters are `prefix`, which takes the blanks before it, its line end
+/// and the blank lines after it (`\s*(\n|$)`).
+fn line_statements(text: &str, prefix: &str, syntax: &Syntax) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut eating = false;
+    for line in text.split_inclusive('\n') {
+        if eating && line.trim().is_empty() {
+            continue;
+        }
+        eating = false;
+        match line
+            .trim_start_matches([' ', '\t', '\x0b'])
+            .strip_prefix(prefix)
+        {
+            Some(statement) => {
+                for piece in [
+                    &syntax.block_start,
+                    " ",
+                    statement.trim(),
+                    " ",
+                    &syntax.block_end,
+                ] {
+                    out.push_str(piece);
+                }
+                eating = true;
+            }
+            None => out.push_str(line),
+        }
+    }
+    out
 }
 
 /// The count of literal `\n` characters at the very end of `s`, stopping at the first character

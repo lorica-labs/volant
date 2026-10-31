@@ -1,0 +1,3 @@
+# Bytes slice and join into bytes, run the methods of Python's bytes, and show as b'...' in a
+# loop label.
+args: [-i, inv, play.yml]

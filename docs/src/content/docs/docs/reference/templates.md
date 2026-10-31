@@ -79,6 +79,7 @@ Methods such as `.get()`, `.keys()`, `.values()` and `.items()` also work on oth
 
 - `| length` counts the bytes. `b[0]`, `b[-1]`, `| first`, `| list` and `{% for %}` give integers.
 - `b.decode(encoding, errors)` and `b.hex(sep, bytes_per_sep)` give text. `.encode('ascii', 'ignore').decode('ascii')` removes the characters that are not ASCII.
+- `b[1:]` and `b + b` give bytes. The other methods of Python's `bytes`, such as `upper`, `split`, `startswith` and `replace`, work as in Python, the case changes and the whitespace on ASCII alone. A loop over bytes items shows `(item=b'abc')`.
 - `b64encode` reads the exact bytes. `b64decode`, `regex_replace`, `regex_search`, `regex_findall` and `quote` read them as UTF-8 text.
 - A result that is bytes becomes its text, and so does `x {{ b }}`. `'x' ~ b`, `b | string` and `'%s' % b` give `b'abc'`, as in Python.
 - `==`, `is sequence`, `is string` and `type_debug` (`bytes`) answer as in ansible-core. `to_json` and `to_nice_json` fail with `Object of type 'bytes' is not JSON serializable`.
@@ -236,8 +237,7 @@ Volant refuses a YAML text that it cannot load without risk. The error names the
 
 ### Gaps in bytes
 
-- A bytes value is a sequence of integers that prints as `b'abc'`. A slice and `+` (`b[1:]`, `b + b`) give a list of integers, where Python gives bytes.
-- A bytes value that a variable holds (`set_fact`, `vars:`) is stored as its text: its `| length` counts characters, and `.decode()` fails. A loop over bytes items shows `(item=abc)` where ansible-core shows `(item=b'abc')`, because a loop item is stored as text.
-- The methods of bytes other than `decode` and `hex` (`upper`, `split`, `startswith`) fail with their name.
+- A bytes value that a variable holds (`set_fact`, `vars:`) is stored as its text: its `| length` counts characters, and `.decode()` fails.
+- `fromhex`, `maketrans` and `translate` fail with their name.
 - A bytes value that is not UTF-8 cannot be a result or be printed in text: ansible-core prints `?` in their place. `to_yaml`, `dict2items`, `flatten`, `hash`, `checksum`, `md5`, `sha1` and every filter that runs in Python refuse bytes by name.
 - `encode` and `decode` refuse by name the encodings other than the ones listed above (`cp1252`, `shift_jis`), `decode` of `utf-16` and `utf-32`, and the error handlers `namereplace`, `surrogateescape` and `surrogatepass` on `decode`.

@@ -29,6 +29,7 @@ mod once;
 mod one_pass;
 mod order;
 mod pymethods;
+pub(crate) use pymethods::bytes::{keeping as keeping_bytes, kept_repr, kept_text};
 mod register;
 mod resolve;
 mod templar;
@@ -157,6 +158,9 @@ const REMT_KEY: &str = "volant::remt";
 /// The names `+` and `-` are routed through in a template that calls `now()`.
 const ADD_KEY: &str = "volant::add";
 const SUB_KEY: &str = "volant::sub";
+/// The names `+` and a slice are routed through in a template that calls `encode`.
+const BYTES_ADD_KEY: &str = "volant::bytes_add";
+const SLICE_KEY: &str = "volant::slice";
 /// Prefix of the name a list or mapping literal is routed through in such a template, then the
 /// literal as JSON: minijinja folds a literal of constants into one shared value, and a template
 /// that changes a list needs a new one each time the literal runs.

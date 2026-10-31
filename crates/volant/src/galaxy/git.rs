@@ -160,7 +160,7 @@ fn search_path() -> Vec<String> {
     paths
 }
 
-fn find(program: &str) -> Option<PathBuf> {
+pub(super) fn find(program: &str) -> Option<PathBuf> {
     let names: Vec<String> = if cfg!(windows) {
         vec![format!("{program}.exe"), program.to_string()]
     } else {

@@ -5,7 +5,6 @@ ansiballz_debug                #1290
 ansiballz_debugging            #1283
 ansible                        #1286
 ansible-galaxy-collection-scm  #1290
-ansible-galaxy-role            #1290
 ansible-playbook-callbacks     #1287
 ansible_log                    #1287
 assert                         #1283

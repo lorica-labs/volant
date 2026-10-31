@@ -19,27 +19,56 @@ pub(super) fn scm_archive(role: &Role, dir: &Path, options: Options) -> Result<P
             "- scm {scm} is not currently supported"
         )));
     }
-    let source = format!("git+{}", role.src);
-    let version = role
-        .version
-        .as_deref()
-        .filter(|v| !v.is_empty())
-        .unwrap_or("HEAD");
-    let checkout = crate::galaxy::git::checkout(&source, version, false, options.verbose)?;
-    let tar = dir.join(format!("{}.tar", role.name));
     let io = |e: std::io::Error| Failure::error(e.to_string());
+    let Some(git) = crate::galaxy::git::find("git") else {
+        return Err(Failure::error(format!(
+            "Could not find/use 'git', it is required to continue with installing '{}'.",
+            role.src
+        )));
+    };
+    let git = git.display().to_string();
+    let clone = tempfile::tempdir().map_err(io)?;
+    // `--` ends the options: a `src` or a `name` that starts with `-` is a repository or a
+    // directory, never an option of git's.
+    let argv = [&git, "clone", "--", &role.src, &role.name];
+    scm_run(&argv, clone.path())?;
+    let checkout = clone.path().join(&role.name);
+    if let Some(version) = role.version.as_deref().filter(|v| !v.is_empty()) {
+        scm_run(&[&git, "checkout", version], &checkout)?;
+    }
+    let tar = dir.join(format!("{}.tar", role.name));
     let mut builder = tar::Builder::new(std::fs::File::create(&tar).map_err(io)?);
     builder.follow_symlinks(false);
     add_tree(
         &mut builder,
-        &checkout.collection,
-        &checkout.collection,
+        &checkout,
+        &checkout,
         &role.name,
         options.keep_scm_meta,
     )
     .map_err(io)?;
     builder.finish().map_err(io)?;
     Ok(tar)
+}
+
+/// One git command of `scm_archive_resource`, failing in its words with git's own stderr.
+fn scm_run(argv: &[&str], dir: &Path) -> Result<(), Failure> {
+    let out = std::process::Command::new(argv[0])
+        .args(&argv[1..])
+        .current_dir(dir)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .map_err(|e| Failure::error(format!("when executing {}: {e}", argv.join(" "))))?;
+    if out.status.success() {
+        return Ok(());
+    }
+    Err(Failure::error(format!(
+        "- command {} failed in directory {} (rc={}) - {}",
+        argv.join(" "),
+        dir.display(),
+        out.status.code().unwrap_or(1),
+        String::from_utf8_lossy(&out.stderr)
+    )))
 }
 
 fn add_tree(

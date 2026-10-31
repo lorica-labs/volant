@@ -1,5 +1,5 @@
 ---
-sourceHash: 58dc975aeb56
+sourceHash: d7a9625feefb
 title: Délégation, tâches meta et environment
 description: Exécuter une tâche une seule fois pour un lot ou sur un autre hôte, ce que fait chaque action meta, et comment environment et no_log façonnent une tâche.
 ---
@@ -104,6 +104,8 @@ Les facts et les valeurs de `set_fact` restent comme ils étaient. Voir [Inventa
 Les couches sont fusionnées clé par clé, chacune par-dessus la précédente : le play d'abord, puis chaque bloc englobant de l'extérieur vers l'intérieur, puis la tâche. Chaque couche est rendue avec les variables de l'élément de boucle courant.
 
 Les valeurs deviennent ce que le `str()` de Python en fait : `42` devient `"42"`, `true` devient `"True"` et `null` devient `"None"`. Une variable non définie dans `environment` fait échouer la tâche.
+
+`environment` peut aussi être une liste de mappings, fusionnés dans l'ordre. Une entrée ou une valeur qui vaut `omit` est ignorée.
 
 ## no_log
 

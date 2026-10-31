@@ -104,6 +104,8 @@ Layers are merged key by key, each one over the previous: the play first, then e
 
 Values become what Python's `str()` makes of them, so `42` becomes `"42"`, `true` becomes `"True"` and `null` becomes `"None"`. An undefined variable inside `environment` fails the task.
 
+`environment` may also be a list of mappings, merged in order. An entry or a value that is `omit` is left out.
+
 ## no_log
 
 `no_log: true` replaces the task's output with the censored line `ansible-playbook` prints, on every line it would have shown and at every verbosity level. That covers the `ok:` and `changed:` lines, `fatal:`, `UNREACHABLE!`, each loop item's line, and `debug` output. A loop item's label becomes `(censored due to no_log)`.

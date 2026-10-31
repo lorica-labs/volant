@@ -253,7 +253,29 @@ pub(super) fn environment_for(
         let rendered = templar.render_value(layer, vars).map_err(|e| {
             TemplateError(format!("Error processing keyword 'environment': {}", e.0))
         })?;
-        let Value::Object(map) = rendered else {
+        // A list of mappings is merged in order, as the reference merges its layers. Measured on
+        // ansible-core 2.19.12: an entry or a value that is `omit` is left out.
+        let omit = crate::vars::omit_token();
+        let maps: Option<Vec<Map<String, Value>>> = match rendered {
+            Value::Object(map) => Some(vec![map]),
+            Value::Array(items)
+                if items
+                    .iter()
+                    .all(|item| item.is_object() || item.as_str() == Some(omit)) =>
+            {
+                Some(
+                    items
+                        .into_iter()
+                        .filter_map(|item| match item {
+                            Value::Object(map) => Some(map),
+                            _ => None,
+                        })
+                        .collect(),
+                )
+            }
+            _ => None,
+        };
+        let Some(maps) = maps else {
             // The raw stack of layers, not the rendered one. Measured on ansible-core 2.19.12
             // with a `no_log` task whose `environment` is `"{{ secret }}"`: the warning reads
             // `could not parse environment value, skipping: ['{{ secret }}']` - brackets
@@ -265,8 +287,10 @@ pub(super) fn environment_for(
             ));
             continue;
         };
-        for (k, v) in map {
-            out.insert(k, environment_value(&v));
+        for (k, v) in maps.into_iter().flatten() {
+            if v.as_str() != Some(omit) {
+                out.insert(k, environment_value(&v));
+            }
         }
     }
     Ok(out)

@@ -18,7 +18,6 @@ conditionals                   #1282
 connection_delegation          #1265
 connection_local               #1290
 deprecations                   #1282
-filter_core                    #1289
 filter_encryption              #1282
 fork_safe_stdio                #1287
 gather_facts-errors            #1285

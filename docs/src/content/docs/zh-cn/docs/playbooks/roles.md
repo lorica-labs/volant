@@ -1,5 +1,5 @@
 ---
-sourceHash: 053a11b38c33
+sourceHash: bca51b95b831
 title: Role、include 与 import
 description: Volant 在哪里查找 role，依赖、参数规范和 role 变量如何工作，以及 import 和 include 如何把其他文件带入 play。
 ---
@@ -43,7 +43,7 @@ roles:
 
 ## 参数规范
 
-`meta/argument_specs.yml` 会变成一个独立的 task。它在 role 的依赖之后、role 的第一个 task 之前运行，并根据以 tasks 文件命名的规范条目检查 role 的参数。
+`meta/argument_specs.yml` 会变成一个独立的 task。它在 role 的依赖之后、role 的第一个 task 之前运行，并根据以 tasks 文件命名的规范条目检查 role 的参数。没有该文件的 role 可以把 `argument_specs` 写在 `meta/main.yml` 中，与 Ansible 一致。
 
 这个 task 在破折号之后带有 role 的 `short_description`，所以 `--list-tasks` 显示 `Validating arguments against arg spec 'main' - The spec role`。它带有 `always` tag，所以任何 `--tags` 选择都不会丢掉它。
 

@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    n: "{{ 'nan' | float }}"
+  tasks:
+    - assert:
+        that:
+          - "'bad' is not nan"
+          - "1.1 | float is not nan"
+          - "'nan' | float is isnan"
+          - "'nan' | float is nan"
+          - "n is nan"
+    - debug: var=n
+    - debug:
+        msg: "{{ [n, 'inf' | float, '-inf' | float] }}"

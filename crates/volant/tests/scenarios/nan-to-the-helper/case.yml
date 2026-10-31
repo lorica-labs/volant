@@ -1,0 +1,3 @@
+# A float that is not a number travels to and from the Python helper as `NaN`, in a test's argument and in a variable, without ending the host.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

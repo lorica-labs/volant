@@ -4,7 +4,7 @@
 use std::sync::MutexGuard;
 use std::time::Instant;
 
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use volant_protocol::frame::MAX_FRAME_LEN;
 
 use super::conversation::converse;
@@ -45,10 +45,22 @@ impl Bridge {
     ) -> Result<Value, BridgeError> {
         let name = call.name;
         let (mut helper, id) = self.action_helper()?;
-        let request = json!({"id": id, "action": {
-            "name": name, "task": call.task, "task_vars": call.task_vars,
-            "play_context": call.play_context, "link": call.link,
-        }})
+        // Built as maps, not with `json!`, which serializes the values again and refuses a `NaN`
+        // a variable holds; the helper's `json.loads` reads it.
+        let action = Map::from_iter([
+            ("name".to_string(), json!(name)),
+            ("task".to_string(), call.task.clone()),
+            ("task_vars".to_string(), call.task_vars.clone()),
+            ("play_context".to_string(), call.play_context.clone()),
+            (
+                "link".to_string(),
+                call.link.cloned().unwrap_or(Value::Null),
+            ),
+        ]);
+        let request = Value::Object(Map::from_iter([
+            ("id".to_string(), json!(id)),
+            ("action".to_string(), Value::Object(action)),
+        ]))
         .to_string();
         if request.len() > MAX_FRAME_LEN {
             self.lock_actions().idle.push(helper);

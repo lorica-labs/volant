@@ -82,9 +82,17 @@ pub(super) fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Y
     match node {
         Yaml::Value(Scalar::String(text)) => {
             let text = text.trim();
-            let (name, rest) = text
-                .split_once(char::is_whitespace)
-                .map_or((text, ""), |(name, rest)| (name, rest.trim_start()));
+            // A module named by a template ends where the template does, spaces inside it and all.
+            let named_by_template = text
+                .starts_with("{{")
+                .then(|| text.find("}}").map(|end| end + 2))
+                .flatten();
+            let (name, rest) = match named_by_template {
+                Some(end) => (&text[..end], text[end..].trim_start()),
+                None => text
+                    .split_once(char::is_whitespace)
+                    .map_or((text, ""), |(name, rest)| (name, rest.trim_start())),
+            };
             if name.is_empty() {
                 bail!("no module/action detected in task.");
             }

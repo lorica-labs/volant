@@ -36,6 +36,10 @@ pub struct Deferred {
     /// variables, like `serial`.
     pub gather_facts: Option<String>,
     pub force_handlers: Option<String>,
+    /// A module an `action:` statement named by a template that needs variables, rendered for
+    /// each host when the task runs, with the arguments the statement gave it as written: a
+    /// `key=value` string or a mapping.
+    pub module: Option<(String, serde_json::Value)>,
 }
 
 impl Deferred {

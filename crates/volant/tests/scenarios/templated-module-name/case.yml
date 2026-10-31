@@ -1,0 +1,3 @@
+# A module an `action:` statement names by a template renders for each host when the task runs,
+# in the string form, in the mapping form, and from a host's own variable.
+args: [-i, inv.ini, play.yml]

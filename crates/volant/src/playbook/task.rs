@@ -231,17 +231,13 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
     // under `module:` and holds its arguments beside it. It is read after the whole mapping so a
     // conflict is reported the same whichever key came first.
     let rewritten;
-    let mut deferred_module = None;
     let mut local = false;
-    let mut shown = None;
+    let (mut shown, mut deferred_module) = (None, None);
     let source = statement.map(|(_, node)| node);
     let module = match statement {
         Some((word, node)) => {
             let (mut name, args) = action_statement(node)?;
-            shown = super::splat::rendered_module(&mut name);
-            if crate::template::Templar::is_template(&name) {
-                deferred_module = Some((name.clone(), to_json(&args)?));
-            }
+            (shown, deferred_module) = super::splat::read_module(&mut name, &args)?;
             if let Some((other, _)) = &module {
                 return Err(located(
                     format!("conflicting action statements: {name}, {other}"),
@@ -298,10 +294,7 @@ pub(super) fn parse_task(yaml: &Yaml, handler: bool) -> anyhow::Result<PlayTask>
         }
     }
     let context = format!("task '{label}': ");
-    let mut deferred = Deferred {
-        module: deferred_module,
-        ..Deferred::default()
-    };
+    let mut deferred = Deferred::with_module(deferred_module);
     let ignore_errors = flag(yaml, "ignore_errors")?;
     let timeout = timeout(yaml, &context, &mut deferred)?;
     let async_val =

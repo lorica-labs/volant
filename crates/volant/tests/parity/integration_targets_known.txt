@@ -15,7 +15,6 @@ assert                         #1283
 async                          #1290
 become_su                      #1285
 become_sudo                    #1284
-binary                         #1289
 binary_modules_posix           #1281
 blocks                         #1283
 cache-plugins                  #1286
@@ -49,7 +48,6 @@ keyword_inheritance            #1281
 limit_inventory                #1286
 lookup_env                     #1282
 lookup_first_found             #1289
-lookup_template                #1289
 lookup_varnames                #1284
 lookup_vars                    #1284
 loop-connection                #1290
@@ -62,7 +60,6 @@ omit                           #1288
 order                          #1289
 playbook                       #1288
 plugin_filtering               #1290
-plugin_loader                  #1289
 preflight_encoding             #1283
 protomatter                    #1282
 python_module_rlimit_nofile    #1290
@@ -72,7 +69,6 @@ roles_arg_spec                 #1284
 set_fact                       #1282
 setup_pexpect                  #1265
 shell                          #1290
-special_vars                   #1289
 strategy-external              #1287
 strategy_linear                #1281
 tags                           #1287
@@ -81,11 +77,9 @@ task-timeout                   #1290
 template                       #1290
 templating                     #1284
 templating_lookup_args         #1289
-templating_lookups             #1289
 test_core                      #1289
 throttle                       #1290
 undefined                      #1284
-unsafe_writes                  #1290
 until                          #1290
 user                           #1281
 var_precedence                 #1289

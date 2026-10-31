@@ -178,9 +178,47 @@ pub(crate) fn decode_text(bytes: &[u8], name: &str) -> Result<String, String> {
     decode::decode(bytes, codec)
 }
 
+/// Where Python's `surrogateescape` keeps a byte UTF-8 cannot read, the lone surrogate
+/// `U+DC80` to `U+DCFF`, which a Rust string cannot hold: the private-use stand-in the JSON
+/// filters keep a lone surrogate as, `U+F0000` on from `U+D800`.
+const ESCAPED: u32 = 0xF_0000 + 0xDC00 - 0xD800;
+
+/// `bytes.decode(name, 'surrogateescape')`, which ansible-core's `to_text` reads with: a byte
+/// UTF-8 cannot read is kept, as a stand-in [`escaped_bytes`] writes back.
+pub(crate) fn decode_escaping(bytes: &[u8], name: &str) -> Result<String, String> {
+    match decode_text(bytes, name) {
+        Err(_) if codec_of(name) == Some(Codec::Utf8) => Ok(bytes
+            .utf8_chunks()
+            .flat_map(|chunk| {
+                let bad = chunk
+                    .invalid()
+                    .iter()
+                    .filter_map(|b| char::from_u32(ESCAPED + u32::from(*b)));
+                chunk.valid().chars().chain(bad)
+            })
+            .collect()),
+        other => other,
+    }
+}
+
+/// `text` as UTF-8, each byte [`decode_escaping`] kept written back as itself.
+pub(crate) fn escaped_bytes(text: &str) -> Vec<u8> {
+    let mut out = Vec::with_capacity(text.len());
+    for c in text.chars() {
+        match u32::from(c)
+            .checked_sub(ESCAPED)
+            .and_then(|b| u8::try_from(b).ok())
+        {
+            Some(b) if b >= 0x80 => out.push(b),
+            _ => out.extend_from_slice(c.encode_utf8(&mut [0; 4]).as_bytes()),
+        }
+    }
+    out
+}
+
 fn encode_with(codec: Codec, text: &str) -> Result<Vec<u8>, String> {
     match codec {
-        Codec::Utf8 => Ok(text.as_bytes().to_vec()),
+        Codec::Utf8 => Ok(escaped_bytes(text)),
         Codec::Utf8Sig => Ok([&[0xef, 0xbb, 0xbf][..], text.as_bytes()].concat()),
         Codec::Latin1 => narrow(text, "latin-1", "ordinal not in range(256)", |c| {
             u8::try_from(u32::from(c)).ok()

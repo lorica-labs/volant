@@ -25,7 +25,7 @@ mod package;
 mod reboot;
 mod service;
 mod template;
-pub(crate) use template::{decode_text, encode_text};
+pub(crate) use template::{decode_escaping, encode_text, escaped_bytes};
 mod unarchive;
 
 use std::collections::{BTreeMap, BTreeSet};

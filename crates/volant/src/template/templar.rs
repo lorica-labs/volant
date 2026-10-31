@@ -163,7 +163,7 @@ impl Templar {
             if seen.contains(&(kind, name.clone())) {
                 continue;
             }
-            if bridged::sendable_name(kind, &name) && !bridged::knows(env, kind, &name) {
+            if bridged::sendable_name(kind, &name) && !bridged::native(env, bridge, kind, &name) {
                 bridged::register(Arc::make_mut(env), bridge, kind, &name);
             }
             seen.insert((kind, name));

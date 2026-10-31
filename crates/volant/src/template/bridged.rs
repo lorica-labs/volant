@@ -85,6 +85,12 @@ pub(super) fn knows(env: &Environment<'_>, kind: PluginKind, name: &str) -> bool
     !failure.is_some_and(|e| matches!(e.kind(), ErrorKind::UnknownFilter | ErrorKind::UnknownTest))
 }
 
+/// Whether `env` answers `name` itself: it knows it, and no plugin directory of the playbook's
+/// own defines it over the engine's.
+pub(super) fn native(env: &Environment<'_>, bridge: &Bridge, kind: PluginKind, name: &str) -> bool {
+    knows(env, kind, name) && !bridge.overrides(kind, name)
+}
+
 /// Registers `name` in `env` as a call to the helper.
 ///
 /// An undefined argument is not sent, as `_invoke_plugin` sends none to a plugin: once the name

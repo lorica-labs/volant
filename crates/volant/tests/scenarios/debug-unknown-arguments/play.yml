@@ -1,0 +1,17 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: msg=x that=true
+      ignore_errors: true
+    - debug:
+        msg: y
+        var: z
+        nosuch: 1
+      ignore_errors: true
+    - ansible.builtin.debug:
+        msg: y
+        zz: 1
+        aa: 2
+      ignore_errors: true
+    - debug:
+        msg: fine

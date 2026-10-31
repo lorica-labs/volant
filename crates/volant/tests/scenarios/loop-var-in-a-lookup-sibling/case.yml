@@ -1,0 +1,4 @@
+# A variable that reads a lookup and a sibling naming the loop variable renders per item, as in
+# ansible-core: the sibling cannot render before the loop binds its name, and the variable waits
+# for it rather than keeping its text.
+args: [-i, inv.ini, site.yml]

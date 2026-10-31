@@ -1,0 +1,22 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - command: id -u
+      become: "{{ item }}"
+      loop: [true, false, true]
+      register: ids
+    - debug:
+        msg: "{{ ids.results | map(attribute='stdout') | map('int') | map('bool') | list }}"
+    - command: id -un
+      become: true
+      become_user: "{{ item }}"
+      loop: [root, root]
+      register: names
+    - debug: msg="{{ names.results | map(attribute='stdout') | list }}"
+    - block:
+        - command: id -u
+          become: "{{ item }}"
+          loop: [false, true]
+          register: again
+      always:
+        - debug: msg="{{ again.results | map(attribute='stdout') | map('int') | map('bool') | list }}"

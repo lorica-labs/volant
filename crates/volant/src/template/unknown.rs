@@ -49,6 +49,22 @@ pub(crate) fn active() -> bool {
     REPLAY.load(Ordering::Relaxed)
 }
 
+/// `render`, whose result is the unknown value's marker when what it rendered read one, whether
+/// it then succeeded or failed. Outside a replay, `render` alone.
+pub(super) fn through(
+    render: impl FnOnce() -> Result<serde_json::Value, super::TemplateError>,
+) -> Result<serde_json::Value, super::TemplateError> {
+    if !active() {
+        return render();
+    }
+    let before = begin();
+    let result = render();
+    match end(before) {
+        Some(reason) => Ok(serde_json::Value::String(marker(&reason))),
+        None => result,
+    }
+}
+
 /// Turns the unknown value on for this test's thread alone.
 #[cfg(test)]
 pub(crate) fn enable_here() {

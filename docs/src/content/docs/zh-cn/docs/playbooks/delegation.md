@@ -1,5 +1,5 @@
 ---
-sourceHash: d7a9625feefb
+sourceHash: e7525bbdddd7
 title: 委派、meta 任务与 environment
 description: 对一个批次只运行一次 task 或在另一台主机上运行，每个 meta 动作的作用，以及 environment 和 no_log 如何影响 task。
 ---
@@ -123,6 +123,6 @@ task 的横幅和 task 的名字不会被隐藏。已注册的变量和汇总保
 - `local_action` 是 `delegate_to: localhost` 的另一种写法，并且优先于同一个 task 上的 `delegate_to`。
 - 被选举来运行 `run_once` task 的主机无法连接时，等待的主机会离开 play，运行就此结束。Ansible 会再多打印一个空的 play 横幅。两个引擎都不会选举另一台主机，退出码都是 4。
 - `run_once` 与 `delegate_facts` 组合时，facts 存储在 delegate 上，这让 `delegate_facts` 只有一种含义。Ansible 在这里的行为没有测量过。
-- `become_user: "{{ item }}"` 会让 task 失败，而 Ansible 按 item 提权。提权在每个批次中确定一次，原因与 delegate 相同。
+- 由循环 item 写出的 `become`、`become_user` 和 `become_method` 会按每个 item 渲染。所有 item 提权方式相同时，循环照常运行。不同时，task 以 `loop items that escalate differently from one another are not supported yet` 失败，而 Ansible 按 item 提权：一个 task 的所有 item 走同一条连接，原因与 delegate 相同。
 - 不是映射的 `environment` 值会被跳过，并给出点明该值的警告。Ansible 则打印它所在的整个层级栈。
 - 这条警告不会被 `no_log` 屏蔽。Ansible 的警告同样不被屏蔽，所以这与 ansible-core 一致，但在把机密放进一个可能不是映射的 `environment` 之前，请记住这一点。

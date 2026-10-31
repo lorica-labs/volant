@@ -1,5 +1,5 @@
 ---
-sourceHash: d7a9625feefb
+sourceHash: e7525bbdddd7
 title: Délégation, tâches meta et environment
 description: Exécuter une tâche une seule fois pour un lot ou sur un autre hôte, ce que fait chaque action meta, et comment environment et no_log façonnent une tâche.
 ---
@@ -123,6 +123,6 @@ La bannière de la tâche et le nom de la tâche ne sont pas masqués. La variab
 - `local_action` est `delegate_to: localhost` écrit autrement, et l'emporte sur un `delegate_to` de la même tâche.
 - Quand l'hôte élu pour exécuter une tâche `run_once` ne peut pas être joint, les hôtes en attente quittent le play et l'exécution s'arrête là. Ansible affiche une bannière de play vide de plus. Aucun des deux moteurs n'élit un autre hôte, et le code de sortie est le même, 4.
 - `run_once` combiné à `delegate_facts` stocke les facts sur l'hôte délégué, ce qui garde à `delegate_facts` un seul sens. Le comportement d'Ansible ici n'a pas été mesuré.
-- `become_user: "{{ item }}"` fait échouer la tâche, là où Ansible élève les privilèges élément par élément. L'élévation est décidée une fois par lot, pour la même raison que l'hôte délégué.
+- `become`, `become_user` et `become_method` écrits à partir de l'élément de boucle sont rendus pour chaque élément. Quand tous les éléments élèvent les privilèges de la même façon, la boucle s'exécute. Quand ils diffèrent, la tâche échoue avec `loop items that escalate differently from one another are not supported yet`, là où Ansible élève les privilèges élément par élément : les éléments d'une tâche passent par une seule liaison, pour la même raison que l'hôte délégué.
 - Une valeur d'`environment` qui n'est pas un mapping est sautée avec un avertissement qui nomme la valeur. Ansible affiche à la place toute la pile des couches où elle se trouvait.
 - Cet avertissement n'est pas censuré par `no_log`. Ansible ne censure pas non plus son avertissement : cela correspond donc à ansible-core, mais gardez-le en tête avant de mettre un secret dans un `environment` qui pourrait ne pas être un mapping.

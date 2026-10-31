@@ -31,6 +31,37 @@ pub(super) fn remove_omit(value: &mut Value) {
     }
 }
 
+/// [`become_for`] for a task, read from its items when it loops and the host's variables alone do
+/// not render it. Measured on ansible-core 2.19.12: `become: "{{ item }}"` is rendered for each
+/// item. A loop whose items escalate alike runs over one link; one whose items escalate
+/// differently is refused by name, since this release runs a task's items over one link.
+pub(super) fn escalation_for(
+    task: &PlayTask,
+    play: &PlayPlan,
+    (vars, items): (&HostVars, &[super::Item]),
+    defaults: &ConnectionDefaults,
+    templar: &Templar,
+) -> Result<Option<Escalation>, TemplateError> {
+    let whole = become_for(task, play, vars, defaults, templar);
+    if whole.is_ok() || task.loop_items.is_none() {
+        return whole;
+    }
+    let mut chosen: Option<Option<Escalation>> = None;
+    for item in items.iter().filter(|item| item.skipped.is_none()) {
+        let this = become_for(task, play, &item.vars, defaults, templar)?;
+        match &chosen {
+            None => chosen = Some(this),
+            Some(first) if *first == this => {}
+            Some(_) => {
+                return Err(TemplateError(
+                    "Error processing keyword 'become': loop items that escalate differently from one another are not supported yet".to_string(),
+                ));
+            }
+        }
+    }
+    Ok(chosen.flatten())
+}
+
 /// Resolves privilege escalation for one task: whether to escalate, to whom, through which
 /// program, and with what password. `None` means the task runs as the connecting user.
 /// `become_method`, `become_exe` and `become_flags` take the order the reference gives every

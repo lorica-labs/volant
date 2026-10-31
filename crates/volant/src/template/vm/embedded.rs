@@ -112,6 +112,42 @@ pub(in crate::template) fn inline_lookup_terms(
     Cow::Owned(out)
 }
 
+/// The help line under [`WARNING`] for a condition.
+const CONDITION_HELP: &str = "Use inline expressions, for example: `when: \"{{ a_var }}\" == 42` becomes `when: a_var == 42`";
+
+/// `expr`, a condition, with each constant string that holds a template written as the
+/// expression it holds, with the warning for each. Measured on ansible-core 2.19.12, a condition
+/// renders such a string wherever it stands: `"'{{ d }}/a' in m"` reads `d`.
+pub(in crate::template) fn inline_conditional(expr: &str) -> Cow<'_, str> {
+    if !expr.contains("{{") {
+        return Cow::Borrowed(expr);
+    }
+    let Ok(tokens) = tokenize(expr, true, SyntaxConfig::default()).collect::<Result<Vec<_>, _>>()
+    else {
+        return Cow::Borrowed(expr);
+    };
+    let mut out = String::new();
+    let mut from = 0;
+    for (token, span) in &tokens {
+        if let Token::Str(text) = token
+            && let Some(inner) = expression(text)
+        {
+            let (start, end) = (span.start_offset as usize, span.end_offset as usize);
+            out.push_str(&expr[from..start]);
+            out.push('(');
+            out.push_str(&inner);
+            out.push(')');
+            from = end;
+            crate::render::warn_once(&format!("[WARNING]: {WARNING}\n{CONDITION_HELP}\n\n"));
+        }
+    }
+    if from == 0 {
+        return Cow::Borrowed(expr);
+    }
+    out.push_str(&expr[from..]);
+    Cow::Owned(out)
+}
+
 /// Whether the template `source` passes a lookup a constant string that holds a template.
 pub(crate) fn embeds(source: &str) -> bool {
     matches!(
@@ -152,5 +188,14 @@ mod tests {
             inline_lookup_terms(expr, true, SyntaxConfig::default()),
             want
         );
+    }
+
+    /// In a condition, every constant string holding a template is inlined, wherever it stands.
+    #[rstest]
+    #[case("'{{ d }}/a' in m", "((d) ~ '/a') in m")]
+    #[case("x in m['{{ d }}']", "x in m[((d))]")]
+    #[case("x == 'plain'", "x == 'plain'")]
+    fn a_condition_inlines_its_constant_templates(#[case] expr: &str, #[case] want: &str) {
+        assert_eq!(inline_conditional(expr), want);
     }
 }

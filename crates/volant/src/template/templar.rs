@@ -19,7 +19,7 @@ use super::missing::named;
 use super::vm::{
     TemplateReads, convert_error, eval_expr, keep_literal, single_expression, template_reads,
 };
-use super::{RESOLVING, Tainted, TemplateError, as_expression};
+use super::{RESOLVING, Tainted, TemplateError, as_expression, inline_conditional};
 
 /// A handle on the environment and the bridge, cheap to clone: a render's context holds one so
 /// that a variable whose value is a template can be rendered when a template reads it.
@@ -224,7 +224,7 @@ impl Templar {
         ctx: &minijinja::Value,
         tainted: &Tainted,
     ) -> Result<Value, TemplateError> {
-        unknown_through(|| self.render_known(text, ctx, tainted))
+        super::unknown::through(|| self.render_known(text, ctx, tainted))
     }
 
     fn render_known(
@@ -408,7 +408,7 @@ impl Templar {
         expr: &str,
         ctx: &minijinja::Value,
     ) -> Result<Value, TemplateError> {
-        unknown_through(|| self.evaluate_known(expr, ctx))
+        super::unknown::through(|| self.evaluate_known(expr, ctx))
     }
 
     fn evaluate_known(&self, expr: &str, ctx: &minijinja::Value) -> Result<Value, TemplateError> {
@@ -456,7 +456,9 @@ impl Templar {
         // A condition written in braces is a template: its syntax errors are a template's.
         let mut value = match delimited {
             Some(inner) => super::as_template(expr, inner, || self.evaluate_in(inner, &ctx))?,
-            None => self.evaluate_in(expr.trim(), &ctx).map_err(as_expression)?,
+            None => self
+                .evaluate_in(&inline_conditional(expr), &ctx)
+                .map_err(as_expression)?,
         };
         if delimited.is_some()
             && let Value::String(text) = &value
@@ -480,21 +482,5 @@ impl Templar {
                 if truthy(&other) { "True" } else { "False" }
             ))),
         }
-    }
-}
-
-/// `render`, whose result is the unknown value's marker when what it rendered read one, whether
-/// it then succeeded or failed: see [`super::unknown`]. Outside a replay, `render` alone.
-fn unknown_through(
-    render: impl FnOnce() -> Result<Value, TemplateError>,
-) -> Result<Value, TemplateError> {
-    if !super::unknown::active() {
-        return render();
-    }
-    let before = super::unknown::begin();
-    let result = render();
-    match super::unknown::end(before) {
-        Some(reason) => Ok(Value::String(super::unknown::marker(&reason))),
-        None => result,
     }
 }

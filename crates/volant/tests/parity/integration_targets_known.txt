@@ -21,7 +21,6 @@ connection_local               #1290
 deprecations                   #1282
 filter_core                    #1289
 filter_encryption              #1283
-find                           #1290
 fork_safe_stdio                #1287
 gather_facts-errors            #1285
 gathering_facts                #1285

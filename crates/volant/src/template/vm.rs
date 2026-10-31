@@ -20,6 +20,7 @@ mod literals;
 mod syntax;
 pub(super) use syntax::{as_expression, as_template, jinja as jinja_syntax};
 
+pub(super) use embedded::inline_conditional;
 pub(crate) use embedded::{HELP as EMBEDDED_HELP, WARNING as EMBEDDED_WARNING, embeds};
 pub(super) use expression::single_expression;
 

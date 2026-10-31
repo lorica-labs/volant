@@ -245,19 +245,26 @@ fn latin1(b: &[u8]) -> String {
     b.iter().map(|&c| char::from(c)).collect()
 }
 
-/// An argument of a bytes method read as the `str` method's: bytes as their characters, and a
-/// list or tuple item by item. A text is refused as Python refuses it.
-fn as_text(value: &Value) -> Result<Value, Error> {
+/// An argument of the bytes method `method` read as the `str` method's: bytes as their
+/// characters, and a list or tuple item by item. A text is refused as Python refuses it.
+fn as_text(method: &str, value: &Value) -> Result<Value, Error> {
     if let Some(bytes) = of(value) {
         return Ok(Value::from(latin1(&bytes.0)));
     }
     if value.as_str().is_some() {
-        return Err(raise("a bytes-like object is required, not 'str'"));
+        // The searches take an integer too, and say so.
+        return Err(raise(
+            if matches!(method, "count" | "find" | "index" | "rfind" | "rindex") {
+                "argument should be integer or bytes-like object, not 'str'"
+            } else {
+                "a bytes-like object is required, not 'str'"
+            },
+        ));
     }
     if matches!(type_of(value), "list" | "tuple") {
         let items = value
             .try_iter()?
-            .map(|item| as_text(&item))
+            .map(|item| as_text(method, &item))
             .collect::<Result<Vec<_>, _>>()?;
         return Ok(if type_of(value) == "tuple" {
             Value::from(Tuple::from(items))
@@ -292,12 +299,16 @@ fn as_bytes(value: Value) -> Value {
     value
 }
 
-/// `me.name(args)` as the `str` method of that name answers it, which `run` calls.
+/// `me.method(args)` as the `str` method of that name answers it, which `run` calls.
 pub(in crate::template::pymethods) fn through_str(
     me: &Bytes,
+    method: &str,
     args: &[Value],
     run: impl FnOnce(&Value, &[Value]) -> Result<Value, Error>,
 ) -> Result<Value, Error> {
-    let args = args.iter().map(as_text).collect::<Result<Vec<_>, _>>()?;
+    let args = args
+        .iter()
+        .map(|arg| as_text(method, arg))
+        .collect::<Result<Vec<_>, _>>()?;
     run(&Value::from(latin1(&me.0)), &args).map(as_bytes)
 }

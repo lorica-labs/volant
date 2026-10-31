@@ -2,7 +2,7 @@
 # each with the issue that tracks it. A line is `<target>  #<issue>`; the recipe fails on any other
 # target that differs, and an entry goes away with the fix of its issue.
 ansiballz_debug                #1336
-ansiballz_debugging            #1283
+ansiballz_debugging            #1330
 ansible                        #1333
 ansible-galaxy-collection-scm  #1342
 ansible-playbook-callbacks     #1333
@@ -20,7 +20,7 @@ connection_local               #1337
 deprecations                   #1282
 filter_encryption              #1282
 fork_safe_stdio                #1333
-gather_facts-errors            #1285
+gather_facts-errors            #1330
 gathering_facts                #1285
 include_vars                   #1282
 interpreter_discovery_python   #1284

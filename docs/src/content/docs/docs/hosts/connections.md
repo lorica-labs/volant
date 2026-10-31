@@ -365,7 +365,7 @@ It is written once to `sudo`'s standard input. It never appears in a command lin
 
 Volant asks `sudo` which form to use instead of assuming one. It tries `sudo -n` first, and falls back to `sudo -k -S -p ''` only when `sudo` itself rejects the request for lack of authentication. [Decision record 0004](/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explains why a guess would hang the link. On a host that ran before, Volant first starts the cached agent under `sudo -n` in the same `ssh` session as its checks, and runs the probe only when that does not work, as [The agent on your hosts](/docs/internals/agent/) describes.
 
-When escalation fails, for a missing password, a wrong one or a `sudoers` rule that forbids the command, the task fails and the host stays reachable. The messages are Ansible's own: `Missing sudo password` or `Incorrect sudo password`.
+When escalation fails, for a missing password, a wrong one or a `sudoers` rule that forbids the command, the task fails and the host stays reachable. The messages are Ansible's own: `Missing sudo password` or `Incorrect sudo password`. A task given another password gets an agent of its own, so a wrong password fails even after the right one worked, and `ignore_errors` covers that failure as it does any other.
 
 ### su
 

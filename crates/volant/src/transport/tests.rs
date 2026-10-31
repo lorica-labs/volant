@@ -198,6 +198,12 @@ fn the_su_command_is_the_references_with_a_raw_terminal() {
         escalation(None).program(),
         "su and sudo to one user are two links"
     );
+    assert_ne!(
+        escalation(Some("right")).program(),
+        escalation(Some("wrong")).program(),
+        "a wrong password is asked for again, not run on the link the right one opened"
+    );
+    assert!(!format!("{:?}", escalation(Some("right")).program()).contains("right"));
 }
 
 /// The success line the fakes below print.

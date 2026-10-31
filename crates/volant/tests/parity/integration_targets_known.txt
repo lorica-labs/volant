@@ -31,7 +31,6 @@ inventory_cache                #1286
 inventory_script               #1282
 lookup_env                     #1282
 lookup_first_found             #1289
-lookup_varnames                #1284
 loop-connection                #1290
 loops                          #1289
 module_defaults                #1289

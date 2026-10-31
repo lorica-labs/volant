@@ -640,3 +640,19 @@ fn the_loop_lookups_shape_their_terms_like_the_plugins() {
         err.0
     );
 }
+
+/// The `vars` lookup refuses a term that is not text, naming its Python type, measured.
+#[rstest::rstest]
+#[case("42", "int")]
+#[case("[1]", "list")]
+#[case("{}", "dict")]
+fn a_vars_term_that_is_not_text_is_refused(#[case] term: &str, #[case] kind: &str) {
+    let t = crate::testing::templar();
+    let err = t
+        .render(&format!("{{{{ lookup('vars', {term}) }}}}"), &Map::new())
+        .unwrap_err();
+    assert_eq!(
+        err.0,
+        format!("The lookup plugin 'vars' failed: Variable name must be 'str' not '{kind}'.")
+    );
+}

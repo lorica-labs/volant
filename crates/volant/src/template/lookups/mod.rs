@@ -297,6 +297,13 @@ fn lookup(
                 taint();
                 Value::from(String::from_utf8_lossy(&bytes).into_owned())
             }
+            "vars" | "ansible.builtin.vars" if term.as_str().is_none() && !term.is_undefined() => {
+                let class = basic::python_type(term);
+                let kind = class.trim_start_matches("<class '").trim_end_matches("'>");
+                return Err(invalid(format!(
+                    "Variable name must be 'str' not '{kind}'."
+                )));
+            }
             "vars" | "ansible.builtin.vars" => match state.lookup(&term_text) {
                 Some(v) if !v.is_undefined() => v,
                 _ => match &default_value {

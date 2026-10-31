@@ -91,9 +91,8 @@ pub fn modules_to_build<'a>(
 /// a collection nobody installed costs nothing, and the include refuses it by name if a host ever
 /// reaches it.
 ///
-/// A role file that cannot be read or parsed refuses the run, naming the file: the role is broken.
-/// A literal include target that cannot be is left to the include, which fails the host reaching
-/// it the way the reference does.
+/// A role file that cannot be read or parsed is left out: the compilation refuses it if the run
+/// reads it, and so does an include that reaches it, the way the reference does.
 pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<String> {
     modules_to_build(reach.modules.iter().map(|(module, _)| module.as_str()))
 }
@@ -279,15 +278,21 @@ impl Reach {
         for sub in ["tasks", "handlers"] {
             for path in yaml_files(&dir.join(sub))? {
                 self.files.insert(path.clone());
-                let mut tasks = if sub == "tasks" {
-                    let mut tasks = Vec::new();
-                    flatten(&crate::playbook::parse_tasks_file(&path)?, &mut tasks);
-                    tasks
+                // A file nothing reads is no concern of the run: measured, a role's `tasks/`
+                // may hold whole playbooks a task runs with `ansible-playbook`. The compilation
+                // refuses a file the run does read, and an include one it reaches.
+                let parsed = if sub == "tasks" {
+                    crate::playbook::parse_tasks_file(&path).map(|items| {
+                        let mut tasks = Vec::new();
+                        flatten(&items, &mut tasks);
+                        tasks
+                    })
                 } else {
-                    crate::playbook::parse_handlers_file(&path)?
-                        .into_iter()
-                        .map(|h| h.task)
-                        .collect()
+                    crate::playbook::parse_handlers_file(&path)
+                        .map(|handlers| handlers.into_iter().map(|h| h.task).collect())
+                };
+                let Ok(mut tasks) = parsed else {
+                    continue;
                 };
                 // A role searches the collections its own `meta/main.yml` lists, and nobody's else.
                 crate::collection::scope(&mut tasks, Some(&collections), search);

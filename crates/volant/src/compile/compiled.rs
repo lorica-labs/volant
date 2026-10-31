@@ -227,9 +227,29 @@ pub(crate) fn batches(
         None => Value::Null,
         // Measured, exit 4: `serial: "{{ n }}"` with no `n` says `Error processing keyword
         // 'serial': 'n' is undefined` and stops the run there, before the play's banner.
-        Some(raw) => templar.render_value(raw, vars).map_err(|err| {
-            Refusal::at(4, format!("Error processing keyword 'serial': {}", err.0))
-        })?,
+        // `omit` is defined there too, and leaves `serial` at its default: measured, `serial:
+        // "{{ n | default(omit) }}"` runs every host at once.
+        Some(raw) => {
+            let omit = crate::vars::omit_token();
+            let mut with_omit;
+            let vars = if raw.to_string().contains("omit") {
+                with_omit = vars.clone();
+                with_omit.insert("omit".into(), Value::from(omit));
+                &with_omit
+            } else {
+                vars
+            };
+            match templar.render_value(raw, vars) {
+                Ok(Value::String(s)) if s == omit => Value::Null,
+                Ok(v) => v,
+                Err(err) => {
+                    return Err(Refusal::at(
+                        4,
+                        format!("Error processing keyword 'serial': {}", err.0),
+                    ));
+                }
+            }
+        }
     };
     let sizes: Vec<Value> = match rendered {
         Value::Null => Vec::new(),

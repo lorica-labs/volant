@@ -275,10 +275,12 @@ pub enum Flag {
 /// `ignore_errors`, `check_mode` and `diff`, which may be templates. Measured on ansible-core 2.19.12:
 /// `ignore_errors: "{{ ansible_check_mode }}"`, which `geerlingguy.ntp` and `geerlingguy.docker`
 /// write, is rendered when the task runs, so it is kept as written here and rendered by
-/// `prepare`. Anything else that is not a boolean is still refused by [`boolean`].
+/// `prepare`. So is a text that is no boolean: measured, `diff: yes.` fails its task when it runs,
+/// with `The value 'yes.' could not be converted to 'bool'.`, which `ignore_errors` takes. Anything
+/// else that is not a boolean is still refused by [`boolean`].
 pub(super) fn flag(yaml: &Yaml, key: &str) -> anyhow::Result<Option<Flag>> {
     match field(yaml, key) {
-        Some(Yaml::Value(Scalar::String(s))) if crate::template::Templar::is_template(s) => {
+        Some(node @ Yaml::Value(Scalar::String(s))) if as_bool(node).is_none() => {
             Ok(Some(Flag::Template(s.to_string())))
         }
         _ => Ok(boolean(yaml, key)?.map(Flag::Fixed)),

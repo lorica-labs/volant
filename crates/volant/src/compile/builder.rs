@@ -343,7 +343,8 @@ impl Builder<'_> {
                 ),
             ));
         }
-        let imported = crate::playbook::parse_tasks_file(&path)?;
+        let imported =
+            crate::playbook::parse_tasks_file(&path).map_err(crate::playbook::imported_refusal)?;
         let merged = merge(inherited, task);
         // The imported file's own directory, for the imports it carries itself, put back
         // afterwards so the rest of the importing file still reads against its own.

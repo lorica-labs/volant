@@ -832,10 +832,9 @@ fn the_union_holds_what_a_dynamic_include_may_read() {
         ]
     );
 
-    // A role file that is not YAML is a broken role, refused by its own name.
+    // A role file nothing reads is left out, whatever it holds: the run reads `main.yml` alone.
     write("roles/r/tasks/broken.yml", "- apt: [\n");
-    let err = union_of(&dir, "- hosts: all\n  roles: [r]\n").unwrap_err();
-    assert!(format!("{err:#}").contains("broken.yml"), "{err:#}");
+    assert!(union_of(&dir, "- hosts: all\n  roles: [r]\n").is_ok());
 }
 
 /// A run that names no Python module builds nothing, so a controller without ansible-core runs

@@ -319,11 +319,9 @@ thread_local! {
 }
 
 /// Runs the lexer and the parser of minijinja, and turns a panic of theirs into an error, with
-/// nothing printed on stderr. Text from a playbook must not be able to stop the run. Two inputs
-/// are known to panic there. A syntax error 65,535 characters into a line overflows the
-/// sixteen-bit column counter of a debug build. An expression that closes the block it sits in,
-/// `}}) else False` say, empties the lexer's stack; the reference refuses that one as a syntax
-/// error, and the same text inside `{{ }}` is `unexpected end of variable block` here.
+/// nothing printed on stderr. Text from a playbook must not be able to stop the run. One input is
+/// known to panic there: a syntax error 65,535 characters into a line overflows the sixteen-bit
+/// column counter of a debug build.
 fn no_panic<T>(
     compile: impl FnOnce() -> Result<T, minijinja::Error>,
 ) -> Result<T, minijinja::Error> {
@@ -339,13 +337,7 @@ fn no_panic<T>(
     let outer = COMPILING.replace(true);
     let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(compile));
     COMPILING.set(outer);
-    outcome.unwrap_or_else(|payload| {
-        let message = match payload.downcast_ref::<&str>() {
-            Some(&"empty lexer stack") => "unexpected end of variable block",
-            _ => LONG_LINE,
-        };
-        Err(minijinja::Error::new(ErrorKind::SyntaxError, message))
-    })
+    outcome.unwrap_or_else(|_| Err(minijinja::Error::new(ErrorKind::SyntaxError, LONG_LINE)))
 }
 
 /// `env.compile_expression(expr)?.eval(ctx)`, with `~` routed through [`concat()`].

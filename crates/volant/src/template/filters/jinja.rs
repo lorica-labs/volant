@@ -29,11 +29,16 @@ pub(super) fn round(
     };
     let number = || f64::try_from(value.clone());
     match method.as_deref() {
-        None | Some("common") => f::round(value, precision),
+        None | Some("common") => f::round(value, precision, None, no_kwargs()),
         Some("ceil") => Ok(scale(number()?, f64::ceil)),
         Some("floor") => Ok(scale(number()?, f64::floor)),
         Some(_) => Err(failed("round", "method must be common, ceil or floor")),
     }
+}
+
+/// No keyword arguments, for a builtin whose own are read here first.
+fn no_kwargs() -> Kwargs {
+    Kwargs::from_iter(std::iter::empty::<(&str, Value)>())
 }
 
 /// `value[attribute]`, a dotted path read part by part and a number read as an index, as Jinja2's
@@ -59,14 +64,20 @@ pub(super) fn sum(state: &State, values: Value, kwargs: Kwargs) -> Result<Value,
             .collect(),
         None => values,
     };
-    let total = f::sum(state, values)?;
+    let total = f::sum(state, values, None, None, no_kwargs())?;
     match start {
         None => Ok(total),
         Some(start) if start.kind() != ValueKind::Number => Err(Error::new(
             ErrorKind::InvalidOperation,
             format!("can only sum numbers, got {}", start.kind()),
         )),
-        Some(start) => f::sum(state, Value::from(vec![start, total])),
+        Some(start) => f::sum(
+            state,
+            Value::from(vec![start, total]),
+            None,
+            None,
+            no_kwargs(),
+        ),
     }
 }
 

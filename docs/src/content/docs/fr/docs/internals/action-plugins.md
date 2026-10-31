@@ -1,5 +1,5 @@
 ---
-sourceHash: 5a320c445d7e
+sourceHash: 55b25036bc65
 title: Plugins d'action
 description: Comment Volant exécute les modules qu'ansible-core exécute par un plugin d'action sur le contrôleur, en Rust ou sur le pont Python.
 ---
@@ -172,10 +172,8 @@ Le plugin lit la clé et l'utilisateur du lien (la variable d'hôte, `--private-
 ### Limites connues
 
 - `wait_for_connection` sur un hôte hors service dès la première connexion se termine par `UNREACHABLE` pour un élément de plugin qui n'a jamais obtenu de lien ; ansible-core rapporte `failed` avec `timed out waiting for ping module test`.
-- Un résultat relayé par le pont qui est `unreachable` au niveau du résultat s'affiche comme `ok`.
-- Un résultat relayé ignoré porte `"failed": false`.
-- Les avertissements qu'un plugin écrit avec `display` vont à la sortie d'erreur de l'assistant et non à la sortie de la tâche ; il en va de même pour l'avertissement `Error loading plugin` d'ansible-core pour un nom de collection inconnu.
-- Un module que `runtime.yml` oriente vers un plugin d'action de nom différent s'exécute sous le nom de la tâche.
+- Un résultat relayé par le pont qui est `unreachable` au niveau du résultat affiche un bloc `[ERROR]:` avant sa ligne `UNREACHABLE!`, et sa valeur enregistrée n'a pas de clé `failed`.
+- Ce qu'un plugin écrit avec `display` ne sort pas dans l'ordre où il l'a écrit : un avertissement peut suivre une ligne écrite après lui.
 - Un `add_host` ou `group_by` délégué s'applique à l'hôte de la tâche.
 
 ## Un fichier source nommé par un hôte géré

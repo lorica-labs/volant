@@ -1,5 +1,5 @@
 ---
-sourceHash: 5a320c445d7e
+sourceHash: 55b25036bc65
 title: Action-Plugins
 description: Wie Volant die Module ausführt, die ansible-core über ein Action-Plugin auf dem Controller ausführt, in Rust oder auf der Python-Bridge.
 ---
@@ -172,10 +172,8 @@ Das Plugin liest Schlüssel und Benutzer der Verbindung (die Hostvariable, `--pr
 ### Bekannte Lücken
 
 - `wait_for_connection` auf einem Host, der von der ersten Verbindung an down ist, endet mit `UNREACHABLE` für ein Plugin-Element, das nie eine Verbindung bekommen hat; ansible-core meldet `failed` mit `timed out waiting for ping module test`.
-- Ein überbrücktes Ergebnis, das auf Ergebnisebene `unreachable` ist, wird als `ok` ausgegeben.
-- Ein übersprungenes überbrücktes Ergebnis trägt `"failed": false`.
-- Die Warnungen, die ein Plugin mit `display` schreibt, gehen an die Standardfehlerausgabe des Hilfsprozesses, nicht an die Ausgabe des Tasks; ebenso die Warnung `Error loading plugin` von ansible-core für einen unbekannten Collection-Namen.
-- Ein Modul, das `runtime.yml` an ein anders benanntes Action-Plugin weiterleitet, läuft unter dem eigenen Namen des Tasks.
+- Ein überbrücktes Ergebnis, das auf Ergebnisebene `unreachable` ist, gibt vor seiner Zeile `UNREACHABLE!` einen `[ERROR]:`-Block aus, und sein registrierter Wert hat keinen Schlüssel `failed`.
+- Was ein Plugin mit `display` schreibt, erscheint nicht in der Reihenfolge, in der es geschrieben wurde: Eine Warnung kann nach einer Zeile kommen, die danach geschrieben wurde.
 - Ein delegiertes `add_host` oder `group_by` gilt für den eigenen Host des Tasks.
 
 ## Eine Quelldatei, die ein verwalteter Host benannt hat

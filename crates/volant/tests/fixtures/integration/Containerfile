@@ -1,0 +1,9 @@
+# The throwaway host the integration targets that change the machine, and the script targets, run
+# in, as ansible-test's own containers give them: an `en_US.UTF-8` locale, which several targets set,
+# and the tools their scripts call. The interpreters come from the reference's virtualenv, mounted
+# at its own path.
+FROM ubuntu:24.04@sha256:fe81560990fae86dc4743202b2cb4d3df98d0bcf949173cecef15ce1127ef852
+ENV DEBIAN_FRONTEND=noninteractive
+RUN apt-get update \
+ && apt-get install -y --no-install-recommends locales sudo acl git unzip zip rsync openssh-client python3 iproute2 ca-certificates curl file gnupg tzdata \
+ && locale-gen en_US.UTF-8

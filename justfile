@@ -57,6 +57,32 @@ yaml-corpus:
     cargo build --release -p volant --example yaml_dump
     "$py" crates/volant/tests/parity/yaml_corpus.py target/yaml-corpus target/release/examples/yaml_dump "$dir"
 
+# Run ansible-core's integration targets, from its source at the tag of the reference
+# ansible-core, under the reference and under Volant, and print one line per target. The targets
+# that change the machine and the script targets run in a throwaway container each. Fails on a
+# difference crates/volant/tests/parity/integration_targets_known.txt does not list, and on a
+# listed one that now passes. `args` go to the runner: `--only copy file`, `--no-container`,
+# `--jobs 4`. Needs `uv`, `git`, `docker` and network access the first time.
+integration-targets *args: _integration-image
+    #!/usr/bin/env bash
+    set -euo pipefail
+    py="$(uv tool dir)/ansible-core/bin/python"
+    tag="v$("$py" -c 'import ansible.release; print(ansible.release.__version__)')"
+    src="target/integration/ansible-$tag"
+    [ -d "$src/test/integration" ] || git clone -q --depth 1 --branch "$tag" https://github.com/ansible/ansible "$src"
+    cargo build --release -p volant -p volant-agent
+    "$py" crates/volant/tests/parity/integration_targets.py "$src" target/integration/work target/release/volant crates/volant/tests/parity/integration_targets_known.txt {{args}}
+
+# Build the image `integration-targets` runs containers from, only when its Containerfile changed:
+# the sha256 of the file is the image's `volant.integration.sha` label.
+_integration-image:
+    #!/usr/bin/env bash
+    set -euo pipefail
+    file=crates/volant/tests/fixtures/integration/Containerfile
+    sha="$(sha256sum "$file" | cut -d' ' -f1)"
+    have="$(docker image inspect volant-integration:24.04 --format '{{{{ index .Config.Labels "volant.integration.sha" }}' 2>/dev/null || true)"
+    [ "$have" = "$sha" ] || docker build -q -t volant-integration:24.04 --label "volant.integration.sha=$sha" - < "$file"
+
 # Regenerate the managed runtime's manifest (crates/volant/src/runtime/manifest.toml): the pinned
 # python-build-standalone builds and, for each platform, the hash-pinned ansible-core wheels.
 # Needs Python 3.12+ and network access.

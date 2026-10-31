@@ -255,9 +255,25 @@ pub(super) fn environment_for(
         // The reference's own prefix for a keyword that cannot be rendered, measured: an
         // undefined variable in an `environment:` fails the task with
         // `Task failed: Error processing keyword 'environment': ...`.
-        let rendered = templar.render_value(layer, vars).map_err(|e| {
+        let keyword = |e: TemplateError| {
             TemplateError(format!("Error processing keyword 'environment': {}", e.0))
-        })?;
+        };
+        // A mapping's values are rendered one by one, and one that reads an undefined
+        // `ansible_env` is left out, as `Task._post_validate_environment` leaves it for any task.
+        let rendered = match layer {
+            Value::Object(map) => {
+                let mut kept = Map::new();
+                for (key, value) in map {
+                    match templar.render_value(value, vars) {
+                        Ok(value) => drop(kept.insert(key.clone(), value)),
+                        Err(e) if e.is_undefined() && e.0.contains("ansible_env") => {}
+                        Err(e) => return Err(keyword(e)),
+                    }
+                }
+                Value::Object(kept)
+            }
+            _ => templar.render_value(layer, vars).map_err(keyword)?,
+        };
         // A list of mappings is merged in order, as the reference merges its layers. Measured on
         // ansible-core 2.19.12: an entry or a value that is `omit` is left out.
         let omit = crate::vars::omit_token();

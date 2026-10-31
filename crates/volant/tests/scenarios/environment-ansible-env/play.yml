@@ -1,0 +1,10 @@
+- hosts: all
+  gather_facts: false
+  environment:
+    PATH: '{{ ansible_env.PATH + ":/lola" }}'
+    lola: ido
+  tasks:
+    - shell: echo "$lola $PATH"
+      register: r
+    - debug:
+        msg: "{{ r.stdout.split()[0] }} {{ '/lola' in r.stdout }}"

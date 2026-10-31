@@ -159,26 +159,30 @@ pub(super) fn items2dict(value: Value, kwargs: Kwargs) -> Result<Value, Error> {
         .get::<Option<String>>("value_name")?
         .unwrap_or_else(|| "value".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Array(items) = data(&value)? else {
-        return Err(invalid("items2dict requires a list"));
+    // Ported from `list_of_dict_key_value_elements_to_dict` in `ansible/plugins/filter/core.py`
+    // (2.19.12), its three errors in its words.
+    let given = data(&value)?;
+    let serde_json::Value::Array(items) = &given else {
+        return Err(invalid(format!(
+            "items2dict requires a list, got <class '{}'> instead.",
+            crate::template::type_name(&given)
+        )));
     };
+    let shown = crate::playbook::python_repr(&given);
     let mut out = serde_json::Map::new();
     for item in items {
-        let key = item
-            .get(&key_name)
-            .and_then(serde_json::Value::as_str)
-            .ok_or_else(|| {
-                invalid(format!(
-                    "items2dict requires each item to have a '{key_name}' string"
-                ))
-            })?
-            .to_string();
-        out.insert(
-            key,
-            item.get(&value_name)
-                .cloned()
-                .unwrap_or(serde_json::Value::Null),
-        );
+        let serde_json::Value::Object(map) = item else {
+            return Err(invalid(format!(
+                "items2dict requires a list of dictionaries, got {shown} instead."
+            )));
+        };
+        let (Some(key), Some(value)) = (map.get(&key_name), map.get(&value_name)) else {
+            return Err(invalid(format!(
+                "items2dict requires each dictionary in the list to contain the keys '{key_name}' and '{value_name}', got {shown} instead."
+            )));
+        };
+        let key = key.as_str().map_or_else(|| key.to_string(), str::to_string);
+        out.insert(key, value.clone());
     }
     Ok(from_json_value(serde_json::Value::Object(out)))
 }
@@ -285,4 +289,71 @@ pub(super) fn extract(
         value = value.get_item(key)?;
     }
     Ok(value)
+}
+
+/// `subelements(obj, subelements, skip_missing=False)`, ported from
+/// `ansible/plugins/filter/core.py` (2.19.12): each element of `obj` paired with each value the
+/// dotted path, or the list of keys, reaches in it, as a tuple, with the reference's errors.
+pub(super) fn subelements(value: Value, path: Value, kwargs: Kwargs) -> Result<Value, Error> {
+    use crate::playbook::python_repr;
+    use serde_json::Value as Json;
+    let skip_missing: bool = kwargs.get::<Option<bool>>("skip_missing")?.unwrap_or(false);
+    kwargs.assert_all_used()?;
+    let elements = match data(&value)? {
+        Json::Object(map) => map.into_iter().map(|(_, v)| v).collect(),
+        Json::Array(items) => items,
+        _ => return Err(invalid("obj must be a list of dicts or a nested dict")),
+    };
+    let keys = match data(&path)? {
+        Json::Array(keys) => keys,
+        Json::String(text) => text.split('.').map(|k| Json::String(k.into())).collect(),
+        _ => return Err(invalid("subelements must be a list or a string")),
+    };
+    let mut out = Vec::new();
+    for element in elements {
+        let mut values = element.clone();
+        for key in &keys {
+            let next = match (&values, key) {
+                (Json::Object(map), Json::String(k)) => map.get(k).cloned().ok_or(true),
+                (Json::Array(items), Json::Number(n)) => n
+                    .as_u64()
+                    .and_then(|i| items.get(usize::try_from(i).ok()?).cloned())
+                    .ok_or(true),
+                _ => Err(false),
+            };
+            values = match next {
+                Ok(found) => found,
+                Err(true) if skip_missing => {
+                    values = Json::Array(Vec::new());
+                    break;
+                }
+                Err(true) => {
+                    return Err(invalid(format!(
+                        "could not find {} key in iterated item {}",
+                        python_repr(key),
+                        python_repr(&values)
+                    )));
+                }
+                Err(false) => {
+                    let key = key.as_str().map_or_else(|| key.to_string(), str::to_string);
+                    return Err(invalid(format!(
+                        "the key {key} should point to a dictionary, got '{}'",
+                        python_repr(&values)
+                    )));
+                }
+            };
+        }
+        let Json::Array(found) = values else {
+            return Err(invalid(format!(
+                "the key {} should point to a list, got {}",
+                python_repr(keys.last().unwrap_or(&Json::Null)),
+                python_repr(&values)
+            )));
+        };
+        for one in found {
+            let pair = vec![from_json_value(element.clone()), from_json_value(one)];
+            out.push(Value::from(minijinja::value::Tuple::from(pair)));
+        }
+    }
+    Ok(Value::from(out))
 }

@@ -16,7 +16,9 @@ mod regex;
 mod surrogates;
 mod text;
 
-use collections::{SetFilter, combine, dict2items, extract, flatten, items2dict, set_filter};
+use collections::{
+    SetFilter, combine, dict2items, extract, flatten, items2dict, set_filter, subelements,
+};
 use int::to_int;
 pub(crate) use json::python_json;
 use json::{from_json, from_yaml, to_json, to_nice_json};
@@ -230,6 +232,7 @@ pub fn register(
     add_filter(env, "ternary", ternary);
     add_filter(env, "combine", combine);
     add_filter(env, "dict2items", dict2items);
+    add_filter(env, "subelements", subelements);
     add_filter(env, "items2dict", items2dict);
     add_filter(env, "to_json", to_json);
     add_filter(env, "to_nice_json", to_nice_json);

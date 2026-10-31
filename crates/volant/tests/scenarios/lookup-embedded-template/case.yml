@@ -1,0 +1,4 @@
+# A constant string holding a template, passed to a lookup, is rendered before the lookup reads
+# it; `lookup('env')` reads its default only for a variable that is not set.
+args: [-i, inv, play.yml]
+needs: ["ansible-core"]

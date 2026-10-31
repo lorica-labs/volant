@@ -14,9 +14,11 @@ use minijinja::syntax::SyntaxConfig;
 use minijinja::{AutoEscape, ErrorKind};
 use serde_json::Value;
 
+mod embedded;
 mod expression;
 mod literals;
 
+pub(crate) use embedded::{HELP as EMBEDDED_HELP, WARNING as EMBEDDED_WARNING, embeds};
 pub(super) use expression::single_expression;
 
 use super::bridged;
@@ -239,7 +241,8 @@ pub(super) fn render_counted(
     ctx: &minijinja::Value,
     syntax_config: SyntaxConfig,
 ) -> Result<(String, Emitted), minijinja::Error> {
-    let unfolded = literals::unfold_comparisons(source, false, syntax_config.clone());
+    let inlined = embedded::inline_lookup_terms(source, false, syntax_config.clone());
+    let unfolded = literals::unfold_comparisons(&inlined, false, syntax_config.clone());
     let config = TemplateConfig {
         syntax_config,
         // Never by file name: measured on ansible-core 2.19.12, `index.html.j2` holding
@@ -347,7 +350,8 @@ pub(super) fn eval_expr(
     ctx: &minijinja::Value,
 ) -> Result<minijinja::Value, minijinja::Error> {
     crate::profile::count(crate::profile::Counter::Compile, 1);
-    let unfolded = literals::unfold_comparisons(expr, true, SyntaxConfig::default());
+    let inlined = embedded::inline_lookup_terms(expr, true, SyntaxConfig::default());
+    let unfolded = literals::unfold_comparisons(&inlined, true, SyntaxConfig::default());
     let ast = no_panic(|| parse_expr(&unfolded))?;
     let mut codegen = CodeGenerator::new("<expression>", &unfolded);
     codegen.compile_expr(&ast);

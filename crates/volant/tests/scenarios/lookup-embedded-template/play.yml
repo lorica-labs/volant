@@ -1,0 +1,16 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    a_dict: {a_key: 1}
+  tasks:
+    - debug:
+        msg: "{{ lookup('ansible.builtin.items', '{{ [a_dict.a_key, 42] }}')[1] == 42 }}"
+    - debug:
+        msg: "{{ query('ansible.builtin.items', 'x{{ 1 }}', '{{ 2 }}') }}"
+    - debug:
+        msg: "{{ lookup('env', 'HOME', default=undef()) | length > 0 }}"
+    - debug:
+        msg: "[{{ lookup('env', 'VOLANT_SURELY_UNSET_VAR', default='d') }}]"
+    - debug:
+        msg: "{{ lookup('env', 'VOLANT_SURELY_UNSET_VAR', default=undef()) }}"
+      ignore_errors: true

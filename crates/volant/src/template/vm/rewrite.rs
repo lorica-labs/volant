@@ -70,8 +70,8 @@ fn stored_after(instructions: &Instructions<'_>, mut at: u32) -> bool {
 /// chained comparison (`a < b < c`) keeps its right operand on the stack for the next link, which
 /// a call cannot do in one instruction: it jumps to code appended after the end, which calls,
 /// unpacks the result and the operand, and jumps back. `in` and `not in` stay minijinja's. A
-/// comparison of literals alone (`'a' < 1`) is folded by minijinja's compiler into its answer
-/// before this rewrite sees it, so its refusal of two types Python cannot order is lost.
+/// comparison of literals alone (`'a' < 1`) reaches this rewrite only because the source was
+/// written so that minijinja's compiler cannot fold it, see [`super::literals`].
 ///
 /// `mutating` is true when the template calls a method that changes a list or mapping in place
 /// (see [`mutates`]). Each variable, attribute and item it reads then goes through a function that

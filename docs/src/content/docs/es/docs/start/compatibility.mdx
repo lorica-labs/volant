@@ -1,5 +1,5 @@
 ---
-sourceHash: f734791df9a1
+sourceHash: "27377717e493"
 title: ¿Se ejecutará mi playbook?
 description: Comprueba un proyecto de Ansible existente contra esta versión en unos segundos, sin tocar ningún host.
 ---
@@ -105,7 +105,6 @@ Estas diferencias con `ansible-playbook` aparecen sin ningún mensaje antes de l
 | `stdout_callback` con el callback de una colección distinto de `json`, como `community.general.unixy` | La ejecución se detiene antes del primer play con `Could not load '<name>' callback plugin.`, seguido del archivo del plugin cuando el ansible-core del controlador encuentra uno, como un plugin en `callback_plugins/`. `default`, `minimal`, `oneline`, `tree` y `json` funcionan. |
 | `callbacks_enabled` | `junit`, `tree`, `ansible.posix.timer` y `ansible.posix.profile_tasks` se ejecutan. Cualquier otro nombre se omite con `[WARNING]: Skipping callback plugin '<name>', unable to load`, seguido del archivo del plugin cuando el ansible-core del controlador encuentra uno. `volant.compat.record` se omite sin aviso. |
 | Los comandos `volant check` y `volant lint` | No existen. Ejecútalos con ansible-core o ansible-lint. |
-| Una comparación escrita entre dos literales de tipos que Python no sabe ordenar, como `{{ 'a' < 1 }}` | Responde `false` o `true` donde ansible-core falla con `'<' not supported between instances of 'str' and 'int'`. La biblioteca de plantillas resuelve una comparación de literales antes de que Volant la vea. Con una variable en cualquiera de los dos lados, la comparación falla igual que en ansible-core. |
 | Una tarea con `no_log: true` que falla | Es a propósito. Volant imprime `[ERROR]: Task failed: Action failed: <error censored due to no log>` y nada más sobre la causa. ansible-core 2.19.12 imprime la causa: `[ERROR]: Task failed: Action failed: <the msg of fail or assert>`, el error del módulo y los bloques `<<< caused by >>>`. Ese texto puede contener un secreto, como el `msg` de un `fail` que nombra una contraseña. La [política de seguridad](https://github.com/lorica-labs/volant/blob/main/SECURITY.md) considera una vulnerabilidad que un secreto llegue a un log o a un terminal donde `no_log` lo oculta en ansible-core, así que Volant lo oculta. La línea `fatal:`, el resultado registrado y el recap son iguales en ambos. Para leer la causa, ejecuta la tarea sin `no_log`. |
 | SIGTERM | Es a propósito. Volant se detiene limpiamente: cancela las tareas en curso, elimina el directorio que guarda la contraseña de conexión, imprime el recap y termina con el código 99, igual que con Ctrl-C. `ansible-playbook` no captura SIGTERM. Muere de inmediato con el código 143 y no imprime recap. Medido con `kill -TERM` durante un `command: sleep`: 99 con Volant, 143 con ansible-core 2.19.12. |
 

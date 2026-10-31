@@ -13,13 +13,46 @@ pub(super) fn combine(first: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result
         .get::<Option<String>>("list_merge")?
         .unwrap_or_else(|| "replace".to_string());
     kwargs.assert_all_used()?;
-    let serde_json::Value::Object(mut out) = data(&first)? else {
-        return Err(invalid("|combine expects dictionaries"));
-    };
-    for other in rest.iter() {
-        let serde_json::Value::Object(other) = data(other)? else {
-            return Err(invalid("|combine expects dictionaries"));
+    // The reference's `flatten(terms, levels=1)`: a list among the terms gives its items, and a
+    // null, `'None'` or `'null'` drops out.
+    let null = |v: &serde_json::Value| v.is_null() || v == "None" || v == "null";
+    let mut dicts = Vec::new();
+    for term in std::iter::once(&first).chain(rest.iter()) {
+        match data(term)? {
+            serde_json::Value::Array(items) => dicts.extend(items.into_iter().filter(|v| !null(v))),
+            v if !null(&v) => dicts.push(v),
+            _ => {}
+        }
+    }
+    let n = dicts.len();
+    if n < 2 {
+        let one = dicts.pop();
+        return Ok(from_json_value(
+            one.unwrap_or_else(|| serde_json::json!({})),
+        ));
+    }
+    // The reference merges from the last term down, so the first pair it refuses is the last one
+    // with a term that is no dict.
+    if let Some(i) = (0..n - 1)
+        .rev()
+        .find(|&i| !dicts[i].is_object() || (i == n - 2 && !dicts[n - 1].is_object()))
+    {
+        let higher = if i == n - 2 {
+            crate::template::env::type_name(&dicts[n - 1])
+        } else {
+            "dict"
         };
+        return Err(invalid(format!(
+            "failed to combine variables, expected dicts but got a '{}' and a '{higher}'.",
+            crate::template::env::type_name(&dicts[i])
+        )));
+    }
+    let mut dicts = dicts.into_iter().filter_map(|v| match v {
+        serde_json::Value::Object(m) => Some(m),
+        _ => None,
+    });
+    let mut out = dicts.next().unwrap_or_default();
+    for other in dicts {
         merge_into(&mut out, other, recursive, &list_merge);
     }
     Ok(from_json_value(serde_json::Value::Object(out)))

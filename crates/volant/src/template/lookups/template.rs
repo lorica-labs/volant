@@ -103,7 +103,23 @@ pub(super) fn render_template(
         super::super::include::note_asked_in(&e.0, path);
     }
     TEMPLATE_DEPTH.set(depth);
-    out.map(Value::from).map_err(|e| lookup_error(name, &e))
+    // A template that writes nothing at all, a comment alone say, is `None` there: the engine
+    // joins no piece of output into no value, and has no output to give the file's last newline
+    // back to. One that prints an empty string is `''`, and plain text is itself.
+    out.map(|s| {
+        let written = if text.ends_with('\n') {
+            s.strip_suffix('\n').unwrap_or(&s)
+        } else {
+            &s
+        };
+        let tags = text.contains("{%") || text.contains("{#");
+        if written.is_empty() && tags && !text.contains("{{") {
+            Value::from(())
+        } else {
+            Value::from(s)
+        }
+    })
+    .map_err(|e| lookup_error(name, &e))
 }
 
 pub(super) fn render_template_at(

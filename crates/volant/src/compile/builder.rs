@@ -16,7 +16,9 @@ use super::compiled::{FLUSH_HANDLERS, beside_or_in_role, meta_action};
 use super::flatten::{import_role_entry, unknown_options};
 use super::include::{include_options, include_role_options, include_vars_options};
 use super::inherit::merge;
-use super::model::{BlockSpan, Handler, IncludeKind, Origin, Section, Step, StepKind};
+use super::model::{
+    BlockSpan, Handler, IncludeKind, IncludeParams, Origin, Section, Step, StepKind,
+};
 use super::role_entry::{ChainLink, Lent};
 use super::tags::TagSelection;
 /// How deep roles and imported files may nest before the run is refused: the same ceiling a
@@ -133,6 +135,9 @@ pub(super) struct Builder<'a> {
     /// `import_role` are compared with it: measured on ansible-core 2.19.12, a role the play's
     /// `roles:` ran is not run again as a dependency of a role imported in `tasks:`.
     pub(super) played: Seen,
+    /// The role a file an include brought in was written in, which an `import_role` in it names
+    /// as its parent: the steps of that file carry no role of this compilation's own.
+    pub(super) outer_role: Option<String>,
 }
 
 impl Builder<'_> {
@@ -217,17 +222,33 @@ impl Builder<'_> {
                     return Ok(());
                 }
                 self.imported.push(key);
+                let parent = role
+                    .and_then(|r| self.roles.get(r))
+                    .map(RoleVars::full_name)
+                    .or_else(|| self.outer_role.clone())
+                    .zip(self.role_dir.clone())
+                    .map(|(name, dir)| IncludeParams::parent_role(&name, &dir));
+                let start = self.steps.len();
                 // A fresh `seen` list: measured, `import_role` runs its role even when the
                 // play's `roles:` list has already run it with the same parameters. Its
                 // dependencies still deduplicate against each other.
-                return self.role(
+                self.role(
                     &entry,
                     &merge(inherited, task),
                     &mut self.played.clone(),
                     block,
                     section,
                     RoleKind::Import,
-                );
+                )?;
+                if let Some(parent) = parent {
+                    for step in &mut self.steps[start..] {
+                        step.include_params = Some(Arc::new(match &step.include_params {
+                            Some(own) => own.under(&parent),
+                            None => parent.clone(),
+                        }));
+                    }
+                }
+                return Ok(());
             }
             // Measured: written as a task rather than in the list of plays, the reference fails
             // the task with `Action 'ansible.builtin.import_playbook' does not support raw

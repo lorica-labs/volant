@@ -297,12 +297,18 @@ pub fn register(
     super::yaml_dump::register(env);
 
     super::test_plugins::register(env);
-    add_test(env, "truthy", |v: Value| truthy(&json(&v)));
+    add_test(env, "truthy", truthy_test);
     // `math.isnan`; a value that is no number is not a NaN, as the reference's test answers.
     add_test(env, "isnan", |v: Value| {
         v.kind() == ValueKind::Number && f64::try_from(v).is_ok_and(f64::is_nan)
     });
-    add_test(env, "falsy", |v: Value| !truthy(&json(&v)));
+    add_test(
+        env,
+        "falsy",
+        |v: Value, convert: Option<bool>, kwargs: Kwargs| {
+            truthy_test(v, convert, kwargs).map(|t| !t)
+        },
+    );
     for name in ["match", "search", "regex"] {
         add_test(
             env,
@@ -345,6 +351,25 @@ fn data(v: &Value) -> Result<serde_json::Value, Error> {
 
 fn from_json_value(v: serde_json::Value) -> Value {
     super::bigint::to_template(&v)
+}
+
+/// `truthy(value, convert_bool=False)`: with `convert_bool`, a text `boolean` reads (`'on'`,
+/// `'off'`, `'no'`...) counts as that boolean, and anything else by its truth.
+fn truthy_test(v: Value, convert: Option<bool>, kwargs: Kwargs) -> Result<bool, Error> {
+    let convert = match convert {
+        Some(c) => c,
+        None => kwargs.get::<Option<bool>>("convert_bool")?.unwrap_or(false),
+    };
+    kwargs.assert_all_used()?;
+    let v = json(&v);
+    if convert && let serde_json::Value::String(text) = &v {
+        match text.trim().to_lowercase().as_str() {
+            "y" | "yes" | "on" | "1" | "true" | "t" => return Ok(true),
+            "n" | "no" | "off" | "0" | "false" | "f" => return Ok(false),
+            _ => {}
+        }
+    }
+    Ok(truthy(&v))
 }
 
 fn truthy_value(value: Option<Value>) -> bool {

@@ -131,6 +131,34 @@ pub(crate) struct Named<'a> {
 }
 
 impl Reach {
+    /// Records each builtin action name that an action plugin of the run's own overrides, so the
+    /// helper runs that plugin in place of this engine's own: measured on ansible-core 2.19.12, an
+    /// `action_plugins/debug.py` beside the playbook, in a role or on `ANSIBLE_ACTION_PLUGINS`
+    /// answers `debug` and `ansible.legacy.debug`, and only `ansible.builtin.debug` keeps the
+    /// builtin.
+    pub(crate) fn note_own_actions(&self) {
+        let mut dirs: Vec<std::path::PathBuf> = std::env::var_os("ANSIBLE_ACTION_PLUGINS")
+            .map(|paths| std::env::split_paths(&paths).collect())
+            .unwrap_or_default();
+        dirs.extend(
+            self.plugin_dirs
+                .iter()
+                .map(|dir| dir.join("action_plugins")),
+        );
+        for (module, _) in &self.modules {
+            let short = module.strip_prefix("ansible.legacy.").unwrap_or(module);
+            if short.contains('.') || !volant_protocol::modules::is_builtin(short) {
+                continue;
+            }
+            if dirs
+                .iter()
+                .any(|dir| dir.join(format!("{short}.py")).is_file())
+            {
+                crate::action_plugins::note_collection_action(module, module, false);
+            }
+        }
+    }
+
     /// [`Reach::walk_run`] over plays of one playbook with no directory of its own.
     #[cfg(test)]
     pub(crate) fn walk(

@@ -1,5 +1,5 @@
 ---
-sourceHash: 5a320c445d7e
+sourceHash: 3f6e31ce86d4
 title: Action plugin
 description: Volant 如何运行 ansible-core 通过控制节点上的 action plugin 运行的模块，用 Rust 或通过 Python 桥接。
 ---
@@ -147,7 +147,7 @@ the 'dest' of this task was named by a managed host, and '/home/op/.ssh/x/' is n
 
 ## 桥接
 
-`add_host`、`assemble`、`gather_facts`、`group_by`、`script`、`set_stats`、`uri` 和 `wait_for_connection` 在辅助进程中运行 ansible-core 自己的 action plugin，collection 自带的每个 action plugin 也是如此（需要 Windows 主机或其他连接类型的 plugin 除外；[对等性](/zh-cn/docs/reference/parity/)页面统计了它们）。`copy` 和 `unarchive` 在 Rust plugin 拒绝的两种情形下走同一条路：目录的 `copy`，以及 `dest` 或 `creates` 里带 `~` 的 `unarchive`。在 `host_named_paths = refuse` 之下，受管主机指定的 `src` 永远不会走这条路：Rust plugin 的拒绝依然成立。`async_status` 不是桥接的 plugin：它由 agent 运行，桥接的 plugin 通过它轮询自己的作业。
+`add_host`、`assemble`、`gather_facts`、`group_by`、`script`、`set_stats`、`uri` 和 `wait_for_connection` 在辅助进程中运行 ansible-core 自己的 action plugin，collection 自带的每个 action plugin 也是如此（需要 Windows 主机或其他连接类型的 plugin 除外；[对等性](/zh-cn/docs/reference/parity/)页面统计了它们）。`copy` 和 `unarchive` 在 Rust plugin 拒绝的两种情形下走同一条路：目录的 `copy`，以及 `dest` 或 `creates` 里带 `~` 的 `unarchive`。在 `host_named_paths = refuse` 之下，受管主机指定的 `src` 永远不会走这条路：Rust plugin 的拒绝依然成立。`async_status` 不是桥接的 plugin：它由 agent 运行，桥接的 plugin 通过它轮询自己的作业。 以内置名称命名的你自己的 action 插件，放在 playbook 旁的 `action_plugins/`、role 中或 `ANSIBLE_ACTION_PLUGINS` 上时，同样在 helper 中运行：它响应短名称和 `ansible.legacy.<name>`，而 `ansible.builtin.<name>` 仍使用内置插件，与 Ansible 相同。
 
 plugin 说出它需要什么，控制节点来回答：运行这个模块，运行这个命令，读取一个变量，创建一个临时目录，放置这个文件。每个回答都受 task 的 `timeout:` 限定。永不返回的 plugin 或死掉的辅助进程，只会让该 task 失败，而不会让整个运行失败；plugin 留在主机上的临时目录会被删除。`add_host`、`group_by` 和 `set_stats` 不需要主机，不经连接运行。它们返回的内容由执行器应用：为之后的 task 加入新的主机和组，以及在汇总之后输出自定义统计。`add_host` 中由 fact 渲染出的值仍然是数据：它被保留为新主机的 fact，永远不会成为 inventory 变量。`add_host` 或 `group_by` 中由受管主机写下的文本构建出的主机名或组名也是如此。任何含有 `{` 的主机名或组名同样如此，无论它来自 inventory 文件、动态 inventory 来源、`meta: refresh_inventory`、`add_host` 还是 `group_by`：`groups`、`hostvars`、`group_names`、play 的主机列表和 `inventory_hostname` 把它显示为文本，与 ansible-core 一致。一旦存在这样的名称，对携带它的列表的每次读取都是数据。通过 `hostvars[name]` 读取某台主机，只有对那台主机才是数据，所以另一台主机的嵌套模板仍会渲染。
 

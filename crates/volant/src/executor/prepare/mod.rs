@@ -476,7 +476,7 @@ pub(in crate::executor) fn render_deferred(
 }
 
 fn is_local(module: &str) -> bool {
-    volant_protocol::modules::local(module).is_some()
+    volant_protocol::modules::local(module).is_some() && !crate::action_plugins::overridden(module)
 }
 
 /// The `(item=...)` label: Python's `str` of the item, which is a string as it is and anything

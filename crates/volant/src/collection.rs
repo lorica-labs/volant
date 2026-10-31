@@ -356,6 +356,14 @@ pub(crate) fn defaults_for(
         for (key, value) in layer {
             let key = match key.strip_prefix("group/") {
                 Some(group) => format!("group/{}", group_fqcn(group)),
+                // A builtin a plugin of the run's own overrides keeps its defaults for the builtin:
+                // measured on ansible-core 2.19.12, `ansible.builtin.debug` defaults do not reach
+                // an `ansible.legacy.debug` that an `action_plugins/debug.py` answers.
+                None if key.starts_with("ansible.builtin.")
+                    && crate::action_plugins::overridden(module) =>
+                {
+                    key.clone()
+                }
                 None => canonical(key).to_string(),
             };
             match merged.iter_mut().find(|(seen, _)| *seen == key) {

@@ -381,13 +381,17 @@ fn local_result(
                 match evaluated {
                     // An item whose template did not render is marked; never one a host wrote.
                     Ok((mut v, tainted)) => {
+                        let mut warned = Vec::new();
                         if !tainted {
-                            mark_failed(&mut v, None, &render, &mut 0);
+                            mark_failed(&mut v, None, &render, &mut 0, &mut warned);
                         }
                         if v.as_str() == Some(crate::vars::omit_token()) {
                             v = json!("<<Omit>>");
                             let at = task.value_origins.get("var");
-                            r.insert("warnings".into(), json!([placed_warning(OMITTED, at)]));
+                            warned.push(placed_warning(OMITTED, at));
+                        }
+                        if !warned.is_empty() {
+                            r.insert("warnings".into(), Value::Array(warned));
                         }
                         r.insert(var.to_string(), v)
                     }

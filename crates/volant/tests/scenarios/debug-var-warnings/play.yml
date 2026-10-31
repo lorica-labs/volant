@@ -23,4 +23,9 @@
       loop: [k1]
       register: indirect
     - debug:
-        msg: "{{ [undefined, omitted, indirect.results[0].k1] }}"
+        var: both
+      vars:
+        both: {x: "{{ nope }}", y: "{{ nope2 }}"}
+      register: marked
+    - debug:
+        msg: "{{ [undefined, omitted, indirect.results[0].k1, marked] }}"

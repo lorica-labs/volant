@@ -1,5 +1,5 @@
 ---
-sourceHash: 06debf796f2c
+sourceHash: 2b129c372539
 title: Bloques y handlers
 description: Cómo viaja un fallo por los bloques, qué hacen rescue y always, y cuándo se ejecutan los handlers.
 ---
@@ -45,6 +45,7 @@ Un fallo dentro de un `always` termina esa sección: el resto se omite, y el hos
 
 - Un host que nunca entró en un rescue omite todas las tareas que hay dentro, incluido un punto de flush y los handlers que van detrás.
 - Un host al que no se puede llegar abandona el play, salvo que `ignore_unreachable` cubra la tarea. No queda nada en lo que ejecutar un rescue.
+- En un host cuyo plugin de conexión no existe, todas las tareas fallan con `the connection plugin 'x' was not found`, `debug` y `set_fact` incluidos, así que un `rescue` también falla en él, como en Ansible. Una tarea delegada a otro host lee la conexión de ese host.
 - Cuando falla una tarea `run_once`, los hosts que la esperaban abandonan el play, incluso si un rescue mantiene al host que la ejecutó.
 
 ## Hacer fallar a más de un host

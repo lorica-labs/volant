@@ -1,0 +1,3 @@
+# On a host whose connection plugin does not exist, `set_fact` and `debug` fail as a module would; a delegated `debug`, `meta` and an include do not.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

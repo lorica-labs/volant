@@ -1,5 +1,5 @@
 ---
-sourceHash: 06debf796f2c
+sourceHash: 2b129c372539
 title: Blocs et handlers
 description: Comment un échec se propage à travers les blocs, ce que font rescue et always, et quand les handlers s'exécutent.
 ---
@@ -45,6 +45,7 @@ Un échec dans un `always` termine cette section : le reste est sauté, et l'h�
 
 - Un hôte qui n'est jamais entré dans un rescue saute toutes les tâches qu'il contient, y compris un point de flush et les handlers qui le suivent.
 - Un hôte qui ne peut pas être joint quitte le play, sauf si `ignore_unreachable` couvre la tâche. Il ne reste rien sur quoi exécuter un rescue.
+- Sur un hôte dont le plugin de connexion n'existe pas, toutes les tâches échouent avec `the connection plugin 'x' was not found`, `debug` et `set_fact` compris, donc un `rescue` y échoue aussi, comme dans Ansible. Une tâche déléguée à un autre hôte lit la connexion de cet hôte.
 - Quand une tâche `run_once` échoue, les hôtes qui l'attendaient quittent le play, même si un rescue garde l'hôte qui l'a exécutée.
 
 ## Faire échouer plusieurs hôtes

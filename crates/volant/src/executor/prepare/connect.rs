@@ -93,6 +93,45 @@ pub(super) fn connect_for(
 /// The flag says the name is data: the render read a value that came from a managed host or a
 /// file read at run time. Such a name is a host name whatever it holds, and the view built for
 /// it renders none of the names it derives from it.
+/// Fails each item of a controller-side task on a host whose connection plugin does not exist,
+/// with the loader's warning in `warnings`. Measured on ansible-core 2.19.12: every task of the
+/// host loads its connection plugin, so `set_fact` and `debug` fail with `Task failed: the
+/// connection plugin 'x' was not found` as a module would; a delegated one reads the delegate's.
+pub(super) fn unplugged(
+    task: &PlayTask,
+    host: &str,
+    (vars, templar, defaults): (&HostVars, &Templar, &crate::transport::ConnectionDefaults),
+    items: &mut [super::Item],
+    warnings: &mut Vec<String>,
+) {
+    let Some((failure, warning)) = missing_plugin(task, host, vars, templar, defaults) else {
+        return;
+    };
+    warnings.extend(warning);
+    for item in items.iter_mut().filter(|i| i.skipped.is_none()) {
+        item.skipped = Some(failure.clone());
+    }
+}
+
+fn missing_plugin(
+    task: &PlayTask,
+    host: &str,
+    vars: &HostVars,
+    templar: &Templar,
+    defaults: &crate::transport::ConnectionDefaults,
+) -> Option<(volant_protocol::TaskResult, Option<String>)> {
+    let keywords = connect_for(task, vars, templar).ok()?;
+    let err =
+        crate::transport::Transport::for_task(host, &vars.own_variables(), defaults, &keywords)
+            .err()?;
+    let missing = err.downcast_ref::<crate::transport::ConnectionFailsTask>()?;
+    let mut result = volant_protocol::TaskResult::failed_with(format!("Task failed: {missing}"));
+    if volant_protocol::modules::short_name(&task.module) != "debug" {
+        result.0.insert("changed".into(), Value::Bool(false));
+    }
+    Some((result, missing.warning()))
+}
+
 pub(super) fn delegate_for(
     task: &PlayTask,
     vars: &HostVars,

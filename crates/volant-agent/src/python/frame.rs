@@ -2,6 +2,7 @@
 //! What the parent's frames say, and the task results made from them.
 
 use std::io;
+use std::sync::atomic::Ordering;
 
 use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
@@ -101,7 +102,14 @@ pub(super) fn result(frame: &Value) -> TaskResult {
         _ => json_lines(stdout),
     };
     match parsed {
-        Some(result) => crate::modules::module_result(result),
+        Some(mut result) => {
+            // The reference's async wrapper keeps what the module wrote to stderr, over any
+            // `stderr` of its own: measured on ansible-core 2.19.12.
+            if !stderr.is_empty() && crate::modules::AS_WRITTEN.load(Ordering::Relaxed) {
+                result.insert("stderr".into(), Value::String(stderr.to_string()));
+            }
+            crate::modules::module_result(result)
+        }
         None => fail(
             format!(
                 "the module wrote something that is not a result (exit status {code}): {}",

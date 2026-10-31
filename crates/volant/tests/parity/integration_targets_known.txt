@@ -9,7 +9,6 @@ ansible-galaxy-role            #1290
 ansible-playbook-callbacks     #1287
 ansible_log                    #1287
 assert                         #1283
-async                          #1290
 become_su                      #1285
 become_sudo                    #1284
 binary_modules_posix           #1281

@@ -1,5 +1,5 @@
 ---
-sourceHash: 514cf9b472a1
+sourceHash: 06debf796f2c
 title: Bloques y handlers
 description: Cómo viaja un fallo por los bloques, qué hacen rescue y always, y cuándo se ejecutan los handlers.
 ---
@@ -116,7 +116,7 @@ Los handlers no aparecen en ningún listado, ni tampoco los tres puntos de flush
 ## Diferencias con Ansible
 
 - En `ansible_failed_task`, una palabra clave que esta versión no ejecuta se lee como `null` en lugar del valor por defecto de ansible-core. Un valor por defecto como `connection: "ssh"` describiría algo que Volant no respeta.
-- `ansible_failed_task` tiene una clave por palabra clave y omite las seis que ansible-core se reserva (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`, `loop_with`). Sus `args` contienen lo que escribió el playbook, sin las diecinueve claves `_ansible_*` que añade ansible-core.
+- Los `args` de `ansible_failed_task` contienen lo que escribió el playbook, sin las diecinueve claves `_ansible_*` que añade ansible-core.
 - Un host cuyo `ansible_connection` nombra un transporte que esta versión no tiene se informa como inalcanzable, así que un rescue no lo captura. Ansible lo trata como un fallo de tarea normal y lo rescata.
 - Un `notify` y el `name` de un handler pueden ser plantillas. Se renderizan para cada host cuando la tarea informa `changed`, y una plantilla que se renderiza como lista notifica todos los nombres que contiene. `listen` es siempre el texto literal. Un `notify` que no se puede renderizar hace fallar la tarea antes de ejecutarla, como en Ansible, y un rescue o `ignore_errors` pueden absorber ese fallo. En un bucle, Volant hace fallar toda la tarea donde Ansible hace fallar el elemento.
 - Un `notify` que no nombra ningún handler termina la ejecución con el código de salida 1 y el mensaje `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`, como en Ansible: tras el banner de la tarea, sin recap. Solo ocurre cuando la tarea informa `changed` sin fallar, y ningún `ignore_errors` ni `rescue` puede capturarlo.

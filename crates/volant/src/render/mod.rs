@@ -10,6 +10,7 @@ mod aggregate;
 mod callback;
 mod error;
 mod json_doc;
+pub(crate) use json_doc::uuid_prefix;
 mod junit;
 pub mod log;
 mod oneline;

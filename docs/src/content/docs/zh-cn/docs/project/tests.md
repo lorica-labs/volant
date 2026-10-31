@@ -1,5 +1,5 @@
 ---
-sourceHash: 0c814d31d6fc
+sourceHash: 1b054d891987
 title: 测试
 description: Volant 如何对照 ansible-core 进行检查，各种已记录的应答，以及如何添加场景。
 ---
@@ -43,7 +43,7 @@ Volant 的每次运行都发生在目录的一份全新副本中，除非 case �
 - `env` 为这次运行设置环境变量。
 - `program: ansible` 用 `ansible` 而不是 `ansible-playbook` 来记录运行，并运行 `volant adhoc` 而不是 `volant playbook`。
 - `forks` 把 fork 数提高到一以上。此时各主机的打印顺序可能不同，所以请在 `unordered` 中以正则表达式列出顺序可能不同的那些行。没有 `forks` 而使用 `unordered` 会被拒绝。
-- `needs` 指明机器必须具备什么：`ansible-core`、`sudo` 或 `systemd`。需求得不到满足的 case 会被跳过，除非设置了 `VOLANT_PYTHON`，这时跳过会变成失败。
+- `needs` 指明机器必须具备什么：`ansible-core`、`sudo` 或 `systemd`。需求得不到满足的 case 会被跳过，除非设置了 `VOLANT_PYTHON` 或 `VOLANT_REQUIRE_REFERENCE=1`，这时跳过会变成失败：nextest 不会显示通过的测试中的跳过，因此没有 ansible-core 的机器会显示全绿。`ssh-test` 系列 recipe 会设置 `VOLANT_REQUIRE_REFERENCE=1`。
 - `links` 把一个路径映射到链接的目标，每份副本都会在该路径上得到这个链接。用它来表示 git 或 cargo 无法保存的链接，例如指向不存在的文件的链接：`cargo package` 会拒绝这样被跟踪的链接。
 
 ## 对等性矩阵

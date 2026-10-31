@@ -1858,6 +1858,9 @@ def run_action(ident, request):
                             del result[key]
                         result.setdefault("changed", False)
                         result_compat(result, warning_ctx)
+                        if result.get("unreachable") is True and not result.get("failed"):
+                            # Returned rather than raised: no error block, and `failed` registered.
+                            result["_volant_returned"] = True
                         # An error that gathers others (`gather_facts`'s failed modules) keeps its
                         # shape for the controller's error block, which frames each one.
                         event = getattr(result.get("exception"), "event", None)

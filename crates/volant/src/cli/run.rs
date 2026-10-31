@@ -186,7 +186,7 @@ async fn run_all(
     // The subset the whole run is narrowed to, resolved before anything else looks at a host.
     // The reference resolves it here too, before it reads a play: a `--limit` matching nothing
     // stops a listing as surely as it stops a run, measured, exit 1.
-    let limit = match plays {
+    let mut limit = match plays {
         Plays::Files | Plays::Replay(_) => resolve_limit(args, &inventory, out)?,
         Plays::Adhoc(adhoc) => match adhoc.settle_hosts(args, &playbooks, &inventory, out)? {
             Ok(limit) => limit,
@@ -502,7 +502,7 @@ async fn run_all(
         sources.clone(),
         config.inventory_plugins.clone(),
         Arc::clone(&bridge),
-        limit.clone(),
+        super::hosts::with_pattern(args, limit.as_ref())?,
     );
     if let Some(cache) = &cache {
         let names: Vec<String> = inventory
@@ -648,10 +648,10 @@ async fn run_all(
                 )
                 .await?;
                 state.vars.lock().expect("vars lock").end_play();
-                // `meta: refresh_inventory` read the file again: the plays behind this one
-                // resolve their hosts against what it found.
+                // A refresh read the sources again: later plays resolve hosts and limit there.
                 if let Some(fresh) = state.refreshed.take() {
                     inventory = fresh;
+                    limit = state.vars.lock().expect("vars lock").limit().cloned();
                 }
                 // `add_host` and `group_by` grew the inventory: the plays behind this one run on
                 // what they added. Taken after the refresh, which the store already folded in.

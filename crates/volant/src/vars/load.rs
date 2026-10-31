@@ -191,7 +191,7 @@ pub fn read_vars_document(path: &Path) -> anyhow::Result<VarsDocument> {
         None => Value::Null,
         Some(doc) => yaml::to_json(doc).with_context(|| format!("in {}", path.display()))?,
     };
-    yaml::note_vault_origins(&docs, &origins, &source, &text);
+    yaml::note_value_origins(&docs, &origins, &source, &text);
     Ok(VarsDocument { value, encrypted })
 }
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 15a0cbe0471d
+sourceHash: 97768b377097
 title: 模板语言参考
 description: Volant 的 Jinja2 所支持的 Python 方法、字符串规则、正则表达式和限制，以及与 ansible-core 的每一处差异。
 ---
@@ -80,6 +80,7 @@ description: Volant 的 Jinja2 所支持的 Python 方法、字符串规则、�
 
 - `| length` 统计字节数。`b[0]`、`b[-1]`、`| first`、`| list` 和 `{% for %}` 得到整数。
 - `b.decode(encoding, errors)` 和 `b.hex(sep, bytes_per_sep)` 得到文本。`.encode('ascii', 'ignore').decode('ascii')` 会删除不是 ASCII 的字符。
+- `b[1:]` 和 `b + b` 得到 bytes。Python `bytes` 的其他方法，例如 `upper`、`split`、`startswith` 和 `replace`，与 Python 中一样工作，大小写转换和空白只作用于 ASCII。对 bytes 项的循环显示 `(item=b'abc')`。
 - `b64encode` 读取确切的字节。`b64decode`、`regex_replace`、`regex_search`、`regex_findall` 和 `quote` 把它们当作 UTF-8 文本读取。
 - 结果如果是 bytes，就会变成它的文本，`x {{ b }}` 也一样。`'x' ~ b`、`b | string` 和 `'%s' % b` 得到 `b'abc'`，与 Python 一致。
 - `==`、`is sequence`、`is string` 和 `type_debug`（`bytes`）的应答与 ansible-core 一致。`to_json` 和 `to_nice_json` 会失败，并给出 `Object of type 'bytes' is not JSON serializable`。
@@ -238,8 +239,7 @@ Volant 会拒绝无法在没有风险的前提下加载的 YAML 文本。错误�
 
 ### bytes 方面的缺口
 
-- bytes 值是一个整数序列，打印为 `b'abc'`。切片和 `+`（`b[1:]`、`b + b`）得到整数列表，而 Python 得到 bytes。
-- 变量持有的 bytes 值（`set_fact`、`vars:`）以它的文本形式存储：它的 `| length` 统计字符，`.decode()` 会失败。对 bytes 项的循环显示 `(item=abc)`，而 ansible-core 显示 `(item=b'abc')`，因为循环项是以文本存储的。
-- bytes 除 `decode` 和 `hex` 之外的方法（`upper`、`split`、`startswith`）会以其名字失败。
+- 变量持有的 bytes 值（`set_fact`、`vars:`）以它的文本形式存储：它的 `| length` 统计字符，`.decode()` 会失败。
+- `fromhex`、`maketrans` 和 `translate` 会以其名字失败。
 - 不是 UTF-8 的 bytes 值不能作为结果，也不能在文本中打印：ansible-core 会在它们的位置打印 `?`。`to_yaml`、`dict2items`、`flatten`、`hash`、`checksum`、`md5`、`sha1`，以及每个在 Python 中运行的过滤器，都会按名字拒绝 bytes。
 - `encode` 和 `decode` 会按名字拒绝上面列出的编码以外的编码（`cp1252`、`shift_jis`）、`utf-16` 和 `utf-32` 的 `decode`，以及 `decode` 上的错误处理方式 `namereplace`、`surrogateescape` 和 `surrogatepass`。

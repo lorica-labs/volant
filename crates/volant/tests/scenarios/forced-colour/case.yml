@@ -1,0 +1,5 @@
+# Under ANSIBLE_FORCE_COLOR, every status line and recap field has ansible-core's colour code, and
+# a result over several lines opens and closes its colour on each line.
+args: [-i, inv.ini, play.yml]
+env:
+  ANSIBLE_FORCE_COLOR: "1"

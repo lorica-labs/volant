@@ -1,5 +1,5 @@
 ---
-sourceHash: 0c814d31d6fc
+sourceHash: 1b054d891987
 title: Tests
 description: Wie Volant gegen ansible-core geprüft wird, die Arten aufgezeichneter Antworten und wie Sie ein Szenario hinzufügen.
 ---
@@ -43,7 +43,7 @@ Jeder Volant-Lauf geschieht in einer frischen Kopie des Verzeichnisses, mit `--f
 - `env` setzt Umgebungsvariablen für den Lauf.
 - `program: ansible` zeichnet die Läufe mit `ansible` statt `ansible-playbook` auf und führt `volant adhoc` statt `volant playbook` aus.
 - `forks` erhöht die Zahl der Forks über eins. Hosts geben dann möglicherweise in anderer Reihenfolge aus, führen Sie also die Zeilen, deren Reihenfolge abweichen darf, als reguläre Ausdrücke in `unordered` auf. `unordered` ohne `forks` wird abgelehnt.
-- `needs` nennt, was der Rechner haben muss: `ansible-core`, `sudo` oder `systemd`. Ein Fall, dessen Voraussetzungen nicht erfüllt sind, wird übersprungen, außer wenn `VOLANT_PYTHON` gesetzt ist, was das Überspringen in einen Fehlschlag verwandelt.
+- `needs` nennt, was der Rechner haben muss: `ansible-core`, `sudo` oder `systemd`. Ein Fall, dessen Voraussetzungen nicht erfüllt sind, wird übersprungen, außer wenn `VOLANT_PYTHON` oder `VOLANT_REQUIRE_REFERENCE=1` gesetzt ist, was das Überspringen in einen Fehlschlag verwandelt: nextest zeigt das Überspringen eines bestandenen Tests nicht an, sodass ein Rechner ohne ansible-core grün melden würde. Die `ssh-test`-Rezepte setzen `VOLANT_REQUIRE_REFERENCE=1`.
 - `links` ordnet einem Pfad das Ziel eines Links zu, den jede Kopie unter diesem Pfad erhält. Nutzen Sie es für einen Link, den git oder cargo nicht halten können, etwa einen Link auf eine Datei, die nicht existiert: `cargo package` lehnt einen versionierten Link dieser Art ab.
 
 ## Die Paritätsmatrix

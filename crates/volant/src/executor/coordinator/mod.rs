@@ -38,7 +38,9 @@ use meta::{MetaContext, apply_meta};
 use publish::{Coordinator, Rendering, keep_links, take_links, task_name};
 pub(in crate::executor) use publish::{escalated_links, render_name};
 pub use types::Progress;
-pub(in crate::executor) use types::{BatchEnd, Event, LostItem, MetaEffect, Shade, already_ran};
+pub(in crate::executor) use types::{
+    BatchEnd, Event, LostItem, MetaEffect, RETURNED, Shade, already_ran, returned,
+};
 use types::{Round, Unreached};
 
 /// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list

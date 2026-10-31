@@ -1,0 +1,11 @@
+all:
+  children:
+    web:
+      hosts:
+        web:
+          x: host web var
+          ansible_connection: local
+        other:
+          ansible_connection: local
+      vars:
+        g: group

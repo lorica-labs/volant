@@ -367,6 +367,8 @@ pub(super) fn sub_task(
 
 /// The job a sub-task runs as under the task's `async`: the module an action plugin that
 /// supports `async` picks and runs, never the `setup` it asks for first or a command of its own.
+/// A bridged plugin names its job itself, through `wrap_async`, so its commands and temporary
+/// directory run as they are.
 fn sub_job(
     task: &PlayTask,
     item: &Item,
@@ -377,7 +379,7 @@ fn sub_job(
         && sub.module != "setup"
         && matches!(
             crate::action_plugins::kind(&task.module),
-            Some(Kind::Dnf | Kind::Package | Kind::Service | Kind::Bridged("uri"))
+            Some(Kind::Dnf | Kind::Package | Kind::Service)
         );
     runs_as_job.then(|| volant_protocol::AsyncJob {
         limit: task.async_val,
@@ -401,5 +403,11 @@ pub(super) fn unreachable_ending(
         .get("msg")
         .and_then(Value::as_str)
         .unwrap_or("the plugin reported the host unreachable");
+    if result.0.get("_volant_returned") == Some(&Value::Bool(true)) {
+        return Err(Err(format!(
+            "{}{msg}",
+            crate::executor::coordinator::RETURNED
+        )));
+    }
     Err(Err(msg.to_string()))
 }

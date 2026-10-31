@@ -1,0 +1,4 @@
+{
+  "code": 4,
+  "stdout": "\nPLAY [l] ***********************************************************************\n\nTASK [gone] ********************************************************************\nfatal: [l]: UNREACHABLE! => {\"changed\": false, \"msg\": \"gone on purpose\", \"unreachable\": true}\n...ignoring\n\nTASK [debug] *******************************************************************\nok: [l] => {\n    \"u\": {\n        \"changed\": false,\n        \"failed\": false,\n        \"msg\": \"gone on purpose\",\n        \"unreachable\": true\n    }\n}\n\nTASK [gone] ********************************************************************\nfatal: [l]: UNREACHABLE! => {\"changed\": false, \"msg\": \"gone on purpose\", \"unreachable\": true}\n\nPLAY RECAP *********************************************************************\nl                          : ok=2    changed=0    unreachable=1    failed=0    skipped=0    rescued=0    ignored=1   \n\n"
+}

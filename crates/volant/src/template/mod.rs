@@ -29,6 +29,7 @@ mod once;
 mod one_pass;
 mod order;
 mod pymethods;
+pub(crate) use pymethods::bytes::{keeping as keeping_bytes, kept_repr, kept_text};
 mod register;
 mod resolve;
 mod templar;
@@ -36,6 +37,8 @@ mod test_plugins;
 pub(crate) mod unknown;
 mod version;
 mod vm;
+mod written;
+pub(crate) use written::{inner_origin, note as note_written, written_at};
 mod yaml_dump;
 pub(crate) use pymethods::format::float::repr as python_float_repr;
 pub(crate) use yaml_dump::{
@@ -50,7 +53,7 @@ pub(crate) use env::{
 use env::{any_undefined, environment, type_name};
 pub use templar::Templar;
 pub(crate) use vm::{EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template};
-use vm::{convert_error, render_str};
+use vm::{as_template, convert_error, jinja_syntax, render_str};
 
 pub(crate) use bridged::is_plugin_failure;
 pub use bridged::{bridged_name, not_sent_reason};
@@ -157,6 +160,9 @@ const REMT_KEY: &str = "volant::remt";
 /// The names `+` and `-` are routed through in a template that calls `now()`.
 const ADD_KEY: &str = "volant::add";
 const SUB_KEY: &str = "volant::sub";
+/// The names `+` and a slice are routed through in a template that calls `encode`.
+const BYTES_ADD_KEY: &str = "volant::bytes_add";
+const SLICE_KEY: &str = "volant::slice";
 /// Prefix of the name a list or mapping literal is routed through in such a template, then the
 /// literal as JSON: minijinja folds a literal of constants into one shared value, and a template
 /// that changes a list needs a new one each time the literal runs.

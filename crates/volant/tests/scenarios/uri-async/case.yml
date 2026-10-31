@@ -1,0 +1,5 @@
+# `uri` with `async`: the bridged plugin starts its module as a job of the host, polled with
+# `poll`, or handed back with `poll: 0` for `async_status`. The request goes to a closed port, so
+# the job ends at once with the module's own failure.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

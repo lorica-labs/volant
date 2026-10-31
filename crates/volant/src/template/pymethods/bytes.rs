@@ -2,7 +2,8 @@
 //! Python's `bytes`, as far as a template meets it: what `str.encode` makes.
 //!
 //! A [`Bytes`] value counts, indexes and iterates as a sequence of integers, prints as Python's
-//! `str(bytes)` does (`b'abc'`), and has the methods `decode` and `hex`. A whole result that is
+//! `str(bytes)` does (`b'abc'`), slices and joins with `+` into bytes, and has the methods of
+//! Python's `bytes` (see `methods`). A whole result that is
 //! bytes becomes its text, as in ansible-core, which reads a bytes result as UTF-8. The
 //! filters that read bytes as text (`b64encode`, `b64decode`, `quote`, the regex filters) do so
 //! here too. What nothing here runs fails by name and does not pass for a list of integers.
@@ -17,6 +18,11 @@ use minijinja::{Error, Value};
 use super::args::{Call, index, raise, type_of};
 use super::codec;
 use super::limits::check;
+
+mod methods;
+mod ops;
+pub(in crate::template::pymethods) use methods::{THROUGH_STR, through_str};
+pub(crate) use ops::{add, keeping, slice};
 
 /// Set when a template first made a bytes value. A result is walked for bytes only after that,
 /// so a run that never calls `encode` pays nothing.
@@ -98,6 +104,32 @@ impl Object for Bytes {
     }
 }
 
+/// Python's `repr` of the bytes `text` holds, when it is the wrapper a loop kept bytes in, or a
+/// `!!binary` value: the `(item=b'abc')` of a loop label.
+pub(crate) fn kept_repr(text: &str) -> Option<String> {
+    let data = crate::yaml::binary_text(text)?;
+    let bytes = volant_protocol::encoding::b64_decode(&data).ok()?;
+    Some(Bytes(bytes).python_repr())
+}
+
+/// `value` with each bytes wrapper read as its text, as a result shows bytes.
+pub(crate) fn kept_text(value: &serde_json::Value) -> serde_json::Value {
+    use serde_json::Value as Json;
+    match value {
+        Json::String(s) => crate::yaml::binary_text(s)
+            .and_then(|data| volant_protocol::encoding::b64_decode(&data).ok())
+            .map_or_else(
+                || value.clone(),
+                |b| Json::String(String::from_utf8_lossy(&b).into_owned()),
+            ),
+        Json::Array(items) => Json::Array(items.iter().map(kept_text).collect()),
+        Json::Object(map) => {
+            Json::Object(map.iter().map(|(k, v)| (k.clone(), kept_text(v))).collect())
+        }
+        other => other.clone(),
+    }
+}
+
 /// The bytes a value holds, when it is a bytes value.
 pub(crate) fn of(value: &Value) -> Option<&Bytes> {
     value.downcast_object_ref::<Bytes>()
@@ -156,7 +188,7 @@ pub(super) fn call(me: &Bytes, name: &str, args: &[Value]) -> Option<Result<Valu
     match name {
         "decode" => Some(decode(me, &call)),
         "hex" => Some(hex(me, &call)),
-        _ if METHODS.contains(&name) => None,
+        _ if METHODS.contains(&name) => methods::call(me, name, args),
         _ => Some(Err(raise(format!(
             "object of type 'bytes' has no attribute '{name}'"
         )))),
@@ -320,6 +352,9 @@ pub(crate) fn to_json(value: &Value) -> Result<serde_json::Value, String> {
 /// `value` with each bytes value, however deep, replaced by its text.
 fn settle(value: &Value) -> Result<Value, String> {
     if let Some(bytes) = of(value) {
+        if let Some(kept) = ops::kept(bytes) {
+            return Ok(kept);
+        }
         return bytes.text().map(Value::from);
     }
     if !holds(value) {

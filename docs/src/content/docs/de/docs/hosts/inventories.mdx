@@ -1,5 +1,5 @@
 ---
-sourceHash: fc3f00e1fecb
+sourceHash: e36caf7c110c
 title: Inventories und der Fact-Cache
 description: Das Inventory-Format, das Volant liest, woher Gruppen- und Hostvariablen kommen, die Grammatik der Host-Muster und wie Facts zwischen Läufen erhalten bleiben.
 ---
@@ -80,7 +80,7 @@ Volant liest `group_vars/` und `host_vars/` neben jeder Quelle, dann neben dem P
 
 Gehört ein Host zu mehreren Gruppen, gewinnt die tiefere Gruppe. Zwischen Gruppen gleicher Tiefe entscheidet `ansible_group_priority` (der höhere Wert gewinnt), danach der Gruppenname.
 
-Ein Name, der zugleich Host und Gruppe ist, steht für den Host. Volant warnt pro Lauf einmal, wenn ein Inventory einen solchen Namen enthält, unabhängig vom Muster des Laufs, weil Ansible das beim Laden des Inventorys erkennt.
+Ein Name, der zugleich Host und Gruppe ist, steht für den Host. Volant warnt pro Lauf einmal, wenn ein Inventory einen solchen Namen enthält, unabhängig vom Muster des Laufs, weil Ansible das beim Laden des Inventorys erkennt. Die Variablen, die eine Quelle diesem Host gibt, gehen an die Gruppe, sobald es sie gibt, wie in Ansible, sodass jedes Mitglied der Gruppe sie liest.
 
 ## Ein Inventory ausgeben
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: fc3f00e1fecb
+sourceHash: e36caf7c110c
 title: Inventaires et cache de facts
 description: Le format d'inventaire que Volant lit, d'où viennent les variables de groupe et d'hôte, la grammaire des motifs d'hôtes, et comment les facts sont conservés entre deux exécutions.
 ---
@@ -80,7 +80,7 @@ Volant lit `group_vars/` et `host_vars/` à côté de chaque source, puis à cô
 
 Quand un hôte appartient à plusieurs groupes, le groupe le plus profond l'emporte. Entre groupes de même profondeur, `ansible_group_priority` décide (la valeur la plus haute l'emporte), puis le nom du groupe.
 
-Un nom qui est à la fois un hôte et un groupe désigne l'hôte. Volant avertit une fois par exécution quand un inventaire contient un tel nom, quel que soit le motif utilisé, car Ansible le détecte au chargement de l'inventaire.
+Un nom qui est à la fois un hôte et un groupe désigne l'hôte. Volant avertit une fois par exécution quand un inventaire contient un tel nom, quel que soit le motif utilisé, car Ansible le détecte au chargement de l'inventaire. Les variables qu'une source donne à cet hôte vont au groupe dès que le groupe existe, comme dans Ansible : chaque membre du groupe les lit donc.
 
 ## Afficher un inventaire
 

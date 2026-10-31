@@ -1,0 +1,11 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - gone:
+      register: u
+      ignore_unreachable: true
+    - debug:
+        var: u
+    - gone:
+    - debug:
+        msg: never

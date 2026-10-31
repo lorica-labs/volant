@@ -419,11 +419,17 @@ impl DateTime {
     }
 }
 
-/// `now()`, and the routed `+` and `-` a template that calls it uses.
+/// `now()`, the routed `+` and `-` a template that calls it uses, and the `+` and slice of a
+/// template that makes bytes.
 pub(super) fn register(env: &mut minijinja::Environment<'static>) {
     env.add_function("now", now);
     env.add_function(super::ADD_KEY, delta::add);
     env.add_function(super::SUB_KEY, delta::sub);
+    // A template that makes bytes routes `+` here, a `datetime` operand included.
+    env.add_function(super::BYTES_ADD_KEY, |state: &State, l: Value, r: Value| {
+        super::pymethods::bytes::add(&l, &r).unwrap_or_else(|| delta::add(state, l, r))
+    });
+    env.add_function(super::SLICE_KEY, super::pymethods::bytes::slice);
 }
 
 /// `now(utc=False, fmt=None)`. Measured on ansible-core 2.19.12: any true `utc` takes UTC, any

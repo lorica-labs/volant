@@ -50,7 +50,13 @@ fn when_causes(task: &PlayTask, message: &str) -> Option<Value> {
     let sentence = message.strip_prefix("Task failed: ").unwrap_or(message);
     // A lookup's sentence without `Task failed: ` is a `with_` loop's, shown with no task around it.
     let lookup = message.starts_with("Task failed: The lookup plugin '");
-    if sentence.starts_with(CONDITIONAL) || lookup || sentence == crate::template::UNTRUSTED {
+    // A syntax error in the condition is its own sentence at the condition, as Jinja words it.
+    let syntax = sentence.starts_with("Syntax error in ");
+    if sentence.starts_with(CONDITIONAL)
+        || lookup
+        || syntax
+        || sentence == crate::template::UNTRUSTED
+    {
         let help =
             (sentence == crate::template::UNTRUSTED).then_some(crate::template::UNTRUSTED_HELP);
         return Some(serde_json::json!([crate::render::cause(
@@ -215,6 +221,19 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
         }
         _ => (resolving.to_string(), None),
     };
+    // A failure inside the template of a variable the value read is a third link, at that
+    // template: the argument's own link ends at its key.
+    let said = format!("{}'{key}': ", crate::template::RESOLVING);
+    let (resolving, inner) = match resolving
+        .strip_prefix(&said)
+        .and_then(|reason| Some((reason, crate::template::inner_origin(reason)?)))
+    {
+        Some((reason, at)) => (
+            format!("{}'{key}'.", crate::template::RESOLVING),
+            Some(crate::render::cause(reason, at.as_ref(), None)),
+        ),
+        None => (resolving, None),
+    };
     // A plugin that failed on an exception of its own is a block of its sentence, then one bare
     // block per cause.
     let (resolving, behind) = split_plugin_failure(&resolving);
@@ -237,6 +256,7 @@ pub(in crate::executor) fn finalization_causes(task: &PlayTask, message: &str) -
         ]
     };
     chain.extend(vaulted);
+    chain.extend(inner);
     chain.extend(behind);
     Some(Value::Array(chain))
 }

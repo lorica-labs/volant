@@ -1,0 +1,4 @@
+# An action plugin that returns `unreachable: true`, rather than raising a connection failure,
+# prints no error block in front of its UNREACHABLE! line and registers `"failed": false`.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

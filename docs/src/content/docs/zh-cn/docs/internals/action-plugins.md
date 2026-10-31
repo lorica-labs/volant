@@ -1,5 +1,5 @@
 ---
-sourceHash: 47cbf928cd7e
+sourceHash: 3c2163d53be0
 title: Action plugin
 description: Volant 如何运行 ansible-core 通过控制节点上的 action plugin 运行的模块，用 Rust 或通过 Python 桥接。
 ---
@@ -172,8 +172,6 @@ plugin 读取链路的密钥和用户（主机变量、`--private-key`、`-u` �
 ### 已知缺口
 
 - 从第一次连接起就宕机的主机上的 `wait_for_connection`，对从未拿到链路的 plugin 条目以 `UNREACHABLE` 结束；ansible-core 报告 `failed`，信息为 `timed out waiting for ping module test`。
-- 在结果层面为 `unreachable` 的桥接结果会在 `UNREACHABLE!` 行之前输出一个 `[ERROR]:` 块，其注册值也没有 `failed` 键。
-- plugin 用 `display` 写出的内容不按写出的顺序输出：一条警告可能排在它之后才写出的行后面。
 - 被委派的 `add_host` 或 `group_by` 作用于 task 自己的主机。
 
 ## 受管主机指定的源文件

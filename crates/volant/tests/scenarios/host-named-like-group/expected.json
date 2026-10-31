@@ -1,0 +1,18 @@
+[
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [web] => {\n    \"msg\": \"web x=host web var g=group\"\n}\nok: [other] => {\n    \"msg\": \"other x=host web var g=group\"\n}\n\nPLAY RECAP *********************************************************************\nother                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nweb                        : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [web] => {\n    \"msg\": \"web x=host web var g=group\"\n}\nok: [other] => {\n    \"msg\": \"other x=host web var g=group\"\n}\n\nPLAY RECAP *********************************************************************\nother                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nweb                        : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [web] => {\n    \"msg\": \"web x=host web var g=group\"\n}\nok: [other] => {\n    \"msg\": \"other x=host web var g=group\"\n}\n\nPLAY RECAP *********************************************************************\nother                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nweb                        : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  },
+  {
+    "code": 0,
+    "stdout": "\nPLAY [all] *********************************************************************\n\nTASK [debug] *******************************************************************\nok: [web] => {\n    \"msg\": \"web x=host web var g=group\"\n}\nok: [other] => {\n    \"msg\": \"other x=unset g=group\"\n}\n\nPLAY RECAP *********************************************************************\nother                      : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \nweb                        : ok=1    changed=0    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+  }
+]

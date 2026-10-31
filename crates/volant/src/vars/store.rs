@@ -179,7 +179,7 @@ impl VarStore {
         sources: Vec<Source>,
         config: PluginConfig,
         bridge: Arc<Bridge>,
-        limit: Option<HashSet<String>>,
+        limit: Option<(String, HashSet<String>)>,
     ) {
         self.reload = Some((sources, config, bridge));
         self.limit = limit;
@@ -188,7 +188,7 @@ impl VarStore {
     /// After a refresh, `ansible_play_hosts_all` lists `hosts`: new hosts show at once, removed
     /// ones are gone, and none of them changes who runs the rest of the play.
     pub fn set_play_hosts_all(&mut self, mut hosts: Vec<String>) {
-        if let Some(limit) = &self.limit {
+        if let Some((_, limit)) = &self.limit {
             hosts.retain(|h| limit.contains(h));
         }
         self.play_hosts_all = Some(hosts);
@@ -228,7 +228,7 @@ impl VarStore {
         }
         let mut all = base.to_vec();
         for host in &self.added_play_hosts {
-            if !all.contains(host) && self.limit.as_ref().is_none_or(|l| l.contains(host)) {
+            if !all.contains(host) && self.limit.as_ref().is_none_or(|(_, l)| l.contains(host)) {
                 all.push(host.clone());
             }
         }
@@ -261,10 +261,25 @@ impl VarStore {
             self.group_names,
         ) = inventory_maps(&self.dynamic);
         self.mark_inventory_names();
+        // The reference keeps `--limit` as patterns, applied anew to what the sources hold.
+        if let Some((pattern, hosts)) = &mut self.limit {
+            *hosts = self
+                .dynamic
+                .resolve(pattern)
+                .hosts
+                .into_iter()
+                .map(|h| h.name)
+                .collect();
+        }
         self.inventory_changed = false;
         self.forget_hostvars();
         self.shared = None;
         self.dynamic.clone()
+    }
+
+    /// The hosts `--limit` narrows the run to, as the last refresh resolved it.
+    pub fn limit(&self) -> Option<&HashSet<String>> {
+        self.limit.as_ref().map(|(_, hosts)| hosts)
     }
 
     /// Every group with its member hosts, as the `groups` magic variable reads them.

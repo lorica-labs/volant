@@ -184,7 +184,13 @@ fn reason(source: &str, ctx: &minijinja::Value) -> Option<String> {
             }
             let mut value = ctx.get_attr(root).unwrap_or(minijinja::Value::UNDEFINED);
             if value.is_undefined() {
-                return Some(format!("'{root}' is undefined"));
+                // A variable whose own template read a name with no value: that read is named.
+                let inner = ctx
+                    .downcast_object_ref::<super::Context>()
+                    .and_then(|c| c.undefined_in(root));
+                let said = inner.as_ref().map(|(said, _)| said.clone());
+                super::written::set_inner(inner);
+                return Some(said.unwrap_or_else(|| format!("'{root}' is undefined")));
             }
             for segment in segments {
                 value = match segment {
@@ -219,6 +225,7 @@ pub(super) fn named(error: TemplateError, source: &str, ctx: &minijinja::Value) 
     if !bare {
         return error;
     }
+    super::written::set_inner(None);
     let found = reason(source, ctx);
     // Reading a variable can render it, which may leave a failure behind for the next render.
     let _ = take_failure(ctx);

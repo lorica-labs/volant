@@ -1,0 +1,18 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: [one, two]
+    - debug:
+        msg: changed
+      changed_when: true
+    - debug:
+        msg: skipped
+      when: false
+    - fail:
+        msg: failed
+      ignore_errors: true
+    - fail:
+        msg: rescued
+      ignore_errors: false
+      when: false

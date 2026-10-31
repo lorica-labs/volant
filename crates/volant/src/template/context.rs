@@ -19,9 +19,9 @@ use super::env::{chained_attr, fresh_const, mutable_attr, mutable_var};
 use super::pymethods::mutable::{identity, mutable};
 use super::templar::Templar;
 use super::{
-    ADD_KEY, ATTR_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, HOSTVARS_KEYS, ITEM_KEY, MATTR_KEY,
-    MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY, SUB_KEY, TAINT_KEY, Tainted,
-    TemplateError, VAR_KEY,
+    ADD_KEY, ATTR_KEY, BYTES_ADD_KEY, CONCAT_KEY, CONST_KEY, CONTEXT_KEY, HOSTVARS_KEYS, ITEM_KEY,
+    MATTR_KEY, MITEM_KEY, MKLIST_KEY, MKMAP_KEY, QUERY_KEY, REM_KEY, REMT_KEY, SLICE_KEY, SUB_KEY,
+    TAINT_KEY, Tainted, TemplateError, VAR_KEY,
 };
 
 /// The name, in the variables an extended loop shares between its items, under which the list of
@@ -214,6 +214,9 @@ pub(super) struct Context {
     any_soiled: AtomicBool,
     /// Set when `failed` is: the first error a nested render raised that the read cannot carry.
     failure: Mutex<Option<TemplateError>>,
+    /// What each variable whose template read a name with no value failed with, and where that
+    /// template was written.
+    undefined_in: Mutex<HashMap<String, (String, Option<crate::playbook::Origin>)>>,
     failed: AtomicBool,
 }
 
@@ -319,6 +322,8 @@ impl Object for Context {
             REMT_KEY,
             ADD_KEY,
             SUB_KEY,
+            BYTES_ADD_KEY,
+            SLICE_KEY,
             ALLITEMS_KEY,
         ]
         .contains(&key)
@@ -441,6 +446,7 @@ pub(super) fn context_tracking(
         author_only: Mutex::new(HashMap::new()),
         any_soiled: AtomicBool::new(false),
         failure: Mutex::new(None),
+        undefined_in: Mutex::default(),
         failed: AtomicBool::new(false),
     });
     (ctx, tainted)

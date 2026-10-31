@@ -66,8 +66,13 @@ fn call(state: &mut State, value: &Value, method: &str, args: &[Value]) -> Resul
         if super::any_undefined(args) {
             return Err(Error::from(ErrorKind::UndefinedError));
         }
-        return bytes::call(held, method, args)
-            .unwrap_or_else(|| Err(Error::from(ErrorKind::UnknownMethod)));
+        if let Some(answer) = bytes::call(held, method, args) {
+            return answer;
+        }
+        if bytes::THROUGH_STR.contains(&method) {
+            return bytes::through_str(held, args, |text, args| call(state, text, method, args));
+        }
+        return Err(Error::from(ErrorKind::UnknownMethod));
     }
     if let Some(tuple) = value.downcast_object_ref::<Tuple>() {
         if super::any_undefined(args) {

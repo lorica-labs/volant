@@ -5,12 +5,17 @@
 //! fails there fails here with the same sentence.
 
 use minijinja::value::ValueKind;
-use minijinja::{Error, ErrorKind, Value};
+use minijinja::{Error, Value};
 
 /// The error a method raises: Python's own message, which the reference prints without the name
-/// of the exception class.
+/// of the exception class, behind `Error rendering template:`. An attribute a value lacks is an
+/// undefined read there, and keeps its sentence alone.
 pub(super) fn raise(message: impl Into<String>) -> Error {
-    Error::new(ErrorKind::InvalidOperation, message.into())
+    let message = message.into();
+    if message.starts_with("object of type '") && message.contains("' has no attribute '") {
+        return crate::template::bridged::raise(message);
+    }
+    crate::template::bridged::raise(format!("Error rendering template: {message}"))
 }
 
 /// Python's name for the type of a value, as its error messages write it.

@@ -1,0 +1,2 @@
+# A syntax error in an expression or a template is worded as Jinja words it.
+args: [-i, inv, play.yml]

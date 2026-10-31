@@ -42,7 +42,7 @@ Each run of Volant happens in a fresh copy of the directory, with `--forks 1` un
 - `env` sets environment variables for the run.
 - `program: ansible` records the runs with `ansible` instead of `ansible-playbook`, and runs `volant adhoc` instead of `volant playbook`.
 - `forks` raises the number of forks above one. Hosts may then print in a different order, so list the lines whose order may differ in `unordered`, as regular expressions. `unordered` without `forks` is refused.
-- `needs` names what the machine must have: `ansible-core`, `sudo` or `systemd`. A case whose needs are not met is skipped, except when `VOLANT_PYTHON` is set, which turns the skip into a failure.
+- `needs` names what the machine must have: `ansible-core`, `sudo` or `systemd`. A case whose needs are not met is skipped, except when `VOLANT_PYTHON` or `VOLANT_REQUIRE_REFERENCE=1` is set, which turns the skip into a failure: nextest does not show the skip of a test that passes, so a machine without ansible-core would report green. The `ssh-test` recipes set `VOLANT_REQUIRE_REFERENCE=1`.
 - `links` maps a path to the target of a link that each copy gets at that path. Use it for a link that git or cargo cannot hold, such as a link to a file that does not exist: `cargo package` refuses a tracked link like that.
 
 ## The parity matrix

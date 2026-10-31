@@ -4,7 +4,8 @@
 use std::io::Write;
 
 use anstream::{AutoStream, ColorChoice};
-use anstyle::{AnsiColor, Style};
+pub(crate) use style::VERBOSE;
+use style::{CHANGED, DEBUG, FAILED, OK, SKIPPED, Style, UNREACHABLE, WARNING};
 
 mod aggregate;
 mod callback;
@@ -19,6 +20,7 @@ mod recap_json;
 mod result;
 mod shorten;
 mod shown;
+mod style;
 mod tree;
 
 pub use aggregate::{Aggregate, Begun, Profile};
@@ -107,16 +109,6 @@ pub const CENSORED: &str =
 /// `changed: [h1] => (item=(censored due to no_log))`.
 pub const CENSORED_ITEM: &str = "(censored due to no_log)";
 
-const OK: Style = AnsiColor::Green.on_default();
-const CHANGED: Style = AnsiColor::Yellow.on_default();
-const FAILED: Style = AnsiColor::Red.on_default();
-const UNREACHABLE: Style = AnsiColor::BrightRed.on_default();
-const SKIPPED: Style = AnsiColor::Cyan.on_default();
-const WARNING: Style = AnsiColor::BrightMagenta.on_default();
-/// The reference's `dark gray`, its `COLOR_DEBUG`.
-const DEBUG: Style = AnsiColor::BrightBlack.on_default();
-pub(crate) const VERBOSE: Style = AnsiColor::Blue.on_default();
-
 /// `stream` with colour as `choice` and the terminal decide, and whether it is coloured.
 fn auto<S: anstream::stream::RawStream + anstream::stream::AsLockedWrite + 'static>(
     stream: S,
@@ -130,6 +122,10 @@ fn auto<S: anstream::stream::RawStream + anstream::stream::AsLockedWrite + 'stat
 impl Renderer {
     /// Stdout renderer. Colour follows the terminal, `NO_COLOR`, `CLICOLOR_FORCE`, or the caller.
     pub fn new(choice: ColorChoice, verbosity: u8) -> Self {
+        // Warnings and errors go to stderr, which colours the way stdout does when forced.
+        if choice != ColorChoice::Auto {
+            choice.write_global();
+        }
         let stream = AutoStream::new(std::io::stdout(), choice);
         let color = stream.current_choice() != ColorChoice::Never;
         let width = std::env::var("COLUMNS")
@@ -246,9 +242,14 @@ impl Renderer {
         self.diffs = Some(bridge);
     }
 
+    /// `text` in `style`, each line opened and closed apart as `stringc` does, so a viewer that
+    /// resets the colour at each line keeps it.
     fn paint(&self, style: Style, text: &str) -> String {
         if self.color {
-            format!("{style}{text}{style:#}")
+            text.split('\n')
+                .map(|line| format!("{style}{line}{style:#}"))
+                .collect::<Vec<_>>()
+                .join("\n")
         } else {
             text.to_string()
         }

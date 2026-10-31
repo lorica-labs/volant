@@ -100,7 +100,7 @@ impl Templar {
         ctx: &minijinja::Value,
     ) -> Result<Value, TemplateError> {
         if let Some(expr) = lone_expression(body) {
-            let value = self.evaluate_in(expr, ctx)?;
+            let value = super::as_template(body, expr, || self.evaluate_in(expr, ctx))?;
             return Ok(with_line_ends(value, text));
         }
         // The line end is dropped by hand, so the lexer is told to keep what is left.
@@ -109,7 +109,9 @@ impl Templar {
             .trim_blocks(true)
             .build()
             .map_err(|err| TemplateError(err.to_string()))?;
-        let counted = render_counted(self, "<string>", body, ctx, syntax).map_err(convert_error);
+        let counted = render_counted(self, "<string>", body, ctx, syntax).map_err(|e| {
+            super::jinja_syntax(&e, body).map_or_else(|| convert_error(e), TemplateError)
+        });
         // A variable the text read failed to render: that is the error, whatever the undefined
         // value it was read as did to the text.
         if let Some(error) = take_failure(ctx) {

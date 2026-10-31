@@ -1,0 +1,4 @@
+# `meta: refresh_inventory` resolves `--limit` again against what the sources now hold: a host
+# the limit names that only the refreshed inventory has joins the play and the plays after it.
+args: [-i, inv.ini, --limit, "h1,h3", play.yml]
+needs: [ansible-core]

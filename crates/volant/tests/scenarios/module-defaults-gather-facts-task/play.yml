@@ -1,0 +1,33 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - name: defaults for the action
+      gather_facts:
+      module_defaults:
+        gather_facts:
+          gather_subset: min
+    - assert:
+        that: "gather_subset == ['min']"
+    - name: defaults for the module
+      gather_facts:
+      module_defaults:
+        setup:
+          gather_subset: '!all'
+    - assert:
+        that: "gather_subset == ['!all']"
+    - name: defaults for both
+      gather_facts:
+      module_defaults:
+        setup:
+          gather_subset: '!all'
+        gather_facts:
+          gather_subset: min
+    - assert:
+        that: "gather_subset == ['min']"
+    - name: defaults for the legacy name
+      gather_facts:
+      module_defaults:
+        ansible.legacy.setup:
+          gather_subset: '!all'
+    - assert:
+        that: "gather_subset == ['!all']"

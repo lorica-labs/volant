@@ -1794,8 +1794,9 @@ def run_action(ident, request):
     name = request["name"]
     fields = dict(request.get("task") or {})
     written = fields.pop("_volant_action", None) or name
-    # The action is `name`, and the controller has merged the module defaults into the arguments.
-    for keyword in ("action", "local_action", "module_defaults"):
+    # The action is `name`, and the controller has merged its module defaults into the arguments:
+    # the task's `module_defaults` are for the modules the plugin picks itself.
+    for keyword in ("action", "local_action"):
         if keyword in fields:
             message = "the task keyword %s is not supported for an action plugin yet" % keyword
             return {"error": {"kind": "plugin", "message": message}}
@@ -1839,8 +1840,7 @@ def run_action(ident, request):
             task_vars["hostvars"] = LazyHostVars(ident, names, loader)
             templar = Templar(loader=loader, variables=task_vars)
             fields["action"] = written
-            # A play of its own: `post_validate` reads the play's action groups, which hold nothing
-            # here since no module_defaults reach the plugin.
+            # A play of its own, whose action groups loading the `module_defaults` fills.
             task = Task.load(fields, block=Block(play=Play()), loader=loader)
             task.post_validate(templar=templar._engine)
             if search_path:

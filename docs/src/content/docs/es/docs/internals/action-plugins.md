@@ -1,5 +1,5 @@
 ---
-sourceHash: 3c2163d53be0
+sourceHash: 658a36da3f86
 title: Plugins de acción
 description: Cómo Volant ejecuta los módulos que ansible-core ejecuta mediante un plugin de acción en el controlador, en Rust o en el bridge de Python.
 ---
@@ -156,7 +156,9 @@ El helper hace las veces de la conexión del controlador, así que algunas cosas
 - Un miembro de la conexión o del contexto del play que no es uno de los pocos que lleva el shim: `Connection.<name> is not supported yet`, `the connection option <name> is not supported yet`, `the play context field <name> is not supported yet`, `the shell plugin <name> is not supported yet`.
 - Un modo de `async_status` distinto de `status` y `cleanup`.
 - Un módulo que no es texto UTF-8 donde el shim lo lee como texto.
-- Las palabras clave de tarea `action`, `local_action` y `module_defaults` dentro del helper: el controlador ya fusionó los valores por defecto.
+- Las palabras clave de tarea `action` y `local_action` dentro del helper.
+
+Los `module_defaults` de la tarea llegan al plugin. El controlador ya fusionó los valores por defecto de la acción en sus argumentos, y `gather_facts` aplica los demás al módulo de facts que ejecuta, como ansible-core.
 
 Dos partes de la conexión del helper siguen a ansible-core:
 

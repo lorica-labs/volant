@@ -2157,6 +2157,7 @@ async fn plugin_item_on<R: Relink<FakeAgent>>(
                 no_log: false,
                 async_val: 0,
                 action: "probe",
+                module_defaults: &[],
             },
         );
         run_plugin_item(

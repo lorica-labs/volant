@@ -19,8 +19,41 @@ use crate::vars::HostVars;
 use super::Item;
 use crate::executor::run::set_fact_names;
 
+/// Whether the items of a controller-side loop render as the loop reaches them: measured on
+/// ansible-core 2.19.12, a `set_fact` or `debug` loop with a `loop_control.pause` reads `now()`
+/// after each pause, so its items cannot be rendered before the first one runs.
+pub(super) fn paced(task: &crate::playbook::PlayTask, options: &super::LoopOptions) -> bool {
+    options.pause.is_some_and(|pause| !pause.is_zero())
+        && (super::is_local(&task.module) || crate::action_plugins::controller_side(&task.module))
+}
+
+/// Lays what item `ii - 1` set over item `ii` before it renders, when the items of a looped
+/// `set_fact` render as the loop reaches them ([`paced`]): what [`Carry::vars`] and the item's
+/// own pass do in `prepare` for an item rendered there.
+pub(in crate::executor) fn carry_on(
+    carry: Option<&mut Carry>,
+    items: &mut [Item],
+    ii: usize,
+    templar: &Templar,
+) {
+    let (Some(carry), Some(index)) = (carry, ii.checked_sub(1)) else {
+        return;
+    };
+    carry.take(&items[index], templar);
+    let Some(item) = items.get_mut(ii).filter(|item| item.deferred) else {
+        return;
+    };
+    for (name, template) in &carry.rebuilt {
+        item.vars.insert(name.clone(), template.clone());
+    }
+    carry.lay_over(&mut item.vars);
+    let (resolved, untrusted) = templar.resolve_vars_tainted(&item.vars);
+    item.vars.map = resolved;
+    item.vars.untrusted = untrusted;
+}
+
 /// What the items before the current one set, for one host.
-pub(super) struct Carry {
+pub(in crate::executor) struct Carry {
     /// The host's variables before they resolved each other: where the templates of `rebuilt`
     /// come from.
     merged: HostVars,

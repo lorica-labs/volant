@@ -88,3 +88,17 @@ pub(in crate::executor) fn label_failed(message: &str, result: &mut TaskResult) 
         .0
         .insert(crate::render::NO_BLOCK_KEY.into(), Value::Bool(true));
 }
+
+/// An item's label, the message it fails with, and the error that ends the task after it.
+pub(super) type Labelled = (Option<String>, Option<String>, Option<String>);
+
+/// A label's render as `prepare` keeps it: its error, which an item reports after it ran, is
+/// carried rather than raised.
+pub(super) fn raises(
+    rendered: Result<(Option<String>, Option<String>), TemplateError>,
+) -> Result<Labelled, TemplateError> {
+    match rendered {
+        Ok((label, error)) => Ok((label, error, None)),
+        Err(err) => Ok((None, None, Some(err.0))),
+    }
+}

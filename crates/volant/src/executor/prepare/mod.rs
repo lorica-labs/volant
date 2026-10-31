@@ -39,12 +39,13 @@ pub(in crate::executor) use plan::{Gate, PlayPlan, Strategy};
 pub(in crate::executor) use vars::host_vars;
 use vars::{Named, delegate_host_vars, merged_vars, resolved};
 
-use carry::Carry;
+pub(in crate::executor) use carry::carry_on;
+use carry::{Carry, paced};
 use connect::{connect_for, delegate_for, unplugged};
 use escalation::escalation_for;
 use fields::{Fields, render_fields};
 use item::{item_failure, notify_for};
-use label::label_for;
+use label::{label_for, raises};
 pub(in crate::executor) use loops::undefined_causes;
 use loops::{LoopOptions, loop_list, loop_options, named_undefined, with_lookup_items};
 
@@ -243,7 +244,8 @@ pub(super) fn prepare(
                     task.index_var.as_deref().unwrap_or_default(),
                     "ansible_loop",
                 ],
-                defer: index > 0 && !task.break_when.is_empty() && carry.is_none(),
+                defer: index > 0
+                    && (paced(task, &options) || (!task.break_when.is_empty() && carry.is_none())),
             },
             &mut loop_error,
             warnings,
@@ -289,7 +291,9 @@ pub(super) fn prepare(
             label_raised,
             deferred: fields.deferred,
         };
-        if let Some(carry) = &mut carry {
+        if let Some(carry) = &mut carry
+            && !item.deferred
+        {
             carry.take(&item, templar);
             // The reference renders `loop_control.label` after the item ran, so it reads the
             // facts the item just set.
@@ -329,7 +333,12 @@ pub(super) fn prepare(
         if delegate.is_none() {
             unplugged(task, host, (&base, templar, defaults), &mut items, warnings);
         }
-        return Ok(Prepared::Local(items, delegate.map(|(name, _)| name)));
+        let carry = carry.filter(|_| paced(task, &options)).map(Box::new);
+        return Ok(Prepared::Local(
+            items,
+            delegate.map(|(name, _)| name),
+            carry,
+        ));
     }
     let connect = Box::new(connect_for(task, &base, templar)?);
     // A delegate's variables come back merged under the full precedence, like any host's: its
@@ -464,20 +473,6 @@ pub(in crate::executor) fn render_deferred(
     item.diff = fields.diff;
     settle_label(task, item);
     warnings
-}
-
-/// An item's label, the message it fails with, and the error that ends the task after it.
-type Labelled = (Option<String>, Option<String>, Option<String>);
-
-/// A label's render as `prepare` keeps it: its error, which an item reports after it ran, is
-/// carried rather than raised.
-fn raises(
-    rendered: Result<(Option<String>, Option<String>), TemplateError>,
-) -> Result<Labelled, TemplateError> {
-    match rendered {
-        Ok((label, error)) => Ok((label, error, None)),
-        Err(err) => Ok((None, None, Some(err.0))),
-    }
 }
 
 fn is_local(module: &str) -> bool {

@@ -1,5 +1,5 @@
 ---
-sourceHash: 30b19ae888bc
+sourceHash: 480ffa167c92
 title: Bucles y reintentos
 description: loop, with_items y loop_control, y cómo until, retries y delay repiten una tarea.
 ---
@@ -46,6 +46,7 @@ Un bucle renderiza los argumentos, el `when`, las palabras clave y la etiqueta d
 
 - Un elemento que no se renderiza falla solo, como `failed: [h] (item=2)`. Los elementos siguientes se ejecutan igualmente, y la tarea termina con `One or more items failed`.
 - Un `break_when` que termina antes el bucle oculta los errores de renderizado de los elementos posteriores.
+- Un bucle de `debug` o `set_fact` con `loop_control.pause` renderiza cada elemento después de la pausa, así que `now()` lee la hora a la que se ejecuta el elemento, y un `set_fact` en bucle sigue pasando lo que definió a los elementos siguientes.
 - Un `loop_control.label` que lee una variable sin definir hace fallar su elemento después de que el módulo se ejecutó.
 
 ## `with_first_found` y `with_fileglob`

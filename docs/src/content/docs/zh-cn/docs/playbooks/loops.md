@@ -1,5 +1,5 @@
 ---
-sourceHash: 30b19ae888bc
+sourceHash: 480ffa167c92
 title: 循环与重试
 description: loop、with_items 和 loop_control，以及 until、retries 和 delay 如何重复运行一个 task。
 ---
@@ -46,6 +46,7 @@ description: loop、with_items 和 loop_control，以及 until、retries 和 del
 
 - 渲染失败的 item 单独失败，显示为 `failed: [h] (item=2)`。它之后的 item 仍然会运行，task 以 `One or more items failed` 结束。
 - 先结束循环的 `break_when`，会隐藏它之后各项的渲染错误。
+- 带 `loop_control.pause` 的 `debug` 或 `set_fact` 循环会在暂停之后渲染每一项，因此 `now()` 读到的是该项运行时的时间；循环中的 `set_fact` 仍会把它设置的值交给后面的项。
 - 读取未定义变量的 `loop_control.label`，会在模块运行之后让它所在的 item 失败。
 
 ## `with_first_found` 和 `with_fileglob`

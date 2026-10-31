@@ -82,7 +82,7 @@ pub(super) fn resolve_include(
     let items = match prepare(step, host, plan, live, templar, store, defaults, warnings) {
         Ok(
             Prepared::Skipped(items)
-            | Prepared::Local(items, _)
+            | Prepared::Local(items, ..)
             | Prepared::Remote(items, _, _, _, _, _),
         ) => items,
         // A `when` that cannot be evaluated or a `loop` that is not a list, reported with the

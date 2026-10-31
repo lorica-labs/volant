@@ -1,5 +1,5 @@
 ---
-sourceHash: 5a320c445d7e
+sourceHash: 55b25036bc65
 title: Plugins de acción
 description: Cómo Volant ejecuta los módulos que ansible-core ejecuta mediante un plugin de acción en el controlador, en Rust o en el bridge de Python.
 ---
@@ -172,10 +172,8 @@ El plugin lee la clave y el usuario del enlace (la variable de host, `--private-
 ### Carencias conocidas
 
 - `wait_for_connection` en un host que está caído desde la primera conexión termina con `UNREACHABLE` para un elemento del plugin que nunca obtuvo un enlace; ansible-core informa `failed` con `timed out waiting for ping module test`.
-- Un resultado conectado mediante el bridge que es `unreachable` a nivel de resultado se imprime como `ok`.
-- Un resultado omitido conectado mediante el bridge lleva `"failed": false`.
-- Los avisos que un plugin escribe con `display` van al error estándar del helper, no a la salida de la tarea; lo mismo ocurre con el aviso `Error loading plugin` de ansible-core para un nombre de colección desconocido.
-- Un módulo que `runtime.yml` redirige a un plugin de acción con otro nombre se ejecuta con el nombre de la propia tarea.
+- Un resultado conectado mediante el bridge que es `unreachable` a nivel de resultado imprime un bloque `[ERROR]:` delante de su línea `UNREACHABLE!`, y su valor registrado no tiene la clave `failed`.
+- Lo que un plugin escribe con `display` no sale en el orden en que lo escribió: un aviso puede aparecer después de una línea escrita más tarde.
 - Un `add_host` o `group_by` delegado se aplica al host de la propia tarea.
 
 ## Un archivo src nombrado por un host administrado

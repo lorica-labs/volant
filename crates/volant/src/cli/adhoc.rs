@@ -63,7 +63,7 @@ pub fn adhoc(args: AdhocArgs) -> i32 {
             adhoc.one_line = args.one_line;
             adhoc.tree = tree;
             adhoc.list_hosts = args.list_hosts;
-            adhoc.dir.clone_from(&args.playbook_dir);
+            adhoc.dir = super::args::playbook_dir(args.playbook_dir.as_deref());
             adhoc.background = args.background.unwrap_or(0).unsigned_abs();
             adhoc.poll = args.poll.map(i64::unsigned_abs);
             adhoc.timeout = args.task_timeout.unwrap_or(0).unsigned_abs();

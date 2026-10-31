@@ -9,7 +9,6 @@ ansible-console                #1286
 ansible-galaxy-collection-scm  #1290
 ansible-galaxy-role            #1290
 ansible-playbook-callbacks     #1287
-ansible-test-vendoring         #1265
 ansible_log                    #1287
 assert                         #1283
 async                          #1290
@@ -39,7 +38,6 @@ inventory-invalid-group        #1286
 inventory_advanced_host_list   #1286
 inventory_cache                #1286
 inventory_script               #1282
-limit_inventory                #1286
 lookup_env                     #1282
 lookup_first_found             #1289
 lookup_varnames                #1284
@@ -60,7 +58,6 @@ remote_tmp                     #1290
 result_pickle_error            #1284
 roles_arg_spec                 #1284
 set_fact                       #1282
-setup_pexpect                  #1265
 shell                          #1290
 strategy-external              #1287
 task-args                      #1284

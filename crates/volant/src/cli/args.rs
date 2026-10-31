@@ -376,3 +376,13 @@ impl AdhocArgs {
         }
     }
 }
+
+/// `--playbook-dir`, or `ANSIBLE_PLAYBOOK_DIR` when the option is not given, as ansible-core's
+/// `PLAYBOOK_DIR` setting is its default.
+pub fn playbook_dir(given: Option<&std::path::Path>) -> Option<PathBuf> {
+    given.map(std::path::Path::to_path_buf).or_else(|| {
+        std::env::var_os("ANSIBLE_PLAYBOOK_DIR")
+            .filter(|dir| !dir.is_empty())
+            .map(PathBuf::from)
+    })
+}

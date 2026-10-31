@@ -41,7 +41,6 @@ meta_tasks                     #1287
 module_defaults                #1289
 no_log                         #1287
 order                          #1289
-preflight_encoding             #1283
 protomatter                    #1282
 remote_tmp                     #1290
 result_pickle_error            #1284

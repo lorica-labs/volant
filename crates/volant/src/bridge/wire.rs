@@ -144,7 +144,11 @@ impl Ask {
 impl Reply {
     pub(super) fn to_json(&self) -> Value {
         match self {
-            Reply::Value(value) => json!({ "value": value }),
+            // Not `json!`, which serializes `value` again and refuses a `NaN` in it.
+            Reply::Value(value) => Value::Object(serde_json::Map::from_iter([(
+                "value".to_string(),
+                value.clone(),
+            )])),
             Reply::Error(text) => json!({ "error": text }),
         }
     }

@@ -213,7 +213,19 @@ impl Bridge {
             &mut guard,
             kind,
             name,
-            json!({"kind": kind.as_str(), "name": name, "args": args, "kwargs": kwargs, "vars": vars}),
+            // Built as a map, not with `json!`: that serializes the values again, and a float
+            // that is not a number (`'nan' | float`) does not serialize, where the helper's
+            // `json.loads` reads the `NaN` it is written as.
+            Value::Object(Map::from_iter([
+                ("kind".to_string(), json!(kind.as_str())),
+                ("name".to_string(), json!(name)),
+                ("args".to_string(), Value::Array(args.to_vec())),
+                ("kwargs".to_string(), Value::Object(kwargs.clone())),
+                (
+                    "vars".to_string(),
+                    vars.cloned().map_or(Value::Null, Value::Object),
+                ),
+            ])),
         );
         crate::profile::bridge_call(
             name,
@@ -425,7 +437,12 @@ impl Bridge {
         };
         *next += 1;
         let id = *next;
-        let request = json!({"id": id, "call": call}).to_string();
+        // As in `call`: `json!` would serialize `call` again and refuse a `NaN` in it.
+        let request = Value::Object(Map::from_iter([
+            ("id".to_string(), json!(id)),
+            ("call".to_string(), call),
+        ]))
+        .to_string();
         if request.len() > MAX_FRAME_LEN {
             return Err(BridgeError::Helper(format!(
                 "the request for the {} plugin '{name}' is {} bytes, over the {MAX_FRAME_LEN} byte limit",

@@ -18,7 +18,7 @@ use crate::vars::VarStore;
 use super::argspec::{action_name, unchanged_failure, unknown_args, validate_argument_spec};
 use super::controller::{assert_module, pause};
 use super::include_vars::run_include_vars;
-use super::marked::{mark_failed, warn_template_error};
+use super::marked::{mark_failed, undecryptable_in, warn_template_error};
 use super::output::summarise_exception;
 
 /// What a `debug: var:` naming a value that came from a managed host reports. The reference's
@@ -395,15 +395,16 @@ fn local_result(
                 if read {
                     crate::playbook::deprecate_play_hosts(task.value_origins.get("var"));
                 }
+                let render = |text: &str| templar.render(text, &item.vars);
                 let evaluated = evaluated.and_then(|(v, tainted)| match crate::vault::unread(&v) {
                     Some(failed) => Err(crate::template::TemplateError(failed)),
-                    None => Ok((v, tainted)),
+                    None if tainted => Ok((v, tainted)),
+                    None => undecryptable_in(&v, &render).map_or(Ok((v, tainted)), Err),
                 });
                 match evaluated {
                     // An item whose template did not render is marked; never one a host wrote.
                     Ok((mut v, tainted)) => {
                         if !tainted {
-                            let render = |text: &str| templar.render(text, &item.vars);
                             mark_failed(&mut v, None, &render, &mut 0);
                         }
                         r.insert(var.to_string(), v)

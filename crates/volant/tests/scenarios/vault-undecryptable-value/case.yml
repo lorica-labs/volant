@@ -1,5 +1,5 @@
 # A !vault value no secret opens fails the task that reads it, with the value's own origin,
-# also when it is a member of the mapping a debug var prints.
+# also when it is a member of the mapping a debug var prints, or read by a template that member holds.
 runs:
   - args: [-i, inv, var.yml]
   - args: [-i, inv, --vault-password-file, pw_wrong, var.yml]
@@ -7,4 +7,5 @@ runs:
   - args: [-i, inv, --vault-password-file, pw_wrong, msg.yml]
   - args: [-i, inv, --vault-password-file, pw_right, var.yml]
   - args: [-i, inv, dict.yml]
+  - args: [-i, inv, dict_template.yml]
 needs: ["ansible-core"]

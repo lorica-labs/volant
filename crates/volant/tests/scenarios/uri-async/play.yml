@@ -1,0 +1,28 @@
+- hosts: l
+  gather_facts: false
+  tasks:
+    - uri:
+        url: http://127.0.0.1:9/
+        timeout: 5
+      async: 30
+      poll: 1
+      register: polled
+      ignore_errors: true
+    - debug:
+        msg: "{{ polled.status }} {{ polled.finished }}"
+    - uri:
+        url: http://127.0.0.1:9/
+        timeout: 5
+      async: 30
+      poll: 0
+      register: started
+    - debug:
+        msg: "{{ started.started }} {{ started.finished }}"
+    - wait_for:
+        timeout: 2
+    - async_status:
+        jid: "{{ started.ansible_job_id }}"
+      register: job
+      ignore_errors: true
+    - debug:
+        msg: "{{ job.status }}"

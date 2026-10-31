@@ -275,10 +275,11 @@ impl Inventory {
                 _ => regular.push(term),
             }
         }
-        if regular.is_empty() {
+        if regular.is_empty() && !pattern.trim().is_empty() {
             // A bare `!term`/`&term` pattern has nothing to start from but `all`, as Ansible's own
-            // `order_patterns` inserts, and neither has one with no term at all: measured,
-            // `ansible ,, --list-hosts` lists every host.
+            // `order_patterns` inserts, and neither has one of separators alone: measured,
+            // `ansible ,, --list-hosts` lists every host. An empty one is a play's `hosts` that
+            // rendered to an empty list, which matches nothing.
             regular.push("all");
         }
         let mut selected: Vec<String> = Vec::new();

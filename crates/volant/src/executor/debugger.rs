@@ -233,7 +233,7 @@ pub(super) fn with_edited(
     let Some((_, edits)) = edited.take().filter(|(at, _)| *at == pos) else {
         return prepared;
     };
-    if let Ok(Prepared::Local(items, _) | Prepared::Remote(items, ..)) = &mut prepared {
+    if let Ok(Prepared::Local(items, ..) | Prepared::Remote(items, ..)) = &mut prepared {
         for item in items {
             for key in &edits.removed {
                 item.args.remove(key);

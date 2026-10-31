@@ -30,8 +30,9 @@ pub(in crate::executor) enum Prepared {
     Skipped(Vec<Item>),
     /// `set_fact` or `debug`: run on the controller. A `delegate_to` changes nothing about
     /// where it runs - measured, a delegated `debug` still runs here - so the delegate travels
-    /// only as the name the line shows.
-    Local(Vec<Item>, Option<String>),
+    /// only as the name the line shows. A looped `set_fact` whose items render as the loop
+    /// reaches them brings what the earlier items set (`carry_on`).
+    Local(Vec<Item>, Option<String>, Option<Box<super::carry::Carry>>),
     /// Send to the agent, one `Task` per item, over a link running as this task's escalated
     /// user. Escalation belongs to the task rather than to an item: it decides which agent on
     /// the host the whole task talks to, so every item of a loop shares it.
@@ -78,7 +79,7 @@ impl Prepared {
     /// The items of the task, whichever way it goes.
     pub(in crate::executor) fn items(&self) -> &[Item] {
         match self {
-            Self::Skipped(items) | Self::Local(items, _) | Self::Remote(items, ..) => items,
+            Self::Skipped(items) | Self::Local(items, ..) | Self::Remote(items, ..) => items,
         }
     }
 }

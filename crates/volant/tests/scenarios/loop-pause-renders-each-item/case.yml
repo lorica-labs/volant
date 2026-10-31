@@ -1,0 +1,3 @@
+# A controller-side loop with a `pause` renders each item after the pause, so `now()` reads later times and a looped `set_fact` still carries what the earlier items set.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

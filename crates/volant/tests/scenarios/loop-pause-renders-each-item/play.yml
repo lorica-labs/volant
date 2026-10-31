@@ -1,0 +1,18 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    built: "{{ times | default([]) | length }}"
+  tasks:
+    - set_fact:
+        times: "{{ times | default([]) + [now(fmt='%s.%f')] }}"
+        sizes: "{{ sizes | default([]) + [built | int] }}"
+      with_sequence: count=3
+      loop_control: {pause: 0.6}
+    - debug: {msg: "{{ (times[2] | float - times[0] | float) >= 1.2 }}"}
+    - debug: var=sizes
+    - debug: {msg: "{{ now(fmt='%s.%f') }}"}
+      loop: [1, 2]
+      loop_control: {pause: 0.6}
+      register: stamps
+      no_log: true
+    - debug: {msg: "{{ (stamps.results[1].msg | float - stamps.results[0].msg | float) >= 0.5 }}"}

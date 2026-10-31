@@ -23,7 +23,9 @@ use crate::vars::VarStore;
 use super::coordinator::{Event, MetaEffect, Progress, escalated_links, render_name};
 use super::debugger::{self, Hold};
 use super::include::{NO_FAILED_VARS, report_include, resolve_include};
-use super::prepare::{Item, PlayPlan, Prepared, failed_result, pause_of, prepare, retry_name};
+use super::prepare::{
+    Item, PlayPlan, Prepared, carry_on, failed_result, pause_of, prepare, retry_name,
+};
 use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, Polled, Relinker, Replayed,
@@ -1116,7 +1118,7 @@ pub(super) async fn drive_host(
                     };
                     pos = next;
                 }
-                Ok(Prepared::Local(mut items, delegate)) => {
+                Ok(Prepared::Local(mut items, delegate, mut carry)) => {
                     if !batch.is_empty() {
                         break;
                     }
@@ -1146,6 +1148,7 @@ pub(super) async fn drive_host(
                         if ii > 0 && driver.pause_for(pause, 1).await.is_none() {
                             break 'run;
                         }
+                        carry_on(carry.as_deref_mut(), &mut items, ii, &templar);
                         let item = driver.reach_item(pos, task, &mut items, ii, &templar).await;
                         names.push(retry_name(task, &item.vars, &templar));
                         let mut mine = Vec::new();

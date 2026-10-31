@@ -1,5 +1,5 @@
 ---
-sourceHash: 30b19ae888bc
+sourceHash: 480ffa167c92
 title: Boucles et nouvelles tentatives
 description: loop, with_items et loop_control, et comment until, retries et delay répètent une tâche.
 ---
@@ -46,6 +46,7 @@ Une boucle rend les arguments, le `when`, les mots-clés et le libellé d'un él
 
 - Un élément qui ne parvient pas à être rendu échoue seul, sous la forme `failed: [h] (item=2)`. Les éléments suivants s'exécutent quand même, et la tâche se termine par `One or more items failed`.
 - Un `break_when` qui termine la boucle en premier masque les erreurs de rendu des éléments qui le suivent.
+- Une boucle `debug` ou `set_fact` avec un `loop_control.pause` rend chaque élément après la pause, donc `now()` lit l'heure à laquelle l'élément s'exécute, et un `set_fact` en boucle transmet toujours ce qu'il a défini aux éléments suivants.
 - Un `loop_control.label` qui lit une variable non définie fait échouer son élément après l'exécution du module.
 
 ## `with_first_found` et `with_fileglob`

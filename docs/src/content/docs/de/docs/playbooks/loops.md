@@ -1,5 +1,5 @@
 ---
-sourceHash: 30b19ae888bc
+sourceHash: 480ffa167c92
 title: Schleifen und Wiederholungen
 description: loop, with_items und loop_control sowie wie until, retries und delay einen Task wiederholen.
 ---
@@ -46,6 +46,7 @@ Eine Schleife rendert die Argumente, das `when`, die Keywords und das Label eine
 
 - Ein Element, das sich nicht rendern lässt, schlägt allein fehl, als `failed: [h] (item=2)`. Die Elemente danach laufen weiter, und der Task endet mit `One or more items failed`.
 - Ein `break_when`, das die Schleife zuerst beendet, verbirgt die Render-Fehler der Elemente danach.
+- Eine `debug`- oder `set_fact`-Schleife mit `loop_control.pause` rendert jedes Element nach der Pause, sodass `now()` die Zeit liest, zu der das Element läuft, und ein `set_fact` in einer Schleife gibt weiterhin an die folgenden Elemente weiter, was es gesetzt hat.
 - Ein `loop_control.label`, das eine undefinierte Variable liest, lässt sein Element fehlschlagen, nachdem das Modul gelaufen ist.
 
 ## `with_first_found` und `with_fileglob`

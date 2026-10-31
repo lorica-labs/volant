@@ -45,6 +45,7 @@ A loop renders an item's arguments, `when`, keywords and label when it reaches t
 
 - An item that fails to render fails alone, as `failed: [h] (item=2)`. The items after it still run, and the task ends with `One or more items failed`.
 - A `break_when` that ends the loop first hides the render errors of the items after it.
+- A `debug` or `set_fact` loop with a `loop_control.pause` renders each item after the pause, so `now()` reads the time the item runs, and a looped `set_fact` still hands what it set to the items after it.
 - A `loop_control.label` that reads an undefined variable fails its item after the module ran.
 
 ## `with_first_found` and `with_fileglob`

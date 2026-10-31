@@ -317,7 +317,7 @@ fn prepared(step: &Step, store: &Mutex<VarStore>) -> Result<Vec<Item>, TemplateE
     )?;
     Ok(match prepared {
         Prepared::Skipped(items)
-        | Prepared::Local(items, _)
+        | Prepared::Local(items, ..)
         | Prepared::Remote(items, _, _, _, _, _) => items,
     })
 }
@@ -640,7 +640,7 @@ fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
     .expect("the task renders");
     let items = match prepared {
         Prepared::Skipped(items)
-        | Prepared::Local(items, _)
+        | Prepared::Local(items, ..)
         | Prepared::Remote(items, _, _, _, _, _) => items,
     };
     let vars = &items[0].vars;

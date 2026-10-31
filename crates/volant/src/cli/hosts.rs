@@ -96,6 +96,15 @@ pub(super) fn limit_names(
     Ok(Some(resolution.hosts.into_iter().map(|h| h.name).collect()))
 }
 
+/// `--limit`'s pattern with the hosts it resolved to, which a refresh resolves again.
+pub(super) fn with_pattern(
+    args: &PlaybookArgs,
+    limit: Option<&HashSet<String>>,
+) -> anyhow::Result<Option<(String, HashSet<String>)>> {
+    let pattern = args.hosts.limit.as_deref().map(limit_pattern).transpose()?;
+    Ok(pattern.flatten().zip(limit.cloned()))
+}
+
 /// `--limit` as the reference's `InventoryManager.subset` reads it: the parts between commas,
 /// blank ones dropped, and each `@file` replaced by the lines of the file. `None` when nothing is
 /// left, which limits nothing: measured on ansible-core 2.19.12, `--limit ,`, `--limit ''` and an

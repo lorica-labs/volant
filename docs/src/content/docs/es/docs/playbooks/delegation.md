@@ -1,5 +1,5 @@
 ---
-sourceHash: 60a46a158fc1
+sourceHash: 630bc063e9af
 title: Delegación, tareas meta y environment
 description: Ejecutar una tarea una sola vez para un lote o en otro host, qué hace cada acción meta, y cómo dan forma a una tarea environment y no_log.
 ---
@@ -82,7 +82,7 @@ Un host que termina con `end_host`, `end_batch` o `end_play` no ha fallado, y el
 
 ### Actualizar el inventario
 
-`refresh_inventory` vuelve a leer todas las fuentes de inventario, en el orden de `-i`. `groups` y `hostvars` cambian de inmediato. Un host que las fuentes ganaron se une desde el siguiente play, y un host que perdieron abandona el play donde está, sin fallar. Los hosts y grupos creados por `add_host` y `group_by` permanecen. Si las fuentes ya no se pueden leer, el inventario queda vacío a partir de entonces, como en Ansible: todos los hosts se van y los plays siguientes no coinciden con nada.
+`refresh_inventory` vuelve a leer todas las fuentes de inventario, en el orden de `-i`. `groups` y `hostvars` cambian de inmediato. Un host que las fuentes ganaron se une desde el siguiente play, y un host que perdieron abandona el play donde está, sin fallar. `--limit` también se resuelve de nuevo, así que un host que nombra y que solo tienen las fuentes nuevas también se une. Los hosts y grupos creados por `add_host` y `group_by` permanecen. Si las fuentes ya no se pueden leer, el inventario queda vacío a partir de entonces, como en Ansible: todos los hosts se van y los plays siguientes no coinciden con nada.
 
 Los facts y los valores de `set_fact` se quedan como estaban. Consulta [Inventarios](/es/docs/hosts/inventories/).
 

@@ -81,7 +81,7 @@ A host that ends with `end_host`, `end_batch` or `end_play` has not failed, and 
 
 ### Refreshing the inventory
 
-`refresh_inventory` reads every inventory source again, in the order of `-i`. `groups` and `hostvars` change at once. A host the sources gained joins from the next play, and a host they lost leaves the play where it stands, without failing. Hosts and groups made by `add_host` and `group_by` stay. If the sources cannot be read any more, the inventory is empty from then on, as in Ansible: every host leaves, and the next plays match nothing.
+`refresh_inventory` reads every inventory source again, in the order of `-i`. `groups` and `hostvars` change at once. A host the sources gained joins from the next play, and a host they lost leaves the play where it stands, without failing. `--limit` is resolved again too, so a host it names that only the new sources hold joins as well. Hosts and groups made by `add_host` and `group_by` stay. If the sources cannot be read any more, the inventory is empty from then on, as in Ansible: every host leaves, and the next plays match nothing.
 
 Facts and `set_fact` values stay as they were. See [Inventories](/docs/hosts/inventories/).
 

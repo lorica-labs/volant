@@ -1,5 +1,5 @@
 ---
-sourceHash: 60a46a158fc1
+sourceHash: 630bc063e9af
 title: 委派、meta 任务与 environment
 description: 对一个批次只运行一次 task 或在另一台主机上运行，每个 meta 动作的作用，以及 environment 和 no_log 如何影响 task。
 ---
@@ -82,7 +82,7 @@ role 之外的 `end_role` 会在运行开始之前让运行停止，退出码为
 
 ### 刷新 inventory
 
-`refresh_inventory` 按 `-i` 的顺序重新读取每个 inventory 来源。`groups` 和 `hostvars` 立刻改变。来源新增的主机从下一个 play 开始加入，来源中少了的主机则在当前位置离开 play，且不算失败。由 `add_host` 和 `group_by` 创建的主机和组会保留。如果来源再也无法读取，inventory 此后就是空的，与 Ansible 一致：每台主机都离开，后面的 play 不匹配任何主机。
+`refresh_inventory` 按 `-i` 的顺序重新读取每个 inventory 来源。`groups` 和 `hostvars` 立刻改变。来源新增的主机从下一个 play 开始加入，来源中少了的主机则在当前位置离开 play，且不算失败。`--limit` 也会重新解析，所以它点名的、只有新来源才有的主机同样会加入。由 `add_host` 和 `group_by` 创建的主机和组会保留。如果来源再也无法读取，inventory 此后就是空的，与 Ansible 一致：每台主机都离开，后面的 play 不匹配任何主机。
 
 facts 和 `set_fact` 的值保持原样。见 [Inventory](/zh-cn/docs/hosts/inventories/)。
 

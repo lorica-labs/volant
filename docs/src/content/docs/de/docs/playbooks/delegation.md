@@ -1,5 +1,5 @@
 ---
-sourceHash: 60a46a158fc1
+sourceHash: 630bc063e9af
 title: Delegation, Meta-Tasks und Umgebungsvariablen
 description: Einen Task einmal pro Batch oder auf einem anderen Host ausführen, was jede meta-Action tut und wie environment und no_log einen Task prägen.
 ---
@@ -82,7 +82,7 @@ Ein Host, der mit `end_host`, `end_batch` oder `end_play` endet, ist nicht fehlg
 
 ### Das Inventory neu laden
 
-`refresh_inventory` liest jede Inventory-Quelle erneut, in der Reihenfolge von `-i`. `groups` und `hostvars` ändern sich sofort. Ein Host, den die Quellen hinzugewonnen haben, kommt ab dem nächsten Play dazu, und ein Host, den sie verloren haben, verlässt das Play dort, wo es steht, ohne fehlzuschlagen. Hosts und Gruppen, die `add_host` und `group_by` angelegt haben, bleiben. Lassen sich die Quellen nicht mehr lesen, ist das Inventory von da an leer, wie in Ansible: Jeder Host verlässt das Play, und die nächsten Plays treffen auf nichts.
+`refresh_inventory` liest jede Inventory-Quelle erneut, in der Reihenfolge von `-i`. `groups` und `hostvars` ändern sich sofort. Ein Host, den die Quellen hinzugewonnen haben, kommt ab dem nächsten Play dazu, und ein Host, den sie verloren haben, verlässt das Play dort, wo es steht, ohne fehlzuschlagen. Auch `--limit` wird neu aufgelöst, sodass ein Host, den es nennt und den erst die neuen Quellen enthalten, ebenfalls dazukommt. Hosts und Gruppen, die `add_host` und `group_by` angelegt haben, bleiben. Lassen sich die Quellen nicht mehr lesen, ist das Inventory von da an leer, wie in Ansible: Jeder Host verlässt das Play, und die nächsten Plays treffen auf nichts.
 
 Facts und `set_fact`-Werte bleiben, wie sie waren. Siehe [Inventories](/de/docs/hosts/inventories/).
 

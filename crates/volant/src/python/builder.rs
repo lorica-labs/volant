@@ -8,7 +8,7 @@ use anyhow::{Context, bail};
 use serde_json::Value;
 use volant_protocol::frame::{read_frame, write_frame};
 
-use super::reach::module_path;
+use super::module_path::module_path;
 use super::types::{HELPER, ModuleFacts, Natives, Resolved, Union, payload_key};
 use crate::runtime::resolve;
 

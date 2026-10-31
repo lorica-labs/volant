@@ -69,6 +69,25 @@ pub fn union_and_helper(
     Ok((union, helper))
 }
 
+/// [`union_and_helper`] for a run: the modules its plays name, and every builtin one as well when
+/// a task names one by a template ([`super::reach::modules_unfollowed`]). A module only a template may
+/// name is no reason to refuse a run that cannot build it: built again without them, the task that
+/// renders to one fails by name instead.
+pub(crate) fn union_for_run(
+    reach: &super::Reach,
+    named: &[(String, String)],
+    warn: &mut dyn FnMut(String),
+) -> anyhow::Result<(Option<Union>, Option<PythonBuilder>)> {
+    let plays = super::modules_for_run(reach);
+    let mut every = super::reach::modules_unfollowed(reach);
+    every.extend(plays.iter().cloned());
+    let built = union_and_helper(&every, named, &reach.plugin_dirs, warn);
+    if built.is_err() && every.len() > plays.len() {
+        return union_and_helper(&plays, named, &reach.plugin_dirs, warn);
+    }
+    built
+}
+
 /// The names only the controller's ansible-core can answer to, which the helper resolves first.
 fn collection_names(modules: &std::collections::BTreeSet<String>) -> Vec<String> {
     modules

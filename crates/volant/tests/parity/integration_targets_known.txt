@@ -23,7 +23,7 @@ callback-dispatch              #1287
 callback_results               #1287
 conditionals                   #1282
 connection_delegation          #1265
-connection_local               #1281
+connection_local               #1290
 dataloader                     #1288
 debug                          #1283
 deprecations                   #1282
@@ -35,7 +35,6 @@ find                           #1290
 fork_safe_stdio                #1287
 gather_facts-errors            #1285
 gathering_facts                #1285
-group                          #1281
 include_import                 #1288
 include_vars                   #1282
 include_when_parent_is_static  #1288
@@ -45,7 +44,6 @@ inventory-invalid-group        #1286
 inventory_advanced_host_list   #1286
 inventory_cache                #1286
 inventory_script               #1282
-keyword_inheritance            #1281
 limit_inventory                #1286
 lookup_env                     #1282
 lookup_first_found             #1289
@@ -74,7 +72,6 @@ setup_pexpect                  #1265
 shell                          #1290
 special_vars                   #1289
 strategy-external              #1287
-strategy_linear                #1281
 tags                           #1287
 task-args                      #1284
 task-timeout                   #1290
@@ -87,7 +84,6 @@ throttle                       #1290
 undefined                      #1284
 unsafe_writes                  #1290
 until                          #1290
-user                           #1281
 var_precedence                 #1289
 var_reserved                   #1288
 var_templating                 #1289

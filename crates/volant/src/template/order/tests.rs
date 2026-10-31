@@ -53,7 +53,7 @@ fn chains_and_membership_keep_their_meaning(
 }
 
 /// Measured on ansible-core 2.19.12: Python's words for values it cannot order, the left operand
-/// first. The operands are variables: minijinja folds a comparison of literals before it runs.
+/// first, whether the operands are variables or literals.
 #[rstest]
 #[case(
     "{{ s < 1 }}",
@@ -95,7 +95,40 @@ fn chains_and_membership_keep_their_meaning(
     "{% set l = ['a', 1] %}{% set _ = l.sort() %}{{ l }}",
     "'<' not supported between instances of 'int' and 'str'"
 )]
+#[case(
+    "{{ 'a' < 1 }}",
+    "'<' not supported between instances of 'str' and 'int'"
+)]
+#[case(
+    "{{ 1 >= 'a' }}",
+    "'>=' not supported between instances of 'int' and 'str'"
+)]
+#[case(
+    "{{ none < 1 }}",
+    "'<' not supported between instances of 'NoneType' and 'int'"
+)]
+#[case(
+    "x{% if 'a' > 1 %}y{% endif %}",
+    "'>' not supported between instances of 'str' and 'int'"
+)]
+#[case(
+    "{{ 1 < 2 < 'a' }}",
+    "'<' not supported between instances of 'int' and 'str'"
+)]
 fn what_python_cannot_order_is_refused_in_its_words(#[case] template: &str, #[case] said: &str) {
     let err = render(template).unwrap_err();
     assert!(err.contains(said), "{template}: {err}");
+}
+
+#[test]
+fn a_condition_of_literals_is_refused_too() {
+    let err = crate::testing::templar()
+        .evaluate("'a' < 1", &Map::new())
+        .unwrap_err();
+    assert!(
+        err.0
+            .contains("'<' not supported between instances of 'str' and 'int'"),
+        "{}",
+        err.0
+    );
 }

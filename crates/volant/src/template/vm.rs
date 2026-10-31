@@ -15,6 +15,7 @@ use minijinja::{AutoEscape, ErrorKind};
 use serde_json::Value;
 
 mod expression;
+mod literals;
 
 pub(super) use expression::single_expression;
 
@@ -238,13 +239,14 @@ pub(super) fn render_counted(
     ctx: &minijinja::Value,
     syntax_config: SyntaxConfig,
 ) -> Result<(String, Emitted), minijinja::Error> {
+    let unfolded = literals::unfold_comparisons(source, false, syntax_config.clone());
     let config = TemplateConfig {
         syntax_config,
         // Never by file name: measured on ansible-core 2.19.12, `index.html.j2` holding
         // `{{ "<b>" }}` writes `<b>`.
         default_auto_escape: Arc::new(|_| AutoEscape::None),
     };
-    let mut compiled = no_panic(|| CompiledTemplate::new(name, source, &config))?;
+    let mut compiled = no_panic(|| CompiledTemplate::new(name, &unfolded, &config))?;
     internal_filter(
         std::iter::once(&compiled.instructions).chain(compiled.blocks.values()),
         Some(source),
@@ -353,8 +355,9 @@ pub(super) fn eval_expr(
     ctx: &minijinja::Value,
 ) -> Result<minijinja::Value, minijinja::Error> {
     crate::profile::count(crate::profile::Counter::Compile, 1);
-    let ast = no_panic(|| parse_expr(expr))?;
-    let mut codegen = CodeGenerator::new("<expression>", expr);
+    let unfolded = literals::unfold_comparisons(expr, true, SyntaxConfig::default());
+    let ast = no_panic(|| parse_expr(&unfolded))?;
+    let mut codegen = CodeGenerator::new("<expression>", &unfolded);
     codegen.compile_expr(&ast);
     let (mut instructions, _) = codegen.finish();
     // A one-expression template reaches here without its braces.
@@ -388,6 +391,14 @@ pub(super) fn convert_error(err: minijinja::Error) -> TemplateError {
         return convert_error(minijinja::Error::from(ErrorKind::UndefinedError));
     }
     if let Some(python) = zero_division(&err) {
+        return TemplateError(format!("Error rendering template: {python}"));
+    }
+    // Python's `TypeError` for an ordering, worded by `order::compare` in its words already.
+    if err.kind() == ErrorKind::InvalidOperation
+        && let Some(python) = err
+            .detail()
+            .filter(|d| d.contains(" not supported between instances of "))
+    {
         return TemplateError(format!("Error rendering template: {python}"));
     }
     if err.kind() == ErrorKind::TemplateNotFound

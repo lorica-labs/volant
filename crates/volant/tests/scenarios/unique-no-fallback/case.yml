@@ -1,0 +1,3 @@
+# unique refuses a key Python cannot hash when case_sensitive=False or attribute is given, and a
+# value it cannot iterate, in Python's words.
+args: [-i, inv, play.yml]

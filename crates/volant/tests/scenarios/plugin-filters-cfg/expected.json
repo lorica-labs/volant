@@ -1,0 +1,5 @@
+{
+  "code": 4,
+  "stderr": "[ERROR]: couldn't resolve module/action 'copy'. This often indicates a misspelling, missing collection, or incorrect module path.\nOrigin: <golden-tmp>/play.yml:5:7\n\n3   tasks:\n4     - debug: {msg: never}\n5     - copy: {content: x, dest: /nonexistent/out}\n        ^ column 7\n\n",
+  "stdout": ""
+}

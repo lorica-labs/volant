@@ -188,6 +188,10 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
     if import_module(&task.module).is_some() {
         return Ok(());
     }
+    // A module the `plugin_filters_cfg` file rejects is one the reference cannot resolve.
+    if crate::config::rejected(&task.module) {
+        return Err(resolved::rejected(task));
+    }
     // The two dynamic statements never reach a host either, and what they name is not known until
     // the host that reaches them has rendered its own variables - so there is nothing here for
     // the second pass to walk. What can be checked before the first connection is their

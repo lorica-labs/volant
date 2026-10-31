@@ -263,6 +263,7 @@ pub(super) fn parse(text: &str, base: &Path, origin: &str) -> anyhow::Result<Con
                     boolean("DEPRECATION_WARNINGS", origin, value.trim())?;
             }
             "log_path" => config.log_path = Some(expand_home(value.trim(), base)),
+            "plugin_filters_cfg" => super::filters::load(&expand_home(value.trim(), base)),
             "log_verbosity" => {
                 let level = integer("DEFAULT_LOG_VERBOSITY", origin, value.trim())?;
                 config.log_verbosity = u8::try_from(level.max(0)).unwrap_or(u8::MAX);

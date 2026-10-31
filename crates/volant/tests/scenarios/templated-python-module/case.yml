@@ -1,0 +1,4 @@
+# A module named by a template that renders to a Python module runs: the union holds every
+# builtin then. A template followed by more of the name ends at the space after it.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

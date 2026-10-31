@@ -294,20 +294,14 @@ async fn run_all(
     let reach = python::Reach::walk_run(&named_playbooks).map_err(|e| Refusal::or(4, e))?;
     reach.note_own_actions();
     python::check_plugin_order(&reach).map_err(|e| Refusal::or(4, e))?;
-    let python_modules = python::modules_for_run(&reach);
     let named: Vec<(String, String)> = compiled
         .iter()
         .flatten()
         .flat_map(preflight::collection_modules)
         .collect();
-    let built = python::union_and_helper(
-        &python_modules,
-        &named,
-        &reach.plugin_dirs,
-        &mut |warning| {
-            out.warning(&warning, false);
-        },
-    );
+    let built = python::union_for_run(&reach, &named, &mut |warning| {
+        out.warning(&warning, false);
+    });
     let (python, helper) = match built {
         Ok(built) => built,
         Err(e) => {

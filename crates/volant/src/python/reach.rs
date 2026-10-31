@@ -98,6 +98,15 @@ pub(crate) fn modules_for_run(reach: &Reach) -> std::collections::BTreeSet<Strin
     modules_to_build(reach.modules.iter().map(|(module, _)| module.as_str()))
 }
 
+/// Every builtin module, when a task names a module, a role, or a file outside every role by a
+/// template: nothing follows such a name before the run, and it may lead to any of them.
+pub(crate) fn modules_unfollowed(reach: &Reach) -> std::collections::BTreeSet<String> {
+    let every = reach
+        .unfollowed
+        .then_some(volant_protocol::modules::BUILTIN_MODULES);
+    modules_to_build(every.into_iter().flatten().copied())
+}
+
 /// Every role and task file a run's plays can reach, read once before the first connection: what
 /// [`modules_for_run`] builds the union from, and what `facts_read` reads the facts a run uses
 /// from. It keeps what it has already read, so a ring of includes ends.
@@ -115,6 +124,8 @@ pub(crate) struct Reach {
     modules: Vec<(String, usize)>,
     /// Whether a task loops over a lookup only ansible-core runs (`with_subelements`, `with_dict`).
     pub(crate) bridged_loop: bool,
+    /// Whether a task names, by a template, a module, a role, or a file outside every role.
+    unfollowed: bool,
     /// Every task read from a file, with that file and where it resolves its relative paths.
     pub(crate) tasks: Vec<(
         std::path::PathBuf,
@@ -220,6 +231,7 @@ impl Reach {
 
     /// Records `module` as named by a task that runs now.
     fn named(&mut self, module: &str) {
+        self.unfollowed |= crate::template::Templar::is_template(module);
         self.modules
             .push((module.to_string(), self.plugin_dirs.len()));
     }
@@ -345,6 +357,11 @@ impl Reach {
                 let Some(name) = literal("file").or_else(|| literal("_raw_params")) else {
                     return Ok(());
                 };
+                // A role's every file is read already, whatever name the include renders.
+                if crate::template::Templar::is_template(name) {
+                    self.unfollowed |= role_dir.is_none();
+                    return Ok(());
+                }
                 let path = crate::compile::beside_or_in_role(file_dir, role_dir, name);
                 if !self.files.insert(path.clone()) {
                     return Ok(());
@@ -365,10 +382,9 @@ impl Reach {
                 )?;
             }
             "include_role" | "import_role" => {
-                if let Some(Ok(dir)) = literal("name")
-                    .or_else(|| literal("role"))
-                    .map(|name| search.locate(name))
-                {
+                let name = literal("name").or_else(|| literal("role"));
+                self.unfollowed |= name.is_some_and(crate::template::Templar::is_template);
+                if let Some(Ok(dir)) = name.map(|name| search.locate(name)) {
                     let read = self.role(&dir, search);
                     // An `include_role` reads its role when the task is reached, and a role
                     // that does not parse fails the run there, after the tasks in front of it.
@@ -383,24 +399,6 @@ impl Reach {
         }
         Ok(())
     }
-}
-
-static MODULE_PATH: std::sync::Mutex<Vec<std::path::PathBuf>> = std::sync::Mutex::new(Vec::new());
-
-/// Sets the directories of `-M`/`--module-path`, which hold modules directly and lead the
-/// configured module path, so a playbook's or role's `library/` is still searched before them.
-pub fn set_module_path(dirs: Vec<std::path::PathBuf>) {
-    *MODULE_PATH
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner) = dirs;
-}
-
-/// The directories [`set_module_path`] set.
-pub fn module_path() -> Vec<std::path::PathBuf> {
-    MODULE_PATH
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner)
-        .clone()
 }
 
 /// Refuses a run in which one module name finds different files at different points of the

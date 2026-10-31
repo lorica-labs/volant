@@ -16,6 +16,7 @@
 
 mod action_helper;
 mod builder;
+mod module_path;
 mod reach;
 mod types;
 mod union_build;
@@ -23,16 +24,17 @@ mod union_build;
 pub(crate) use action_helper::{ActionHelper, Silence};
 pub use builder::PythonBuilder;
 pub(crate) use builder::{find_python, module_facts, resolved_from, resolved_json};
+pub use module_path::{module_path, set_module_path};
+pub use reach::is_python_module;
 pub(crate) use reach::{Named, Reach, check_plugin_order, modules_for_run};
-pub use reach::{is_python_module, module_path, set_module_path};
 pub(crate) use types::HELPER;
 #[cfg(test)]
 pub use types::ModuleFacts;
 pub(crate) use types::missing;
 pub use types::{Facts, ModulePayload, Natives, Resolved, Union, is_resolved_name, payload_key};
-pub use union_build::union_and_helper;
 #[cfg(test)]
 pub use union_build::union_for;
+pub(crate) use union_build::union_for_run;
 
 #[cfg(test)]
 mod tests;

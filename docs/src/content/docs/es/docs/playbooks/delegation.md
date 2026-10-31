@@ -1,5 +1,5 @@
 ---
-sourceHash: bfb49ba5fe9b
+sourceHash: "387854768339"
 title: Delegación, tareas meta y environment
 description: Ejecutar una tarea una sola vez para un lote o en otro host, qué hace cada acción meta, y cómo dan forma a una tarea environment y no_log.
 ---
@@ -43,7 +43,7 @@ La tarea viaja por la conexión propia del delegado, con los ajustes de conexió
 
 Un módulo que se ejecuta en el controlador, como `set_fact` o `debug`, se ejecuta siempre en el controlador, diga lo que diga `delegate_to`. El delegado solo decide entonces el nombre que se muestra en la línea de resultado y, con `delegate_facts`, de quién se escriben los facts.
 
-`action:` y `local_action:` aceptan una cadena (`command echo hi`), un mapa con `module:` que Ansible considera obsoleto, o un nombre de módulo solo con los argumentos bajo `args:`. El módulo puede ser una plantilla, como `action: "{{ module_to_run }} msg=hi"`: se renderiza para cada host cuando la tarea se ejecuta, y el banner lo muestra tal como está escrito. Una plantilla que nombra un módulo de Python que esta ejecución no construyó hace fallar la tarea, porque los módulos se construyen antes de la primera conexión. Una palabra como `module=command` tras `action:` no nombra ningún módulo. La tarea falla cuando un host llega a ella, con el código 2, y un `rescue` o `ignore_errors` absorbe el fallo, como en Ansible.
+`action:` y `local_action:` aceptan una cadena (`command echo hi`), un mapa con `module:` que Ansible considera obsoleto, o un nombre de módulo solo con los argumentos bajo `args:`. El módulo puede ser una plantilla, como `action: "{{ module_to_run }} msg=hi"`: se renderiza para cada host cuando la tarea se ejecuta, y el banner lo muestra tal como está escrito. Los módulos se construyen antes de la primera conexión, así que una ejecución con una plantilla así construye todos los módulos de Python incluidos. Una plantilla que nombra un módulo de una colección o de un directorio `library/`, que ninguna tarea nombra directamente, hace fallar la tarea. Una palabra como `module=command` tras `action:` no nombra ningún módulo. La tarea falla cuando un host llega a ella, con el código 2, y un `rescue` o `ignore_errors` absorbe el fallo, como en Ansible.
 
 `delegate_to` y `delegate_facts` pueden escribirse en un bloque y en una tarea, no en un play, que es donde Ansible también los acepta. Las dos palabras clave se combinan: una tarea `run_once` con un `delegate_to` se ejecuta una vez, en el delegado.
 

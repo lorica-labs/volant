@@ -1,5 +1,5 @@
 ---
-sourceHash: bfb49ba5fe9b
+sourceHash: "387854768339"
 title: Délégation, tâches meta et environment
 description: Exécuter une tâche une seule fois pour un lot ou sur un autre hôte, ce que fait chaque action meta, et comment environment et no_log façonnent une tâche.
 ---
@@ -43,7 +43,7 @@ La tâche passe par la propre connexion de l'hôte délégué, avec ses réglage
 
 Un module côté contrôleur comme `set_fact` ou `debug` s'exécute toujours sur le contrôleur, quoi que dise `delegate_to`. L'hôte délégué ne décide alors que du nom affiché sur la ligne de résultat et, avec `delegate_facts`, de l'hôte dont les facts sont écrits.
 
-`action:` et `local_action:` prennent une chaîne (`command echo hi`), un mapping avec `module:` qu'Ansible juge obsolète, ou un nom de module seul avec les arguments sous `args:`. Le module peut être un template, comme `action: "{{ module_to_run }} msg=hi"` : il est rendu pour chaque hôte quand la tâche s'exécute, et la bannière l'affiche tel qu'il est écrit. Un template qui nomme un module Python que cette exécution n'a pas construit fait échouer la tâche, car les modules sont construits avant la première connexion. Un mot comme `module=command` après `action:` ne nomme aucun module. La tâche échoue quand un hôte l'atteint, avec le code 2, et un `rescue` ou `ignore_errors` prend l'échec, comme dans Ansible.
+`action:` et `local_action:` prennent une chaîne (`command echo hi`), un mapping avec `module:` qu'Ansible juge obsolète, ou un nom de module seul avec les arguments sous `args:`. Le module peut être un template, comme `action: "{{ module_to_run }} msg=hi"` : il est rendu pour chaque hôte quand la tâche s'exécute, et la bannière l'affiche tel qu'il est écrit. Les modules sont construits avant la première connexion, donc une exécution avec un tel template construit tous les modules Python intégrés. Un template qui nomme un module d'une collection ou d'un répertoire `library/`, qu'aucune tâche ne nomme directement, fait échouer la tâche. Un mot comme `module=command` après `action:` ne nomme aucun module. La tâche échoue quand un hôte l'atteint, avec le code 2, et un `rescue` ou `ignore_errors` prend l'échec, comme dans Ansible.
 
 `delegate_to` et `delegate_facts` peuvent s'écrire sur un bloc et sur une tâche, pas sur un play, ce qui est aussi le cas dans Ansible. Les deux mots-clés se combinent : une tâche `run_once` avec un `delegate_to` s'exécute une fois, sur l'hôte délégué.
 

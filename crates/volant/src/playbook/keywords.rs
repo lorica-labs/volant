@@ -78,21 +78,35 @@ pub(super) fn escalation(
 /// mapping is merged into the arguments beside it. A first word with a `=` in it is a
 /// `module=command` spelling the reference cannot resolve, which fails the task rather than the
 /// load, and a mapping with no `module:` has "no module/action".
+/// Where the module of an `action:` string ends: at the first space outside a template, as
+/// ansible-core's `split_args` joins a template's pieces back together. Measured on 2.19.12,
+/// `action: "{{ prefix }}file path=x"` runs `file` when `prefix` is empty.
+fn module_word_end(text: &str) -> usize {
+    let mut depth = 0usize;
+    let mut chars = text.char_indices().peekable();
+    while let Some((at, c)) = chars.next() {
+        match (c, chars.peek().map(|&(_, next)| next)) {
+            ('{', Some('{' | '%')) => {
+                depth += 1;
+                chars.next();
+            }
+            ('}' | '%', Some('}')) if depth > 0 => {
+                depth -= 1;
+                chars.next();
+            }
+            (c, _) if depth == 0 && c.is_whitespace() => return at,
+            _ => {}
+        }
+    }
+    text.len()
+}
+
 pub(super) fn action_statement<'a>(node: &Yaml<'a>) -> anyhow::Result<(String, Yaml<'a>)> {
     match node {
         Yaml::Value(Scalar::String(text)) => {
             let text = text.trim();
-            // A module named by a template ends where the template does, spaces inside it and all.
-            let named_by_template = text
-                .starts_with("{{")
-                .then(|| text.find("}}").map(|end| end + 2))
-                .flatten();
-            let (name, rest) = match named_by_template {
-                Some(end) => (&text[..end], text[end..].trim_start()),
-                None => text
-                    .split_once(char::is_whitespace)
-                    .map_or((text, ""), |(name, rest)| (name, rest.trim_start())),
-            };
+            let end = module_word_end(text);
+            let (name, rest) = (&text[..end], text[end..].trim_start());
             if name.is_empty() {
                 bail!("no module/action detected in task.");
             }

@@ -279,6 +279,16 @@ pub(in crate::executor) enum MetaEffect {
     RefreshInventory,
 }
 
+/// Leads the reason of a host an action plugin returned unreachable rather than lost: measured on
+/// ansible-core 2.19.12, it prints no error block and registers `"failed": false`.
+pub(in crate::executor) const RETURNED: &str = "\u{0}returned:";
+
+/// The reason without [`RETURNED`], and whether it led.
+pub(in crate::executor) fn returned(msg: &str) -> (bool, &str) {
+    msg.strip_prefix(RETURNED)
+        .map_or((false, msg), |msg| (true, msg))
+}
+
 /// One loop item a host could not be reached for: its label and its unreachable result.
 /// Measured on ansible-core 2.19.12: each item tries the connection and reports
 /// `failed: [h] (item=1) => {..., "unreachable": true}`, then the task's `UNREACHABLE!` line holds
@@ -322,16 +332,19 @@ impl Unreached {
     }
 
     pub(super) fn show(&self, host: &str, out: &mut Renderer) {
+        let (plain, msg) = returned(&self.msg);
         // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
         // the reason censored.
-        out.error(&crate::render::ErrorBlock::unreachable(
-            &self.msg,
-            self.origin.as_ref(),
-            self.censored,
-        ));
+        if !plain {
+            out.error(&crate::render::ErrorBlock::unreachable(
+                msg,
+                self.origin.as_ref(),
+                self.censored,
+            ));
+        }
         show_lost(
             host,
-            &self.msg,
+            msg,
             &self.items,
             self.censored,
             self.delegate.as_deref(),

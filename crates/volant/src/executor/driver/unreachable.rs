@@ -31,9 +31,15 @@ pub(super) async fn ignore_unreachable(
     store: &Mutex<VarStore>,
     register_hosts: &[String],
 ) {
+    let (plain, reason) = crate::executor::coordinator::returned(&msg);
     let mut result = TaskResult::default();
     result.0.insert("changed".into(), Value::Bool(false));
-    result.0.insert("msg".into(), Value::String(msg.clone()));
+    if plain {
+        result.0.insert("failed".into(), Value::Bool(false));
+    }
+    result
+        .0
+        .insert("msg".into(), Value::String(reason.to_string()));
     result.0.insert("unreachable".into(), Value::Bool(true));
     // A loop registers its items under `results`, each as the reference keeps it, and the
     // aggregate stays unreachable.

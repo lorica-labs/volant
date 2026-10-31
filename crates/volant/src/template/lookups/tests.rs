@@ -656,3 +656,16 @@ fn a_vars_term_that_is_not_text_is_refused(#[case] term: &str, #[case] kind: &st
         format!("The lookup plugin 'vars' failed: Variable name must be 'str' not '{kind}'.")
     );
 }
+
+#[test]
+fn a_varnames_pattern_python_refuses_says_why_as_python() {
+    let t = crate::testing::templar();
+    let err = t
+        .render("{{ lookup('varnames', '*') }}", &Map::new())
+        .unwrap_err();
+    assert!(
+        err.0.contains("nothing to repeat at position 0"),
+        "{}",
+        err.0
+    );
+}

@@ -1220,8 +1220,11 @@ fn the_helper_names_the_files_a_union_came_from() {
             traced
         })
         .expect("every entry is named");
-    let python = std::env::var("VOLANT_PYTHON").unwrap();
-    assert_eq!(traced.interpreter, std::fs::canonicalize(python).unwrap());
+    // The interpreter named is the one asked for, when one was: without `VOLANT_PYTHON` the
+    // helper takes the first ansible-core it finds.
+    if let Ok(python) = std::env::var("VOLANT_PYTHON") {
+        assert_eq!(traced.interpreter, std::fs::canonicalize(python).unwrap());
+    }
     let sources = traced.sources;
     let paths: Vec<String> = sources
         .iter()

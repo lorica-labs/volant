@@ -58,6 +58,12 @@ pub fn run_within_seen(
     let (send, receive) = std::sync::mpsc::channel();
     std::thread::spawn(move || send.send(child.wait_with_output()));
     let received = receive.recv_timeout(deadline);
+    // Where a hung child waits, taken before it is killed: the panic below carries it.
+    let stacks = if received.is_err() {
+        stacks_of(pid)
+    } else {
+        String::new()
+    };
     if received.is_err() {
         kill_group(pid);
     }
@@ -70,11 +76,25 @@ pub fn run_within_seen(
             .expect("the waiting thread answers")
             .expect("the child's output");
         panic!(
-            "{what} {arguments} did not finish within {deadline:?}:\n{}",
-            String::from_utf8_lossy(&out.stdout)
+            "{what} {arguments} did not finish within {deadline:?}:\n{}\n--- stderr\n{}\n{stacks}",
+            String::from_utf8_lossy(&out.stdout),
+            String::from_utf8_lossy(&out.stderr)
         );
     };
     out.expect("the child's output")
+}
+
+/// The stacks of each thread of `pid`, where the system can tell them without a debugger: macOS
+/// `sample`. Empty elsewhere.
+fn stacks_of(pid: u32) -> String {
+    if !cfg!(target_os = "macos") {
+        return String::new();
+    }
+    Command::new("sample")
+        .args([&pid.to_string(), "1"])
+        .output()
+        .map(|out| format!("--- stacks\n{}", String::from_utf8_lossy(&out.stdout)))
+        .unwrap_or_default()
 }
 
 #[cfg(unix)]

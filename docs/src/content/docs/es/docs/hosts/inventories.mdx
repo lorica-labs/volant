@@ -1,5 +1,5 @@
 ---
-sourceHash: fc3f00e1fecb
+sourceHash: e36caf7c110c
 title: Inventarios y caché de facts
 description: El formato de inventario que lee Volant, de dónde salen las variables de grupo y de host, la gramática de los patrones de hosts y cómo se conservan los facts entre ejecuciones.
 ---
@@ -80,7 +80,7 @@ Volant lee `group_vars/` y `host_vars/` junto a cada fuente y después junto al 
 
 Cuando un host está en varios grupos, gana el grupo más profundo. Entre grupos de la misma profundidad decide `ansible_group_priority` (gana el valor más alto) y después el nombre del grupo.
 
-Un nombre que es a la vez un host y un grupo significa el host. Volant avisa una vez por ejecución cuando un inventario contiene un nombre así, sea cual sea el patrón de la ejecución, porque Ansible lo detecta al cargar el inventario.
+Un nombre que es a la vez un host y un grupo significa el host. Volant avisa una vez por ejecución cuando un inventario contiene un nombre así, sea cual sea el patrón de la ejecución, porque Ansible lo detecta al cargar el inventario. Las variables que una fuente da a ese host van al grupo en cuanto el grupo existe, como en Ansible, así que todos los miembros del grupo las leen.
 
 ## Imprimir un inventario
 

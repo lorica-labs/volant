@@ -79,7 +79,7 @@ Volant reads `group_vars/` and `host_vars/` next to each source, then next to th
 
 When a host is in several groups, the deeper group wins. Between groups at the same depth, `ansible_group_priority` decides (the higher value wins), then the group name.
 
-A name that is both a host and a group means the host. Volant warns once per run when an inventory contains such a name, whatever pattern the run uses, because Ansible detects it when it loads the inventory.
+A name that is both a host and a group means the host. Volant warns once per run when an inventory contains such a name, whatever pattern the run uses, because Ansible detects it when it loads the inventory. The variables a source gives that host go to the group once the group exists, as in Ansible, so every member of the group reads them.
 
 ## Printing an inventory
 

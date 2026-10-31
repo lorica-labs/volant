@@ -15,7 +15,7 @@ mod docker;
 mod filters;
 pub(crate) use filters::rejected;
 mod locate;
-pub(crate) use locate::locate;
+pub(crate) use locate::{helper_config, locate};
 mod paramiko;
 mod parse;
 mod paths;

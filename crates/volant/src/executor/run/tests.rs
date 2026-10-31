@@ -5187,6 +5187,10 @@ async fn a_shutdown_answer_before_the_link_went_is_kept() {
         "Reboot command failed. Error was: ', shutdown: Permission denied'"
     );
     assert_eq!(relink.attempts, 0);
+    // `start` is the UTC time the command came back, as `datetime.isoformat` writes it.
+    assert_eq!(result.0["changed"], json!(false));
+    let start = result.0["start"].as_str().expect("a start time");
+    assert!(start.ends_with("+00:00") && start.len() == 32, "{start}");
 }
 
 /// The reference's schedule between two tries: 1, 2, 4, 8, then 12 seconds for good.

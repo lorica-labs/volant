@@ -26,6 +26,17 @@ pub(crate) fn locate() -> Option<PathBuf> {
     current().path
 }
 
+/// The `ANSIBLE_CONFIG` the Python helper gets when this run skipped an `ansible.cfg` in a
+/// world-writable directory: the file the run reads, or none, so the helper's ansible-core reads
+/// the same and does not print the warning the run printed already.
+pub(crate) fn helper_config() -> Option<PathBuf> {
+    let found = current();
+    let none = if cfg!(windows) { "NUL" } else { "/dev/null" };
+    found
+        .skipped
+        .then(|| found.path.unwrap_or_else(|| PathBuf::from(none)))
+}
+
 /// The search for this process: its environment and its working directory.
 pub(super) fn current() -> Located {
     let home = super::paths::home();

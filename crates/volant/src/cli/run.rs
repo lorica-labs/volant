@@ -127,7 +127,7 @@ async fn run_all(
         play.take_defaults(args.check, args.diff, config.gathering == "explicit");
     }
     let plays_of = playbooks.iter().flat_map(|pb| &pb.plays);
-    crate::action_plugins::facts_modules::configure(&config.facts_modules, plays_of, &inventory);
+    crate::action_plugins::facts_modules::configure(&config, plays_of, &inventory);
     let mode = Listing {
         tasks: args.list_tasks,
         tags: args.list_tags,

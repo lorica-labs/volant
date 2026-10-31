@@ -438,8 +438,8 @@ pub(crate) fn meta(role: &Path) -> anyhow::Result<(Vec<RoleEntry>, bool, Vec<Str
     Ok((dependencies, allow_duplicates, collections))
 }
 
-/// `meta/argument_specs.yml`, reduced to the `options` mapping of the entry named after the
-/// tasks file being run. Measured: a role read with `tasks_from: extra` is checked against the
+/// `meta/argument_specs.yml`, or the `argument_specs` key of `meta/main.yml` when the role has no
+/// such file, reduced to the `options` mapping of the entry named after the tasks file being run. Measured: a role read with `tasks_from: extra` is checked against the
 /// `extra` entry, and the banner names the entry (`Validating arguments against arg spec
 /// 'main'`).
 type ArgumentSpec = (Option<Map<String, Value>>, Option<String>);
@@ -447,15 +447,18 @@ type ArgumentSpec = (Option<Map<String, Value>>, Option<String>);
 fn argument_spec(role: &Path, entry: &str) -> anyhow::Result<ArgumentSpec> {
     // `_load_argument_specs` of ansible-core 2.19.12 reads the file only when one of
     // `argument_specs.yml`, `.yaml` or `.json` exists, then looks it up by name, so a bare
-    // `argument_specs` wins beside one of them and is never read alone.
+    // `argument_specs` wins beside one of them and is never read alone. With none of them it
+    // reads the `argument_specs` of the role's metadata, `meta/main.yml`.
     let base = role.join("meta");
-    if ![".yml", ".yaml", ".json"]
+    let own_file = [".yml", ".yaml", ".json"]
         .iter()
-        .any(|ext| base.join(format!("argument_specs{ext}")).exists())
-    {
-        return Ok((None, None));
-    }
-    let Some(files) = meta_files(role, "argument_specs", true)? else {
+        .any(|ext| base.join(format!("argument_specs{ext}")).exists());
+    let files = if own_file {
+        meta_files(role, "argument_specs", true)?
+    } else {
+        meta_files(role, "main", false)?
+    };
+    let Some(files) = files else {
         return Ok((None, None));
     };
     for file in files {

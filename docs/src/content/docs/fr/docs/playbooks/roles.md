@@ -1,5 +1,5 @@
 ---
-sourceHash: 053a11b38c33
+sourceHash: bca51b95b831
 title: Rôles, includes et imports
 description: Où Volant cherche les rôles, comment fonctionnent les dépendances, les spécifications d'arguments et les variables de rôle, et comment les imports et les includes amènent d'autres fichiers dans un play.
 ---
@@ -43,7 +43,7 @@ roles:
 
 ## Spécifications d'arguments
 
-`meta/argument_specs.yml` devient une tâche à part. Elle s'exécute après les dépendances du rôle et avant la première tâche du rôle, et elle vérifie les arguments du rôle par rapport à l'entrée de spécification qui porte le nom de son fichier de tâches.
+`meta/argument_specs.yml` devient une tâche à part. Elle s'exécute après les dépendances du rôle et avant la première tâche du rôle, et elle vérifie les arguments du rôle par rapport à l'entrée de spécification qui porte le nom de son fichier de tâches. Un rôle sans ce fichier peut placer ses `argument_specs` dans `meta/main.yml`, comme dans Ansible.
 
 La tâche porte la `short_description` du rôle après un tiret : `--list-tasks` affiche donc `Validating arguments against arg spec 'main' - The spec role`. Elle est taguée `always`, si bien qu'aucune sélection `--tags` ne l'écarte.
 

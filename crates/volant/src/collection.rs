@@ -60,6 +60,25 @@ fn is_statement(module: &str) -> bool {
     )
 }
 
+/// Whether the collection at `dir` routes `module` in its `meta/runtime.yml`, as a module or an
+/// action: measured on ansible-core 2.19.12, a short name a listed collection only redirects
+/// resolves through that collection.
+fn routes(dir: &std::path::Path, module: &str) -> bool {
+    let path = dir.join("meta").join("runtime.yml");
+    let Ok(text) = std::fs::read_to_string(&path) else {
+        return false;
+    };
+    let Some(Ok(runtime)) = crate::yaml::load(&text, &path.display().to_string())
+        .ok()
+        .and_then(|docs| docs.first().map(crate::yaml::to_json))
+    else {
+        return false;
+    };
+    ["modules", "action"]
+        .iter()
+        .any(|kind| runtime["plugin_routing"][kind].get(module).is_some())
+}
+
 /// Gives a task written with a short module name the name of the first listed collection that
 /// has it. A name no listed collection has stays as written, for `ansible.builtin` to answer.
 ///
@@ -100,7 +119,8 @@ fn resolve(task: &mut PlayTask, search: &RoleSearch, warnings: &mut Vec<String>)
                 .join(kind)
                 .join(format!("{module}.py"))
                 .is_file()
-        }) {
+        }) || routes(&dir, module)
+        {
             found = Some(format!("{collection}.{module}"));
             break;
         }

@@ -1,0 +1,5 @@
+# `strategy` and `order` written as templates are rendered with the play's variables and the extra vars when the play starts.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, play.yml, -e, myorder=reverse_sorted]
+  - args: [-i, inv.ini, play.yml, -e, test_strategy=free, -l, h1]

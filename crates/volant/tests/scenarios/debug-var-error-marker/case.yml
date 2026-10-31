@@ -1,0 +1,3 @@
+# A debug var expression that reads something missing prints the error marker as its value,
+# after a warning at the expression; a loop warns once for the same place.
+args: [-i, inv, play.yml]

@@ -1,0 +1,5 @@
+# A module in the playbook's library/ wins over ansible-core's module of the same name, even
+# with no extension, and ansible.legacy.<name> finds it; a short name a listed collection only
+# routes in its runtime.yml resolves through that collection.
+needs: [ansible-core]
+args: [-i, inv.ini, play.yml]

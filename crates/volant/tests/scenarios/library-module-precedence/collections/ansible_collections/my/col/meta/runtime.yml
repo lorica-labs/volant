@@ -1,0 +1,4 @@
+plugin_routing:
+  modules:
+    routed:
+      redirect: my.col.real

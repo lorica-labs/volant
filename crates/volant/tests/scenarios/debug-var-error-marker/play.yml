@@ -1,0 +1,16 @@
+- hosts: localhost
+  gather_facts: false
+  vars:
+    mydict: {a: 1}
+    mylist: [1]
+    empty: []
+  tasks:
+    - debug: var=missing
+    - debug: {var: mydict.c}
+    - debug: {var: "mydict['c']"}
+    - debug: {var: "mylist[3]"}
+    - debug: {var: "mylist[-5]"}
+    - debug: {var: "empty[0]"}
+    - debug: {var: "missing + 1"}
+    - debug: var=missing
+      loop: [1, 2]

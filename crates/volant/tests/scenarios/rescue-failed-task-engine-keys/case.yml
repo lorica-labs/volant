@@ -1,0 +1,3 @@
+# `ansible_failed_task` carries ansible-core's own six keys: `_resolved_action`, `async_val`, `finalized`, `loop_with`, `squashed` and `uuid`.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

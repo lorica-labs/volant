@@ -9,6 +9,7 @@ use crate::executor::prepare::{Item, display};
 use crate::playbook::PlayTask;
 use crate::template::Templar;
 
+use super::interpreter::action_fqcn;
 use super::judge::{empty_loop_result, loops, task_fails};
 
 /// What `register` stores: the single result, or Ansible's loop aggregate.
@@ -67,10 +68,11 @@ pub(in crate::executor) fn registered_value(
 ///
 /// Measured on ansible-core 2.19.12 with a `command` carrying `register`, `when`, `tags` and
 /// `vars`: the dictionary holds one key per task keyword, `action` holding the module's short
-/// name, plus six keys of the engine's own (`uuid`, `finalized`, `squashed`, `_resolved_action`,
-/// `async_val`, `loop_with`) that describe nothing a playbook wrote. Those six are deliberately
-/// not reproduced, and neither are the `_ansible_*` keys the reference adds to `args` on its way
-/// to the module.
+/// name, plus six keys of the engine's own: `_resolved_action` (the action's full name),
+/// `async_val`, `finalized` and `squashed` (both `true` by then), `loop_with` (the `with_` lookup,
+/// or `null`) and `uuid`, which here names the task by where it was written, the same for the
+/// whole run. The `_ansible_*` keys the reference adds to `args` on its way to the module are
+/// not reproduced.
 ///
 /// The keys come from the keyword table itself rather than from a list written here, so a
 /// keyword added to the grammar appears in this dictionary too. Two families are left out
@@ -127,7 +129,32 @@ pub(in crate::executor) fn failed_task_value(task: &PlayTask) -> Value {
         };
         out.insert(kw.name.to_string(), value);
     }
+    let loop_with = match (&task.loop_with, task.with_items) {
+        (Some(lookup), _) => json!(lookup),
+        (None, true) => json!("items"),
+        (None, false) => Value::Null,
+    };
+    out.insert("_resolved_action".into(), json!(action_fqcn(&task.module)));
+    out.insert("async_val".into(), json!(task.async_val));
+    out.insert("finalized".into(), json!(true));
+    out.insert("loop_with".into(), loop_with);
+    out.insert("squashed".into(), json!(true));
+    out.insert("uuid".into(), json!(task_uuid(task)));
     Value::Object(out)
+}
+
+/// A uuid for the task, the same wherever the run asks for it: the run's prefix, then a number
+/// drawn from where the task was written.
+fn task_uuid(task: &PlayTask) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    task.origin
+        .as_ref()
+        .map(|o| (&o.path, o.line, o.col))
+        .hash(&mut hasher);
+    task.name.hash(&mut hasher);
+    let n = hasher.finish() % 1_000_000_000_000;
+    format!("{}-{n:012}", crate::render::uuid_prefix())
 }
 
 /// The handlers one finished task asks for, if it changed anything and did not fail, and the

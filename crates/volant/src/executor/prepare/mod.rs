@@ -20,6 +20,7 @@ mod connect;
 mod escalation;
 mod fields;
 mod item;
+mod keyword;
 mod label;
 mod late;
 mod loops;
@@ -28,11 +29,11 @@ pub(in crate::executor) mod undefined;
 mod vars;
 
 pub(in crate::executor) use escalation::retry_name;
-pub(in crate::executor) use item::strict_boolean;
 pub(in crate::executor) use item::{
     FINALIZING, Item, NOTIFY_FAILED, Prepared, failed_result, failure_text, pause_of,
     undefined_name,
 };
+pub(in crate::executor) use keyword::strict_boolean;
 pub(in crate::executor) use label::{label_failed, label_raised_result, raised_by_label};
 pub(in crate::executor) use late::{
     hide_after_failure, item_ignores_unreachable, resolve, strategy_reads_as_true,

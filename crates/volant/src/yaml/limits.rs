@@ -215,7 +215,14 @@ pub(super) fn syntax_error(err: &anyhow::Error, text: &str) -> Option<(String, u
     let opened = text
         .get(scan.marker().index()..)
         .is_some_and(|rest| rest.starts_with("---") || rest.starts_with('%'));
-    if info == SECOND_DOCUMENT && !opened {
+    // So is a closing bracket after a whole flow collection, which libyaml reads as more text
+    // where a new document would have to start: measured, `{ }}` says that.
+    let before = text.get(..scan.marker().index()).unwrap_or_default();
+    let depth = |open: char, close: char| {
+        before.matches(open).count() as isize - before.matches(close).count() as isize
+    };
+    let whole = depth('{', '}') == 0 && depth('[', ']') == 0;
+    if (info == SECOND_DOCUMENT && !opened) || (info == "misplaced bracket" && whole) {
         info = "did not find expected <document start>".to_string();
     }
     // libyaml joins what it was parsing and what went wrong with a space, saphyr with a comma,

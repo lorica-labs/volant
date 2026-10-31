@@ -310,6 +310,32 @@ pub struct PlayTask {
     pub value_origins: std::collections::BTreeMap<String, Origin>,
 }
 
+impl Play {
+    /// The run's defaults under what the play says itself, which everything in it inherits:
+    /// `--check`, `--diff`, `gathering = explicit`, and `ANSIBLE_NO_LOG` (`DEFAULT_NO_LOG`), under
+    /// which a task's own `no_log: false` still shows, measured on ansible-core 2.19.12.
+    pub fn take_defaults(&mut self, check: bool, diff: bool, explicit: bool) {
+        self.check_mode = self
+            .check_mode
+            .take()
+            .or(check.then_some(Flag::Fixed(true)));
+        self.diff = self.diff.take().or(diff.then_some(Flag::Fixed(true)));
+        if explicit && !self.gather_written {
+            self.gather_facts = false;
+        }
+        let no_log = std::env::var("ANSIBLE_NO_LOG").unwrap_or_default();
+        if self.no_log.is_none()
+            && self.deferred.no_log.is_none()
+            && matches!(
+                no_log.trim().to_lowercase().as_str(),
+                "1" | "y" | "yes" | "on" | "true" | "t"
+            )
+        {
+            self.no_log = Some(true);
+        }
+    }
+}
+
 impl PlayTask {
     /// Whether a failure here leaves the host in the play. Silence means no: the keyword is
     /// three-state only so a block and the task under it can disagree, and by the time the

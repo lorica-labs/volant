@@ -1,5 +1,5 @@
 ---
-sourceHash: 97768b377097
+sourceHash: 0228e4fa70e5
 title: 模板语言参考
 description: Volant 的 Jinja2 所支持的 Python 方法、字符串规则、正则表达式和限制，以及与 ansible-core 的每一处差异。
 ---
@@ -194,7 +194,7 @@ Volant 会先渲染每个参数，并把结果作为数据发送。Python 不会
 Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.
 ```
 
-像 `debug: var: result.stdout` 这样由你自己写出名字则照常工作。会被拦下的是 `debug: var: "{{ from_a_host }}"`。
+像 `debug: var: result.stdout` 这样由你自己写出名字则照常工作。会被拦下的是 `debug: var: "{{ from_a_host }}"`。`debug: var: "{{ 'name' }}"` 同样会被拦下：与 ansible-core 2.19 一致，模板里的字符串字面量不受信任。从你自己写的循环里读出的名字，例如 `debug: var: "{{ item }}"`，仍然可用。不是文本的 `var`（包括数字）会让 task 失败，并给出参数规范的报错。
 
 条件遵循同样的规则。渲染为你自己写的字符串（例如 `"1 == 1"`）的 `when: "{{ ... }}"`，会被再作为条件求值一次。如果这次渲染读取了主机发来的内容，这个字符串就绝不会被编译，task 会失败，并给出同样的 `Encountered untrusted template or expression.`。`that` 经过模板处理的 `assert` 也以同样的方式工作。
 

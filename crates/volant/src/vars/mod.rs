@@ -10,6 +10,7 @@ mod listed;
 mod load;
 mod magic;
 mod play_view;
+mod refresh;
 mod shared;
 mod store;
 

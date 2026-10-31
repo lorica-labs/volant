@@ -65,6 +65,7 @@ fn parse() -> Cli {
         let mut argv = std::env::args_os();
         let program = argv.next().unwrap_or_default();
         if let Some(sub) = volant::cli::subcommand_for(&program) {
+            volant::cli::check_locale();
             let started = std::path::Path::new(&program)
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())

@@ -2125,7 +2125,8 @@ The collection 'foo.bar' is not installed on the controller: install it with vol
 #[case::not_a_reference(
     "sub.hello",
     "Error loading plugin 'sub.hello': sub.hello is not a valid collection reference",
-    ""
+    "
+"
 )]
 fn a_module_nothing_holds_prints_the_reference_warning_and_error_block(
     #[case] module: &str,

@@ -1,5 +1,5 @@
 ---
-sourceHash: 8dc270cc846e
+sourceHash: b638cbf2bfa7
 title: ansible 命令名
 description: Volant 的哪个命令取代 ansible-core 的哪个程序，哪些相同，哪些不同，以及如何保留你的命令行。
 ---
@@ -31,7 +31,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 volant shims install
 ```
 
-每个名字都是指向 `volant` 的符号链接。Volant 会读取自己被启动时的文件名，所以链接 `ansible-vault` 运行的是 `volant vault`。两个命令接受相同的参数，给出相同的输出和退出码。用法错误以 2 退出，并按启动时的名字称呼程序，即 `ansible-vault: error: ...`。
+每个名字都是指向 `volant` 的符号链接。Volant 会读取自己被启动时的文件名，所以链接 `ansible-vault` 运行的是 `volant vault`。两个命令接受相同的参数，给出相同的输出和退出码。用法错误以 2 退出，并按启动时的名字称呼程序，即 `ansible-vault: error: ...`。和 ansible-core 一样，链接会在读取参数之前检查 locale。无法设置的 locale，或不是 UTF-8 的 locale，会以 1 退出，并报 `ERROR: Ansible could not initialize the preferred locale` 或 `ERROR: Ansible requires the locale encoding to be UTF-8`。`LC_ALL=C` 会被拒绝；如果没有设置任何 locale 变量，C locale 按 C.UTF-8 处理。`volant` 本身不做检查。
 
 `install` 不会替换不是它创建的文件或链接，除非给出 `--force`。当 `PATH` 中还有同名的其他程序时，它会说明：链接胜出时是 `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`，否则是 `note: ... still runs first, DIR comes later in PATH`。要删除这些链接：
 

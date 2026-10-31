@@ -19,7 +19,7 @@ use crate::stats::CustomStats;
     clippy::type_complexity,
     reason = "one value per map the store keeps, built together and assigned together"
 )]
-fn inventory_maps(
+pub(super) fn inventory_maps(
     inventory: &Inventory,
 ) -> (
     BTreeMap<String, Vec<String>>,
@@ -152,7 +152,7 @@ impl VarStore {
     /// Marks every host name and group name of the inventory that holds template syntax as data,
     /// whichever source it came from: the files the run started with, `refresh_inventory`,
     /// `add_host` and `group_by`.
-    fn mark_inventory_names(&mut self) {
+    pub(super) fn mark_inventory_names(&mut self) {
         let hosts = self.groups.get("all").into_iter().flatten();
         self.data_hosts
             .extend(hosts.filter(|name| is_data_name(name)).cloned());
@@ -238,43 +238,6 @@ impl VarStore {
     /// The sources and plugin settings a refresh reads again, when there are some.
     pub fn reload(&self) -> Option<(Vec<Source>, PluginConfig, Arc<Bridge>)> {
         self.reload.clone()
-    }
-
-    /// Replaces what the store knows of the inventory with `inventory`'s groups, hosts and
-    /// variables, as `meta: refresh_inventory` does mid-play, and puts back the hosts and groups
-    /// `add_host` and `group_by` made. The facts hosts gathered and the facts the playbook set
-    /// stay where they are: the reference's refresh re-reads its sources and touches neither.
-    /// Returns the inventory the store now holds.
-    pub fn refresh_inventory(&mut self, inventory: &Inventory) -> Inventory {
-        self.dynamic = inventory.clone();
-        for change in &self.added {
-            match change {
-                Added::Host(name, vars) => self.dynamic.add_host(name, vars.clone()),
-                Added::Member(host, group) => self.dynamic.add_member(host, group),
-                Added::Child(parent, child) => self.dynamic.add_child(parent, child),
-            }
-        }
-        (
-            self.groups,
-            self.inventory_vars,
-            self.host_line_vars,
-            self.group_names,
-        ) = inventory_maps(&self.dynamic);
-        self.mark_inventory_names();
-        // The reference keeps `--limit` as patterns, applied anew to what the sources hold.
-        if let Some((pattern, hosts)) = &mut self.limit {
-            *hosts = self
-                .dynamic
-                .resolve(pattern)
-                .hosts
-                .into_iter()
-                .map(|h| h.name)
-                .collect();
-        }
-        self.inventory_changed = false;
-        self.forget_hostvars();
-        self.shared = None;
-        self.dynamic.clone()
     }
 
     /// The hosts `--limit` narrows the run to, as the last refresh resolved it.

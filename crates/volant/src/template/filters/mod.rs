@@ -33,15 +33,7 @@ pub fn register(
     base_dir: PathBuf,
     bridge: Option<&std::sync::Arc<crate::bridge::Bridge>>,
 ) {
-    // What `!unsafe` text loads as: the text itself, marked as data so no further pass renders it.
-    env.add_filter("volant_unsafe", |state: &State, text: String| {
-        if let Some(sink) = state.lookup(super::TAINT_KEY)
-            && let Some(sink) = sink.downcast_object_ref::<super::TaintSink>()
-        {
-            sink.taint();
-        }
-        text
-    });
+    env.add_filter("volant_unsafe", text::volant_unsafe);
     // What a `!!binary` value loads as: its base64 text, read back as bytes.
     env.add_filter("volant_binary", |data: String| {
         volant_protocol::encoding::b64_decode(&data)
@@ -161,7 +153,7 @@ pub fn register(
         add_filter(env, "reject", f::reject);
         add_filter(env, "selectattr", f::selectattr);
         add_filter(env, "rejectattr", f::rejectattr);
-        add_filter(env, "map", f::map);
+        add_filter(env, "map", super::missing::map_naming);
         add_filter(env, "groupby", f::groupby);
         add_filter(env, "unique", ordering::unique);
         add_filter(env, "chain", f::chain);

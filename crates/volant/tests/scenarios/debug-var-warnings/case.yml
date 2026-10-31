@@ -1,0 +1,4 @@
+# A debug var that reads an undefined name, or is the omit placeholder, registers the warning it
+# shows; args that are omit as a whole are left out, and a var that is one string literal is
+# refused as untrusted.
+args: [-i, inv.ini, play.yml]

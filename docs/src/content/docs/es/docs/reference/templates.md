@@ -1,5 +1,5 @@
 ---
-sourceHash: 97768b377097
+sourceHash: 0228e4fa70e5
 title: Referencia del lenguaje de plantillas
 description: Los métodos de Python, las reglas de cadenas, las expresiones regulares y los límites del Jinja2 de Volant, con todas las diferencias con ansible-core.
 ---
@@ -194,7 +194,7 @@ Un valor no fiable se renderiza una vez. Si el resultado vuelve a parecer una pl
 Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.
 ```
 
-Escribir tú el nombre, como en `debug: var: result.stdout`, funciona como siempre. Lo que se detiene es `debug: var: "{{ from_a_host }}"`.
+Escribir tú el nombre, como en `debug: var: result.stdout`, funciona como siempre. Lo que se detiene es `debug: var: "{{ from_a_host }}"`. También `debug: var: "{{ 'name' }}"`: como en ansible-core 2.19, un literal de cadena dentro de una plantilla no es de confianza. Un nombre leído de un bucle que escribiste tú, como en `debug: var: "{{ item }}"`, sigue funcionando. Un `var` que no es texto, incluido un número, hace fallar la tarea con el mensaje de la especificación de argumentos.
 
 Las condiciones siguen la misma regla. Un `when: "{{ ... }}"` que se renderiza como una cadena que escribiste, como `"1 == 1"`, se evalúa una vez más como condición. Si el renderizado leyó algo que envió un host, la cadena nunca se compila, y la tarea falla con el mismo `Encountered untrusted template or expression.` Un `assert` cuyo `that` es una plantilla funciona igual.
 

@@ -1,5 +1,5 @@
 ---
-sourceHash: 8dc270cc846e
+sourceHash: b638cbf2bfa7
 title: Ansible-Befehlsnamen
 description: Welcher Volant-Befehl welches Programm von ansible-core ersetzt, was gleich ist, was abweicht und wie Sie Ihre Kommandozeilen behalten.
 ---
@@ -31,7 +31,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 volant shims install
 ```
 
-Jeder Name ist ein symbolischer Link auf `volant`. Volant liest den Dateinamen, unter dem es gestartet wurde, sodass der Link `ansible-vault` `volant vault` ausführt. Beide Befehle nehmen dieselben Argumente und geben dieselbe Ausgabe und dieselben Exit-Codes. Ein Aufruffehler endet mit 2 und nennt das Programm unter dem gestarteten Namen, `ansible-vault: error: ...`.
+Jeder Name ist ein symbolischer Link auf `volant`. Volant liest den Dateinamen, unter dem es gestartet wurde, sodass der Link `ansible-vault` `volant vault` ausführt. Beide Befehle nehmen dieselben Argumente und geben dieselbe Ausgabe und dieselben Exit-Codes. Ein Aufruffehler endet mit 2 und nennt das Programm unter dem gestarteten Namen, `ansible-vault: error: ...`. Wie ansible-core prüft ein Link die Locale, bevor er seine Argumente liest. Eine Locale, die sich nicht setzen lässt oder nicht UTF-8 ist, endet mit 1 und `ERROR: Ansible could not initialize the preferred locale` oder `ERROR: Ansible requires the locale encoding to be UTF-8`. `LC_ALL=C` wird abgelehnt; ist keine Locale-Variable gesetzt, gilt die C-Locale als C.UTF-8. `volant` selbst prüft nichts.
 
 `install` ersetzt keine Datei und keinen Link, die es nicht angelegt hat, außer mit `--force`. Liegt ein anderes Programm dieses Namens in Ihrem `PATH`, sagt es das: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH`, wenn der Link gewinnt, oder `note: ... still runs first, DIR comes later in PATH`, wenn nicht. So entfernen Sie die Links:
 

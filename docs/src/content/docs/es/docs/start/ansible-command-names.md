@@ -1,5 +1,5 @@
 ---
-sourceHash: 8dc270cc846e
+sourceHash: b638cbf2bfa7
 title: Nombres de comandos de ansible
 description: Qué comando de Volant sustituye a cada programa de ansible-core, qué es igual, qué difiere y cómo conservar tus líneas de comandos.
 ---
@@ -31,7 +31,7 @@ curl -fsSL https://volant.sh/install.sh | sh -s -- --shims
 volant shims install
 ```
 
-Cada nombre es un enlace simbólico a `volant`. Volant lee el nombre de archivo con el que se inició, así que el enlace `ansible-vault` ejecuta `volant vault`. Ambos comandos toman los mismos argumentos y dan la misma salida y los mismos códigos de salida. Un error de uso sale con 2 y nombra el programa tal como se inició, `ansible-vault: error: ...`.
+Cada nombre es un enlace simbólico a `volant`. Volant lee el nombre de archivo con el que se inició, así que el enlace `ansible-vault` ejecuta `volant vault`. Ambos comandos toman los mismos argumentos y dan la misma salida y los mismos códigos de salida. Un error de uso sale con 2 y nombra el programa tal como se inició, `ansible-vault: error: ...`. Como ansible-core, un enlace comprueba la configuración regional antes de leer sus argumentos. Una que no puede establecer, o que no es UTF-8, sale con 1 y `ERROR: Ansible could not initialize the preferred locale` o `ERROR: Ansible requires the locale encoding to be UTF-8`. `LC_ALL=C` se rechaza; sin ninguna variable de configuración regional, la configuración C cuenta como C.UTF-8. `volant` en sí no comprueba nada.
 
 `install` no reemplaza un archivo o enlace que no creó, salvo con `--force`. Cuando hay otro programa con ese nombre en tu `PATH`, lo dice: `note: /usr/bin/ansible-vault is hidden by this link, DIR comes first in PATH` cuando gana el enlace, o `note: ... still runs first, DIR comes later in PATH` cuando no. Para eliminar los enlaces:
 

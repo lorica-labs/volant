@@ -1,0 +1,2 @@
+# `become` written from the loop item is rendered for each item; items that escalate alike run.
+args: [-i, inv.ini, play.yml]

@@ -1,5 +1,5 @@
 ---
-sourceHash: d7a9625feefb
+sourceHash: e7525bbdddd7
 title: Delegación, tareas meta y environment
 description: Ejecutar una tarea una sola vez para un lote o en otro host, qué hace cada acción meta, y cómo dan forma a una tarea environment y no_log.
 ---
@@ -123,6 +123,6 @@ El banner de la tarea y su nombre no se ocultan. La variable registrada y el rec
 - `local_action` es `delegate_to: localhost` escrito de otra manera, y gana a un `delegate_to` de la misma tarea.
 - Cuando no se puede llegar al host elegido para ejecutar una tarea `run_once`, los hosts que esperan abandonan el play y la ejecución termina allí. Ansible imprime un banner de play vacío más. Ninguno de los dos motores elige otro host, y el código de salida es el mismo 4.
 - `run_once` combinado con `delegate_facts` guarda los facts en el delegado, lo que hace que `delegate_facts` signifique una sola cosa. El comportamiento de Ansible aquí no se midió.
-- `become_user: "{{ item }}"` hace fallar la tarea, mientras que Ansible escala por elemento. El escalado de privilegios se decide una vez por lote, por la misma razón que el delegado.
+- `become`, `become_user` y `become_method` escritos a partir del elemento del bucle se renderizan para cada elemento. Cuando todos los elementos escalan igual, el bucle se ejecuta. Cuando difieren, la tarea falla con `loop items that escalate differently from one another are not supported yet`, mientras que Ansible escala por elemento: los elementos de una tarea pasan por un solo enlace, por la misma razón que el delegado.
 - Un valor de `environment` que no es un mapa se omite con un aviso que nombra el valor. Ansible imprime en su lugar toda la pila de capas en la que estaba.
 - Ese aviso no lo censura `no_log`. Ansible tampoco censura su aviso, así que esto coincide con ansible-core, pero tenlo en cuenta antes de poner un secreto en un `environment` que podría no ser un mapa.

@@ -1,0 +1,8 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - command: echo {{ item.n }}
+      become: "{{ item.b }}"
+      loop: [{n: 1, b: false}, {n: 2, b: false}]
+      register: out
+    - debug: msg="{{ out.results | map(attribute='stdout') | list }}"

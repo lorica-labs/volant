@@ -1,5 +1,5 @@
 ---
-sourceHash: d7a9625feefb
+sourceHash: e7525bbdddd7
 title: Delegation, Meta-Tasks und Umgebungsvariablen
 description: Einen Task einmal pro Batch oder auf einem anderen Host ausführen, was jede meta-Action tut und wie environment und no_log einen Task prägen.
 ---
@@ -123,6 +123,6 @@ Das Banner des Tasks und der Name des Tasks werden nicht verborgen. Die registri
 - `local_action` ist `delegate_to: localhost` anders geschrieben und schlägt ein `delegate_to` am selben Task.
 - Wenn der Host, der für einen `run_once`-Task gewählt wurde, nicht erreichbar ist, verlassen die wartenden Hosts das Play, und der Lauf endet dort. Ansible gibt noch ein weiteres leeres Play-Banner aus. Keine der Engines wählt einen anderen Host, und der Exit-Code ist derselbe 4.
 - `run_once` zusammen mit `delegate_facts` speichert die Facts auf dem Delegierten, wodurch `delegate_facts` nur eines bedeutet. Das Verhalten von Ansible wurde hier nicht gemessen.
-- `become_user: "{{ item }}"` lässt den Task fehlschlagen, wo Ansible pro Element die Rechte ausweitet. Die Rechteausweitung wird aus demselben Grund wie der Delegierte einmal pro Batch festgelegt.
+- `become`, `become_user` und `become_method`, die aus dem Schleifenelement geschrieben sind, werden für jedes Element gerendert. Weiten alle Elemente die Rechte gleich aus, läuft die Schleife. Unterscheiden sie sich, schlägt der Task mit `loop items that escalate differently from one another are not supported yet` fehl, wo Ansible pro Element die Rechte ausweitet: Die Elemente eines Tasks laufen über eine Verbindung, aus demselben Grund wie beim Delegierten.
 - Ein `environment`-Wert, der kein Mapping ist, wird mit einer Warnung übersprungen, die den Wert nennt. Ansible gibt stattdessen den ganzen Stapel von Schichten aus, in dem er stand.
 - Diese Warnung wird von `no_log` nicht zensiert. Ansible zensiert seine Warnung ebenfalls nicht, das entspricht also ansible-core, aber bedenken Sie es, bevor Sie ein Geheimnis in ein `environment` legen, das vielleicht kein Mapping ist.

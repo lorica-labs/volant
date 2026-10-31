@@ -76,6 +76,8 @@ pub(super) fn set_aside(compiled: &crate::compile::Compiled) -> impl Iterator<It
         .filter(|step| !matches!(step.kind, crate::compile::StepKind::Flush { .. }))
         .map(|step| &step.task)
         .chain(compiled.handlers.iter().map(|handler| &handler.task))
+        // A module named by a template is known only once it renders, when the task runs.
+        .filter(|task| task.deferred.module.is_none())
         .filter(|task| crate::python::is_resolved_name(&task.module))
 }
 

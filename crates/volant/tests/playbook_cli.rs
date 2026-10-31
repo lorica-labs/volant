@@ -804,7 +804,9 @@ fn a_result_s_warnings_are_shown_and_not_registered() {
         "{text}{errors}"
     );
     assert!(
-        text.contains(r#""q.warnings": "VARIABLE IS NOT DEFINED!"#),
+        text.contains(
+            r#""q.warnings": "<< error 1 - object of type 'dict' has no attribute 'warnings' >>""#
+        ),
         "{text}"
     );
 }

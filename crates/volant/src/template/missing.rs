@@ -38,13 +38,16 @@ const WORDS: [&str; 17] = [
 /// a test, not a variable.
 static NAME: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(
-        r#"'[^']*'|"[^"]*"|(\.\s*|\|\s*|\bis\s+(?:not\s+)?)?\b([A-Za-z_]\w*)((?:\s*\.\s*[A-Za-z_]\w*|\s*\[\s*(?:'[^']*'|"[^"]*")\s*\])*)\s*(\(|==|=)?"#,
+        r#"'[^']*'|"[^"]*"|(\.\s*|\|\s*|\bis\s+(?:not\s+)?)?\b([A-Za-z_]\w*)((?:\s*\.\s*(?:[A-Za-z_]\w*|\d+)|\s*\[\s*(?:'[^']*'|"[^"]*"|-?\d+)\s*\])*)\s*(\(|==|=)?"#,
     )
     .expect("a fixed pattern")
 });
 
 static SEGMENT: LazyLock<Regex> = LazyLock::new(|| {
-    Regex::new(r#"\.\s*([A-Za-z_]\w*)|\[\s*(?:'([^']*)'|"([^"]*)")\s*\]"#).expect("a fixed pattern")
+    Regex::new(
+        r#"\.\s*([A-Za-z_]\w*)|\[\s*(?:'([^']*)'|"([^"]*)")\s*\]|\.\s*(\d+)|\[\s*(-?\d+)\s*\]"#,
+    )
+    .expect("a fixed pattern")
 });
 
 /// A read that cannot fail: it is the subject of `default` or of `is defined`.
@@ -62,6 +65,12 @@ static BOUND: LazyLock<Regex> = LazyLock::new(|| {
     Regex::new(r"\{%-?\s*(?:for\s+(.+?)\s+in\b|set\s+(\w+))").expect("a fixed pattern")
 });
 
+/// One read chained on a name: an attribute or key, or a number.
+enum Segment {
+    Key(String),
+    Index(i64),
+}
+
 /// The Python name of the type a value has.
 fn py_type(value: &minijinja::Value) -> &'static str {
     match value.kind() {
@@ -74,6 +83,38 @@ fn py_type(value: &minijinja::Value) -> &'static str {
         ValueKind::Seq | ValueKind::Iterable => "list",
         _ => "dict",
     }
+}
+
+/// The item at `i` of a list or a string, a negative `i` counted from the end, or what
+/// ansible-core 2.19.12 says when there is none: an empty list is one of its lazy lists, and any
+/// other list or string answers as an attribute read. A mapping read by a number is not worded
+/// here, its sentence depending on where the mapping came from.
+fn element(value: &minijinja::Value, i: i64) -> Result<minijinja::Value, Option<String>> {
+    let lazy = "ansible._internal._templating._lazy_containers._AnsibleLazyTemplateList";
+    if !matches!(value.kind(), ValueKind::Seq | ValueKind::String) {
+        let next = value
+            .get_item(&minijinja::Value::from(i))
+            .unwrap_or(minijinja::Value::UNDEFINED);
+        return if next.is_undefined() {
+            Err(None)
+        } else {
+            Ok(next)
+        };
+    }
+    let len = value.len().and_then(|n| i64::try_from(n).ok()).unwrap_or(0);
+    let at = if i < 0 { i + len } else { i };
+    if (0..len).contains(&at) {
+        return value
+            .get_item(&minijinja::Value::from(at))
+            .map_err(|_| None);
+    }
+    if len == 0 && value.kind() == ValueKind::Seq {
+        return Err(Some(format!("{lazy} object has no element {i}")));
+    }
+    Err(Some(format!(
+        "object of type '{}' has no attribute {i}",
+        py_type(value)
+    )))
 }
 
 /// What the first read in `source` that finds nothing in `ctx` says, if there is one. The check
@@ -117,10 +158,20 @@ fn reason(source: &str, ctx: &minijinja::Value) -> Option<String> {
             {
                 continue;
             }
-            let mut segments: Vec<String> = SEGMENT
+            let mut segments: Vec<Segment> = SEGMENT
                 .captures_iter(c.get(3).map_or("", |m| m.as_str()))
-                .filter_map(|s| s.get(1).or_else(|| s.get(2)).or_else(|| s.get(3)))
-                .map(|m| m.as_str().to_string())
+                .filter_map(
+                    |s| match s.get(1).or_else(|| s.get(2)).or_else(|| s.get(3)) {
+                        Some(key) => Some(Segment::Key(key.as_str().to_string())),
+                        None => s
+                            .get(4)
+                            .or_else(|| s.get(5))?
+                            .as_str()
+                            .parse()
+                            .ok()
+                            .map(Segment::Index),
+                    },
+                )
                 .collect();
             if after == Some("(") {
                 // A call: of a function when nothing is chained on it, else of a method, whose
@@ -136,16 +187,22 @@ fn reason(source: &str, ctx: &minijinja::Value) -> Option<String> {
                 return Some(format!("'{root}' is undefined"));
             }
             for segment in segments {
-                let next = value
-                    .get_attr(&segment)
-                    .unwrap_or(minijinja::Value::UNDEFINED);
-                if next.is_undefined() {
-                    return Some(format!(
-                        "object of type '{}' has no attribute '{segment}'",
-                        py_type(&value)
-                    ));
-                }
-                value = next;
+                value = match segment {
+                    Segment::Key(key) => {
+                        let next = value.get_attr(&key).unwrap_or(minijinja::Value::UNDEFINED);
+                        if next.is_undefined() {
+                            return Some(format!(
+                                "object of type '{}' has no attribute '{key}'",
+                                py_type(&value)
+                            ));
+                        }
+                        next
+                    }
+                    Segment::Index(i) => match element(&value, i) {
+                        Ok(next) => next,
+                        Err(said) => return said,
+                    },
+                };
             }
         }
     }

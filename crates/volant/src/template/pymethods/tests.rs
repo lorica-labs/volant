@@ -501,3 +501,84 @@ fn sorting_a_wide_integer_is_exact() {
         .unwrap_err();
     assert!(err.0.contains("'int'") && err.0.contains("'str'"), "{err}");
 }
+
+/// Python 3.12's answers for the methods of `bytes`, `+` and slicing, each read as text the way
+/// a result reads bytes.
+#[rstest::rstest]
+#[case("{{ 'aBc'.encode().swapcase() }}", json!("AbC"))]
+#[case("{{ 'aBC'.encode().capitalize() }}", json!("Abc"))]
+#[case("{{ 'hello world-x'.encode().title() }}", json!("Hello World-X"))]
+#[case(
+    "{{ 'ab1'.encode().isalnum() }} {{ 'ab'.encode().isalpha() }} {{ '12'.encode().isdigit() }}",
+    json!("True True True")
+)]
+#[case(
+    "{{ ' \t'.encode().isspace() }} {{ 'a'.encode().isascii() }} {{ 'ab1'.encode().islower() }} {{ 'AB1'.encode().isupper() }}",
+    json!("True True True True")
+)]
+#[case("{{ ''.encode().isalpha() }} {{ 'A'.encode().islower() }}", json!("False False"))]
+#[case("[{{ ' a '.encode().lstrip() }}][{{ ' a '.encode().rstrip() }}]", json!("[a ][ a]"))]
+#[case("{{ 'xxaxx'.encode().strip('x'.encode()) }}", json!("a"))]
+#[case("{{ 'a\nb\r\nc\rd'.encode().splitlines() | length }}", json!(4))]
+#[case("{{ ('a\nb'.encode().splitlines(true))[0] | length }}", json!(2))]
+#[case("{{ ('a b  c'.encode().rsplit(None, 1))[0] }}", json!("a b"))]
+#[case("{{ ('a b  c'.encode().split(None, 1))[1] }}", json!("b  c"))]
+#[case("{{ '7'.encode().zfill(3) }} {{ '7'.encode().ljust(3, '*'.encode()) }}", json!("007 7**"))]
+#[case(
+    "{{ 'abca'.encode().count('a'.encode()) }} {{ 'abca'.encode().rfind('a'.encode()) }} {{ 'abc'.encode().index('b'.encode()) }}",
+    json!("2 3 1")
+)]
+#[case(
+    "{{ 'abc'.encode().startswith(('x'.encode(), 'a'.encode())) }}",
+    json!(true)
+)]
+#[case("{{ ('a=b'.encode().partition('='.encode()))[2] }}", json!("b"))]
+#[case("{{ ','.encode().join(['a'.encode(), 'b'.encode()]) }}", json!("a,b"))]
+#[case("{{ 'abc'.encode().removeprefix('a'.encode()) }}", json!("bc"))]
+#[case("{{ 'abc'.encode().replace('b'.encode(), 'x'.encode()) }}", json!("axc"))]
+#[case(
+    "{{ ('abcdef'.encode())[1:5:2] }} {{ ('abc'.encode())[-1:] }} {{ ('abc'.encode())[::-1] }}",
+    json!("bd c cba")
+)]
+#[case("{{ ('abc'.encode())[5:] }}|{{ ('abc'.encode())[:-5] }}", json!("|"))]
+#[case("{{ 'ab'.encode() + 'c'.encode() }}", json!("abc"))]
+#[case("{{ [1, 2][1:] }} {{ 'abc'[1:] }}", json!("[2] bc"))]
+fn bytes_answer_as_python_s(#[case] template: &'static str, #[case] want: serde_json::Value) {
+    assert_eq!(render(template), Ok(want), "{template}");
+}
+
+#[rstest::rstest]
+#[case(
+    "{{ 'a'.encode().upper(1) }}",
+    "bytes.upper() takes no arguments (1 given)"
+)]
+#[case(
+    "{{ 'a'.encode().find('a') }}",
+    "argument should be integer or bytes-like object, not 'str'"
+)]
+#[case(
+    "{{ 'a'.encode().split('a') }}",
+    "a bytes-like object is required, not 'str'"
+)]
+#[case(
+    "{{ 'a'.encode().split(maxsplit='x') }}",
+    "'maxsplit' must be an integer"
+)]
+#[case("{{ 'a'.encode() + [1] }}", "can't concat list to bytes")]
+#[case(
+    "{{ 'a' + 'b'.encode() }}",
+    "can only concatenate str (not \"bytes\") to str"
+)]
+#[case(
+    "{{ 1 + 'b'.encode() }}",
+    "unsupported operand type(s) for +: 'int' and 'bytes'"
+)]
+#[case("{{ ('abc'.encode())[::0] }}", "slice step cannot be zero")]
+#[case(
+    "{{ ('abc'.encode())['a':] }}",
+    "slice indices must be integers or None or have an __index__ method"
+)]
+fn bytes_refuse_as_python_does(#[case] template: &'static str, #[case] said: &str) {
+    let err = render(template).unwrap_err();
+    assert!(err.contains(said), "{template}: {err}");
+}

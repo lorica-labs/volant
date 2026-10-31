@@ -1,0 +1,3 @@
+# A role's handler written as `include_tasks` reads its file from the role's `tasks/`, and a task
+# of that file finds the role's templates, wherever the flush that runs the handler stands.
+args: [play.yml]

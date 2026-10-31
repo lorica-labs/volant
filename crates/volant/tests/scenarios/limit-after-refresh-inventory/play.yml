@@ -1,0 +1,17 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - copy:
+        dest: "{{ playbook_dir }}/inv.ini"
+        content: "h1 ansible_connection=local\nh2 ansible_connection=local\nh3 ansible_connection=local\n"
+      delegate_to: localhost
+      run_once: true
+    - meta: refresh_inventory
+    - debug:
+        msg: "{{ ansible_play_hosts_all }}"
+      run_once: true
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "{{ inventory_hostname }} in {{ ansible_play_hosts_all }}"

@@ -1,5 +1,5 @@
 ---
-sourceHash: 60a46a158fc1
+sourceHash: 630bc063e9af
 title: Délégation, tâches meta et environment
 description: Exécuter une tâche une seule fois pour un lot ou sur un autre hôte, ce que fait chaque action meta, et comment environment et no_log façonnent une tâche.
 ---
@@ -82,7 +82,7 @@ Un hôte qui se termine avec `end_host`, `end_batch` ou `end_play` n'a pas écho
 
 ### Recharger l'inventaire
 
-`refresh_inventory` relit toutes les sources d'inventaire, dans l'ordre de `-i`. `groups` et `hostvars` changent aussitôt. Un hôte que les sources ont gagné rejoint à partir du play suivant, et un hôte qu'elles ont perdu quitte le play là où il en est, sans échouer. Les hôtes et groupes créés par `add_host` et `group_by` restent. Si les sources ne peuvent plus être lues, l'inventaire est vide à partir de là, comme dans Ansible : tous les hôtes partent, et les plays suivants ne correspondent à rien.
+`refresh_inventory` relit toutes les sources d'inventaire, dans l'ordre de `-i`. `groups` et `hostvars` changent aussitôt. Un hôte que les sources ont gagné rejoint à partir du play suivant, et un hôte qu'elles ont perdu quitte le play là où il en est, sans échouer. `--limit` est lui aussi résolu à nouveau : un hôte qu'il nomme et que seules les nouvelles sources contiennent rejoint donc les plays suivants. Les hôtes et groupes créés par `add_host` et `group_by` restent. Si les sources ne peuvent plus être lues, l'inventaire est vide à partir de là, comme dans Ansible : tous les hôtes partent, et les plays suivants ne correspondent à rien.
 
 Les facts et les valeurs de `set_fact` restent comme ils étaient. Voir [Inventaires](/fr/docs/hosts/inventories/).
 

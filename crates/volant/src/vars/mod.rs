@@ -251,8 +251,9 @@ pub struct VarStore {
     added_play_hosts: Vec<String>,
     /// Whether `add_host` grew the inventory in this play.
     play_grew: bool,
-    /// The hosts `--limit` narrows the run to, which a refresh applies to the play's hosts too.
-    limit: Option<HashSet<String>>,
+    /// `--limit`'s pattern and the hosts it narrows the run to, which a refresh resolves again
+    /// and applies to the play's hosts too.
+    limit: Option<(String, HashSet<String>)>,
     /// The sources and plugin settings a refresh reads again.
     reload: Option<(Vec<Source>, PluginConfig, Arc<Bridge>)>,
     /// Whether `dynamic` moved since the command line last took it.

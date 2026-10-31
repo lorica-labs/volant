@@ -101,6 +101,7 @@ impl TemplateError {
                     || head.ends_with(" object has no element"))
         });
         self.0.ends_with("' is undefined")
+            || missing::was_said(&self.0)
             || index
             || (self.0.starts_with("The environment variable '")
                 && self.0.ends_with("' is not set."))

@@ -185,6 +185,11 @@ fn reason(source: &str, ctx: &minijinja::Value) -> Option<String> {
             }
             let mut value = ctx.get_attr(root).unwrap_or(minijinja::Value::UNDEFINED);
             if value.is_undefined() {
+                // A variable whose template handed back an undefined value that says why, an
+                // `undef(hint)`: measured on ansible-core 2.19.12, the hint is the failure.
+                if let Some(said) = HANDED.with(|h| h.borrow_mut().take()) {
+                    return Some(said);
+                }
                 // A variable whose own template read a name with no value: that read is named.
                 let inner = ctx
                     .downcast_object_ref::<super::Context>()
@@ -222,10 +227,26 @@ thread_local! {
     static HANDED: RefCell<Option<String>> = const { RefCell::new(None) };
 }
 
+/// Forgets what an `undef()` said when its value was not the one used, a `default` that did not
+/// apply, so that a later failure is not worded by it.
+pub(super) fn forget_handed() {
+    HANDED.with(|h| h.borrow_mut().take());
+}
+
+/// Every sentence an undefined value was handed out with, so the failure it causes still reads
+/// as an undefined read: `debug: var=` prints it as `<< error 1 - why >>`.
+static SAYINGS: LazyLock<std::sync::Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
 /// An undefined value that says `why` when it is read: what the reference's `_undef(why)` is.
 pub(super) fn undefined_saying(why: String) -> minijinja::Value {
+    SAYINGS.lock().expect("sayings lock").insert(why.clone());
     HANDED.with(|h| *h.borrow_mut() = Some(why));
     minijinja::Value::UNDEFINED
+}
+
+/// Whether `text` is a sentence an undefined value was handed out with.
+pub(super) fn was_said(text: &str) -> bool {
+    SAYINGS.lock().expect("sayings lock").contains(text)
 }
 
 /// `error` with its sentence replaced by the one that names what was missing, when it is the
@@ -239,8 +260,7 @@ pub(super) fn named(error: TemplateError, source: &str, ctx: &minijinja::Value) 
         return error;
     }
     super::written::set_inner(None);
-    let handed = HANDED.with(|h| h.borrow_mut().take());
-    let found = reason(source, ctx).or(handed);
+    let found = reason(source, ctx).or_else(|| HANDED.with(|h| h.borrow_mut().take()));
     // Reading a variable can render it, which may leave a failure behind for the next render.
     let _ = take_failure(ctx);
     found.map_or(error, TemplateError)

@@ -449,9 +449,12 @@ fn to_float(value: Value, default_value: Option<f64>) -> Value {
 
 fn mandatory(value: Value, msg: Option<String>) -> Result<Value, Error> {
     if value.is_undefined() {
-        return Err(invalid(
-            msg.unwrap_or_else(|| "Mandatory variable not defined.".to_string()),
-        ));
+        // The name of the variable that was not found, when it was a variable: measured on
+        // ansible-core 2.19.12, `hey | mandatory` says `Mandatory variable 'hey' not defined.`
+        let name = super::context::take_missing().map_or_else(String::new, |n| format!("'{n}' "));
+        return Err(invalid(msg.unwrap_or_else(|| {
+            format!("Mandatory variable {name}not defined.")
+        })));
     }
     Ok(value)
 }

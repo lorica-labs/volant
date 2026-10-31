@@ -57,13 +57,14 @@ pub fn register(
         |data: String, secret: String, kwargs: Kwargs| {
             let id: Option<String> = kwargs.get("vault_id")?;
             let id = id.unwrap_or_else(|| "filter_default".into());
-            // The salt and the wrapped object are read here, so they are refused rather than
-            // dropped.
-            if kwargs
+            // A salt is read as its text, as Python's `to_bytes` reads it: `salt=7` salts with
+            // `b'7'`. The wrapped object is read here, so it is refused rather than dropped.
+            let salt = kwargs
                 .get::<Option<Value>>("salt")?
-                .is_some_and(|v| !v.is_none())
-            {
-                return Err(invalid("the salt argument of vault is not supported yet"));
+                .filter(|v| !v.is_none())
+                .map(|v| v.to_string());
+            if salt.as_deref() == Some("") {
+                return Err(invalid("Empty or invalid salt passed"));
             }
             if truthy_value(kwargs.get::<Option<Value>>("wrap_object")?) {
                 return Err(invalid(
@@ -71,8 +72,16 @@ pub fn register(
                 ));
             }
             kwargs.assert_all_used()?;
-            crate::vault::encrypt(data.as_bytes(), secret.as_bytes(), Some(&id))
-                .map_err(|_| invalid("Unable to encrypt."))
+            match salt {
+                Some(salt) => Ok(crate::vault::encrypt_with_salt(
+                    data.as_bytes(),
+                    secret.as_bytes(),
+                    Some(&id),
+                    salt.as_bytes(),
+                )),
+                None => crate::vault::encrypt(data.as_bytes(), secret.as_bytes(), Some(&id))
+                    .map_err(|_| invalid("Unable to encrypt.")),
+            }
         },
     );
     add_filter(

@@ -1758,10 +1758,7 @@ fn a_pattern_python_refuses_is_worded_as_python_words_it(
     #[case] pattern: &str,
     #[case] expected: Option<&str>,
 ) {
-    assert_eq!(
-        include_dir::python_regex_error(pattern).as_deref(),
-        expected
-    );
+    assert_eq!(python_regex_error(pattern).as_deref(), expected);
 }
 
 /// `os.path.join`: an absolute tail wins, a trailing slash is not doubled, `..` is kept.

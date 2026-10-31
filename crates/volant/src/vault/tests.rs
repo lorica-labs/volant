@@ -74,7 +74,6 @@ fn encrypting_with_the_fixtures_salt_gives_the_fixture(
 ) {
     let data = fixture(name);
     let salt = parts(&envelope(&data).unwrap().body).unwrap().salt;
-    let salt: [u8; 32] = salt.try_into().unwrap();
     let got = encrypt_with_salt(b"hello", fixture(pw).trim_ascii(), id, &salt);
     assert_eq!(got.as_bytes(), &data[..]);
 }

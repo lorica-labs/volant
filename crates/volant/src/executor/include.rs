@@ -261,7 +261,7 @@ pub(super) fn resolve_include(
                     let mut body = Map::new();
                     body.insert("changed".into(), json!(false));
                     body.insert("include".into(), json!(request.what));
-                    body.insert("reason".into(), json!(format!("{err:#}")));
+                    body.insert("reason".into(), json!(load_reason(&format!("{err:#}"))));
                     TaskResult(body)
                 }
             },
@@ -450,5 +450,22 @@ pub(super) async fn report_include(
         failure.or_else(|| Some(TaskResult::default()))
     } else {
         None
+    }
+}
+
+/// Why a file an include brings in could not be loaded. A file it imports that is not there is
+/// named once more in front, as the reference's loader wraps it: measured on ansible-core 2.19.12,
+/// `Could not find or access '<path>' on the Ansible Controller: Unable to retrieve file
+/// contents.` and the rest.
+fn load_reason(text: &str) -> String {
+    let text = text.trim_end();
+    let missing = text
+        .strip_prefix("Unable to retrieve file contents.\nCould not find or access '")
+        .and_then(|rest| rest.split_once("' on the Ansible Controller."));
+    match missing {
+        Some((path, _)) => {
+            format!("Could not find or access '{path}' on the Ansible Controller: {text}")
+        }
+        None => text.to_string(),
     }
 }

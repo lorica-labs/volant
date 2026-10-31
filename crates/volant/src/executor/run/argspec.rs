@@ -112,15 +112,17 @@ pub(super) fn validate_argument_spec(item: &Item) -> TaskResult {
     // host can see under that name.
     let value_of =
         |name: &str| -> Option<&Value> { provided.get(name).or_else(|| item.vars.get(name)) };
+    let required = |option: &Value| {
+        option
+            .get("required")
+            .and_then(as_bool_value)
+            .unwrap_or(false)
+    };
+    // Only an option nobody set is missing: one set to `~` is there, and its type says whether
+    // `None` will do, as `check_required_arguments` reads it.
     let mut missing: Vec<&String> = spec
         .iter()
-        .filter(|(name, option)| {
-            option
-                .get("required")
-                .and_then(as_bool_value)
-                .unwrap_or(false)
-                && !matches!(value_of(name), Some(v) if !v.is_null())
-        })
+        .filter(|(name, option)| required(option) && value_of(name).is_none())
         .map(|(name, _)| name)
         .collect();
     missing.sort();
@@ -138,6 +140,11 @@ pub(super) fn validate_argument_spec(item: &Item) -> TaskResult {
         let Some(value) = value_of(name) else {
             continue;
         };
+        // `None` for an option neither required nor defaulted is left alone.
+        if value.is_null() && !required(option) && option.get("default").is_none_or(Value::is_null)
+        {
+            continue;
+        }
         if let Some(wanted) = option.get("type").and_then(Value::as_str)
             && let Err(err) = converts(value, wanted)
         {
@@ -200,9 +207,9 @@ pub(super) fn validate_argument_spec(item: &Item) -> TaskResult {
 /// complaint when it cannot.
 ///
 /// Ansible converts permissively and this follows it where the conversion was measured: a string
-/// `"3"` is an `int`, `"yes"` is a `bool`. Only the two numeric types and `bool` can fail; `str`,
-/// `path`, `raw`, `list` and `dict` take what they are given, which is what the reference does
-/// with them for every shape a playbook can write.
+/// `"3"` is an `int`, `"yes"` is a `bool`. Only the two numeric types and `bool` can fail, and
+/// `list` and `dict` on `None`; `str`, `path`, `raw`, `list` and `dict` take anything else they
+/// are given, which is what the reference does with them for every shape a playbook can write.
 fn converts(value: &Value, wanted: &str) -> Result<(), String> {
     let quoted = || {
         format!(
@@ -210,6 +217,17 @@ fn converts(value: &Value, wanted: &str) -> Result<(), String> {
             display(value)
         )
     };
+    // Measured on ansible-core 2.19.12: `int` quotes the repr of `None`, and the others name its
+    // class. `str` and `path` read it as the empty string.
+    if value.is_null() {
+        return match wanted {
+            "int" => Err("\"None\" cannot be converted to an int".into()),
+            "float" | "list" | "dict" | "bool" => Err(format!(
+                "<class 'NoneType'> cannot be converted to a {wanted}"
+            )),
+            _ => Ok(()),
+        };
+    }
     match wanted {
         "int" => match value {
             Value::Number(n) if !n.is_f64() => Ok(()),
@@ -237,10 +255,7 @@ fn converts(value: &Value, wanted: &str) -> Result<(), String> {
             )),
             Value::Array(_) => Err("<class 'ansible.module_utils._internal._datatag._AnsibleTaggedList'> cannot be converted to a bool".into()),
             Value::Object(_) => Err("<class 'ansible.module_utils._internal._datatag._AnsibleTaggedDict'> cannot be converted to a bool".into()),
-            Value::Null => Err(format!(
-                "\"'{}'\" cannot be converted to a {wanted}",
-                display(value)
-            )),
+            Value::Null => unreachable!("None is answered above"),
         },
         _ => Ok(()),
     }

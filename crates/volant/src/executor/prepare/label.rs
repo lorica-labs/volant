@@ -60,6 +60,10 @@ pub(super) fn label_for(
     Ok(match (element, &task.loop_label) {
         (None, _) => (None, None),
         (Some(el), None) => (Some(display(el)), None),
+        // Rendered once the item ran, by `label_after`.
+        (Some(el), Some(template)) if reads_register(task, template, templar) => {
+            (Some(display(el)), None)
+        }
         (Some(el), Some(template)) => match templar.render(template, vars) {
             Ok(label) => (Some(display(&label)), None),
             Err(e) if e.is_undefined() => (
@@ -76,6 +80,50 @@ pub(super) fn label_for(
             Err(e) => return Err(e),
         },
     })
+}
+
+/// Whether `template`, a `loop_control.label`, reads the name the task registers.
+fn reads_register(task: &PlayTask, template: &str, templar: &Templar) -> bool {
+    task.register.as_ref().is_some_and(|name| {
+        templar
+            .env()
+            .template_from_str(template)
+            .is_ok_and(|t| t.undeclared_variables(false).contains(name))
+    })
+}
+
+/// The label of an item that ran, as `item.label` holds it unless the label reads the name the
+/// task registers. Then it is rendered now, with that name bound to the item's own result, and a
+/// label that fails fails the result. Measured on ansible-core 2.19.12: `label: "{{ r.stdout }}"`
+/// with `register: r` shows each item's own output, and a skipped item, which has none, registers
+/// `Failed to template loop_control.label: ... has no attribute 'stdout'`.
+pub(in crate::executor) fn label_after(
+    task: &PlayTask,
+    item: &super::Item,
+    result: &mut TaskResult,
+    templar: &Templar,
+) -> Option<String> {
+    let (Some(element), Some(template), Some(name)) =
+        (&item.element, &task.loop_label, &task.register)
+    else {
+        return item.label.clone();
+    };
+    if !reads_register(task, template, templar) {
+        return item.label.clone();
+    }
+    let mut vars = item.vars.clone();
+    vars.insert(name.clone(), Value::Object(result.0.clone()));
+    match templar.render(template, &vars) {
+        Ok(label) => Some(display(&label)),
+        Err(e) => {
+            let message = format!(
+                "Failed to template loop_control.label: {}",
+                undefined_name(template, e.0)
+            );
+            label_failed(&message, result);
+            Some(display(element))
+        }
+    }
 }
 
 /// `result` failed by a label that did not render, as the reference's `res.update` fails it.

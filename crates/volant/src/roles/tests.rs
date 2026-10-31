@@ -406,9 +406,11 @@ fn a_missing_directory_is_not_looked_into() {
 }
 
 /// `meta/argument_specs` with no extension is read only beside a `.yml`, `.yaml` or `.json`
-/// one, and then wins over it, as `_load_argument_specs` of ansible-core 2.19.12 does.
+/// one, and then wins over it, as `_load_argument_specs` of ansible-core 2.19.12 does; with none
+/// of them, `meta/main.yml` is read.
 #[rstest]
 #[case(&["argument_specs"], None)]
+#[case(&["main.yml"], Some("from-yml"))]
 #[case(&["argument_specs.yml"], Some("from-yml"))]
 #[case(&["argument_specs", "argument_specs.yml"], Some("from-bare"))]
 fn argument_specs_are_read_the_way_the_reference_reads_them(

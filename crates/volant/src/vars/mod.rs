@@ -37,7 +37,9 @@ pub fn hostvars_map(map: Map<String, Value>) -> HostvarsMap {
         .collect()
 }
 pub use host_vars::{HostSettings, HostVars, host_setting, omit_token, settled, settled_all};
-pub use include_dir::{Chain, Failure, Scan, include_dir, join_path, read_failure};
+pub use include_dir::{
+    Chain, Failure, Scan, include_dir, join_path, python_regex_error, read_failure,
+};
 pub use listed::ListedOrigin;
 pub use load::{
     VaultFile, include_vars_paths, load_play_vars_file, load_vars_file, parse_extra_vars,

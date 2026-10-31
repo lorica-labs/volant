@@ -1,0 +1,16 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - set_fact: {x: 1}
+      ignore_errors: true
+    - debug: {msg: d}
+      ignore_errors: true
+    - debug: {msg: delegated}
+      delegate_to: localhost
+      ignore_errors: true
+    - meta: noop
+    - include_tasks: inc.yml
+    - block:
+        - command: "true"
+      rescue:
+        - debug: {msg: rescued}

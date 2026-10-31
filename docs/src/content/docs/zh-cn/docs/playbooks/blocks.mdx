@@ -1,5 +1,5 @@
 ---
-sourceHash: 514cf9b472a1
+sourceHash: 434d79ab61bf
 title: 块与 handler
 description: 失败如何在块中传递，rescue 和 always 做什么，以及 handler 何时运行。
 ---
@@ -45,6 +45,7 @@ description: 失败如何在块中传递，rescue 和 always 做什么，以及 
 
 - 从未进入 rescue 的主机，会跳过其中的每个 task，包括刷新点以及它后面的 handler。
 - 无法连接的主机会离开 play，除非 `ignore_unreachable` 覆盖了这个 task。已经没有可以运行 rescue 的地方了。
+- 在连接插件不存在的主机上，每个 task 都会失败并报 `the connection plugin 'x' was not found`，`debug` 和 `set_fact` 也不例外，因此其上的 `rescue` 同样会失败，与 Ansible 相同。委派到其他主机的 task 读取那台主机的连接。
 - `run_once` 的 task 失败时，等待它的主机会离开 play，即使 rescue 保住了运行该 task 的那台主机。
 
 ## 让多台主机失败

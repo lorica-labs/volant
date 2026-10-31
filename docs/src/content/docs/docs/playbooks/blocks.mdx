@@ -44,6 +44,7 @@ A failure inside an `always` ends that section: the rest of it is skipped, and t
 
 - A host that never entered a rescue skips every task inside it, including a flush point and the handlers behind it.
 - A host that cannot be reached leaves the play, unless `ignore_unreachable` covers the task. There is nothing left to run a rescue on.
+- On a host whose connection plugin does not exist, every task fails with `the connection plugin 'x' was not found`, `debug` and `set_fact` included, so a `rescue` fails on it too, as in Ansible. A task delegated to another host reads that host's connection.
 - When a `run_once` task fails, the hosts that were waiting on it leave the play, even if a rescue keeps the host that ran it.
 
 ## Failing more than one host

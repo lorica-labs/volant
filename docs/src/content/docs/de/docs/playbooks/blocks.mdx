@@ -1,5 +1,5 @@
 ---
-sourceHash: 514cf9b472a1
+sourceHash: 434d79ab61bf
 title: Blöcke und Handler
 description: Wie ein Fehler durch Blöcke wandert, was rescue und always tun und wann Handler laufen.
 ---
@@ -45,6 +45,7 @@ Ein Fehler in einem `always` beendet diesen Abschnitt: Der Rest wird übersprung
 
 - Ein Host, der nie in ein rescue eingetreten ist, überspringt jeden Task darin, einschließlich eines Flush-Punkts und der Handler dahinter.
 - Ein Host, der nicht erreichbar ist, verlässt das Play, es sei denn, `ignore_unreachable` deckt den Task ab. Es bleibt nichts, worauf ein rescue laufen könnte.
+- Auf einem Host, dessen Connection-Plugin nicht existiert, schlägt jeder Task mit `the connection plugin 'x' was not found` fehl, auch `debug` und `set_fact`, also schlägt dort auch ein `rescue` fehl, wie in Ansible. Ein an einen anderen Host delegierter Task liest dessen Verbindung.
 - Wenn ein `run_once`-Task fehlschlägt, verlassen die Hosts, die auf ihn gewartet haben, das Play, auch wenn ein rescue den Host behält, der ihn ausgeführt hat.
 
 ## Mehrere Hosts fehlschlagen lassen

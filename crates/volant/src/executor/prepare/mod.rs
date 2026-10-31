@@ -40,7 +40,7 @@ pub(in crate::executor) use vars::host_vars;
 use vars::{Named, delegate_host_vars, merged_vars, resolved};
 
 use carry::Carry;
-use connect::{connect_for, delegate_for};
+use connect::{connect_for, delegate_for, unplugged};
 use escalation::become_for;
 use fields::{Fields, render_fields};
 use item::{item_failure, notify_for};
@@ -326,6 +326,9 @@ pub(super) fn prepare(
         || crate::playbook::names_no_action(&task.module)
     {
         late::check_become(task, plan, &base, templar)?;
+        if delegate.is_none() {
+            unplugged(task, host, (&base, templar, defaults), &mut items, warnings);
+        }
         return Ok(Prepared::Local(items, delegate.map(|(name, _)| name)));
     }
     let connect = Box::new(connect_for(task, &base, templar)?);

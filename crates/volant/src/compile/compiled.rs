@@ -162,7 +162,11 @@ pub(crate) fn handler_steps(c: &Compiled, at: usize) -> Vec<Step> {
             block,
             section,
             role: h.role,
-            origin: Arc::clone(&c.steps[at].origin),
+            // The handler's own place for its paths, at the flush's include depth.
+            origin: Arc::new(super::Origin {
+                depth: c.steps[at].origin.depth,
+                ..(*h.origin).clone()
+            }),
             include_params: c.steps[at].include_params.clone(),
             hosts: c.steps[at].hosts.clone(),
         })

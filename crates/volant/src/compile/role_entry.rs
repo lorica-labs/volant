@@ -168,7 +168,10 @@ impl Builder<'_> {
         // The role's handlers, before its tasks are walked, so a role imported by another one
         // contributes its handlers in front of the importer's. Their keywords are merged the way
         // a task's are: a `when` or a `become` written on the role entry reaches them too.
-        self.push_handlers(&role.handlers, &kw, &path.join("handlers"), Some(index))?;
+        let outer_role = self.role_dir.replace(path.clone());
+        let pushed = self.push_handlers(&role.handlers, &kw, &path.join("handlers"), Some(index));
+        self.role_dir = outer_role;
+        pushed?;
         // `rolespec_validate: false` leaves the check out, whatever the role ships.
         if let Some(spec) = role.argument_spec.filter(|_| entry.validate) {
             let task = merge(

@@ -1,5 +1,5 @@
 ---
-sourceHash: c2126b365c1e
+sourceHash: 93e42c829631
 title: Blöcke und Handler
 description: Wie ein Fehler durch Blöcke wandert, was rescue und always tun und wann Handler laufen.
 ---
@@ -90,7 +90,7 @@ Ein Task benachrichtigt nur, wenn er `changed` meldet. Bei einer Schleife entsch
 
 Eine `handlers:`-Liste darf ein `import_tasks` enthalten, in einem Play oder in einer Rolle. Die Handler der genannten Datei treten mit seinen Keywords an seine Stelle und werden über ihren Namen und über `listen` benachrichtigt. Die Datei wird neben der Datei gesucht, die die Anweisung enthält, dann im Verzeichnis des Playbooks.
 
-Ein Handler darf auch ein `include_tasks` sein. Benachrichtigt, bindet er seine Datei beim Flush ein: `included:` erscheint unter seinem `RUNNING HANDLER`-Banner, dann laufen die Tasks der Datei als Handler für die Hosts, die ihn benachrichtigt haben. Ein als Handler geschriebenes `include_role` beendet den Lauf, bevor etwas läuft, mit Exit-Code 4, wie in Ansible.
+Ein Handler darf auch ein `include_tasks` sein. Benachrichtigt, bindet er seine Datei beim Flush ein: `included:` erscheint unter seinem `RUNNING HANDLER`-Banner, dann laufen die Tasks der Datei als Handler für die Hosts, die ihn benachrichtigt haben. Der Handler einer Rolle sucht seine Datei im Verzeichnis `tasks/` der Rolle, wie ein Task der Rolle, und seine Tasks finden die Templates und Dateien der Rolle. Ein als Handler geschriebenes `include_role` beendet den Lauf, bevor etwas läuft, mit Exit-Code 4, wie in Ansible.
 
 Teilen sich zwei Handler einen Namen, antwortet der aus der zuletzt definierten Liste, wobei die Liste des Plays nach denen aller Rollen kommt, und innerhalb einer Liste der erste. Der Handler einer Rolle antwortet auch auf `<rolle> : <name>`. Jeder Handler, der auf den Namen hört, läuft, außer einem zweiten Listener mit demselben Namen wie ein bereits gefundener.
 

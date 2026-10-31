@@ -1,0 +1,2 @@
+- debug:
+    msg: "cleanup from the role: {{ lookup('template', 'note.j2') }}"

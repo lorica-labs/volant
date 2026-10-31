@@ -89,7 +89,7 @@ A task notifies only when it reports `changed`. For a loop, the overall result d
 
 A `handlers:` list may hold an `import_tasks`, in a play or in a role. The handlers of the file it names take its place, with its keywords, and are notified by name and by `listen`. The file is looked for beside the file that wrote the statement, then in the playbook's directory.
 
-A handler may also be an `include_tasks`. Notified, it includes its file at the flush: `included:` shows under its `RUNNING HANDLER` banner, then the file's tasks run as handlers for the hosts that notified it. An `include_role` written as a handler stops the run before anything runs, with exit code 4, as in Ansible.
+A handler may also be an `include_tasks`. Notified, it includes its file at the flush: `included:` shows under its `RUNNING HANDLER` banner, then the file's tasks run as handlers for the hosts that notified it. A role's handler looks for its file in the role's `tasks/` directory, as a task of the role does, and its tasks find the role's templates and files. An `include_role` written as a handler stops the run before anything runs, with exit code 4, as in Ansible.
 
 When two handlers share a name, the one in the last list defined answers, the play's own list after every role's, and within one list the first. A role's handler also answers to `<role> : <name>`. Every handler that listens for the name runs, except a second listener with the same name as one already found.
 

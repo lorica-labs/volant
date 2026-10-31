@@ -1,0 +1,16 @@
+- hosts: hu
+  gather_facts: false
+  tasks:
+    - command: "true"
+      ignore_unreachable: "{{ item.ignore_unreachable }}"
+      loop:
+        - ignore_unreachable: true
+        - ignore_unreachable: true
+      register: unreachable_ignored
+    - debug:
+        msg: "{{ unreachable_ignored.unreachable }} {{ unreachable_ignored.results | length }} {{ unreachable_ignored.results[0].unreachable }}"
+      delegate_to: h1
+    - command: "true"
+      ignore_unreachable: "{{ item }}"
+      loop: [true, false]
+    - debug: msg=never

@@ -233,6 +233,8 @@ pub(in crate::executor) enum Event {
         origin: Option<crate::playbook::Origin>,
         /// The step the batch that could not be reached began at, for `any_errors_fatal`.
         index: Option<usize>,
+        /// The items of a loop that could not be reached, each its own unreachable result.
+        items: Vec<LostItem>,
     },
     /// A host could not be reached for step `index` and the step said `ignore_unreachable`: the
     /// reference prints the same block and line as for a host that left, then `...ignoring`,
@@ -245,6 +247,7 @@ pub(in crate::executor) enum Event {
         censored: bool,
         delegate: Option<String>,
         origin: Option<crate::playbook::Origin>,
+        items: Vec<LostItem>,
     },
 }
 
@@ -276,16 +279,48 @@ pub(in crate::executor) enum MetaEffect {
     RefreshInventory,
 }
 
-/// What a host that could not be reached shows: the reference's error block, then the
-/// `UNREACHABLE!` line.
+/// One loop item a host could not be reached for: its label and its unreachable result.
+/// Measured on ansible-core 2.19.12: each item tries the connection and reports
+/// `failed: [h] (item=1) => {..., "unreachable": true}`, then the task's `UNREACHABLE!` line holds
+/// the items under `results`.
+pub(in crate::executor) type LostItem =
+    (Option<String>, serde_json::Map<String, serde_json::Value>);
+
+/// What a host that could not be reached shows: the reference's error block, then a line per
+/// loop item, then the `UNREACHABLE!` line.
 pub(super) struct Unreached {
     pub(super) msg: String,
     pub(super) censored: bool,
     pub(super) delegate: Option<String>,
     pub(super) origin: Option<crate::playbook::Origin>,
+    pub(super) items: Vec<LostItem>,
 }
 
 impl Unreached {
+    /// What an [`Event::Unreachable`] shows, with its host and the step it names.
+    pub(super) fn of(event: Event) -> (String, Option<usize>, Unreached) {
+        let Event::Unreachable {
+            host,
+            msg,
+            censored,
+            delegate,
+            origin,
+            index,
+            items,
+        } = event
+        else {
+            unreachable!("only an unreachable host is shown as one");
+        };
+        let blame = Unreached {
+            msg,
+            censored,
+            delegate,
+            origin,
+            items,
+        };
+        (host, index, blame)
+    }
+
     pub(super) fn show(&self, host: &str, out: &mut Renderer) {
         // Measured on ansible-core 2.19.12: a `no_log` task's unreachable host gets its block,
         // the reason censored.
@@ -294,7 +329,14 @@ impl Unreached {
             self.origin.as_ref(),
             self.censored,
         ));
-        out.unreachable(host, &self.msg, self.censored, self.delegate.as_deref());
+        show_lost(
+            host,
+            &self.msg,
+            &self.items,
+            self.censored,
+            self.delegate.as_deref(),
+            out,
+        );
     }
 
     /// [`Unreached::show`], after what the host showed at that step before it went, such as a
@@ -311,6 +353,30 @@ impl Unreached {
         }
         self.show(host, out);
     }
+}
+
+/// The lines of the items a host could not be reached for, then its `UNREACHABLE!` line.
+pub(super) fn show_lost(
+    host: &str,
+    msg: &str,
+    items: &[LostItem],
+    censored: bool,
+    delegate: Option<&str>,
+    out: &mut Renderer,
+) {
+    for (label, result) in items {
+        let result = TaskResult(result.clone());
+        out.result(
+            host,
+            Outcome::Failed,
+            &result,
+            label.as_deref(),
+            Dump::No,
+            censored,
+            delegate,
+        );
+    }
+    out.unreachable(host, msg, items, censored, delegate);
 }
 
 /// How a round of a batch ended, for the play that runs it.

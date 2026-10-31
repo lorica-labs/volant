@@ -1,5 +1,5 @@
 ---
-sourceHash: 2b129c372539
+sourceHash: c2126b365c1e
 title: Blöcke und Handler
 description: Wie ein Fehler durch Blöcke wandert, was rescue und always tun und wann Handler laufen.
 ---
@@ -52,7 +52,7 @@ Ein Fehler in einem `always` beendet diesen Abschnitt: Der Rest wird übersprung
 
 - `any_errors_fatal`, an einem Play, Block oder Task: Schlägt ein Task auf einem Host fehl oder erreicht ihn nicht, schlagen alle Hosts des Batches an diesem Task fehl, sobald alle ihn ausgeführt haben. Ein `rescue` um den Task läuft auf jedem Host. Nur der Host, der fehlgeschlagen ist, wird im Recap als `rescued` gezählt.
 - `max_fail_percentage`, an einem Play: Ist nach einem Task mehr als dieser Anteil des Batches fehlgeschlagen, endet der Lauf. `NO MORE HOSTS LEFT` wird zweimal ausgegeben, wie Ansible es ausgibt, und kein späteres Play läuft. Ein Batch, der genau diesen Anteil verliert, läuft weiter.
-- `ignore_unreachable`, an einem Play, Block oder Task: Ein Host, der nicht erreichbar ist, gibt seinen Fehler und `...ignoring` aus, bleibt im Play und wird als `ok` und `ignored` gezählt. Das `ignore_errors` eines Plays deckt Fehler ab und deckt keinen nicht erreichbaren Host ab.
+- `ignore_unreachable`, an einem Play, Block oder Task: Ein Host, der nicht erreichbar ist, gibt seinen Fehler und `...ignoring` aus, bleibt im Play und wird als `ok` und `ignored` gezählt. Das `ignore_errors` eines Plays deckt Fehler ab und deckt keinen nicht erreichbaren Host ab. In einer Schleife versucht jedes Element den Host und meldet sein eigenes unerreichbares Ergebnis, und der Host bleibt nur, wenn das `ignore_unreachable` jedes Elements gilt.
 
 ## Handler
 

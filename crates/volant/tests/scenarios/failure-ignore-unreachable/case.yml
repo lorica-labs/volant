@@ -1,4 +1,4 @@
-# An unreachable host the keyword covers stays in the play, and the play's ignore_errors does not cover it.
+# An unreachable host the keyword covers stays in the play, and the play's ignore_errors does not cover it; each item of a loop reports its own unreachable result, and the host stays only when every item's keyword holds.
 runs:
   - args: [-i, inv.ini, none.yml]
   - args: [-i, inv.ini, task.yml]
@@ -8,3 +8,4 @@ runs:
   - args: [-i, inv.ini, ignore-errors-play.yml]
   - args: [-i, inv.ini, register.yml]
   - args: [-i, inv.ini, rescue-block.yml]
+  - args: [-i, inv.ini, loop.yml]

@@ -1,5 +1,5 @@
 ---
-sourceHash: 2b129c372539
+sourceHash: c2126b365c1e
 title: Bloques y handlers
 description: Cómo viaja un fallo por los bloques, qué hacen rescue y always, y cuándo se ejecutan los handlers.
 ---
@@ -52,7 +52,7 @@ Un fallo dentro de un `always` termina esa sección: el resto se omite, y el hos
 
 - `any_errors_fatal`, en un play, un bloque o una tarea: cuando una tarea falla en un host o no puede llegar a él, todos los hosts del lote fallan en esa tarea una vez que todos la han ejecutado. Un `rescue` alrededor de la tarea se ejecuta en todos los hosts. Solo el host que falló se cuenta como `rescued` en el recap.
 - `max_fail_percentage`, en un play: después de cada tarea, si ha fallado más de esa proporción del lote, la ejecución se detiene. `NO MORE HOSTS LEFT` se imprime dos veces, como lo imprime Ansible, y no se ejecuta ningún play posterior. Un lote que pierde exactamente esa proporción continúa.
-- `ignore_unreachable`, en un play, un bloque o una tarea: un host al que no se puede llegar imprime su error y `...ignoring`, permanece en el play y se cuenta como `ok` e `ignored`. El `ignore_errors` de un play cubre los fallos y no cubre un host inalcanzable.
+- `ignore_unreachable`, en un play, un bloque o una tarea: un host al que no se puede llegar imprime su error y `...ignoring`, permanece en el play y se cuenta como `ok` e `ignored`. El `ignore_errors` de un play cubre los fallos y no cubre un host inalcanzable. En un bucle, cada elemento intenta llegar al host y devuelve su propio resultado inalcanzable, y el host solo se queda cuando el `ignore_unreachable` de cada elemento se cumple.
 
 ## Handlers
 

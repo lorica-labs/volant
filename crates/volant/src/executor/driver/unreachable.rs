@@ -11,8 +11,10 @@ use crate::playbook::PlayTask;
 use crate::vars::VarStore;
 
 use super::Driver;
-use crate::executor::coordinator::Event;
+use crate::executor::coordinator::{Event, LostItem};
+use crate::executor::prepare::{Item, item_ignores_unreachable};
 use crate::executor::run::{fact_targets, record_registered};
+use crate::template::Templar;
 /// An unreachable host under `ignore_unreachable`: the step shows the reason and the host stays.
 /// What a `register` on the task reads is the reference's own unreachable result.
 #[expect(
@@ -24,7 +26,7 @@ pub(super) async fn ignore_unreachable(
     host: &str,
     index: usize,
     task: &PlayTask,
-    msg: String,
+    (msg, items): (String, Vec<LostItem>),
     delegate: Option<&str>,
     store: &Mutex<VarStore>,
     register_hosts: &[String],
@@ -33,6 +35,20 @@ pub(super) async fn ignore_unreachable(
     result.0.insert("changed".into(), Value::Bool(false));
     result.0.insert("msg".into(), Value::String(msg.clone()));
     result.0.insert("unreachable".into(), Value::Bool(true));
+    // A loop registers its items under `results`, each as the reference keeps it, and the
+    // aggregate stays unreachable.
+    if !items.is_empty() {
+        let kept: Vec<Value> = items
+            .iter()
+            .map(|(_, item)| {
+                let mut kept = item.clone();
+                kept.insert("exception".into(), "(traceback unavailable)".into());
+                Value::Object(kept)
+            })
+            .collect();
+        result.0.insert("msg".into(), "All items completed".into());
+        result.0.insert("results".into(), Value::Array(kept));
+    }
     record_registered(
         &mut store.lock().expect("vars lock"),
         task,
@@ -48,6 +64,7 @@ pub(super) async fn ignore_unreachable(
             censored: task.censors(),
             delegate: delegate.map(str::to_string),
             origin: task.origin.clone(),
+            items,
         })
         .await;
     let _ = tx
@@ -71,7 +88,7 @@ pub(super) async fn ignore_the_batch(
     host: &str,
     task: &PlayTask,
     index: usize,
-    msg: String,
+    lost: (String, Vec<LostItem>),
     delegate: Option<&str>,
     store: &Mutex<VarStore>,
     undecided: Option<usize>,
@@ -79,7 +96,7 @@ pub(super) async fn ignore_the_batch(
 ) -> bool {
     let live = driver.progress.borrow().live_hosts.clone();
     let targets = fact_targets(task, host, &live);
-    ignore_unreachable(tx, host, index, task, msg, delegate, store, &targets).await;
+    ignore_unreachable(tx, host, index, task, lost, delegate, store, &targets).await;
     if let Some(step) = undecided {
         let Some(next) = driver.advance(step).await else {
             return false;
@@ -87,4 +104,35 @@ pub(super) async fn ignore_the_batch(
         *pos = next;
     }
     true
+}
+
+/// What a batch a host could not be reached for leaves per loop item: measured on ansible-core
+/// 2.19.12, each item of a looped step tries the connection and reports its own unreachable
+/// result, and the host is forgiven only when every item's `ignore_unreachable` holds. A step
+/// with no loop, or a batch of several, is one result, under the task's own keyword.
+pub(super) fn lost_items(
+    task: &PlayTask,
+    batch: &[(usize, Vec<Item>)],
+    msg: &str,
+    templar: &Templar,
+) -> (Vec<LostItem>, bool) {
+    let ([(_, items)], true) = (batch, task.loop_items.is_some()) else {
+        return (Vec::new(), task.ignores_unreachable());
+    };
+    let mut ignored = true;
+    let lost = items
+        .iter()
+        .filter(|item| item.skipped.is_none())
+        .map(|item| {
+            ignored &= item_ignores_unreachable(task, item, templar);
+            let mut result = serde_json::Map::new();
+            result.insert("ansible_loop_var".into(), task.loop_var.clone().into());
+            result.insert("changed".into(), Value::Bool(false));
+            result.insert("item".into(), item.element.clone().unwrap_or(Value::Null));
+            result.insert("msg".into(), msg.into());
+            result.insert("unreachable".into(), Value::Bool(true));
+            (item.label.clone(), result)
+        })
+        .collect();
+    (lost, ignored)
 }

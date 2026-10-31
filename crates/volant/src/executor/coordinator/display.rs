@@ -191,6 +191,7 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
         censored,
         delegate,
         origin,
+        items,
         ..
     } = &event
     {
@@ -200,7 +201,7 @@ pub(super) fn report_result(event: Event, stats: &mut Stats, out: &mut Renderer)
             origin.as_ref(),
             *censored,
         ));
-        out.unreachable(host, msg, *censored, delegate.as_deref());
+        super::types::show_lost(host, msg, items, *censored, delegate.as_deref(), out);
         out.ignoring();
         return;
     }

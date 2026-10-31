@@ -24,7 +24,7 @@ use super::coordinator::{Event, MetaEffect, Progress, escalated_links, render_na
 use super::debugger::{self, Hold};
 use super::include::{NO_FAILED_VARS, report_include, resolve_include};
 use super::prepare::{
-    Item, PlayPlan, Prepared, carry_on, failed_result, pause_of, prepare, retry_name,
+    Item, PlayPlan, Prepared, carry_on, failed_result, label_after, pause_of, prepare, retry_name,
 };
 use super::report::report_task;
 use super::run::{
@@ -1249,8 +1249,8 @@ pub(super) async fn drive_host(
                         };
                         let mut r = r;
                         let broke = break_after(task, item, &mut r, &templar);
+                        labels.push(label_after(task, item, &mut r, &templar));
                         results.push((item.element.clone(), r));
-                        labels.push(item.label.clone());
                         lefts.push(mine);
                         if broke {
                             break;
@@ -2174,7 +2174,7 @@ pub(super) async fn drive_host(
                     if bi == 0 && broken_at.is_some_and(|at| ii > at) {
                         break;
                     }
-                    let r = match (&item.skipped, received[bi][ii].take()) {
+                    let mut r = match (&item.skipped, received[bi][ii].take()) {
                         (Some(s), found) => found.unwrap_or_else(|| s.clone()),
                         // The retry loop has already applied `changed_when` and `failed_when`:
                         // `until` reads what they decided, so applying them twice would judge a
@@ -2186,8 +2186,8 @@ pub(super) async fn drive_host(
                             break;
                         }
                     };
+                    labels.push(label_after(task, item, &mut r, &templar));
                     results.push((item.element.clone(), r));
-                    labels.push(item.label.clone());
                 }
                 if !reached && results.is_empty() {
                     break;

@@ -35,7 +35,7 @@ pub(in crate::executor) use item::{
 };
 pub(crate) use keyword::command_line_modes;
 pub(in crate::executor) use keyword::strict_boolean;
-pub(in crate::executor) use label::{label_failed, label_raised_result, raised_by_label};
+pub(in crate::executor) use label::*;
 pub(in crate::executor) use late::{
     hide_after_failure, item_ignores_unreachable, resolve, strategy_reads_as_true,
 };
@@ -49,7 +49,6 @@ use connect::{connect_for, delegate_for, unplugged};
 use escalation::escalation_for;
 use fields::{Fields, render_fields};
 use item::{item_failure, notify_for};
-use label::{label_for, raises};
 pub(in crate::executor) use loops::undefined_causes;
 use loops::{LoopOptions, loop_list, loop_options, named_undefined, with_lookup_items};
 

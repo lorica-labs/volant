@@ -1,5 +1,5 @@
 ---
-sourceHash: 15a0cbe0471d
+sourceHash: 97768b377097
 title: Référence du langage de modèles
 description: Les méthodes Python, les règles sur les chaînes, les expressions régulières et les limites du Jinja2 de Volant, avec chaque différence avec ansible-core.
 ---
@@ -80,6 +80,7 @@ Des méthodes comme `.get()`, `.keys()`, `.values()` et `.items()` fonctionnent 
 
 - `| length` compte les octets. `b[0]`, `b[-1]`, `| first`, `| list` et `{% for %}` donnent des entiers.
 - `b.decode(encoding, errors)` et `b.hex(sep, bytes_per_sep)` donnent du texte. `.encode('ascii', 'ignore').decode('ascii')` supprime les caractères qui ne sont pas ASCII.
+- `b[1:]` et `b + b` donnent des bytes. Les autres méthodes de `bytes` de Python, comme `upper`, `split`, `startswith` et `replace`, fonctionnent comme en Python, la casse et les espaces sur l'ASCII seul. Une boucle sur des éléments bytes affiche `(item=b'abc')`.
 - `b64encode` lit les octets exacts. `b64decode`, `regex_replace`, `regex_search`, `regex_findall` et `quote` les lisent comme du texte UTF-8.
 - Un résultat de type bytes devient son texte, et `x {{ b }}` aussi. `'x' ~ b`, `b | string` et `'%s' % b` donnent `b'abc'`, comme dans Python.
 - `==`, `is sequence`, `is string` et `type_debug` (`bytes`) répondent comme dans ansible-core. `to_json` et `to_nice_json` échouent avec `Object of type 'bytes' is not JSON serializable`.
@@ -237,8 +238,7 @@ Volant refuse un texte YAML qu'il ne peut pas charger sans risque. L'erreur nomm
 
 ### Manques des bytes
 
-- Une valeur bytes est une séquence d'entiers qui s'affiche `b'abc'`. Une tranche et `+` (`b[1:]`, `b + b`) donnent une liste d'entiers, là où Python donne des bytes.
-- Une valeur bytes qu'une variable détient (`set_fact`, `vars:`) est stockée sous forme de texte : son `| length` compte des caractères, et `.decode()` échoue. Une boucle sur des éléments bytes affiche `(item=abc)` là où ansible-core affiche `(item=b'abc')`, parce qu'un élément de boucle est stocké sous forme de texte.
-- Les méthodes de bytes autres que `decode` et `hex` (`upper`, `split`, `startswith`) échouent en citant leur nom.
+- Une valeur bytes qu'une variable détient (`set_fact`, `vars:`) est stockée sous forme de texte : son `| length` compte des caractères, et `.decode()` échoue.
+- `fromhex`, `maketrans` et `translate` échouent en citant leur nom.
 - Une valeur bytes qui n'est pas de l'UTF-8 ne peut être ni un résultat ni être affichée dans un texte : ansible-core affiche `?` à sa place. `to_yaml`, `dict2items`, `flatten`, `hash`, `checksum`, `md5`, `sha1` et tout filtre qui s'exécute en Python refusent les bytes par leur nom.
 - `encode` et `decode` refusent par leur nom les encodages autres que ceux listés plus haut (`cp1252`, `shift_jis`), `decode` de `utf-16` et `utf-32`, et les gestionnaires d'erreur `namereplace`, `surrogateescape` et `surrogatepass` sur `decode`.

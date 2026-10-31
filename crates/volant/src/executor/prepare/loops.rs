@@ -88,7 +88,9 @@ pub(super) fn loop_list(
     vars: &HostVars,
 ) -> Result<(Vec<Value>, bool), TemplateError> {
     crate::profile::count(crate::profile::Counter::RenderLoop, 1);
-    let (rendered, tainted) = templar.render_value_tainted(raw, vars)?;
+    // A bytes item stays bytes, as the reference's loop item does.
+    let (rendered, tainted) =
+        crate::template::keeping_bytes(|| templar.render_value_tainted(raw, vars))?;
     // A loop over an unknown value goes over the items the recording looped over.
     let recorded = rendered
         .as_str()

@@ -483,10 +483,10 @@ fn is_local(module: &str) -> bool {
 
 /// The `(item=...)` label: Python's `str` of the item, which is a string as it is and anything
 /// else as its `repr`. Measured on ansible-core 2.19.12: `(item={'r': 1, 'd': 'nan'})` in the
-/// playbook's key order, `(item=[1, 'a', True, None])`.
+/// playbook's key order, `(item=[1, 'a', True, None])`, and bytes as `(item=b'abc')`.
 pub(super) fn display(v: &Value) -> String {
     match v {
-        Value::String(s) => s.clone(),
+        Value::String(s) => crate::template::kept_repr(s).unwrap_or_else(|| s.clone()),
         other => python_repr(other),
     }
 }

@@ -379,7 +379,8 @@ pub(super) fn item_keys(
     result: &mut serde_json::Map<String, Value>,
     element: &Value,
 ) {
-    result.insert(task.loop_var.clone(), element.clone());
+    // An item a loop kept as bytes shows as its text, as the result of a template does.
+    result.insert(task.loop_var.clone(), crate::template::kept_text(element));
     result.insert(
         "ansible_loop_var".into(),
         Value::from(task.loop_var.clone()),

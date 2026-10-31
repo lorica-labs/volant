@@ -359,8 +359,8 @@ fn encode_and_bytes_refuse_in_the_words_of_python() {
             "object of type 'bytes' has no attribute 'nope'",
         ),
         (
-            "{{ 'a'.encode().upper() }}",
-            "method upper is not available yet",
+            "{{ 'a'.encode().translate(none) }}",
+            "method translate is not available yet",
         ),
     ] {
         let err = render(template).unwrap_err();

@@ -1,0 +1,13 @@
+- hosts: localhost
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{{ ('abc'.encode())[1:] }} {{ ('abcdef'.encode())[::-2] }}"}
+    - debug: {msg: "{{ 'abc'.encode() + 'd'.encode() }}"}
+    - debug: {msg: "{{ 'abc'.encode().upper() }} {{ 'hello world'.encode().title() }}"}
+    - debug: {msg: "{{ 'a,b'.encode().split(','.encode()) }}"}
+    - debug: {msg: "{{ ' a  b c '.encode().split(None, 1) }} {{ 'a\nb\r\nc'.encode().splitlines() }}"}
+    - debug: {msg: "{{ 'abc'.encode().startswith('a'.encode()) }} {{ 'abc'.encode().find('c'.encode()) }}"}
+    - debug: {msg: "{{ item }}"}
+      loop: "{{ ['abc'.encode(), 'x'] }}"
+    - debug: {msg: "{{ 'abc'.encode() + 'd' }}"}
+      ignore_errors: true

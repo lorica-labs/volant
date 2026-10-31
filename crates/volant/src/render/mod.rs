@@ -440,8 +440,15 @@ impl Renderer {
             }
             return;
         }
-        let body = if censored { CENSORED } else { text };
-        let line = format!("[WARNING]: {body}");
+        // Measured on ansible-core 2.19.12: a Windows newline prints as a plain one, and a
+        // warning of several lines ends with a blank line, as `format_event` ends it.
+        let body = if censored { CENSORED } else { text }.replace("\r\n", "\n");
+        let blank = if body.contains('\n') && !body.ends_with('\n') {
+            "\n"
+        } else {
+            ""
+        };
+        let line = format!("[WARNING]: {body}{blank}");
         if !self.warned.insert(line.clone()) {
             return;
         }

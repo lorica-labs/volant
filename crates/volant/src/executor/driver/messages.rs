@@ -192,6 +192,7 @@ impl Driver<'_> {
                 ),
             ),
         };
+        self.meta_said(index, &why).await;
         let mut result = TaskResult::default();
         result.0.insert("msg".into(), Value::String(msg));
         result.0.insert("skipped".into(), Value::Bool(true));
@@ -215,6 +216,21 @@ impl Driver<'_> {
             .await;
     }
 
+    /// The `META: <what it did>` line a `meta` the playbook wrote prints at `-vv`, measured on
+    /// ansible-core 2.19.12: the reason it was skipped, or what it did.
+    pub(super) async fn meta_said(&self, index: usize, header: &str) {
+        let _ = self
+            .tx
+            .send(Event::Display {
+                host: self.name.to_string(),
+                index,
+                line: format!("META: {header}"),
+                shade: Shade::Verbose(2),
+                banner: true,
+            })
+            .await;
+    }
+
     /// Asks for the banner of the step at `index`.
     pub(super) async fn banner(&self, index: usize) {
         let _ = self
@@ -224,6 +240,21 @@ impl Driver<'_> {
                 index,
             })
             .await;
+    }
+}
+
+/// What a `meta` that ran says it did, in the reference's words.
+pub(super) fn meta_done(action: &str, host: &str, role: Option<&str>) -> String {
+    match action {
+        "end_host" => format!("ending play for {host}"),
+        "end_batch" => "ending batch".to_string(),
+        "end_play" => "ending play".to_string(),
+        "clear_facts" => "facts cleared".to_string(),
+        "clear_host_errors" => "cleared host errors".to_string(),
+        "refresh_inventory" => "inventory successfully refreshed".to_string(),
+        "reset_connection" => "reset connection".to_string(),
+        "end_role" => format!("ending role {} for {host}", role.unwrap_or_default()),
+        other => other.to_string(),
     }
 }
 

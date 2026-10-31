@@ -235,13 +235,16 @@ impl Bridged {
             Ok(Value::Object(map)) => {
                 // The helper's marks of a raised skip or failure, which the judge reads, and of
                 // an unreachable result the plugin returned rather than raised.
+                // And `_ansible_no_log`, which an action plugin sets on its own result to have it
+                // shown censored: measured, the reference honours it.
                 let raised: Vec<&str> = [
                     crate::executor::RAISED_SKIP,
                     crate::executor::RAISED_FAIL,
                     "_volant_returned",
+                    "_ansible_no_log",
                 ]
                 .into_iter()
-                .filter(|key| map.contains_key(*key))
+                .filter(|key| map.get(*key).is_some_and(|v| v != &Value::Bool(false)))
                 .collect();
                 let deprecation = map.get(crate::executor::DEPRECATION_TEXT).cloned();
                 // The error that gathers others, which the error block frames: see `settle_failure`.

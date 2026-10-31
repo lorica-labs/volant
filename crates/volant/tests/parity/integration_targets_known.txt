@@ -26,7 +26,6 @@ connection_local               #1290
 dataloader                     #1288
 debug                          #1283
 deprecations                   #1282
-display-newline                #1287
 filter_core                    #1289
 filter_encryption              #1283
 find                           #1290
@@ -63,7 +62,6 @@ set_fact                       #1282
 setup_pexpect                  #1265
 shell                          #1290
 strategy-external              #1287
-tags                           #1287
 task-args                      #1284
 template                       #1290
 templating                     #1284

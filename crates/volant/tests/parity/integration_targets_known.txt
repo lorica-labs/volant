@@ -24,7 +24,7 @@ callback_results               #1265
 conditionals                   #1265
 connection_delegation          #1265
 connection_local               #1264
-cron                           #1263
+cron                           #1265
 dataloader                     #1265
 debug                          #1265
 deprecations                   #1265

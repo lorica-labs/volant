@@ -1,5 +1,5 @@
 ---
-sourceHash: 3c2163d53be0
+sourceHash: 658a36da3f86
 title: Plugins d'action
 description: Comment Volant exécute les modules qu'ansible-core exécute par un plugin d'action sur le contrôleur, en Rust ou sur le pont Python.
 ---
@@ -156,7 +156,9 @@ L'assistant tient lieu de connexion du contrôleur, si bien que certaines choses
 - Un membre du contexte de connexion ou de play qui n'est pas l'un des rares que la couche d'adaptation porte : `Connection.<name> is not supported yet`, `the connection option <name> is not supported yet`, `the play context field <name> is not supported yet`, `the shell plugin <name> is not supported yet`.
 - Un mode d'`async_status` autre que `status` et `cleanup`.
 - Un module qui n'est pas du texte UTF-8 là où la couche d'adaptation le lit comme du texte.
-- Les mots-clés de tâche `action`, `local_action` et `module_defaults` dans l'assistant : le contrôleur a déjà fusionné les valeurs par défaut.
+- Les mots-clés de tâche `action` et `local_action` dans l'assistant.
+
+Les `module_defaults` de la tâche atteignent le plugin. Le contrôleur a déjà fusionné les valeurs par défaut de l'action dans ses arguments, et `gather_facts` applique les autres au module de facts qu'il exécute, comme ansible-core.
 
 Deux aspects de la connexion de l'assistant suivent ansible-core :
 

@@ -155,7 +155,9 @@ The helper stands in for the controller's connection, so some things ansible-cor
 - A member of the connection or play context that is not one of the few the shim carries: `Connection.<name> is not supported yet`, `the connection option <name> is not supported yet`, `the play context field <name> is not supported yet`, `the shell plugin <name> is not supported yet`.
 - An `async_status` mode other than `status` and `cleanup`.
 - A module that is not UTF-8 text where the shim reads it as text.
-- The task keywords `action`, `local_action` and `module_defaults` inside the helper: the controller merged the defaults already.
+- The task keywords `action` and `local_action` inside the helper.
+
+The task's `module_defaults` reach the plugin. The controller has merged the action's own defaults into its arguments already, and `gather_facts` applies the others to the facts module it runs, as ansible-core does.
 
 Two parts of the helper's connection follow ansible-core:
 

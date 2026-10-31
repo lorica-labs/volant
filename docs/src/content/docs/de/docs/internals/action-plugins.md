@@ -1,5 +1,5 @@
 ---
-sourceHash: 3c2163d53be0
+sourceHash: 658a36da3f86
 title: Action-Plugins
 description: Wie Volant die Module ausführt, die ansible-core über ein Action-Plugin auf dem Controller ausführt, in Rust oder auf der Python-Bridge.
 ---
@@ -156,7 +156,9 @@ Der Hilfsprozess steht für die Verbindung des Controllers, daher werden einige 
 - Ein Mitglied der Verbindung oder des Play-Kontexts, das nicht zu den wenigen gehört, die der Shim trägt: `Connection.<name> is not supported yet`, `the connection option <name> is not supported yet`, `the play context field <name> is not supported yet`, `the shell plugin <name> is not supported yet`.
 - Ein `async_status`-Modus außer `status` und `cleanup`.
 - Ein Modul, das kein UTF-8-Text ist, wo der Shim es als Text liest.
-- Die Task-Keywords `action`, `local_action` und `module_defaults` im Hilfsprozess: Der Controller hat die Defaults schon zusammengeführt.
+- Die Task-Keywords `action` und `local_action` im Hilfsprozess.
+
+Die `module_defaults` des Tasks erreichen das Plugin. Der Controller hat die Defaults der Action schon in ihre Argumente zusammengeführt, und `gather_facts` wendet die übrigen auf das Facts-Modul an, das es ausführt, wie ansible-core.
 
 Zwei Teile der Verbindung des Hilfsprozesses folgen ansible-core:
 

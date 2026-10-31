@@ -269,6 +269,11 @@ pub(super) fn start(
     if ctx.async_val > 0 {
         task.insert("async".into(), json!(ctx.async_val));
     }
+    // The plugin's own action has them merged into its arguments already; `gather_facts`,
+    // `package` and `service` read them for the module they pick, as the reference's do.
+    if !ctx.module_defaults.is_empty() {
+        task.insert("module_defaults".into(), json!(ctx.module_defaults));
+    }
     let task = Value::Object(task);
     // What the link is opened with comes from the host the module runs on, the delegate when
     // there is one. What the plugin reads as `task_vars` is the task's own host, and the delegate's

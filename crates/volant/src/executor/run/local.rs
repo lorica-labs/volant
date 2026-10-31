@@ -107,6 +107,7 @@ async fn controller_side(
             no_log: task.censors(),
             async_val: task.async_val,
             action: &task.module,
+            module_defaults: &task.module_defaults,
         },
     );
     let mut last = None;

@@ -91,7 +91,8 @@ pub fn run(task: &Task, cancelled: &dyn Fn() -> bool) -> (Run, Ran) {
         .and_then(|n| n.as_u64())
         .filter(|n| *n > 0);
     let mut context = Context {
-        timeout: task.timeout.map(Duration::from_secs),
+        // `timeout: 0` sets no deadline, as the reference's alarm does.
+        timeout: task.timeout.filter(|t| *t > 0).map(Duration::from_secs),
         environment: task.environment.clone(),
         check_mode,
         rlimit_nofile,

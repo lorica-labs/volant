@@ -54,7 +54,6 @@ loops                          #1289
 meta_tasks                     #1287
 module_defaults                #1289
 no_log                         #1287
-old_style_modules_posix        #1290
 omit                           #1288
 order                          #1289
 playbook                       #1288
@@ -73,7 +72,6 @@ special_vars                   #1289
 strategy-external              #1287
 tags                           #1287
 task-args                      #1284
-task-timeout                   #1290
 template                       #1290
 templating                     #1284
 templating_lookup_args         #1289
@@ -82,7 +80,6 @@ test_core                      #1289
 throttle                       #1290
 undefined                      #1284
 unsafe_writes                  #1290
-until                          #1290
 var_precedence                 #1289
 var_reserved                   #1288
 var_templating                 #1289

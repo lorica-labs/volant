@@ -154,6 +154,9 @@ fn parse_at(
     let Some(Yaml::Sequence(entries)) = docs.first() else {
         bail!("{source}: a playbook must be a list of plays");
     };
+    if entries.is_empty() {
+        bail!("A playbook must contain at least one play: {source}");
+    }
     let mut plays = Vec::new();
     for (i, entry) in entries.iter().enumerate() {
         match imported_playbook(entry, rendering)? {
@@ -242,7 +245,11 @@ fn imported_playbook(entry: &Yaml, rendering: &Rendering<'_>) -> anyhow::Result<
     let value = map.iter().find_map(|(key, value)| {
         matches!(
             key.as_str(),
-            Some("import_playbook" | "ansible.builtin.import_playbook")
+            Some(
+                "import_playbook"
+                    | "ansible.builtin.import_playbook"
+                    | "ansible.legacy.import_playbook"
+            )
         )
         .then_some(value)
     });
@@ -314,6 +321,22 @@ impl std::fmt::Display for NotATaskList {
 
 impl std::error::Error for NotATaskList {}
 
+/// `err` as an `import_tasks` refuses it while the play loads: a file whose document is not a
+/// list is placed at its start, measured on ansible-core 2.19.12, with the line it holds.
+pub(crate) fn imported_refusal(err: anyhow::Error) -> anyhow::Error {
+    match err.downcast::<NotATaskList>() {
+        Ok(NotATaskList(path)) => anyhow::Error::new(super::Located {
+            message: "included task files must contain a list of tasks".into(),
+            origin: super::Origin {
+                path: path.into(),
+                line: 1,
+                col: 1,
+            },
+        }),
+        Err(err) => err,
+    }
+}
+
 fn parse_tasks_text(path: &Path) -> anyhow::Result<Vec<TaskOrBlock>> {
     let text = crate::vault::read_to_string(path)
         .with_context(|| format!("reading {}", path.display()))?;
@@ -358,8 +381,27 @@ pub(super) fn task_list(node: Option<&Yaml>, label: &str) -> anyhow::Result<Vec<
             .map(|(i, y)| parse_item(y).with_context(|| format!("{label} item {}", i + 1)))
             .collect(),
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
-        _ => bail!("'{label}' must be a list"),
+        Some(other) => bail!(
+            "A malformed block was encountered while loading {label}: {} should be a list or None              but is {}",
+            super::keywords::shown(other),
+            tagged_class(other)
+        ),
     }
+}
+
+/// The class ansible-core names a value it loaded from YAML by, in its refusals: the tagged
+/// type it wraps a scalar or a container in, `bool` and `NoneType` as they are.
+pub(super) fn tagged_class(node: &Yaml) -> String {
+    let name = match node {
+        Yaml::Value(Scalar::Integer(_)) => "_AnsibleTaggedInt",
+        Yaml::Value(Scalar::FloatingPoint(_)) => "_AnsibleTaggedFloat",
+        Yaml::Value(Scalar::String(_)) => "_AnsibleTaggedStr",
+        Yaml::Sequence(_) => "_AnsibleTaggedList",
+        Yaml::Mapping(_) => "_AnsibleTaggedDict",
+        Yaml::Value(Scalar::Boolean(_)) => return "<class 'bool'>".into(),
+        _ => return "<class 'NoneType'>".into(),
+    };
+    format!("<class 'ansible.module_utils._internal._datatag.{name}'>")
 }
 
 /// A task, or a block. A mapping carrying `block`, `rescue` or `always` is a block: the

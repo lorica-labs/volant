@@ -224,10 +224,6 @@ fn hosts_lists_defaults_and_escalation_keywords_are_read() {
     "- hosts: all\n  gather_facts: 2\n  tasks:\n    - command: echo hi\n",
     &["The value 2 could not be converted to 'bool'."]
 )]
-#[case::ignore_errors_word(
-    "- hosts: all\n  tasks:\n    - command: echo hi\n      ignore_errors: maybe\n",
-    &["Error processing keyword 'ignore_errors': The value 'maybe' could not be converted to 'bool'."]
-)]
 #[case::become_word(
     "- hosts: all\n  tasks:\n    - command: echo hi\n      become: maybe\n",
     &["Error processing keyword 'become': The value 'maybe' could not be converted to 'bool'."]

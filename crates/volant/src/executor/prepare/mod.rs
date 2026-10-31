@@ -290,6 +290,7 @@ pub(super) fn prepare(
             label_error,
             label_raised,
             deferred: fields.deferred,
+            escalation: None,
         };
         if let Some(carry) = &mut carry
             && !item.deferred
@@ -370,7 +371,8 @@ pub(super) fn prepare(
     // `ansible_become_user` under a `delegate_to` still reads the value the **delegating**
     // host carries, while `ansible_host` and `ansible_connection` read the delegate's. So the
     // link goes to the delegate and escalates to the user the task's own host asked for.
-    let escalation = escalation_for(task, plan, (&base, &items), defaults, templar)?.map(Box::new);
+    let escalation =
+        escalation_for(task, plan, (&base, &mut items), defaults, templar)?.map(Box::new);
     if let Some(kind) = crate::action_plugins::kind(&task.module) {
         return Ok(Prepared::Remote(
             items,

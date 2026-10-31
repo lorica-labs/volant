@@ -171,10 +171,8 @@ The plugin reads the link's key and user (the host variable, `--private-key`, `-
 ### Known gaps
 
 - `wait_for_connection` on a host that is down from the first connection ends `UNREACHABLE` for a plugin item that never got a link; ansible-core reports `failed` with `timed out waiting for ping module test`.
-- A bridged result that is `unreachable` at the result level prints as `ok`.
-- A skipped bridged result carries `"failed": false`.
-- The warnings a plugin writes with `display` go to the helper's standard error, not to the task's output; so does ansible-core's `Error loading plugin` warning for an unknown collection name.
-- A module that `runtime.yml` routes to a differently named action plugin runs under the task's own name.
+- A bridged result that is `unreachable` at the result level prints an `[ERROR]:` block in front of its `UNREACHABLE!` line, and its registered value has no `failed` key.
+- What a plugin writes with `display` does not come out in the order it wrote it: a warning can follow a line written after it.
 - A delegated `add_host` or `group_by` applies to the task's own host.
 
 ## A source file a managed host named

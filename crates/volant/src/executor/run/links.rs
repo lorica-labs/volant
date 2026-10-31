@@ -193,6 +193,37 @@ pub(in crate::executor) async fn link_for<'a>(
     Ok(links.get_mut(key).expect("inserted just above"))
 }
 
+/// The link one item of the task whose batch holds `key` runs over: the batch's, or one of its
+/// own when the item escalates differently ([`crate::executor::prepare::Item::escalation`]). A
+/// link that cannot be had fails that item alone, as a refused escalation fails a task.
+pub(in crate::executor) async fn item_link<'a>(
+    (links, checked): (
+        &'a mut HashMap<LinkKey, AgentLink>,
+        &mut HashMap<LinkKey, u64>,
+    ),
+    key: &LinkKey,
+    item: &crate::executor::prepare::Item,
+    agents: &AgentSource,
+    options: &RunOptions,
+) -> Result<&'a mut AgentLink, volant_protocol::TaskResult> {
+    let Some(own) = &item.escalation else {
+        return links.get_mut(key).ok_or_else(|| {
+            volant_protocol::TaskResult::failed_with("the batch lost its connection")
+        });
+    };
+    let key = LinkKey {
+        become_user: own.as_ref().map(|e| e.user.clone()),
+        become_program: own.as_ref().map(Escalation::program),
+        ..key.clone()
+    };
+    link_for(links, checked, &key, own.as_ref(), agents, options)
+        .await
+        .map_err(|err| match err {
+            ConnectError::Become(msg) => crate::transport::refused_escalation(msg),
+            other => volant_protocol::TaskResult::failed_with(format!("Task failed: {other}")),
+        })
+}
+
 /// `meta: reset_connection` for `host`: its links go, the shared ssh master with them, and so
 /// does the persistent connection process a task of the host started in the helper, whether or
 /// not a link is held for it. The next task opens them again.

@@ -1,5 +1,5 @@
 ---
-sourceHash: 58dc975aeb56
+sourceHash: d7a9625feefb
 title: Delegación, tareas meta y environment
 description: Ejecutar una tarea una sola vez para un lote o en otro host, qué hace cada acción meta, y cómo dan forma a una tarea environment y no_log.
 ---
@@ -104,6 +104,8 @@ Los facts y los valores de `set_fact` se quedan como estaban. Consulta [Inventar
 Las capas se combinan clave por clave, cada una sobre la anterior: primero el play, después cada bloque envolvente de fuera hacia dentro y por último la tarea. Cada capa se renderiza con las variables del elemento de bucle actual.
 
 Los valores pasan a ser lo que `str()` de Python hace de ellos, así que `42` pasa a `"42"`, `true` a `"True"` y `null` a `"None"`. Una variable sin definir dentro de `environment` hace fallar la tarea.
+
+`environment` también puede ser una lista de mappings, que se combinan en orden. Una entrada o un valor que sea `omit` se omite.
 
 ## no_log
 

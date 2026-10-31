@@ -1,6 +1,7 @@
-# A meta that is skipped shows skipping under its banner and is no result the recap counts; the condition is read per host or on the first one.
+# A meta that is skipped shows skipping under its banner and is no result the recap counts; the condition is read per host or on the first one, and one that cannot be evaluated ends the run.
 # No modes: the meta effects are the same in every mode.
 runs:
   - args: [-i, inv.ini, skip.yml]
   - args: [-i, inv.ini, flush.yml]
   - args: [-i, inv.ini, once.yml]
+  - args: [-i, inv.ini, undefined.yml]

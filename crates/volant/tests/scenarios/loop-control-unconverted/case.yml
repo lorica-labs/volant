@@ -1,0 +1,4 @@
+# A `loop_control` value that does not convert fails the task with the keyword's block at the value, its conversion as the cause.
+runs:
+  - args: [-i, inv.ini, templated.yml]
+  - args: [-i, inv.ini, literal.yml]

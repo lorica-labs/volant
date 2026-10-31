@@ -1,0 +1,10 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - block:
+        - debug: {msg: "{{ item }}"}
+          loop: [1]
+          loop_control:
+            extended: maybe
+      rescue:
+        - debug: var=ansible_failed_result.msg

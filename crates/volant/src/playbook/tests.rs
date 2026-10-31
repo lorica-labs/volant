@@ -282,7 +282,7 @@ fn hosts_lists_defaults_and_escalation_keywords_are_read() {
 )]
 #[case::poll_negative(
     "- hosts: all\n  tasks:\n    - name: t\n      command: \"true\"\n      poll: -1\n",
-    &["task 't': 'poll' must be a non-negative integer"]
+    &["task 't': 'poll': the value -1 is negative, which is not supported yet"]
 )]
 #[case::apply_list(
     "- hosts: all\n  tasks:\n    - include_tasks:\n        file: a.yml\n        apply: [tags]\n",
@@ -1000,7 +1000,6 @@ fn a_templated_run_once_and_any_errors_fatal_show_before_they_are_rendered() {
     "run_once: 2",
     "Error processing keyword 'run_once': The value 2 could not be converted to 'bool'."
 )]
-#[case::timeout("timeout: -1", "'timeout' must be a non-negative integer")]
 #[case::async_keyword("async: abc", "'async' must be a non-negative integer")]
 fn a_literal_that_is_not_what_the_keyword_takes_is_still_refused_at_load(
     #[case] line: &str,

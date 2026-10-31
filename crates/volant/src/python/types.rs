@@ -155,10 +155,28 @@ pub fn is_resolved_name(module: &str) -> bool {
         && !volant_protocol::modules::is_builtin(module)
 }
 
+/// The names nothing on the controller answers to, with the collection that would have to be
+/// installed: kept for a task that names one only when it runs ([`missing`]).
+static MISSING: std::sync::Mutex<BTreeMap<String, Option<String>>> =
+    std::sync::Mutex::new(BTreeMap::new());
+
+/// What [`note_action_plugins`] learned of `module` when nothing answers to it: `Some` with the
+/// collection to install, if one would.
+pub(crate) fn missing(module: &str) -> Option<Option<String>> {
+    MISSING.lock().expect("missing lock").get(module).cloned()
+}
+
 /// Tells the action plugin dispatch which of the names ansible-core resolved are collection
-/// action plugins, which run in the helper rather than as a module.
+/// action plugins, which run in the helper rather than as a module, and [`missing`] which
+/// resolved to nothing.
 pub(crate) fn note_action_plugins(resolved: &BTreeMap<String, Resolved>) {
     for (name, answer) in resolved {
+        if let Resolved::Missing { collection } = answer {
+            MISSING
+                .lock()
+                .expect("missing lock")
+                .insert(name.clone(), collection.clone());
+        }
         if let Resolved::ActionPlugin { fqcn, with_module } = answer
             && !crate::action_plugins::waits_for_later(name)
             && !crate::action_plugins::waits_for_later(fqcn)

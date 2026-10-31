@@ -1,0 +1,17 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - action: nosuch_ns.nosuch_coll.mod
+      when: false
+    - action: nosuch_ns.nosuch_coll.mod a=1
+      ignore_errors: true
+    - action: nosuch_module_xyz
+      ignore_errors: true
+    - local_action: nosuch_module_xyz
+      register: out
+      ignore_errors: true
+    - debug: var=out.msg
+    - block:
+        - action: nosuch_module_xyz
+      rescue:
+        - debug: msg=rescued

@@ -1,5 +1,5 @@
 ---
-sourceHash: e661323a4182
+sourceHash: f734791df9a1
 title: ¿Se ejecutará mi playbook?
 description: Comprueba un proyecto de Ansible existente contra esta versión en unos segundos, sin tocar ningún host.
 ---
@@ -87,7 +87,7 @@ La comprobación previa detiene la ejecución antes de la primera conexión, ant
 | Un argumento de módulo que tiene ansible-core y que esta versión no aplica | `argument 'x' is not supported yet on 'module'`, con ` with 'v'` cuando solo se rechaza ese valor | 4 |
 | `end_role` fuera de un rol | `Cannot execute 'end_role' from outside of a role` | 4 |
 | Un módulo integrado que esta versión no incluye | `module 'x' is not available in this release` | 4 |
-| Un módulo o una colección que no se resuelve | `couldn't resolve module/action 'x' ...`, con el comando de instalación si falta una colección | 4 |
+| Un módulo o una colección que no se resuelve, escrito como clave de la tarea (nombrado en `action:` o `local_action:`, hace fallar la tarea cuando se ejecuta, con `Cannot resolve 'x' to an action or module.`) | `couldn't resolve module/action 'x' ...`, con el comando de instalación si falta una colección | 4 |
 | Un módulo de colección que necesita un plugin de acción para Windows | `module 'x' needs an action plugin from its collection, which this release does not run` | 4 |
 | Un `become_method` distinto de `sudo` y `su` | `become_method 'x' is not supported yet` | 2 |
 | Un rol en `roles:` o `import_role` que nadie encuentra | `the role 'x' was not found in ...` | 1 |

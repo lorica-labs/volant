@@ -28,6 +28,7 @@ pub use reach::{is_python_module, module_path, set_module_path};
 pub(crate) use types::HELPER;
 #[cfg(test)]
 pub use types::ModuleFacts;
+pub(crate) use types::missing;
 pub use types::{Facts, ModulePayload, Natives, Resolved, Union, is_resolved_name, payload_key};
 pub use union_build::union_and_helper;
 #[cfg(test)]

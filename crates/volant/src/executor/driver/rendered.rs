@@ -1,12 +1,13 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The steps of a batch as one host runs them, with the keywords written as templates rendered.
 
+use std::borrow::Cow;
 use std::collections::HashMap;
 use std::sync::Mutex;
 
 use tokio::sync::mpsc;
 
-use crate::compile::{Compiled, Step};
+use crate::compile::{Compiled, Step, StepKind};
 use crate::template::{Templar, TemplateError};
 use crate::vars::VarStore;
 
@@ -16,6 +17,21 @@ use super::super::prepare::{PlayPlan, Prepared, hide_after_failure, resolve};
 /// The steps of the batch in hand whose keywords were rendered for this host, by position. A
 /// step with nothing to render is not in it.
 pub(super) type Rendered = HashMap<usize, Step>;
+
+/// The `meta` actions whose `when` the reference does not read: it warns that the task does not
+/// support one and runs the action all the same.
+pub(super) const NO_WHEN: [&str; 3] = ["noop", "refresh_inventory", "reset_connection"];
+
+/// `step` as it is prepared: a `NO_WHEN` action loses its `when`, since the reference never
+/// reads it, so a condition that cannot be evaluated must not fail the host either.
+pub(super) fn read_as(step: &Step) -> Cow<'_, Step> {
+    if step.kind != StepKind::Meta || !NO_WHEN.contains(&crate::compile::meta_action(&step.task)) {
+        return Cow::Borrowed(step);
+    }
+    let mut copy = step.clone();
+    copy.task.when.clear();
+    Cow::Owned(copy)
+}
 
 /// The step at `index` as this host runs it: the copy its templated keywords were rendered into
 /// when there is one, the compiled step otherwise.

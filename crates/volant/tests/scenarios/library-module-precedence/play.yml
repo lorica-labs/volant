@@ -1,0 +1,14 @@
+- hosts: l
+  gather_facts: false
+  collections: [my.col]
+  tasks:
+    - ping:
+      register: plain
+    - ansible.legacy.legacy_ping:
+      register: legacy
+    - legacy_ping:
+      register: short
+    - routed:
+      register: routed
+    - debug:
+        msg: "{{ [plain.location, legacy.location, short.location, routed.location] }}"

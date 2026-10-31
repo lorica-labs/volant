@@ -320,10 +320,13 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
             with_module: true
         }
     );
-    assert!(
-        matches!(&resolved["volanttest.coll.winmod"], Resolved::Unusable { reason } if reason.contains("'old'")),
-        "{:?}",
-        resolved["volanttest.coll.winmod"]
+    assert_eq!(
+        resolved["volanttest.coll.winmod"],
+        // Its documentation-only `.py` is an `old` module, which `normal` ships as it is.
+        Resolved::ActionPlugin {
+            fqcn: "ansible.builtin.normal".into(),
+            with_module: false
+        }
     );
     assert_eq!(
         resolved["volanttest.coll.onlyps"],
@@ -384,10 +387,6 @@ fn a_collection_the_controller_cannot_run_is_answered_name_by_name() {
     );
     // Named by a task, each is refused by its own sentence.
     for (module, says) in [
-        (
-            "volanttest.coll.winmod",
-            "cannot run: module 'volanttest.coll.winmod' is built as 'old'",
-        ),
         (
             "volanttest.coll.gone",
             "cannot run: AnsiblePluginRemovedError: The 'volanttest.coll.gone' module has been removed",

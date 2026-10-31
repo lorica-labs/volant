@@ -65,7 +65,8 @@ fn module_defaults_follow_the_reference(
     );
 }
 
-/// `my.col` has `hello`, `my.col2` has `hello` and `only2`.
+/// `my.col` has `hello`, `my.col2` has `hello` and `only2`, and routes `routed` and `acted` in its
+/// `runtime.yml`.
 fn installed() -> (tempfile::TempDir, RoleSearch) {
     let dir = tempfile::tempdir().expect("a scratch directory");
     for (collection, module) in [("col", "hello"), ("col2", "hello"), ("col2", "only2")] {
@@ -77,6 +78,13 @@ fn installed() -> (tempfile::TempDir, RoleSearch) {
         std::fs::create_dir_all(&modules).expect("a modules directory");
         std::fs::write(modules.join(format!("{module}.py")), "").expect("a module");
     }
+    let meta = dir.path().join("ansible_collections/my/col2/meta");
+    std::fs::create_dir_all(&meta).expect("a meta directory");
+    std::fs::write(
+        meta.join("runtime.yml"),
+        "plugin_routing:\n  modules:\n    routed:\n      redirect: my.col2.only2\n  action:\n    acted:\n      redirect: my.col2.only2\n",
+    )
+    .expect("a runtime.yml");
     let search = RoleSearch {
         paths: Vec::new(),
         collections: vec![dir.path().to_path_buf()],
@@ -88,6 +96,8 @@ fn installed() -> (tempfile::TempDir, RoleSearch) {
 #[case::first_listed_wins(&["my.col", "my.col2"], "hello", "my.col.hello", 0)]
 #[case::order_decides(&["my.col2", "my.col"], "hello", "my.col2.hello", 0)]
 #[case::a_later_collection_is_searched(&["my.col", "my.col2"], "only2", "my.col2.only2", 0)]
+#[case::a_routed_module_is_found(&["my.col", "my.col2"], "routed", "my.col2.routed", 0)]
+#[case::a_routed_action_is_found(&["my.col", "my.col2"], "acted", "my.col2.acted", 0)]
 #[case::a_builtin_name_stays(&["my.col"], "debug", "debug", 0)]
 #[case::a_full_name_stays(&["my.col2"], "my.col.hello", "my.col.hello", 0)]
 #[case::a_missing_collection_warns_and_is_skipped(&["no.such", "my.col"], "hello", "my.col.hello", 1)]

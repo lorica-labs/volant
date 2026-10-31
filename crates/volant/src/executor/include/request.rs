@@ -188,7 +188,12 @@ fn prepend(vars: &mut IncludeParams, name: &str, value: Value) {
 /// as part of a role's identity: measured, the same role named by the same item twice is one
 /// instance and by two items is two.
 fn bind_loop(task: &PlayTask, item: &Item, vars: &mut IncludeParams, own: &mut Map<String, Value>) {
-    let bound = [Some(&task.loop_var), task.index_var.as_ref()]
+    // The name `prepare` bound the item to, a templated `loop_var` rendered.
+    let loop_var = match item.vars.get_whole("ansible_loop_var") {
+        Some(Value::String(name)) => name,
+        _ => task.loop_var.clone(),
+    };
+    let bound = [Some(&loop_var), task.index_var.as_ref()]
         .into_iter()
         .flatten()
         .map(String::as_str)
@@ -202,7 +207,7 @@ fn bind_loop(task: &PlayTask, item: &Item, vars: &mut IncludeParams, own: &mut M
             own.insert(name.to_string(), value);
         }
     }
-    let var = Value::String(task.loop_var.clone());
+    let var = Value::String(loop_var.clone());
     vars.values.insert("ansible_loop_var".into(), var.clone());
     own.insert("ansible_loop_var".into(), var);
     if let Some(index) = &task.index_var {

@@ -407,8 +407,8 @@ fn another_host_s_variables_say_whether_they_render(#[case] host: &str, #[case] 
         modules: &[],
         hostvars: Arc::new(hostvars.into_iter().collect()),
         untrusted_hosts: [
-            Arc::new(["h3".to_string()].into()),
-            Arc::new(["h4".to_string()].into()),
+            Arc::new([("h3".to_string(), ["v".to_string()].into())].into()),
+            Arc::new([("h4".to_string(), ["v".to_string()].into())].into()),
         ],
         asks,
         replies: Some(replies),

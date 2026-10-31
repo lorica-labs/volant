@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! The boolean keywords a task writes as templates, rendered for one item.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+
 use serde_json::Value;
 
 use crate::playbook::{Flag, python_repr};
@@ -32,7 +34,7 @@ pub(super) fn flag_for(
 ) -> Result<Option<bool>, TemplateError> {
     match flag {
         Some(Flag::Fixed(b)) => Ok(Some(*b)),
-        Some(Flag::Template(raw)) if omitted(raw, vars, templar) => Ok(None),
+        Some(Flag::Template(raw)) if omitted(raw, vars, templar) => Ok(Some(command_line(key))),
         Some(Flag::Template(raw)) if !skipped => boolean_keyword(key, raw, vars, templar).map(Some),
         _ => Ok(None),
     }
@@ -83,4 +85,19 @@ pub(in crate::executor) fn strict_boolean(value: &Value) -> Option<bool> {
         "n" | "no" | "off" | "0" | "0.0" | "-0.0" | "false" | "f" => Some(false),
         _ => None,
     }
+}
+
+/// `--check` and `--diff` as the command line gave them, which a `check_mode` or a `diff` that
+/// renders to `omit` falls back to: measured on ansible-core 2.19.12, `check_mode: '{{ omit }}'`
+/// under `-C` runs in check mode whatever the play says.
+static COMMAND_LINE: [AtomicBool; 2] = [AtomicBool::new(false), AtomicBool::new(false)];
+
+/// Sets [`COMMAND_LINE`] once, before the first play.
+pub(crate) fn command_line_modes(check: bool, diff: bool) {
+    COMMAND_LINE[0].store(check, Ordering::Relaxed);
+    COMMAND_LINE[1].store(diff, Ordering::Relaxed);
+}
+
+fn command_line(key: &str) -> bool {
+    COMMAND_LINE[usize::from(key == "diff")].load(Ordering::Relaxed)
 }

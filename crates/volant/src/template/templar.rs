@@ -19,7 +19,7 @@ use super::missing::named;
 use super::vm::{
     TemplateReads, convert_error, eval_expr, keep_literal, single_expression, template_reads,
 };
-use super::{RESOLVING, Tainted, TemplateError};
+use super::{RESOLVING, Tainted, TemplateError, as_expression};
 
 /// A handle on the environment and the bridge, cheap to clone: a render's context holds one so
 /// that a variable whose value is a template can be rendered when a template reads it.
@@ -456,7 +456,7 @@ impl Templar {
         // A condition written in braces is a template: its syntax errors are a template's.
         let mut value = match delimited {
             Some(inner) => super::as_template(expr, inner, || self.evaluate_in(inner, &ctx))?,
-            None => self.evaluate_in(expr.trim(), &ctx)?,
+            None => self.evaluate_in(expr.trim(), &ctx).map_err(as_expression)?,
         };
         if delimited.is_some()
             && let Value::String(text) = &value

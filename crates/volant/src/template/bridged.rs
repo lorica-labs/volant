@@ -368,8 +368,9 @@ fn failed(kind: PluginKind, name: &str, err: BridgeError) -> Error {
         (BridgeError::NotFound(_), PluginKind::Filter) => {
             raise(format!("{}'{name}'.", super::NO_FILTER))
         }
+        // Measured on ansible-core 2.19.12: `1 is nope` fails with this sentence.
         (BridgeError::NotFound(_), PluginKind::Test) => {
-            Error::new(ErrorKind::UnknownTest, format!("test {name} is unknown"))
+            raise(format!("Syntax error in template: No test named '{name}'."))
         }
         (BridgeError::Plugin(text) | BridgeError::NotFound(text), _) => raise(text),
         (BridgeError::Start(why), _) => raise(format!(

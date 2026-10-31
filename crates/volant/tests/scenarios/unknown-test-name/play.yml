@@ -1,0 +1,14 @@
+- hosts: all
+  gather_facts: false
+  tasks:
+    - debug:
+        msg: "{{ 1 is nope }}"
+      ignore_errors: true
+    - debug:
+        msg: never
+      when: 1 is nope
+      ignore_errors: true
+    - debug:
+        msg: never
+      when: 1 | nope
+      ignore_errors: true

@@ -255,7 +255,8 @@ pub fn check_task(task: &PlayTask) -> anyhow::Result<()> {
         // is built ([`check_resolved`]). A word left in `_raw_params` fails the task when it
         // runs (`raw_params_refusal`), once the name resolved: `shel: echo hi` is a typo before
         // it is a module given raw params.
-        if crate::python::is_resolved_name(&task.module) {
+        // A name written as a template is judged once the task renders it for its host.
+        if crate::python::is_resolved_name(&task.module) || Templar::is_template(&task.module) {
             return Ok(());
         }
         bail!(unresolved(&task.name, &task.module));

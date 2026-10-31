@@ -1,5 +1,5 @@
 ---
-sourceHash: 97768b377097
+sourceHash: 0228e4fa70e5
 title: Referenz der Template-Sprache
 description: Die Python-Methoden, String-Regeln, regulären Ausdrücke und Grenzen des Jinja2 von Volant, mit jedem Unterschied zu ansible-core.
 ---
@@ -194,7 +194,7 @@ Ein nicht vertrauenswürdiger Wert wird einmal gerendert. Sieht das Ergebnis wie
 Task failed: Error while resolving `var` expression: Encountered untrusted template or expression.
 ```
 
-Wenn Sie den Namen selbst schreiben, wie in `debug: var: result.stdout`, funktioniert das wie gewohnt. Es ist `debug: var: "{{ from_a_host }}"`, das anhält.
+Wenn Sie den Namen selbst schreiben, wie in `debug: var: result.stdout`, funktioniert das wie gewohnt. Es ist `debug: var: "{{ from_a_host }}"`, das anhält. Ebenso `debug: var: "{{ 'name' }}"`: Wie in ansible-core 2.19 ist ein String-Literal in einem Template nicht vertrauenswürdig. Ein Name aus einer Schleife, die Sie geschrieben haben, wie in `debug: var: "{{ item }}"`, funktioniert weiterhin. Ein `var`, der kein Text ist, auch eine Zahl, lässt den Task mit der Meldung der Argumentspezifikation fehlschlagen.
 
 Bedingungen folgen derselben Regel. Ein `when: "{{ ... }}"`, das zu einem String gerendert wird, den Sie geschrieben haben, etwa `"1 == 1"`, wird noch einmal als Bedingung ausgewertet. Hat das Rendern etwas gelesen, das ein Host gesendet hat, wird der String nie kompiliert, und der Task schlägt mit demselben `Encountered untrusted template or expression.` fehl. Ein `assert`, dessen `that` ein Template ist, funktioniert genauso.
 

@@ -22,7 +22,6 @@ conditionals                   #1282
 connection_delegation          #1265
 connection_local               #1290
 dataloader                     #1288
-debug                          #1283
 deprecations                   #1282
 filter_core                    #1289
 filter_encryption              #1283

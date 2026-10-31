@@ -303,6 +303,10 @@ fn render_args(
         let (value, tainted) = templar
             .render_value_tainted(&Value::String(template.clone()), vars)
             .map_err(|err| splat_failure(task, &super::undefined_name(template, err.0)))?;
+        // A splat that is `omit` as a whole is left out, measured.
+        if value.as_str() == Some(crate::vars::omit_token()) {
+            continue;
+        }
         let Value::Object(fields) = value else {
             return Err(splat_failure(
                 task,

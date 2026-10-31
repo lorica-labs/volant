@@ -1,0 +1,16 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug:
+        var:
+          some_diot:
+            sub_dict:
+      ignore_errors: true
+    - debug:
+        var: [1]
+      ignore_errors: true
+    - debug:
+        var: 5
+      ignore_errors: true
+    - debug:
+        var:

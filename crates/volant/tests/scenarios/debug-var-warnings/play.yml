@@ -1,0 +1,26 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug:
+        var: something_undefined
+      register: undefined
+    - debug:
+        var: indirect_omit
+      vars:
+        indirect_omit: '{{ omit }}'
+      register: omitted
+    - debug:
+      args: '{{ omit }}'
+    - debug:
+        var: '{{ "trusted_varname" }}'
+      vars:
+        trusted_varname: hi
+      ignore_errors: true
+    - debug:
+        var: '{{ item }}'
+      vars:
+        k1: v1
+      loop: [k1]
+      register: indirect
+    - debug:
+        msg: "{{ [undefined, omitted, indirect.results[0].k1] }}"

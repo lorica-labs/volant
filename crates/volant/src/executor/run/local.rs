@@ -18,7 +18,9 @@ use crate::vars::VarStore;
 use super::argspec::{action_name, unchanged_failure, unknown_args, validate_argument_spec};
 use super::controller::{assert_module, pause};
 use super::include_vars::run_include_vars;
-use super::marked::{mark_failed, undecryptable_in, warn_template_error};
+use super::marked::{
+    OMITTED, debug_refusal, literal_only, mark_failed, placed_warning, undecryptable_in,
+};
 use super::output::summarise_exception;
 
 /// What a `debug: var:` naming a value that came from a managed host reports. The reference's
@@ -316,39 +318,8 @@ fn local_result(
             r.insert("failed".into(), json!(false));
         }
         "debug" => {
-            // An argument the action does not have is refused, as its argument spec does, after
-            // the conflict below: measured on ansible-core 2.19.12, a task with both says only that.
-            let mut unknown: Vec<&str> = item
-                .args
-                .keys()
-                .map(String::as_str)
-                .filter(|key| !["msg", "var", "verbosity"].contains(key))
-                .filter(|key| !key.starts_with("_ansible_") && !key.starts_with("_volant_"))
-                .collect();
-            unknown.sort_unstable();
-            // The action refuses both before it looks at either, which is how a `module_defaults`
-            // `msg` turns a task's own `var` into a failure.
-            let mutually_exclusive = item.args.contains_key("msg") && item.args.contains_key("var");
-            if !unknown.is_empty() || mutually_exclusive {
-                let msg = if mutually_exclusive {
-                    "parameters are mutually exclusive: msg|var".to_string()
-                } else {
-                    format!(
-                        "Unsupported parameters for ({}) module: {}. Supported parameters include: msg, var, verbosity.",
-                        action_name(
-                            &task.module,
-                            "ansible_collections.ansible.builtin.plugins.action.debug"
-                        ),
-                        unknown.join(", ")
-                    )
-                };
-                let msg = msg.as_str();
-                let mut failed = TaskResult::failed_with(msg);
-                failed.0.insert(
-                    crate::render::ERROR_KEY.into(),
-                    Value::from(crate::render::task_failed(msg)),
-                );
-                return failed;
+            if let Some(refused) = debug_refusal(task, item) {
+                return refused;
             }
             let wanted: u8 = item
                 .args
@@ -374,7 +345,7 @@ fn local_result(
                     .args
                     .get("var")
                     .and_then(Value::as_str)
-                    .is_some_and(|s| crate::yaml::unsafe_text(s).is_some());
+                    .is_some_and(|s| crate::yaml::unsafe_text(s).is_some() || literal_only(s));
                 if written_unsafe || item.args_untrusted.contains("var") {
                     let at = task.value_origins.get("var");
                     let mut refused = TaskResult::failed_with(UNTRUSTED_VAR);
@@ -412,6 +383,11 @@ fn local_result(
                     Ok((mut v, tainted)) => {
                         if !tainted {
                             mark_failed(&mut v, None, &render, &mut 0);
+                        }
+                        if v.as_str() == Some(crate::vars::omit_token()) {
+                            v = json!("<<Omit>>");
+                            let at = task.value_origins.get("var");
+                            r.insert("warnings".into(), json!([placed_warning(OMITTED, at)]));
                         }
                         r.insert(var.to_string(), v)
                     }
@@ -457,11 +433,9 @@ fn local_result(
                     Err(e) => {
                         // A failure inside a variable's template is placed at that template.
                         let inner = crate::template::inner_origin(&e.0).flatten();
-                        warn_template_error(
-                            1,
-                            &e.0,
-                            inner.as_ref().or(task.value_origins.get("var")),
-                        );
+                        let text = format!("Encountered 1 template error.\nerror 1 - {}", e.0);
+                        let at = inner.as_ref().or(task.value_origins.get("var"));
+                        r.insert("warnings".into(), json!([placed_warning(&text, at)]));
                         r.insert(
                             var.to_string(),
                             Value::String(format!("<< error 1 - {} >>", e.0)),

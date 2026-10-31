@@ -625,6 +625,9 @@ fn a_scenario_matches_the_reference(#[files("tests/scenarios/*/case.yml")] case:
                             .flat_map(|forks| ["--forks".to_string(), forks.to_string()]),
                     )
                     .current_dir(&copy)
+                    // Nobody types at a prompt a scenario opens: an empty standard input, whatever
+                    // the suite was started from, ends it.
+                    .stdin(std::process::Stdio::null())
                     .env_remove("COLUMNS")
                     // The suite never installs Volant's runtime: the controller's Python is the machine's.
                     .env("VOLANT_RUNTIME", "system");

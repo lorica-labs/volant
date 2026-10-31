@@ -1,5 +1,5 @@
 ---
-sourceHash: 06260172771b
+sourceHash: c65d7e53b4fd
 title: Vault
 description: Volant 如何读取 Ansible Vault 数据，从哪里获取密码，以及为什么密码永远不会离开控制节点进程。
 ---
@@ -78,5 +78,6 @@ mykey: !vault |
 - `vault` 过滤器的 `salt` 和 `wrap_object` 参数会被拒绝，提示尚不支持。
 - 写在 play 自己的 `vars:` 里的 `!vault` 值，在没有机密能打开它时，不会打印 `Origin:` 行。
 - 对持有 vault 加密值的裸 `{{ x }}` 做 `set_fact`，会丢失 vault 标记，所以 `is vault_encrypted` 在该 fact 上回答 false，而 ansible-core 回答 true。
+- 在 `-vvvvv` 下，`vault view`、`decrypt` 和 `rekey` 不会输出 ansible-core 对每个所试 secret 的跟踪信息（`Trying secret FileVaultSecret(...) for vault_id=...`）。尝试 secret 的顺序相同。
 
 [命令行页面](/zh-cn/docs/reference/cli/#vault)列出了这些选项。

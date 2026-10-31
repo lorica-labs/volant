@@ -53,11 +53,12 @@ fn chains_and_membership_keep_their_meaning(
 }
 
 /// Measured on ansible-core 2.19.12: Python's words for values it cannot order, the left operand
-/// first, whether the operands are variables or literals.
+/// first, whether the operands are variables or literals. A string read from a variable the
+/// playbook wrote is a `_AnsibleTaggedStr`, one built in the template a `str`.
 #[rstest]
 #[case(
     "{{ s < 1 }}",
-    "'<' not supported between instances of 'str' and 'int'"
+    "'<' not supported between instances of '_AnsibleTaggedStr' and 'int'"
 )]
 #[case(
     "{{ one >= 'a' }}",
@@ -77,11 +78,11 @@ fn chains_and_membership_keep_their_meaning(
 )]
 #[case(
     "{{ mixed < [1, 2] }}",
-    "'<' not supported between instances of 'str' and 'int'"
+    "'<' not supported between instances of '_AnsibleTaggedStr' and 'int'"
 )]
 #[case(
     "{{ 1 < 2 < s }}",
-    "'<' not supported between instances of 'int' and 'str'"
+    "'<' not supported between instances of 'int' and '_AnsibleTaggedStr'"
 )]
 #[case(
     "{{ ['a', 1] | sort }}",
@@ -94,6 +95,18 @@ fn chains_and_membership_keep_their_meaning(
 #[case(
     "{% set l = ['a', 1] %}{% set _ = l.sort() %}{{ l }}",
     "'<' not supported between instances of 'int' and 'str'"
+)]
+#[case(
+    "{{ (s | upper) < 1 }}",
+    "'<' not supported between instances of 'str' and 'int'"
+)]
+#[case(
+    "{{ one < s ~ 'x' }}",
+    "'<' not supported between instances of 'int' and 'str'"
+)]
+#[case(
+    "{{ lookup('vars', 's') < 1 }}",
+    "'<' not supported between instances of '_AnsibleTaggedStr' and 'int'"
 )]
 #[case(
     "{{ 'a' < 1 }}",

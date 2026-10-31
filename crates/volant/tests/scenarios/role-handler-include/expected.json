@@ -1,0 +1,4 @@
+{
+  "code": 0,
+  "stdout": "\nPLAY [localhost] ***************************************************************\n\nTASK [r : debug] ***************************************************************\nchanged: [localhost] => {\n    \"msg\": \"notifying\"\n}\n\nTASK [debug] *******************************************************************\nok: [localhost] => {\n    \"msg\": \"after the role\"\n}\n\nRUNNING HANDLER [r : clean] ****************************************************\nincluded: <golden-tmp>/roles/r/tasks/cleanup.yml for localhost\n\nRUNNING HANDLER [r : debug] ****************************************************\nok: [localhost] => {\n    \"msg\": \"cleanup from the role: role template\\n\"\n}\n\nPLAY RECAP *********************************************************************\nlocalhost                  : ok=4    changed=1    unreachable=0    failed=0    skipped=0    rescued=0    ignored=0   \n\n"
+}

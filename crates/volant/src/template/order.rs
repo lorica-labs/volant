@@ -358,5 +358,8 @@ pub(crate) fn unique_key(value: &Value) -> Option<Value> {
     })
 }
 
+mod tagged;
+pub(super) use tagged::tagged;
+
 #[cfg(test)]
 mod tests;

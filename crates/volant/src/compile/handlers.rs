@@ -28,10 +28,13 @@ impl Builder<'_> {
         for handler in handlers {
             let task = merge(kw, &handler.task);
             if short_name(&handler.task.module) != "import_tasks" {
+                let mut origin = (*self.origin()).clone();
+                origin.file_dir = dir.to_path_buf();
                 self.handlers.push(Handler {
                     task,
                     listen: handler.listen.clone(),
                     role,
+                    origin: std::sync::Arc::new(origin),
                 });
                 continue;
             }

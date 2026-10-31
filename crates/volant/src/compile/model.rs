@@ -88,6 +88,9 @@ pub(crate) struct Handler {
     /// The role instance it came from, which is what puts `base : ` in front of its banner and
     /// what decides which variable layers it reads.
     pub role: Option<usize>,
+    /// Where it was written: a role's handler resolves an `include_tasks` file, a template or a
+    /// lookup's file in its role, wherever the flush that runs it stands.
+    pub origin: Arc<Origin>,
 }
 
 /// Which of a block's three lists a step came from.

@@ -97,3 +97,16 @@ fn a_script_whose_interpreter_is_missing_names_the_errno() {
     });
     assert!(warned, "{notes:?}");
 }
+
+/// Linux only: on macOS the standard library runs such a file through `/bin/sh` instead.
+#[cfg(target_os = "linux")]
+#[test]
+fn an_executable_that_is_not_a_script_names_the_errno() {
+    // Not an ini file either, so every plugin fails and each one says why.
+    let notes = notes_of("[web\nbroken = = =\n", &PluginConfig::default());
+    let warned = notes.iter().any(|n| {
+        matches!(n, Note::Warning(text)
+            if text.contains("--list': [Errno 8] Exec format error: '") && text.contains("inv.sh'"))
+    });
+    assert!(warned, "{notes:?}");
+}

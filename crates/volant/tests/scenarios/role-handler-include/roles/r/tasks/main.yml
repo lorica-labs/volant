@@ -1,0 +1,4 @@
+- debug:
+    msg: notifying
+  changed_when: true
+  notify: clean

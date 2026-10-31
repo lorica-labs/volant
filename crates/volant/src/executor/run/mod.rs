@@ -35,7 +35,7 @@ pub(super) use interpreter::{
 };
 pub(super) use judge::{break_after, broke_before, empty_loop_result, finish, loops, task_fails};
 pub use links::LocalPool;
-pub(super) use links::{link_for, release_at_barrier, reset_host};
+pub(super) use links::{item_link, link_for, release_at_barrier, reset_host};
 pub(super) use local::{run_local, set_fact_names};
 pub(super) use output::asks_to_be_hidden;
 pub(crate) use output::{DEPRECATION_TEXT, RAISED_FAIL, RAISED_SKIP, drop_internal_keys};
@@ -51,7 +51,7 @@ pub(super) use register::{failed_task_value, notified_handlers, registered_value
 pub(super) use replayed::Replayed;
 pub(crate) use retry::RAISED_KEY;
 pub(super) use retry::{
-    Attempt, ItemRetry, RetryLine, any_retried, judge_attempt, local_timed_out, retry_plans,
+    Attempt, ItemRetry, RetryLine, item_by_item, judge_attempt, local_timed_out, retry_plans,
 };
 
 #[cfg(test)]

@@ -27,13 +27,13 @@ use super::prepare::{Item, PlayPlan, Prepared, failed_result, pause_of, prepare,
 use super::report::report_task;
 use super::run::{
     Attempt, DISCOVERED_INTERPRETER, DISCOVERY_HELP, ItemRetry, Polled, Relinker, Replayed,
-    RetryLine, announce_retry, any_retried, break_after, broke_before, chosen_interpreter,
+    RetryLine, announce_retry, break_after, broke_before, chosen_interpreter,
     discovers_interpreter, discovery_warning, fact_targets, failed_task_value, finish,
-    judge_attempt, legacy_discovery, link_for, local_timed_out, notified_handlers, pause_lines,
-    poll_job, polls, python_for, record_facts, record_inventory_results, record_local_facts,
-    record_registered, refusal, release_at_barrier, replayed, requested_interpreter, retry_plans,
-    run_agent_batch, run_local, running_host_vars, shown, silent_discovery, stamp_discovery,
-    step_task, step_tasks, take_warnings, task_fails,
+    item_by_item, item_link, judge_attempt, legacy_discovery, link_for, local_timed_out,
+    notified_handlers, pause_lines, poll_job, polls, python_for, record_facts,
+    record_inventory_results, record_local_facts, record_registered, refusal, release_at_barrier,
+    replayed, requested_interpreter, retry_plans, run_agent_batch, run_local, running_host_vars,
+    shown, silent_discovery, stamp_discovery, step_task, step_tasks, take_warnings, task_fails,
 };
 use super::{LinkKey, RunOptions};
 use crate::shadow::replay::Seen;
@@ -41,6 +41,7 @@ use messages::dump_of;
 use notified::{announce_notified, saved_lines, sits_out};
 
 mod boundaries;
+mod host;
 mod messages;
 mod notified;
 mod pinned;
@@ -55,6 +56,7 @@ mod waits;
 pub(in crate::executor) use boundaries::{Definitions, mark_boundaries};
 use boundaries::{calls_lookup, meets, strict, writes_facts};
 pub(crate) use boundaries::{expressions, strings, task_strings};
+use host::Driver;
 use pinned::Turn;
 use plugin::{PluginBatch, PluginItems, plugin_step, run_plugin_items};
 use rendered::{NO_WHEN, Rendered, read_as, render_keywords, step_at};
@@ -1445,10 +1447,7 @@ pub(super) async fn drive_host(
                     // A loop that pauses or can break runs its items one at a time, like a retried
                     // one: the agent cannot be told to stop after an item it has not answered yet.
                     // A job that is waited for is too: each look at it is a trip of its own.
-                    let retried = any_retried(&plans)
-                        || !task.break_when.is_empty()
-                        || task.loop_pause.is_some()
-                        || polls(task);
+                    let retried = item_by_item(task, &plans, &items);
                     // A retried task runs its items one at a time, each on its own trip to the
                     // agent, so it is alone in its batch: the tasks in hand go out first and
                     // this one opens the next batch. It ends that batch too, through `boundary`.
@@ -1858,16 +1857,19 @@ pub(super) async fn drive_host(
                 let (index, items) = &mut batch[0];
                 let task = &step_at(&c, &rendered, *index).task;
                 let first = *index;
-                let timings = |link: &mut AgentLink| {
-                    file_timings(
-                        link,
-                        &options.profile,
-                        &name,
-                        &c,
-                        &[],
-                        first,
-                        &prepare_micros,
-                    );
+                // Read off the batch's own link, which an item escalating otherwise leaves alone.
+                let timings = |links: &mut HashMap<LinkKey, AgentLink>| {
+                    if let Some(link) = links.get_mut(&key) {
+                        file_timings(
+                            link,
+                            &options.profile,
+                            &name,
+                            &c,
+                            &[],
+                            first,
+                            &prepare_micros,
+                        );
+                    }
                 };
                 names = items
                     .iter()
@@ -1901,7 +1903,7 @@ pub(super) async fn drive_host(
                     let (at, passed) =
                         broke_before(task, items, &mut received[0], &mut checked_to, ii, &templar);
                     if driver.pause_for(pause, passed).await.is_none() {
-                        timings(link);
+                        timings(&mut links);
                         break 'run;
                     }
                     if at.is_some() {
@@ -1909,6 +1911,16 @@ pub(super) async fn drive_host(
                         break 'items;
                     }
                     let item = driver.reach_item(*index, task, items, ii, &templar).await;
+                    let link =
+                        match item_link((&mut links, &mut checked), &key, item, &agents, &options)
+                            .await
+                        {
+                            Ok(link) => link,
+                            Err(failed) => {
+                                received[0][ii] = Some(failed);
+                                continue 'items;
+                            }
+                        };
                     let Some(built) = step_task(task, item, &python, &mut received[0][ii]) else {
                         continue 'items;
                     };
@@ -1968,7 +1980,7 @@ pub(super) async fn drive_host(
                             {
                                 Polled::Done(result) => result,
                                 Polled::Stopped => {
-                                    timings(link);
+                                    timings(&mut links);
                                     break 'run;
                                 }
                                 Polled::Ended(ended) => {
@@ -2009,7 +2021,7 @@ pub(super) async fn drive_host(
                             continue 'items;
                         }
                         if replayed.is_none() && driver.sleep_between(retry.delay).await.is_none() {
-                            timings(link);
+                            timings(&mut links);
                             break 'run;
                         }
                     }
@@ -2035,7 +2047,7 @@ pub(super) async fn drive_host(
                         passed.saturating_sub(1)
                     };
                     if driver.pause_for(pause, owed).await.is_none() {
-                        timings(link);
+                        timings(&mut links);
                         break 'run;
                     }
                 }
@@ -2487,38 +2499,6 @@ pub(super) async fn drive_host(
             links: links.into_iter().collect(),
         })
         .await;
-}
-
-/// Everything one host's driver carries from one step to the next: who it is, what it is
-/// walking, and the watches every wait below opens on.
-///
-/// What a wait needs of this host is the same at every step, so it lives here rather than
-/// travelling through each of them. Only `cleanup` moves underneath it.
-struct Driver<'a> {
-    /// Where every word this host owes the coordinator, and every line it shows, goes.
-    tx: &'a mpsc::Sender<Event>,
-    name: &'a str,
-    plan: &'a PlayPlan,
-    /// The batch's shared progress, written by the coordinator alone.
-    progress: watch::Receiver<Progress>,
-    stop: watch::Receiver<bool>,
-    /// Set once the stop watch's sender is gone, so a dropped sender is never read as an
-    /// interrupt and the selects below stop polling a branch that would otherwise resolve
-    /// immediately forever.
-    stop_broken: bool,
-    /// The index the `always` section this host is draining ends at, when it is draining one.
-    /// The one index it carries that sits past a splice point, so the one a splice moves.
-    cleanup: Option<usize>,
-    /// The `any_errors_fatal` step another host failed at, found when this host finished it. Read
-    /// at the top of the host's loop, where it becomes a failure at that step.
-    peer_fatal: Option<usize>,
-}
-
-impl Driver<'_> {
-    /// Whether the run has been interrupted.
-    fn stopped(&self) -> bool {
-        *self.stop.borrow()
-    }
 }
 
 #[cfg(test)]

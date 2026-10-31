@@ -33,12 +33,12 @@ pub(super) fn remove_omit(value: &mut Value) {
 
 /// [`become_for`] for a task, read from its items when it loops and the host's variables alone do
 /// not render it. Measured on ansible-core 2.19.12: `become: "{{ item }}"` is rendered for each
-/// item. A loop whose items escalate alike runs over one link; one whose items escalate
-/// differently is refused by name, since this release runs a task's items over one link.
+/// item. The task escalates as its first item does; an item that escalates otherwise carries its
+/// own, and runs over a link of its own.
 pub(super) fn escalation_for(
     task: &PlayTask,
     play: &PlayPlan,
-    (vars, items): (&HostVars, &[super::Item]),
+    (vars, items): (&HostVars, &mut [super::Item]),
     defaults: &ConnectionDefaults,
     templar: &Templar,
 ) -> Result<Option<Escalation>, TemplateError> {
@@ -47,16 +47,12 @@ pub(super) fn escalation_for(
         return whole;
     }
     let mut chosen: Option<Option<Escalation>> = None;
-    for item in items.iter().filter(|item| item.skipped.is_none()) {
+    for item in items.iter_mut().filter(|item| item.skipped.is_none()) {
         let this = become_for(task, play, &item.vars, defaults, templar)?;
         match &chosen {
             None => chosen = Some(this),
-            Some(first) if *first == this => {}
-            Some(_) => {
-                return Err(TemplateError(
-                    "Error processing keyword 'become': loop items that escalate differently from one another are not supported yet".to_string(),
-                ));
-            }
+            Some(first) if *first != this => item.escalation = Some(this),
+            Some(_) => {}
         }
     }
     Ok(chosen.flatten())

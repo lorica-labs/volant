@@ -1,2 +1,5 @@
-# `become` written from the loop item is rendered for each item; items that escalate alike run.
-args: [-i, inv.ini, play.yml]
+# `become` written from the loop item is rendered for each item: items that escalate alike run over one link, and items that escalate differently each run over their own.
+runs:
+  - args: [-i, inv.ini, play.yml]
+  - args: [-i, inv.ini, differ.yml]
+needs: ["sudo"]

@@ -229,6 +229,22 @@ pub(in crate::executor) fn any_retried(plans: &[ItemRetry]) -> bool {
     plans.iter().any(|plan| !matches!(plan, Ok(None)))
 }
 
+/// Whether a remote task runs its items one at a time, each on its own trip to the agent: one
+/// that retries, pauses or can break, since the agent cannot be told to stop after an item it has
+/// not answered yet; a job that is waited for, each look at it a trip of its own; and a loop
+/// whose items escalate differently, each over its own link.
+pub(in crate::executor) fn item_by_item(
+    task: &PlayTask,
+    plans: &[ItemRetry],
+    items: &[Item],
+) -> bool {
+    any_retried(plans)
+        || !task.break_when.is_empty()
+        || task.loop_pause.is_some()
+        || super::async_job::polls(task)
+        || items.iter().any(|item| item.escalation.is_some())
+}
+
 /// Whether the attempt loop stops here: the `until` conditions all hold, or - when the task gave
 /// none - the result did not fail.
 ///

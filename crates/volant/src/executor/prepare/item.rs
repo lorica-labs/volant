@@ -187,6 +187,10 @@ pub(in crate::executor) struct Item {
     /// Set until the loop reaches an item whose arguments and keywords wait for it: see
     /// [`super::render_deferred`].
     pub(in crate::executor) deferred: bool,
+    /// How this item escalates, when it differs from the task's: measured on ansible-core
+    /// 2.19.12, `become: "{{ item }}"` over `[true, false]` runs the first item as root and the
+    /// second as the connecting user, so the item runs over a link of its own.
+    pub(in crate::executor) escalation: Option<Option<Escalation>>,
 }
 
 /// What an item whose fields failed to render reports once the loop reaches it. Measured on

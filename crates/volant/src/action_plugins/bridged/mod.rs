@@ -55,7 +55,7 @@ pub(super) struct Bridged {
     hostvars: Arc<crate::vars::HostvarsMap>,
     /// The hosts holding a value a managed host sent, as the task's host and the host the module
     /// runs on see them.
-    untrusted_hosts: [Arc<std::collections::BTreeSet<String>>; 2],
+    untrusted_hosts: [Arc<crate::vars::UntrustedHosts>; 2],
     asks: Receiver<FromHelper>,
     replies: Option<Sender<Reply>>,
     ready: Arc<Notify>,

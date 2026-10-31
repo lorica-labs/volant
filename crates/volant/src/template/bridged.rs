@@ -258,7 +258,7 @@ fn hostvars(state: &State) -> Option<Map<String, serde_json::Value>> {
                     host.clone(),
                     serde_json::json!({
                         "vars": vars,
-                        "trusted": !context.untrusted_hosts.contains(host),
+                        "trusted": !context.untrusted_hosts.contains_key(host),
                     }),
                 )
             })

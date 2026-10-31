@@ -122,6 +122,7 @@ async fn run_all(
     let mut playbooks = plays.load(&files, &rendering)?;
     // `--check` and `--diff` are each play's default: its own keyword wins, and every block,
     // role, task and handler under it inherits whichever applies, as in the reference.
+    executor::command_line_modes(args.check, args.diff);
     for play in playbooks.iter_mut().flat_map(|pb| pb.plays.iter_mut()) {
         play.check_mode = play
             .check_mode

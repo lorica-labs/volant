@@ -35,18 +35,14 @@ fn engine_owned(key: &str) -> bool {
 /// recursion limit, and a chain this long is never an intended one.
 const MAX_RESOLVING: usize = 64;
 
-/// In front of a host's name among the names of `Deferred`: no variable has a name like that.
-const HOST_PREFIX: &str = "hostvars/";
-
 /// The reads of a render that handed a template out unrendered: a variable the render does not
-/// resolve, or a host whose variables hold one. A result with a template marker is rendered again
+/// resolve. A result with a template marker is rendered again
 /// only when such a read gave it the marker: a marker the pass built from names and text that
 /// hold none (`'{{ ' ~ name`, `replace('a', '{{ x }}')`) is text, as the reference leaves it.
 #[derive(Debug, Default)]
 pub(super) struct Deferred {
     count: AtomicUsize,
-    /// The names that did, so that a read answered from the memo counts as the first one did. A
-    /// host's name has `HOST_PREFIX` in front.
+    /// The names that did, so that a read answered from the memo counts as the first one did.
     names: Mutex<BTreeSet<String>>,
     any: AtomicBool,
 }
@@ -67,22 +63,9 @@ impl Deferred {
         self.count.fetch_add(1, Ordering::Relaxed);
     }
 
-    /// A host whose variables `entry` hold a template: each read of it counts.
-    pub(super) fn mark_host(&self, host: &str, entry: &Value) {
-        if holds_template(entry) {
-            self.mark(format!("{HOST_PREFIX}{host}"));
-        }
-    }
-
     /// A read of a name that already handed a template out counts again, whatever answers it.
     pub(super) fn again(&self, key: &str) {
         if self.any.load(Ordering::Relaxed) && self.has(key) {
-            self.count.fetch_add(1, Ordering::Relaxed);
-        }
-    }
-
-    pub(super) fn again_host(&self, host: &str) {
-        if self.any.load(Ordering::Relaxed) && self.has(&format!("{HOST_PREFIX}{host}")) {
             self.count.fetch_add(1, Ordering::Relaxed);
         }
     }
@@ -257,7 +240,6 @@ impl Context {
                 untrusted_hosts: self.untrusted_hosts.clone(),
                 keys_untrusted: self.untrusted.contains(HOSTVARS_KEYS),
                 tainted: Arc::clone(&self.tainted),
-                deferred: Arc::clone(&self.deferred),
                 memo: Memo::default(),
                 templar: self.templar.clone(),
                 listed_untrusted: self

@@ -1,0 +1,3 @@
+# meta: clear_host_errors in the always of a block whose rescue failed keeps the host in the
+# play: the tasks after the block and the post_tasks run.
+args: [-i, inv.ini, play.yml]

@@ -15,6 +15,9 @@ pub(super) struct LoopOptions {
     pub(in crate::executor) extended: bool,
     pub(in crate::executor) allitems: bool,
     pub(in crate::executor) pause: Option<std::time::Duration>,
+    /// `loop_var`, rendered: measured on ansible-core 2.19.12, `loop_var: "{{ name }}"` binds
+    /// the item to the name it renders to.
+    pub(in crate::executor) loop_var: String,
 }
 
 /// The three `loop_control` fields the reference templates per task, rendered against `vars` and
@@ -73,10 +76,15 @@ pub(super) fn loop_options(
             }
         }
     };
+    let loop_var = match rendered("loop_var", &Some(Value::String(task.loop_var.clone())))? {
+        Some(Value::String(name)) => name,
+        _ => task.loop_var.clone(),
+    };
     Ok(LoopOptions {
         extended: flag("extended", &task.loop_extended, false)?,
         allitems: flag("extended_allitems", &task.loop_allitems, true)?,
         pause,
+        loop_var,
     })
 }
 

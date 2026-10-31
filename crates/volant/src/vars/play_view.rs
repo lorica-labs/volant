@@ -21,7 +21,7 @@ pub(crate) struct PlayView {
     /// The names that are data. Reading one makes the render's result data, which is never
     /// evaluated again.
     pub untrusted: BTreeSet<String>,
-    pub untrusted_hosts: Arc<BTreeSet<String>>,
+    pub untrusted_hosts: Arc<super::UntrustedHosts>,
 }
 
 impl PlayView {
@@ -82,18 +82,20 @@ impl VarStore {
     /// once the run has made one, everything that lists names is data: `groups`, the play's
     /// host lists and `hostvars`, and the hosts made are the hosts whose entry in `hostvars` is.
     /// This reads the run's own record of what it added, whatever the name looks like.
-    fn data_names(&mut self) -> (BTreeSet<String>, Arc<BTreeSet<String>>) {
+    fn data_names(&mut self) -> (BTreeSet<String>, Arc<super::UntrustedHosts>) {
         let mut hosts = self.untrusted_hosts();
         if self.added.is_empty() {
             return (BTreeSet::new(), hosts);
         }
         let made = Arc::make_mut(&mut hosts);
+        // Only the name of a host the run made is data: its variables are what the playbook's
+        // files and the run gave it, each marked as such.
         for change in &self.added {
-            match change {
-                Added::Host(name, _) => made.insert(name.clone()),
-                Added::Member(host, _) => made.insert(host.clone()),
-                Added::Child(..) => false,
-            };
+            if let Added::Host(host, _) | Added::Member(host, _) = change {
+                made.entry(host.clone())
+                    .or_default()
+                    .extend(super::HOST_NAMES.map(String::from));
+            }
         }
         let names = [
             "groups",

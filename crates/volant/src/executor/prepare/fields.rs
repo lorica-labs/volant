@@ -327,18 +327,16 @@ fn render_args(
     if task.name == "Gathering Facts" && task.module == "ansible.legacy.setup" {
         check_gather_subset(raw.get("gather_subset"), map.get("gather_subset"))?;
     }
+    super::keyword::check_rlimit(vars, templar)?;
     // The task's `module_defaults` lie under its own arguments, each rendered once on its own: a
     // default is a template like an argument, and may be a whole template that renders to a
     // mapping. A task's argument wins, `omit` included.
     if !task.module_defaults.is_empty() {
         let mut from_default = BTreeSet::new();
-        let resolved = plan
-            .python
-            .as_deref()
-            .and_then(|u| u.resolved_fqcn(&task.module));
+        let resolve = |name: &str| plan.python.as_deref().and_then(|u| u.resolved_fqcn(name));
         let mut defaults = crate::collection::defaults_for(
             &task.module,
-            resolved.as_deref(),
+            &resolve,
             &task.module_defaults,
             &plan.steps().resolved.groups(),
             &mut |key, value| {

@@ -9,6 +9,7 @@ mod buildah;
 mod choose;
 mod chroot;
 mod control;
+pub(crate) use control::started_open_file_limit;
 mod copy;
 mod defaults;
 mod docker;

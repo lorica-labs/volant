@@ -3,7 +3,7 @@
 
 use std::io;
 
-use serde_json::Value;
+use serde_json::{Map, Value};
 use volant_protocol::TaskResult;
 
 use super::Timing;
@@ -96,9 +96,13 @@ pub(super) fn result(frame: &Value) -> TaskResult {
             said,
         );
     }
-    match serde_json::from_str::<Value>(stdout) {
-        Ok(Value::Object(result)) => crate::modules::module_result(result),
-        _ => fail(
+    let parsed = match serde_json::from_str::<Value>(stdout) {
+        Ok(Value::Object(result)) => Some(result),
+        _ => json_lines(stdout),
+    };
+    match parsed {
+        Some(result) => crate::modules::module_result(result),
+        None => fail(
             format!(
                 "the module wrote something that is not a result (exit status {code}): {}",
                 excerpt(stdout.trim())
@@ -106,6 +110,38 @@ pub(super) fn result(frame: &Value) -> TaskResult {
             said,
         ),
     }
+}
+
+/// The object a module printed among other lines, as ansible-core's `_filter_non_json_lines`
+/// finds it: from the first line that starts with `{` to the last that ends with `}`. What came
+/// before is dropped, and what came after is a warning, measured on ansible-core 2.19.12.
+fn json_lines(stdout: &str) -> Option<Map<String, Value>> {
+    let lines: Vec<&str> = stdout.lines().collect();
+    let start = lines.iter().position(|l| l.trim().starts_with('{'))?;
+    let end = lines.iter().rposition(|l| l.trim().ends_with('}'))?;
+    if end < start {
+        return None;
+    }
+    let Ok(Value::Object(mut result)) = serde_json::from_str(&lines[start..=end].join("\n")) else {
+        return None;
+    };
+    let junk = &lines[end + 1..];
+    if junk.iter().any(|l| !l.trim().is_empty()) {
+        let warning = format!(
+            "Module invocation had junk after the JSON data: {}",
+            junk.join("\n")
+        );
+        match result.get_mut("warnings") {
+            Some(Value::Array(warnings)) => warnings.push(Value::String(warning)),
+            _ => {
+                result.insert(
+                    "warnings".into(),
+                    Value::Array(vec![Value::String(warning)]),
+                );
+            }
+        }
+    }
+    Some(result)
 }
 
 /// A failed task in Ansible's shape, with what the module wrote to stderr behind the sentence

@@ -297,6 +297,13 @@ fn lookup(
                 taint();
                 Value::from(String::from_utf8_lossy(&bytes).into_owned())
             }
+            "vars" | "ansible.builtin.vars" if term.as_str().is_none() && !term.is_undefined() => {
+                let class = basic::python_type(term);
+                let kind = class.trim_start_matches("<class '").trim_end_matches("'>");
+                return Err(invalid(format!(
+                    "Variable name must be 'str' not '{kind}'."
+                )));
+            }
             "vars" | "ansible.builtin.vars" => match state.lookup(&term_text) {
                 Some(v) if !v.is_undefined() => v,
                 _ => match &default_value {
@@ -312,9 +319,15 @@ fn lookup(
             },
             "pipe" | "ansible.builtin.pipe" => {
                 taint();
+                // Under the open-file limit the run started with, as a local task's command runs:
+                // measured, `lookup('pipe', 'ulimit -n')` and a local `shell: ulimit -n` agree.
+                let script = match crate::transport::started_open_file_limit() {
+                    Some(soft) => format!("ulimit -Sn {soft} 2>/dev/null; {term_text}"),
+                    None => term_text.clone(),
+                };
                 let out = std::process::Command::new("sh")
                     .arg("-c")
-                    .arg(&term_text)
+                    .arg(&script)
                     .output()
                     .map_err(|e| invalid(format!("lookup pipe: {e}")))?;
                 if !out.status.success() {

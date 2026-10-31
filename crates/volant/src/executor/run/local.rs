@@ -219,6 +219,11 @@ fn written_keys(item: &Item) -> Vec<String> {
 /// mark, so `is vault_encrypted` holds for it, where a concatenation drops it.
 fn vaulted_fact(task: &PlayTask, item: &Item, key: &str) -> Option<String> {
     let text = task.args.get(key)?.as_str()?;
+    // A `!vault` value written in the task itself stays one: measured on ansible-core 2.19.12,
+    // `set_fact: {x: !vault ...}` then `x is vault_encrypted` holds.
+    if crate::yaml::vault_text(text).is_some() {
+        return Some(text.to_string());
+    }
     let inner = text.trim().strip_prefix("{{")?.strip_suffix("}}")?.trim();
     let name = inner
         .strip_suffix("string")

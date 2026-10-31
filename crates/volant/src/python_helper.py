@@ -1824,6 +1824,10 @@ def run_action(ident, request):
                 if key not in PlayContext.fattributes:
                     raise AnsibleError("the play context field %s is not supported yet" % key)
                 setattr(context, key, value)
+            # A connection takes its shell from the play context, which `ansible_shell_type`
+            # sets as `PlayContext.set_task_and_variable_override` does.
+            if task_vars.get("ansible_shell_type"):
+                context.shell = task_vars["ansible_shell_type"]
             shell_type = task_vars.get("ansible_shell_type") or "sh"
             shell = plugin_loader.shell_loader.get(shell_type)
             if shell is None:

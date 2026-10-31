@@ -89,10 +89,11 @@ pub(super) fn render(partial: &[(&str, &str)]) -> String {
          `no_log`, `run_once`, `any_errors_fatal`, `ignore_unreachable`, `delegate_facts`, \
          `timeout`, `async` and `poll`. It is rendered for each host when its task runs, once the \
          task's `when` has held, and a value the keyword cannot take fails the task with the \
-         reference's sentence. `gather_facts` and `force_handlers` of a play are rendered when the \
-         play starts. A literal that is not a boolean is refused when the playbook loads. A \
-         `timeout` that is negative or not a number fails its task when it runs, as in Ansible, \
-         even when written as a literal.\n\n\
+         reference's sentence. `gather_facts`, `force_handlers`, `strategy` and `order` of a play \
+         are rendered when the play starts, with the play's variables and the extra vars. A \
+         literal that is not a boolean is refused when the playbook loads. A `timeout` that is \
+         negative or not a number fails its task when it runs, as in Ansible, even when written \
+         as a literal.\n\n\
          This page is generated from the tables the loader and the pre-flight read, so it always \
          describes the release it ships with. A status says what Volant does with the keyword, \
          not that every value works: the [known gaps](/docs/start/compatibility/#known-gaps) list the \

@@ -101,3 +101,15 @@ pub(crate) fn command_line_modes(check: bool, diff: bool) {
 fn command_line(key: &str) -> bool {
     COMMAND_LINE[usize::from(key == "diff")].load(Ordering::Relaxed)
 }
+
+/// `ansible_python_module_rlimit_nofile` that does not render fails the task, as the reference's
+/// module wrapper renders it: measured on ansible-core 2.19.12, `"{{ undefined_variable }}"`
+/// fails it, and `"{{ omit }}"` leaves the limit alone.
+pub(super) fn check_rlimit(vars: &HostVars, templar: &Templar) -> Result<(), TemplateError> {
+    match crate::vars::host_setting(vars, "ansible_python_module_rlimit_nofile") {
+        Some(Value::String(raw)) if Templar::is_template(raw) => {
+            templar.render(raw, vars).map(drop)
+        }
+        _ => Ok(()),
+    }
+}

@@ -11,7 +11,7 @@ static REJECTED: RwLock<Vec<String>> = RwLock::new(Vec::new());
 
 /// Reads the modules the file at `path` rejects, under `module_rejectlist` or its older name
 /// `module_blacklist`. A file that cannot be read or parsed rejects nothing.
-pub(super) fn load(path: &Path) {
+pub(super) fn load(path: &Path) -> anyhow::Result<()> {
     let names: Vec<String> = std::fs::read_to_string(path)
         .ok()
         .and_then(|text| {
@@ -27,7 +27,16 @@ pub(super) fn load(path: &Path) {
                 .collect()
         })
         .unwrap_or_default();
+    // ansible-core's one special case, refused as it loads the file: measured on 2.19.12.
+    if names.iter().any(|name| name == "stat") {
+        anyhow::bail!(
+            "The stat module was specified in the module reject list file, {}, but Ansible will \
+             not function without the stat module.  Please remove stat from the reject list.",
+            path.display()
+        );
+    }
     *REJECTED.write().expect("filters lock") = names;
+    Ok(())
 }
 
 /// Whether the filter file rejects `module`, as the task writes it.

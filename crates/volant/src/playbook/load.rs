@@ -382,7 +382,8 @@ pub(super) fn task_list(node: Option<&Yaml>, label: &str) -> anyhow::Result<Vec<
             .collect(),
         None | Some(Yaml::Value(Scalar::Null)) => Ok(Vec::new()),
         Some(other) => bail!(
-            "A malformed block was encountered while loading {label}: {} should be a list or None              but is {}",
+            "A malformed block was encountered while loading {label}: {} should be a list or None \
+             but is {}",
             super::keywords::shown(other),
             tagged_class(other)
         ),

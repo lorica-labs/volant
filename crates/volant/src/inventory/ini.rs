@@ -91,18 +91,7 @@ fn parse_into(
             continue;
         }
         if let Some(m) = SECTION.captures(line) {
-            group = m[1].to_string();
-            // `add_group` warns once about a name with characters outside `[A-Za-z0-9_]`.
-            if let Some(cx) = cx
-                && group
-                    .chars()
-                    .any(|c| !(c.is_ascii_alphanumeric() || c == '_'))
-            {
-                cx.warn_once(
-                    "Invalid characters were found in group names but not replaced, use -vvvv to                      see details"
-                        .to_string(),
-                );
-            }
+            group = safe_group_name(&m[1], cx);
             state = m.get(2).map_or("hosts", |k| k.as_str()).to_string();
             if !matches!(state.as_str(), "hosts" | "children" | "vars") {
                 return Err(err(format!(
@@ -315,4 +304,36 @@ fn literal(text: &str) -> Value {
 
 fn python_literal(text: &str) -> Value {
     super::pyliteral::literal_eval(text.trim()).unwrap_or_else(|| Value::String(text.to_string()))
+}
+
+/// A group name as `to_safe_group_name` makes it under `TRANSFORM_INVALID_GROUP_CHARS`: with
+/// `always` or `silently` each character outside `[A-Za-z0-9_]` becomes `_`, and with `never`, the
+/// default, the name stays. `always` and `never` warn once, `ignore` and `silently` do not.
+fn safe_group_name(name: &str, cx: Option<&ParseCx>) -> String {
+    let invalid = |c: char| !(c.is_ascii_alphanumeric() || c == '_');
+    if !name.chars().any(invalid) {
+        return name.to_string();
+    }
+    let mode = std::env::var("ANSIBLE_TRANSFORM_INVALID_GROUP_CHARS")
+        .unwrap_or_else(|_| "never".to_string());
+    let warn = |text: &str| {
+        if let Some(cx) = cx {
+            cx.warn_once(format!("{text}, use -vvvv to see details"));
+        }
+    };
+    match mode.as_str() {
+        "always" | "silently" => {
+            if mode == "always" {
+                warn("Invalid characters were found in group names and automatically replaced");
+            }
+            name.chars()
+                .map(|c| if invalid(c) { '_' } else { c })
+                .collect()
+        }
+        "never" => {
+            warn("Invalid characters were found in group names but not replaced");
+            name.to_string()
+        }
+        _ => name.to_string(),
+    }
 }

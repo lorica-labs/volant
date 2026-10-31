@@ -1,0 +1,3 @@
+# An argument debug does not have fails the task with the reference's sentence, after the
+# msg and var conflict, in the key=value and the mapping form and under the long name.
+args: [play.yml]

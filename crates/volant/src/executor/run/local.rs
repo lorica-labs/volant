@@ -310,10 +310,33 @@ fn local_result(
             r.insert("failed".into(), json!(false));
         }
         "debug" => {
+            // An argument the action does not have is refused, as its argument spec does, after
+            // the conflict below: measured on ansible-core 2.19.12, a task with both says only that.
+            let mut unknown: Vec<&str> = item
+                .args
+                .keys()
+                .map(String::as_str)
+                .filter(|key| !["msg", "var", "verbosity"].contains(key))
+                .filter(|key| !key.starts_with("_ansible_") && !key.starts_with("_volant_"))
+                .collect();
+            unknown.sort_unstable();
             // The action refuses both before it looks at either, which is how a `module_defaults`
             // `msg` turns a task's own `var` into a failure.
-            if item.args.contains_key("msg") && item.args.contains_key("var") {
-                let msg = "parameters are mutually exclusive: msg|var";
+            let mutually_exclusive = item.args.contains_key("msg") && item.args.contains_key("var");
+            if !unknown.is_empty() || mutually_exclusive {
+                let msg = if mutually_exclusive {
+                    "parameters are mutually exclusive: msg|var".to_string()
+                } else {
+                    format!(
+                        "Unsupported parameters for ({}) module: {}. Supported parameters include: msg, var, verbosity.",
+                        action_name(
+                            &task.module,
+                            "ansible_collections.ansible.builtin.plugins.action.debug"
+                        ),
+                        unknown.join(", ")
+                    )
+                };
+                let msg = msg.as_str();
                 let mut failed = TaskResult::failed_with(msg);
                 failed.0.insert(
                     crate::render::ERROR_KEY.into(),

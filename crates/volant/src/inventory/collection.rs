@@ -23,22 +23,6 @@ fn list(value: Option<&Value>) -> Result<&Vec<Value>, PluginError> {
     value.and_then(Value::as_array).ok_or_else(bad)
 }
 
-/// A value as the plugin made it: a string it did not trust as a template arrives as
-/// `{"__ansible_unsafe": text}` and stays data.
-fn untrusted(value: &Value) -> Value {
-    match value {
-        Value::Object(map) if map.len() == 1 => match map.get("__ansible_unsafe") {
-            Some(Value::String(text)) => Value::String(yaml::unsafe_string(text)),
-            _ => Value::Object(map.iter().map(|(k, v)| (k.clone(), untrusted(v))).collect()),
-        },
-        Value::Object(map) => {
-            Value::Object(map.iter().map(|(k, v)| (k.clone(), untrusted(v))).collect())
-        }
-        Value::Array(items) => Value::Array(items.iter().map(untrusted).collect()),
-        other => other.clone(),
-    }
-}
-
 /// The helper's answer into the inventory: the warnings the plugin said, then, unless it
 /// failed, its groups and hosts. Every value is data from a plugin and is never templated.
 pub(super) fn read(
@@ -64,7 +48,7 @@ pub(super) fn read(
             .ok_or_else(bad)?;
         Ok(vars
             .iter()
-            .map(|(k, v)| (k.clone(), untrusted(v)))
+            .map(|(k, v)| (k.clone(), yaml::unsafe_markers(v)))
             .collect())
     };
     let named = |value: &Value| {

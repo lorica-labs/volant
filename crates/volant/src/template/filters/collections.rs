@@ -31,7 +31,8 @@ pub(super) fn combine(first: Value, rest: Rest<Value>, kwargs: Kwargs) -> Result
     .contains(&list_merge.as_str())
     {
         return Err(invalid(
-            "merge_hash: 'list_merge' argument can only be equal to 'replace', 'keep', 'append',              'prepend', 'append_rp' or 'prepend_rp'",
+            "merge_hash: 'list_merge' argument can only be equal to 'replace', 'keep', 'append', \
+             'prepend', 'append_rp' or 'prepend_rp'",
         ));
     }
     // The reference's `flatten(terms, levels=1)`: a list among the terms gives its items, and a

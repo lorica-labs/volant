@@ -1,0 +1,20 @@
+- hosts: all
+  gather_facts: false
+  serial: 1
+  tasks:
+    - add_host: {name: "n{{ inventory_hostname }}", ansible_connection: local}
+    - add_host: {name: "m{{ inventory_hostname }}", groups: [g], ansible_connection: local}
+    - debug: {msg: "{{ ansible_play_hosts_all }}"}
+
+- hosts: g
+  gather_facts: false
+  serial: 2
+  tasks:
+    - add_host: {name: "x{{ inventory_hostname }}", groups: [g], ansible_connection: local}
+    - debug: {msg: "{{ ansible_play_hosts_all }}"}
+      run_once: true
+
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - debug: {msg: "{{ ansible_play_hosts_all }}"}

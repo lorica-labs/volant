@@ -1183,7 +1183,8 @@ h1
     );
     let groups = store.shared_values(&at)["groups"].clone();
     assert_eq!(groups["g1"], json!(["n1"]));
-    assert_eq!(groups["all"], json!(["h1", "n1"]));
+    // A new host is a member of `all` itself, listed before the members of its groups.
+    assert_eq!(groups["all"], json!(["n1", "h1"]));
     let view = store.hostvars_shared("h1");
     assert_eq!(view["n1"]["foo"], "baz");
     assert_eq!(groups["g3"], json!(["n1"]));
@@ -1198,7 +1199,7 @@ h1
     );
 
     let grown = store.take_inventory_changes().expect("the inventory grew");
-    assert_eq!(grown.groups()["all"], ["h1", "n1"]);
+    assert_eq!(grown.groups()["all"], ["n1", "h1"]);
     assert!(store.take_inventory_changes().is_none());
 }
 
@@ -1312,12 +1313,17 @@ const NAME_ROWS: &[NameRow] = &[
         false,
     ),
     name_row(EVIL, &[], EVIL, &[EVIL], EVERY_LIST, true),
+    // The added host joins `ansible_play_hosts_all` of the play that runs.
     name_row(
         EVIL,
         &[],
         "h1",
         &["h1"],
-        &["groups", crate::template::HOSTVARS_KEYS],
+        &[
+            "ansible_play_hosts_all",
+            "groups",
+            crate::template::HOSTVARS_KEYS,
+        ],
         true,
     ),
     NameRow {

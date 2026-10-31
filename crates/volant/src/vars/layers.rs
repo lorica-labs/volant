@@ -66,10 +66,7 @@ impl VarStore {
             return;
         }
         let listed = |hosts: &[String]| hosts.iter().any(|h| self.data_hosts.contains(h));
-        let all_hosts = self
-            .play_hosts_all
-            .as_deref()
-            .unwrap_or(&scope.all_play_hosts);
+        let all_hosts = self.play_hosts_all(scope);
         let reads = [
             ("groups", true),
             (HOSTVARS_KEYS, !self.data_hosts.is_empty()),
@@ -82,7 +79,7 @@ impl VarStore {
                     .is_some_and(|g| g.iter().any(|n| self.data_groups.contains(n))),
             ),
             ("ansible_play_hosts", listed(&scope.play_hosts)),
-            ("ansible_play_hosts_all", listed(all_hosts)),
+            ("ansible_play_hosts_all", listed(&all_hosts)),
             ("ansible_play_batch", listed(&scope.batch_hosts)),
             ("play_hosts", listed(&scope.batch_hosts)),
         ];

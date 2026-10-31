@@ -1,0 +1,3 @@
+# `ansible_play_hosts_all` grows with `add_host`, and a later batch of a `serial` play reads it from the play's pattern anew.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

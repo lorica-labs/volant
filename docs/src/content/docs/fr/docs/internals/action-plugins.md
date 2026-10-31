@@ -1,5 +1,5 @@
 ---
-sourceHash: 93a0f9272733
+sourceHash: 5a320c445d7e
 title: Plugins d'action
 description: Comment Volant exécute les modules qu'ansible-core exécute par un plugin d'action sur le contrôleur, en Rust ou sur le pont Python.
 ---
@@ -176,7 +176,7 @@ Le plugin lit la clé et l'utilisateur du lien (la variable d'hôte, `--private-
 - Un résultat relayé ignoré porte `"failed": false`.
 - Les avertissements qu'un plugin écrit avec `display` vont à la sortie d'erreur de l'assistant et non à la sortie de la tâche ; il en va de même pour l'avertissement `Error loading plugin` d'ansible-core pour un nom de collection inconnu.
 - Un module que `runtime.yml` oriente vers un plugin d'action de nom différent s'exécute sous le nom de la tâche.
-- `ansible_play_hosts_all` ne grandit pas pour un hôte ajouté dans un play `serial`, et un `add_host` ou `group_by` délégué s'applique à l'hôte de la tâche.
+- Un `add_host` ou `group_by` délégué s'applique à l'hôte de la tâche.
 
 ## Un fichier source nommé par un hôte géré
 

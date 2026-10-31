@@ -297,6 +297,8 @@ fn unresolved_action_refusal(task: &PlayTask) -> Option<TaskResult> {
     let msg = format!("Cannot resolve '{}' to an action or module.", task.module);
     let mut r = TaskResult::failed_with(format!("Task failed: {msg}"));
     r.0.insert("changed".into(), json!(false));
+    // Registered too, measured, and what `oneline` notes of the failure.
+    r.0.insert("exception".into(), json!("(traceback unavailable)"));
     r.0.insert(
         crate::render::CHAIN_KEY.into(),
         json!([crate::render::cause(

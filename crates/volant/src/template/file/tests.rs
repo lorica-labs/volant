@@ -325,24 +325,35 @@ fn a_header_s_newline_sequence_and_the_task_s_are_two_things() {
     );
 }
 
-/// A line prefix is refused: minijinja and Jinja2 disagree about the lines around a line statement
-/// and about a line comment, measured on ansible-core 2.19.12.
+/// A line comment prefix is refused: minijinja and Jinja2 disagree about its newline, measured on
+/// ansible-core 2.19.12.
 #[test]
-fn line_statements_and_comments_are_refused() {
-    for header in ["line_statement_prefix: '#'", "line_comment_prefix: '##'"] {
-        let err = templar()
-            .render_file(
-                &format!("#jinja2: {header}\nx\n"),
-                &Map::new(),
-                &FileRender::default(),
-            )
-            .unwrap_err();
-        let name = header.split(':').next().unwrap();
-        assert_eq!(
-            err.0,
-            format!("Syntax error in template: {name} is not supported yet")
-        );
-    }
+fn line_comments_are_refused() {
+    let err = templar()
+        .render_file(
+            "#jinja2: line_comment_prefix: '##'\nx\n",
+            &Map::new(),
+            &FileRender::default(),
+        )
+        .unwrap_err();
+    assert_eq!(
+        err.0,
+        "Syntax error in template: line_comment_prefix is not supported yet"
+    );
+}
+
+/// A line statement takes its line end and the blank lines after it, as in Jinja2: measured on
+/// ansible-core 2.19.12, the `template` target's `override_colon_value.j2` renders `foo\n`.
+#[test]
+fn line_statements_render_as_jinja2_does() {
+    let rendered = templar()
+        .render_file(
+            "#jinja2: line_statement_prefix:\":\"\n: if true\n\n  foo\n  : endif\nbar\n",
+            &Map::new(),
+            &FileRender::default(),
+        )
+        .unwrap();
+    assert_eq!(rendered, "  foo\nbar\n");
 }
 
 /// What the lexer cannot read is refused by name, never rendered wrong: an empty string, and an

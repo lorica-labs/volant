@@ -1,0 +1,3 @@
+# `changed_when` on `add_host` and `group_by` reads a result already marked `changed` when the inventory would change, through the task's own `register` name.
+args: [-i, inv.ini, play.yml]
+needs: [ansible-core]

@@ -241,17 +241,7 @@ impl VarStore {
     /// the hosts of the play being run are not changed by it. Whether it changed the inventory:
     /// a new host, a variable that differs, a group or a membership that was missing.
     pub fn add_host(&mut self, name: &str, groups: &[String], vars: &Map<String, Value>) -> bool {
-        let known = self.dynamic.groups();
-        let line = self.dynamic.host_line_vars(name);
-        let changed = !known["all"].iter().any(|h| h == name)
-            || vars
-                .iter()
-                .any(|(k, v)| line.and_then(|l| l.get(k)) != Some(v))
-            || groups.iter().filter(|g| *g != "all").any(|g| {
-                !known
-                    .get(g)
-                    .is_some_and(|members| members.iter().any(|h| h == name))
-            });
+        let changed = self.adds_host(name, groups, vars);
         // A value that still holds a template after the task rendered it was built from text the
         // playbook did not write (a fact, a registered result): it is data, kept as an untrusted
         // fact of the host and never rendered again. The rest sits on the host's inventory line.
@@ -282,6 +272,32 @@ impl VarStore {
         changed
     }
 
+    /// Whether [`VarStore::add_host`] would change the inventory, asked before it runs.
+    pub fn adds_host(&self, name: &str, groups: &[String], vars: &Map<String, Value>) -> bool {
+        let known = self.dynamic.groups();
+        let line = self.dynamic.host_line_vars(name);
+        !known["all"].iter().any(|h| h == name)
+            || vars
+                .iter()
+                .any(|(k, v)| line.and_then(|l| l.get(k)) != Some(v))
+            || groups.iter().filter(|g| *g != "all").any(|g| {
+                !known
+                    .get(g)
+                    .is_some_and(|members| members.iter().any(|h| h == name))
+            })
+    }
+
+    /// Whether [`VarStore::add_to_group`] would change the inventory, asked before it runs.
+    pub fn adds_to_group(&self, host: &str, group: &str, parents: &[String]) -> bool {
+        let known = self.dynamic.groups();
+        std::iter::once(group)
+            .chain(parents.iter().map(String::as_str))
+            .any(|name| !known.contains_key(name))
+            || !known[group_or_all(&known, group)]
+                .iter()
+                .any(|member| member == host)
+    }
+
     /// Marks names as data whatever they hold: the render that made them read a value that came
     /// from a managed host, so braces the playbook joins from them later are text too. The names
     /// that hold a template are marked by `add_host` and `group_by` themselves.
@@ -296,13 +312,7 @@ impl VarStore {
     /// `group_by`: `host` joins `group`, which is made a child of each of `parents`. Whether it
     /// changed the inventory: a group that was missing, or a membership.
     pub fn add_to_group(&mut self, host: &str, group: &str, parents: &[String]) -> bool {
-        let known = self.dynamic.groups();
-        let changed = std::iter::once(group)
-            .chain(parents.iter().map(String::as_str))
-            .any(|name| !known.contains_key(name))
-            || !known[group_or_all(&known, group)]
-                .iter()
-                .any(|member| member == host);
+        let changed = self.adds_to_group(host, group, parents);
         if group != "all" {
             if is_data_name(group) {
                 self.data_groups.insert(group.to_string());

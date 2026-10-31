@@ -1,5 +1,5 @@
 ---
-sourceHash: 34b11b932609
+sourceHash: 480e3fd3df2d
 title: volant adhoc
 description: Exécute un module sur chaque hôte qui correspond à un motif, avec les options et la sortie d'ansible.
 ---
@@ -83,11 +83,10 @@ Les deux options affichent ces lignes sur l'erreur standard avant le premier ré
 
 ## Les actions qui ne sont pas des modules
 
-`set_fact` affiche ses `ansible_facts` comme tout résultat de module. `meta` avec `noop`, `flush_handlers`, `clear_facts`, `refresh_inventory`, `reset_connection` ou `end_host` n'affiche rien et sort avec 0. Ces différences avec ansible-core 2.19.12 subsistent :
+`set_fact` affiche ses `ansible_facts` comme tout résultat de module. `meta` avec `noop`, `flush_handlers`, `clear_facts`, `refresh_inventory`, `reset_connection` ou `end_host` n'affiche rien et sort avec 0, et avec `end_play` il s'arrête sur `Unexpected Exception, this is probably a bug: 0` et le code de sortie 250, comme la référence, sans sa trace. Ces différences avec ansible-core 2.19.12 subsistent :
 
-- `meta -a end_play` termine ansible-core par une exception inattendue et le code de sortie 250. Volant n'affiche rien et sort avec 0.
 - `meta` avec une action inconnue, ou sans `-a`, s'arrête avec le code de sortie 1 comme la référence, mais son bloc `[ERROR]` ne se termine pas par la ligne vide qu'affiche la référence, et sans `-a` il nomme l'argument autrement.
-- `include_role` et `include_tasks` affichent dans la référence un bloc `SUCCESS` avec `include_args` avant le bloc `FAILED!`. Volant n'affiche que le bloc `FAILED!`. Les codes de sortie concordent : 2 pour ces deux-là, 1 pour `import_role` et `import_tasks`, et le texte de `[ERROR]` diffère.
+- Le `[ERROR]` d'un `include_role` ou d'un `include_tasks` qui ne peut pas charger son rôle ou son fichier est formulé autrement. Les codes de sortie concordent : 2 pour ces deux-là, 1 pour `import_role` et `import_tasks`.
 - `group_by` signale `SUCCESS` avec `"changed": false` là où la référence signale `CHANGED`.
 
 ## Sortie verbeuse

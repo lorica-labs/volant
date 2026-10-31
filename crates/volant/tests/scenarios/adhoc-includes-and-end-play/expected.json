@@ -1,0 +1,22 @@
+[
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"changed\": false,\n    \"include_args\": {\n        \"name\": \"r\"\n    }\n}\nh1 | SUCCESS => {\n    \"msg\": \"in role\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"changed\": false,\n    \"include\": \"t.yml\",\n    \"include_args\": {}\n}\nh1 | SUCCESS => {\n    \"msg\": \"in file\"\n}\n"
+  },
+  {
+    "code": 0,
+    "stdout": "h1 | SUCCESS => {\n    \"changed\": false,\n    \"include\": \"t.yml\",\n    \"include_args\": {}\n}\nh1 | SUCCESS => {\n    \"msg\": \"in file\"\n}\n"
+  },
+  {
+    "code": 250,
+    "stdout": ""
+  },
+  {
+    "code": 2,
+    "stdout": "h1 | SUCCESS => {\n    \"changed\": false,\n    \"include\": \"nosuch.yml\",\n    \"include_args\": {}\n}\nh1 | FAILED! => {\n    \"changed\": false,\n    \"include\": \"nosuch.yml\",\n    \"reason\": \"Could not find or access '<golden-tmp>/nosuch.yml' on the Ansible Controller: Unable to retrieve file contents.\\nCould not find or access '<golden-tmp>/nosuch.yml' on the Ansible Controller.\\nIf you are using a module and expect the file to exist on the remote, see the remote_src option: [Errno 2] No such file or directory: '<golden-tmp>/nosuch.yml'\"\n}\n"
+  }
+]

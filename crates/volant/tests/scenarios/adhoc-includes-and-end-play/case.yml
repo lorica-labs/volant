@@ -1,0 +1,8 @@
+# An ad hoc `include_role` or `include_tasks` prints its own result before the tasks it brings in; an ad hoc `end_play` dies with exit 250.
+program: ansible
+runs:
+  - args: [h1, -i, inv.ini, -m, include_role, -a, name=r]
+  - args: [h1, -i, inv.ini, -m, include_tasks, -a, t.yml]
+  - args: [h1, -i, inv.ini, -m, include_tasks, -a, "file=t.yml"]
+  - args: [h1, -i, inv.ini, -m, meta, -a, end_play]
+  - args: [h1, -i, inv.ini, -m, include_tasks, -a, nosuch.yml]

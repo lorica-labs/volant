@@ -1,5 +1,5 @@
 ---
-sourceHash: 34b11b932609
+sourceHash: 480e3fd3df2d
 title: volant adhoc
 description: 在每台匹配模式的主机上运行一个模块，选项和输出与 ansible 一致。
 ---
@@ -83,11 +83,10 @@ volant adhoc <PATTERN> [-m MODULE] [-a ARGS] [-i INV] [-e VARS] [-l SUBSET] [-f 
 
 ## 不是模块的动作
 
-`set_fact` 像任何模块结果一样打印它的 `ansible_facts`。`meta` 带 `noop`、`flush_handlers`、`clear_facts`、`refresh_inventory`、`reset_connection` 或 `end_host` 时不打印任何内容，退出码为 0。与 ansible-core 2.19.12 相比，这些差异仍然存在：
+`set_fact` 像任何模块结果一样打印它的 `ansible_facts`。`meta` 带 `noop`、`flush_handlers`、`clear_facts`、`refresh_inventory`、`reset_connection` 或 `end_host` 时不打印任何内容，退出码为 0；带 `end_play` 时以 `Unexpected Exception, this is probably a bug: 0` 和退出码 250 停止，与参考实现相同，但不打印其 traceback。与 ansible-core 2.19.12 相比，这些差异仍然存在：
 
-- `meta -a end_play` 会让 ansible-core 以意外异常和退出码 250 结束。Volant 不打印任何内容，退出码为 0。
 - `meta` 带未知动作，或没有 `-a` 时，与参考实现一样以退出码 1 停止，但它的 `[ERROR]` 块末尾没有参考实现打印的那个空行，而且没有 `-a` 时对参数的称呼不同。
-- `include_role` 和 `include_tasks` 在参考实现中会在 `FAILED!` 块之前打印带 `include_args` 的 `SUCCESS` 块。Volant 只打印 `FAILED!` 块。退出码一致：这两个是 2，`import_role` 和 `import_tasks` 是 1，`[ERROR]` 的文本不同。
+- 无法加载其 role 或文件的 `include_role` 或 `include_tasks`，其 `[ERROR]` 措辞不同。退出码一致：这两个是 2，`import_role` 和 `import_tasks` 是 1。
 - `group_by` 报告 `SUCCESS` 且 `"changed": false`，而参考实现报告 `CHANGED`。
 
 ## 详细输出

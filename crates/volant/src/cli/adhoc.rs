@@ -337,6 +337,12 @@ impl Adhoc {
             .then(|| self.args.get("_raw_params").and_then(Value::as_str))
             .flatten()
             .filter(|_| self.args.len() == 1);
+        // Measured on ansible-core 2.19.12: an ad hoc `end_play` dies in the reference's own
+        // code, exit 250, behind a traceback this engine leaves out.
+        if meta == Some("end_play") {
+            let message = "Unexpected Exception, this is probably a bug: 0".to_string();
+            return Err(Refusal::plain(250, message));
+        }
         let (action, args) = match meta {
             Some(action) => (format!("{} {action}", self.module), Map::new()),
             None => (self.module.clone(), self.args.clone()),
@@ -369,6 +375,21 @@ impl Adhoc {
             }
         }
         Ok(parsed)
+    }
+
+    /// The result an ad hoc include shows first: measured on ansible-core 2.19.12, `{"changed":
+    /// false, "include_args": {"name": "r"}}` for `include_role -a name=r`, and `include` naming
+    /// the file beside the other arguments for `include_tasks`.
+    pub(super) fn include_result(&self) -> Option<Map<String, Value>> {
+        let tasks = volant_protocol::modules::include_module(&self.module)?;
+        let mut args = self.args.clone();
+        let mut result = Map::from_iter([("changed".to_string(), Value::Bool(false))]);
+        if tasks {
+            let file = args.remove("_raw_params").or_else(|| args.remove("file"));
+            result.insert("include".into(), file.unwrap_or(Value::Null));
+        }
+        result.insert("include_args".into(), Value::Object(args));
+        Some(result)
     }
 
     /// Whether `err` is the run's refusal of this task's module, a name nothing answers to.

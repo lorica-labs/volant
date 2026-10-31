@@ -82,11 +82,10 @@ Both options print these lines on standard error before the first result, in thi
 
 ## Actions that are not modules
 
-`set_fact` prints its `ansible_facts` as any module result. `meta` with `noop`, `flush_handlers`, `clear_facts`, `refresh_inventory`, `reset_connection` or `end_host` prints nothing and exits with 0. These differences from ansible-core 2.19.12 remain:
+`set_fact` prints its `ansible_facts` as any module result. `meta` with `noop`, `flush_handlers`, `clear_facts`, `refresh_inventory`, `reset_connection` or `end_host` prints nothing and exits with 0, and with `end_play` it stops with `Unexpected Exception, this is probably a bug: 0` and exit code 250, as in the reference, without its traceback. These differences from ansible-core 2.19.12 remain:
 
-- `meta -a end_play` ends ansible-core with an unexpected exception and exit code 250. Volant prints nothing and exits with 0.
 - `meta` with an unknown action, or with no `-a`, stops with exit code 1 as the reference does, but its `[ERROR]` block does not end with the blank line the reference prints, and without `-a` it names the argument differently.
-- `include_role` and `include_tasks` print a `SUCCESS` block with `include_args` before the `FAILED!` block in the reference. Volant prints the `FAILED!` block only. The exit codes agree: 2 for these two, 1 for `import_role` and `import_tasks`, and the `[ERROR]` text differs.
+- The `[ERROR]` of an `include_role` or `include_tasks` that cannot load its role or file words it differently. The exit codes agree: 2 for these two, 1 for `import_role` and `import_tasks`.
 - `group_by` reports `SUCCESS` with `"changed": false` where the reference reports `CHANGED`.
 
 ## Verbose output

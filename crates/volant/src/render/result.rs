@@ -316,6 +316,7 @@ impl Renderer {
         dump: Dump,
         censored: bool,
     ) {
+        self.show_include(host);
         let succeeded = matches!(outcome, Outcome::Ok | Outcome::Changed);
         let body = self.shown_body(result, if succeeded { dump } else { Dump::No }, censored);
         let command = self

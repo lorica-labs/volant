@@ -9,13 +9,17 @@ pub const RECORDED: &str = include_str!("../golden/ANSIBLE_VERSION");
 
 /// An interpreter importing exactly the recorded ansible-core, or `None` after saying why on
 /// stderr. Under `VOLANT_PYTHON` there is no skip: an interpreter that cannot reproduce the
-/// recording fails the test.
+/// recording fails the test. Nor under `VOLANT_REQUIRE_REFERENCE=1`: a skip, which nextest does
+/// not show for a test that passes, would let a machine without ansible-core report green.
 pub fn reference_python() -> Option<PathBuf> {
     let want = RECORDED.trim();
     match controller_python(want) {
         Ok(python) => Some(python),
         Err(why) if std::env::var_os("VOLANT_PYTHON").is_some() => {
             panic!("VOLANT_PYTHON cannot reproduce the recording: {why}")
+        }
+        Err(why) if std::env::var("VOLANT_REQUIRE_REFERENCE").is_ok_and(|v| v == "1") => {
+            panic!("VOLANT_REQUIRE_REFERENCE is set and no ansible-core {want} was found: {why}")
         }
         Err(why) => {
             eprintln!("skipped: {why}. Set VOLANT_PYTHON to an ansible-core {want}.");

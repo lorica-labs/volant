@@ -1,5 +1,5 @@
 ---
-sourceHash: 376899cd0604
+sourceHash: d2cbf2aab06e
 title: Tests
 description: Cómo se comprueba Volant contra ansible-core, los tipos de respuesta grabada y cómo añadir un escenario.
 ---
@@ -43,7 +43,7 @@ Cada ejecución de Volant se hace en una copia nueva del directorio, con `--fork
 - `env` define variables de entorno para la ejecución.
 - `program: ansible` graba las ejecuciones con `ansible` en lugar de `ansible-playbook`, y ejecuta `volant adhoc` en lugar de `volant playbook`.
 - `forks` sube el número de forks por encima de uno. Entonces los hosts pueden imprimir en otro orden, así que enumera en `unordered`, como expresiones regulares, las líneas cuyo orden puede variar. `unordered` sin `forks` se rechaza.
-- `needs` nombra lo que debe tener la máquina: `ansible-core`, `sudo` o `systemd`. Un caso cuyas necesidades no se cumplen se omite, salvo cuando `VOLANT_PYTHON` está definida, lo que convierte la omisión en un fallo.
+- `needs` nombra lo que debe tener la máquina: `ansible-core`, `sudo` o `systemd`. Un caso cuyas necesidades no se cumplen se omite, salvo cuando `VOLANT_PYTHON` o `VOLANT_REQUIRE_REFERENCE=1` está definida, lo que convierte la omisión en un fallo: nextest no muestra la omisión de una prueba que pasa, así que una máquina sin ansible-core daría verde. Las recetas `ssh-test` definen `VOLANT_REQUIRE_REFERENCE=1`.
 - `links` asocia una ruta con el destino de un enlace que cada copia recibe en esa ruta. Úsalo para un enlace que git o cargo no pueden guardar, como un enlace a un archivo que no existe: `cargo package` rechaza un enlace versionado así.
 
 ## La matriz de paridad

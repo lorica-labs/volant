@@ -8,8 +8,6 @@ ansible-galaxy-collection-scm  #1290
 ansible-playbook-callbacks     #1287
 ansible_log                    #1287
 assert                         #1283
-become_su                      #1285
-become_sudo                    #1284
 binary_modules_posix           #1281
 cache-plugins                  #1286
 callback-dispatch              #1287

@@ -102,12 +102,12 @@ pub(in crate::transport) fn local_argv(agent: &str, escalated: Escalated<'_>) ->
         return vec![agent.to_string()];
     };
     let mut argv = sudo_words(escalation, form);
-    argv.extend([
-        "-u".to_string(),
-        escalation.user.clone(),
-        "--".to_string(),
-        agent.to_string(),
-    ]);
+    // An empty `become_user` names nobody, so `sudo` runs as its own default, root: sudo.py
+    // leaves `-u` out for it.
+    if !escalation.user.is_empty() {
+        argv.extend(["-u".to_string(), escalation.user.clone()]);
+    }
+    argv.extend(["--".to_string(), agent.to_string()]);
     argv
 }
 
@@ -118,10 +118,23 @@ pub(in crate::transport) fn local_argv(agent: &str, escalated: Escalated<'_>) ->
 /// *connecting* user's home, which is the one directory an unprivileged `become_user` may not
 /// be able to enter. Inside the shell `sudo -H` starts, `~` is the escalated user's own home,
 /// so the agent is cached where that user can read it and nowhere else.
+///
+/// A `sudo_chdir` is the inner shell's first move, so the command runs there and a directory that
+/// is not there fails it with the shell's own `cd` complaint.
 pub(in crate::transport) fn escalated_command(escalated: Escalated<'_>, command: &str) -> String {
     match escalated {
         None => command.to_string(),
-        Some(_) => format!("{}sh -c {}", sudo_prefix(escalated), single_quoted(command)),
+        Some((escalation, _)) => {
+            let command = match &escalation.chdir {
+                Some(dir) => format!("cd {} && {command}", single_quoted(dir)),
+                None => command.to_string(),
+            };
+            format!(
+                "{}sh -c {}",
+                sudo_prefix(escalated),
+                single_quoted(&command)
+            )
+        }
     }
 }
 
@@ -136,6 +149,9 @@ pub(in crate::transport) fn sudo_prefix(escalated: Escalated<'_>) -> String {
         .map(|word| single_quoted(word))
         .collect::<Vec<_>>()
         .join(" ");
+    if escalation.user.is_empty() {
+        return format!("{words} -- ");
+    }
     format!("{words} -u {} -- ", single_quoted(&escalation.user))
 }
 

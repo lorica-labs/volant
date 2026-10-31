@@ -412,9 +412,10 @@ pub(crate) fn check_plugin_order(reach: &Reach) -> anyhow::Result<()> {
 }
 
 /// Whether `dir`'s `library/` holds the module `name` as the reference's legacy search finds
-/// one built with `mod_type=".py"`: a file `<name>.py`, a link to one included.
+/// one: a file `<name>.py` or `<name>`, a link to one included.
 fn holds(dir: &std::path::Path, name: &str) -> bool {
-    dir.join("library").join(format!("{name}.py")).is_file()
+    let library = dir.join("library");
+    library.join(format!("{name}.py")).is_file() || library.join(name).is_file()
 }
 
 /// Every task of a list, blocks and all three of their sections included. A block's own keywords

@@ -196,36 +196,49 @@ def scan_once():
         kept_init(getattr(module_common, name))
 
 
-class WantJson(RuntimeError):
-    """A module in another language that reads its arguments from the file named on its command
-    line (`WANT_JSON`). It ships as itself rather than in a zip: ansible-core's own
-    `_execute_module` copies it and its arguments file to the host and runs it there."""
+class ShippedAsItself(RuntimeError):
+    """A module ansible-core builds with no zip: one in another language that reads its arguments
+    from the file named on its command line (`WANT_JSON`), or an `old` one, a script reading them
+    as `key=value` words from that file. It ships as itself: ansible-core's own `_execute_module`
+    copies it and its arguments file to the host and runs it there."""
 
 
-def want_json(name):
-    """Whether the module `name` is one `WantJson` stands for."""
+def shipped_as_itself(name):
+    """Whether the module `name` is one `ShippedAsItself` stands for."""
     try:
         build(name)
-    except WantJson:
+    except ShippedAsItself:
         return True
     except Exception:
         return False
     return False
 
 
-def build(name):
-    """One module's zip and facts, or RuntimeError saying why it cannot be shipped.
+def find_module(name):
+    """The module `name` resolves to, as a POSIX host runs it.
 
     Looked up with `mod_type=".py"`: a Windows module is a `.ps1` beside a `.py` that holds only
-    its documentation, and the loader left to itself returns whichever it meets first.
+    its documentation, and the loader left to itself returns whichever it meets first. A file with
+    no extension that comes first on the module path wins over that: measured on ansible-core
+    2.19.12, a `ping` in `ANSIBLE_LIBRARY` runs in place of ansible-core's `ping.py`.
     """
+    from ansible.plugins.loader import module_loader
+
+    plain = module_loader.find_plugin_with_context(name, mod_type="")
+    if plain.resolved and not os.path.splitext(plain.plugin_resolved_path)[1]:
+        return plain
+    return module_loader.find_plugin_with_context(name, mod_type=".py")
+
+
+def build(name):
+    """One module's zip and facts, or RuntimeError saying why it cannot be shipped."""
     from ansible.executor import module_common
     from ansible.parsing.dataloader import DataLoader
-    from ansible.plugins.loader import module_loader
     from ansible.template import Templar
 
     loaders()
-    path = module_loader.find_plugin(name, mod_type=".py")
+    found = find_module(name)
+    path = found.plugin_resolved_path if found.resolved else None
     if path is None:
         raise RuntimeError("ansible-core has no module %r" % name)
     try:
@@ -241,12 +254,10 @@ def build(name):
         )
     except Exception as failure:
         raise RuntimeError("building module %r: %s" % (name, failure))
-    if built.module_style == "non_native_want_json":
-        raise WantJson(name)
-    # A module built `old` has no zip at all: its whole body is the payload, and what makes it
-    # work is an action plugin on the controller, or it is a documentation stub. `resolve`
-    # answers those as unusable before a task can name them; this is the belt to that pair of
-    # braces.
+    # Measured on ansible-core 2.19.12: a `library/a.py` that only prints its JSON runs, copied
+    # with its arguments file. A documentation stub runs the same way there and says nothing.
+    if built.module_style in ("non_native_want_json", "old"):
+        raise ShippedAsItself(name)
     if built.module_style != "new":
         raise RuntimeError(
             "module %r is built as %r, which has no module_utils zip to ship"
@@ -277,7 +288,14 @@ def union(modules):
     owners = {}
     facts_by_module = {}
     for name in modules:
-        raw, found = build(name)
+        try:
+            raw, found = build(name)
+        except ShippedAsItself:
+            raise RuntimeError(
+                "module %r at %s is a script ansible-core copies to the host as it is, which "
+                "Volant runs only under a name ansible-core does not ship a module for"
+                % (name, find_module(name).plugin_resolved_path)
+            )
         merge(entries, owners, name, raw)
         facts_by_module[name] = found
     blob = pack(entries)
@@ -520,9 +538,13 @@ def version_of(directory):
 
 
 def collection_of(name):
-    """The `namespace.collection` a dotted module name lives in, or None for a shorter name."""
+    """The `namespace.collection` a dotted module name lives in, or None for a shorter name and
+    for `ansible.legacy`, which is no collection to install: it names what the module paths and
+    the `library/` directories hold, then ansible-core's own."""
     parts = name.split(".")
-    return ".".join(parts[:2]) if len(parts) > 2 else None
+    if len(parts) < 3 or parts[:2] == ["ansible", "legacy"]:
+        return None
+    return ".".join(parts[:2])
 
 
 def resolve(names):
@@ -550,14 +572,14 @@ def resolve_one(name):
     The collection is looked for before the module: asking the module loader for a name in a
     collection that is not there prints a loader warning the operator has no use for.
     """
-    from ansible.plugins.loader import action_loader, module_loader
+    from ansible.plugins.loader import action_loader
 
     collection = collection_of(name)
     if collection is not None:
         track_collection(collection)
         if collection_dir(collection) is None:
             return {"missing": collection}
-    module = module_loader.find_plugin_with_context(name, mod_type=".py")
+    module = find_module(name)
     for hop in module.redirect_list:
         if collection_of(hop) is not None:
             track_collection(collection_of(hop))
@@ -594,7 +616,7 @@ def resolve_one(name):
         return {"action_plugin": handler, "with_module": built}
     try:
         build(name)
-    except WantJson:
+    except ShippedAsItself:
         # Run by ansible-core's `normal` action plugin, as the reference runs every module with
         # no plugin of its own.
         return {"action_plugin": "ansible.builtin.normal", "with_module": False}
@@ -1184,7 +1206,8 @@ def shim():
         allow_executable = True
         module_implementation_preferences = (".py", "")
         _remote_is_local = False
-        # Read by ansible-core's own `_execute_module`, which runs a `WANT_JSON` module here:
+        # Read by ansible-core's own `_execute_module`, which runs a module shipped as itself
+        # (`WANT_JSON`, or one that only prints its JSON) here:
         # no persistent connection stands behind the link.
         socket_path = None
 
@@ -1255,7 +1278,7 @@ def shim():
         # `tmp` and `delete_remote_tmp` are ignored as ansible-core ignores them; `persist_files`
         # and `task_vars` shape the module's upload and interpreter, which the controller owns.
         name = self._task.action if module_name is None else module_name
-        if want_json(name):
+        if shipped_as_itself(name):
             # Copied with its arguments file and run over the link, by ansible-core's own code.
             return original[0](
                 self, module_name, module_args, tmp, task_vars, persist_files,

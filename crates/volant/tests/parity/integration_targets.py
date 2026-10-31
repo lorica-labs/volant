@@ -81,11 +81,21 @@ def environment(integration, output_dir, inventory, path_first, python):
     return env
 
 
+def remove(path):
+    """`path` and everything under it, a file an earlier run's container left as root included."""
+    try:
+        shutil.rmtree(path)
+    except PermissionError:
+        subprocess.run(["docker", "run", "--rm", "-v", "%s:/gone" % path, IMAGE, "sh", "-c",
+                        "rm -rf /gone/* /gone/.[!.]*"], check=True)
+        shutil.rmtree(path)
+
+
 def prepare(src, work, engine, python):
     """A fresh copy of `test/integration` for one engine, with its inventory and config."""
     integration = os.path.join(work, engine, "integration")
-    if os.path.exists(integration):
-        shutil.rmtree(integration)
+    if os.path.exists(os.path.join(work, engine)):
+        remove(os.path.join(work, engine))
     shutil.copytree(os.path.join(src, "test", "integration"), integration, symlinks=True)
     with open(os.path.join(integration, "inventory"), "w") as handle:
         handle.write(
@@ -162,7 +172,11 @@ def docker(cmd, cwd, env, work, bins, python, target, engine):
     for key, value in env.items():
         if key != "HOME":
             out += ["-e", "%s=%s" % (key, value)]
-    return out + [IMAGE] + cmd
+    # What the target wrote as root goes back to the user running this, so the next run can remove
+    # it: the target's own directory, or the whole copy for a role, and its output directory.
+    owner = "%d:%d" % (os.getuid(), os.getgid())
+    give_back = '"$@"; rc=$?; chown -R %s "$PWD" "$OUTPUT_DIR"; exit $rc' % owner
+    return out + [IMAGE, "sh", "-c", give_back, "sh"] + cmd
 
 
 def main():

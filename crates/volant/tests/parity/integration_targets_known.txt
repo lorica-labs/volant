@@ -9,6 +9,7 @@ ansible-console                #1265
 ansible-galaxy-collection-scm  #1265
 ansible-galaxy-role            #1265
 ansible-playbook-callbacks     #1265
+ansible-test-vendoring         #1265
 ansible_log                    #1265
 assemble                       #1263
 assert                         #1265
@@ -24,6 +25,7 @@ callback-dispatch              #1265
 callback_results               #1265
 command_shell                  #1263
 conditionals                   #1265
+connection_delegation          #1265
 connection_local               #1264
 cron                           #1263
 dataloader                     #1265
@@ -81,6 +83,7 @@ result_pickle_error            #1265
 roles_arg_spec                 #1265
 script                         #1263
 set_fact                       #1265
+setup_pexpect                  #1265
 setup_remote_tmp_dir           #1263
 setup_rpm_repo                 #1263
 shell                          #1265

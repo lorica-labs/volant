@@ -36,12 +36,29 @@ impl InventoryPlugin for HostList {
             if item.is_empty() {
                 continue;
             }
-            let (hosts, port) = if self.advanced {
+            let parsed = if self.advanced {
                 expand_hostpattern(item)
             } else {
                 ranges::parse_address(item, false).map(|(host, port)| (vec![host], port))
+            };
+            // What Python raises rather than ansible-core, `int('j')` of a botched range, fails
+            // the whole source, measured on 2.19.12; ansible-core's own refusals leave the item
+            // as it is written.
+            if let Err(reason) = &parsed
+                && (reason.starts_with("invalid literal for int()")
+                    || reason.contains("values to unpack"))
+            {
+                return Err(PluginError {
+                    message: format!("Invalid data from string, could not parse: {reason}"),
+                    origin: Some(format!(
+                        "<inventory plugin '{}' with source '{}'>",
+                        self.name(),
+                        source.text()
+                    )),
+                    cause: None,
+                });
             }
-            .unwrap_or_else(|reason| {
+            let (hosts, port) = parsed.unwrap_or_else(|reason| {
                 cx.verbose(
                     3,
                     format!("Unable to parse address from hostname, leaving unchanged: {reason}"),

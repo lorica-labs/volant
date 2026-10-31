@@ -217,7 +217,10 @@ impl Builder<'_> {
         match short_name(&task.module) {
             "import_tasks" => return self.import_tasks(task, inherited, block, section, role),
             "import_role" => {
-                let entry = import_role_entry(task)?;
+                let mut entry = import_role_entry(task)?;
+                // A templated name renders while the play compiles, as an import's path does:
+                // measured, `import_playbook`'s `vars:` name the role a play of it imports.
+                entry.name = self.import_path(&entry.name)?;
                 let key = identity_with(&entry, &task.vars);
                 if entry.unique && self.imported.contains(&key) {
                     return Ok(());

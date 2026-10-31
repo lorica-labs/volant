@@ -417,7 +417,7 @@ impl Templar {
         if let Some(error) = take_failure(ctx) {
             return Err(error);
         }
-        let value = value.map_err(|e| named(e, expr, ctx))?;
+        let value = value.map_err(|e| super::order::tagged(named(e, expr, ctx), expr, ctx))?;
         // Strict mode only raises on operations that force an undefined value (printing,
         // comparing, ...); an attribute lookup that never gets used stays a lazy Undefined, alone
         // or inside a list or mapping, that serde_json would otherwise turn into `null`. Force

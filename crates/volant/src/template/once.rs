@@ -115,7 +115,8 @@ impl Templar {
         if let Some(error) = take_failure(ctx) {
             return Err(error);
         }
-        let (out, emitted) = counted.map_err(|e| named(e, body, ctx))?;
+        let (out, emitted) =
+            counted.map_err(|e| super::order::tagged(named(e, body, ctx), body, ctx))?;
         // Without a statement, a comment or a `none` every `{{ }}` is a node of its own and the
         // text between is one too, so one node means the text is one expression, handled above.
         if Self::has_statement(text) || emitted.printed_none() {

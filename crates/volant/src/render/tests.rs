@@ -226,9 +226,9 @@ fn banners_recap_and_status_lines() {
     );
 
     let out = capture(|r| {
-        r.unreachable("db1", "agent binary not found", false, None);
+        r.unreachable("db1", "agent binary not found", &[], false, None);
         r.no_hosts();
-        r.unreachable("h1", "starting ssh: secret-host", true, None);
+        r.unreachable("h1", "starting ssh: secret-host", &[], true, None);
         r.retrying(
             "h1",
             "retry until file",

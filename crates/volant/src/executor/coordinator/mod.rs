@@ -38,7 +38,7 @@ use meta::{MetaContext, apply_meta};
 use publish::{Coordinator, Rendering, keep_links, take_links, task_name};
 pub(in crate::executor) use publish::{escalated_links, render_name};
 pub use types::Progress;
-pub(in crate::executor) use types::{BatchEnd, Event, MetaEffect, Shade, already_ran};
+pub(in crate::executor) use types::{BatchEnd, Event, LostItem, MetaEffect, Shade, already_ran};
 use types::{Round, Unreached};
 
 /// Plays one batch of hosts: the coordinator, its drivers, and everything the play's step list
@@ -218,6 +218,7 @@ pub(super) async fn run_batch(
                             delegate: None,
                             origin: None,
                             index: None,
+                            items: Vec::new(),
                         })
                         .await;
                     let _ = watchdog_tx
@@ -540,20 +541,8 @@ pub(super) async fn run_batch(
                             out.warning(&message, false);
                         }
                     }
-                    Some(Event::Unreachable {
-                        host,
-                        msg,
-                        censored,
-                        delegate,
-                        origin,
-                        index: at,
-                    }) => {
-                        let blame = Unreached {
-                            msg,
-                            censored,
-                            delegate,
-                            origin,
-                        };
+                    Some(left @ Event::Unreachable { .. }) => {
+                        let (host, at, blame) = Unreached::of(left);
                         // A host its driver holds at the prompt leaves the play only once the
                         // operator keeps the result: `r` tries to reach it again.
                         let waiting = at.and_then(|at| held.remove(&(host.clone(), at)));
@@ -709,20 +698,8 @@ pub(super) async fn run_batch(
     // dropped its sender.
     while let Some(event) = rx.recv().await {
         match event {
-            Event::Unreachable {
-                host,
-                msg,
-                censored,
-                delegate,
-                origin,
-                index: at,
-            } => {
-                let blame = Unreached {
-                    msg,
-                    censored,
-                    delegate,
-                    origin,
-                };
+            left @ Event::Unreachable { .. } => {
+                let (host, at, blame) = Unreached::of(left);
                 blame.show(&host, out);
                 if let Some(at) = at {
                     prompt!(unreachable_ask(), &host, at);
@@ -834,7 +811,7 @@ pub(super) async fn run_batch(
             && !gone.contains(&host)
         {
             stats.unreachable(&host);
-            out.unreachable(&host, &format!("driver panicked: {err}"), false, None);
+            out.unreachable(&host, &format!("driver panicked: {err}"), &[], false, None);
             state.failed_hosts.insert(host);
         }
     }

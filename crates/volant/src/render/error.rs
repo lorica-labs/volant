@@ -406,12 +406,37 @@ impl Renderer {
     /// `censored` is the `no_log` of the task whose batch could not be sent. Measured on
     /// ansible-core 2.19.12: the reference censors this line too, so the reason the host could
     /// not be reached is hidden along with everything else the task would have printed.
-    pub fn unreachable(&mut self, host: &str, msg: &str, censored: bool, delegate: Option<&str>) {
+    ///
+    /// `items` are the loop items it could not be reached for, whose results the line holds
+    /// under `results`, each with the exception the reference adds to it.
+    pub fn unreachable(
+        &mut self,
+        host: &str,
+        msg: &str,
+        items: &[(Option<String>, serde_json::Map<String, serde_json::Value>)],
+        censored: bool,
+        delegate: Option<&str>,
+    ) {
         if self.json_unreachable(host, msg) {
             return;
         }
+        let results: Vec<serde_json::Value> = items
+            .iter()
+            .map(|(_, result)| {
+                let mut result = result.clone();
+                result.insert("exception".into(), "(traceback unavailable)".into());
+                serde_json::Value::Object(result)
+            })
+            .collect();
         let body = if censored {
             serde_json::json!({"censored": CENSORED, "changed": false})
+        } else if !items.is_empty() {
+            serde_json::json!({
+                "changed": false,
+                "msg": "All items completed",
+                "results": results,
+                "unreachable": true
+            })
         } else {
             serde_json::json!({"changed": false, "msg": msg, "unreachable": true})
         };

@@ -1,5 +1,5 @@
 ---
-sourceHash: 2b129c372539
+sourceHash: c2126b365c1e
 title: Blocs et handlers
 description: Comment un échec se propage à travers les blocs, ce que font rescue et always, et quand les handlers s'exécutent.
 ---
@@ -52,7 +52,7 @@ Un échec dans un `always` termine cette section : le reste est sauté, et l'h�
 
 - `any_errors_fatal`, sur un play, un bloc ou une tâche : quand une tâche échoue sur un hôte ou ne peut pas l'atteindre, tous les hôtes du lot échouent à cette tâche une fois que tous l'ont exécutée. Un `rescue` autour de la tâche s'exécute sur chaque hôte. Seul l'hôte qui a échoué est compté `rescued` dans le récapitulatif.
 - `max_fail_percentage`, sur un play : après chaque tâche, si plus que cette part du lot a échoué, l'exécution s'arrête. `NO MORE HOSTS LEFT` s'affiche deux fois, comme Ansible l'affiche, et aucun play suivant ne s'exécute. Un lot qui perd exactement cette part continue.
-- `ignore_unreachable`, sur un play, un bloc ou une tâche : un hôte qui ne peut pas être joint affiche son erreur et `...ignoring`, reste dans le play et est compté `ok` et `ignored`. Le `ignore_errors` d'un play couvre les échecs mais pas un hôte injoignable.
+- `ignore_unreachable`, sur un play, un bloc ou une tâche : un hôte qui ne peut pas être joint affiche son erreur et `...ignoring`, reste dans le play et est compté `ok` et `ignored`. Le `ignore_errors` d'un play couvre les échecs mais pas un hôte injoignable. Dans une boucle, chaque élément essaie l'hôte et rapporte son propre résultat injoignable, et l'hôte ne reste que si le `ignore_unreachable` de chaque élément tient.
 
 ## Handlers
 

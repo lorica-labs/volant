@@ -287,3 +287,19 @@ fn as_whole(value: &Value) -> Option<i64> {
 pub(in crate::executor) fn strategy_reads_as_true(value: &Value) -> bool {
     crate::template::truthy(value)
 }
+
+/// Whether `item` ignores a host it cannot reach: the task's `ignore_unreachable`, rendered for
+/// the item when it was written as a template. Measured on ansible-core 2.19.12:
+/// `ignore_unreachable: "{{ item }}"` is read per item.
+pub(in crate::executor) fn item_ignores_unreachable(
+    task: &PlayTask,
+    item: &super::Item,
+    templar: &Templar,
+) -> bool {
+    match &task.deferred.ignore_unreachable {
+        Some(raw) => {
+            boolean_keyword("ignore_unreachable", raw, &item.vars, templar).unwrap_or(false)
+        }
+        None => task.ignores_unreachable(),
+    }
+}

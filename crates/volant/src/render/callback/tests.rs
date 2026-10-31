@@ -191,7 +191,7 @@ fn the_json_callback_prints_one_document_at_the_recap() {
         out.task_started("loop", "debug", None);
         let aggregate = result(json!({"changed": false, LOOP_RESULTS: [{"item": "a"}]}));
         out.result("h1", Outcome::Ok, &aggregate, None, Dump::No, false, None);
-        out.unreachable("h2", "gone", false, None);
+        out.unreachable("h2", "gone", &[], false, None);
         out.recap(&Stats::default(), None);
     });
     let escaped = format!("h{}u00e9llo", '\\');

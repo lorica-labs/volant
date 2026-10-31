@@ -64,7 +64,7 @@ use plugin::{PluginBatch, PluginItems, plugin_step, run_plugin_items};
 use rendered::{NO_WHEN, Rendered, read_as, render_keywords, step_at};
 pub(in crate::executor) use throttle::Turn as ThrottleTurn;
 use timings::file_timings;
-use unreachable::{ignore_the_batch, ignore_unreachable};
+use unreachable::{ignore_the_batch, ignore_unreachable, lost_items};
 use waits::{Halt, RunOnce};
 
 #[expect(
@@ -139,6 +139,7 @@ pub(super) async fn drive_host(
     // one the recap counts, and the delegate only shows in the line.
     let mut unreachable_delegate: Option<String> = None;
     let mut unreachable_index: Option<usize> = None;
+    let mut unreachable_items = Vec::new();
     let mut failed = false;
     // Set when this host leaves the play with nothing to show for it: the one runner of a
     // `run_once` step failed, so this host never ran the task and has no line, and the run
@@ -204,6 +205,7 @@ pub(super) async fn drive_host(
                 delegate: unreachable_delegate.take(),
                 origin: unreachable_origin.take(),
                 index: unreachable_index,
+                items: std::mem::take(&mut unreachable_items),
             };
             let Some((at, edits)) = redo::unreachable(&tx, &plan, gone).await else {
                 failed = true;
@@ -1418,7 +1420,7 @@ pub(super) async fn drive_host(
                                     &name,
                                     pos,
                                     task,
-                                    format!("{err:#}"),
+                                    (format!("{err:#}"), Vec::new()),
                                     delegate_name.as_deref(),
                                     &store,
                                     &register_hosts,
@@ -1667,7 +1669,8 @@ pub(super) async fn drive_host(
                     continue 'run;
                 }
                 Err(err) => {
-                    if head.ignores_unreachable() {
+                    let (lost, ignored) = lost_items(head, &batch, &err.to_string(), &templar);
+                    if ignored {
                         // The turn goes back before the host waits for anyone: `advance` can
                         // wait for a verdict that depends on a host this gate is holding up.
                         drop(gate);
@@ -1680,7 +1683,7 @@ pub(super) async fn drive_host(
                             &name,
                             head,
                             batch[0].0,
-                            err.to_string(),
+                            (err.to_string(), lost),
                             batch_delegate.as_deref(),
                             &store,
                             undecided,
@@ -1692,6 +1695,7 @@ pub(super) async fn drive_host(
                         }
                         continue 'run;
                     }
+                    unreachable_items = lost;
                     unreachable = Some(err.to_string());
                     continue 'run;
                 }
@@ -2371,7 +2375,7 @@ pub(super) async fn drive_host(
                             &name,
                             &step_at(&c, &rendered, batch[0].0).task,
                             batch[0].0,
-                            msg,
+                            (msg, Vec::new()),
                             batch_delegate.as_deref(),
                             &store,
                             undecided,

@@ -1,5 +1,5 @@
 ---
-sourceHash: 2b129c372539
+sourceHash: c2126b365c1e
 title: 块与 handler
 description: 失败如何在块中传递，rescue 和 always 做什么，以及 handler 何时运行。
 ---
@@ -52,7 +52,7 @@ description: 失败如何在块中传递，rescue 和 always 做什么，以及 
 
 - `any_errors_fatal`，可写在 play、块或 task 上：当一个 task 在某台主机上失败或无法连接到它时，批次中的所有主机都会在运行完这个 task 之后，在这个 task 处失败。围绕这个 task 的 `rescue` 会在每台主机上运行。只有失败的那台主机在汇总里被计为 `rescued`。
 - `max_fail_percentage`，写在 play 上：每个 task 之后，如果批次中失败的比例超过该值，运行就会停止。`NO MORE HOSTS LEFT` 会像 Ansible 一样打印两次，之后不再运行任何 play。恰好损失该比例的批次则会继续。
-- `ignore_unreachable`，可写在 play、块或 task 上：无法连接的主机会打印它的错误和 `...ignoring`，留在 play 中，并被计为 `ok` 和 `ignored`。play 的 `ignore_errors` 覆盖失败，但不覆盖不可达的主机。
+- `ignore_unreachable`，可写在 play、块或 task 上：无法连接的主机会打印它的错误和 `...ignoring`，留在 play 中，并被计为 `ok` 和 `ignored`。play 的 `ignore_errors` 覆盖失败，但不覆盖不可达的主机。 在循环中，每一项都会尝试连接主机并报告自己的不可达结果，只有每一项的 `ignore_unreachable` 都成立时主机才会留下。
 
 ## Handler
 

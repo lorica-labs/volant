@@ -49,6 +49,7 @@ mod notified;
 mod pinned;
 mod plugin;
 mod redo;
+mod refused;
 mod rendered;
 mod throttle;
 mod timings;
@@ -1642,36 +1643,30 @@ pub(super) async fn drive_host(
                     options.profile.natives(&key.host, l.natives());
                     l
                 }
-                // The host answered and then refused to escalate, so this is the task failing and
-                // not the host going away. `ignore_errors` is deliberately not honoured: the
-                // batch never ran, and a run reporting success while having quietly skipped every
-                // escalated task is the worst outcome here. Measured on ansible-core 2.19.12: a
-                // refused `become_user` is a task failure, so a rescue takes it (`rescued=1`,
-                // exit 0).
+                // The host answered and then refused to escalate: the task fails, the host stays.
                 Err(ConnectError::Become(msg)) => {
                     let index = batch[0].0;
-                    let mut task = step_at(&c, &rendered, index).task.clone();
-                    task.ignore_errors = Some(crate::playbook::Flag::Fixed(false));
-                    let results = vec![(None, crate::transport::refused_escalation(msg))];
                     let rescuable = !handlers_only && rescue_target(&c, index).is_some();
-                    let result = report_task(
-                        &tx,
-                        &name,
-                        index,
-                        &task,
-                        &results,
-                        &[None],
-                        &[],
-                        &[],
-                        &[],
-                        Dump::No,
-                        rescuable,
-                        batch_delegate.as_deref(),
-                        Hold::new(&plan, &mut permit).with_turn(&mut gate),
-                    )
-                    .await;
+                    let task = &step_at(&c, &rendered, index).task;
+                    let hold = Hold::new(&plan, &mut permit).with_turn(&mut gate);
+                    let delegate = batch_delegate.as_deref();
+                    let refused = refused::report_refusal(
+                        &driver, &tx, &name, task, &batch, msg, rescuable, delegate, &store, hold,
+                    );
+                    let Some(result) = refused.await else {
+                        if let Some(step) = undecided.take() {
+                            let Some(next) = driver.advance(step).await else {
+                                break 'run;
+                            };
+                            pos = next;
+                        }
+                        if !plan.strategy.pinned() {
+                            permit = None;
+                        }
+                        continue 'run;
+                    };
                     failed |= !rescuable;
-                    failed_at = Some((index, result.unwrap_or_default()));
+                    failed_at = Some((index, result));
                     // Nothing ran, so the fork this host holds goes back before it carries on:
                     // the next round can block at a barrier or at a flush point, and a permit
                     // held across a wait is one the hosts that have to reach that same point

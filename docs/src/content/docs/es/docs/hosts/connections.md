@@ -1,5 +1,5 @@
 ---
-sourceHash: 3798b346c136
+sourceHash: 864ee37f7fcb
 title: Conexiones y become
 description: Cómo llega Volant a un host, las variables de host y los ajustes de ansible.cfg que lee, y cómo funciona become mediante sudo y su.
 ---
@@ -366,7 +366,7 @@ Se escribe una sola vez en la entrada estándar de `sudo`. Nunca aparece en una 
 
 Volant le pregunta a `sudo` qué forma usar en lugar de suponer una. Prueba primero `sudo -n` y recurre a `sudo -k -S -p ''` solo cuando el propio `sudo` rechaza la petición por falta de autenticación. El [registro de decisión 0004](/es/docs/decisions/0004-become-runs-a-second-agent-under-sudo/) explica por qué una suposición bloquearía el enlace. En un host que ya se usó, Volant arranca primero el agente en caché con `sudo -n` en la misma sesión `ssh` que sus comprobaciones, y solo ejecuta la sonda cuando eso no funciona, como describe [El agente en tus hosts](/es/docs/internals/agent/).
 
-Cuando el escalado falla, por falta de contraseña, por una contraseña incorrecta o por una regla de `sudoers` que prohíbe el comando, la tarea falla y el host sigue siendo alcanzable. Los mensajes son los propios de Ansible: `Missing sudo password` o `Incorrect sudo password`.
+Cuando el escalado falla, por falta de contraseña, por una contraseña incorrecta o por una regla de `sudoers` que prohíbe el comando, la tarea falla y el host sigue siendo alcanzable. Los mensajes son los propios de Ansible: `Missing sudo password` o `Incorrect sudo password`. Una tarea con otra contraseña recibe un agente propio, así que una contraseña incorrecta falla aunque la correcta ya haya funcionado, e `ignore_errors` cubre ese fallo como cualquier otro.
 
 ### su
 

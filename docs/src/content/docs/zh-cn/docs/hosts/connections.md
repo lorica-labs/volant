@@ -1,5 +1,5 @@
 ---
-sourceHash: 3798b346c136
+sourceHash: 864ee37f7fcb
 title: 连接与 become
 description: Volant 如何连接到主机、它读取的主机变量和 ansible.cfg 设置，以及 become 如何通过 sudo 和 su 工作。
 ---
@@ -366,7 +366,7 @@ sudo -H <form> -u <user> -- volant-agent
 
 Volant 会询问 `sudo` 该用哪种形式，而不是假设其中一种。它先尝试 `sudo -n`，只有当 `sudo` 本身因缺少认证而拒绝请求时，才退回到 `sudo -k -S -p ''`。为什么靠猜测会让链路挂起，见[决策记录 0004](/zh-cn/docs/decisions/0004-become-runs-a-second-agent-under-sudo/)。对已经运行过的主机，Volant 先在做检查的同一个 `ssh` 会话里用 `sudo -n` 启动缓存的 agent，只有这样不行时才运行探测，见[主机上的 agent](/zh-cn/docs/internals/agent/)。
 
-当提权失败时，无论是缺少密码、密码错误，还是 `sudoers` 规则禁止该命令，task 都会失败，主机仍然可达。消息是 Ansible 自己的：`Missing sudo password` 或 `Incorrect sudo password`。
+当提权失败时，无论是缺少密码、密码错误，还是 `sudoers` 规则禁止该命令，task 都会失败，主机仍然可达。消息是 Ansible 自己的：`Missing sudo password` 或 `Incorrect sudo password`。使用另一个密码的 task 会得到自己的 agent，因此即使正确的密码已经成功过，错误的密码仍会失败，而 `ignore_errors` 会像对待其他失败一样覆盖这种失败。
 
 ### su
 

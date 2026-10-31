@@ -111,15 +111,17 @@ pub struct Escalation {
     pub prompt_l10n: Vec<String>,
 }
 
-/// How a link escalates, less the user and the password: two links to one user through
-/// different programs or flags are different agents, started under different rules. The
-/// password is left out on purpose, so a password that changes in the middle of a play keeps
-/// the link it already has, the escalation it proved being the same.
+/// How a link escalates, less the user: two links to one user through different programs,
+/// flags or passwords are different agents, started under different rules. ansible-core asks
+/// for the password on every task, so a task handed a wrong one fails with `Incorrect su
+/// password` even after the right one worked; a link kept across a password change would run
+/// it. The password is kept as a hash, so a formatted key never shows it.
 #[derive(Clone, Debug, PartialEq, Eq, Hash)]
 pub struct EscalationProgram {
     pub method: BecomeMethod,
     pub exe: Vec<String>,
     pub flags: Option<Vec<String>>,
+    pub password: Option<u64>,
 }
 
 impl Escalation {
@@ -129,6 +131,12 @@ impl Escalation {
             method: self.method,
             exe: self.exe.clone(),
             flags: self.flags.clone(),
+            password: self.password.as_deref().map(|password| {
+                use std::hash::{Hash as _, Hasher as _};
+                let mut hasher = std::hash::DefaultHasher::new();
+                password.hash(&mut hasher);
+                hasher.finish()
+            }),
         }
     }
 }

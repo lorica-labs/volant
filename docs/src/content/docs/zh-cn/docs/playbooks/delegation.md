@@ -1,5 +1,5 @@
 ---
-sourceHash: "387854768339"
+sourceHash: 49150b243c90
 title: 委派、meta 任务与 environment
 description: 对一个批次只运行一次 task 或在另一台主机上运行，每个 meta 动作的作用，以及 environment 和 no_log 如何影响 task。
 ---
@@ -76,7 +76,7 @@ role 之外的 `end_role` 会在运行开始之前让运行停止，退出码为
 
 `clear_host_errors` 把批次的失败从退出码中去掉。汇总保留它的计数，所以主机可以在退出码为 0 的运行中显示 `failed=1`。
 
-- 失败的主机不会回到它失败的那个 play。它会回到之后的 play。
+- 失败的主机不会回到它失败的那个 play。它会回到之后的 play。例外是自己执行 `clear_host_errors` 的主机：它在一个 `rescue` 失败了的 block 的 `always` 里执行，会留在 play 中，并继续执行 block 之后的 task。
 - 变得不可达的主机会回来。它从停下的地方接着执行 play，并在其他所有主机完成后，运行它错过的步骤。如果它再次不可达，会再次计数。
 - 在更早的 play 中不可达的主机也会回来，从执行清除的那个 play 的第一个 task 开始。它在之后的 play 中又会不可达，退出码无论哪种情况都是 4。
 

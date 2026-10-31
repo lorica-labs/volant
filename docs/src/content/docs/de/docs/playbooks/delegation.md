@@ -1,5 +1,5 @@
 ---
-sourceHash: "387854768339"
+sourceHash: 49150b243c90
 title: Delegation, Meta-Tasks und Umgebungsvariablen
 description: Einen Task einmal pro Batch oder auf einem anderen Host ausführen, was jede meta-Action tut und wie environment und no_log einen Task prägen.
 ---
@@ -76,7 +76,7 @@ Ein Host, der mit `end_host`, `end_batch` oder `end_play` endet, ist nicht fehlg
 
 `clear_host_errors` nimmt die Fehler des Batches aus dem Exit-Code. Der Recap behält seine Zähler, sodass ein Host `failed=1` zeigen kann, in einem Lauf, der mit 0 endet.
 
-- Ein Host, der fehlgeschlagen ist, kehrt nicht in das Play zurück, in dem er fehlgeschlagen ist. In den Plays danach ist er wieder dabei.
+- Ein Host, der fehlgeschlagen ist, kehrt nicht in das Play zurück, in dem er fehlgeschlagen ist. In den Plays danach ist er wieder dabei. Die Ausnahme ist der Host, der `clear_host_errors` selbst ausführt, im `always` eines Blocks, dessen `rescue` fehlgeschlagen ist: Er bleibt im Play und führt die Tasks nach dem Block aus.
 - Ein Host, der nicht erreichbar wurde, kehrt zurück. Er nimmt das Play dort wieder auf, wo er aufgehört hat, und führt die verpassten Schritte aus, nachdem alle anderen Hosts fertig sind. Ist er erneut nicht erreichbar, zählt er erneut.
 - Ein Host, der in einem früheren Play nicht erreichbar war, kehrt ebenfalls zurück, ab dem ersten Task des Plays, das zurückgesetzt hat. In den Plays danach ist er wieder nicht erreichbar, und der Exit-Code sagt in beiden Fällen 4.
 

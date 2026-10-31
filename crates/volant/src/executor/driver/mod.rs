@@ -1018,8 +1018,10 @@ pub(super) async fn drive_host(
                                 leaves = true;
                             }
                             "clear_facts" => driver.meta(pos, MetaEffect::ClearFacts).await,
+                            // A host draining an `always` on its way out stays in the play.
                             "clear_host_errors" => {
                                 driver.meta(pos, MetaEffect::ClearHostErrors).await;
+                                (driver.cleanup, failed_index, failed) = (None, None, false);
                             }
                             "refresh_inventory" => {
                                 driver.meta(pos, MetaEffect::RefreshInventory).await;

@@ -1,5 +1,5 @@
 ---
-sourceHash: "387854768339"
+sourceHash: 49150b243c90
 title: Delegación, tareas meta y environment
 description: Ejecutar una tarea una sola vez para un lote o en otro host, qué hace cada acción meta, y cómo dan forma a una tarea environment y no_log.
 ---
@@ -76,7 +76,7 @@ Un host que termina con `end_host`, `end_batch` o `end_play` no ha fallado, y el
 
 `clear_host_errors` quita los fallos del lote del código de salida. El recap conserva sus cuentas, así que un host puede mostrar `failed=1` en una ejecución que termina con 0.
 
-- Un host que falló no vuelve al play en el que falló. Vuelve en los plays posteriores.
+- Un host que falló no vuelve al play en el que falló. Vuelve en los plays posteriores. La excepción es el host que ejecuta el propio `clear_host_errors`, en el `always` de un bloque cuyo `rescue` falló: se queda en el play y ejecuta las tareas que siguen al bloque.
 - Un host que pasó a ser inalcanzable vuelve. Retoma el play donde se quedó y ejecuta los pasos que se perdió cuando todos los demás hosts han terminado. Si vuelve a ser inalcanzable, se cuenta de nuevo.
 - Un host que fue inalcanzable en un play anterior también vuelve, desde la primera tarea del play que lo perdonó. Vuelve a ser inalcanzable en los plays posteriores, y el código de salida dice 4 en cualquier caso.
 

@@ -245,6 +245,12 @@ pub struct VarStore {
     /// The hosts the play's pattern found after a refresh, which `ansible_play_hosts_all` shows
     /// in place of the play's starting list until the play ends.
     play_hosts_all: Option<Vec<String>>,
+    /// The hosts `add_host` brought into the inventory while the play runs, in order: they join
+    /// `ansible_play_hosts_all` behind the play's list, and the next batch finds them through
+    /// the play's pattern ([`VarStore::start_batch`]).
+    added_play_hosts: Vec<String>,
+    /// Whether `add_host` grew the inventory in this play.
+    play_grew: bool,
     /// The hosts `--limit` narrows the run to, which a refresh applies to the play's hosts too.
     limit: Option<HashSet<String>>,
     /// The sources and plugin settings a refresh reads again.

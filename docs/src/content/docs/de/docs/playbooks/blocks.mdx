@@ -1,5 +1,5 @@
 ---
-sourceHash: 434d79ab61bf
+sourceHash: 2b129c372539
 title: Blöcke und Handler
 description: Wie ein Fehler durch Blöcke wandert, was rescue und always tun und wann Handler laufen.
 ---
@@ -117,7 +117,7 @@ Handler erscheinen in keiner Auflistung, und die drei automatischen Flush-Punkte
 ## Unterschiede zu Ansible
 
 - In `ansible_failed_task` wird ein Keyword, das dieses Release nicht ausführt, als `null` gelesen statt als Standardwert von ansible-core. Ein Standardwert wie `connection: "ssh"` würde etwas beschreiben, das Volant nicht beachtet.
-- `ansible_failed_task` hat einen Schlüssel pro Keyword und lässt die sechs aus, die ansible-core für sich behält (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`, `loop_with`). Sein `args` enthält, was das Playbook geschrieben hat, ohne die neunzehn `_ansible_*`-Schlüssel, die ansible-core hinzufügt.
+- Das `args` von `ansible_failed_task` enthält, was das Playbook geschrieben hat, ohne die neunzehn `_ansible_*`-Schlüssel, die ansible-core hinzufügt.
 - Ein Host, dessen `ansible_connection` einen Transport nennt, den dieses Release nicht hat, wird als nicht erreichbar gemeldet, sodass ein rescue ihn nicht auffängt. Ansible behandelt das als gewöhnlichen Task-Fehler und fängt ihn auf.
 - Ein `notify` und der `name` eines Handlers können Templates sein. Sie werden für jeden Host gerendert, wenn der Task `changed` meldet, und ein Template, das zu einer Liste rendert, benachrichtigt jeden Namen darin. `listen` ist immer der literale Text. Ein `notify`, das sich nicht rendern lässt, lässt den Task wie in Ansible fehlschlagen, bevor er läuft, und ein rescue oder `ignore_errors` kann diesen Fehler übernehmen. In einer Schleife lässt Volant den ganzen Task fehlschlagen, wo Ansible das Element fehlschlagen lässt.
 - Ein `notify`, das keinen Handler nennt, beendet den Lauf wie in Ansible mit Exit-Code 1 und der Meldung `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`: nach dem Banner des Tasks, ohne Recap. Das geschieht nur, wenn der Task `changed` meldet, ohne fehlzuschlagen, und kein `ignore_errors` und kein `rescue` kann es auffangen.

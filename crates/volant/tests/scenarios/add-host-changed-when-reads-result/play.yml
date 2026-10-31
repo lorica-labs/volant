@@ -1,0 +1,23 @@
+- hosts: h1
+  gather_facts: false
+  tasks:
+    - add_host: {name: 'host_{{ item }}'}
+      loop: [1, 2]
+      changed_when: item == 2
+      register: res
+    - add_host: {name: host_3}
+      changed_when: res is changed
+      register: res
+    - debug: {msg: "{{ res is changed }}"}
+    - add_host: {name: host_3}
+      changed_when: again.changed
+      register: again
+    - debug: var=again.changed
+    - add_host: {name: host_a}
+      changed_when: false
+    - group_by: {key: gx}
+      changed_when: grouped.changed
+      register: grouped
+    - group_by: {key: gx}
+      changed_when: grouped.changed
+      register: grouped

@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-3.0-or-later
 //! Building a `VarStore` from an inventory, its settings, and the inventory changes a play makes.
 
+use std::borrow::Cow;
 use std::collections::{BTreeMap, BTreeSet, HashSet};
 use std::path::Path;
 use std::sync::Arc;
@@ -139,6 +140,8 @@ impl VarStore {
             reload: None,
             limit: None,
             play_hosts_all: None,
+            added_play_hosts: Vec::new(),
+            play_grew: false,
             inventory_changed: false,
             custom_stats: CustomStats::default(),
         };
@@ -194,9 +197,42 @@ impl VarStore {
 
     /// The play is over: `ansible_play_hosts_all` is the next play's own list again.
     pub fn end_play(&mut self) {
+        self.added_play_hosts.clear();
+        self.play_grew = false;
         if self.play_hosts_all.take().is_some() {
             self.shared = None;
         }
+    }
+
+    /// A batch after the first starts. Measured on ansible-core 2.19.12: once `add_host` grew the
+    /// inventory, each batch reads `ansible_play_hosts_all` from the play's pattern anew, the
+    /// added hosts where the inventory puts them, then the hosts added during the batch.
+    pub fn start_batch(&mut self, pattern: &str) {
+        if !self.play_grew {
+            return;
+        }
+        let found = self.dynamic.resolve(pattern).hosts;
+        self.added_play_hosts.clear();
+        self.set_play_hosts_all(found.into_iter().map(|h| h.name).collect());
+    }
+
+    /// `ansible_play_hosts_all` as it stands: the play's list, or the one a refresh or a batch
+    /// found, and the hosts `add_host` added since.
+    pub(super) fn play_hosts_all<'a>(&'a self, scope: &'a super::Scope) -> Cow<'a, [String]> {
+        let base = self
+            .play_hosts_all
+            .as_deref()
+            .unwrap_or(&scope.all_play_hosts);
+        if self.added_play_hosts.is_empty() {
+            return Cow::Borrowed(base);
+        }
+        let mut all = base.to_vec();
+        for host in &self.added_play_hosts {
+            if !all.contains(host) && self.limit.as_ref().is_none_or(|l| l.contains(host)) {
+                all.push(host.clone());
+            }
+        }
+        Cow::Owned(all)
     }
 
     /// The sources and plugin settings a refresh reads again, when there are some.
@@ -241,17 +277,13 @@ impl VarStore {
     /// the hosts of the play being run are not changed by it. Whether it changed the inventory:
     /// a new host, a variable that differs, a group or a membership that was missing.
     pub fn add_host(&mut self, name: &str, groups: &[String], vars: &Map<String, Value>) -> bool {
-        let known = self.dynamic.groups();
-        let line = self.dynamic.host_line_vars(name);
-        let changed = !known["all"].iter().any(|h| h == name)
-            || vars
-                .iter()
-                .any(|(k, v)| line.and_then(|l| l.get(k)) != Some(v))
-            || groups.iter().filter(|g| *g != "all").any(|g| {
-                !known
-                    .get(g)
-                    .is_some_and(|members| members.iter().any(|h| h == name))
-            });
+        let new = !self.dynamic.groups()["all"].iter().any(|h| h == name);
+        if new {
+            self.added_play_hosts.push(name.to_string());
+            self.play_grew = true;
+            self.shared = None;
+        }
+        let changed = self.adds_host(name, groups, vars);
         // A value that still holds a template after the task rendered it was built from text the
         // playbook did not write (a fact, a registered result): it is data, kept as an untrusted
         // fact of the host and never rendered again. The rest sits on the host's inventory line.
@@ -267,6 +299,13 @@ impl VarStore {
         }
         self.dynamic.add_host(name, line.clone());
         self.added.push(Added::Host(name.to_string(), line));
+        // A new host is a member of `all` itself, as the reference's `add_host(name, 'all')`
+        // makes it: `all` lists its own members before its groups'.
+        if new {
+            self.dynamic.add_member(name, "all");
+            self.added
+                .push(Added::Member(name.to_string(), "all".to_string()));
+        }
         for group in groups.iter().filter(|g| *g != "all") {
             if is_data_name(group) {
                 self.data_groups.insert(group.clone());
@@ -280,6 +319,32 @@ impl VarStore {
             self.set_untrusted_fact(name, key, value.clone());
         }
         changed
+    }
+
+    /// Whether [`VarStore::add_host`] would change the inventory, asked before it runs.
+    pub fn adds_host(&self, name: &str, groups: &[String], vars: &Map<String, Value>) -> bool {
+        let known = self.dynamic.groups();
+        let line = self.dynamic.host_line_vars(name);
+        !known["all"].iter().any(|h| h == name)
+            || vars
+                .iter()
+                .any(|(k, v)| line.and_then(|l| l.get(k)) != Some(v))
+            || groups.iter().filter(|g| *g != "all").any(|g| {
+                !known
+                    .get(g)
+                    .is_some_and(|members| members.iter().any(|h| h == name))
+            })
+    }
+
+    /// Whether [`VarStore::add_to_group`] would change the inventory, asked before it runs.
+    pub fn adds_to_group(&self, host: &str, group: &str, parents: &[String]) -> bool {
+        let known = self.dynamic.groups();
+        std::iter::once(group)
+            .chain(parents.iter().map(String::as_str))
+            .any(|name| !known.contains_key(name))
+            || !known[group_or_all(&known, group)]
+                .iter()
+                .any(|member| member == host)
     }
 
     /// Marks names as data whatever they hold: the render that made them read a value that came
@@ -296,13 +361,7 @@ impl VarStore {
     /// `group_by`: `host` joins `group`, which is made a child of each of `parents`. Whether it
     /// changed the inventory: a group that was missing, or a membership.
     pub fn add_to_group(&mut self, host: &str, group: &str, parents: &[String]) -> bool {
-        let known = self.dynamic.groups();
-        let changed = std::iter::once(group)
-            .chain(parents.iter().map(String::as_str))
-            .any(|name| !known.contains_key(name))
-            || !known[group_or_all(&known, group)]
-                .iter()
-                .any(|member| member == host);
+        let changed = self.adds_to_group(host, group, parents);
         if group != "all" {
             if is_data_name(group) {
                 self.data_groups.insert(group.to_string());

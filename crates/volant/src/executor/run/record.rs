@@ -132,6 +132,50 @@ pub(in crate::executor) fn record_facts(
 /// The key `set_stats` answers under: not a host setting, so not read through `host_setting`.
 const STATS_KEY: &str = "ansible_stats";
 
+/// Marks an `add_host` or `group_by` result `changed` when it would change the inventory, before
+/// its conditions are judged. Measured on ansible-core 2.19.12: `changed_when: r.changed` on
+/// `add_host` holds for a new host and not for one already there, and `changed_when` keeps the
+/// last word.
+pub(super) fn foresee_inventory(
+    result: &mut TaskResult,
+    task: &PlayTask,
+    item: &Item,
+    store: &std::sync::Mutex<VarStore>,
+) {
+    let names = |value: Option<&Value>| -> Vec<String> {
+        value
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|v| v.as_str().map(str::to_string))
+            .collect()
+    };
+    let store = store.lock().expect("vars lock");
+    let changed = match short_name(&task.module) {
+        "add_host" => {
+            let Some(added) = result.0.get("add_host").and_then(Value::as_object) else {
+                return;
+            };
+            let Some(name) = added.get("host_name").and_then(Value::as_str) else {
+                return;
+            };
+            let vars = added.get("host_vars").and_then(Value::as_object).cloned();
+            store.adds_host(name, &names(added.get("groups")), &vars.unwrap_or_default())
+        }
+        "group_by" => {
+            let (Some(group), Some(host)) = (
+                result.0.get("add_group").and_then(Value::as_str),
+                item.vars.get("inventory_hostname").and_then(Value::as_str),
+            ) else {
+                return;
+            };
+            store.adds_to_group(host, group, &names(result.0.get("parent_groups")))
+        }
+        _ => return,
+    };
+    result.0.insert("changed".into(), Value::Bool(changed));
+}
+
 /// Applies what `add_host`, `group_by` and `set_stats` answered for `host`, once the task is
 /// judged: the inventory gains the host or the group, the custom stats gain the data.
 ///

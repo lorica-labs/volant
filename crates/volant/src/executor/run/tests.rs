@@ -715,7 +715,7 @@ fn the_failed_task_carries_the_reference_s_own_keys() {
     task.connect.port = Some("22".to_string());
     let value = failed_task_value(&task);
     let object = value.as_object().expect("an object");
-    assert_eq!(object.len(), 40, "{value}");
+    assert_eq!(object.len(), 46, "{value}");
     for key in [
         "action",
         "args",

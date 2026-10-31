@@ -41,7 +41,7 @@ use crate::transport::ConnectionDefaults;
 
 use coordinator::run_batch;
 pub(crate) use driver::{expressions, strings, task_strings};
-pub(crate) use play_checks::as_bool_value;
+pub(crate) use play_checks::{as_bool_value, render_play_names};
 use play_checks::{check_gather_keywords, load_play_vars_files, max_fail_percentage, play_flags};
 pub(crate) use play_hosts::{Context as HostsContext, is_templated, render_hosts};
 pub use run::LocalPool;
@@ -210,11 +210,18 @@ async fn play_batches(
         .expect("vars lock")
         .playbook_dir()
         .to_path_buf();
-    for batch in batches {
+    for (index, batch) in batches.into_iter().enumerate() {
         // A batch that starts after the operator interrupted the run is a batch that should not
         // start: the drivers of the batch before it have already stopped for the same reason.
         if *options.stop.borrow() {
             break;
+        }
+        if index > 0 {
+            state
+                .vars
+                .lock()
+                .expect("vars lock")
+                .start_batch(&play.hosts);
         }
         // The reference divides by the batch as the inventory cut it, hosts that failed in an
         // earlier play included, and counts only the failures of this batch.

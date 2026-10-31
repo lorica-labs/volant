@@ -1,5 +1,5 @@
 ---
-sourceHash: 434d79ab61bf
+sourceHash: 2b129c372539
 title: Blocs et handlers
 description: Comment un échec se propage à travers les blocs, ce que font rescue et always, et quand les handlers s'exécutent.
 ---
@@ -117,7 +117,7 @@ Les handlers n'apparaissent dans aucune liste, pas plus que les trois points de 
 ## Différences avec Ansible
 
 - Dans `ansible_failed_task`, un mot-clé que cette version n'exécute pas se lit `null` plutôt que comme la valeur par défaut d'ansible-core. Une valeur par défaut comme `connection: "ssh"` décrirait quelque chose que Volant ne respecte pas.
-- `ansible_failed_task` a une clé par mot-clé et laisse de côté les six qu'ansible-core garde pour lui (`uuid`, `finalized`, `squashed`, `_resolved_action`, `async_val`, `loop_with`). Ses `args` contiennent ce que le playbook a écrit, sans les dix-neuf clés `_ansible_*` qu'ansible-core ajoute.
+- Les `args` de `ansible_failed_task` contiennent ce que le playbook a écrit, sans les dix-neuf clés `_ansible_*` qu'ansible-core ajoute.
 - Un hôte dont l'`ansible_connection` nomme un transport que cette version n'a pas est signalé injoignable : un rescue ne l'attrape donc pas. Ansible traite cela comme un échec de tâche ordinaire et le rattrape.
 - Un `notify` et le `name` d'un handler peuvent être des modèles. Ils sont rendus pour chaque hôte quand la tâche signale `changed`, et un modèle rendu en liste notifie chaque nom qu'elle contient. `listen` est toujours le texte littéral. Un `notify` qui ne peut pas être rendu fait échouer la tâche avant son exécution, comme dans Ansible, et un rescue ou `ignore_errors` peut prendre cet échec. Dans une boucle, Volant fait échouer toute la tâche là où Ansible fait échouer l'élément.
 - Un `notify` qui ne nomme aucun handler met fin à l'exécution avec le code de sortie 1 et le message `The requested handler '<name>' was not found in either the main handlers list nor in the listening handlers list`, comme dans Ansible : après la bannière de la tâche, sans récapitulatif. Cela n'arrive que lorsque la tâche signale `changed` sans échouer, et aucun `ignore_errors` ni `rescue` ne peut l'attraper.

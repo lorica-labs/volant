@@ -49,7 +49,9 @@ pub(in crate::executor) async fn run_local(
         )
         .await?
     } else if crate::action_plugins::controller_side(&task.module) {
-        controller_side(task, item, step, templar, stop).await?
+        let mut result = controller_side(task, item, step, templar, stop).await?;
+        super::record::foresee_inventory(&mut result, task, item, store);
+        result
     } else {
         local_result(task, item, step, templar, store, verbosity)
     };

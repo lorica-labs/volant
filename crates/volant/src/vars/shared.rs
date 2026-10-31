@@ -150,16 +150,9 @@ impl VarStore {
             "ansible_play_hosts".to_string(),
             serde_json::to_value(&*scope.play_hosts).unwrap_or_default(),
         );
-        // Known gap: measured on ansible-core 2.19.12, `ansible_play_hosts_all` grows when
-        // `add_host` runs inside a `serial` play; here it stays the play's own list.
         map.insert(
             "ansible_play_hosts_all".to_string(),
-            serde_json::to_value(
-                self.play_hosts_all
-                    .as_deref()
-                    .unwrap_or(&*scope.all_play_hosts),
-            )
-            .unwrap_or_default(),
+            serde_json::to_value(&*self.play_hosts_all(scope)).unwrap_or_default(),
         );
         map.insert("ansible_play_batch".to_string(), batch.clone());
         map.insert("play_hosts".to_string(), batch);

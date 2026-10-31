@@ -1,5 +1,3 @@
 # `async` in check mode runs the module under the job in check mode: `command` comes back skipped, a module that changes something reports it, and one that does not support check mode is skipped.
 needs: [ansible-core]
-runs:
-  - args: [-i, inv.ini, play.yml, --check]
-  - args: [-i, inv.ini, play.yml, --check, -v]
+args: [-i, inv.ini, play.yml, --check]

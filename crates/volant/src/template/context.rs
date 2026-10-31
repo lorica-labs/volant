@@ -214,6 +214,9 @@ pub(super) struct Context {
     any_soiled: AtomicBool,
     /// Set when `failed` is: the first error a nested render raised that the read cannot carry.
     failure: Mutex<Option<TemplateError>>,
+    /// What each variable whose template read a name with no value failed with, and where that
+    /// template was written.
+    undefined_in: Mutex<HashMap<String, (String, Option<crate::playbook::Origin>)>>,
     failed: AtomicBool,
 }
 
@@ -443,6 +446,7 @@ pub(super) fn context_tracking(
         author_only: Mutex::new(HashMap::new()),
         any_soiled: AtomicBool::new(false),
         failure: Mutex::new(None),
+        undefined_in: Mutex::default(),
         failed: AtomicBool::new(false),
     });
     (ctx, tainted)

@@ -1,0 +1,4 @@
+# A variable whose own template reads a name with no value: the read inside it is named and
+# placed at that template, for debug var, for each item of a mapping, and under msg.
+args: [-i, inv, play.yml]
+stderr: true

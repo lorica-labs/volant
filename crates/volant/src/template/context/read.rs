@@ -104,6 +104,19 @@ impl Context {
         names
     }
 
+    /// What the template of `key` failed with when it read a name with no value, and where it
+    /// was written.
+    pub(in crate::template) fn undefined_in(
+        &self,
+        key: &str,
+    ) -> Option<(String, Option<crate::playbook::Origin>)> {
+        self.undefined_in
+            .lock()
+            .expect("template undefined")
+            .get(key)
+            .cloned()
+    }
+
     fn fail(&self, error: TemplateError) {
         self.failure
             .lock()
@@ -162,7 +175,16 @@ impl Context {
             Ok(value) => (crate::template::bigint::to_template(&value), true),
             // A variable that reads a name with no value has none either, which is what
             // `default` and `is defined` ask.
-            Err(error) if error.is_undefined() => (minijinja::Value::UNDEFINED, false),
+            Err(error) if error.is_undefined() => {
+                let written = raw
+                    .as_str()
+                    .and_then(|text| crate::template::written::written_at(key, text));
+                self.undefined_in
+                    .lock()
+                    .expect("template undefined")
+                    .insert(key.to_string(), (error.0, written));
+                (minijinja::Value::UNDEFINED, false)
+            }
             Err(error) => {
                 self.fail(error);
                 (minijinja::Value::UNDEFINED, false)

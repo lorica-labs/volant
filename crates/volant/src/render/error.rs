@@ -232,6 +232,17 @@ pub fn concat_message(left: &str, right: &str) -> String {
     format!("{}: {right}", left.trim_end_matches(['.', ' ']))
 }
 
+/// A warning block written in full, `[WARNING]: ` and all, on stderr while a task runs, before
+/// its result. The reference's display drops a text it has shown already, for the whole run.
+pub(crate) fn warn_once(text: &str) {
+    static SAID: std::sync::LazyLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+        std::sync::LazyLock::new(Default::default);
+    if SAID.lock().expect("said lock").insert(text.to_string()) {
+        super::log::record(text);
+        eprint!("{text}");
+    }
+}
+
 /// `Origin: ...`, a blank line, then the task's line and the two before it, numbered, with a
 /// marker under the column: `SourceContext.from_origin` and its `__str__`.
 pub(crate) fn source_context(origin: &crate::playbook::Origin) -> String {

@@ -49,7 +49,7 @@ pub(crate) use env::{
 };
 use env::{any_undefined, environment, type_name};
 pub use templar::Templar;
-pub(crate) use vm::holds_template;
+pub(crate) use vm::{EMBEDDED_HELP, EMBEDDED_WARNING, embeds, holds_template};
 use vm::{convert_error, render_str};
 
 pub(crate) use bridged::is_plugin_failure;
@@ -89,7 +89,8 @@ impl TemplateError {
 
     /// Whether the message is one of the sentences that name what a read did not find: a
     /// variable (`'x' is undefined`), an attribute (`object of type 'dict' has no attribute 'x'`),
-    /// or an index (`object of type 'list' has no attribute 3`, `... object has no element 0`).
+    /// an index (`object of type 'list' has no attribute 3`, `... object has no element 0`), or an
+    /// environment variable `lookup('env')` was given an undefined default for.
     fn names_missing(&self) -> bool {
         let index = self.0.rsplit_once(' ').is_some_and(|(head, n)| {
             n.parse::<i64>().is_ok()
@@ -98,6 +99,8 @@ impl TemplateError {
         });
         self.0.ends_with("' is undefined")
             || index
+            || (self.0.starts_with("The environment variable '")
+                && self.0.ends_with("' is not set."))
             || (self.0.contains("object of type '")
                 && self.0.ends_with('\'')
                 && self.0.contains("' has no attribute '"))

@@ -222,6 +222,35 @@ fn note_texts(at: &Noting<'_>, templar: &Templar, value: &Value) {
 /// The arguments of one item, rendered argument by argument rather than as one value, because a
 /// few arguments are read back as engine input rather than as data - the name a `debug: var:`
 /// compiles - and the render is the only place that can say which of them came from a host.
+/// The reference's warning at each argument whose template passes a lookup a constant string
+/// that holds a template.
+fn warn_embedded(task: &PlayTask, raw: &Map<String, Value>) {
+    for (key, value) in raw {
+        if value.as_str().is_some_and(crate::template::embeds) {
+            let place = task
+                .value_origins
+                .get(&format!("args.{key}"))
+                .map(|origin| {
+                    format!(
+                        "{}
+
+",
+                        crate::render::source_context(origin)
+                    )
+                })
+                .unwrap_or_default();
+            crate::render::warn_once(&format!(
+                "[WARNING]: {}
+{place}{}
+
+",
+                crate::template::EMBEDDED_WARNING,
+                crate::template::EMBEDDED_HELP
+            ));
+        }
+    }
+}
+
 fn render_args(
     task: &PlayTask,
     plan: &PlayPlan,
@@ -265,6 +294,7 @@ fn render_args(
             }
         }
     }
+    warn_embedded(task, &raw);
     let (mut map, mut untrusted) = rendered.map_err(finalizing)?;
     // The splats lie under the arguments written as such, each over the one before it.
     let mut splatted: BTreeMap<String, (Value, bool)> = BTreeMap::new();

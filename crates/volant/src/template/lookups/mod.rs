@@ -26,9 +26,15 @@ pub fn register(env: &mut Environment<'static>, base_dir: PathBuf, bridge: Optio
     let call = move |state: &State, name: String, terms: Rest<Value>, kwargs: Kwargs| {
         // Measured on ansible-core 2.19.12: an undefined term or option is an undefined
         // read (`lookup('env', nope | lower)`, `lookup('vars', 'x', default=nope | lower)`).
-        let undefined_option = kwargs
-            .args()
-            .any(|k| kwargs.peek::<Value>(k).is_ok_and(|v| v.is_undefined()));
+        // `env` reads its `default` only for a variable that is not set, so an undefined one
+        // fails there, in the plugin's words.
+        let env = matches!(
+            name.as_str(),
+            "env" | "ansible.builtin.env" | "ansible.legacy.env"
+        );
+        let undefined_option = kwargs.args().any(|k| {
+            !(env && k == "default") && kwargs.peek::<Value>(k).is_ok_and(|v| v.is_undefined())
+        });
         if undefined_option || terms.iter().any(super::holds_undefined) {
             return Err(Error::from(ErrorKind::UndefinedError));
         }
@@ -211,6 +217,8 @@ fn lookup(
     if matches!(name, "varnames" | "ansible.builtin.varnames") {
         return varnames(state, terms);
     }
+    // Peeked first: an undefined `default` is no default to `get`, and `env` still needs it.
+    let env_default = kwargs.peek::<Value>("default").ok();
     let default_value: Option<Value> = kwargs.get::<Option<Value>>("default")?;
     let render_options = matches!(name, "template" | "ansible.builtin.template")
         .then(|| template_options(&kwargs))
@@ -230,7 +238,16 @@ fn lookup(
         let found = match name {
             "env" | "ansible.builtin.env" => {
                 taint();
-                Value::from(std::env::var(&term_text).unwrap_or_default())
+                match (std::env::var(&term_text), &env_default) {
+                    (Ok(set), _) => Value::from(set),
+                    (Err(_), None) => Value::from(""),
+                    (Err(_), Some(default)) if default.is_undefined() => {
+                        return Err(super::bridged::raise(format!(
+                            "The environment variable '{term_text}' is not set."
+                        )));
+                    }
+                    (Err(_), Some(default)) => default.clone(),
+                }
             }
             "file" | "ansible.builtin.file" => {
                 let Some(path) = found_file(state, &term_text, base_dir) else {

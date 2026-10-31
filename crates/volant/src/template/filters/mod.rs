@@ -153,7 +153,7 @@ pub fn register(
         add_filter(env, "reject", f::reject);
         add_filter(env, "selectattr", f::selectattr);
         add_filter(env, "rejectattr", f::rejectattr);
-        add_filter(env, "map", f::map);
+        add_filter(env, "map", super::missing::map_naming);
         add_filter(env, "groupby", f::groupby);
         add_filter(env, "unique", ordering::unique);
         add_filter(env, "chain", f::chain);

@@ -1,0 +1,3 @@
+# map(attribute=) over an item that lacks the attribute fails with the sentence that names it;
+# select('defined') still drops the item.
+args: [-i, inv.ini, play.yml]

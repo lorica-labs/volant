@@ -1,0 +1,15 @@
+- hosts: h1
+  gather_facts: false
+  vars:
+    things:
+      - name: one
+      - notname: three
+  tasks:
+    - set_fact:
+        names: '{{ things|map(attribute="name") }}'
+      ignore_errors: true
+    - debug:
+        msg: '{{ things | map(attribute="name") | list }}'
+      ignore_errors: true
+    - debug:
+        msg: '{{ things | map(attribute="name") | select("defined") | list }}'

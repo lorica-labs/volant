@@ -245,3 +245,31 @@ pub(super) fn named(error: TemplateError, source: &str, ctx: &minijinja::Value) 
     let _ = take_failure(ctx);
     found.map_or(error, TemplateError)
 }
+
+/// minijinja's `map`, with what an item an `attribute=` read found nothing for says when it is
+/// read: ansible-core's `object of type 'dict' has no attribute 'name'`, measured. A `default=`
+/// leaves no such item.
+pub(super) fn map_naming(
+    state: &mut minijinja::State,
+    value: minijinja::Value,
+    args: minijinja::value::Rest<minijinja::value::ValueOrKwargs>,
+) -> Result<minijinja::Value, minijinja::Error> {
+    let kwarg = |name: &str| {
+        args.last()
+            .filter(|last| last.is_kwargs())
+            .and_then(|kwargs| kwargs.get_attr(name).ok())
+            .filter(|found| !found.is_undefined())
+    };
+    let attribute = kwarg("attribute").filter(|_| kwarg("default").is_none());
+    let items = minijinja::filters::map(state, value.clone(), args)?;
+    if let Some(attribute) = attribute
+        && let Some(i) = items.iter().position(minijinja::Value::is_undefined)
+    {
+        let from = value.try_iter()?.nth(i).unwrap_or_default();
+        undefined_saying(format!(
+            "object of type '{}' has no attribute '{attribute}'",
+            py_type(&from)
+        ));
+    }
+    Ok(minijinja::Value::from(items))
+}

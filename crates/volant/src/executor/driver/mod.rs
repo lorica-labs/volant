@@ -61,6 +61,7 @@ use boundaries::{calls_lookup, meets, strict, writes_facts};
 pub(crate) use boundaries::{expressions, strings, task_strings};
 use host::Driver;
 use pinned::Turn;
+pub(in crate::executor) use pinned::Turns;
 use plugin::{PluginBatch, PluginItems, plugin_step, run_plugin_items};
 use rendered::{NO_WHEN, Rendered, read_as, render_keywords, step_at};
 pub(in crate::executor) use throttle::Turn as ThrottleTurn;
@@ -97,6 +98,9 @@ pub(super) async fn drive_host(
         stop_broken: false,
         cleanup: None,
         peer_fatal: None,
+        place: (!plan.strategy.free())
+            .then(|| plan.queue.iter().position(|h| h == &name))
+            .flatten(),
     };
     // One entry per target user on this host: the connecting user's own agent, and one more
     // for each `become_user` the play escalates to. Connections this play never uses itself
@@ -116,7 +120,7 @@ pub(super) async fn drive_host(
     // one's lines. `host_pinned` keeps the fork to the last step, so the worker that starts a
     // host is the one that finishes it; every release below is skipped for it.
     let mut turn = Turn {
-        gate: &plan.turn,
+        gate: &plan.turns,
         mine: plan
             .queue
             .iter()
@@ -1564,7 +1568,13 @@ pub(super) async fn drive_host(
                 break 'run;
             };
             if permit.is_none() {
-                if let Ok(p) = Arc::clone(&forks).acquire_owned().await {
+                let Some(taken) = driver
+                    .fork_for(&forks, batch[0].0, batch_throttle.is_none())
+                    .await
+                else {
+                    break 'run;
+                };
+                if let Some(p) = taken {
                     permit = Some(p);
                 } else {
                     // Nothing in this run closes the semaphore, so this is a bug rather than

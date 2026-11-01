@@ -260,7 +260,7 @@ impl Driver<'_> {
     /// Waits until the hosts in front of this one in a `host_pinned` batch have queued for their
     /// forks. `None` when the run is interrupted.
     pub(super) async fn wait_turn(&mut self, mine: usize) -> Option<()> {
-        let mut turn = self.plan.turn.subscribe();
+        let mut turn = self.plan.turns.first.subscribe();
         tokio::select! {
             reached = turn.wait_for(|reached| *reached >= mine) => reached.ok().map(|_| ()),
             () = async {
@@ -269,6 +269,53 @@ impl Driver<'_> {
                 }
             } => None,
         }
+    }
+
+    /// A fork for the batch at `pos`, `Some(None)` when the forks are gone. With a place in the
+    /// queue, taken once every live host before this one has taken its own for that step or moved
+    /// past it, as the reference hands its forks out in the play's host order. A throttled batch
+    /// waits for its throttle first and is not ordered, so the two waits never hold each other up.
+    /// `None` when the run is interrupted on the way.
+    pub(super) async fn fork_for(
+        &mut self,
+        forks: &Arc<Semaphore>,
+        pos: usize,
+        ordered: bool,
+    ) -> Option<Option<OwnedSemaphorePermit>> {
+        let Some(mine) = self.place else {
+            return Some(Arc::clone(forks).acquire_owned().await.ok());
+        };
+        let mut places = self.plan.turns.places.subscribe();
+        while ordered && !self.queued_before(&places.borrow_and_update(), mine, pos) {
+            tokio::select! {
+                _ = places.changed() => {}
+                // The coordinator is gone: nobody leaves the batch any more, and waiting on it
+                // would never end.
+                changed = self.progress.changed() => if changed.is_err() {
+                    break;
+                },
+                res = self.stop.changed(), if !self.stop_broken => {
+                    if res.is_err() {
+                        self.stop_broken = true;
+                    } else {
+                        return None;
+                    }
+                }
+            }
+        }
+        let permit = Arc::clone(forks).acquire_owned().await.ok();
+        self.plan.turns.reach(mine, pos + 1);
+        Some(permit)
+    }
+
+    /// Whether every host in front of `mine` has queued for the step at `pos`, moved past it, or
+    /// left the batch.
+    fn queued_before(&self, places: &[usize], mine: usize, pos: usize) -> bool {
+        let live = Arc::clone(&self.progress.borrow().live_hosts);
+        (0..mine).all(|host| {
+            places.get(host).is_some_and(|&reached| reached > pos)
+                || !live.contains(&self.plan.queue[host])
+        })
     }
 
     /// A permit of `gate`, or `None` when the run is interrupted before one is free.
@@ -297,6 +344,15 @@ impl Driver<'_> {
     /// Returns the length of the step list when the play is over for this host, which is what the
     /// driver's own bound reads as "done", and `None` when the run was interrupted on the way.
     pub(super) async fn advance(&mut self, pos: usize) -> Option<usize> {
+        let next = self.advance_past(pos).await?;
+        // Every step before `next` is behind this host: nobody waits on it to queue for those.
+        if let Some(mine) = self.place {
+            self.plan.turns.reach(mine, next);
+        }
+        Some(next)
+    }
+
+    async fn advance_past(&mut self, pos: usize) -> Option<usize> {
         let compiled = self.plan.steps();
         // An `any_errors_fatal` step is finished for this host only when it is finished for the
         // batch. A host that failed there makes this one fail at the same step: it does not step

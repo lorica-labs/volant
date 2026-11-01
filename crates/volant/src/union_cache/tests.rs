@@ -49,6 +49,7 @@ fn entry(root: &Path, bytes: &[u8]) -> Entry {
             Resolved::ActionPlugin {
                 fqcn: "ns.c.act".into(),
                 with_module: true,
+                raw_params: false,
             },
         ),
         (

@@ -179,11 +179,18 @@ pub(crate) fn note_action_plugins(resolved: &BTreeMap<String, Resolved>) {
                 .expect("missing lock")
                 .insert(name.clone(), collection.clone());
         }
-        if let Resolved::ActionPlugin { fqcn, with_module } = answer
+        if let Resolved::ActionPlugin {
+            fqcn,
+            with_module,
+            raw_params,
+        } = answer
             && !crate::action_plugins::waits_for_later(name)
             && !crate::action_plugins::waits_for_later(fqcn)
         {
             crate::action_plugins::note_collection_action(name, fqcn, *with_module);
+            if *raw_params {
+                crate::action_plugins::note_raw_params(name);
+            }
         }
     }
 }
@@ -205,7 +212,13 @@ pub enum Resolved {
     /// routes it to: run in the helper as ansible-core's action plugin. `fqcn` is the plugin
     /// that runs (`runtime.yml`'s `action_plugin`, else the one of the module's name), and
     /// `with_module` says the module of the asked name builds, for a plugin that runs it.
-    ActionPlugin { fqcn: String, with_module: bool },
+    /// `raw_params` is the plugin's `supports_raw_params`: a string argument that is not
+    /// `key=value` stays its `_raw_params`.
+    ActionPlugin {
+        fqcn: String,
+        with_module: bool,
+        raw_params: bool,
+    },
     /// A name ansible-core knows and this release cannot run: a module its collection removed
     /// (a `runtime.yml` tombstone), one with no Python source (a `.ps1` module whose `.py` holds
     /// only its documentation), or one the helper failed to build. `reason` is ansible-core's

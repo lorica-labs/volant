@@ -11,11 +11,12 @@ use volant_protocol::modules::{import_module, include_module, is_known, short_na
 use crate::keywords::{block_keyword, handler_keyword, loop_control_keyword, task_keyword};
 use crate::yaml::{field, to_json};
 
+use super::action::action_statement;
 use super::deferred::{Deferred, boolean_or_template, seconds_or_template};
 use super::fields::{
     condition, conditions, debugger, mapping, module_args, names, tags, throttle, timeout,
 };
-use super::keywords::{META, action_statement, connect_keywords, delegation, escalation, flag};
+use super::keywords::{META, connect_keywords, delegation, escalation, flag};
 use super::load::task_list;
 use super::model::{Apply, Block, PlayTask};
 use super::origin::{entry_origins, key_origin, located, task_origin, value_origin};

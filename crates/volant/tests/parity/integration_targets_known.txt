@@ -19,7 +19,7 @@ fork_safe_stdio                #1333
 gather_facts-errors            #1330
 gathering_facts                #1285
 include_vars                   #1282
-interpreter_discovery_python   #1284
+interpreter_discovery_python   #1361
 inventory_cache                #1334
 inventory_script               #1282
 lookup_env                     #1282
@@ -28,11 +28,10 @@ module_defaults                #1345
 order                          #1340
 protomatter                    #1282
 remote_tmp                     #1336
-roles_arg_spec                 #1284
+roles_arg_spec                 #1360
 set_fact                       #1282
 shell                          #1336
 strategy-external              #1335
-task-args                      #1284
 template                       #1339
 templating                     #1282
 var_templating                 #1336

@@ -431,6 +431,7 @@ fn an_unbalanced_command_line_fails_the_load(#[case] line: &str) {
 #[case::string_options("action: copy src=a dest=b", "copy", &[("dest", "b"), ("src", "a")], None)]
 #[case::mapping("action: {module: command, cmd: hostname}", "command", &[("cmd", "hostname")], None)]
 #[case::mapping_args("action: {module: command, args: {cmd: hostname}}", "command", &[("cmd", "hostname")], None)]
+#[case::mapping_words("action: {module: copy src=w dest=w, src: beside, mode: '0644', args: {src: args}}", "copy", &[("dest", "w"), ("mode", "0644"), ("src", "args")], None)]
 #[case::args_beside("action: command\n      args: {cmd: hostname}", "command", &[("cmd", "hostname")], None)]
 #[case::local("local_action: command hostname", "command", &[("_raw_params", "hostname")], Some("localhost"))]
 #[case::local_mapping("local_action: {module: command, cmd: hostname}", "command", &[("cmd", "hostname")], Some("localhost"))]

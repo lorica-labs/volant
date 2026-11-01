@@ -73,12 +73,14 @@ pub(crate) enum Kind {
 struct Collection {
     action: BTreeMap<&'static str, &'static str>,
     modules: BTreeMap<&'static str, &'static [&'static str]>,
+    raw_params: BTreeSet<&'static str>,
 }
 
 fn collection_actions() -> std::sync::MutexGuard<'static, Collection> {
     static NAMES: std::sync::Mutex<Collection> = std::sync::Mutex::new(Collection {
         action: BTreeMap::new(),
         modules: BTreeMap::new(),
+        raw_params: BTreeSet::new(),
     });
     NAMES
         .lock()
@@ -107,6 +109,20 @@ pub(crate) fn note_collection_action(name: &str, action: &str, with_module: bool
             .modules
             .insert(action, Box::leak(held.into_boxed_slice()));
     }
+}
+
+/// Records that the plugin `name` runs keeps a string argument that is not `key=value` as its
+/// `_raw_params` (`supports_raw_params`).
+pub(crate) fn note_raw_params(name: &str) {
+    let mut known = collection_actions();
+    if !known.raw_params.contains(name) {
+        known.raw_params.insert(leak(name));
+    }
+}
+
+/// Whether the controller's ansible-core said the plugin `name` runs takes raw parameters.
+pub(crate) fn takes_raw_params(name: &str) -> bool {
+    collection_actions().raw_params.contains(name)
 }
 
 /// Whether the parity page holds this collection plugin or module back for a later release: it

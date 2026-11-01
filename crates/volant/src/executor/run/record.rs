@@ -333,11 +333,11 @@ pub(in crate::executor) fn record_local_facts(
                     written.insert(host.clone());
                 }
                 if !set_fact {
-                    vars.set_included(host, key, value.clone(), data.contains(key));
+                    vars.set_included(host, key, value.clone(), None, data.contains(key));
                 } else if data.contains(key) {
                     vars.set_untrusted_fact(host, key, value.clone());
                 } else {
-                    vars.set_fact(host, key, value.clone());
+                    vars.set_fact(host, key, value.clone(), None);
                 }
             }
         }

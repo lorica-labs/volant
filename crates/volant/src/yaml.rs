@@ -19,6 +19,8 @@ mod merge;
 mod noted;
 pub(crate) use noted::note_value_origins;
 mod quoted;
+mod tagging;
+pub use tagging::tags_of;
 mod walk;
 
 pub use escapes::as_reference;

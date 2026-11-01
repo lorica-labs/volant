@@ -120,7 +120,7 @@ pub(crate) fn prompted<'a>(
     };
     let mut play = play.clone();
     for (name, value) in answers(&play, templar, vars, extra, ask, warned)? {
-        play.vars.insert(name, value);
+        play.vars.insert(name, value, None);
     }
     Ok(std::borrow::Cow::Owned(play))
 }

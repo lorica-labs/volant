@@ -184,7 +184,13 @@ fn a_templated_hosts_renders_to_patterns(
         .map(|(k, v)| ((*k).to_string(), Value::String((*v).to_string())))
         .collect();
     let store = std::sync::Mutex::new(
-        VarStore::new(&inventory, None, tmp.path(), extra).expect("the store builds"),
+        VarStore::new(
+            &inventory,
+            None,
+            tmp.path(),
+            crate::tags::Tagged::from(extra),
+        )
+        .expect("the store builds"),
     );
     let text = format!("- hosts: {hosts}\n  tasks: []\n");
     let compiled = crate::testing::compiled(&text);

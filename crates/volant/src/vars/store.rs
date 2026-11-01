@@ -9,7 +9,7 @@ use std::sync::Arc;
 use serde_json::{Map, Value};
 
 use super::load::load_vars_dir;
-use super::{Added, VarStore, holds_template, is_data_name};
+use super::{Added, Tagged, VarStore, holds_template, is_data_name};
 use crate::bridge::Bridge;
 use crate::inventory::{Inventory, PluginConfig, Source};
 use crate::stats::CustomStats;
@@ -23,8 +23,8 @@ pub(super) fn inventory_maps(
     inventory: &Inventory,
 ) -> (
     BTreeMap<String, Vec<String>>,
-    BTreeMap<String, Map<String, Value>>,
-    BTreeMap<String, Map<String, Value>>,
+    BTreeMap<String, Tagged>,
+    BTreeMap<String, Tagged>,
     BTreeMap<String, Vec<String>>,
 ) {
     let groups = inventory.groups();
@@ -35,15 +35,10 @@ pub(super) fn inventory_maps(
     for host in &groups["all"] {
         // Not `resolve`: a name that is both a group and a host resolves as the group, and
         // an empty group would leave this host without its own inventory variables.
-        inventory_vars.insert(host.clone(), layering.vars_of(host).into_iter().collect());
+        inventory_vars.insert(host.clone(), layering.vars_of(host));
         host_line_vars.insert(
             host.clone(),
-            layering
-                .line_vars(host)
-                .cloned()
-                .unwrap_or_default()
-                .into_iter()
-                .collect(),
+            layering.line_vars(host).cloned().unwrap_or_default(),
         );
         // In layering order; the `group_names` magic variable sorts its own copy.
         group_names.insert(host.clone(), layering.layered(host));
@@ -58,7 +53,7 @@ impl VarStore {
         inventory: &Inventory,
         inventory_path: Option<&Path>,
         playbook_dir: &Path,
-        extra: Map<String, Value>,
+        extra: Tagged,
     ) -> anyhow::Result<Self> {
         let sources: Vec<Source> = inventory_path
             .map(|p| Source::new(&p.to_string_lossy()))
@@ -74,7 +69,7 @@ impl VarStore {
         inventory: &Inventory,
         sources: &[Source],
         playbook_dir: &Path,
-        extra: Map<String, Value>,
+        extra: Tagged,
     ) -> anyhow::Result<Self> {
         let mut group_files = Vec::new();
         let mut host_files = Vec::new();
@@ -171,6 +166,7 @@ impl VarStore {
             .chain(self.inventory_vars.values())
             .chain(self.host_line_vars.values())
             .chain([&self.extra])
+            .map(Tagged::as_map)
     }
 
     /// Keeps the sources `meta: refresh_inventory` reads again.

@@ -7,6 +7,7 @@ use serde_json::{Map, Value};
 use volant_protocol::modules::short_name;
 
 use crate::keywords::BLOCK_SECTIONS;
+use crate::tags::Tagged;
 use crate::yaml::{field, to_json};
 
 use super::deferred::{Deferred, seconds_or_template};
@@ -113,14 +114,14 @@ pub(super) fn debugger(yaml: &Yaml, context: &str) -> anyhow::Result<Option<Debu
 }
 
 /// A keyword whose value has to be a mapping, kept raw: `vars`, on a task or on a block.
-pub(super) fn mapping(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Map<String, Value>> {
+pub(super) fn mapping(yaml: &Yaml, key: &str, context: &str) -> anyhow::Result<Tagged> {
     if key == "vars" {
         super::origin::warn_reserved_keys(field(yaml, key));
     }
     match field(yaml, key) {
-        None | Some(Yaml::Value(Scalar::Null)) => Ok(Map::new()),
+        None | Some(Yaml::Value(Scalar::Null)) => Ok(Tagged::default()),
         Some(v) => match to_json(v).with_context(|| format!("{context}'{key}'"))? {
-            Value::Object(map) => Ok(map),
+            Value::Object(map) => Ok(super::origin::tagged_vars(v, map)),
             _ => bail!("{context}'{key}' must be a mapping"),
         },
     }

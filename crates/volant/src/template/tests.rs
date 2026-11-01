@@ -431,7 +431,7 @@ fn the_context_hands_out_the_shared_view_and_ranks_inventory_wide_names() {
         let shared = Arc::new(vars(json!({"groups": {"web": ["h1"]}})));
         let facts = Arc::new(vars(json!({"own": 2})));
         let own = vars(own);
-        let base = Arc::new(vars(base));
+        let base = Arc::new(crate::tags::Tagged::from(vars(base)));
         let (ctx, _) = context_of(
             &templar(),
             Vars {

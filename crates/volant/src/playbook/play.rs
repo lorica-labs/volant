@@ -88,9 +88,9 @@ pub(super) fn parse_play(yaml: &Yaml, dir: &Path) -> anyhow::Result<Play> {
     let gather_written = gather_written.is_some() || deferred.gather_facts.is_some();
     super::origin::warn_reserved_keys(field(yaml, "vars"));
     let vars = match field(yaml, "vars") {
-        None | Some(Yaml::Value(Scalar::Null)) => Map::new(),
+        None | Some(Yaml::Value(Scalar::Null)) => crate::tags::Tagged::default(),
         Some(v) => match to_json(v).context("'vars'")? {
-            Value::Object(map) => map,
+            Value::Object(map) => super::origin::tagged_vars(v, map),
             _ => bail!("'vars' must be a mapping"),
         },
     };
@@ -350,7 +350,7 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
         None => bail!("a role entry needs 'role'"),
     };
     let mut from = RoleFrom::default();
-    let mut params = Map::new();
+    let mut params = crate::tags::Tagged::default();
     for (key, value) in map {
         let key = key
             .as_str()
@@ -375,7 +375,8 @@ fn parse_role_entry(yaml: &Yaml) -> anyhow::Result<RoleEntry> {
         // A role entry takes the keywords a block takes, which is the list the reference checks
         // one against; anything else is a parameter for the role itself.
         if block_keyword(key).is_none() {
-            params.insert(key.to_string(), to_json(value)?);
+            let tree = super::origin::tree_of(value);
+            params.insert(key.to_string(), to_json(value)?, tree);
         }
     }
     let context = format!("role '{name}': ");

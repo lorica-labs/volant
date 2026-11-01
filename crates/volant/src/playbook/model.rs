@@ -38,7 +38,7 @@ pub struct Play {
     /// Whether the play wrote `gather_facts` at all: `gathering = explicit` gathers only for a
     /// play that did.
     pub gather_written: bool,
-    pub vars: Map<String, Value>,
+    pub vars: crate::tags::Tagged,
     /// Each entry's alternatives: one path, or a list of which the first file that exists is read.
     pub vars_files: Vec<Vec<String>>,
     /// The `when` of the `import_playbook` entries this play came through, outermost first. Every
@@ -218,7 +218,7 @@ pub struct PlayTask {
     pub throttle: Option<Throttle>,
     /// `debugger`: when a result of this task opens the debugger prompt.
     pub debugger: Option<Debugger>,
-    pub vars: Map<String, Value>,
+    pub vars: crate::tags::Tagged,
     /// Conditions that must all hold, as Jinja2 expressions.
     pub when: Vec<String>,
     /// Raw `loop` value: a list, or a template string rendering to one. `with_items` lands
@@ -366,7 +366,7 @@ impl PlayTask {
             poll: None,
             throttle: None,
             debugger: None,
-            vars: Map::new(),
+            vars: crate::tags::Tagged::default(),
             when: Vec::new(),
             loop_items: None,
             with_items: false,

@@ -16,6 +16,7 @@ use crate::action_plugins::Kind;
 use crate::compile::{Compiled, IncludeParams, Origin, Step};
 use crate::executor::coordinator::Progress;
 use crate::playbook::{Flag, PlayTask};
+use crate::tags::Tagged;
 use crate::template::{Templar, TemplateError};
 use crate::testing::{defaults, hvars, play, scratch, task, templar, write};
 use crate::transport::{BecomeMethod, ConnectionDefaults, Escalation};
@@ -135,7 +136,8 @@ fn a_task_is_prepared_with_the_payload_built_for_its_module() {
         )
         .expect("an inventory");
         let store = Mutex::new(
-            VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
+            VarStore::new(&inventory, None, Path::new("."), Tagged::default())
+                .expect("a var store"),
         );
         let mut step = Step {
             kind: crate::compile::StepKind::Task,
@@ -288,7 +290,9 @@ fn a_task_is_sent_to_python_where_a_native_must_not_answer() {
 
 fn store_at(playbook_dir: &Path) -> Mutex<VarStore> {
     let inventory = crate::inventory::Inventory::parse_ini("h1\n").expect("an inventory");
-    Mutex::new(VarStore::new(&inventory, None, playbook_dir, Map::new()).expect("a var store"))
+    Mutex::new(
+        VarStore::new(&inventory, None, playbook_dir, Tagged::default()).expect("a var store"),
+    )
 }
 
 fn step_of(task: PlayTask, origin: Origin) -> Step {
@@ -615,6 +619,7 @@ fn a_tasks_own_vars_resolve_with_the_role_s_search_path_already_in_place() {
     t.vars.insert(
         "via_lookup".into(),
         json!("{{ lookup('template', 't.j2') }}"),
+        None,
     );
     let step = step_of(
         t,
@@ -661,7 +666,7 @@ fn plan() -> PlayPlan {
         throttles: Mutex::default(),
         queue: Vec::new(),
         turn: watch::channel(0).0,
-        play_vars: Map::new(),
+        play_vars: Tagged::default(),
         vars_files: HashMap::new(),
         all_play_hosts: Vec::new().into(),
         r#become: (None, None),
@@ -956,7 +961,7 @@ fn a_delegate_is_the_inventory_s_host_or_an_implicit_one() {
     )
     .expect("an inventory");
     let store = Mutex::new(
-        VarStore::new(&inventory, None, Path::new("."), Map::new()).expect("a var store"),
+        VarStore::new(&inventory, None, Path::new("."), Tagged::default()).expect("a var store"),
     );
     let templar = templar();
     let live = Progress::default();
@@ -965,7 +970,7 @@ fn a_delegate_is_the_inventory_s_host_or_an_implicit_one() {
         host_vars(
             name,
             &plan,
-            &Map::new(),
+            &Tagged::default(),
             None,
             None,
             &live,

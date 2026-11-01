@@ -19,7 +19,7 @@ use super::defaults::{
     port_of, setting_args, timeout_of,
 };
 use super::escalation::check_local_escalation;
-use super::escalation::{local_argv, local_su, preamble};
+use super::escalation::{become_success, local_argv, local_su, local_sudo, preamble};
 use super::names::{self, first_set, secret_text};
 use super::resolve::{ConnectionNames, Resolution};
 use super::shell::validate_remote_tmp;
@@ -330,15 +330,32 @@ impl Transport {
                 // The agent gets the open file limit the run started with from a shell in front
                 // of it, not from a hook between fork and exec: such a hook makes the standard
                 // library fork on macOS, where a pipe made for one agent can then reach another
-                // started at the same moment and keep its link open.
-                if let Some(soft) = super::control::started_open_file_limit() {
+                // started at the same moment and keep its link open. Behind `sudo` that shell
+                // prints the success line first.
+                let soft = super::control::started_open_file_limit();
+                let success = escalated.map(|_| become_success());
+                if soft.is_some() || success.is_some() {
                     let agent = argv.pop().unwrap_or_default();
+                    let script = format!(
+                        "{}{}exec \"$0\"",
+                        if soft.is_some() {
+                            "ulimit -Sn \"$1\" 2>/dev/null; "
+                        } else {
+                            ""
+                        },
+                        if success.is_some() {
+                            "echo \"$2\"; "
+                        } else {
+                            ""
+                        },
+                    );
                     argv.extend([
                         "sh".to_string(),
                         "-c".to_string(),
-                        "ulimit -Sn \"$1\" 2>/dev/null; exec \"$0\"".to_string(),
+                        script,
                         agent,
-                        soft.to_string(),
+                        soft.map(|soft| soft.to_string()).unwrap_or_default(),
+                        success.clone().unwrap_or_default(),
                     ]);
                 }
                 let mut command = Command::new(&argv[0]);
@@ -350,12 +367,20 @@ impl Transport {
                     .args(&argv[1..])
                     .stdin(Stdio::piped())
                     .stdout(Stdio::piped())
-                    .stderr(Stdio::inherit())
+                    .stderr(if success.is_some() {
+                        Stdio::piped()
+                    } else {
+                        Stdio::inherit()
+                    })
                     .kill_on_drop(true)
                     .spawn()
                     .map_err(|e| {
                         ConnectError::Unreachable(format!("starting agent {agent}: {e}"))
                     })?;
+                if let Some(success) = &success {
+                    let keep = escalated.is_some_and(|(e, _)| e.keep_preamble);
+                    return local_sudo(child, preamble(escalated), success, keep).await;
+                }
                 AgentLink::new_with_preamble(child, preamble(escalated))
                     .await
                     .map_err(|e| ConnectError::Unreachable(format!("{e:#}")))

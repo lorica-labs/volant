@@ -249,6 +249,11 @@ pub(super) fn become_for(
         (BecomeMethod::Sudo, Some(Value::String(dir))) if !dir.is_empty() => Some(dir.clone()),
         _ => None,
     };
+    // The local connection's `become_strip_preamble`, which only `sudo` reaches here.
+    let keep_preamble = method == BecomeMethod::Sudo
+        && host_setting(vars, "ansible_local_become_strip_preamble")
+            .and_then(super::keyword::strict_boolean)
+            == Some(false);
     Ok(Some(Escalation {
         method,
         user,
@@ -257,6 +262,7 @@ pub(super) fn become_for(
         flags,
         prompt_l10n,
         chdir,
+        keep_preamble,
     }))
 }
 

@@ -665,7 +665,7 @@ fn plan() -> PlayPlan {
         strategy: Strategy::Linear,
         throttles: Mutex::default(),
         queue: Vec::new(),
-        turn: watch::channel(0).0,
+        turns: crate::executor::driver::Turns::default(),
         play_vars: Tagged::default(),
         vars_files: HashMap::new(),
         all_play_hosts: Vec::new().into(),

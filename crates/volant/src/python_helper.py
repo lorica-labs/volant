@@ -22,6 +22,7 @@ import importlib.util
 import io
 import json
 import os
+import pickle
 import re
 import struct
 import sys
@@ -1927,6 +1928,18 @@ def run_action(ident, request):
             traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
             if traceback:
                 result["exception"] = traceback
+    try:
+        # `WorkerProcess` pickles the result to send it back, and replaces one it cannot send.
+        pickle.dumps(result)
+    except Exception as unsent:
+        try:
+            raise AnsibleError("Task result omitted due to queue send failure.") from unsent
+        except AnsibleError as wrapped:
+            result = _error_utils.result_dict_from_exception(wrapped)
+        summary = result.pop("exception", None)
+        traceback = getattr(getattr(summary, "event", None), "formatted_traceback", None)
+        if traceback:
+            result["exception"] = traceback
     if isinstance(result, dict):
         captured_messages(result, warning_ctx)
     value = plain(result)

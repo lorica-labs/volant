@@ -27,7 +27,6 @@ module_defaults                #1345
 order                          #1340
 protomatter                    #1282
 remote_tmp                     #1336
-roles_arg_spec                 #1360
 set_fact                       #1282
 shell                          #1336
 strategy-external              #1335
